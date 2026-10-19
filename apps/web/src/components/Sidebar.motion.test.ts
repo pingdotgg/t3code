@@ -155,8 +155,6 @@ describe("sidebar list motion", () => {
     const { motion, layout } = fixture([a, b, c]);
     motion.update(true);
     motion.suspend();
-    // a is lifted 130px below its slot; b previews upward into a's place
-    // and c holds a 16px label gap open below the divider.
     a.dragTranslate = 130;
     b.dragTranslate = -83;
     c.dragTranslate = 16;
@@ -165,9 +163,7 @@ describe("sidebar list motion", () => {
     layout([b, a, c]);
     a.dragTranslate = b.dragTranslate = c.dragTranslate = 0;
     motion.update(true);
-    // Lifted top 138, committed slot top 91: glide the remaining 47px.
     expectMove(a, 47);
-    // b already sits where it lands; c closes its 16px gap.
     expect(b.animations).toHaveLength(0);
     expectMove(c, 16);
   });
@@ -331,8 +327,6 @@ describe("sidebar list motion", () => {
     const z = new TestRow("z", 36);
     const { motion, layout } = fixture([a, header, x]);
     motion.update(true);
-    // The shelf is anchored below the list, so two revealed rows lift the
-    // header and its existing rows by the same 72px.
     layout([a, header, x, y, z]);
     for (const row of [header, x, y, z]) row.offsetTop -= 72;
     motion.update(true);
@@ -409,8 +403,6 @@ describe("sidebar list motion", () => {
     motion.update(true);
     expect(entry.cancel).toHaveBeenCalledOnce();
     const clone = y.clones[0]!;
-    // Remaining entry travel (36 * 0.75) is baked into the clone's box so the
-    // fade starts from the row's current visual top instead of jumping to 0.
     expect(clone.style.top).toBe("110px");
     expect(clone.animate).toHaveBeenCalledWith(
       [
@@ -497,7 +489,6 @@ describe("sidebar list motion", () => {
     for (const row of [header, x, y]) row.offsetTop += 40;
     motion.update(true);
     expect(entry.cancel).not.toHaveBeenCalled();
-    // Remaining 27px of the 36px entry plus the new 40px shift.
     expectMove(y, -13);
   });
 

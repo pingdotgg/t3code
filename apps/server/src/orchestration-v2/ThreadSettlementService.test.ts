@@ -51,8 +51,6 @@ function at(offsetMs: number): DateTime.Utc {
 type SettlementShell = OrchestrationV2ThreadShell &
   Pick<ProjectionStore.ProjectionSettlementCandidate, "latestUserAuthoredMessageAt">;
 
-// A fixture's user message is one the user wrote unless the test sets
-// latestUserAuthoredMessageAt on its own.
 function shell(overrides: Partial<SettlementShell> = {}): SettlementShell {
   return {
     id: ThreadId.make("thread-1"),
@@ -201,7 +199,6 @@ describe("isAutoSettlementCandidate", () => {
         NOW_MS,
       ),
     ).toBe(false);
-    // Expired snooze is no longer a park.
     expect(
       ThreadSettlementService.isAutoSettlementCandidate(
         shell({ ...snoozed, snoozedUntil: at(-1) }),
@@ -215,7 +212,6 @@ describe("threadHasQueuedTurnStart", () => {
   it("holds a fresh unadopted user message inside the grace window only", () => {
     const fresh = shell({ latestUserMessageAt: at(-1_000) });
     expect(ThreadSettlementService.threadHasQueuedTurnStart(fresh, NOW_MS)).toBe(true);
-    // Adoption stamps the run with the message time, clearing the hold.
     expect(
       ThreadSettlementService.threadHasQueuedTurnStart(
         shell({
@@ -226,21 +222,18 @@ describe("threadHasQueuedTurnStart", () => {
         NOW_MS,
       ),
     ).toBe(false);
-    // Outside the grace window the stale message no longer blocks.
     expect(
       ThreadSettlementService.threadHasQueuedTurnStart(
         shell({ latestUserMessageAt: at(-ThreadSettlementService.QUEUED_TURN_START_GRACE_MS - 1) }),
         NOW_MS,
       ),
     ).toBe(false);
-    // Client clocks ahead of the server must not extend the hold.
     expect(
       ThreadSettlementService.threadHasQueuedTurnStart(
         shell({ latestUserMessageAt: at(ThreadSettlementService.QUEUED_TURN_START_GRACE_MS + 1) }),
         NOW_MS,
       ),
     ).toBe(false);
-    // A failed start clears the hold immediately.
     expect(
       ThreadSettlementService.threadHasQueuedTurnStart(
         shell({ latestUserMessageAt: at(-1_000), status: "failed" }),
@@ -251,6 +244,38 @@ describe("threadHasQueuedTurnStart", () => {
 });
 
 describe("resolveAutoSettlementAt", () => {
+  it("keeps threads with a PR from inactivity settlement only when asked", () => {
+    const input = {
+      thread: shell({
+        latestUserMessageAt: at(-4 * DAY_MS),
+        linkedPullRequest: {
+          projectId: ProjectId.make("project-1"),
+          repository: "owner/repo",
+          number: 1,
+          url: "https://example.test/owner/repo/pull/1",
+        },
+      }),
+      pullRequest: null,
+      nowMs: NOW_MS,
+      autoSettleAfterDays: 3,
+      autoSettleOnMerge: true,
+      autoSettleKeepPullRequests: true,
+    };
+    expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toBeNull();
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({
+        ...input,
+        autoSettleKeepPullRequests: false,
+      }),
+    ).toEqual(at(-4 * DAY_MS));
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({
+        ...input,
+        pullRequest: { state: "merged", mergedAt: DateTime.formatIso(at(-1)) },
+      }),
+    ).toEqual(at(-4 * DAY_MS));
+  });
+
   it("uses the latest activity time when the inactivity window elapses", () => {
     const idle = shell({
       latestUserMessageAt: at(-4 * DAY_MS),
@@ -322,7 +347,6 @@ describe("resolveAutoSettlementAt", () => {
         pullRequest: { state: "merged", mergedAt: DateTime.formatIso(at(-3 * 60 * 60 * 1_000)) },
       }),
     ).toBeNull();
-    // A thread without messages still has a stable timestamp when its PR closes.
     expect(
       ThreadSettlementService.resolveAutoSettlementAt({
         ...input,
@@ -334,8 +358,6 @@ describe("resolveAutoSettlementAt", () => {
   });
 
   it("settles on merge after agent-started runs, but not after the user writes again", () => {
-    // A background command stopped after the merge and its notification
-    // started a run. Only the user's own messages hold a merged thread open.
     const woken = shell({
       latestUserMessageAt: at(-30 * 60 * 1_000),
       latestUserAuthoredMessageAt: at(-2 * 60 * 60 * 1_000),
@@ -356,6 +378,53 @@ describe("resolveAutoSettlementAt", () => {
         thread: { ...woken, latestUserAuthoredMessageAt: at(-30 * 60 * 1_000) },
       }),
     ).toBeNull();
+  });
+
+  it("does not settle on pull requests that were already merged when linked", () => {
+    const link = (number: number, linkedAt: DateTime.Utc, mergedAt: DateTime.Utc) => ({
+      host: "example.test",
+      repository: "owner/repository",
+      number,
+      url: `https://example.test/owner/repository/pull/${number}`,
+      source: "agent" as const,
+      linkedAt: DateTime.formatIso(linkedAt),
+      snapshot: {
+        state: "merged" as const,
+        title: "Pull request",
+        headBranch: `feature-${number}`,
+        baseBranch: "main",
+        isDraft: false,
+        updatedAt: DateTime.formatIso(mergedAt),
+        syncedAt: DateTime.formatIso(linkedAt),
+        mergedAt: DateTime.formatIso(mergedAt),
+      },
+      stack: null,
+    });
+    // The user asked the agent to merge pull requests; it merged one, then
+    // linked it to the thread as a record of the work.
+    const recorded = link(1, at(-50 * 60 * 1_000), at(-55 * 60 * 1_000));
+    const input = {
+      thread: shell({
+        latestUserMessageAt: at(-2 * 60 * 60 * 1_000),
+        latestRunCompletedAt: at(-45 * 60 * 1_000),
+        pullRequests: [recorded],
+      }),
+      pullRequest: null,
+      nowMs: NOW_MS,
+      autoSettleAfterDays: null,
+      autoSettleOnMerge: true,
+    };
+    expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toBeNull();
+    // A pull request linked while open still settles the thread when it merges.
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({
+        ...input,
+        thread: {
+          ...input.thread,
+          pullRequests: [recorded, link(2, at(-90 * 60 * 1_000), at(-40 * 60 * 1_000))],
+        },
+      }),
+    ).toEqual(at(-45 * 60 * 1_000));
   });
 
   it("settles inactive threads even when their pull request remains open", () => {
@@ -508,13 +577,10 @@ interface HarnessOptions {
   readonly pullRequestSummary?: PullRequestService.PullRequestService["Service"]["summary"];
   readonly existingWorktreePaths?: ReadonlyArray<string>;
   readonly onDispatch?: (command: AutoSettleCommand) => Effect.Effect<void>;
-  /** Runs before each settle script start; a failure fails that start. */
   readonly onScriptRun?: (
     input: ProjectSetupScriptRunner.ProjectSetupScriptRunnerInput,
   ) => Effect.Effect<void>;
-  /** Runs inside each `closeIdle` call. */
   readonly onCloseIdle?: () => Effect.Effect<void>;
-  /** Threads `getThread` returns when a `thread.settled` event is handled. */
   readonly currentThreads?: ReadonlyArray<OrchestrationV2AppThread>;
 }
 
@@ -833,6 +899,64 @@ describe("ThreadSettlementServiceV2 worker", () => {
     ),
   );
 
+  it.effect("does not look up a pull request that was already merged when linked", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const reference = {
+          projectId: PROJECT_ID,
+          repository: "owner/repository",
+          number: 42,
+          url: "https://example.test/owner/repository/pull/42",
+        };
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([
+            makeThread("merged-then-linked", {
+              linkedPullRequest: reference,
+              pullRequests: [
+                {
+                  host: "example.test",
+                  repository: reference.repository,
+                  number: reference.number,
+                  url: reference.url,
+                  source: "agent",
+                  linkedAt: "2026-08-28T00:00:00.000Z",
+                  snapshot: {
+                    state: "merged",
+                    title: "Pull request",
+                    headBranch: "feature",
+                    baseBranch: "main",
+                    isDraft: false,
+                    updatedAt: "2026-08-27T00:00:00.000Z",
+                    syncedAt: "2026-08-28T00:00:00.000Z",
+                    mergedAt: "2026-08-27T00:00:00.000Z",
+                  },
+                  stack: null,
+                },
+              ],
+            }),
+          ]),
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            sidebarAutoSettleAfterDays: null,
+            sidebarAutoSettleOnMerge: true,
+          },
+          pullRequestSummary: (input) =>
+            Effect.succeed({
+              ...makePullRequestSummary({ ...input, state: "merged" }),
+              mergedAt: "2026-08-27T00:00:00.000Z",
+            }),
+        });
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+          assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
+          assert.deepStrictEqual(yield* Ref.get(fixture.summaryCalls), []);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("reevaluates immediately after a pull request merge", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -962,9 +1086,6 @@ describe("ThreadSettlementServiceV2 worker", () => {
           ]),
           pullRequestSummary: (input) =>
             Ref.updateAndGet(lookupCount, (count) => count + 1).pipe(
-              // The initial sweep looks up both linked threads; the merge
-              // sweep only looks up the unrelated one, since the merged
-              // thread settles from the event itself.
               Effect.tap((count) =>
                 count === 3 ? Deferred.succeed(mergeLookupStarted, undefined) : Effect.void,
               ),
@@ -1118,8 +1239,6 @@ describe("ThreadSettlementServiceV2 terminals", () => {
           const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
           yield* startHarness(service, fixture.activation, fixture.snapshotReads);
           yield* fixture.publishEvent(settledEvent(settled));
-          // Events run in order, so the first close belongs to the later
-          // event only if the re-engaged thread was skipped.
           yield* fixture.publishEvent(settledEvent(marker));
           assert.deepStrictEqual(yield* Queue.take(fixture.closedIdle), { threadId: marker.id });
         }).pipe(Effect.provide(fixture.layer));
@@ -1142,8 +1261,6 @@ describe("ThreadSettlementServiceV2 terminals", () => {
         yield* Effect.gen(function* () {
           const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
           yield* startHarness(service, fixture.activation, fixture.snapshotReads);
-          // Events run in order, so the first run belongs to the last event
-          // only if the shared checkout and the removed worktree were skipped.
           yield* fixture.publishEvent(settledEvent(shared));
           yield* fixture.publishEvent(settledEvent(missing));
           yield* fixture.publishEvent(settledEvent(worktree));
@@ -1166,7 +1283,6 @@ describe("ThreadSettlementServiceV2 terminals", () => {
           snapshot: makeSnapshot([]),
           currentThreads,
           existingWorktreePaths: ["/worktrees/reengaging", "/worktrees/marker"],
-          // The user sends a message while the first close checks processes.
           onCloseIdle: () =>
             Effect.sync(() => {
               currentThreads[0] = { ...settled, settledOverride: "active" };
@@ -1198,7 +1314,6 @@ describe("ThreadSettlementServiceV2 terminals", () => {
         yield* Effect.gen(function* () {
           const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
           yield* startHarness(service, fixture.activation, fixture.snapshotReads);
-          // Settling an already settled thread emits the same settlement again.
           yield* fixture.publishEvent(settledEvent(repeated));
           yield* fixture.publishEvent(settledEvent(repeated));
           yield* fixture.publishEvent(settledEvent(marker));

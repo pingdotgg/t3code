@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  type ThreadPullRequestLink,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
@@ -105,6 +106,34 @@ const emptyProjection = {
 } as OrchestrationV2ThreadProjection;
 
 describe("applyOrchestrationV2ProjectionEvent", () => {
+  it("applies a compact PR sync without replacing other links or thread metadata", () => {
+    const link = (number: number): ThreadPullRequestLink => ({
+      host: "github.com",
+      repository: "pingdotgg/t3code",
+      number,
+      url: `https://github.com/pingdotgg/t3code/pull/${number}`,
+      source: "manual",
+      linkedAt: DateTime.formatIso(now),
+      snapshot: null,
+      stack: null,
+    });
+    const links = [link(1), link(2)];
+    const projection = {
+      ...emptyProjection,
+      thread: { ...emptyProjection.thread, pullRequests: links },
+    };
+    const updated = { ...links[1]!, source: "agent" as const };
+    const next = applyOrchestrationV2ProjectionEvent(projection, {
+      id: "compact-sync" as OrchestrationV2DomainEvent["id"],
+      type: "thread.pull-request-link-updated",
+      threadId,
+      occurredAt: now,
+      payload: updated,
+    });
+    expect(next?.thread).toEqual({ ...projection.thread, pullRequests: [links[0], updated] });
+    expect(next?.thread.pullRequests?.[0]).toBe(links[0]);
+  });
+
   it("keeps live token usage when the terminal provider turn omits it", () => {
     const providerTurnId = ProviderTurnId.make("provider-turn-reducer");
     const running = {
@@ -317,8 +346,6 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
       }) as OrchestrationV2DomainEvent;
 
     it("shows a queued run that starts after a newer steer raised the watermark", () => {
-      // Run 2 was queued first, run 3 was steered in and ran first. Its items
-      // sit in run 3's band and already raised the watermark past run 2's band.
       const steerItems = [
         runItem("item-steer-user", steerRunId, 3_000_001),
         runItem("item-steer-reply", steerRunId, 3_000_002),
@@ -328,8 +355,6 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
         steerItems,
       );
       let latestLocalTurnOrdinal = 3_000_002;
-      // Same order the orchestrator commits a queued start: the user message
-      // lands while the run is still queued, then the run starts and replies.
       const queuedUser = runItem("item-queued-user", queuedRunId, 2_000_001);
       const queuedReply = runItem("item-queued-reply", queuedRunId, 2_000_002);
       for (const event of [
@@ -356,8 +381,6 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     });
 
     it("keeps a running run's item when the window starts after its earlier items", () => {
-      // The bounded window begins inside run 3; run 2 started and kept going,
-      // but none of its rows made it into the window.
       const runningRun = { ...queuedRun, status: "running" } as const;
       const steerItems = [
         runItem("item-steer-user", steerRunId, 3_000_001),

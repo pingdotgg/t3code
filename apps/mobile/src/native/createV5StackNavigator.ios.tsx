@@ -37,7 +37,6 @@ import {
 
 export type V5StackViewProps = ComponentProps<typeof NativeStackView>;
 
-/** The presentation envelope must not mount a second search bar or header. */
 export function modalEnvelopeOptions(options: NativeStackNavigationOptions) {
   return {
     ...Object.fromEntries(
@@ -177,7 +176,6 @@ export function V5CardStackView(
               onDidAppear={() => {
                 const source = nativePopSource.current;
                 if (source === route.key) {
-                  // A cancelled swipe restores its source without changing router history.
                   nativePopSource.current = null;
                 } else if (source) {
                   const state = props.navigation.getState();
@@ -258,7 +256,6 @@ export function V5CardStackView(
   );
 }
 
-/** v5 owns pushes and headers; the legacy renderer only presents modal groups. */
 export function V5StackView(props: V5StackViewProps) {
   const groups = partitionStackPresentations(props.state.routes, (route) => {
     const presentation = props.descriptors[route.key]?.options.presentation;
@@ -278,7 +275,6 @@ export function V5StackView(props: V5StackViewProps) {
         {
           ...descriptor,
           navigation: props.descriptors[visibleRoute.key]!.navigation,
-          // Focus belongs to the pushed page inside this presentation group.
           route: visibleRoute,
           options: modalEnvelopeOptions(descriptor.options),
           render: () => (
@@ -306,7 +302,6 @@ export function V5StackView(props: V5StackViewProps) {
   );
 }
 
-/** Keep a direct card host mounted while v5 form sheets present above it. */
 export function V5SheetStackView(props: V5StackViewProps) {
   const { preventedRoutes } = usePreventRemoveContext();
   const groups = partitionStackPresentations(
@@ -481,7 +476,6 @@ export function createV5StackNavigator<
   return createNavigatorFactory(V5StackNavigator)(config);
 }
 
-/** For navigators whose presentations are cards and form sheets only. */
 export function createV5SheetStackNavigator<
   const ParamList extends ParamListBase,
   const NavigatorID extends string | undefined = string | undefined,

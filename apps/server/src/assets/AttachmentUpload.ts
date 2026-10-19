@@ -34,7 +34,6 @@ import { inferImageExtension } from "../imageMime.ts";
 
 export const ATTACHMENT_UPLOAD_ROUTE_PREFIX = "/api/attachments/upload";
 
-// Asset download tokens share this key, but their signed claim kind is different.
 const SIGNING_SECRET_NAME = "asset-access-signing-key";
 const PENDING_ATTACHMENT_SWEEP_INTERVAL_MS = 15 * 60_000;
 const lastPendingSweepByDirectory = new Map<string, number>();
@@ -170,7 +169,7 @@ export const storeAttachmentUpload = Effect.fn("AttachmentUpload.store")(functio
     relativePath,
   });
   const crypto = yield* Crypto.Crypto;
-  const partId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+  const partId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
   const partPath = resolveAttachmentRelativePath({
     attachmentsDir: config.attachmentsDir,
     relativePath: `${relativePath}.${partId}.part`,

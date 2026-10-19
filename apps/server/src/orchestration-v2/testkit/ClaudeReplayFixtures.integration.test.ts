@@ -177,7 +177,6 @@ describe("Claude Agent SDK replay fixtures", () => {
           })
           .pipe(Effect.flip);
         assert.equal(refused._tag, "OrchestratorSubagentThreadReadOnlyError");
-        // The wire error carries this text to the web toast and mobile outbox.
         assert.equal(
           userFacingDispatchErrorMessage(refused),
           "This subagent is run by its provider and cannot take messages. Message the parent thread instead.",
@@ -211,7 +210,6 @@ describe("Claude Agent SDK replay fixtures", () => {
           for (const toolName of claudeToolUseNamesFromTranscript(transcript)) {
             seenToolNames.add(toolName);
             const classification = classifyClaudeNativeTool(toolName);
-            // MCP tools are open-ended and deliberately become dynamic tools.
             if (!classification.known && !toolName.startsWith("mcp__")) {
               unknownToolNames.add(`${fixture.name}:${toolName}`);
             }

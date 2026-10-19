@@ -28,24 +28,15 @@ export class CliUninstallError extends Schema.TaggedError<CliUninstallError>()(
   }
 }
 
-/**
- * What `t3 uninstall` would remove for one T3 home. Computed before anything
- * is touched so the user sees the whole plan in one place.
- */
 export interface UninstallPlan {
-  /** The background service serves this home and will be stopped and removed. */
   readonly service: boolean;
-  /** The `t3` launcher (symlink or `.cmd` shim) that points into this home's runtime tree. */
   readonly launcher: string | undefined;
-  /** `<home>/runtime`, holding every downloaded version, when it exists. */
   readonly runtimeDir: string | undefined;
-  /** `<home>/userdata`, which is never removed; shown so the user knows where it is. */
   readonly userdataDir: string;
 }
 
 /**
- * Finds the launcher this install left on PATH. Only a launcher that points
- * into this home's `runtime/versions` is claimed: a plain copy of the
+ * Only a launcher that points into this home's `runtime/versions` is claimed: a plain copy of the
  * executable, or a launcher for another home, is not ours to delete.
  */
 export const findOwnedLauncher = Effect.fn("cli.uninstall.find_launcher")(function* (input: {

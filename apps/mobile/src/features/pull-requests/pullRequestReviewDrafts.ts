@@ -41,7 +41,6 @@ export const ReviewDraftDocument = Schema.Struct({
     }),
   ),
 });
-/** A successful request only clears the exact snapshot it posted. */
 export function clearSubmittedReview(current: ReviewDraft, submitted: ReviewDraft): ReviewDraft {
   return {
     ...current,

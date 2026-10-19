@@ -38,7 +38,6 @@ function ownedFileLocation(uri: string) {
   return { documentPath: path.slice(0, index), name };
 }
 
-/** Compares references across iOS data-container moves without rewriting saved drafts. */
 export function composerAttachmentFileReferenceKey(uri: string): string {
   const location = ownedFileLocation(uri);
   if (!location) {
@@ -53,7 +52,6 @@ export function composerAttachmentFileReferenceKey(uri: string): string {
   return `file://${documentPath}/${COMPOSER_ATTACHMENT_DIRECTORY}/${encodeURIComponent(location.name)}`;
 }
 
-/** Holds a local copy until its last player or share-copy operation releases it. */
 export function retainComposerAttachmentFile(uri: string, onLastRelease: () => void): () => void {
   const key = composerAttachmentFileReferenceKey(uri);
   retainedFiles.set(key, (retainedFiles.get(key) ?? 0) + 1);
@@ -78,9 +76,9 @@ export function isComposerAttachmentFileRetained(uri: string): boolean {
 }
 
 /**
- * Resolves only our saved attachment copies. iOS preserves Documents on updates
- * but can change its container UUID. Picker and open-in-place source URIs must
- * bypass this resolver so another app's document keeps its original location.
+ * iOS preserves Documents on updates but can change its container UUID. Picker
+ * and open-in-place source URIs must bypass this resolver so another app's
+ * document keeps its original location.
  */
 export function resolveOwnedComposerAttachmentFileUri(
   uri: string,

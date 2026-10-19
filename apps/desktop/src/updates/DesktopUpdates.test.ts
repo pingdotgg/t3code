@@ -14,6 +14,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
+import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopState from "../app/DesktopState.ts";
@@ -652,6 +653,66 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
+  it.effect("records the version an install hands to the installer", () => {
+    let recordsAtStop: ReadonlyArray<string> = [];
+    const harness = makeHarness({
+      stopBackend: Effect.sync(() => {
+        recordsAtStop = [...harness.installRecords.values()];
+      }),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        assert.isTrue((yield* updates.install).accepted);
+        assert.deepEqual(
+          recordsAtStop.map((record) => JSON.parse(record)),
+          [{ fromVersion: "1.2.3", targetVersion: "1.2.4" }],
+        );
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("flags an install that did not apply and keeps the flag through checks", () => {
+    const harness = makeHarness({
+      installRecord: JSON.stringify({ fromVersion: "1.2.3", targetVersion: "1.2.4" }),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        assert.equal((yield* updates.getState).notAppliedVersion, "1.2.4");
+        assert.isDefined(harness.previousInstallRecord());
+
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* flushCallbacks;
+        const state = yield* updates.getState;
+        assert.equal(state.status, "available");
+        assert.equal(state.notAppliedVersion, "1.2.4");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("does not flag an install that applied", () => {
+    const harness = makeHarness({
+      installRecord: JSON.stringify({ fromVersion: "1.2.2", targetVersion: "1.2.3" }),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        assert.isUndefined((yield* updates.getState).notAppliedVersion);
+        assert.isUndefined(harness.previousInstallRecord());
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
   it.effect("drops the update restart marker when an install is interrupted", () =>
     Effect.gen(function* () {
       const stopping = yield* Deferred.make<void>();
@@ -701,8 +762,92 @@ describe("DesktopUpdates", () => {
         assert.isTrue(result.accepted);
         assert.isFalse(yield* Ref.get(desktopState.quitting));
         assert.deepEqual(harness.installSteps, ["quitAndInstall", "startBackend"]);
-        // The restarted old backend must release its tunnel on a later quit.
         assert.equal(harness.updateRestartMarkers.size, 0);
+        assert.equal(harness.installRecords.size, 0);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("keeps the disabled primary stopped when quitAndInstall fails", () => {
+    const harness = makeHarness({
+      backendDesiredRunning: false,
+      quitAndInstall: Effect.fail(
+        new ElectronUpdater.ElectronUpdaterQuitAndInstallError({
+          channel: "latest",
+          isSilent: true,
+          isForceRunAfter: true,
+          cause: new Error("installer refused"),
+        }),
+      ),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        const pool = yield* DesktopBackendPool.DesktopBackendPool;
+        yield* updates.configure;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const result = yield* updates.install;
+        assert.equal(result.state.errorContext, "install");
+        assert.deepEqual(harness.installSteps, ["quitAndInstall"]);
+        assert.isFalse((yield* (yield* pool.primary).snapshot).desiredRunning);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("restores only desired-running instances after an installer error event", () => {
+    const starts: string[] = [];
+    const stops: string[] = [];
+    const makeInstance = (id: DesktopBackendPool.BackendInstanceId, initiallyRunning: boolean) => {
+      let desiredRunning = initiallyRunning;
+      return {
+        id,
+        label: Effect.succeed(id),
+        currentConfig: Effect.succeedNone,
+        start: Effect.sync(() => {
+          starts.push(id);
+          desiredRunning = true;
+        }),
+        stop: () =>
+          Effect.sync(() => {
+            stops.push(id);
+            desiredRunning = false;
+          }),
+        snapshot: Effect.sync(() => ({
+          desiredRunning,
+          ready: false,
+          activePid: Option.none(),
+          restartAttempt: 0,
+          restartScheduled: false,
+        })),
+        waitForReady: () => Effect.succeed(true),
+      } satisfies DesktopBackendPool.DesktopBackendInstance;
+    };
+    const primary = makeInstance(DesktopBackendPool.PRIMARY_INSTANCE_ID, false);
+    const wsl = makeInstance(DesktopBackendPool.BackendInstanceId("wsl:default"), true);
+    const harness = makeHarness({ backendInstances: [primary, wsl] });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        yield* updates.install;
+        assert.sameMembers(stops, [primary.id, wsl.id]);
+        assert.isFalse((yield* wsl.snapshot).desiredRunning);
+        const { changes } = yield* updates.subscribe;
+        const recovered = yield* Stream.runHead(changes).pipe(Effect.forkChild);
+        yield* flushCallbacks;
+        harness.emit("error", new Error("native installer refused"));
+        assert.equal(Option.getOrThrow(yield* Fiber.join(recovered)).errorContext, "install");
+
+        assert.deepEqual(starts, [wsl.id]);
+        assert.isFalse((yield* primary.snapshot).desiredRunning);
+        assert.isTrue((yield* wsl.snapshot).desiredRunning);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });

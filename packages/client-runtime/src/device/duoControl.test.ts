@@ -114,7 +114,6 @@ it("pinches only a hit device, accumulates independently of native readback, cla
   expect(pinch.active).toBe(false);
 });
 
-// Screen configs as an iPhone Duo simulator reports them for each way of holding the device.
 it.each([
   [
     "vertical phone, closed",
@@ -146,14 +145,12 @@ it.each([
 });
 
 it("marks a display handoff unsettled while the cover reports the inner display's orientation", () => {
-  // Recorded from the iPhone Duo simulator opening a closed vertical phone to a book.
   const handoff = [
     { screenId: 1, orientation: "portrait", hingeAngle: 90 },
     { screenId: 1, orientation: "landscape_left", hingeAngle: 90 },
     { screenId: 3, orientation: "landscape_left", hingeAngle: 90 },
   ] as const;
   expect(handoff.map((screen) => duoFoldState(screen).settled)).toEqual([false, false, true]);
-  // Closing hands back to the cover the same way.
   expect(duoFoldState({ screenId: 3, orientation: "landscape_left", hingeAngle: 0 }).settled).toBe(
     false,
   );
@@ -170,7 +167,6 @@ it("falls back like the 3D view when hinge fields are missing", () => {
     fold: "closed",
     phoneVertical: true,
   });
-  // Without a display ID the 3D view draws the open inner panel, so the controls do too.
   expect(duoFoldState({ orientation: "landscape_left" })).toMatchObject({
     fold: "open",
     phoneVertical: true,
@@ -183,7 +179,6 @@ it("rotates a stand back to how the phone was held, in the frame of the display 
   // leaves a phone that opens and closes vertical.
   expect(duoHoldOrientation(true, 3)).toBe("landscape_left");
   expect(duoHoldOrientation(true, 1)).toBe("portrait");
-  // A quarter turn apart, these describe the same horizontal phone.
   expect(duoHoldOrientation(false, 1)).toBe("landscape_left");
   expect(duoHoldOrientation(false, 3)).toBe("portrait_upside_down");
   for (const screenId of [1, 3])

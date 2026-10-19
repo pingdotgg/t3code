@@ -40,7 +40,6 @@ async function assertReleaseSource({ github, context, releaseChannel }) {
 
 const isNightlyTag = (tag) => /^v.*-nightly\./.test(tag) || tag.startsWith("nightly-v");
 
-// Newest published nightly by publication time, or undefined when none exists.
 async function findLatestNightly({ github, context }) {
   const releases = await github.paginate(github.rest.repos.listReleases, {
     ...context.repo,
@@ -51,7 +50,6 @@ async function findLatestNightly({ github, context }) {
     .sort((a, b) => Date.parse(b.published_at) - Date.parse(a.published_at))[0];
 }
 
-// Runs after the workflow acquires the nightly concurrency lock.
 async function shouldReleaseNightly({ github, context, core, now = Date.now() }) {
   const lastNightly = await findLatestNightly({ github, context });
 
@@ -81,9 +79,6 @@ async function shouldReleaseNightly({ github, context, core, now = Date.now() })
   return true;
 }
 
-// Stable releases build the commit the latest nightly shipped, so the stable
-// build is one nightly users already ran. Returns the nightly tag, its commit,
-// and the stable version that nightly was a preview of.
 async function resolveLatestNightlyCommit({ github, context, core }) {
   const lastNightly = await findLatestNightly({ github, context });
   if (!lastNightly) {
@@ -91,7 +86,6 @@ async function resolveLatestNightlyCommit({ github, context, core }) {
   }
 
   const tag = lastNightly.tag_name;
-  // repos.getCommit dereferences annotated tags, so this is the commit either way.
   const { data: commit } = await github.rest.repos.getCommit({ ...context.repo, ref: tag });
   const version = /^(?:nightly-)?v(\d+\.\d+\.\d+)-nightly\./.exec(tag)?.[1];
   if (!version) {

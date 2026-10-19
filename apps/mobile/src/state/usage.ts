@@ -1,14 +1,3 @@
-/**
- * Multi-environment usage state.
- *
- * Every connected environment answers the same typed query; the client merges
- * the results. Raw transcripts never leave the machine that produced them.
- *
- * Mirror of `apps/web/src/state/usage.ts` over mobile's atom wiring; the merge
- * rules themselves live in `@t3tools/shared/usageMerge`.
- *
- * @module state/usage
- */
 import { useAtomValue } from "@effect/atom-react";
 import {
   AuthDiagnosticsReadScope,
@@ -41,11 +30,8 @@ export interface EnvironmentUsageStatus {
 }
 
 /**
- * Reads every environment's summary for one window.
- *
- * Keyed by the serialised window so switching ranges does not thrash the atom
- * cache, and so each environment's query is shared with any other reader of the
- * same window.
+ * Keyed by the serialised window so switching ranges does not thrash the atom cache, and so
+ * each environment's query is shared with any other reader of the same window.
  */
 const usageByWindowAtom = Atom.family((windowKey: string) =>
   Atom.make((get): readonly EnvironmentUsageStatus[] => {
@@ -95,13 +81,9 @@ export interface UsageView {
   readonly merged: MergedUsage;
   readonly environments: readonly EnvironmentUsageStatus[];
   readonly selectedEnvironments: readonly EnvironmentUsageStatus[];
-  /** True until at least one environment has answered. */
+
   readonly isPending: boolean;
-  /**
-   * True while environments that have not failed are still answering. Failed
-   * environments are reported in the environment menu: totals will not
-   * improve by waiting on them, so they must not read as "still reporting".
-   */
+
   readonly isPartial: boolean;
   readonly refresh: (input?: UsageSummaryInput) => Promise<void>;
 }
@@ -145,8 +127,7 @@ export function useUsage(
         registry: appAtomRegistry,
         server: serverEnvironment,
         presentations: environmentPresentations,
-        // Only environments this connection may read; the others report a
-        // permission error instead of a stale or failed rescan.
+
         environmentIds: selectedEnvironments
           .filter(
             (environment) =>

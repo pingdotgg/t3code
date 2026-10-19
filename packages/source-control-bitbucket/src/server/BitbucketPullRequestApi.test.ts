@@ -19,7 +19,6 @@ const layer = it.layer(
   ),
 );
 
-/** The shape `request` answers with: a body plus whether it had to be cut short. */
 function response(body: string) {
   return { body, truncated: false };
 }
@@ -46,12 +45,10 @@ function valuePage(values: ReadonlyArray<unknown>, next?: string): string {
   return JSON.stringify({ values, ...(next === undefined ? {} : { next }) });
 }
 
-/** Who opened the pull request, and two accounts that could review it. */
 const bilal = { uuid: "{bilal}", nickname: "bilal" };
 const octocat = { uuid: "{octocat}", nickname: "octocat" };
 const hubot = { uuid: "{hubot}", nickname: "hubot" };
 
-/** One pull request as `/pullrequests/{id}` answers with it. */
 function pullRequestJson(overrides: Record<string, unknown>): string {
   return JSON.stringify({
     id: 7,
@@ -67,14 +64,12 @@ function pullRequestJson(overrides: Record<string, unknown>): string {
   });
 }
 
-/** The request the nth call made. */
 function callAt(index: number) {
   const call = mockedRequest.mock.calls[index];
   assert.isDefined(call);
   return call[0];
 }
 
-/** The filter expression of the nth request, read back out of its query string. */
 function filterOfCall(index: number): string | null {
   const url = callAt(index).url;
   return new URLSearchParams(url.slice(url.indexOf("?") + 1)).get("q");
@@ -149,8 +144,7 @@ layer("BitbucketPullRequestApi.layer", (it) => {
   it.effect("counts the rows it walked past as more to come", () =>
     Effect.gen(function* () {
       // Bitbucket pages in fifties whatever was asked for, so a request for ninety-nine reads a
-      // hundred and drops one. That row is more results, and saying otherwise takes the "load
-      // more" away from a listing that has not finished.
+      // hundred and drops one.
       const next = "https://api.bitbucket.org/2.0/repositories/acme/web/pullrequests?page=2";
       mockedRequest
         .mockReturnValueOnce(Effect.succeed(response(page(50, 1, next))))
@@ -181,7 +175,6 @@ layer("BitbucketPullRequestApi.layer", (it) => {
       });
 
       expect(filterOfCall(0)).toBe('(title ~ "page" OR description ~ "page")');
-      // The state filter beside it still stands, which the brackets are there to keep.
       expect(callAt(0).url).toContain("state=OPEN");
     }),
   );
@@ -231,7 +224,6 @@ layer("BitbucketPullRequestApi.layer", (it) => {
         cursor: { updatedBefore: "2026-07-02T00:00:00.123456+00:00", delivered: 50 },
       });
 
-      // Inclusive, so the rows already sent at that instant come back for the caller to drop.
       expect(filterOfCall(0)).toBe("updated_on <= 2026-07-02T00:00:00.123456+00:00");
       expect(callAt(0).url).toContain("sort=-updated_on");
     }),
@@ -321,7 +313,6 @@ layer("BitbucketPullRequestApi.layer", (it) => {
       assert.isFalse(diff.truncated);
       expect(callAt(0)).toMatchObject({
         url: "/repositories/acme/web/pullrequests/7/diff",
-        // A diff of any size would otherwise be read into memory whole.
         maxBytes: 8 * 1024 * 1024,
       });
     }),
@@ -397,10 +388,6 @@ layer("BitbucketPullRequestApi.layer", (it) => {
         paths: ["a.ts", "missing.ts"],
       });
 
-      // `b.ts` was not asked about and is reported anyway: parsing the patch for `a.ts` read it
-      // too, and the caller holding it is what stops the next tick paying for the patch again.
-      // `missing.ts` was asked about and the whole patch was read without finding it, which is
-      // what a file this pull request deletes looks like, so it is answered as the empty version.
       assert.deepStrictEqual(
         [...revisions.revisions],
         [
@@ -416,8 +403,6 @@ layer("BitbucketPullRequestApi.layer", (it) => {
 
   it.effect("says nothing about the files past the end of a patch it could not read whole", () =>
     Effect.gen(function* () {
-      // Bitbucket's patch is read up to a byte ceiling, and a file past the cut was not looked at.
-      // Answering for it as deleted would clear a mark on it once and for good.
       mockedRequest.mockReturnValueOnce(
         Effect.succeed({
           body: "diff --git a/a.ts b/a.ts\nindex 1111111..2222222 100644\n@@ -1 +1 @@\n",
@@ -433,7 +418,6 @@ layer("BitbucketPullRequestApi.layer", (it) => {
       });
 
       assert.deepStrictEqual([...revisions.revisions], [["a.ts", "2222222"]]);
-      // `past-the-cut.ts` gets no empty version, and nothing here may be held as the whole story.
       assert.strictEqual(revisions.complete, false);
     }),
   );
@@ -462,7 +446,6 @@ layer("BitbucketPullRequestApi.layer", (it) => {
         number: 74,
         paths: ["a.ts"],
       });
-      // A path nobody has asked about before, which is what every tick after the first names.
       const second = yield* api.getFileRevisions({
         repository: "acme/web",
         number: 74,
@@ -494,8 +477,6 @@ layer("BitbucketPullRequestApi.layer", (it) => {
       yield* read();
       assert.strictEqual(mockedRequest.mock.calls.length, 1);
 
-      // Well inside the window the caller holds versions for: a refresh drops what it holds so
-      // that the read after it reaches Bitbucket, and this must not answer that read instead.
       yield* TestClock.adjust(Duration.seconds(30));
       yield* read();
       assert.strictEqual(mockedRequest.mock.calls.length, 2);
@@ -730,6 +711,24 @@ layer("BitbucketPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect("asks for the time a pull request closed, which Bitbucket leaves out by default", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValueOnce(
+        Effect.succeed(
+          response(
+            pullRequestJson({ state: "MERGED", closed_on: "2025-06-16T23:40:46.222238+00:00" }),
+          ),
+        ),
+      );
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+
+      const pullRequest = yield* api.getPullRequest({ repository: "acme/web", number: 7 });
+
+      expect(callAt(0).url).toBe("/repositories/acme/web/pullrequests/7?fields=%2Bclosed_on");
+      assert.strictEqual(pullRequest.closedAt, "2025-06-16T23:40:46.222Z");
+    }),
+  );
+
   it.effect("fails the read when Bitbucket answers with something unreadable", () =>
     Effect.gen(function* () {
       mockedRequest.mockReturnValueOnce(
@@ -758,7 +757,6 @@ layer("BitbucketPullRequestApi.layer", (it) => {
 
       const error = yield* Effect.flip(api.getViewer());
 
-      // The fact only; the provider adds the operation around it.
       assert.strictEqual(error.detail, "Bitbucket returned HTTP 500.");
     }),
   );
@@ -797,8 +795,6 @@ layer("BitbucketPullRequestApi.layer", (it) => {
       mockedRequest.mockReturnValueOnce(
         Effect.succeed(
           response(
-            // The reply arrives a page after the remark it answers, which is why the threads
-            // are only assembled once every page is in hand.
             JSON.stringify({
               values: [
                 {
@@ -829,7 +825,6 @@ layer("BitbucketPullRequestApi.layer", (it) => {
 
   it.effect("stops the comment walk at its bound and says the conversation was cut short", () =>
     Effect.gen(function* () {
-      // Bitbucket that always names a next page: the walk has to end itself.
       mockedRequest.mockReturnValue(
         Effect.succeed(
           response(
@@ -877,7 +872,6 @@ layer("BitbucketPullRequestApi.layer", (it) => {
                   created_on: "2026-06-16T06:04:32+00:00",
                   parent: { id: 10 },
                 },
-                // A reply to a reply still belongs to the thread its root opened.
                 {
                   id: 12,
                   content: { raw: "thanks" },
@@ -937,7 +931,6 @@ layer("BitbucketPullRequestApi.layer", (it) => {
         inline: { path: "src/a.ts", from: 12 },
       });
       expect(callAt(1).url).toContain("/pullrequests/7/comments");
-      // The verdict goes last, so a review that failed part-way is never a rejection either.
       expect(callAt(2).url).toContain("/pullrequests/7/request-changes");
     }),
   );
@@ -998,8 +991,25 @@ layer("BitbucketPullRequestApi.layer", (it) => {
 
       assert.isFalse(yield* api.getRepositoryPermission({ repository: "acme/web" }));
 
-      expect(callAt(0).url).toContain("/user/permissions/repositories");
+      expect(new URL(callAt(0).url, "https://api.bitbucket.org").pathname).toBe(
+        "/user/workspaces/acme/permissions/repositories",
+      );
       assert.strictEqual(filterOfCall(0), 'repository.full_name="acme/web"');
+    }),
+  );
+
+  it.effect("matches repository permissions after normalizing whitespace around segments", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockImplementation((input) => {
+        const url = new URL(input.url, "https://api.bitbucket.org");
+        const matches =
+          url.pathname === "/user/workspaces/acme/permissions/repositories" &&
+          url.searchParams.get("q") === 'repository.full_name="acme/web"';
+        return Effect.succeed(response(valuePage(matches ? [{ permission: "read" }] : [])));
+      });
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+
+      assert.isFalse(yield* api.getRepositoryPermission({ repository: " acme / web " }));
     }),
   );
 
@@ -1010,48 +1020,40 @@ layer("BitbucketPullRequestApi.layer", (it) => {
 
       yield* api.getRepositoryPermission({ repository: 'acme/we"b' });
 
-      // A quote would otherwise end the literal and leave the rest standing as filter syntax.
       assert.strictEqual(filterOfCall(0), 'repository.full_name="acme/we\\"b"');
     }),
   );
 
-  it.effect(
-    "reads a removed permissions endpoint as granted rather than failing the merge on it",
-    () =>
+  const permissionFailure = (status: number) =>
+    Effect.fail(
+      new BitbucketApi.BitbucketResponseError({
+        operation: "request",
+        status,
+        responseBodyLength: 0,
+      }),
+    );
+
+  it.effect.each([403, 404, 410])(
+    "reads HTTP %s from the permissions endpoint as an unknown permission",
+    (status) =>
       Effect.gen(function* () {
-        // Bitbucket retired /user/permissions/repositories under CHANGE-2770: every account now
-        // gets HTTP 410 here, whatever it may do.
-        mockedRequest.mockReturnValue(
-          Effect.fail(
-            new BitbucketApi.BitbucketResponseError({
-              operation: "request",
-              status: 410,
-              responseBodyLength: 0,
-            }),
-          ),
-        );
+        mockedRequest.mockReturnValue(permissionFailure(status));
         const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
 
         assert.isTrue(yield* api.getRepositoryPermission({ repository: "acme/web" }));
       }),
   );
 
-  it.effect("still fails the permission read on a failure that is not the removed endpoint", () =>
+  it.effect.each([401, 500])("still fails the permission read on HTTP %s", (status) =>
     Effect.gen(function* () {
-      mockedRequest.mockReturnValue(
-        Effect.fail(
-          new BitbucketApi.BitbucketResponseError({
-            operation: "request",
-            status: 401,
-            responseBodyLength: 0,
-          }),
-        ),
-      );
+      mockedRequest.mockReturnValue(permissionFailure(status));
       const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
 
       const error = yield* Effect.flip(api.getRepositoryPermission({ repository: "acme/web" }));
-
       assert.strictEqual(error._tag, "BitbucketResponseError");
+      if (error._tag === "BitbucketResponseError") {
+        assert.strictEqual(error.status, status);
+      }
     }),
   );
 
@@ -1070,7 +1072,6 @@ layer("BitbucketPullRequestApi.layer", (it) => {
 
       const list = yield* api.listReviewerCandidates({ repository: "acme/web", number: 7 });
 
-      // The people live on the workspace: nothing on a repository lists who may review it.
       expect(callAt(1).url).toBe("/workspaces/acme/members?pagelen=50");
       expect(list.candidates.map((candidate) => [candidate.id, candidate.isRequested])).toEqual([
         ["{octocat}", true],

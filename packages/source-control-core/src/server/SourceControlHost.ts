@@ -1,17 +1,3 @@
-/**
- * SourceControlHost — what a source control provider package may ask of the server it runs in.
- *
- * Providers run inside a T3 server but must not import it. The server provides this one
- * service; everything a provider needs from its environment (settings, the process runner)
- * goes through it, so a provider package depends only on `@t3tools/source-control-core` and
- * its own API and CLI code. HTTP, the filesystem, and paths come from Effect's platform
- * services directly.
- *
- * `git` is the subset of the server's git driver that checking out a change request needs; it
- * grows only when a provider needs another operation.
- *
- * @module source-control-core/server/SourceControlHost
- */
 import type {
   GitCommandError,
   ServerSettings,
@@ -25,7 +11,6 @@ import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-/** One CLI invocation. The server bounds concurrency, output, and time for every run. */
 export interface SourceControlProcessInput {
   readonly operation: string;
   readonly command: string;
@@ -38,7 +23,6 @@ export interface SourceControlProcessInput {
   readonly allowNonZeroExit?: boolean;
   readonly timeoutMs?: number;
   readonly maxOutputBytes?: number;
-  /** What happens past `maxOutputBytes`: fail the run, or keep the first bytes. */
   readonly outputMode?: "error" | "truncate" | undefined;
   readonly appendTruncationMarker?: boolean;
 }
@@ -49,7 +33,6 @@ export interface SourceControlProcessOutput {
   readonly stderr: string;
   readonly stdoutTruncated: boolean;
   readonly stderrTruncated: boolean;
-  /** Present on real process output; optional so narrow test doubles remain lightweight. */
   readonly stdoutInvalidUtf8?: boolean;
   readonly stderrInvalidUtf8?: boolean;
 }
@@ -78,7 +61,6 @@ export class SourceControlHost extends Context.Service<
       ) => Effect.Effect<SourceControlProcessOutput, VcsError>;
     };
     readonly git: {
-      /** Runs `git -C cwd …args` through the server's git driver, with its limits and metrics. */
       readonly execute: (input: {
         readonly operation: string;
         readonly cwd: string;
@@ -91,8 +73,8 @@ export class SourceControlHost extends Context.Service<
         readonly revision: string;
       }) => Effect.Effect<{ readonly commitSha: string }, GitCommandError>;
       /**
-       * Lists the remotes of the repository at `cwd`. The outer effect resolves the repository
-       * and fails when the server cannot drive one there; the inner one lists its remotes.
+       * The outer effect resolves the repository and fails when the server cannot drive
+       * one there; the inner one lists its remotes.
        */
       readonly remotes: (
         cwd: string,
@@ -102,7 +84,6 @@ export class SourceControlHost extends Context.Service<
         key: string,
       ) => Effect.Effect<string | null, GitCommandError>;
       readonly resolvePrimaryRemoteName: (cwd: string) => Effect.Effect<string, GitCommandError>;
-      /** Adds a remote for `url` unless one exists, and returns the name it is under. */
       readonly ensureRemote: (input: {
         readonly cwd: string;
         readonly preferredName: string;

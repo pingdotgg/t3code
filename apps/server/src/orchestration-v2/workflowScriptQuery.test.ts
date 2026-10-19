@@ -18,8 +18,6 @@ NodeFS.writeFileSync(scriptPath, "export const meta = {};\n");
 const outside = NodePath.join(NodeOS.tmpdir(), "wf-outside.js");
 NodeFS.writeFileSync(outside, "evil\n");
 const link = NodePath.join(root, "sneaky.js");
-// Planted only where the host allows it; the escape test is skipped
-// otherwise rather than passing vacuously on "not-found".
 if (symlinksSupported) {
   NodeFS.rmSync(link, { force: true });
   NodeFS.symlinkSync(outside, link);
@@ -76,9 +74,6 @@ describe("workflow script containment", () => {
       Effect.gen(function* () {
         const escaped = yield* Effect.exit(readWorkflowScript({ scriptPath: outside }));
         assert.equal(escaped._tag, "Failure");
-        // A symlink INSIDE the root pointing outside must fail specifically on
-        // realpath re-containment — a "not-found" would mean the link was
-        // never exercised and the assertion proves nothing.
         const sneaky = yield* Effect.exit(
           readWorkflowScript({ scriptPath: link }).pipe(
             Effect.flip,

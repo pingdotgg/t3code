@@ -7,7 +7,8 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { PositiveInt, type PullRequestChecks } from "@t3tools/contracts";
 
-import * as GitHubApi from "./GitHubApi.ts";
+import * as GitHubRest from "./GitHubRest.ts";
+import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import type { GitHubPullRequestDetail } from "./gitHubPullRequestJson.ts";
 import type { GitHubPullRequestApiError } from "./GitHubPullRequestApi.ts";
 import type { ProviderRepositoryRef } from "@t3tools/source-control-core/server/PullRequestProvider";
@@ -36,10 +37,6 @@ const decodeWorkflowRuns = Schema.decodeUnknownOption(
 
 export type KnownWorkflowRun = typeof WorkflowRunSchema.Type;
 
-/**
- * Every `pull_request` workflow run of one head, as the revalidator just confirmed them against
- * GitHub. A read running under it filters these rather than asking for the runs again.
- */
 export const KnownWorkflowRuns = Context.Reference<{
   readonly headSha: string;
   readonly runs: ReadonlyArray<KnownWorkflowRun>;
@@ -49,11 +46,10 @@ export const KnownWorkflowRuns = Context.Reference<{
 
 type Validator = { etag: string | undefined; next: boolean; body: string };
 
-/** A host that answers these with one of them has no conditional REST for it at all. */
 const UNSUPPORTED_STATUSES = new Set([404, 405, 501]);
 
 export const makeChecksRevalidator = Effect.gen(function* () {
-  const api = yield* GitHubApi.GitHubApi;
+  const api = yield* GitHubRest.GitHubRest;
   const entries = yield* Cache.makeWith(
     (_key: string) =>
       Effect.sync(() => ({
@@ -76,7 +72,7 @@ export const makeChecksRevalidator = Effect.gen(function* () {
     >,
   ) =>
     Effect.gen(function* () {
-      const credential = yield* GitHubApi.PinnedGitHubCredential;
+      const credential = yield* GitHubRequestPolicy.PinnedGitHubCredential;
       if (credential === null) return yield* read;
       const key = `${credential.credentialFingerprint}\0${input.host}\0${input.repository}\0${input.number}`;
       const entry = yield* Cache.get(entries, key);
@@ -84,12 +80,11 @@ export const makeChecksRevalidator = Effect.gen(function* () {
         Effect.gen(function* () {
           if (!entry.supported) return yield* read;
           const fail = (status: number) =>
-            new GitHubApi.GitHubApiResponseError({
+            new GitHubRequestPolicy.GitHubApiResponseError({
               host: input.host,
               operation: "revalidateChecks",
               status,
             });
-          /** Whether the endpoint has a next page, or null where the host cannot say. */
           const get = (endpoint: string, head = false) =>
             Effect.gen(function* () {
               const previous = entry.validators.get(endpoint);
@@ -164,8 +159,6 @@ export const makeChecksRevalidator = Effect.gen(function* () {
           }
           const now = yield* Clock.currentTimeMillis;
           if (entry.value !== null && now - entry.readAt < 5 * 60_000) return entry.value;
-          // Every page of the head's runs was just confirmed current, so the read filters them
-          // rather than listing the runs a second time.
           const pages = runPages.map((endpoint) =>
             decodeWorkflowRuns(entry.validators.get(endpoint)?.body ?? ""),
           );

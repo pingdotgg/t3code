@@ -1,11 +1,9 @@
-import { SymbolView } from "../../../components/AppSymbol";
+import { SymbolView } from "../../../components/ui/AppSymbol";
 import type { ComponentProps } from "react";
 import { Platform, Pressable, View } from "react-native";
-import { AppText as Text } from "../../../components/AppText";
-import { MaterialButton } from "../../../components/MaterialButton";
+import { AppText as Text } from "../../../components/ui/AppText";
+import { Button } from "../../../components/ui/Button";
 import { cn } from "../../../lib/cn";
-
-/* ─── Shared sheet components ──────────────────────────────────────── */
 
 export function SheetActionButton(props: {
   readonly icon: ComponentProps<typeof SymbolView>["name"];
@@ -17,8 +15,9 @@ export function SheetActionButton(props: {
   if (Platform.OS === "android")
     return (
       <View className="flex-1">
-        <MaterialButton
+        <Button
           label={props.label}
+          icon={props.icon}
           tone={props.tone}
           disabled={props.disabled}
           onPress={props.onPress}
@@ -37,8 +36,7 @@ export function SheetActionButton(props: {
   return (
     <Pressable
       className={cn(
-        "min-h-[48px] flex-row items-center justify-center gap-2 px-4 py-3 disabled:opacity-[0.45]",
-        "flex-1 rounded-[18px]",
+        "min-h-[48px] flex-1 items-center justify-center rounded-[18px] px-3 py-3 disabled:opacity-[0.45]",
         tone === "primary" ? "bg-primary" : tone === "danger" ? "bg-danger" : "bg-secondary",
         tone !== "primary" &&
           (tone === "danger" ? "border border-danger-border" : "border border-secondary-border"),
@@ -47,24 +45,26 @@ export function SheetActionButton(props: {
       disabled={props.disabled}
       onPress={props.onPress}
     >
-      <SymbolView
-        name={props.icon}
-        size={16}
-        tintColorClassName={textColorClassName}
-        type="monochrome"
-      />
-      <Text
-        className={cn(
-          "text-xs font-t3-bold tracking-[0.9px] uppercase",
-          tone === "primary"
-            ? "text-primary-foreground"
-            : tone === "danger"
-              ? "text-danger-foreground"
-              : "text-secondary-foreground",
-        )}
-      >
-        {props.label}
-      </Text>
+      <View className="max-w-full flex-row items-center justify-center gap-1.5">
+        <SymbolView
+          name={props.icon}
+          size={16}
+          tintColorClassName={textColorClassName}
+          type="monochrome"
+        />
+        <Text
+          className={cn(
+            "shrink text-center text-xs font-t3-bold tracking-[0.9px] uppercase",
+            tone === "primary"
+              ? "text-primary-foreground"
+              : tone === "danger"
+                ? "text-danger-foreground"
+                : "text-secondary-foreground",
+          )}
+        >
+          {props.label}
+        </Text>
+      </View>
     </Pressable>
   );
 }
@@ -84,6 +84,7 @@ export function MetaCard(props: { readonly label: string; readonly value: string
 
 export function SheetListRow(props: {
   readonly icon: ComponentProps<typeof SymbolView>["name"];
+  readonly iconTintClassName?: string | undefined;
   readonly title: string;
   readonly subtitle?: string | null;
   readonly disabled?: boolean;
@@ -99,7 +100,7 @@ export function SheetListRow(props: {
         <SymbolView
           name={props.icon}
           size={Platform.OS === "android" ? 24 : 16}
-          tintColorClassName="accent-icon"
+          tintColorClassName={props.iconTintClassName ?? "accent-icon"}
           type="monochrome"
         />
       </View>
@@ -122,8 +123,6 @@ export function SheetListRow(props: {
     </Pressable>
   );
 }
-
-/* ─── Shared utilities ──────────────────────────────────────────────── */
 
 export function menuItemIconName(
   icon: "commit" | "push" | "pr",

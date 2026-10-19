@@ -77,7 +77,6 @@ describe("3D phone input", () => {
     phone.root.rotation.set(0.3, -0.45, 0, "YXZ");
     phone.orientation.rotation.z = layout.rotation;
     phone.root.updateMatrixWorld(true);
-    // A point one quarter across and three quarters down the portrait display.
     const point = new Vector3((-2.2 * layout.aspect) / 4, -2.2 / 4, 0.043);
     phone.orientation.localToWorld(point);
     point.project(camera);

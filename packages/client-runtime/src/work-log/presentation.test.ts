@@ -78,6 +78,19 @@ describe("workEntryIndicatesToolFailure", () => {
     },
   );
 
+  it("ignores failure phrases in reasoning text", () => {
+    const entry: WorkLogPresentationEntry = {
+      ...base,
+      label: "Thinking",
+      tone: "thinking",
+      itemType: "reasoning",
+      toolLifecycleStatus: "completed",
+      detail: "That exit code 2 is just from listing the deleted directory, which is expected.",
+    };
+    expect(workEntryIndicatesToolFailure(entry)).toBe(false);
+    expect(workEntryDisplayIndicatesToolFailure(entry)).toBe(false);
+  });
+
   it("is true for error tone", () => {
     expect(
       workEntryIndicatesToolFailure({
@@ -151,7 +164,7 @@ describe("workEntryIndicatesToolFailure", () => {
     } satisfies WorkLogPresentationEntry;
 
     expect(workEntryDisplayIndicatesToolFailure(entry)).toBe(false);
-    // Older activities can store output in this field, so that path stays separate.
+
     expect(workEntryIndicatesToolFailure(entry)).toBe(true);
     expect(workEntryDisplayIndicatesToolFailure({ ...entry, detail: "File not found" })).toBe(true);
   });

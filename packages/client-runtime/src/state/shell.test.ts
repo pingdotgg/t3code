@@ -7,7 +7,11 @@ import { Atom, AtomRegistry } from "effect/reactivity";
 
 import { PrimaryConnectionTarget } from "../connection/model.ts";
 import type { EnvironmentShellState } from "./shell.ts";
-import { createEnvironmentServerConfigsAtom, createEnvironmentShellSummaryAtom } from "./shell.ts";
+import {
+  createEnvironmentServerConfigsAtom,
+  createEnvironmentShellProgressAtoms,
+  createEnvironmentShellSummaryAtom,
+} from "./shell.ts";
 import { v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
@@ -230,5 +234,36 @@ describe("environment shell projections", () => {
 
     harness.registry.set(harness.configAtom(ENVIRONMENT_ID), config);
     expect(harness.registry.get(harness.serverConfigsAtom)).toBe(withConfig);
+  });
+
+  it("keeps load progress quiet while threads stream and reports real progress", () => {
+    const stateAtom = Atom.make(
+      shellState({ status: "cached", updatedAt: "2026-06-01T00:00:00.000Z" }),
+    );
+    const registry = AtomRegistry.make();
+    const { statusAtom, hasSnapshotAtom } = createEnvironmentShellProgressAtoms(() => stateAtom);
+    let changes = 0;
+    const unsubscribeStatus = registry.subscribe(statusAtom(ENVIRONMENT_ID), () => changes++);
+    const unsubscribeSnapshot = registry.subscribe(
+      hasSnapshotAtom(ENVIRONMENT_ID),
+      () => changes++,
+    );
+
+    registry.set(
+      stateAtom,
+      shellState({ status: "cached", updatedAt: "2026-06-01T00:00:01.000Z" }),
+    );
+    expect(changes).toBe(0);
+
+    registry.set(stateAtom, shellState({ status: "live", updatedAt: "2026-06-01T00:00:02.000Z" }));
+    expect(registry.get(statusAtom(ENVIRONMENT_ID))).toBe("live");
+    expect(changes).toBe(1);
+
+    registry.set(stateAtom, shellState({ status: "live" }));
+    expect(registry.get(hasSnapshotAtom(ENVIRONMENT_ID))).toBe(false);
+    expect(changes).toBe(2);
+
+    unsubscribeStatus();
+    unsubscribeSnapshot();
   });
 });

@@ -131,9 +131,6 @@ const relayCorsMiddleware = HttpMiddleware.cors({
   maxAge: 86_400,
 });
 
-// The CORS headers come from a pre-response handler, so they reach every response
-// the request sends: handler failures and defects, and the deadline 504 that
-// `traceRelayHttpRequest` produces outside the router.
 export const layerCors = HttpRouter.middleware(
   Effect.fnUntraced(function* <E, R>(
     httpEffect: Effect.Effect<
@@ -143,7 +140,6 @@ export const layerCors = HttpRouter.middleware(
     >,
   ) {
     const request = yield* HttpServerRequest.HttpServerRequest;
-    // Public webhook forwarding is server-to-server: no preflight, no CORS grants.
     if (isRelayHookPath(request.url)) {
       return yield* httpEffect;
     }
@@ -168,9 +164,6 @@ export const layerDocsRedirectRoute = HttpRouter.add(
 // request hangs (e.g. a stuck upstream query), the client would otherwise
 // abort first, the invocation would die with the request span still open, and
 // the batched spans would never export — leaving no server-side trace at all.
-// Failing server-side first turns the hang into a completed 504 whose trace
-// contains the exact child span that stalled, and the response still carries
-// the traceparent back to the client.
 export const RELAY_REQUEST_DEADLINE_MS = 9_000;
 /**
  * Webhook forwarding reads a body of up to 1 MiB, waits up to the upstream
@@ -212,7 +205,6 @@ const relayRequestDeadline = <E, R>(
     ),
   );
 
-/** Trace context headers in every format the tracer reads (W3C and B3). */
 const SENDER_TRACE_HEADER = /^(traceparent|tracestate|b3|x-b3-.*)$/i;
 
 export const traceRelayHttpRequest = <E, R>(
@@ -229,7 +221,6 @@ export const traceRelayHttpRequest = <E, R>(
     );
     if (!isRelayHookPath(request.url)) {
       return yield* HttpMiddleware.tracer(traced).pipe(
-        // The worker turns its own request span off; this one is ours.
         Effect.provideService(HttpMiddleware.TracerDisabledWhen, () => false),
         // HttpMiddleware finalizes its span on the dispatcher; do not close a request-scoped exporter first.
         Effect.ensuring(Effect.yieldNow),
@@ -257,14 +248,11 @@ export const traceRelayHttpRequest = <E, R>(
       ),
     ).pipe(
       Effect.provideService(HttpServerRequest.HttpServerRequest, redacted),
-      // The worker turns its own request span off; this one is ours.
       Effect.provideService(HttpMiddleware.TracerDisabledWhen, () => false),
       Effect.ensuring(Effect.yieldNow),
     );
   });
 
-// Webhook senders put shared secrets and signatures in headers such as
-// x-hub-signature-256, stripe-signature, x-gitlab-token and x-webhook-key.
 const layerWebhookHeaderRedaction = Layer.effect(
   Headers.CurrentRedactedNames,
   Effect.map(Headers.CurrentRedactedNames, (names) => [
@@ -506,7 +494,6 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
   function* (input: {
     readonly userId: string;
     readonly environmentId: string;
-    /** The stage's tunnel-name namespace, to find this link's held webhook requests. */
     readonly managedEndpointNamespace?: string | undefined;
   }) {
     const links = yield* EnvironmentLinks.EnvironmentLinks;
@@ -527,17 +514,14 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
             environmentId: link.environmentId,
             environmentPublicKey: link.environmentPublicKey,
           });
-    // External teardown cannot share the SQL transaction. Run it only after
-    // revocation commits so a database failure leaves a fully usable active
-    // link. Still run teardown when the link is already revoked, allowing a
-    // retry to finish cleanup after an earlier Cloudflare failure.
+    // Run it only after revocation commits so a database failure leaves a fully
+    // usable active link. Still run teardown when the link is already revoked,
+    // allowing a retry to finish cleanup after an earlier Cloudflare failure.
     const deprovisioned = yield* managedEndpointProvider.deprovision({
       userId: input.userId,
       environmentId: input.environmentId,
       target: deprovisionTarget,
     });
-    // Requests held for this link's endpoint go with it. Best effort: the link
-    // is already gone, and its inbox drops anything left after its TTL.
     const endpointKey =
       deprovisionTarget && input.managedEndpointNamespace
         ? HeldHooks.endpointKeyForTunnelName(
@@ -937,9 +921,9 @@ export const layerClientApi = HttpApiBuilder.group(
           const { userId } = yield* RelayClientPrincipal;
           const now = yield* DateTime.now;
           const expiresAt = DateTime.add(now, { minutes: 5 });
-          const jti = yield* crypto.randomUUIDv4.pipe(
-            Effect.catch(() => relayInternalErrorResponse("internal_error")),
-          );
+          const jti = yield* crypto
+            .randomUUIDv4()
+            .pipe(Effect.catch(() => relayInternalErrorResponse("internal_error")));
           const challenge = yield* relayTokens
             .issueLinkChallenge({
               userId,
@@ -1028,9 +1012,9 @@ export const layerTokenApi = HttpApiBuilder.group(
         );
         const now = yield* DateTime.now;
         const expiresAt = DateTime.addDuration(now, RelayTokens.RELAY_DPOP_ACCESS_TOKEN_TTL);
-        const jti = yield* crypto.randomUUIDv4.pipe(
-          Effect.catch(() => relayInternalErrorResponse("internal_error")),
-        );
+        const jti = yield* crypto
+          .randomUUIDv4()
+          .pipe(Effect.catch(() => relayInternalErrorResponse("internal_error")));
         return {
           access_token: yield* relayTokens
             .issueDpopAccessToken({

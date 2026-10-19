@@ -8,7 +8,6 @@ function record(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
-/** Devin's typed extension metadata, captured from its native ACP stream. */
 export function normalizeDevinSessionUpdate(
   notification: AcpSchema.SessionNotification,
 ): AcpSchema.SessionNotification {

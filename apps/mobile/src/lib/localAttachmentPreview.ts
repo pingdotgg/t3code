@@ -5,7 +5,6 @@ import { resolveOwnedComposerAttachmentFileUri } from "./composerAttachmentFiles
 import { shareLocalAttachment, type AttachmentPreviewFile } from "./attachmentDownload";
 import { retainComposerAttachmentFileForPreview } from "./composerAttachmentPreviewRetention";
 
-/** Retains the draft original for preview and gives each outgoing share its own lease. */
 export async function loadLocalAttachmentPreview(
   attachment: FileBackedComposerAttachment,
   signal: AbortSignal,

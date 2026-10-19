@@ -1,3 +1,4 @@
+import AVFoundation
 import ExpoModulesCore
 import Security
 import UIKit
@@ -19,6 +20,18 @@ public final class T3NativeControlsModule: Module {
       }
       return ["supportsWorkspaceColumns": false]
     }
+    View(T3SegmentedControlView.self) {
+      ViewName("SegmentedControl")
+      Events("onSelectionChange")
+      Prop("labels") { (view: T3SegmentedControlView, value: [String]) in view.labels = value }
+      Prop("selectedIndex") { (view: T3SegmentedControlView, value: Int) in view.selectedIndex = value }
+      Prop("trackColor") { (view: T3SegmentedControlView, value: UIColor) in view.trackColor = value }
+      Prop("selectedColor") { (view: T3SegmentedControlView, value: UIColor) in view.selectedColor = value }
+      Prop("textColor") { (view: T3SegmentedControlView, value: UIColor) in view.textColor = value }
+      Prop("mutedColor") { (view: T3SegmentedControlView, value: UIColor) in view.mutedColor = value }
+      Prop("appearance") { (view: T3SegmentedControlView, value: String) in view.appearance = value }
+    }
+
     View(T3LayoutMetricsView.self) {
       ViewName("LayoutMetrics")
       Events("onMetricsChange")
@@ -95,6 +108,18 @@ public final class T3NativeControlsModule: Module {
   @MainActor
   func dismissVideo(identifier: String) async {
     dismissVideoPresentation(identifier: identifier)
+  }
+
+  // expo-video activates the session for inline playback but never deactivates
+  // it. Any other category or mode means another feature (recording) owns it.
+  @JS
+  @MainActor
+  func releaseVideoAudioSession() async {
+    // The fullscreen presentation releases the session in its own teardown.
+    guard videoPresentation == nil else { return }
+    let session = AVAudioSession.sharedInstance()
+    guard session.category == .playback, session.mode == .moviePlayback else { return }
+    try? session.setActive(false, options: [.notifyOthersOnDeactivation])
   }
 
   @JS

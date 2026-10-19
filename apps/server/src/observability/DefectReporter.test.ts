@@ -20,7 +20,6 @@ class TestRpcs extends RpcGroup.make(
 ) {}
 type TestRpc = RpcGroup.Rpcs<typeof TestRpcs>;
 
-/** Runs `body` with every error log captured. */
 const withErrorLogs = <A, E, R>(
   body: (logs: Queue.Queue<Cause.Cause<unknown>>) => Effect.Effect<A, E, R>,
 ) =>
@@ -41,7 +40,6 @@ describe("DefectReporter", () => {
     withErrorLogs((logs) =>
       Effect.gen(function* () {
         const subscription = yield* Queue.unbounded<number>();
-        // The same client/server pairing as RpcTest.makeClient, with ws.ts's options.
         let client!: Effect.Success<
           ReturnType<typeof RpcClient.makeNoSerialization<TestRpc, never>>
         >;
@@ -49,7 +47,6 @@ describe("DefectReporter", () => {
           ...WS_RPC_SERVER_OPTIONS,
           onFromServer: (response) => client.write(response),
         }).pipe(
-          // Provided to the handlers, as ws.ts does.
           Effect.provide(
             TestRpcs.toLayer({
               subscribe: () => Stream.fromQueue(subscription),
@@ -72,11 +69,9 @@ describe("DefectReporter", () => {
 
         const boom = yield* Effect.exit(client.client.boom());
         assert.isTrue(Exit.hasDies(boom));
-        // The server reports before it answers, so the log is already written.
         const logged = yield* Queue.clear(logs);
         assert.deepEqual(logged.map(errorMessage), ["handler bug"]);
 
-        // The sibling subscription on the same client keeps delivering.
         yield* Queue.offer(subscription, 2);
         const next = yield* Queue.take(received).pipe(
           Effect.raceFirst(Fiber.await(sibling).pipe(Effect.as("subscription ended"))),
@@ -94,7 +89,6 @@ describe("DefectReporter", () => {
         yield* ErrorReporter.report(Cause.interrupt());
         yield* ErrorReporter.report(Cause.die(new Error("bug")));
 
-        // Reporters log synchronously, so the logs are already written.
         assert.deepEqual((yield* Queue.clear(logs)).map(errorMessage), ["bug"]);
       }).pipe(Effect.provide(DefectReporter.layer)),
     ),

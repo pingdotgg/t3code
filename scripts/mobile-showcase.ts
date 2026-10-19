@@ -232,8 +232,6 @@ export function showcaseCaptureDirectory(
   outputDirectory: string,
   capture: Pick<ShowcaseCapture, "device" | "appearance" | "theme">,
 ): string {
-  // Each palette owns a leaf folder so one upload slot never mixes themes and
-  // every folder keeps a store-legal screenshot count of its own.
   return NodePath.join(
     outputDirectory,
     capture.device.storeAsset.directory,
@@ -812,11 +810,10 @@ async function iosSimulatorDataPath(udid: string): Promise<string> {
 }
 
 // generativeexperiencesd posts a "Ready for Apple Intelligence" follow-up
-// banner on an eligible device's first boot, and CoreFollowUp re-surfaces it
-// on every boot until the user dismisses it. Stamping the readiness marker
-// before boot makes the daemon skip the post, and dropping the CoreFollowUp
-// store clears a banner that a previous boot already queued. Runs while the
-// device is shut down so the files are read fresh on the next boot.
+// banner on an eligible device's first boot, and CoreFollowUp re-surfaces it on
+// every boot until the user dismisses it. Stamping the readiness marker before
+// boot makes the daemon skip the post, and dropping the CoreFollowUp store
+// clears a banner that a previous boot already queued.
 async function suppressIosSystemFollowUps(udid: string): Promise<void> {
   const dataPath = await iosSimulatorDataPath(udid);
   const preferences = NodePath.join(dataPath, "Library/Preferences");
@@ -875,8 +872,7 @@ async function normalizeIosSimulator(appearance: ShowcaseAppearance, udid: strin
 
 // iPadOS 26 windowing ("Chamois") runs UIRequiresFullScreen apps in a fixed
 // portrait compatibility window, which defeats the in-app landscape rotation
-// the capture build relies on. Switch the device to Full Screen Apps mode
-// (Settings > Multitasking & Gestures) and restart SpringBoard to apply it.
+// the capture build relies on.
 async function ensureIosFullScreenAppsMode(udid: string): Promise<void> {
   const current = await commandOutput("xcrun", [
     "simctl",
@@ -1002,10 +998,6 @@ async function allowIosNotificationsUntilReady(udid: string, ready: Promise<void
   }
 }
 
-/**
- * Locks the simulator over the staged Live Activity and delivers the alert a
- * relay push would, so the lock screen shows both.
- */
 async function presentIosLockScreen(udid: string): Promise<void> {
   await runAxe(udid, ["button", "lock"]);
   const deadline = Date.now() + 15_000;
@@ -1055,7 +1047,6 @@ async function wakeIosLockScreen(udid: string): Promise<void> {
 
 function pngIsBlack(bytes: Uint8Array): boolean {
   const { data } = PNG.sync.read(Buffer.from(bytes));
-  // Sample a sparse grid; a sleeping display is uniformly black.
   for (let offset = 0; offset < data.length; offset += 4 * 997) {
     if ((data[offset] ?? 0) > 8 || (data[offset + 1] ?? 0) > 8 || (data[offset + 2] ?? 0) > 8) {
       return false;
@@ -1065,13 +1056,11 @@ function pngIsBlack(bytes: Uint8Array): boolean {
 }
 
 async function unlockIosSimulator(udid: string): Promise<void> {
-  // The first press wakes the display, the second dismisses the lock screen.
   await runAxe(udid, ["button", "home"]);
   await delay(2_000);
   await runAxe(udid, ["button", "home"]);
 }
 
-/** Mirrors the app's staged hero row (showcaseAgentActivity.ts). */
 function showcaseAgentAlert(): { readonly title: string; readonly body: string } {
   const thread = SHOWCASE_THREADS.find((candidate) => candidate.id === "pocket-command-center");
   const project = SHOWCASE_PROJECTS.find((candidate) => candidate.id === thread?.projectId);
@@ -1092,8 +1081,6 @@ async function captureIos(
   const startedByRunner = simulator.state !== "Booted";
   registerCleanup({ udid: simulator.udid, startedByRunner, createdByRunner });
   if (!startedByRunner) {
-    // Clear transient SpringBoard state (permission prompts, stale URL-open
-    // confirmations, keyboards) without erasing the developer's simulator.
     await runCommand("xcrun", ["simctl", "shutdown", simulator.udid]);
   }
   await suppressIosSystemFollowUps(simulator.udid);
@@ -1110,8 +1097,6 @@ async function captureIos(
     await runCommand("xcrun", ["simctl", "install", simulator.udid, appPath]);
   }
 
-  // The dev-client launch URL carries the dev menu preferences (SDK 58), so
-  // nothing is written into the app container ahead of launch.
   const metroUrl = `http://${metroHost}:${config.metroPort}?${DEV_CLIENT_LAUNCH_FLAGS}`;
   const scenePath = NodePath.join(
     await iosAppContainer(simulator.udid),
@@ -1401,8 +1386,6 @@ async function captureAndroid(
     await runAdb(serial, ["install", "-r", apkPath]);
   }
   await runAdb(serial, ["shell", "pm", "clear", ANDROID_PACKAGE]);
-  // The agent-activity scene posts notifications; granting up front keeps the
-  // runtime prompt off every capture.
   await runAdb(serial, [
     "shell",
     "pm",
@@ -1663,9 +1646,6 @@ async function main(): Promise<void> {
 
 if (import.meta.main) {
   void main().catch((error: unknown) => {
-    // Stack over message: the harness only fails in CI, where the line that
-    // threw is the whole diagnosis and there is nobody at a terminal to
-    // re-run it with more output.
     NodeProcess.stderr.write(
       `${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
     );

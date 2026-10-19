@@ -43,8 +43,6 @@ function bannerPriority(item: ComposerBannerStackEntry) {
 interface ComposerBannerStackProps {
   readonly className?: string;
   readonly items: ReadonlyArray<ComposerBannerStackEntry>;
-  /** Attachments that sit between the stacked notices and the front item, such as the queue.
-      The stacked notices peek above the whole column, never from between two attachments. */
   readonly attachedAbove?: ReactNode;
 }
 
@@ -70,9 +68,10 @@ export function ComposerBannerStack({ className, items, attachedAbove }: Compose
     };
   }, []);
 
-  useEffect(() => {
-    if (items.length < 2) setStackExpanded(false);
-  }, [items.length]);
+  // A stack that shrinks to one banner collapses, so the next stack starts collapsed.
+  if (items.length < 2 && stackExpanded) {
+    setStackExpanded(false);
+  }
 
   useLayoutEffect(() => {
     if (stackExpanded && pendingFocusRef.current === "notice") {
@@ -87,7 +86,6 @@ export function ComposerBannerStack({ className, items, attachedAbove }: Compose
     }
   }, [stackExpanded]);
 
-  // Activity stays attached. Urgency and severity only order the notices behind it.
   const orderedItems = items.toSorted((a, b) => bannerPriority(a) - bannerPriority(b));
   const frontItem = orderedItems[0];
   if (!frontItem) {
@@ -180,10 +178,12 @@ export function ComposerBannerStack({ className, items, attachedAbove }: Compose
               stackExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
             )}
           >
-            <div className="min-h-0 overflow-hidden">
+            {/* Clip only the collapsing axis: at fractional widths a horizontal clip
+                shaves the notice's right border. */}
+            <div className="min-h-0 overflow-y-clip">
               <div
                 className={cn(
-                  "transform-gpu space-y-2 pb-2 transition-[opacity,transform] duration-150 ease-out will-change-[opacity,transform]",
+                  "transform-gpu space-y-2 pb-2 transition-[opacity,transform] duration-150 ease-out will-change-transform",
                   stackExpanded
                     ? "pointer-events-auto visible translate-y-0 opacity-100"
                     : "pointer-events-none invisible translate-y-1 opacity-0",
@@ -249,7 +249,6 @@ export function ComposerBannerStack({ className, items, attachedAbove }: Compose
   );
 }
 
-/** Keep full descriptions reachable only when their inline copy is clipped. */
 function NoticeDescription({ children }: { children: ReactNode }) {
   const descriptionRef = useRef<HTMLSpanElement>(null);
   const detailsRef = useRef<HTMLButtonElement>(null);
@@ -272,7 +271,6 @@ function NoticeDescription({ children }: { children: ReactNode }) {
     };
     measure();
     const stopObserving = observeResize(description, measure);
-    // A child can reveal new text without resizing its clipped box.
     const mutations = new MutationObserver(measure);
     mutations.observe(description, { childList: true, subtree: true, characterData: true });
     return () => {
@@ -350,7 +348,7 @@ function ComposerBannerStackAlert({
       variant={item.variant}
       density="comfortable"
     >
-      <ComposerBanner.Row layout="wrap-actions">
+      <ComposerBanner.Row layout={item.priority === "activity" ? "inline" : "wrap-actions"}>
         <ComposerBanner.Icon className="h-(--composer-banner-icon-column) self-start">
           {item.icon}
         </ComposerBanner.Icon>

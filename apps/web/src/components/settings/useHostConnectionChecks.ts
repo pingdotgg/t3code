@@ -22,30 +22,26 @@ export function useHostConnectionChecks(targets: ReadonlyArray<DeviceHostCheckTa
     running.current.add(key);
     setChecks((current) => ({ ...current, [key]: {} }));
     const results: Record<string, DeviceHostCheck> = {};
-    try {
-      await checkDeviceHostConnections(
-        targets,
-        host,
-        async (environmentId, input) => {
-          if (!readEnvironmentScope(environmentId, AuthSettingsWriteScope)) {
-            throw new Error("This connection cannot test device hosts.");
-          }
-          const result = await test({ environmentId, input });
-          if (result._tag === "Failure") throw new Error(Cause.pretty(result.cause));
-          return result.value;
-        },
-        (environmentId, result) => {
-          results[environmentId] = result;
-          setChecks((current) => ({
-            ...current,
-            [key]: { ...current[key], [environmentId]: result },
-          }));
-        },
-      );
-      return results;
-    } finally {
-      running.current.delete(key);
-    }
+    await checkDeviceHostConnections(
+      targets,
+      host,
+      async (environmentId, input) => {
+        if (!readEnvironmentScope(environmentId, AuthSettingsWriteScope)) {
+          throw new Error("This connection cannot test device hosts.");
+        }
+        const result = await test({ environmentId, input });
+        if (result._tag === "Failure") throw new Error(Cause.pretty(result.cause));
+        return result.value;
+      },
+      (environmentId, result) => {
+        results[environmentId] = result;
+        setChecks((current) => ({
+          ...current,
+          [key]: { ...current[key], [environmentId]: result },
+        }));
+      },
+    ).finally(() => running.current.delete(key));
+    return results;
   };
   return { checks, testConnection };
 }

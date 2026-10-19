@@ -38,7 +38,6 @@ export type TextMatch = {
   input: string;
 };
 
-/** The dependency-free subset of mdast-util-find-and-replace used by PR autolinks. */
 export function findAndReplaceText(
   tree: MarkdownNode,
   find: RegExp,

@@ -1,9 +1,13 @@
+import * as Dialog from "./ui/Dialog";
 import { useIsFocused } from "@react-navigation/native";
 import { requireNativeModule } from "expo";
+import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { AsyncResult } from "effect/reactivity";
 import { useEffect, useEffectEvent, useId, useState } from "react";
-import { Alert, Keyboard } from "react-native";
+import { Keyboard } from "react-native";
 
 import { loadLocalAttachmentPreview } from "../lib/localAttachmentPreview";
+import { fullscreenVideoClosed, fullscreenVideoOpened } from "../lib/videoAudioSession";
 import { mediaVideoPreviewUri, type VideoPreviewSource } from "../lib/videoPreviewSource";
 import { useAssetUrlState, useRefreshAssetUrl } from "../state/assets";
 import { usePreparedConnection } from "../state/session";
@@ -52,11 +56,15 @@ function NativeVideoPreview(props: {
 
   useEffect(() => Keyboard.dismiss(), []);
   useEffect(() => {
+    fullscreenVideoOpened();
+    return () => fullscreenVideoClosed();
+  }, []);
+  useEffect(() => {
     if (playbackUrl === null && resolvedUrl !== null) setPlaybackUrl(resolvedUrl);
   }, [playbackUrl, resolvedUrl]);
   useEffect(() => {
     if (!loadError) return;
-    Alert.alert("Could not open video", loadError);
+    Dialog.alert("Could not open video", loadError);
     onRequestClose();
   }, [loadError]);
 
@@ -70,25 +78,28 @@ function NativeVideoPreview(props: {
           ? await loadLocalAttachmentPreview(localAttachment, controller.signal)
           : null;
       if (localAttachment !== null && !file) return;
-      try {
-        if (controller.signal.aborted) return;
-        ready = true;
-        await NativeControls.presentVideo(
+      if (controller.signal.aborted) {
+        file?.dispose();
+        return;
+      }
+      ready = true;
+      const presented = await settlePromise(() =>
+        NativeControls.presentVideo(
           file?.uri ?? playbackUrl!,
           name,
           source.sourceIdentifier ?? "",
           identifier,
-        );
-        if (!controller.signal.aborted) onRequestClose();
-      } finally {
-        // Native completion follows dismissal, so local playback keeps its file lease.
-        file?.dispose();
-      }
+        ),
+      );
+      // Native completion follows dismissal, so local playback keeps its file lease.
+      file?.dispose();
+      if (AsyncResult.isFailure(presented)) throw squashAtomCommandFailure(presented);
+      if (!controller.signal.aborted) onRequestClose();
     })().catch((error: unknown) => {
       if (controller.signal.aborted) return;
       // AVKit gives no retry, so re-mint now; the cached URL may simply have expired.
       if (ready) void refreshAssetUrl();
-      Alert.alert(
+      Dialog.alert(
         "Could not open video",
         ready
           ? "This video couldn't be loaded or played. Check the connection, or touch and hold the video to save or share the original."

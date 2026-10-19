@@ -9,6 +9,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   pullRequestHostActions,
+  largestPullRequestReadCount,
   pullRequestQuickActions,
   filterPullRequestsByInvolvement,
   findScopedProject,
@@ -18,7 +19,6 @@ import {
   groupPullRequestsByInvolvement,
   matchesPullRequestFilters,
   matchesPullRequestQuery,
-  parsePullRequestQuery,
   pullRequestStatsBatches,
   pullRequestStatsKeysToRequest,
   pullRequestStatsRefreshBatches,
@@ -333,7 +333,6 @@ describe("pull request involvement filtering", () => {
   });
 
   it("does not treat a matching login on another host as the viewer", () => {
-    // The same name on GitLab is a different account, and its viewer is unknown here.
     const mixed = [
       entry({ number: 1, author: { login: "Bilal", name: null, avatarUrl: null } }),
       entry({
@@ -353,8 +352,6 @@ describe("pull request involvement filtering", () => {
   });
 
   it("keeps two hosts of one provider kind as two accounts", () => {
-    // A GitHub Enterprise install is a different account from github.com, so the viewer for
-    // one must not claim authorship of the other's change requests.
     const mixed = [
       entry({ number: 1, author: { login: "Bilal", name: null, avatarUrl: null } }),
       entry({
@@ -551,91 +548,11 @@ describe("narrowing rows by the filters a host may not have applied", () => {
       ],
     });
     expect(matchesPullRequestFilters(row, { labels: [["size:S", "size:XS"], ["bug"]] })).toBe(true);
-    // The second group holds nothing this row carries, so the first one satisfied is not enough.
     expect(matchesPullRequestFilters(row, { labels: [["size:S"], ["wip"]] })).toBe(false);
   });
 
   it("holds on to every row for a filter no row carries the answer to", () => {
     expect(narrow({ checks: "passing" })).toEqual([1, 2, 3, 4]);
-  });
-});
-
-describe("reading qualifiers out of a typed query", () => {
-  it("keeps quoted values whole and separates negation", () => {
-    expect(parsePullRequestQuery('label:"needs design" -label:wip Fix the parser')).toEqual({
-      text: "Fix the parser",
-      filters: { labels: [["needs design"]], excludedLabels: ["wip"] },
-    });
-  });
-
-  it("reads a comma-separated list as one group either name satisfies", () => {
-    expect(parsePullRequestQuery("label:size:S,size:XS").filters.labels).toEqual([
-      ["size:S", "size:XS"],
-    ]);
-  });
-
-  it("keeps the spaces in a quoted name of a list, and drops an empty part", () => {
-    expect(parsePullRequestQuery('label:"needs design","wip"').filters.labels).toEqual([
-      ["needs design", "wip"],
-    ]);
-    expect(parsePullRequestQuery("label:a,,b").filters.labels).toEqual([["a", "b"]]);
-  });
-
-  it("excludes every name of a negated list", () => {
-    expect(parsePullRequestQuery("-label:a,b").filters).toEqual({ excludedLabels: ["a", "b"] });
-  });
-
-  it("makes each label qualifier its own group, so the groups are an AND", () => {
-    expect(parsePullRequestQuery("label:bug label:a,b").filters.labels).toEqual([
-      ["bug"],
-      ["a", "b"],
-    ]);
-  });
-
-  it("reads the scalar qualifiers in GitHub's own spelling", () => {
-    expect(
-      parsePullRequestQuery("author:octocat DRAFT:false review:changes_requested status:failure")
-        .filters,
-    ).toEqual({
-      author: "octocat",
-      draft: "hide",
-      review: "changes-requested",
-      checks: "failing",
-    });
-  });
-
-  it("leaves an unknown value and a stray colon as text, and reads an unknown key as a label", () => {
-    const parsed = parsePullRequestQuery("milestone:v2 draft:maybe status: parser");
-    expect(parsed.filters).toEqual({ labels: [["milestone:v2"]] });
-    // A known key whose value it does not take is text, so "status:" itself stays findable.
-    expect(parsed.text).toBe("draft:maybe status: parser");
-  });
-
-  it("reads a quoted name holding a comma as the one label it is", () => {
-    expect(parsePullRequestQuery('label:"needs,triage"').filters.labels).toEqual([
-      ["needs,triage"],
-    ]);
-    expect(parsePullRequestQuery('-label:"needs,triage"').filters.excludedLabels).toEqual([
-      "needs,triage",
-    ]);
-  });
-
-  it("cuts a typed query back to what the contract carries", () => {
-    const many = Array.from({ length: 14 }, (_, index) => `l${index}`).join(",");
-    const long = "x".repeat(240);
-    const parsed = parsePullRequestQuery(`label:${many} label:${long} author:${long}`);
-    expect(parsed.filters.labels?.[0]).toHaveLength(10);
-    expect(parsed.filters.labels?.[1]).toEqual(["x".repeat(200)]);
-    expect(parsed.filters.author).toBe("x".repeat(200));
-  });
-
-  it("cuts a namespaced label after its key is prefixed on", () => {
-    const parsed = parsePullRequestQuery(`size:${"x".repeat(240)}`);
-    expect(parsed.filters.labels).toEqual([[`size:${"x".repeat(240)}`.slice(0, 200)]]);
-  });
-
-  it("answers an empty query with an empty everything", () => {
-    expect(parsePullRequestQuery("   ")).toEqual({ text: "", filters: {} });
   });
 });
 
@@ -656,7 +573,6 @@ describe("resolveProjectScope", () => {
   });
 
   it("keeps an id while the projects are still unknown", () => {
-    // Dropping here would list every project for a moment before narrowing back down.
     expect(resolveProjectScope("p9", [], false)).toBe("p9");
   });
 });
@@ -682,14 +598,12 @@ describe("ranking what a search found", () => {
   });
 
   it("finds the words in any order, which is how people type them", () => {
-    // Substrings count, so "welcomes" answers "welcome" — a search is not a spelling test.
     expect(
       scorePullRequestMatch(row({ title: "The wizard that welcomes" }), "welcome wizard"),
     ).toBe(70);
     expect(
       scorePullRequestMatch(row({ title: "Wizard for the welcome flow" }), "welcome wizard"),
     ).toBe(70);
-    // One of the two words is a mention, not an answer, and ranks under both.
     expect(scorePullRequestMatch(row({ title: "A wizard, of sorts" }), "welcome wizard")).toBe(30);
   });
 
@@ -1014,7 +928,6 @@ describe("merging line counts across keyed stats queries", () => {
       { environmentId: "env-1", projectId: "project-1", number: 1, additions: 10, deletions: 2 },
       { environmentId: "env-1", projectId: "project-1", number: 2, additions: 5, deletions: 1 },
     ]);
-    // A third row appeared; its batch is still pending and contributes nothing yet.
     const merged = mergePullRequestDiffStats(held, []);
     expect(merged.get("env-1 project-1 1")).toEqual({ additions: 10, deletions: 2 });
     expect(merged.get("env-1 project-1 2")).toEqual({ additions: 5, deletions: 1 });
@@ -1049,7 +962,6 @@ describe("partitioning with the hosts' own priority reads", () => {
     const older = entry({ number: 1, updatedAt: "2026-07-05T00:00:00Z" });
     const newer = entry({ number: 2, updatedAt: "2026-07-06T00:00:00Z" });
     const mine = authoredRow(3, "2026-07-04T00:00:00Z");
-    // The authored partition already holds the row the continuation carries.
     const groups = partitionPullRequestsWithPriority([newer, older, mine], [mine], []);
     expect(groups.map((group) => group.key)).toEqual(["authored", "others"]);
     expect(groups[1]!.entries.map((item) => item.number)).toEqual([2, 1]);
@@ -1151,9 +1063,6 @@ describe("the list snapshot across a reload", () => {
   });
 
   it("caps the accumulated rows but keeps the whole host set", () => {
-    // The page keeps growing as the reader scrolls, so what gets written is the accumulated
-    // list rather than one round's answer — capped at the one page a cold start needs, while
-    // the hosts it was read from (which do not grow with the page) are kept in full.
     const storage = makeStorage();
     const manyEntries = Array.from({ length: 120 }, (_, index) => entry({ number: index + 1 }));
     const viewers = { "github.com": "Bilal", "gitlab.com": "Bilal" };
@@ -1340,8 +1249,6 @@ describe("merging the environments' own listings", () => {
         }),
       ],
     ]);
-    // Readable because one environment could read it, but narrowed locally because the other
-    // answers unsearched.
     expect(merged?.providers).toEqual([
       {
         host: "github.com",
@@ -1384,9 +1291,6 @@ describe('who "I" am, per server', () => {
   const byBilal = { login: "Bilal", name: null, avatarUrl: null };
 
   it("does not let one server's account decide who authored another server's rows", () => {
-    // Both servers reach github.com, signed in as different people. Folded into one host-keyed
-    // record, whichever answered last spoke for both — and every row of the reader's own work
-    // was filed under Others.
     const merged = mergePullRequestLists([
       [ENV_1, answer({ "github.com": "Bilal" }, [entry({ number: 1, author: byBilal })])],
       [ENV_2, answer({ "github.com": "Octocat" }, [entry({ number: 2, author: byBilal })])],
@@ -1440,7 +1344,6 @@ describe("the project an id names", () => {
 
   it("answers a bare id only where one server has it", () => {
     expect(findScopedProject(projects, null, "project-2")?.environmentId).toBe(ENV_2);
-    // Two servers hold this id: narrowing to either would be a coin toss the reader cannot see.
     expect(findScopedProject(projects, null, "project-1")).toBeUndefined();
   });
 
@@ -1477,8 +1380,6 @@ describe("which environments a listing should ask", () => {
       { id: "project-1", environmentId: ENV_1 },
       { id: "project-1", environmentId: ENV_2 },
     ];
-    // Two servers can genuinely hold the same project id string; the third holds no such project
-    // and asking it would return an unrelated project's rows rather than an honest empty answer.
     expect(
       resolveQueryEnvironmentIds(environmentIds, projects, undefined, "project-1", true),
     ).toEqual([ENV_1, ENV_2]);
@@ -1492,9 +1393,6 @@ describe("which environments a listing should ask", () => {
   });
 
   it("asks every environment while the servers have not said what they hold yet", () => {
-    // Nothing matches the id because nothing has been read yet, which is not the same answer as
-    // no server holding it: reading none of them would show an empty page for a project that is
-    // there.
     expect(resolveQueryEnvironmentIds(environmentIds, [], undefined, "project-1", false)).toEqual(
       environmentIds,
     );
@@ -1512,8 +1410,6 @@ describe("the server a saved selection names", () => {
   const known = new Set([ENV_1, ENV_2]);
 
   it("resolves to nothing yet for a server that is known but not ready, rather than falling back", () => {
-    // ENV_2 is in the catalog (still connecting, say) but not the fallback; a caller that then
-    // looks a project up under ENV_2 finds none rather than one belonging to the fallback server.
     expect(resolveSelectedEnvironmentId(ENV_2, known, ENV_1)).toBe(ENV_2);
   });
 
@@ -1533,68 +1429,11 @@ describe("the server a saved selection names", () => {
   });
 });
 
-describe("colon-namespaced labels typed as a search", () => {
-  it("reads an unknown key as the label it almost always is", () => {
-    expect(parsePullRequestQuery("size:XXL").filters.labels).toEqual([["size:XXL"]]);
-    expect(parsePullRequestQuery("vouch:trusted").filters.labels).toEqual([["vouch:trusted"]]);
-    expect(parsePullRequestQuery("size:XXL").text).toBe("");
-  });
-
-  it("reads the key as the namespace of every bare name in its list", () => {
-    expect(parsePullRequestQuery("size:S,XS").filters.labels).toEqual([["size:S", "size:XS"]]);
-  });
-
-  it("leaves a name that already carries its own namespace alone", () => {
-    // `size:S,size:XS` is the same pair written out; prefixing again would ask for `size:size:XS`.
-    expect(parsePullRequestQuery("size:S,size:XS").filters.labels).toEqual([["size:S", "size:XS"]]);
-  });
-
-  it("excludes one the same way", () => {
-    expect(parsePullRequestQuery("-size:XXL").filters.excludedLabels).toEqual(["size:XXL"]);
-    expect(parsePullRequestQuery("-size:S,XS").filters.excludedLabels).toEqual([
-      "size:S",
-      "size:XS",
-    ]);
-  });
-
-  it("keeps a quoted token as text, which is the way back to a literal search", () => {
-    const parsed = parsePullRequestQuery('"size:XXL"');
-    expect(parsed.filters.labels).toBeUndefined();
-    expect(parsed.text).toBe('"size:XXL"');
-  });
-
-  it("reads a hyphenated namespace as a label too", () => {
-    expect(parsePullRequestQuery("priority-1:high").filters.labels).toEqual([["priority-1:high"]]);
-    expect(parsePullRequestQuery("priority-1:high").text).toBe("");
-  });
-
-  it("leaves a pasted link alone rather than naming a label after its scheme", () => {
-    const parsed = parsePullRequestQuery("https://github.com/pingdotgg/t3code/pull/1");
-    expect(parsed.filters.labels).toBeUndefined();
-    expect(parsed.text).toBe("https://github.com/pingdotgg/t3code/pull/1");
-  });
-
-  it("mixes with the keys it does know, and with plain words", () => {
-    const parsed = parsePullRequestQuery("area:web draft:true wizard label:bug");
-    expect(parsed.filters).toEqual({ labels: [["area:web"], ["bug"]], draft: "only" });
-    expect(parsed.text).toBe("wizard");
-  });
-
-  it("shares the ceiling with the labels typed as labels", () => {
-    const many = Array.from({ length: 12 }, (_, index) => `area:${index}`).join(" ");
-    expect(parsePullRequestQuery(many).filters.labels).toHaveLength(10);
-  });
-});
-
 describe("the priority groups against a paginated feed", () => {
   const authoredRow = (number: number, updatedAt: string) =>
     entry({ number, updatedAt, author: { login: "Bilal", name: null, avatarUrl: null } });
 
   it("shows every authored row the host reported, not only the ones the feed page holds", () => {
-    // The feed is one page ordered by recency, so on a busy repository it can hold exactly one of
-    // somebody's own pull requests while the rest sit further down the host's list. The Authored
-    // group comes from its own server-filtered read for that reason: grouping the page instead
-    // leaves the older ones under Others, or off the page altogether.
     const newest = authoredRow(6039, "2026-08-11T08:00:00Z");
     const older = [
       authoredRow(5499, "2026-08-10T17:00:00Z"),
@@ -1704,17 +1543,13 @@ describe("pull request list override settlement", () => {
     const at = 1_000_000;
     const closed = { state: "closed" as const, updatedAt: "2026-07-03T00:00:00Z", token: 1, at };
     const overrides = new Map([["#1", closed]]);
-    // A read from before the action still says open: the override stands.
     expect(settlePullRequestOverrides(overrides, [entry(1, "open")], key, at + 5_000)).toBe(
       overrides,
     );
-    // Absent from the answer says nothing: the row may live in another group or page.
     expect(settlePullRequestOverrides(overrides, [entry(2, "open")], key, at + 5_000).size).toBe(1);
-    // Present as closed: confirmed.
     expect(settlePullRequestOverrides(overrides, [entry(1, "closed")], key, at + 5_000).size).toBe(
       0,
     );
-    // Present as open a good while later: the host's news, which outranks the note.
     expect(settlePullRequestOverrides(overrides, [entry(1, "open")], key, at + 90_000).size).toBe(
       0,
     );
@@ -1757,5 +1592,26 @@ describe("pull request quick actions", () => {
       "close",
       "ready",
     ]);
+  });
+});
+
+describe("refresh page size", () => {
+  const twoPagesAcrossFourRepositories = (provider: "github" | "gitlab") =>
+    ["a", "b", "c", "d"].flatMap((name) =>
+      Array.from({ length: 198 }, (_, index) =>
+        entry({
+          number: index + 1,
+          provider: SourceControlProviderKind.make(provider),
+          repository: `pingdotgg/${name}`,
+        }),
+      ),
+    );
+
+  it("asks each repository for its own rows where repositories are read one at a time", () => {
+    expect(largestPullRequestReadCount(twoPagesAcrossFourRepositories("gitlab"))).toBe(198);
+  });
+
+  it("asks for the whole host where one search reads every repository", () => {
+    expect(largestPullRequestReadCount(twoPagesAcrossFourRepositories("github"))).toBe(792);
   });
 });

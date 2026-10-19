@@ -28,7 +28,7 @@ import { dedupeChecks } from "@t3tools/source-control-core/server/pullRequestChe
 const RawUserSchema = Schema.Struct({
   /**
    * How Bitbucket addresses an account when a reviewer set is written; the handles it shows are
-   * not accepted there. Braced, and sent back exactly as it arrived.
+   * not accepted there.
    */
   uuid: Schema.optional(Schema.NullOr(Schema.String)),
   /** Absent on an app account, which is why `display_name` has to stand in for it. */
@@ -45,11 +45,6 @@ const RawUserSchema = Schema.Struct({
   ),
 });
 
-/**
- * Required, and required to be non-empty: the wire contract will not carry a change request
- * without a branch or a link, so a row missing one is skipped rather than breaking the response
- * it travels in.
- */
 const RawBranchSchema = Schema.Struct({
   branch: Schema.Struct({ name: TrimmedNonEmptyString }),
   commit: Schema.optional(
@@ -71,6 +66,8 @@ const RawPullRequestSchema = Schema.Struct({
   destination: RawBranchSchema,
   created_on: Schema.String,
   updated_on: Schema.String,
+  /** Only sent when asked for with `fields=+closed_on`; null while the request is open. */
+  closed_on: Schema.optional(Schema.NullOr(Schema.String)),
   reviewers: Schema.optional(Schema.NullOr(Schema.Array(RawUserSchema))),
   participants: Schema.optional(
     Schema.NullOr(
@@ -90,9 +87,7 @@ const RawPullRequestSchema = Schema.Struct({
 
 const RawPageSchema = Schema.Struct({
   values: Schema.Array(Schema.Unknown),
-  /** A total count, which Bitbucket omits on some endpoints. */
   size: Schema.optional(Schema.NullOr(Schema.Int)),
-  /** Present only while a further page exists. */
   next: Schema.optional(Schema.NullOr(Schema.String)),
 });
 
@@ -102,23 +97,18 @@ const RawCommentSchema = Schema.Struct({
   user: Schema.optional(Schema.NullOr(RawUserSchema)),
   created_on: Schema.String,
   deleted: Schema.optional(Schema.Boolean),
-  /** A comment still being drafted by its author. */
   pending: Schema.optional(Schema.Boolean),
-  /** Set on a reply, to the comment it answers — which may itself be a reply. */
   parent: Schema.optional(Schema.NullOr(Schema.Struct({ id: Schema.Int }))),
   inline: Schema.optional(
     Schema.NullOr(
       Schema.Struct({
         path: Schema.optional(Schema.NullOr(Schema.String)),
-        /** The line in the file as it was; set instead of `to` on a removed line. */
         from: Schema.optional(Schema.NullOr(Schema.Int)),
-        /** The line in the file as it is now. */
         to: Schema.optional(Schema.NullOr(Schema.Int)),
         outdated: Schema.optional(Schema.NullOr(Schema.Boolean)),
       }),
     ),
   ),
-  /** Non-null once someone has marked the thread resolved. */
   resolution: Schema.optional(Schema.NullOr(Schema.Unknown)),
   links: Schema.optional(
     Schema.NullOr(Schema.Struct({ html: Schema.optional(Schema.NullOr(RawLinkSchema)) })),
@@ -152,7 +142,6 @@ const RawDiffstatSchema = Schema.Struct({
   lines_removed: Schema.optional(Schema.NullOr(Schema.Int)),
 });
 
-/** One row of `/workspaces/{workspace}/members`, which wraps the account it is about. */
 const RawMemberSchema = Schema.Struct({
   user: Schema.optional(Schema.NullOr(RawUserSchema)),
 });
@@ -162,11 +151,6 @@ const RawViewerSchema = Schema.Struct({
   display_name: Schema.optional(Schema.NullOr(Schema.String)),
 });
 
-/**
- * `/user/permissions/repositories` filtered to one repository, which is the only place Bitbucket
- * states what the credentials may do with it: nothing on the repository, the pull request or the
- * workspace carries it. One row, or none where Bitbucket names no permission for this account.
- */
 const RawRepositoryPermissionsSchema = Schema.Struct({
   values: Schema.optional(
     Schema.NullOr(
@@ -193,12 +177,12 @@ export interface BitbucketPullRequest {
   readonly mergeability: PullRequestMergeability;
   readonly createdAt: string;
   readonly updatedAt: string;
+  /** When the request was merged or declined, unlike `updatedAt`, which later comments move. */
+  readonly closedAt: string | null;
   readonly body: string;
   readonly reviewRequestLogins: ReadonlyArray<string>;
   readonly reviewers: ReadonlyArray<PullRequestActor>;
-  /** The reviewers as Bitbucket addresses them, which is what writing the set back takes. */
   readonly reviewerIds: ReadonlyArray<string>;
-  /** Approvals and change requests, which Bitbucket keeps on its participants. */
   readonly reviews: ReadonlyArray<PullRequestComment>;
 }
 
@@ -219,7 +203,6 @@ function toIsoUtc(value: string): string {
   });
 }
 
-/** An app account has no nickname, so the display name is the only handle it has. */
 function toActor(raw: Schema.Schema.Type<typeof RawUserSchema> | null | undefined) {
   const login = trimmed(raw?.nickname) ?? trimmed(raw?.display_name);
   return login === null
@@ -258,10 +241,6 @@ function toBuildStatus(value: string | null | undefined): PullRequestCheckStatus
   }
 }
 
-/**
- * A participant who has voted is the closest Bitbucket has to a review, so it reads as one in
- * the conversation. Participants who have only been added carry no verdict and are skipped.
- */
 function toReviews(
   raw: Schema.Schema.Type<typeof RawPullRequestSchema>,
 ): ReadonlyArray<PullRequestComment> {
@@ -305,6 +284,7 @@ function toPullRequest(raw: Schema.Schema.Type<typeof RawPullRequestSchema>): Bi
     mergeability: "unknown",
     createdAt: toIsoUtc(raw.created_on),
     updatedAt: toIsoUtc(raw.updated_on),
+    closedAt: raw.closed_on == null ? null : toIsoUtc(raw.closed_on),
     body: raw.description ?? "",
     reviewRequestLogins: reviewers.map((reviewer) => reviewer.login),
     reviewers,
@@ -329,11 +309,9 @@ type DecodeFailure = Cause.Cause<Schema.SchemaError>;
 
 export interface BitbucketPage<A> {
   readonly items: ReadonlyArray<A>;
-  /** The whole URL of the next page, which Bitbucket sends rather than an offset. */
   readonly next: string | null;
 }
 
-/** Malformed entries are skipped rather than failing the page, as on the other hosts. */
 export function decodePullRequestPageJson(
   raw: string,
 ): Result.Result<BitbucketPage<BitbucketPullRequest>, DecodeFailure> {
@@ -367,11 +345,6 @@ export function decodeViewerJson(raw: string): Result.Result<string | null, Deco
     : Result.fail(decoded.failure);
 }
 
-/**
- * Whether the configured credentials can write to the repository, which is what merging needs.
- * Bitbucket answers `admin`, `write` or `read`, and an empty page means it named no permission at
- * all for this account — an unknown standing, which is granted rather than guessed away.
- */
 export function decodeRepositoryPermissionJson(raw: string): Result.Result<boolean, DecodeFailure> {
   const decoded = decodeRepositoryPermissions(raw);
   if (!Result.isSuccess(decoded)) {
@@ -382,13 +355,9 @@ export function decodeRepositoryPermissionJson(raw: string): Result.Result<boole
 }
 
 /**
- * The workspace's members, which is the nearest thing Bitbucket has to "who may review this".
  * Nothing on a repository lists the people with access to it — `permissions-config/users` is for
  * administrators only — and a pull request can be sent to anyone in the workspace, so this is the
  * list Bitbucket's own reviewer field is filled from too.
- *
- * Nobody is marked requested here: who has been asked lives on the pull request, and only the
- * caller holds both.
  */
 export function decodeWorkspaceMembersJson(
   raw: string,
@@ -409,7 +378,6 @@ export function decodeWorkspaceMembersJson(
   return Result.succeed({ items, next: trimmed(decoded.success.next) });
 }
 
-/** One comment as Bitbucket sent it, kept so threads can be assembled across pages. */
 export type BitbucketRawComment = Schema.Schema.Type<typeof RawCommentSchema>;
 
 export interface BitbucketComments {
@@ -422,18 +390,11 @@ export interface BitbucketComments {
   readonly next: string | null;
 }
 
-/**
- * Bitbucket returns one flat list, so a thread is reassembled from it: a comment pinned to a
- * line opens a thread, and every reply that leads back to it belongs in it. A reply whose
- * parent is on a page that was not read has nowhere to go, and is left out rather than shown
- * as a thread of its own — it still stands in the flat conversation, which needs no parent.
- */
 export function buildReviewThreads(
   comments: ReadonlyArray<BitbucketRawComment>,
 ): ReadonlyArray<PullRequestReviewThread> {
   const byId = new Map(comments.map((comment) => [comment.id, comment]));
   const rootOf = (comment: Schema.Schema.Type<typeof RawCommentSchema>) => {
-    // Bounded by the number of comments read, so a parent cycle cannot spin here.
     let current = comment;
     for (let step = 0; step < byId.size; step += 1) {
       const parent = current.parent === null ? undefined : byId.get(current.parent?.id ?? -1);
@@ -451,8 +412,6 @@ export function buildReviewThreads(
     const path = trimmed(inline?.path);
     if (path === null) continue;
     if (root.id === comment.id) {
-      // `to` is the line as the file stands now, `from` the line it replaced; a comment that
-      // carries only `from` was written against the removed side.
       const side = inline?.to === null || inline?.to === undefined ? "left" : "right";
       const line = side === "left" ? inline?.from : inline?.to;
       threads.set(root.id, {
@@ -484,10 +443,6 @@ export function buildReviewThreads(
   });
 }
 
-/**
- * Deleted comments and ones their author has not posted yet carry nothing to show. A comment
- * pinned to a file is a line-level review comment, which is what that kind means.
- */
 export function decodeCommentsJson(raw: string): Result.Result<BitbucketComments, DecodeFailure> {
   const decoded = decodePage(raw);
   if (!Result.isSuccess(decoded)) {
@@ -596,7 +551,6 @@ export interface BitbucketDiffStatPage extends BitbucketDiffStat {
   readonly next: string | null;
 }
 
-/** One entry per changed file, each carrying that file's line counts. */
 export function decodeDiffstatJson(
   raw: string,
 ): Result.Result<BitbucketDiffStatPage, DecodeFailure> {
@@ -622,10 +576,6 @@ export function decodeDiffstatJson(
   });
 }
 
-/**
- * The conflicts endpoint answers with one entry per conflicting path, so an empty page is the
- * only statement Bitbucket makes that a pull request merges cleanly.
- */
 export function decodeConflictsJson(
   raw: string,
 ): Result.Result<PullRequestMergeability, DecodeFailure> {

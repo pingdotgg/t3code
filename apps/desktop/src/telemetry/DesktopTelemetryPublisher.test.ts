@@ -39,6 +39,7 @@ function layerElectronApp(
     name: Effect.succeed("T3 Code"),
     systemLocale: Effect.succeed("en-US"),
     whenReady: Effect.void,
+    requestSingleInstanceLock: Effect.succeed(true),
     quit: Effect.void,
     exit: () => Effect.void,
     relaunch: () => Effect.void,
@@ -467,8 +468,6 @@ describe("DesktopTelemetryPublisher", () => {
         } as const;
         yield* publisher.publishUpdateReport(report);
 
-        // A subscriber that attaches after the publish (the backend spawned
-        // by a relaunch) still sees the latest report replayed.
         const decoder = new TextDecoder();
         const decodeMessage = Schema.decodeUnknownEffect(
           Schema.fromJsonString(DesktopHostTelemetryMessage),
@@ -658,7 +657,6 @@ describe("DesktopRendererHistory", () => {
           assert.equal(crash.rendererPidSource, "last-known");
           assert.equal(crash.reason, "oom");
           assert.equal(crash.exitCode, -7);
-          // A restarted renderer can reuse the same numeric PID.
           const restarted = yield* Deferred.make<Record>();
           milestone = { matches: (row) => row.event === "dom-ready", written: restarted };
           previewPid = 7_003;
@@ -684,7 +682,6 @@ describe("DesktopRendererHistory", () => {
           yield* history.recordMetrics(metrics);
           assert.equal((yield* Deferred.await(afterDestroy)).webContentsId, 1);
           assert.isFalse(persisted.slice(previousCount).some((row) => row.webContentsId === 2));
-          // The app quit handshake drains before the history layer closes.
           for (let index = 0; index < 12; index++) main.emit("dom-ready");
           yield* history.shutdown;
           assert.equal(

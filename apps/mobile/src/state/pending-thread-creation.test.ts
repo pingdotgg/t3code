@@ -67,7 +67,6 @@ describe("resolvePendingThreadCreation", () => {
     });
     expect(previous).toBe(pending);
 
-    // The user message arrives before the provider publishes a timed turn.
     previous = resolvePendingThreadCreation({
       threadKey,
       pending,
@@ -76,8 +75,6 @@ describe("resolvePendingThreadCreation", () => {
     });
     expect(previous).toBe(pending);
 
-    // The shell stream may observe the turn and collect the global outcome
-    // before this screen's detail stream catches up.
     previous = resolvePendingThreadCreation({
       threadKey,
       pending: null,
@@ -203,10 +200,6 @@ describe("isPendingThreadCreationVisible", () => {
     );
   });
 
-  // The regression: the server creates the thread, THEN builds the worktree,
-  // then starts the turn. The shell and an empty detail arrive seconds before
-  // the prompt, and keying on the shell left the thread empty for that whole
-  // window.
   it("keeps standing in while the created thread has no messages yet", () => {
     expect(isPendingThreadCreationVisible({ creationMessageId, loadedMessageIds: [] })).toBe(true);
   });
@@ -254,8 +247,6 @@ describe("pendingThreadCreationMessage", () => {
     });
   });
 
-  // Draft attachment ids are local; the feed resolves attachment rows against
-  // the server and would spin forever on them.
   it("omits the queued attachments rather than passing local draft ids to the feed", () => {
     expect(pendingThreadCreationMessage(creation)).not.toHaveProperty("attachments");
   });

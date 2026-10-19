@@ -9,29 +9,6 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 
-/**
- * Declares the server's overall authentication posture.
- *
- * This is a high-level policy label that tells clients how the environment is
- * expected to be accessed, not a transport detail and not an exhaustive list
- * of every accepted credential.
- *
- * Typical usage:
- * - rendered in auth/pairing UI so the user understands what kind of
- *   environment they are connecting to
- * - used by clients to decide whether silent desktop bootstrap is expected or
- *   whether an explicit pairing flow should be shown
- *
- * Meanings:
- * - `desktop-managed-local`: local desktop-managed environment with narrow
- *   trusted bootstrap, intended to avoid login prompts on the same machine
- * - `loopback-browser`: standalone local server intended for browser pairing on
- *   the same machine
- * - `remote-reachable`: environment intended to be reached from other devices
- *   or networks, where explicit pairing/auth is expected
- * - `unsafe-no-auth`: intentionally unauthenticated mode; this is an explicit
- *   unsafe escape hatch, not a normal deployment mode
- */
 export const ServerAuthPolicy = Schema.Literals([
   "desktop-managed-local",
   "loopback-browser",
@@ -40,38 +17,9 @@ export const ServerAuthPolicy = Schema.Literals([
 ]);
 export type ServerAuthPolicy = typeof ServerAuthPolicy.Type;
 
-/**
- * A credential type that can be exchanged for a real authenticated session.
- *
- * Bootstrap methods are for establishing trust at the start of a connection or
- * pairing flow. They are not the long-lived credential used for ordinary
- * authenticated HTTP / WebSocket traffic after pairing succeeds.
- *
- * Current methods:
- * - `desktop-bootstrap`: a trusted local desktop handoff, used so the desktop
- *   shell can pair the renderer without a login screen
- * - `one-time-token`: a short-lived pairing token, suitable for manual pairing
- *   flows such as `/pair?token=...`
- */
 export const ServerAuthBootstrapMethod = Schema.Literals(["desktop-bootstrap", "one-time-token"]);
 export type ServerAuthBootstrapMethod = typeof ServerAuthBootstrapMethod.Type;
 
-/**
- * A credential type accepted for steady-state authenticated requests after a
- * client has already paired.
- *
- * These methods are used by the server-wide auth layer for privileged HTTP and
- * WebSocket access. They are distinct from bootstrap methods so clients can
- * reason clearly about "pair first, then use session auth".
- *
- * Current methods:
- * - `browser-session-cookie`: cookie-backed browser session, used by the web
- *   app after bootstrap/pairing
- * - `bearer-access-token`: scoped token suitable for non-cookie or
- *   non-browser clients
- * - `dpop-access-token`: scoped proof-of-possession token used by managed
- *   relay connections
- */
 export const ServerAuthSessionMethod = Schema.Literals([
   "browser-session-cookie",
   "bearer-access-token",
@@ -127,7 +75,6 @@ export type AuthGrantScope = typeof AuthGrantScope.Type;
 export const AuthGrantScopes = Schema.Array(AuthGrantScope);
 export type AuthGrantScopes = typeof AuthGrantScopes.Type;
 
-// Frozen wire vocabulary for clients released before granular permissions.
 const legacyScopes = new Set<AuthEnvironmentScope>([
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
@@ -139,7 +86,6 @@ const legacyScopes = new Set<AuthEnvironmentScope>([
   AuthRelayWriteScope,
 ]);
 
-/** Format public auth metadata without changing the server's authorization grant. */
 export function authScopeResponse(scopes: ReadonlyArray<AuthEnvironmentScope>) {
   return { scopes: scopes.filter((scope) => legacyScopes.has(scope)), permissions: scopes };
 }
@@ -185,13 +131,11 @@ export function sessionGrantsScope(
   if (!session.authenticated) return false;
   if (session.permissions !== undefined) return session.permissions.includes(scope);
   if (session.scopes?.includes(scope)) return true;
-  // Also recognize servers from the first granular-scope release.
   if (session.auth?.serverUpdateScope !== undefined) return false;
   const parent = legacyParents[scope];
   return parent !== undefined && session.scopes?.includes(parent) === true;
 }
 
-/** Old-only grants lost the child permissions formerly implied by their broad scopes. */
 export function sessionHasLegacyPermissions(session: SessionGrantInput): boolean {
   const permissions = session.permissions;
   return (
@@ -202,6 +146,9 @@ export function sessionHasLegacyPermissions(session: SessionGrantInput): boolean
   );
 }
 
+// Access and relay management are included because terminal:operate and
+// orchestration:operate already reach that authority through a shell or a
+// full-access agent. Narrowing a grant means choosing explicit scopes.
 export const AuthStandardClientScopes = [
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
@@ -216,9 +163,6 @@ export const AuthStandardClientScopes = [
   AuthFilesystemReadScope,
   AuthFilesystemWriteScope,
   AuthRelayReadScope,
-] as const;
-export const AuthAdministrativeScopes = [
-  ...AuthStandardClientScopes,
   AuthAccessReadScope,
   AuthAccessWriteScope,
   AuthRelayWriteScope,
@@ -230,26 +174,6 @@ export const AuthAccessTokenType = "urn:ietf:params:oauth:token-type:access_toke
 export const AuthEnvironmentBootstrapTokenType =
   "urn:t3:params:oauth:token-type:environment-bootstrap" as const;
 
-/**
- * Server-advertised auth capabilities for a specific execution environment.
- *
- * Clients should treat this as the authoritative description of how that
- * environment expects to be paired and how authenticated requests should be
- * made afterward.
- *
- * Field meanings:
- * - `policy`: high-level auth posture for the environment
- * - `bootstrapMethods`: pairing/bootstrap methods the server is currently
- *   willing to accept
- * - `sessionMethods`: authenticated request/session methods the server supports
- *   once pairing is complete
- * - `sessionCookieName`: cookie name clients should expect when
- *   `browser-session-cookie` is in use
- *
- * This descriptor is intentionally capability-oriented. It lets clients choose
- * the right UX without embedding server-specific auth logic or assuming a
- * single access method.
- */
 export const ServerAuthDescriptor = Schema.Struct({
   policy: ServerAuthPolicy,
   bootstrapMethods: Schema.Array(ServerAuthBootstrapMethod),
@@ -330,7 +254,6 @@ export const AuthPairingCredentialResult = Schema.Struct({
 });
 export type AuthPairingCredentialResult = typeof AuthPairingCredentialResult.Type;
 
-// Read models contain metadata only. Credentials are returned by creation alone.
 export const AuthPairingLink = Schema.Struct({
   id: TrimmedNonEmptyString,
   ...authScopeResponseFields,
@@ -468,10 +391,6 @@ export const AuthSessionState = Schema.Struct({
 });
 export type AuthSessionState = typeof AuthSessionState.Type;
 
-/**
- * What an agent signed in through MCP OAuth may do, least to most: only read,
- * or act on threads that never run above the given runtime mode.
- */
 export const AuthMcpClientAccess = Schema.Literals([
   "read-only",
   "approval-required",
@@ -481,7 +400,6 @@ export const AuthMcpClientAccess = Schema.Literals([
 ]);
 export type AuthMcpClientAccess = typeof AuthMcpClientAccess.Type;
 
-/** RFC 9728 metadata for an environment's `/mcp` resource. */
 export const AuthMcpProtectedResourceMetadata = Schema.Struct({
   resource: Schema.String,
   authorization_servers: Schema.Array(Schema.String),
@@ -491,7 +409,6 @@ export const AuthMcpProtectedResourceMetadata = Schema.Struct({
 });
 export type AuthMcpProtectedResourceMetadata = typeof AuthMcpProtectedResourceMetadata.Type;
 
-/** RFC 8414 metadata for the authorization server MCP clients sign in through. */
 export const AuthMcpAuthorizationServerMetadata = Schema.Struct({
   issuer: Schema.String,
   authorization_endpoint: Schema.String,
@@ -506,7 +423,6 @@ export const AuthMcpAuthorizationServerMetadata = Schema.Struct({
 });
 export type AuthMcpAuthorizationServerMetadata = typeof AuthMcpAuthorizationServerMetadata.Type;
 
-/** RFC 7591 client metadata. Fields the server does not use are dropped. */
 export const AuthMcpClientRegistration = Schema.Struct({
   client_name: Schema.optionalKey(Schema.String),
   redirect_uris: Schema.optionalKey(Schema.Array(Schema.String)),
@@ -524,7 +440,6 @@ export const AuthMcpRegisteredClient = Schema.Struct({
 }).pipe(HttpApiSchema.status(201));
 export type AuthMcpRegisteredClient = typeof AuthMcpRegisteredClient.Type;
 
-/** RFC 7591 §3.2.2 registration error. */
 export class AuthMcpRegistrationError extends Schema.Error<AuthMcpRegistrationError>(
   "AuthMcpRegistrationError",
 )(
@@ -540,8 +455,7 @@ export class AuthMcpRegistrationError extends Schema.Error<AuthMcpRegistrationEr
 }
 
 /**
- * An agent's authorization request, as the approval page received it in its
- * URL. Every field is checked by the server, so all are optional here.
+ * Every field is checked by the server, so all are optional here.
  */
 export const AuthMcpAuthorizationRequest = Schema.Struct({
   response_type: Schema.optionalKey(Schema.String),
@@ -555,20 +469,14 @@ export const AuthMcpAuthorizationRequest = Schema.Struct({
 export type AuthMcpAuthorizationRequest = typeof AuthMcpAuthorizationRequest.Type;
 
 /**
- * What the approval page needs to show for an MCP OAuth sign-in. The server
- * has already validated the request; nothing here is trusted by the client
- * except for display.
+ * The server has already validated the request; nothing here is trusted by the
+ * client except for display.
  */
 export const AuthMcpApprovalDetails = Schema.Struct({
   /** Self-declared by the client, so shown as such. */
   clientName: Schema.String,
-  /**
-   * Where the code goes: a loopback address on the browser's machine (a CLI
-   * agent), or an https host (a hosted agent).
-   */
   redirectHost: Schema.String,
   environmentHost: Schema.String,
-  /** Present when this browser's session may approve without a pairing code. */
   csrfToken: Schema.optionalKey(Schema.String),
   /**
    * What that session may approve in one click: only access whose scopes it
@@ -578,10 +486,6 @@ export const AuthMcpApprovalDetails = Schema.Struct({
 });
 export type AuthMcpApprovalDetails = typeof AuthMcpApprovalDetails.Type;
 
-/**
- * Where the approval page sends the browser next: back to the agent with a
- * code, a denial, or a protocol error the agent should receive.
- */
 export const AuthMcpApprovalRedirect = Schema.Struct({
   redirectTo: Schema.String,
 });
@@ -593,7 +497,6 @@ export const AuthMcpApprovalDecision = Schema.Union([
     access: AuthMcpClientAccess,
     code: TrimmedNonEmptyString,
   }),
-  /** One click, for a browser session that may approve (see `csrfToken`). */
   Schema.TaggedStruct("browser-session", {
     access: AuthMcpClientAccess,
     csrfToken: Schema.String,
@@ -607,14 +510,12 @@ export const AuthMcpApprovalDecisionRequest = Schema.Struct({
 });
 export type AuthMcpApprovalDecisionRequest = typeof AuthMcpApprovalDecisionRequest.Type;
 
-/** A problem the approval page shows the user without redirecting anywhere. */
 export class AuthMcpApprovalError extends Schema.TaggedError<AuthMcpApprovalError>()(
   "AuthMcpApprovalError",
   { message: Schema.String },
   { httpApiStatus: 400 },
 ) {}
 
-/** RFC 6749 §4.1.3 token request. Every field is checked by the server. */
 export const AuthMcpTokenRequest = Schema.Struct({
   grant_type: Schema.optionalKey(Schema.String),
   code: Schema.optionalKey(Schema.String),
@@ -633,7 +534,6 @@ export const AuthMcpTokenResult = Schema.Struct({
 });
 export type AuthMcpTokenResult = typeof AuthMcpTokenResult.Type;
 
-/** RFC 6749 §5.2 token error. */
 export class AuthMcpTokenError extends Schema.Error<AuthMcpTokenError>("AuthMcpTokenError")(
   {
     error: Schema.Literals([

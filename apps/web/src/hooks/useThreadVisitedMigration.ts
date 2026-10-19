@@ -1,28 +1,20 @@
+import { RegistryContext } from "@effect/atom-react";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { useEffect } from "react";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { useContext, useEffect, useEffectEvent } from "react";
 
-import { useThreadShells } from "../state/entities";
-import { threadEnvironment } from "../state/threads";
+import { environmentThreadShells, threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useUiStateStore } from "../uiStateStore";
 
-// Module-level so each thread is considered once per page load. The visit
-// command is idempotent server-side (the server keeps max(stored, supplied)),
-// so repeats across page loads are harmless — this only avoids re-dispatching
-// within a session.
 const migratedThreadKeys = new Set<string>();
 
-/**
- * One-way migration of the browser-local visited watermarks into servers with
- * visited tracking. Before tracking existed, "Done" lived in this browser's
- * localStorage; pushing those watermarks up seeds the server value so other
- * devices see the same read state. The server never rewinds a newer visit, so
- * this cannot clobber progress made elsewhere.
- */
+// Subscribes outside render: the migration only acts on threads it has not
+// seen, so a shell update must not re-render the layout that mounts it.
 export function useThreadVisitedMigration(): void {
-  const threads = useThreadShells();
+  const registry = useContext(RegistryContext);
   const visitThreadMutation = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
-  useEffect(() => {
+  const migrate = useEffectEvent((threads: ReadonlyArray<EnvironmentThreadShell>) => {
     for (const thread of threads) {
       // Field absent → the environment's server has no visited tracking; keep
       // the local value in play and reconsider if the server upgrades.
@@ -41,5 +33,10 @@ export function useThreadVisitedMigration(): void {
         input: { threadId: thread.id, visitedAt: local },
       });
     }
-  }, [threads, visitThreadMutation]);
+  });
+  useEffect(
+    () =>
+      registry.subscribe(environmentThreadShells.threadShellsAtom, migrate, { immediate: true }),
+    [registry],
+  );
 }

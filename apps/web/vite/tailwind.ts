@@ -1,6 +1,5 @@
 import tailwindcss from "@tailwindcss/vite";
 
-/** Adapts Tailwind's dev hooks to Vite's experimental bundled mode. */
 export function tailwindPlugins(bundledDev: boolean) {
   const plugins = tailwindcss();
   if (bundledDev) {

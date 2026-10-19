@@ -84,7 +84,6 @@ const tailscaleServePortFlag = Flag.Int("tailscale-serve-port").pipe(
   Flag.optional,
 );
 
-// Trace file location, shared by the server and `t3 trace summary`.
 export const traceFileConfig = Config.String("T3CODE_TRACE_FILE").pipe(
   Config.option,
   Config.map(Option.getOrUndefined),
@@ -334,7 +333,13 @@ export const resolveServerConfig = (
     // and supervisor handoff are separate; this preflight cannot arbitrate two starts.
     if (options?.rejectRunningServer && mode === "web") {
       const runtime = yield* readPersistedServerRuntimeState(derivedPaths.serverRuntimeStatePath);
-      if (Option.isSome(runtime) && runtime.value.pid > 0 && isProcessAlive(runtime.value.pid)) {
+      // A killed container can leave a record with the new server's own PID.
+      if (
+        Option.isSome(runtime) &&
+        runtime.value.pid > 0 &&
+        runtime.value.pid !== process.pid &&
+        isProcessAlive(runtime.value.pid)
+      ) {
         return yield* new CliError.UserError({
           cause: `A T3 Code server is already running for ${baseDir} (pid ${runtime.value.pid}, ${runtime.value.origin}). Connect to that server, stop it before starting another, or use a different --base-dir.`,
         });
@@ -411,8 +416,6 @@ export const resolveServerConfig = (
 
     const otel = yield* OtelEnvironment.load;
 
-    // T3 Code's own OTLP variables name no signal, so the one answer they give
-    // is the answer for all three.
     const signalExport: SignalExport = {
       protocol: env.otlpProtocol,
       headers: env.otlpHeaders,

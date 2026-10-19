@@ -6,6 +6,7 @@ import { DraftId } from "./composerDraftStore";
 import {
   buildDraftThreadRouteParams,
   buildThreadRouteParams,
+  isThreadRoutePathname,
   isThreadRouteSnapshotAuthoritative,
   resolveActiveThreadRouteRef,
   resolveThreadRouteRenderState,
@@ -43,6 +44,19 @@ describe("threadRoutes", () => {
 
     expect(resolveThreadRouteRef({ environmentId: "env-1" })).toBeNull();
     expect(resolveThreadRouteRef({ threadId: "thread-1" })).toBeNull();
+  });
+
+  it("matches only the thread's own route pathname", () => {
+    const ref = scopeThreadRef("env-1" as never, ThreadId.make("thread-1"));
+
+    expect(isThreadRoutePathname("/env-1/thread-1", ref)).toBe(true);
+    expect(isThreadRoutePathname("/env-1/thread-1/", ref)).toBe(true);
+    // A pending navigation away from the thread already shows these locations.
+    expect(isThreadRoutePathname("/new", ref)).toBe(false);
+    expect(isThreadRoutePathname("/env-1/thread-2", ref)).toBe(false);
+    expect(isThreadRoutePathname("/env-2/thread-1", ref)).toBe(false);
+    expect(isThreadRoutePathname("/draft/thread-1", ref)).toBe(false);
+    expect(isThreadRoutePathname("/env-1/thread-1/extra", ref)).toBe(false);
   });
 
   it("builds canonical draft route params from a draft id", () => {

@@ -10,7 +10,6 @@ describe("quoteGitPatchPath", () => {
   it("leaves a name a header can carry as itself", () => {
     expect(quoteGitPatchPath("src/app.ts")).toBe("src/app.ts");
     expect(quoteGitPatchPath("with space.txt")).toBe("with space.txt");
-    // Outside ASCII is only quoted for what a terminal can show, and a diff viewer is not one.
     expect(quoteGitPatchPath("café/résumé.ts")).toBe("café/résumé.ts");
     expect(quoteGitPatchPath("🚀.ts")).toBe("🚀.ts");
   });
@@ -35,6 +34,7 @@ describe("a name written into a header and read back out", () => {
     "with space.txt",
     "café/résumé.ts",
     "🚀.ts",
+    "\uFEFFtab\tfile.txt",
     "tab\tfile.txt",
     "line\nfile.txt",
     "carriage\rfile.txt",
@@ -49,7 +49,6 @@ describe("a name written into a header and read back out", () => {
   it.each(names)("is the name that went in: %j", (name) => {
     const written = quoteGitPatchPath(name);
     expect(unquoteGitPatchPath(written)).toBe(name);
-    // A parser that takes the quotes off itself, as the clients' one does, gets there too.
     const unwrapped = written.startsWith('"') ? written.slice(1, -1) : written;
     expect(unquoteGitPatchPath(unwrapped)).toBe(name);
   });
@@ -57,8 +56,6 @@ describe("a name written into a header and read back out", () => {
   it("carries the whole name past the first thing a header stops at", () => {
     const written = quoteGitPatchPath("tab\tfile.txt");
 
-    // The bug this guards: a header line ends at a tab and splits on a space, so the name written
-    // as itself would be read as `tab` and marked viewed under a path no host has.
     expect(written).not.toContain("\t");
     expect(written).not.toContain("\n");
     expect(unquoteGitPatchPath(written)).not.toBe("tab");
@@ -66,6 +63,13 @@ describe("a name written into a header and read back out", () => {
 });
 
 describe("unquoteGitPatchPath", () => {
+  it.each(['"\\357\\273\\277note.txt"', "\\357\\273\\277note.txt"])(
+    "preserves an escaped U+FEFF at the start of a filename: %j",
+    (token) => {
+      expect(unquoteGitPatchPath(token)).toBe("\uFEFFnote.txt");
+    },
+  );
+
   it("leaves a token git saw no need to quote alone", () => {
     expect(unquoteGitPatchPath("src/app.ts")).toBe("src/app.ts");
     expect(unquoteGitPatchPath("with space.txt")).toBe("with space.txt");

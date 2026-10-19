@@ -40,7 +40,6 @@ export function PullRequestStackMenu({
   notice,
   onRetry,
 }: {
-  /** The host's name, which reports what it did with the stack. */
   hostLabel: string;
   notice?: string | null;
   onRetry?: (() => void) | undefined;

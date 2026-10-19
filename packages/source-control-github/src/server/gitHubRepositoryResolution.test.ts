@@ -31,7 +31,6 @@ describe("selectGitHubBaseRepository", () => {
       select({ remotes: fork, resolved: "remote.origin.gh-resolved acme/other" }),
       { owner: "acme", name: "other" },
     );
-    // gh ranks remote names in any case.
     assert.deepStrictEqual(
       select({
         remotes: remotes(

@@ -1,4 +1,5 @@
 import {
+  type ChatAttachment,
   CommandId,
   ModelSelection,
   type OrchestrationV2Command,
@@ -116,8 +117,34 @@ type MessageDispatchMode = Extract<
   { readonly type: "message.dispatch" }
 >["dispatchMode"];
 
-/** Resolve client intent from the state serialized by the thread dispatch lock. */
+export function isNativeMaintenanceCommand(message: {
+  readonly text: string;
+  readonly attachments: ReadonlyArray<ChatAttachment>;
+  readonly context?: import("@t3tools/contracts").OrchestrationMessageContext | undefined;
+}): boolean {
+  return (
+    message.attachments.length === 0 &&
+    ["/compact", "/logout"].includes(message.text.trim().toLowerCase())
+  );
+}
+
 export function resolveMessageDispatchIntent(
+  projection: OrchestrationV2ThreadProjection,
+  requestedMode: MessageDispatchMode,
+  deliveryIntent?: "auto" | "steer" | "restart",
+): MessageDispatchMode {
+  const mode = resolveDeliveryIntent(projection, requestedMode, deliveryIntent);
+  if (mode.type !== "steer_active") return mode;
+  // Compaction and sign-out turns cannot take steering input. A message sent
+  // while one runs waits in the queue like any other follow-up.
+  const target = projection.runs.find((run) => run.id === mode.targetRunId);
+  const targetMessage = projection.messages.find((message) => message.id === target?.userMessageId);
+  return targetMessage !== undefined && isNativeMaintenanceCommand(targetMessage)
+    ? { type: "queue_after_active" }
+    : mode;
+}
+
+function resolveDeliveryIntent(
   projection: OrchestrationV2ThreadProjection,
   requestedMode: MessageDispatchMode,
   deliveryIntent?: "auto" | "steer" | "restart",

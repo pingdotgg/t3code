@@ -429,8 +429,6 @@ import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopSnapShot from "./DesktopSnapShot.ts";
 import * as SnapShotAccessibility from "./SnapShotAccessibility.ts";
 
-// The accessibility reader normally runs in a worker with the real xa11y `App`.
-// Tests hand it this stand-in so the mocks above drive window lookups.
 const accessibilityApp = {
   byPid: accessibilityByPidMock,
   list: accessibilityListMock,
@@ -500,6 +498,7 @@ const layerTest = (
           DesktopEnvironment.DesktopEnvironment,
           DesktopEnvironment.DesktopEnvironment.of({
             platform,
+            displayName: "T3 Code (Dev)",
             stateDir: "/state",
             linuxDesktopEntryName: "com.t3tools.T3Code.desktop",
             appRoot: "/repo",
@@ -870,6 +869,69 @@ it.effect("captures the active Windows window without enumerating desktop source
     }),
   ).pipe(Effect.provide(layer));
 });
+
+it.effect.each(["darwin", "win32"] as const)(
+  "drops shortcut bursts during flight and accepts a fresh capture after landing on %s",
+  (platform) => {
+    const fixture = concurrentCaptureFixture(platform, true);
+    fixture.releaseAll();
+    const flying = Promise.withResolvers<void>();
+    const heldFlights: Array<() => void> = [];
+    const push = heldFlights.push.bind(heldFlights);
+    vi.spyOn(heldFlights, "push").mockImplementation((...resolvers) => {
+      const count = push(...resolvers);
+      flying.resolve();
+      return count;
+    });
+    transitionScriptState.heldFlights = heldFlights;
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const service = yield* DesktopSnapShot.make;
+        yield* service.configure(fixture.settings);
+        yield* Effect.promise(fixture.trigger);
+        const firstId = fixture.readyIds[0]!;
+        const landing = yield* service
+          .setAnimationDestination(firstId, {
+            frame: { x: 100, y: 400, width: 208, height: 112 },
+            backgroundColor: "#fff",
+            borderColor: "#ccc",
+            borderWidth: 1,
+            cornerRadius: 8,
+            scaleFactor: 1,
+          })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.promise(() => flying.promise);
+        const overlayCount = flashWindows.length;
+
+        for (let repeat = 0; repeat < 20; repeat++) {
+          yield* TestClock.adjust("200 millis");
+          yield* Effect.promise(fixture.trigger);
+        }
+        assert.equal(fixture.state.snapshots, 1);
+        assert.lengthOf(fixture.readyIds, 1);
+        assert.lengthOf(flashWindows, overlayCount);
+        assert.isTrue(flashWindows.every((window) => !window.destroyed));
+
+        for (const finish of heldFlights) finish();
+        yield* Fiber.join(landing);
+        // Landing releases the guard even before the first capture is acknowledged.
+        yield* Effect.promise(fixture.trigger);
+        assert.equal(fixture.state.snapshots, 2);
+        assert.lengthOf(fixture.readyIds, 2);
+        assert.isTrue(fixture.second.oldOverlaysCleared);
+      }),
+    ).pipe(
+      Effect.provide(fixture.layer),
+      Effect.ensuring(
+        Effect.sync(() => {
+          for (const finish of heldFlights) finish();
+          transitionScriptState.heldFlights = null;
+          fixture.reset();
+        }),
+      ),
+    );
+  },
+);
 
 it.effect.each([
   { length: 1_000, suffix: "", expectedLength: 1_000 },
@@ -2205,7 +2267,9 @@ it("does not flash a dismissed overlay after its initial compositor receipt arri
       true,
     );
     await readingFrame.promise;
+    assert.isFalse(transition.isAnimating);
     transition.dismiss("capture-1");
+    assert.isFalse(transition.isAnimating);
     frame.resolve();
     await begin;
 
@@ -2294,7 +2358,9 @@ it("does not start a dismissed transition after its compositor receipt arrives",
     });
     const landing = transition.waitForLanding("capture-1");
     await readingFrame.promise;
+    assert.isTrue(transition.isAnimating);
     transition.dismiss("capture-1");
+    assert.isFalse(transition.isAnimating);
     frame.resolve();
     await landing;
 
@@ -2426,6 +2492,7 @@ it("does not let a failed transition fail landing or capture completion", async 
     });
 
     await transition.waitForLanding("capture-1");
+    assert.isFalse(transition.isAnimating);
     await transition.complete("capture-1");
 
     assert.isTrue(flashWindows[0]?.destroyed);
@@ -3895,6 +3962,10 @@ it.effect.each([false, true])(
         if (fails) {
           const error = yield* service.setup("test-mac-capture").pipe(Effect.flip);
           assert.equal(error.reason, "setup-failed");
+          assert.equal(
+            error.message,
+            'Could not capture a test snapshot. Capturing the window failed. macOS grants Screen Recording and Accessibility to each app separately. In System Settings, open Privacy & Security and check that "T3 Code (Dev)" is allowed for both.',
+          );
         } else yield* service.setup("test-mac-capture");
         assert.equal(macCaptureMock.mock.calls.length, 1);
         assert.equal(macCaptureMock.mock.calls[0]?.[0], active);
@@ -3919,12 +3990,88 @@ it.effect.each([false, true])(
   },
 );
 
+const macTestCaptureLayer = layerTest("darwin", {
+  makeTempDirectoryScoped: () => Effect.succeed("/tmp/setup-test"),
+  readDirectory: () => Effect.succeed([]),
+});
+const macTestCaptureWindow = {
+  platform: "macos",
+  id: 42,
+  title: "Setup",
+  owner: { name: "T3 Code", processId: 123, path: "/Applications/T3 Code.app" },
+  bounds: { x: 0, y: 0, width: 800, height: 600 },
+};
+
+it.effect("names the failed macOS window lookup without repeating what it printed", () => {
+  const script = 'ObjC.import("CoreGraphics"); function run() { return ""; }';
+  const stderr = "execution error: Error: Not authorized to send Apple events. (-1743)";
+  activeWindowMock
+    .mockReset()
+    .mockRejectedValue(
+      Object.assign(
+        new Error(`Command failed: /usr/bin/osascript -l JavaScript -e ${script}\n${stderr}`),
+        { cmd: `/usr/bin/osascript -l JavaScript -e ${script}`, code: 1, killed: false },
+      ),
+    );
+  macCaptureMock.mockReset();
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const service = yield* DesktopSnapShot.make;
+      const error = yield* service.setup("test-mac-capture").pipe(Effect.flip);
+      assert.equal(
+        error.message,
+        'Could not capture a test snapshot. Finding the front window failed: osascript exited with code 1. macOS grants Screen Recording and Accessibility to each app separately. In System Settings, open Privacy & Security and check that "T3 Code (Dev)" is allowed for both.',
+      );
+      assert.include(String(error.cause), stderr);
+      assert.equal(macCaptureMock.mock.calls.length, 0);
+    }),
+  ).pipe(Effect.provide(macTestCaptureLayer));
+});
+
+it.effect("says when macOS has no window to test capture", () => {
+  activeWindowMock.mockReset().mockResolvedValue(undefined);
+  macCaptureMock.mockReset();
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const service = yield* DesktopSnapShot.make;
+      const error = yield* service.setup("test-mac-capture").pipe(Effect.flip);
+      assert.equal(
+        error.message,
+        "Could not capture a test snapshot. No window is available to capture.",
+      );
+      assert.equal(macCaptureMock.mock.calls.length, 0);
+    }),
+  ).pipe(Effect.provide(macTestCaptureLayer));
+});
+
+it.effect("says when the macOS test capture command timed out", () => {
+  activeWindowMock.mockReset().mockResolvedValue(macTestCaptureWindow);
+  macCaptureMock.mockReset().mockRejectedValue(
+    Object.assign(new Error("Command failed: /usr/sbin/screencapture -l 42 -o -x"), {
+      code: null,
+      killed: true,
+      signal: "SIGTERM",
+    }),
+  );
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const service = yield* DesktopSnapShot.make;
+      const error = yield* service.setup("test-mac-capture").pipe(Effect.flip);
+      assert.equal(
+        error.message,
+        'Could not capture a test snapshot. Capturing the window timed out. macOS grants Screen Recording and Accessibility to each app separately. In System Settings, open Privacy & Security and check that "T3 Code (Dev)" is allowed for both.',
+      );
+    }),
+  ).pipe(Effect.provide(macTestCaptureLayer));
+});
+
 it.effect("rejects macOS test capture on other platforms", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const service = yield* DesktopSnapShot.make;
       const error = yield* service.setup("test-mac-capture").pipe(Effect.flip);
       assert.equal(error.reason, "unsupported-session");
+      assert.equal(error.message, "Test capture requires macOS.");
     }),
   ).pipe(Effect.provide(layerTest("win32"))),
 );

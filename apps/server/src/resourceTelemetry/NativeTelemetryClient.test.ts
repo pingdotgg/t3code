@@ -1,12 +1,30 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { HostPowerSnapshot } from "@t3tools/contracts";
+import {
+  RESOURCE_MONITOR_PROTOCOL_VERSION,
+  ResourceMonitorCommand,
+  type ResourceMonitorHelloEvent,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import { ChildProcessSpawner } from "effect/process";
 
+import * as ServerConfig from "../config.ts";
+import * as NativeTelemetryClient from "./NativeTelemetryClient.ts";
+import * as ResourceMonitorBinary from "./ResourceMonitorBinary.ts";
 import {
   canCommandNativeTelemetrySidecar,
   canRequestNativeTelemetryRetry,
@@ -40,23 +58,103 @@ describe("resolveNativeSampleIntervalMs", () => {
     expect(resolveNativeSampleIntervalMs({ ...basePower, onBattery: "true" }, 1)).toBe(5_000);
   });
 
-  it("slows background telemetry and serves live diagnostics at 1Hz", () => {
+  it("stops timed sampling without a live subscriber and serves live diagnostics at 1Hz", () => {
     const unknown: HostPowerSnapshot = {
       ...basePower,
       source: "unknown",
       stale: true,
     };
-    expect(resolveNativeSampleIntervalMs(unknown, 0)).toBe(5_000);
+    expect(resolveNativeSampleIntervalMs(unknown, 0)).toBe(0);
     expect(resolveNativeSampleIntervalMs(unknown, 1)).toBe(1_000);
-    expect(
-      resolveNativeSampleIntervalMs(
-        { ...basePower, stale: true, locked: "true", suspended: true },
-        0,
-      ),
-    ).toBe(5_000);
-    expect(resolveNativeSampleIntervalMs(basePower, 0)).toBe(5_000);
+    expect(resolveNativeSampleIntervalMs({ ...basePower, locked: "true" }, 0)).toBe(0);
+    expect(resolveNativeSampleIntervalMs({ ...basePower, onBattery: "true" }, 0)).toBe(0);
+    expect(resolveNativeSampleIntervalMs(basePower, 0)).toBe(0);
     expect(resolveNativeSampleIntervalMs(basePower, 1)).toBe(1_000);
   });
+});
+
+const decodeCommandLine = Schema.decodeUnknownSync(Schema.fromJsonString(ResourceMonitorCommand));
+
+const hello: ResourceMonitorHelloEvent = {
+  version: RESOURCE_MONITOR_PROTOCOL_VERSION,
+  type: "hello",
+  sidecarVersion: "test",
+  sidecarPid: 4242,
+  platform: "linux",
+  arch: "x64",
+  capabilities: {
+    cumulativeCpuTime: true,
+    currentCpuPercent: true,
+    residentMemory: true,
+    virtualMemory: true,
+    ioBytes: true,
+    processStartTime: true,
+    processTree: true,
+  },
+};
+
+describe("NativeTelemetryClient", () => {
+  it.effect("asks the sidecar for timed samples only while a live subscriber exists", () =>
+    Effect.gen(function* () {
+      const commands = yield* Queue.unbounded<ResourceMonitorCommand>();
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(hello.sidecarPid),
+            exitCode: Effect.never,
+            isRunning: Effect.succeed(true),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.forEach((chunk: Uint8Array) =>
+              Effect.forEach(new TextDecoder().decode(chunk).split("\n").filter(Boolean), (line) =>
+                Queue.offer(commands, decodeCommandLine(line)),
+              ),
+            ),
+            stdout: Stream.encodeText(Stream.make(`${JSON.stringify(hello)}\n`)).pipe(
+              Stream.concat(Stream.never),
+            ),
+            stderr: Stream.empty,
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        ),
+      );
+      const client = yield* NativeTelemetryClient.make().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(ResourceMonitorBinary.ResourceMonitorBinary, {
+          resolve: Effect.succeed("/test/t3-resource-monitor"),
+        }),
+      );
+
+      const configure = yield* Queue.take(commands);
+      expect(configure).toMatchObject({ type: "configure", sampleIntervalMs: 0 });
+      expect(yield* Queue.take(commands)).toMatchObject({ type: "setExternalProcesses" });
+
+      const live = yield* Scope.make();
+      yield* client.snapshots.pipe(Stream.runDrain, Effect.forkIn(live));
+      expect(yield* Queue.take(commands)).toMatchObject({
+        type: "setSampleInterval",
+        sampleIntervalMs: 1_000,
+      });
+      expect(yield* Queue.take(commands)).toMatchObject({ type: "setStreaming", enabled: true });
+
+      yield* Scope.close(live, Exit.void);
+      expect(yield* Queue.take(commands)).toMatchObject({
+        type: "setSampleInterval",
+        sampleIntervalMs: 0,
+      });
+      expect(yield* Queue.take(commands)).toMatchObject({ type: "setStreaming", enabled: false });
+      expect((yield* client.health).sampleIntervalMs).toBe(0);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3-native-telemetry-test-" }),
+          NodeCrypto.layer,
+        ).pipe(Layer.provideMerge(NodeServices.layer)),
+      ),
+    ),
+  );
 });
 
 describe("canRequestNativeTelemetryRetry", () => {

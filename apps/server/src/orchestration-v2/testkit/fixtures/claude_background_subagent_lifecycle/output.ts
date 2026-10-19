@@ -22,7 +22,6 @@ import {
 
 const AGENT_A_TASK_ID = "a1a715b7d0bdfefea";
 const AGENT_B_TASK_ID = "af44d5c14aa3ce867";
-// Its snapshots report claude-haiku-4-5-20251001, recorded as the catalog slug.
 const AGENT_A_OBSERVED_MODEL = "claude-haiku-4-5";
 
 function assistantTexts(
@@ -36,7 +35,6 @@ function assistantTexts(
   );
 }
 
-// Messages in display order, as `role:text`.
 function conversation(projection: OrchestrationV2ThreadProjection): ReadonlyArray<string> {
   return projection.turnItems
     .toSorted((left, right) => left.ordinal - right.ordinal)
@@ -84,10 +82,6 @@ function assertRecordedResumeShape(transcript: ProviderReplayTranscript) {
   assert.deepEqual(agentAStarts.slice(1), sendMessageToolUseIds(transcript));
 }
 
-// Two background subagents: Agent A finishes on its own and wakes the root,
-// Agent B is stopped with TaskStop, then Agent A is resumed with SendMessage
-// and wakes the root again. Every wake is its own continuation run, and both
-// subagents keep one child thread for their whole lifecycle.
 export function assertClaudeBackgroundSubagentLifecycleOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
@@ -142,7 +136,6 @@ export function assertClaudeBackgroundSubagentLifecycleOutput(
   );
   assert.equal(agentB?.status, "cancelled");
   assert.equal(agentA?.status, "completed");
-  // Each wake names the subagent that woke the root, and opens its thread.
   const agentWake = (
     name: string,
     outcome: "completed" | "cancelled",
@@ -162,10 +155,8 @@ export function assertClaudeBackgroundSubagentLifecycleOutput(
   ]);
   assert.equal(agentA?.result, "A_SECOND");
   assert.equal(agentA?.model, AGENT_A_OBSERVED_MODEL);
-  // The resume re-attributes Agent A to the run that sent the SendMessage.
   assert.equal(agentA?.runId, projection.runs[4]?.id);
 
-  // Agent A re-opened (completed, then running again) before it completed.
   const agentAStatuses = result.domainEvents.flatMap((event) =>
     event.type === "subagent.updated" && event.payload.nativeTaskRef?.nativeId === AGENT_A_TASK_ID
       ? [event.payload.status]
@@ -176,13 +167,9 @@ export function assertClaudeBackgroundSubagentLifecycleOutput(
   assert.isAbove(agentAStatuses.lastIndexOf("running"), firstCompleted);
   assert.equal(agentAStatuses.at(-1), "completed");
 
-  // One child thread holds both of Agent A's runs, in order: each run's
-  // prompt (the launch task, then the SendMessage text) before its reply.
   const agentAChild =
     agentA?.childThreadId == null ? undefined : result.projections.get(agentA.childThreadId);
   assert.isDefined(agentAChild);
-  // The thread starts on the Agent call's "haiku"; the snapshot's model, which
-  // only arrives with the subagent's first reply, replaces it.
   assert.equal(agentAChild.thread.modelSelection.model, AGENT_A_OBSERVED_MODEL);
   assert.deepEqual(assistantTexts(agentAChild), ["A_FIRST", "A_SECOND"]);
   assert.deepEqual(conversation(agentAChild), [
@@ -192,8 +179,6 @@ export function assertClaudeBackgroundSubagentLifecycleOutput(
     "assistant:A_SECOND",
   ]);
 
-  // The recording's subagent thinking lands in each child thread, before the
-  // reply it led to, and never in the parent.
   const thinkingOf = (child: OrchestrationV2ThreadProjection | undefined) =>
     (child?.turnItems ?? []).flatMap((item) =>
       item.type === "reasoning" && item.title === "Thinking" ? [item] : [],
@@ -227,9 +212,6 @@ export function assertClaudeBackgroundSubagentLifecycleOutput(
     "subagent thinking leaked into the parent thread",
   );
 
-  // A finished subagent's child thread holds only its own settled work.
-  // Claude's task_progress summary ("Running <step>") stays on the parent's
-  // subagent card; in the child it read as a step still running.
   assert.equal(agentB?.progress, "Running Wait 90 seconds then print B_DONE");
   for (const child of [agentAChild, agentBChild]) {
     for (const item of child?.turnItems ?? []) {
@@ -241,7 +223,6 @@ export function assertClaudeBackgroundSubagentLifecycleOutput(
     }
   }
 
-  // Subagents appear in background_tasks_changed but never on the roster.
   assert.isFalse(
     result.domainEvents.some(
       (event) =>

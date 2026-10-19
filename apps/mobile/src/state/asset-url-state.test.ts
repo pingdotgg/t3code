@@ -30,8 +30,6 @@ describe("deriveAssetUrlState", () => {
     }
   });
 
-  // A dead environment fails the URL query itself, so the query outcome alone
-  // cannot tell a missing file from a missing connection.
   it("reports disconnected when the query failed while the environment is down", () => {
     for (const connectionPhase of ["available", "offline", "reconnecting", "error"] as const) {
       expect(deriveAssetUrlState({ connectionPhase, shared: { _tag: "Failure" } })).toEqual({

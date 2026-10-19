@@ -37,7 +37,6 @@ export function useWorkspaceTabs() {
   return use(WorkspaceTabsContext);
 }
 
-/** The tab controller and its list screens share state across native container changes. */
 export function WorkspaceTabsProvider(props: { readonly children: ReactNode }) {
   const [state, dispatch] = useReducer(workspaceTabsReducer, undefined, initialWorkspaceTabsState);
   const activeTab = useRef(state.selectedTab);

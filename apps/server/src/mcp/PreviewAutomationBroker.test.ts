@@ -537,7 +537,6 @@ it.effect.each([
         .invoke<void>({ scope, operation: "open", input: {} })
         .pipe(Effect.flip);
       expect(error._tag).toBe("PreviewAutomationExecutionError");
-      // A desktop or other remote host's text stays out of the agent's context.
       expect(error.message.includes("ERR_CONNECTION_REFUSED")).toBe(shown);
     }),
   ),
@@ -1382,7 +1381,6 @@ it.effect("rejects a routed action when its generation is evicted before deliver
         .pipe(Effect.flip, Effect.forkScoped);
       yield* Deferred.await(received);
 
-      // Suspend only this invocation in the gap between route selection and delivery.
       const tasks: Array<() => void> = [];
       let paused = false;
       const dispatcher: Scheduler.SchedulerDispatcher = {
@@ -1437,7 +1435,6 @@ it.effect("keeps a host whose operation timeout arrives just after the budget", 
         Effect.gen(function* () {
           if (request.operation === "waitFor") {
             yield* Deferred.succeed(received, undefined);
-            // The browser starts its own timer after delivery, so its timeout lands late.
             yield* Effect.sleep(request.timeoutMs + 50);
           }
           yield* broker.respond({
@@ -1472,7 +1469,6 @@ it.effect("keeps the host connected when a background status read times out", ()
     Effect.gen(function* () {
       const broker = yield* makeBroker;
       const requests = requestsFrom(yield* broker.connect(makeHost()));
-      // A busy host answers its actions but not the metadata read behind them.
       yield* Stream.runForEach(requests, (request) =>
         request.operation === "status"
           ? Effect.void
@@ -1501,6 +1497,46 @@ it.effect("keeps the host connected when a background status read times out", ()
       expect(yield* broker.invoke({ scope, operation: "snapshot", input: {} })).toEqual({
         operation: "snapshot",
       });
+    }),
+  ),
+);
+
+it.effect("keeps each thread's current tab when threads share a provider session", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const routed: Array<RoutedRequest> = [];
+      const requests = requestsFrom(yield* broker.connect(makeHost(), { preferred: true }));
+      yield* Stream.runForEach(requests, (request) => {
+        routed.push(request);
+        return broker.respond({
+          clientId: "client-1",
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          ok: true,
+          result: { tabId: request.tabId ?? `tab-${request.threadId}` },
+        });
+      }).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      // Codex runs every thread of an instance in one provider session.
+      const otherThread = {
+        ...scope,
+        thread: { ...scope.thread, threadId: ThreadId.make("thread-2") },
+      };
+
+      yield* broker.invoke({ scope, operation: "open", input: {} });
+      yield* broker.invoke({ scope: otherThread, operation: "snapshot", input: {} });
+      yield* broker.invoke({ scope, operation: "snapshot", input: {} });
+      yield* broker.invoke({ scope: otherThread, operation: "snapshot", input: {} });
+
+      expect(routed.map(({ threadId, tabId }) => [threadId, tabId])).toEqual([
+        ["thread-1", undefined],
+        ["thread-2", undefined],
+        ["thread-1", "tab-thread-1"],
+        ["thread-2", "tab-thread-2"],
+      ]);
+      // Each thread's agent owns its own tabs and tab budget.
+      expect(routed[0]!.agentSessionId).not.toBe(routed[1]!.agentSessionId);
     }),
   ),
 );

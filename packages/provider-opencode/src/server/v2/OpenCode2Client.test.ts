@@ -10,7 +10,6 @@ import * as OpenCode2Client from "./OpenCode2Client.ts";
 
 const INFO_BODY = '{"version":"2.0.18","pid":4242,"urls":[],"paths":{"tmp":"/tmp"}}';
 
-/** Sends one request through the client and returns the Authorization header it carried. */
 const authorizationFor = (password: string | Redacted.Redacted) => {
   const seen: Array<string | undefined> = [];
   const layerCapturing = Layer.succeed(

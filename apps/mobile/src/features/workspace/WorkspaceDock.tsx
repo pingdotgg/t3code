@@ -1,11 +1,11 @@
 import { Keyboard, Pressable, View } from "react-native";
 
-import { SymbolView } from "../../components/AppSymbol";
-import { GlassSurface } from "../../components/GlassSurface";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { GlassSurface } from "../../components/ui/GlassSurface";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { WORKSPACE_DOCK } from "./workspace-tabs-state";
+import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 
-/** Equal-sized glass controls share a baseline without resizing the native tab controller. */
 export function WorkspaceDock(props: { readonly onNewTask: () => void }) {
   const workspace = useWorkspaceTabs()!;
   return (
@@ -41,7 +41,7 @@ export function WorkspaceDock(props: { readonly onNewTask: () => void }) {
                 }
               >
                 <SymbolView
-                  name={tab === "threads" ? "text.bubble" : "arrow.triangle.pull"}
+                  name={tab === "threads" ? "text.bubble" : PullRequestGlyph.pullRequest}
                   size={23}
                   tintColorClassName={selected ? "accent-focus" : "accent-icon"}
                 />

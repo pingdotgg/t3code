@@ -34,10 +34,12 @@ import { RelayManagedEndpointRecoveryRegistrationRequest } from "@t3tools/contra
 import {
   CLOUD_ENDPOINT_CONFIRMED_ORIGIN,
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
+  CLOUD_LINK_REVOKED,
   CLOUD_LINKED_USER_ID,
   decodeConfirmedOrigin,
   decodeRuntimeConfig,
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+  RELAY_ISSUER_SECRET,
   RELAY_URL_SECRET,
 } from "./config.ts";
 import * as CloudLink from "./CloudLink.ts";
@@ -61,15 +63,14 @@ const storeFailure = (tag: "AlreadyExists" | "PermissionDenied") =>
   });
 
 const unusedSecretStoreOperation = () => Effect.die("unused secret-store operation");
-// Linking wakes the awareness relay; these tests do not run it.
+
 const idleAwarenessRelay = AgentAwarenessRelay.AgentAwarenessRelay.of({
   publishThread: () => Effect.void,
   drain: Effect.void,
   requestCatchUp: () => Effect.void,
   start: () => Effect.void,
 });
-// The connect routes register recovery against the listening port; these tests
-// call the service directly.
+
 const idleHttpServer = HttpServer.HttpServer.of({
   address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 3773),
   serve: (() => Effect.void) as HttpServer.HttpServer["Service"]["serve"],
@@ -242,9 +243,6 @@ describe("releaseManagedTunnelOnShutdown", () => {
     readonly respondEffect?: Effect.Effect<Response>;
   }
 
-  // Writes the launcher's durable state file into this test's baseDir with
-  // the launcher's own writer; the release reads it to detect an in-flight
-  // update handoff.
   const writeLauncherState = (update: ServiceUpdateRecord) =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
@@ -259,8 +257,6 @@ describe("releaseManagedTunnelOnShutdown", () => {
       );
     });
 
-  // Writes the marker the desktop app leaves just before it stops its backend
-  // to install an update, and returns when it was written.
   const writeDesktopUpdateRestartMarker = Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -339,8 +335,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
             ),
           ),
         ),
-        // The release consults the launcher state file under the configured
-        // baseDir, so every harness run gets a scoped temp baseDir.
+
         Effect.provide(
           ServerConfigModule.layerTest("/", { prefix: "t3-http-release-test-" }).pipe(
             Layer.provideMerge(NodeServices.layer),
@@ -349,7 +344,6 @@ describe("releaseManagedTunnelOnShutdown", () => {
         Effect.scoped,
       );
 
-  // The persisted state of a CLI-managed link whose tunnel is releasable.
   const managedLinkSecrets = [
     [CLOUD_ENDPOINT_RUNTIME_CONFIG, "runtime-config"],
     [CLOUD_ENDPOINT_CONFIRMED_ORIGIN, "confirmed-origin"],
@@ -364,8 +358,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
 
     return Effect.gen(function* () {
       const link = yield* CloudLink.CloudLink;
-      // Registration started while this marker existed. Unlink removes it
-      // before startup receives the relay's final not_linked response.
+
       values.delete(CLOUD_CLI_DESIRED_LINK_SECRET);
 
       expect(yield* link.reconcileDesiredLinkIfStillDesired("http://127.0.0.1:3773")).toBeNull();
@@ -413,9 +406,6 @@ describe("releaseManagedTunnelOnShutdown", () => {
   });
 
   it.effect("leaves the tunnel of a web/mobile-installed link untouched", () => {
-    // A managed runtime config without a CLI-desired link: the environment was
-    // linked by a web/mobile client, and nothing re-provisions the tunnel on
-    // the next boot, so shutdown must not release it.
     const { store, values } = makeMemorySecretStore([
       [CLOUD_ENDPOINT_RUNTIME_CONFIG, "runtime-config"],
       [RELAY_URL_SECRET, "https://relay.example.test"],
@@ -471,10 +461,6 @@ describe("releaseManagedTunnelOnShutdown", () => {
 
       const released = yield* link.releaseManagedTunnelOnShutdown();
 
-      // The launcher restarts a server immediately, so the tunnel is not
-      // orphaned; keeping it avoids the hostname route re-propagation that
-      // dominates update downtime. The stored config must survive so the
-      // next boot respawns the connector against the same tunnel.
       expect(released).toBe(false);
       expect(applyConfigCalls).toEqual([]);
       expect(requests).toEqual([]);
@@ -495,7 +481,6 @@ describe("releaseManagedTunnelOnShutdown", () => {
       expect(requests).toEqual([]);
       expect(values.has(CLOUD_ENDPOINT_RUNTIME_CONFIG)).toBe(true);
 
-      // The shutdown consumed the marker, so a later quit releases the tunnel.
       expect(yield* link.releaseManagedTunnelOnShutdown()).toBe(true);
       expect(requests).toHaveLength(1);
     }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
@@ -517,9 +502,6 @@ describe("releaseManagedTunnelOnShutdown", () => {
   });
 
   it.effect("still releases a pending update when the launcher is stopping", () => {
-    // `t3 service uninstall` or `systemctl stop` during the pending window:
-    // the launcher writes its stop marker before signalling the child, so no
-    // replacement server is coming and the tunnel must not be kept.
     const { store, values } = makeMemorySecretStore(managedLinkSecrets);
     const applyConfigCalls: Array<unknown> = [];
     const requests: Array<HttpClientRequest.HttpClientRequest> = [];
@@ -580,8 +562,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
       const released = yield* link.releaseManagedTunnelOnShutdown();
 
       expect(released).toBe(true);
-      // The finalizer only drops the config it released; the one written by
-      // the restarted process while the DELETE was in flight stays.
+
       expect(values.get(CLOUD_ENDPOINT_RUNTIME_CONFIG)).toBe(freshConfig);
     }).pipe(
       provideReleaseHarness({
@@ -589,8 +570,6 @@ describe("releaseManagedTunnelOnShutdown", () => {
         applyConfigCalls,
         requests,
         respond: () => {
-          // A restarted process reconciled and stored a fresh connector config
-          // while this shutdown's release request was in flight.
           values.set(CLOUD_ENDPOINT_RUNTIME_CONFIG, freshConfig);
           return Response.json({ ok: true });
         },
@@ -599,9 +578,6 @@ describe("releaseManagedTunnelOnShutdown", () => {
   });
 
   it.effect("keeps the stored connector token when the relay skipped the release", () => {
-    // ok:false means a concurrent provision owns the recorded tunnel, so the
-    // stored runtime config (possibly freshly written by that provision) must
-    // survive.
     const { store, values } = makeMemorySecretStore(managedLinkSecrets);
     const applyConfigCalls: Array<unknown> = [];
     const requests: Array<HttpClientRequest.HttpClientRequest> = [];
@@ -634,8 +610,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
 
       expect(result._tag).toBe("Failure");
       expect(requests).toHaveLength(1);
-      // The tunnel still exists, so the stored token stays valid across the
-      // restart and the next boot can bring the connector back immediately.
+
       expect(values.has(CLOUD_ENDPOINT_RUNTIME_CONFIG)).toBe(true);
     }).pipe(
       provideReleaseHarness({
@@ -691,6 +666,115 @@ describe("releaseManagedTunnelOnShutdown", () => {
         respond: () => Response.json({ status: "ready" }),
       }),
     );
+  });
+
+  it.effect("marks a link the relay rejects as revoked without dropping or replacing it", () => {
+    const { store, values } = makeMemorySecretStore([
+      [
+        CLOUD_ENDPOINT_RUNTIME_CONFIG,
+        '{"providerKind":"cloudflare_tunnel","connectorToken":"existing-token","tunnelId":"existing-tunnel"}',
+      ],
+      [RELAY_URL_SECRET, "https://relay.example.test"],
+      [CLOUD_LINKED_USER_ID, "user-123"],
+      [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "environment-credential"],
+      [CLOUD_CLI_DESIRED_LINK_SECRET, "managed"],
+    ]);
+    const applyConfigCalls: Array<unknown> = [];
+    const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+
+    return Effect.gen(function* () {
+      const link = yield* CloudLink.CloudLink;
+      expect(yield* link.registerManagedTunnelRecovery("http://127.0.0.1:3773")).toEqual({
+        status: "revoked",
+      });
+      expect((yield* link.linkState()).linkRevoked).toBe(true);
+
+      expect(requests).toHaveLength(1);
+      expect(applyConfigCalls).toEqual([]);
+      expect(values.has(RELAY_ENVIRONMENT_CREDENTIAL_SECRET)).toBe(true);
+      expect(values.has(CLOUD_ENDPOINT_RUNTIME_CONFIG)).toBe(true);
+    }).pipe(
+      provideReleaseHarness({
+        store,
+        applyConfigCalls,
+        requests,
+        respond: () =>
+          Response.json(
+            {
+              _tag: "RelayAuthInvalidError",
+              code: "auth_invalid",
+              reason: "not_authorized",
+              traceId: "trace-revoked",
+            },
+            { status: 401 },
+          ),
+      }),
+    );
+  });
+
+  it.effect("does not mark a link that was replaced while its rejection was in flight", () => {
+    const { store, values } = makeMemorySecretStore([
+      [
+        CLOUD_ENDPOINT_RUNTIME_CONFIG,
+        '{"providerKind":"cloudflare_tunnel","connectorToken":"existing-token","tunnelId":"existing-tunnel"}',
+      ],
+      [RELAY_URL_SECRET, "https://relay.example.test"],
+      [CLOUD_LINKED_USER_ID, "user-123"],
+      [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "old-credential"],
+    ]);
+
+    return Effect.gen(function* () {
+      const link = yield* CloudLink.CloudLink;
+      expect(yield* link.registerManagedTunnelRecovery("http://127.0.0.1:3773")).toEqual({
+        status: "superseded",
+      });
+      expect(values.has(CLOUD_LINK_REVOKED)).toBe(false);
+    }).pipe(
+      provideReleaseHarness({
+        store,
+        applyConfigCalls: [],
+        requests: [],
+        respond: () => {
+          values.set(
+            RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+            new TextEncoder().encode("replacement-credential"),
+          );
+          return Response.json(
+            {
+              _tag: "RelayAuthInvalidError",
+              code: "auth_invalid",
+              reason: "not_authorized",
+              traceId: "trace-stale",
+            },
+            { status: 401 },
+          );
+        },
+      }),
+    );
+  });
+
+  it.effect("clears the revoked mark when the environment is linked again", () => {
+    const { store } = makeMemorySecretStore([
+      [RELAY_URL_SECRET, "https://relay.example.test"],
+      [CLOUD_LINKED_USER_ID, "user-123"],
+      [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "revoked-credential"],
+      [CLOUD_LINK_REVOKED, "true"],
+    ]);
+    const cloudMintPublicKey =
+      "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAqZ2u2LjMoAyG2QTHXmITJ9w6RzZtVUAv394XCcPV0zE=\n-----END PUBLIC KEY-----";
+
+    return Effect.gen(function* () {
+      const link = yield* CloudLink.CloudLink;
+      expect((yield* link.linkState()).linkRevoked).toBe(true);
+      yield* link.applyRelayConfig({
+        relayUrl: "https://relay.example.test",
+        cloudUserId: "user-123",
+        environmentCredential: "fresh-credential",
+        cloudMintPublicKey,
+        endpointRuntime: null,
+      });
+      expect(yield* link.linkState()).toMatchObject({ linked: true, linkRevoked: false });
+    }).pipe(provideReleaseHarness({ store, applyConfigCalls: [], requests: [] }));
   });
 
   it.effect("reconciles a changed port after a relay outage outlasts the startup fallback", () => {
@@ -943,7 +1027,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
     }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
   });
 
-  it.effect("recovers a web-linked tunnel with its environment credential", () => {
+  it.effect("recovers a web-linked tunnel and clears its revoked mark", () => {
     const oldConfig =
       '{"providerKind":"cloudflare_tunnel","connectorToken":"old-token","tunnelId":"old-tunnel"}';
     const nextConfig = {
@@ -956,6 +1040,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
       [RELAY_URL_SECRET, "https://relay.example.test"],
       [CLOUD_LINKED_USER_ID, "user-123"],
       [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "environment-credential"],
+      [CLOUD_LINK_REVOKED, "true"],
     ]);
     const applyConfigCalls: Array<unknown> = [];
     const requests: Array<HttpClientRequest.HttpClientRequest> = [];
@@ -973,6 +1058,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
           decodeRuntimeConfig(new TextDecoder().decode(values.get(CLOUD_ENDPOINT_RUNTIME_CONFIG))),
         ),
       ).toEqual(nextConfig);
+      expect(values.has(CLOUD_LINK_REVOKED)).toBe(false);
     }).pipe(
       provideReleaseHarness({
         store,
@@ -987,6 +1073,44 @@ describe("releaseManagedTunnelOnShutdown", () => {
             },
             endpointRuntime: nextConfig,
           }),
+      }),
+    );
+  });
+
+  it.effect("marks the link revoked when the relay rejects a running host's recovery", () => {
+    const { store, values } = makeMemorySecretStore([
+      [
+        CLOUD_ENDPOINT_RUNTIME_CONFIG,
+        '{"providerKind":"cloudflare_tunnel","connectorToken":"old-token","tunnelId":"old-tunnel"}',
+      ],
+      [RELAY_URL_SECRET, "https://relay.example.test"],
+      [CLOUD_LINKED_USER_ID, "user-123"],
+      [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "environment-credential"],
+    ]);
+    const applyConfigCalls: Array<unknown> = [];
+
+    return Effect.gen(function* () {
+      const link = yield* CloudLink.CloudLink;
+      const error = yield* Effect.flip(link.recoverManagedTunnel("http://127.0.0.1:3773"));
+      expect(error).toMatchObject({ _tag: "RelayRequestError", rejection: "unauthorized" });
+      expect((yield* link.linkState()).linkRevoked).toBe(true);
+      expect(applyConfigCalls).toEqual([]);
+      expect(values.has(RELAY_ENVIRONMENT_CREDENTIAL_SECRET)).toBe(true);
+    }).pipe(
+      provideReleaseHarness({
+        store,
+        applyConfigCalls,
+        requests: [],
+        respond: () =>
+          Response.json(
+            {
+              _tag: "RelayAuthInvalidError",
+              code: "auth_invalid",
+              reason: "not_authorized",
+              traceId: "trace-recovery-revoked",
+            },
+            { status: 401 },
+          ),
       }),
     );
   });
@@ -1089,10 +1213,20 @@ describe("releaseManagedTunnelOnShutdown", () => {
   });
 
   it.effect.each([
-    { status: 401, rejection: "unauthorized" },
-    { status: 403, rejection: "forbidden" },
-    { status: 409, rejection: "rejected" },
-  ])("preserves a permanent $status relay recovery failure", ({ status, rejection }) => {
+    { status: 401, body: {}, rejection: "unauthorized" },
+    {
+      status: 401,
+      body: {
+        _tag: "RelayAuthInvalidError",
+        code: "auth_invalid",
+        reason: "invalid_bearer",
+        traceId: "trace-revoked",
+      },
+      rejection: "unauthorized",
+    },
+    { status: 403, body: {}, rejection: "forbidden" },
+    { status: 409, body: {}, rejection: "rejected" },
+  ])("preserves a permanent $status relay recovery failure", ({ status, body, rejection }) => {
     const { store } = makeMemorySecretStore([
       [CLOUD_ENDPOINT_RUNTIME_CONFIG, "old-config"],
       [RELAY_URL_SECRET, "https://relay.example.test"],
@@ -1115,7 +1249,44 @@ describe("releaseManagedTunnelOnShutdown", () => {
         store,
         applyConfigCalls,
         requests,
-        respond: () => Response.json({}, { status }),
+        respond: () => Response.json(body, { status }),
+      }),
+    );
+  });
+
+  // A proof signed with a skewed boot clock is rejected as expired. The next
+  // attempt mints a new proof, so startup reconcile must keep retrying it.
+  it.effect("retries a relay link proof rejected as expired", () => {
+    const { store } = makeMemorySecretStore([
+      [CLOUD_ENDPOINT_RUNTIME_CONFIG, "old-config"],
+      [RELAY_URL_SECRET, "https://relay.example.test"],
+      [CLOUD_LINKED_USER_ID, "user-123"],
+      [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "environment-credential"],
+    ]);
+    const applyConfigCalls: Array<unknown> = [];
+    const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+
+    return Effect.gen(function* () {
+      const link = yield* CloudLink.CloudLink;
+      const error = yield* Effect.flip(link.recoverManagedTunnel("http://127.0.0.1:3773"));
+
+      expect(error).toMatchObject({ _tag: "RelayRequestError", rejection: "unavailable" });
+      expect(error.message).toContain("Trace ID: trace-expired");
+      expect(CloudLink.shouldRetryCloudLink(error)).toBe(true);
+    }).pipe(
+      provideReleaseHarness({
+        store,
+        applyConfigCalls,
+        requests,
+        respond: () =>
+          Response.json(
+            {
+              _tag: "RelayEnvironmentLinkProofExpiredError",
+              code: "environment_link_proof_expired",
+              traceId: "trace-expired",
+            },
+            { status: 401 },
+          ),
       }),
     );
   });
@@ -1157,5 +1328,57 @@ describe("releaseManagedTunnelOnShutdown", () => {
         },
       }),
     );
+  });
+
+  it.effect("does not report a managed tunnel after a relay config write fails part-way", () => {
+    const { store, values } = makeMemorySecretStore([
+      [CLOUD_ENDPOINT_RUNTIME_CONFIG, "managed-config"],
+      [CLOUD_ENDPOINT_CONFIRMED_ORIGIN, "confirmed-origin"],
+      [RELAY_URL_SECRET, "https://relay.example.test"],
+      [CLOUD_LINKED_USER_ID, "user-123"],
+      [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "old-credential"],
+    ]);
+    const failingStore: ServerSecretStore.ServerSecretStore["Service"] = {
+      ...store,
+      set: (name, value) =>
+        name === RELAY_ISSUER_SECRET
+          ? Effect.fail(
+              new ServerSecretStore.SecretStorePersistError({
+                resource: name,
+                cause: PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "rename",
+                  pathOrDescriptor: `${name}.bin`,
+                }),
+              }),
+            )
+          : store.set(name, value),
+    };
+    const applyConfigCalls: Array<unknown> = [];
+    const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+    const cloudMintPublicKey =
+      "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAMY09Vo5CzEA6aEkhB/0h27t4Qs71SHS1fTSI4K0KvZQ=\n-----END PUBLIC KEY-----\n";
+
+    return Effect.gen(function* () {
+      const link = yield* CloudLink.CloudLink;
+      const error = yield* Effect.flip(
+        link.applyRelayConfig({
+          relayUrl: "https://relay.example.test",
+          cloudUserId: "user-123",
+          environmentCredential: "new-credential",
+          cloudMintPublicKey,
+          endpointRuntime: null,
+        }),
+      );
+
+      expect(error._tag).toBe("CloudLinkInternalError");
+      expect(yield* link.linkState()).toMatchObject({
+        linked: true,
+        cloudUserId: "user-123",
+        managedTunnelActive: false,
+      });
+      expect(values.has(CLOUD_ENDPOINT_RUNTIME_CONFIG)).toBe(false);
+    }).pipe(provideReleaseHarness({ store: failingStore, applyConfigCalls, requests }));
   });
 });

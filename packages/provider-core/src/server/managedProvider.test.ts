@@ -96,7 +96,6 @@ const refreshedSnapshotSecond: ServerProvider = {
   message: "Refreshed provider availability again.",
 };
 
-/** A host whose settings never change and whose background demand is fixed. */
 function layerProviderHost(input: {
   readonly runBackgroundWork: boolean;
   readonly settings?: Pick<ProviderHost.ProviderHost["Service"], "settings">["settings"];
@@ -571,12 +570,10 @@ describe("makeManagedServerProvider", () => {
         );
         yield* Effect.yieldNow;
 
-        // Percent-only weekly update: keeps the probe's reset time.
         yield* provider.applyUsageLimits({
           checkedAt: "2026-04-10T00:05:00.000Z",
           windows: [{ id: "seven_day", kind: "weekly", label: "Weekly", usedPercent: 25 }],
         });
-        // No windows: nothing to merge, nothing published.
         yield* provider.applyUsageLimits({ checkedAt: "2026-04-10T00:06:00.000Z", windows: [] });
 
         const [update] = Array.from(yield* Fiber.join(updatesFiber));
@@ -659,7 +656,6 @@ describe("makeManagedServerProvider", () => {
           windows: [liveWindow],
         });
 
-        // Enrichment computed from the pre-update snapshot lands afterwards.
         yield* Deferred.succeed(releaseEnrichment, undefined);
         const enriched = yield* Stream.take(provider.streamChanges, 1).pipe(
           Stream.runCollect,
@@ -668,14 +664,11 @@ describe("makeManagedServerProvider", () => {
         assert.deepStrictEqual(enriched.models, enrichedSnapshot.models);
         assert.deepStrictEqual(enriched.usageLimits?.windows, [liveWindow]);
 
-        // A probe that could not read usage keeps the last good windows.
         const refreshed = yield* provider.refresh;
         assert.strictEqual(refreshed.message, refreshedSnapshotSecond.message);
         assert.deepStrictEqual(refreshed.usageLimits?.windows, [liveWindow]);
-        // ...and the workspace they were read for.
         assert.strictEqual(refreshed.auth.workspaceId, "ws-a");
 
-        // A failed read for another workspace does not inherit those windows.
         const switched = yield* provider.refresh;
         assert.strictEqual(switched.auth.workspaceId, "ws-b");
         assert.strictEqual(switched.usageLimits?.unavailable?.reason, "probeFailed");

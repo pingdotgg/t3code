@@ -51,7 +51,6 @@ const encodeDescriptor = Schema.encodeSync(Schema.fromJsonString(ExecutionEnviro
 
 type Listener = (event: { readonly type: string; readonly data?: unknown }) => void;
 
-/** Answers update RPCs the way a protocol-1 server does. */
 class OutdatedHostSocket {
   static readonly OPEN = 1;
   readyState = 0;
@@ -186,7 +185,6 @@ describe("updateOutdatedHost", () => {
             ),
             Layer.succeed(HttpClient.HttpClient, httpClient),
             Layer.succeed(Socket.WebSocketConstructor, (url) => {
-              // The host relaunches on a compatible protocol once the update lands.
               const socket = new OutdatedHostSocket(url, () => {
                 served = descriptor(ORCHESTRATION_PROTOCOL_VERSION, "0.0.46");
               });
@@ -201,6 +199,84 @@ describe("updateOutdatedHost", () => {
       expect(sockets[0]?.requests.map((request) => request.tag)).toEqual([
         WS_METHODS.serverUpdateServer,
       ]);
+      expect(result.targetVersion).toBe("0.0.46");
+      expect(calls).toEqual(["compatibility:clear", "enabled:true"]);
+    }),
+  );
+
+  it.effect("switches a host that is already compatible back on without opening a socket", () =>
+    Effect.gen(function* () {
+      const calls: Array<string> = [];
+      let opened = false;
+      const prepared = {
+        environmentId: TARGET.environmentId,
+        label: TARGET.label,
+        httpBaseUrl: TARGET.httpBaseUrl,
+        socketUrl: "wss://build.example.test/ws",
+        httpAuthorization: null,
+        target: TARGET,
+      };
+      const result = yield* updateOutdatedHost(
+        TARGET.environmentId,
+        { targetVersion: "0.0.46" },
+        () => Effect.void,
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.succeed(
+              EnvironmentRegistry.EnvironmentRegistry,
+              EnvironmentRegistry.EnvironmentRegistry.of({
+                entries: yield* SubscriptionRef.make<
+                  ReadonlyMap<EnvironmentId, ConnectionCatalogEntry>
+                >(
+                  new Map([
+                    [
+                      TARGET.environmentId,
+                      { target: TARGET, profile: Option.none(), enabled: false },
+                    ],
+                  ]),
+                ),
+                setCompatibility: (_environmentId: EnvironmentId, error: unknown) =>
+                  Effect.sync(() =>
+                    calls.push(`compatibility:${error === null ? "clear" : "block"}`),
+                  ),
+                setEnabled: (_environmentId: EnvironmentId, enabled: boolean) =>
+                  Effect.sync(() => calls.push(`enabled:${enabled}`)),
+              } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]),
+            ),
+            Layer.succeed(
+              ConnectionResolver.ConnectionResolver,
+              ConnectionResolver.ConnectionResolver.of({
+                prepare: () => Effect.die(new Error("unused")),
+                prepareForUpdate: () =>
+                  Effect.succeed({
+                    descriptor: descriptor(ORCHESTRATION_PROTOCOL_VERSION, "0.0.46"),
+                    prepared,
+                  }),
+              }),
+            ),
+            Layer.succeed(
+              RelayEnvironmentDiscovery.RelayEnvironmentDiscovery,
+              RelayEnvironmentDiscovery.RelayEnvironmentDiscovery.of({
+                state: yield* SubscriptionRef.make(
+                  RelayEnvironmentDiscovery.EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE,
+                ),
+                refresh: Effect.void,
+              }),
+            ),
+            Layer.succeed(
+              HttpClient.HttpClient,
+              HttpClient.make(() => Effect.die(new Error("unused"))),
+            ),
+            // A v2 host answers a bare socket with 426, so opening one fails.
+            Layer.succeed(Socket.WebSocketConstructor, () => {
+              opened = true;
+              throw new Error("unused");
+            }),
+          ),
+        ),
+      );
+      expect(opened).toBe(false);
       expect(result.targetVersion).toBe("0.0.46");
       expect(calls).toEqual(["compatibility:clear", "enabled:true"]);
     }),

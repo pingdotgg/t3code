@@ -41,15 +41,10 @@ const layerProjectStore = (importedWorkspaceRoots: ReadonlyArray<string>) =>
       ),
   });
 
-/**
- * Run a scan against the given homes. Homes are temp dirs created inside the
- * test, so the layer is built per run rather than shared.
- */
 interface ScannerTestInput {
   readonly claudeHomePath: string;
   readonly codexHomePath: string;
   readonly importedWorkspaceRoots?: ReadonlyArray<string>;
-  /** Base dir for the test ServerConfig; worktreesDir derives from it. */
   readonly configBaseDir?: string;
   readonly providerInstances?: ContractServerSettings["providerInstances"];
 }
@@ -59,8 +54,6 @@ const layerScannerTest = (input: ScannerTestInput) =>
     Layer.provide(
       Layer.mergeAll(
         ServerSettings.layerTest({
-          // Default slots point at the fixture homes; explicit test instances
-          // replace a slot with the same id.
           providerInstances: {
             [ProviderInstanceId.make("claudeAgent")]: {
               driver: ProviderDriverKind.make("claudeAgent"),
@@ -112,23 +105,19 @@ const makeTempDir = Effect.fn("AgentSessionScanner.test.makeTempDir")(function* 
 const writeTranscript = Effect.fn("AgentSessionScanner.test.writeTranscript")(function* (input: {
   readonly filePath: string;
   readonly contents: string;
-  /** Epoch millis, so ordering assertions never depend on write timing. */
   readonly mtimeMs: number;
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   yield* fileSystem.makeDirectory(path.dirname(input.filePath), { recursive: true });
   yield* fileSystem.writeFileString(input.filePath, input.contents);
-  // Numeric utimes arguments are seconds, not milliseconds.
   const seconds = input.mtimeMs / 1000;
   yield* fileSystem.utimes(input.filePath, seconds, seconds);
 });
 
-/** Claude session line: the first record carries the real `cwd`. */
 const claudeSessionLine = (cwd: string) =>
   `${JSON.stringify({ type: "user", cwd, sessionId: "s1" })}\n${JSON.stringify({ type: "assistant" })}\n`;
 
-/** Codex rollout line: session metadata is nested under `payload`. */
 const codexRolloutLine = (cwd: string) =>
   `${JSON.stringify({ timestamp: "2026-01-01T00:00:00.000Z", type: "session_meta", payload: { id: "r1", cwd } })}\n`;
 
@@ -169,7 +158,6 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         const olderWorkspace = yield* makeTempDir("t3code-workspace-older-");
         const newerWorkspace = yield* makeTempDir("t3code-workspace-newer-");
 
-        // Slugs are intentionally lossy; the scanner must not decode them.
         yield* writeTranscript({
           filePath: path.join(claudeHomePath, "projects", "-slug-older", "a.jsonl"),
           contents: claudeSessionLine(olderWorkspace),
@@ -852,12 +840,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         const fileSystem = yield* FileSystem.FileSystem;
         const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
         const codexHomePath = yield* makeTempDir("t3code-codex-home-");
-        // The exclusions key off the real home directory, so these fixtures
-        // must live there. Each run owns a uniquely named subtree and removes
-        // only that subtree, never the shared Codex or Downloads parents.
         const home = NodeOS.homedir();
-        // Borrow a unique suffix from a scoped temp dir instead of reaching for
-        // Date.now or Math.random, which the Effect lint rejects.
         const runId = path.basename(yield* makeTempDir("t3code-scanner-test-"));
         const scratchRoot = path.join(home, "Documents", "Codex", runId);
         const scratch = path.join(scratchRoot, "2026-09-01", "some-conversation");
@@ -916,7 +899,6 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         );
         yield* fileSystem.makeDirectory(path.join(noRemote, ".git"));
         yield* fileSystem.writeFileString(path.join(noRemote, ".git", "config"), "[core]\n");
-        // Submodules also use a gitdir pointer, but into `modules/`, not `worktrees/`.
         const submoduleGitDir = path.join(repo, ".git", "modules", "vendor");
         yield* fileSystem.makeDirectory(submoduleGitDir, { recursive: true });
         yield* fileSystem.writeFileString(
@@ -963,9 +945,6 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         const configBaseDir = yield* makeTempDir("t3code-scanner-base-");
         const fileSystem = yield* FileSystem.FileSystem;
 
-        // worktreesDir derives as `<baseDir>/worktrees`, and the temp base
-        // dir contains no `.t3` segment — only the config-based prefix match
-        // can exclude this one.
         const worktreeCwd = path.join(configBaseDir, "worktrees", "t3code", "wt-2");
         yield* fileSystem.makeDirectory(worktreeCwd, { recursive: true });
         yield* writeTranscript({
@@ -989,8 +968,6 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         const linkParent = yield* makeTempDir("t3code-scanner-links-");
         const fileSystem = yield* FileSystem.FileSystem;
 
-        // The recorded cwd is a symlink whose own spelling looks harmless;
-        // only its realpath reveals the managed sandbox.
         const worktreeCwd = path.join(configBaseDir, "worktrees", "t3code", "wt-3");
         yield* fileSystem.makeDirectory(worktreeCwd, { recursive: true });
         const symlinkCwd = path.join(linkParent, "innocent-project");
@@ -1014,7 +991,6 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         const codexHomePath = yield* makeTempDir("t3code-codex-home-");
         const workspace = yield* makeTempDir("t3code-workspace-");
 
-        // Claude transcripts often open with records that have no cwd.
         const contents = `{"type":"file-history-snapshot","messageId":"m1"}\n{"type":"queue-operation","operation":"enqueue"}\n${claudeSessionLine(workspace)}`;
         yield* writeTranscript({
           filePath: path.join(claudeHomePath, "projects", "-slug", "a.jsonl"),
@@ -1309,7 +1285,6 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           contents: "not json at all\n",
           mtimeMs: Date.parse("2026-05-01T00:00:00.000Z"),
         });
-        // Valid JSON, but no cwd anywhere in the record.
         yield* writeTranscript({
           filePath: path.join(claudeHomePath, "projects", "-no-cwd", "a.jsonl"),
           contents: `{"type":"summary"}\n`,
@@ -1916,7 +1891,6 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
             .pipe(Stream.runCollect);
           expect(wrongProvider[0]?._tag).toBe("Importable");
 
-          // Keep the old inode allocated while replacing the path with an equal-size file.
           yield* fileSystem.open(filePath);
           yield* fileSystem.remove(filePath);
           yield* writeTranscript({
@@ -3083,7 +3057,7 @@ describe("parseAgentSessionTranscript", () => {
       lastActiveAtMs: Date.parse("2026-08-25T08:00:00.000Z"),
     });
 
-    expect(thread?.title).toBe("<environment_context>");
+    expect(thread?.title).toBe("Initialize Git and add a README.");
     expect(thread?.messages.map((message) => message.text)).toEqual([
       context,
       "Initialize Git and add a README.",
@@ -3110,7 +3084,7 @@ describe("parseAgentSessionTranscript", () => {
       lastActiveAtMs: Date.parse("2026-08-25T08:00:00.000Z"),
     });
 
-    expect(thread?.title).toBe("<environment_context>");
+    expect(thread?.title).toBe("Create a useful project.");
     expect(thread?.messages.map((message) => message.text)).toEqual([prompt]);
   });
 
@@ -3133,7 +3107,32 @@ describe("parseAgentSessionTranscript", () => {
       lastActiveAtMs: Date.parse("2026-08-25T08:00:00.000Z"),
     });
 
-    expect(thread?.title).toBe("## My request for Codex:");
+    expect(thread?.title).toBe("Fix the visible bug");
+    expect(thread?.messages.map((message) => message.text)).toEqual([prompt]);
+  });
+
+  it("titles a Codex event after the request that follows injected setup blocks", () => {
+    const prompt = [
+      "<recommended_plugins>\nGitHub\n</recommended_plugins>",
+      "# AGENTS.md instructions for /tmp/project\n\n<INSTRUCTIONS>\nRules\n</INSTRUCTIONS>",
+      '<in-app-browser-context source="ambient-ui-state">\nTab\n</in-app-browser-context>',
+      "Fix the import titles",
+    ].join("\n");
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [
+        encodeTranscriptRecord({ type: "session_meta", payload: { id: "codex-session" } }),
+        encodeTranscriptRecord({
+          type: "event_msg",
+          payload: { type: "user_message", message: prompt },
+        }),
+      ].join("\n"),
+      source: "codex",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      fallbackSessionId: "fallback",
+      lastActiveAtMs: Date.parse("2026-08-25T08:00:00.000Z"),
+    });
+
+    expect(thread?.title).toBe("Fix the import titles");
     expect(thread?.messages.map((message) => message.text)).toEqual([prompt]);
   });
 

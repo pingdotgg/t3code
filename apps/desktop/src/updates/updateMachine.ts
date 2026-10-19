@@ -211,3 +211,17 @@ export function reduceDesktopUpdateStateOnInstallFailure(
     canRetry: true,
   };
 }
+
+export interface DesktopUpdateInstallRecord {
+  readonly fromVersion: string;
+  readonly targetVersion: string;
+}
+
+export function resolveNotAppliedInstallVersion(
+  record: DesktopUpdateInstallRecord,
+  appVersion: string,
+): string | null {
+  return record.fromVersion === appVersion && record.targetVersion !== appVersion
+    ? record.targetVersion
+    : null;
+}

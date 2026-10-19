@@ -1,5 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - the Windows reveal smoke test drives a real PowerShell through Node process and filesystem APIs.
-import * as NodeChildProcess from "node:child_process";
+// @effect-diagnostics nodeBuiltinImport:off - the Windows launch smoke tests use filesystem notifications to observe real PowerShell launches.
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -32,7 +31,6 @@ const windowsHost = HostProcess.Platform.defaultValue() === "win32";
 interface MockSpawnResult {
   readonly exitCode?: number;
   readonly stdout?: string;
-  /** Never deliver an exit code, like a child wedged on a broken desktop session. */
   readonly stall?: boolean;
 }
 
@@ -124,6 +122,96 @@ it.effect("launches the default browser through the platform command", () => {
   );
 });
 
+it.effect.skipIf(windowsHost)(
+  "launched browsers and editors do not inherit ELECTRON_RUN_AS_NODE",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+      const codePath = path.join(binDir, "code");
+      yield* fileSystem.writeFileString(codePath, "#!/bin/sh\n");
+      yield* fileSystem.chmod(codePath, 0o755);
+
+      const spawned: ChildProcess.StandardCommand[] = [];
+      yield* Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        yield* launcher.launchBrowser("https://example.com");
+        yield* launcher.launchEditor({ editor: "vscode", cwd: "/workspace" });
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            platform: "linux",
+            env: { PATH: binDir, DISPLAY: ":0" },
+            onSpawn: (command) => spawned.push(command),
+          }),
+        ),
+        Effect.provideService(HostProcess.Environment, {
+          PATH: binDir,
+          DISPLAY: ":0",
+          ELECTRON_RUN_AS_NODE: "1",
+        }),
+      );
+
+      assert.deepEqual(
+        spawned.map((command) => ({
+          command: command.command,
+          env: command.options.env,
+          extendEnv: command.options.extendEnv,
+        })),
+        ["xdg-open", "code"].map((command) => ({
+          command,
+          env: { PATH: binDir, DISPLAY: ":0" },
+          extendEnv: false,
+        })),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect.each(["win32", "linux"] as const)(
+  "launches the browser through PowerShell on %s",
+  (platform) => {
+    let spawned: ChildProcess.StandardCommand | undefined;
+    return Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+
+      yield* launcher.launchBrowser("https://example.com/some path");
+
+      assert.ok(spawned);
+      assert.equal(
+        spawned.command,
+        platform === "win32"
+          ? "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+          : "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
+      );
+      assert.deepEqual(spawned.args.slice(0, -1), [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-EncodedCommand",
+      ]);
+      const encodedCommand = spawned.args[spawned.args.length - 1] ?? "";
+      const decodedCommand = Buffer.from(encodedCommand, "base64").toString("utf16le");
+      assert.equal(
+        decodedCommand,
+        "$ProgressPreference = 'SilentlyContinue'; Start 'https://example.com/some path'",
+      );
+      assert.equal(spawned.options.detached, platform !== "win32");
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform,
+          env: { SYSTEMROOT: "C:\\Windows", WSL_DISTRO_NAME: "Ubuntu" },
+          onSpawn: (command) => {
+            spawned = command;
+          },
+        }),
+      ),
+    );
+  },
+);
+
 it.effect("launches an installed editor with platform-safe arguments", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -153,12 +241,17 @@ it.effect("launches an installed editor with platform-safe arguments", () =>
     );
 
     assert.ok(spawned);
-    assert.equal(spawned.command, '^"C:\\Program^ Files\\Microsoft^ VS^ Code\\bin\\code.CMD^"');
-    assert.deepEqual(spawned.args, [
-      '^"--goto^"',
-      '^"C:\\workspace^ with^ spaces\\src\\index.ts:12:4^"',
-    ]);
+    assert.equal(
+      spawned.command,
+      [
+        '^"C:\\Program^ Files\\Microsoft^ VS^ Code\\bin\\code.CMD^"',
+        '^"--goto^"',
+        '^"C:\\workspace^ with^ spaces\\src\\index.ts:12:4^"',
+      ].join(" "),
+    );
+    assert.deepEqual(spawned.args, []);
     assert.equal(spawned.options.shell, true);
+    assert.equal(spawned.options.detached, true);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
@@ -241,13 +334,45 @@ it.effect("launches Cursor in classic IDE mode through the Windows command shim"
     );
 
     assert.ok(spawned);
-    assert.equal(spawned.command, '^"C:\\Program^ Files\\Cursor\\bin\\cursor.CMD^"');
-    assert.deepEqual(spawned.args, [
-      '^"--classic^"',
-      '^"--goto^"',
-      '^"C:\\workspace^ with^ spaces\\src\\index.ts:12:4^"',
-    ]);
+    assert.equal(
+      spawned.command,
+      [
+        '^"C:\\Program^ Files\\Cursor\\bin\\cursor.CMD^"',
+        '^"--classic^"',
+        '^"--goto^"',
+        '^"C:\\workspace^ with^ spaces\\src\\index.ts:12:4^"',
+      ].join(" "),
+    );
+    assert.deepEqual(spawned.args, []);
     assert.equal(spawned.options.shell, true);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("opens a folder in File Explorer with Windows separators", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+    yield* fileSystem.writeFileString(path.join(binDir, "explorer.EXE"), "");
+
+    let spawned: ChildProcess.StandardCommand | undefined;
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      yield* launcher.launchEditor({ editor: "file-manager", cwd: "C:/workspace/project" });
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "win32",
+          env: { PATH: binDir, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+          onSpawn: (command) => {
+            spawned = command;
+          },
+        }),
+      ),
+    );
+
+    assert.ok(spawned);
+    assert.deepEqual(spawned.args, ["C:\\workspace\\project"]);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
@@ -283,6 +408,7 @@ it.effect.skipIf(windowsHost)("reveals a file in Finder with open -R on macOS", 
     assert.ok(spawned);
     assert.equal(spawned.command, "open");
     assert.deepEqual(spawned.args, ["-R", "/workspace/media/linux-mini-v2.mp4"]);
+    assert.equal(spawned.options.detached, true);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
@@ -304,8 +430,6 @@ it.effect("reveals a file in File Explorer through PowerShell on Windows", () =>
       const launcher = yield* ExternalLauncher.ExternalLauncher;
       yield* launcher.launchEditor({
         editor: "file-manager",
-        // Web file links normalize separators even when the server runs on
-        // Windows. Explorer's `/select` switch requires Windows separators.
         cwd: "C:/workspace with spaces/media/author's clip.mp4",
         reveal: true,
       });
@@ -334,72 +458,97 @@ it.effect("reveals a file in File Explorer through PowerShell on Windows", () =>
     ]);
     const encodedCommand = spawned.args[spawned.args.length - 1] ?? "";
     const decodedCommand = Buffer.from(encodedCommand, "base64").toString("utf16le");
-    // explorer.exe expects `/select,"<path>"` with only the path quoted;
-    // PowerShell 5.1's Start-Process passes the argument string verbatim.
     assert.equal(
       decodedCommand,
       "$ProgressPreference = 'SilentlyContinue'; Start-Process 'explorer.exe' -ArgumentList ('/select,\"' + 'C:\\workspace with spaces\\media\\author''s clip.mp4' + '\"')",
     );
     assert.equal(spawned.options.shell, false);
+    assert.equal(spawned.options.detached, false);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-// Real-chain smoke check for the Explorer selection contract: runs the exact
-// PowerShell source the reveal launch encodes, against a stub that records
-// the raw argument tail it receives, and asserts a spaced path arrives as the
-// single `/select,"<path>"` switch. Mock argv assertions cannot prove this —
-// only Windows' own PowerShell -> CreateProcess quoting chain can, so the
-// test runs only where that chain exists.
-// oxlint-disable-next-line t3code/no-global-process-runtime -- the skip decision needs the real host platform, outside any Effect runtime.
-it.skipIf(process.platform !== "win32")(
-  "delivers the raw /select switch for spaced paths through real PowerShell",
-  { timeout: 60_000 },
-  async () => {
-    const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-reveal-smoke-"));
-    try {
-      const recorderPath = NodePath.join(tempDir, "recorder.cmd");
-      const outputPath = NodePath.join(tempDir, "argv.txt");
-      NodeFS.writeFileSync(recorderPath, `@echo off\r\n>"${outputPath}" echo(%*\r\n`);
+for (const kind of ["browser", "reveal"] as const) {
+  it.live.skipIf(!windowsHost)(
+    `completes a ${kind} launch through real PowerShell after the launcher scope closes`,
+    () =>
+      Effect.gen(function* () {
+        const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-reveal-smoke-"));
+        const outputPath = NodePath.join(tempDir, "argv.txt");
+        const watcher = NodeFS.watch(tempDir, { signal: AbortSignal.timeout(20_000) });
+        try {
+          const recorderPath = NodePath.join(tempDir, "recorder.cmd");
+          const stagingPath = NodePath.join(tempDir, "argv.tmp");
+          NodeFS.writeFileSync(
+            recorderPath,
+            `@echo off\r\n>"${stagingPath}" echo(%*\r\nmove /y "${stagingPath}" "${outputPath}" >nul\r\n`,
+          );
+          const recorded = new Promise<string>((resolve, reject) => {
+            watcher.on("change", () => {
+              if (NodeFS.existsSync(outputPath)) {
+                resolve(NodeFS.readFileSync(outputPath, "utf8").trim());
+              }
+            });
+            watcher.on("error", reject);
+            watcher.on("close", () =>
+              reject(new Error("PowerShell did not run the recording stub")),
+            );
+          });
 
-      const target = "C:/workspace with spaces/media/author's clip.mp4";
-      const explorerTarget = target.replaceAll("/", "\\");
-      const source = ExternalLauncher.buildFileExplorerRevealPowerShellSource(
-        recorderPath,
-        explorerTarget,
-      );
-      const powerShellPath = `${process.env.SYSTEMROOT ?? "C:\\Windows"}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
-      NodeChildProcess.execFileSync(
-        powerShellPath,
-        [
-          "-NoProfile",
-          "-NonInteractive",
-          "-ExecutionPolicy",
-          "Bypass",
-          "-EncodedCommand",
-          Buffer.from(source, "utf16le").toString("base64"),
-        ],
-        { timeout: 30_000 },
-      );
-
-      // Start-Process returns before the recorder runs; wait for its output.
-      // The waits run outside the Effect runtime on purpose: the test
-      // exercises the real Windows process chain in real time.
-      // @effect-diagnostics-next-line globalTimers:off
-      const sleep = (millis: number) => new Promise((resolve) => setTimeout(resolve, millis));
-      // @effect-diagnostics-next-line globalDate:off
-      const deadline = Date.now() + 20_000;
-      // @effect-diagnostics-next-line globalDate:off
-      while (!NodeFS.existsSync(outputPath) && Date.now() < deadline) {
-        await sleep(100);
-      }
-      await sleep(200);
-      const recorded = NodeFS.readFileSync(outputPath, "utf8").trim();
-      assert.equal(recorded, `/select,"${explorerTarget}"`);
-    } finally {
-      NodeFS.rmSync(tempDir, { recursive: true, force: true });
-    }
-  },
-);
+          const target = "C:/workspace with spaces/media/author's clip.mp4";
+          yield* Effect.all(
+            [
+              Effect.gen(function* () {
+                const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+                const recordingSpawner = ChildProcessSpawner.make((command) => {
+                  assert.ok(ChildProcess.isStandardCommand(command));
+                  const source = Buffer.from(command.args.at(-1) ?? "", "base64")
+                    .toString("utf16le")
+                    .replace("'explorer.exe'", `'${recorderPath.replaceAll("'", "''")}'`);
+                  return realSpawner.spawn(
+                    ChildProcess.make(
+                      command.command,
+                      [
+                        ...command.args.slice(0, -1),
+                        Buffer.from(source, "utf16le").toString("base64"),
+                      ],
+                      command.options,
+                    ),
+                  );
+                });
+                const launcher = yield* ExternalLauncher.make.pipe(
+                  Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, recordingSpawner),
+                );
+                if (kind === "browser") {
+                  yield* launcher.launchBrowser(recorderPath);
+                } else {
+                  yield* launcher.launchEditor({
+                    editor: "file-manager",
+                    cwd: target,
+                    reveal: true,
+                  });
+                }
+              }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+              Effect.promise(() =>
+                recorded.then((value) => {
+                  assert.equal(
+                    value,
+                    kind === "browser" ? "" : `/select,"${target.replaceAll("/", "\\")}"`,
+                  );
+                }),
+              ),
+            ],
+            { concurrency: "unbounded" },
+          );
+        } finally {
+          watcher.close();
+          // The recording stub's cmd.exe can still hold the directory for a
+          // moment after it publishes its output, which Windows reports as EPERM.
+          NodeFS.rmSync(tempDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+        }
+      }),
+    { timeout: 30_000 },
+  );
+}
 
 it.effect("does not advertise reveal on Windows when PowerShell is missing", () =>
   Effect.gen(function* () {
@@ -427,8 +576,6 @@ it.effect("does not advertise reveal on Windows when PowerShell is missing", () 
       ),
     );
 
-    // Plain "open in file manager" still works through explorer; only the
-    // reveal capability, which launches PowerShell, must stay hidden.
     assert.equal(result.editors.includes("file-manager"), true);
     assert.isUndefined(result.kind);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
@@ -477,9 +624,8 @@ it.effect.skipIf(windowsHost)(
       assert.equal(result.kind, "file-explorer");
       assert.equal(result.editors.includes("file-manager"), true);
       assert.ok(spawned);
-      // The reveal routes through interop PowerShell so Explorer receives its
-      // raw `/select,"<path>"` switch even for spaced paths.
       assert.equal(spawned.command, "powershell.exe");
+      assert.equal(spawned.options.detached, true);
       const encodedCommand = spawned.args[spawned.args.length - 1] ?? "";
       const decodedCommand = Buffer.from(encodedCommand, "base64").toString("utf16le");
       assert.equal(
@@ -524,9 +670,6 @@ it.effect.skipIf(windowsHost)(
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-// When interop PowerShell is missing the capability advertises the Linux
-// "files" kind (or nothing), so the reveal must open the Linux file manager
-// the label promised even though plain open still prefers File Explorer.
 it.effect.skipIf(windowsHost)(
   "reveals through the Linux file manager when WSL lacks interop PowerShell",
   () =>
@@ -579,9 +722,6 @@ it.effect.skipIf(windowsHost)(
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-// Interop can exist without `explorer.exe` on PATH (appendWindowsPath=false)
-// while WSLg still provides a working Linux file manager; the host must keep
-// the Linux open/reveal path instead of losing the editor entirely.
 it.effect.skipIf(windowsHost)(
   "falls back to the Linux file manager when WSL lacks the Explorer bridge",
   () =>
@@ -672,8 +812,6 @@ it.effect.skipIf(windowsHost)(
         ),
       );
 
-      // Explorer's raw switch cannot express a double quote, so the launch
-      // opens the parent directory instead of misparsing a /select argument.
       assert.ok(spawned);
       assert.equal(spawned.command, "explorer.exe");
       assert.deepEqual(spawned.args, ['\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\work "quoted"']);
@@ -779,9 +917,6 @@ it.effect.skipIf(windowsHost)(
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-// `xdg-open` with a display variable but no `inode/directory` handler exits
-// nonzero after the launch has already detached: without this gate the server
-// advertises a reveal that is a silent no-op.
 it.effect.skipIf(windowsHost)(
   "does not advertise a Linux file manager without a directory handler",
   () =>
@@ -845,10 +980,7 @@ it.effect.skipIf(windowsHost)(
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-// The handler probe carries its own timeout because the editor scan's outer
-// timeout in server.getConfig degrades to an EMPTY editor list: a wedged
-// xdg-mime must cost only the file manager, never the other editors. Runs on
-// the live clock so the probe's real timeout fires.
+// Runs on the live clock so the probe's real timeout fires.
 it.live.skipIf(windowsHost)("a stalled handler probe drops only the file manager", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -1033,21 +1165,58 @@ for (const { platform, installPath, editor, args } of [
           ),
         );
         assert.ok(spawned);
+        const shim = executable.endsWith(".cmd");
         assert.equal(
           spawned.command,
-          executable.endsWith(".cmd") ? `^"${executable.replaceAll(" ", "^ ")}^"` : executable,
+          shim ? [`^"${executable.replaceAll(" ", "^ ")}^"`, ...args].join(" ") : executable,
         );
-        assert.deepEqual(spawned.args, args);
-        assert.equal(spawned.options.shell, executable.endsWith(".cmd"));
+        assert.deepEqual(spawned.args, shim ? [] : args);
+        assert.equal(spawned.options.shell, shim);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 }
 
-// JetBrains Toolbox names its bundles after the app and the installed version
-// (`IntelliJ IDEA 2026.1.4.app`), so the darwin branch has to list the
-// Applications directories the way the win32 branch does instead of probing
-// exact `<name>.app` paths. The fixtures only use the mocked platform and a
-// temp directory, so this runs on a Windows host too.
+for (const cwd of ["/workspace with spaces/", "/workspace with spaces/file.ts:12:4"]) {
+  it.effect.skipIf(windowsHost)(
+    `opens ${cwd} with the macOS Zed bundle when another zed is on PATH`,
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-zed-collision-" });
+        const executable = path.join(home, "Applications/Zed.app/Contents/MacOS/cli");
+        const binDir = path.join(home, "zfs/bin");
+        yield* fs.makeDirectory(path.dirname(executable), { recursive: true });
+        yield* fs.makeDirectory(binDir, { recursive: true });
+        for (const command of [executable, path.join(binDir, "zed")]) {
+          yield* fs.writeFileString(command, "#!/bin/sh\n");
+          yield* fs.chmod(command, 0o755);
+        }
+
+        let spawned: ChildProcess.StandardCommand | undefined;
+        yield* Effect.gen(function* () {
+          const launcher = yield* ExternalLauncher.ExternalLauncher;
+          assert.include(yield* launcher.resolveAvailableEditors(), "zed");
+          yield* launcher.launchEditor({ editor: "zed", cwd });
+        }).pipe(
+          Effect.provide(
+            layerTest({
+              platform: "darwin",
+              env: { HOME: home, PATH: binDir },
+              onSpawn: (command) => {
+                spawned = command;
+              },
+            }),
+          ),
+        );
+        assert.ok(spawned);
+        assert.equal(spawned.command, executable);
+        assert.deepEqual(spawned.args, [cwd]);
+        assert.equal(spawned.options.shell, false);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+}
+
 it.effect.each([
   { editor: "webstorm", installPath: "Applications/WebStorm 2026.2.app/Contents/MacOS/webstorm" },
   { editor: "idea", installPath: "Applications/IntelliJ IDEA 2026.1.4.app/Contents/MacOS/idea" },
@@ -1092,8 +1261,6 @@ it.effect.each([
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-// An app whose name merely starts with the same letters is a different IDE, and
-// an exact `<name>.app` bundle keeps resolving the way it did before.
 it.effect("matches macOS bundles on the name boundary only", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -1129,10 +1296,6 @@ it.effect("matches macOS bundles on the name boundary only", () =>
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-// `Visual Studio Code - Insiders.app` starts with the stable VS Code install
-// name, so a plain prefix match let the stable editor resolve to the Insiders
-// bundle. Insiders has to stay reachable under its own name, stable VS Code has
-// to stay unresolved.
 it.effect("keeps the macOS VS Code Insiders bundle out of stable VS Code", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -1173,8 +1336,6 @@ it.effect("keeps the macOS VS Code Insiders bundle out of stable VS Code", () =>
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-// `agy` is the standalone Antigravity CLI, which installs to ~/.local/bin on
-// macOS and Linux and to its own bin folder on Windows. It is not the IDE.
 for (const { platform, installPath, onPath } of [
   { platform: "darwin", installPath: ".local/bin/agy", onPath: true },
   { platform: "linux", installPath: ".local/bin/agy", onPath: false },
@@ -1289,14 +1450,11 @@ it.effect("memoizes editor discovery and refreshes after the cache window", () =
     const statCallsAfterFirstScan = statCalls;
     assert.isAbove(statCallsAfterFirstScan, 0);
 
-    // Past the shared command-resolution cache TTL (30s) but within the
-    // discovery cache window: the memoized set is reused without any scan.
     yield* TestClock.adjust("31 seconds");
     const second = yield* launcher.resolveAvailableEditors();
     assert.deepEqual([...second], [...first]);
     assert.equal(statCalls, statCallsAfterFirstScan);
 
-    // Past the discovery cache window the next call rescans.
     yield* TestClock.adjust("30 seconds");
     yield* launcher.resolveAvailableEditors();
     assert.isAbove(statCalls, statCallsAfterFirstScan);
@@ -1319,9 +1477,6 @@ it.effect("memoizes editor discovery and refreshes after the cache window", () =
   );
 });
 
-// Connects run discovery under a timeout and may disconnect mid-scan. Neither
-// may cancel the scan: on a busy host every connect would time out partway
-// through, cache nothing, and leave every client without editors.
 it.effect("keeps scanning after the caller is interrupted and shares that scan", () => {
   const fileInfo = { type: "File" } as FileSystem.File.Info;
   const release = Deferred.makeUnsafe<void>();
@@ -1330,8 +1485,6 @@ it.effect("keeps scanning after the caller is interrupted and shares that scan",
     Layer.provide(
       Layer.mergeAll(
         FileSystem.layerNoop({
-          // Scans park inside `stat` until released, so the interrupt lands
-          // while discovery is in flight.
           stat: () =>
             Effect.gen(function* () {
               if (!Deferred.isDoneUnsafe(release)) {
@@ -1357,7 +1510,6 @@ it.effect("keeps scanning after the caller is interrupted and shares that scan",
     yield* Effect.yieldNow;
     yield* Fiber.interrupt(interrupted);
 
-    // The next connect joins the running scan instead of starting its own.
     const next = yield* Effect.forkChild(launcher.resolveAvailableEditors());
     yield* Effect.yieldNow;
     assert.equal(parkedStats, 1);
@@ -1435,10 +1587,12 @@ it.effect("starts a Windows command shim for unicode paths with cmd metacharacte
     assert.isTrue(Exit.isSuccess(exit));
     assert.ok(spawned);
     assert.equal(spawned.options.shell, true);
-    assert.deepEqual(spawned.args, [
-      '^"--goto^"',
-      '^"C:\\Users\\jö\\R^&D^ ^(100^%^)\\naïve^ ^^file^!.ts:3:7^"',
-    ]);
+    assert.deepEqual(spawned.args, []);
+    assert.isTrue(
+      spawned.command.endsWith(
+        ' ^"--goto^" ^"C:\\Users\\jö\\R^&D^ ^(100^%^)\\naïve^ ^^file^!.ts:3:7^"',
+      ),
+    );
   }),
 );
 

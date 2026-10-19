@@ -35,8 +35,6 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
 
-// Startup recovery cost for restart continuation. The default case is small
-// enough for CI and asserts correctness; T3_BENCH_RECOVERY=1 adds the matrix.
 // `it.live` keeps a real clock: each reconcile gets a fresh command id, so the
 // second recover cannot hide behind command receipt dedup.
 
@@ -193,8 +191,6 @@ const seedScenario = Effect.fn(function* (scenario: Scenario) {
     for (let ordinal = 1; ordinal <= ITEMS_PER_SETTLED_THREAD; ordinal += 1) {
       yield* commandItem({ threadId, runId, ordinal, status: "completed" });
     }
-    // ~5% of threads carry a queued follow-up; half are already held, and an
-    // earlier recovery already handled those, so only unheld ones are candidates.
     if (index % 20 === 0) {
       const queueHeld = index % 40 === 0;
       yield* run(threadId, 2, "queued", { queueHeld });
@@ -400,7 +396,6 @@ interface Measurement {
   readonly secondRecoverMs: number;
 }
 
-/** A graceful restart: prepare intent, reconcile on shutdown, recover on boot. */
 const measureGraceful = Effect.fn(function* (scenario: Scenario) {
   const [seeded, seedMs] = yield* timed(seedScenario(scenario));
   const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -426,7 +421,6 @@ const measureGraceful = Effect.fn(function* (scenario: Scenario) {
   };
 });
 
-/** A crash: no shutdown hook ran, so boot recovery records the continuations. */
 const measureCrash = Effect.fn(function* (scenario: Scenario) {
   yield* seedScenario(scenario);
   const recovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;

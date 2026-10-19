@@ -18,13 +18,13 @@ import { Linking, Pressable, ScrollView, View } from "react-native";
 import { Defs, Path, Pattern, Rect, Svg } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { SymbolView } from "../../components/AppSymbol";
-import { AppText as Text } from "../../components/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { environmentPresentations } from "../../state/presentation";
 import { ResetCredits } from "./UsageLimitsSection";
-import { useProviderColors } from "./usageProviders";
+import { usageProviderKind, useProviderColors } from "./usageProviders";
 
 const DRIVER_LABEL: Partial<Record<string, string>> = {
   codex: "Codex",
@@ -40,7 +40,6 @@ function accountName(account: LimitAccount) {
   return `${local[0] ?? ""}${domain[0] ?? ""}`.toUpperCase() || "Account";
 }
 
-/** The spent share comes back at reset. SVG keeps the hatching static on both platforms. */
 function AccountSegment({
   remaining,
   color,
@@ -51,23 +50,38 @@ function AccountSegment({
   readonly pending: boolean;
 }) {
   const patternId = useId().replace(/:/g, "");
+  const [size, setSize] = useState({ width: 0, height: 0 });
   return (
-    <Svg width="100%" height="100%" accessible={false}>
-      <Defs>
-        <Pattern id={patternId} width={6} height={6} patternUnits="userSpaceOnUse">
-          <Path d="M-1 1L1 -1M0 6L6 0M5 7L7 5" stroke={color} strokeWidth={1} opacity={0.22} />
-        </Pattern>
-      </Defs>
-      {pending ? (
-        <Rect
-          x={`${remaining}%`}
-          width={`${100 - remaining}%`}
-          height="100%"
-          fill={`url(#${patternId})`}
-        />
+    <View
+      pointerEvents="none"
+      className="absolute inset-0"
+      onLayout={(event) => {
+        const { width, height } = event.nativeEvent.layout;
+        setSize((previous) =>
+          previous.width === width && previous.height === height ? previous : { width, height },
+        );
+      }}
+    >
+      {size.width > 0 && size.height > 0 ? (
+        // Numeric canvas dimensions clear Android SVG geometry cached before a segment resized.
+        <Svg width={size.width} height={size.height} accessible={false}>
+          <Defs>
+            <Pattern id={patternId} width={6} height={6} patternUnits="userSpaceOnUse">
+              <Path d="M-1 1L1 -1M0 6L6 0M5 7L7 5" stroke={color} strokeWidth={1} opacity={0.22} />
+            </Pattern>
+          </Defs>
+          {pending ? (
+            <Rect
+              x={`${remaining}%`}
+              width={`${100 - remaining}%`}
+              height="100%"
+              fill={`url(#${patternId})`}
+            />
+          ) : null}
+          <Rect width={`${remaining}%`} height="100%" fill={color} opacity={0.35} />
+        </Svg>
       ) : null}
-      <Rect width={`${remaining}%`} height="100%" fill={color} opacity={0.35} />
-    </Svg>
+    </View>
   );
 }
 
@@ -223,7 +237,7 @@ export function UsageLimitsSection({
   readonly selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null;
   readonly cursorPrompt?: ReactNode;
 }) {
-  const presentations = useAtomValue(environmentPresentations.presentationsAtom);
+  const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
   const selected =
     selectedEnvironmentIds === null
       ? presentations
@@ -269,13 +283,7 @@ export function UsageLimitsSection({
                   <PoolWindowCard
                     key={`${window.kind}:${window.id}`}
                     pool={window}
-                    color={
-                      pool.driver === "claudeAgent"
-                        ? colors.claude
-                        : pool.driver === "antigravity"
-                          ? colors.antigravity
-                          : colors.codex
-                    }
+                    color={colors[usageProviderKind(pool.driver) ?? "codex"]}
                     now={now}
                     environmentIds={
                       selectedEnvironmentIds === null ? null : [...selectedEnvironmentIds]
@@ -344,10 +352,9 @@ type AccountScreenProps = StaticScreenProps<{
   now: number;
 }>;
 
-/** Resolve the account again so live quota and credit updates reach the open detail screen. */
 export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
   const insets = useSafeAreaInsets();
-  const presentations = useAtomValue(environmentPresentations.presentationsAtom);
+  const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
   const { accountKey, windowId, windowKind, environmentIds, now } = route.params;
   const selectedIds =
     environmentIds === null ? null : new Set(environmentIds.map((id) => EnvironmentId.make(id)));

@@ -15,10 +15,6 @@ import {
 const PROBE_FILE = ".codex-probe-write-action.txt";
 const PROBE_CONTENT = "codex app-server approval fixture";
 
-// The prompt allows a shell command or a file edit, so the approval kind
-// follows whichever tool the provider picked. What matters is the permission:
-// a read-only sandbox with on-request approval must ask exactly once, the
-// accepted request must resolve, and the approved tool must then run.
 export function assertToolCallReadOnlyOnRequestOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
@@ -66,10 +62,6 @@ export function assertToolCallReadOnlyOnRequestOutput(
   }
 }
 
-// T3 advertises no client fs or terminal to Grok, so Grok reads and writes the
-// workspace itself and gates the write with its own permission prompt: T3
-// answers that prompt (the shared assertion pins it as the only request) and
-// never serves a file or terminal request.
 export function assertToolCallReadOnlyOnRequestGrokOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
@@ -86,7 +78,6 @@ export function assertToolCallReadOnlyOnRequestGrokOutput(
   });
   assert.deepEqual(permissionKinds, ["edit"], "Grok must ask T3 before its own write");
 
-  // Grok's edit prompt is the one whose "always" answer lasts only the session.
   const approval = projectionFor(result, transcript.scenario).turnItems.find(
     (item) => item.type === "approval_request",
   );

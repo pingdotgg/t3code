@@ -3,8 +3,6 @@ import * as NodeFS from "node:fs";
 import * as NodeVM from "node:vm";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-// Exercise the shipped patch without loading React Native in the Node runner.
-// Native scroll delivery and animation frames advance independently here.
 function createList(bundle: string) {
   const source = NodeFS.readFileSync(
     new URL(`../apps/mobile/node_modules/@legendapp/list/${bundle}`, import.meta.url),

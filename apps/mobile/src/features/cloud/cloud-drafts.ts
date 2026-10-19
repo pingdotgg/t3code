@@ -26,10 +26,7 @@ export const removeCloudEnvironments = createRuntimeCommand(connectionAtomRuntim
     const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
     const entries = yield* SubscriptionRef.get(registry.entries);
     const environmentIds = new Set(
-      [...entries.values()]
-        // Only environments that sign-out removes entirely lose their drafts.
-        .filter(removedWithRelay)
-        .map((entry) => entry.target.environmentId),
+      [...entries.values()].filter(removedWithRelay).map((entry) => entry.target.environmentId),
     );
     // Credentials are already revoked. A failed backup must leave the local
     // owners intact so a later sign-in can retry without losing their files.

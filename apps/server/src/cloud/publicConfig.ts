@@ -104,11 +104,6 @@ export function makeRelayUrlConfig(fallback = buildTimeRelayUrl) {
 
 export const relayUrlConfig = makeRelayUrlConfig();
 
-/**
- * Hosted app origin used for out-of-band OAuth on headless
- * machines. Overridable so staging/nightly builds can point their CLIs at a
- * matching hosted deployment.
- */
 export const hostedAppUrlConfig = makePublicValueConfig(
   "T3CODE_HOSTED_APP_URL",
   DEFAULT_HOSTED_APP_URL,
@@ -149,13 +144,6 @@ function makePublicValueConfig(name: string, fallback: string) {
   );
 }
 
-/**
- * The CLI never calls Clerk's /oauth/authorize itself: the browser leg goes
- * through the hosted /connect page, which builds the authorize URL after a
- * Clerk session exists (see CliTokenManager.login). The token endpoint and,
- * for headless hosts, the device authorization endpoint are contacted
- * directly.
- */
 export interface CloudCliOAuthConfig {
   readonly tokenEndpoint: string;
   readonly deviceAuthorizationEndpoint: string;

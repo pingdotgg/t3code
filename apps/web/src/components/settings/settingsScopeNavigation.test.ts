@@ -97,7 +97,6 @@ describe("settings scope navigation", () => {
   it("clears a checkout when selecting all environments and all projects", async () => {
     const router = createSettingsRouter();
     await router.navigate({ to: "/settings/general", search: checkoutSearch, hash: "old-setting" });
-    // The scope selects send every axis explicitly so "all" does not read as "unchanged".
     await router.navigate({
       to: "/settings/general",
       search: { project: undefined, machine: undefined, checkout: undefined },

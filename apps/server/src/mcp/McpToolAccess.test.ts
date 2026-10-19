@@ -23,6 +23,17 @@ const supervisedThreadId = ThreadId.make("thread:supervised");
 const planThreadId = ThreadId.make("thread:plan");
 const fullAccessThreadId = ThreadId.make("thread:full-access");
 const endedThreadId = ThreadId.make("thread:ended");
+const backgroundThreadId = ThreadId.make("thread:background");
+const oldProviderThreadId = ThreadId.make("thread:old-provider-background");
+const archivedThreadId = ThreadId.make("thread:archived-background");
+const unknownOwnerThreadId = ThreadId.make("thread:unknown-background-owner");
+
+const backgroundShell = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) => ({
+  ...liveThreadShell(threadId, { activeRunId: null }),
+  pendingBackgroundTasks: [
+    { taskId: "task:background", kind: "subagent" as const, providerInstanceId },
+  ],
+});
 
 const shells = new Map([
   [supervisedThreadId, liveThreadShell(supervisedThreadId, { runtimeMode: "approval-required" })],
@@ -32,6 +43,22 @@ const shells = new Map([
   ],
   [fullAccessThreadId, liveThreadShell(fullAccessThreadId)],
   [endedThreadId, liveThreadShell(endedThreadId, { activeRunId: null })],
+  [backgroundThreadId, backgroundShell(backgroundThreadId, ProviderInstanceId.make("codex"))],
+  [oldProviderThreadId, backgroundShell(oldProviderThreadId, ProviderInstanceId.make("claude"))],
+  [
+    archivedThreadId,
+    {
+      ...backgroundShell(archivedThreadId, ProviderInstanceId.make("codex")),
+      archivedAt: liveThreadShell(archivedThreadId).updatedAt,
+    },
+  ],
+  [
+    unknownOwnerThreadId,
+    {
+      ...liveThreadShell(unknownOwnerThreadId, { activeRunId: null }),
+      pendingBackgroundTasks: [{ taskId: "task:unknown", kind: "subagent" as const }],
+    },
+  ],
 ]);
 
 const threadCaller = (threadId: ThreadId): McpInvocationContext.McpInvocationScope => ({
@@ -71,8 +98,6 @@ const mcpClient = McpSchema.McpServerClient.of({
   getClient: Effect.die("unused"),
 });
 
-// One tool per declaration, each answering with the modes it was handed, so
-// the table below reads what the gate let through.
 const probe = {
   success: Schema.Struct({ ran: Schema.String }),
   failure: OrchestratorMcpFailure,
@@ -122,7 +147,6 @@ const layerProbeHandlers = McpToolAccess.toLayer(ProbeToolkit, probeHandlers);
 
 const unchecked = () => ran;
 
-// What the compiler refuses: each line below must fail to typecheck, and its
 // `@ts-expect-error` fails the build if one ever compiles. Never called.
 export const refusedAtCompileTime = () => {
   McpToolAccess.toLayer(ProbeToolkit, {
@@ -144,7 +168,6 @@ export const refusedAtCompileTime = () => {
   new McpToolAccess.Declaration(unchecked);
   // @ts-expect-error a handlers layer built outside McpToolAccess
   McpToolAccess.HandlersLayer.make(Layer.empty);
-  // The refused layer below types its error and services as unknown, which is fine here.
   // @effect-diagnostics-next-line anyUnknownInErrorContext:off
   McpHttpServer.toolkitRegistration(
     ProbeToolkit,
@@ -168,7 +191,6 @@ const probeServer = (threads: Layer.Layer<ThreadManagement.ThreadManagementServi
     Layer.provideMerge(threads),
   );
 
-/** A probe's answer, or the gate's refusal, as the result's JSON text. */
 const decodeOutcome = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
     Schema.Union([Schema.Struct({ ran: Schema.String }), Schema.Struct({ code: Schema.String })]),
@@ -194,45 +216,53 @@ const supervised = threadCaller(supervisedThreadId);
 const plan = threadCaller(planThreadId);
 const fullAccess = threadCaller(fullAccessThreadId);
 const ended = threadCaller(endedThreadId);
+// Its turn ended, but a background subagent it started still runs.
+const background = threadCaller(backgroundThreadId);
+const oldProviderBackground = threadCaller(oldProviderThreadId);
+const archivedBackground = threadCaller(archivedThreadId);
+const unknownOwnerBackground = threadCaller(unknownOwnerThreadId);
+const mismatchedProvider = {
+  ...background,
+  thread: { ...background.thread!, providerInstanceId: ProviderInstanceId.make("claude") },
+};
 const supervisedClient = clientCaller("approval-required");
 const fullAccessClient = clientCaller("full-access");
 const readOnlyClient = clientCaller("read-only");
-// A live full-access thread whose credential may use its browser but not control threads.
 const previewOnly = { ...fullAccess, capabilities: new Set(["preview"] as const) };
 
 it.effect.each([
-  // Reads are open to every caller, even one whose turn ended.
   ["reads", ended, {}, "ran"],
   ["reads", supervisedClient, {}, "ran"],
   ["reads", readOnlyClient, {}, "ran"],
 
-  // A client approved for read-only access changes nothing.
   ["writes", readOnlyClient, {}, "capability_denied"],
   ["writes_threads", readOnlyClient, { threadId: supervisedThreadId }, "capability_denied"],
   ["starts_threads", readOnlyClient, {}, "capability_denied"],
   ["writes_environment", readOnlyClient, {}, "capability_denied"],
 
-  // What belongs to the calling thread needs one; changing it needs its live turn.
   ["reads_as_caller", ended, {}, "ran"],
   ["reads_as_caller", fullAccessClient, {}, "thread_credential_required"],
   ["acts_as_caller", supervised, {}, "ran"],
   ["acts_as_caller", ended, {}, "parent_not_active"],
+  ["acts_as_caller", background, {}, "ran"],
+  ["acts_as_caller", oldProviderBackground, {}, "parent_not_active"],
+  ["acts_as_caller", mismatchedProvider, {}, "parent_not_active"],
+  ["acts_as_caller", archivedBackground, {}, "parent_not_active"],
+  ["acts_as_caller", unknownOwnerBackground, {}, "parent_not_active"],
   ["acts_as_caller", fullAccessClient, {}, "thread_credential_required"],
 
-  // Any change needs a thread caller's live turn; a client has none to lose.
   ["writes", supervised, {}, "ran"],
   ["writes", ended, {}, "parent_not_active"],
+  ["writes", background, {}, "ran"],
+  ["writes", oldProviderBackground, {}, "parent_not_active"],
   ["writes", supervisedClient, {}, "ran"],
-  // Uploads, scheduled tasks, projects and settings need a credential that controls threads.
   ["writes", previewOnly, {}, "capability_denied"],
   ["writes_environment", previewOnly, {}, "capability_denied"],
 
-  // A tool's own capability stands in for thread control; the rest of a change still applies.
   ["writes_with_capability", previewOnly, {}, "ran"],
   ["writes_with_capability", readOnlyClient, {}, "capability_denied"],
   ["writes_with_capability", ended, {}, "parent_not_active"],
 
-  // Changing a thread: only one that runs within the caller's modes.
   ["writes_threads", supervised, {}, "ran"],
   ["writes_threads", supervised, { threadId: planThreadId }, "ran"],
   [
@@ -251,10 +281,8 @@ it.effect.each([
     { threadId: fullAccessThreadId },
     "runtime_mode_escalation_denied",
   ],
-  // A thread that does not exist is the tool's to report.
   ["writes_threads", supervised, { threadId: "thread:missing" }, "ran"],
 
-  // Starting a thread: the caller's own modes or narrower.
   ["starts_threads", supervised, {}, "approval-required/default"],
   ["starts_threads", supervised, { runtimeMode: "full-access" }, "runtime_mode_escalation_denied"],
   ["starts_threads", plan, {}, "approval-required/plan"],
@@ -265,7 +293,6 @@ it.effect.each([
   ["starts_threads", supervisedClient, { runtimeMode: "auto" }, "runtime_mode_escalation_denied"],
   ["starts_threads", fullAccessClient, { runtimeMode: "full-access" }, "full-access/default"],
 
-  // Projects and environment settings need full access.
   ["writes_environment", fullAccess, {}, "ran"],
   ["writes_environment", supervised, {}, "capability_denied"],
   ["writes_environment", plan, {}, "capability_denied"],
@@ -285,13 +312,11 @@ it.effect.each([
 );
 
 it("refuses a declaration or handlers layer built outside McpToolAccess", () => {
-  // Private constructors only bind the type checker; Reflect.construct reaches them anyway.
   expect(() => Reflect.construct(McpToolAccess.Declaration, [unchecked])).toThrow(TypeError);
   expect(() => Reflect.construct(McpToolAccess.HandlersLayer, [Layer.empty])).toThrow(TypeError);
 });
 
 it("refuses a declaration or handlers layer that only wears another's fields", () => {
-  // The types already refuse these; at runtime the private fields are missing too.
   const copiedDeclaration = Object.assign(
     unchecked,
     McpToolAccess.reads(() => ran),

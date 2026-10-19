@@ -28,13 +28,15 @@ import * as PlatformError from "effect/PlatformError";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as References from "effect/References";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
-import { expect } from "vite-plus/test";
+import { expect, vi } from "vite-plus/test";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
@@ -43,6 +45,11 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TerminalManager from "./Manager.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
+
+vi.mock("effect/SynchronizedRef", async (importOriginal) => {
+  const original = await importOriginal<typeof SynchronizedRef>();
+  return { ...original, make: vi.fn(original.make) };
+});
 
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -61,6 +68,7 @@ class FakePtyProcess implements PtyAdapter.PtyProcess {
   private readonly exitListeners = new Set<(event: PtyAdapter.PtyExitEvent) => void>();
   killed = false;
   exitOnSubscribe: PtyAdapter.PtyExitEvent | undefined;
+  onKill: ((signal?: string) => void) | undefined;
 
   constructor(pid: number) {
     this.pid = pid;
@@ -83,6 +91,7 @@ class FakePtyProcess implements PtyAdapter.PtyProcess {
   kill(signal?: string): void {
     this.killed = true;
     this.killSignals.push(signal);
+    this.onKill?.(signal);
   }
 
   onData(callback: (data: string) => void): () => void {
@@ -104,6 +113,10 @@ class FakePtyProcess implements PtyAdapter.PtyProcess {
     for (const listener of this.dataListeners) {
       listener(data);
     }
+  }
+
+  get exitListenerCount(): number {
+    return this.exitListeners.size;
   }
 
   emitExit(event: PtyAdapter.PtyExitEvent): void {
@@ -318,7 +331,6 @@ const createManager = (
 const layerWithHostPlatform = (platform: NodeJS.Platform) =>
   Layer.succeed(HostProcess.Platform, platform);
 
-// Apply the existing line policy, then find the longest code-point-aligned byte tail.
 function retainedHistory(text: string, maxLines: number, maxBytes = Infinity): string {
   const terminated = text.endsWith("\n");
   const lines = text.split("\n");
@@ -1128,8 +1140,6 @@ it.layer(
   it.effect("derives subprocess activity for every terminal from one shared process snapshot", () =>
     Effect.gen(function* () {
       const runCalls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
-      // FakePtyAdapter assigns pids starting at 9000, so the two terminals
-      // opened below run as pids 9000 and 9001.
       const psStdout = ["  100  9000 vim", "  101   100 git", "  200  9001 /usr/bin/python3"].join(
         "\n",
       );
@@ -1184,8 +1194,6 @@ it.layer(
         "1200 millis",
       );
 
-      // Every spawn is the shared table snapshot — no per-terminal `pgrep`
-      // or per-child `ps -p` invocations.
       expect(runCalls.every((call) => call.args.join(" ") === "-eo pid=,ppid=,comm=")).toBe(true);
     }),
   );
@@ -1237,7 +1245,6 @@ it.layer(
         "1200 millis",
       );
 
-      // A failed snapshot is not authoritative: no terminal flips to idle.
       const activityEvents = (yield* getEvents).filter((event) => event.type === "activity");
       expect(activityEvents.length).toBeGreaterThan(0);
       expect(activityEvents.every((event) => event.hasRunningSubprocess === true)).toBe(true);
@@ -1278,16 +1285,13 @@ it.layer(
 
   it.effect("closes only a thread's idle shells, ignoring a helper forked from the shell", () =>
     Effect.gen(function* () {
-      // FakePtyAdapter assigns pids from 9000 in open order.
       const { manager, ptyAdapter } = yield* createManager(5, {
         processTable: Effect.succeed([
           { pid: 9000, ppid: 1, name: "zsh" },
-          // An async prompt worker: a copy of the shell with no children.
           { pid: 100, ppid: 9000, name: "zsh" },
           { pid: 9001, ppid: 1, name: "zsh" },
           { pid: 200, ppid: 9001, name: "node" },
           { pid: 9002, ppid: 1, name: "zsh" },
-          // A subshell with a child is real work.
           { pid: 300, ppid: 9002, name: "zsh" },
           { pid: 301, ppid: 300, name: "sleep" },
           { pid: 9003, ppid: 1, name: "zsh" },
@@ -1312,7 +1316,6 @@ it.layer(
   it.effect("keeps terminals that get input or output while closeIdle checks them", () =>
     Effect.gen(function* () {
       const ptyAdapter = new FakePtyAdapter();
-      // The typed command's process misses the snapshot, but its input or echo lands.
       let duringCheck: (pid: number) => Effect.Effect<void> = () => Effect.void;
       const { manager, getEvents } = yield* createManager(5, {
         ptyAdapter,
@@ -1376,7 +1379,6 @@ it.layer(
       );
 
       yield* manager.open(openInput());
-      // The fallback data is still applied while the sidecar is down.
       yield* waitFor(
         Effect.map(getEvents, (events) =>
           events.some(
@@ -1393,9 +1395,6 @@ it.layer(
         Effect.sync(() => fallbackCalls.length >= 4),
         "2000 millis",
       );
-      // Four snapshots at the 20 ms base cadence would span ~60 ms. Backoff
-      // (40 + 80 + 160 ms) stretches the same four snapshots past 150 ms, so
-      // a stalled sidecar no longer hot-loops the spawned fallback.
       const spanMs = fallbackCalls[3]! - fallbackCalls[0]!;
       expect(spanMs).toBeGreaterThan(150);
     }),
@@ -1608,16 +1607,11 @@ it.layer(
       if (!process) return;
 
       process.emitData("prompt ");
-      // DECRQM/DECRPM, XTVERSION, and kitty-keyboard CSI query/reply traffic.
       process.emitData("\u001b[?2026$p\u001b[?2026;2$y\u001b[>q\u001b[?u\u001b[?31u");
-      // DECRQSS and XTGETTCAP query/reply traffic in 7-bit DCS form.
       process.emitData("\u001bP$q m\u001b\\\u001bP1$r0m\u001b\\");
       process.emitData("\u001bP+q544e\u001b\\\u001bP1+r544e=1b\u001b\\");
-      // The same DCS traffic in 8-bit form.
       process.emitData("\u0090$q m\u009c\u00901$r0m\u009c");
       process.emitData("\u0090+q544e\u009c\u00901+r544e=1b\u009c");
-      // Setters and cursor movement share final bytes with query families but
-      // have visible terminal-state value and must survive replay.
       process.emitData('\u001b[!p\u001b["p\u001b[4 q\u001b[u');
       process.emitData("done\n");
 
@@ -1808,6 +1802,94 @@ it.layer(
 
       assert.equal(process.killSignals[0], "SIGTERM");
       expect(process.killSignals).toContain("SIGKILL");
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("skips SIGKILL when the process exits during the grace period", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, { processKillGraceMs: 10_000 });
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      const sigterm = yield* Deferred.make<void>();
+      process.onKill = (signal) => {
+        if (signal === "SIGTERM") Deferred.doneUnsafe(sigterm, Effect.void);
+      };
+
+      yield* manager.close({ threadId: "thread-1" });
+      yield* Deferred.await(sigterm);
+      process.emitExit({ exitCode: 0, signal: 15 });
+      yield* TestClock.adjust("10 seconds");
+
+      assert.deepEqual(process.killSignals, ["SIGTERM"]);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("does not retain a kill fiber that finishes before registration", () =>
+    Effect.gen(function* () {
+      let managerState:
+        | SynchronizedRef.SynchronizedRef<{
+            killFibers: Map<PtyAdapter.PtyProcess, Fiber.Fiber<void, never>>;
+          }>
+        | undefined;
+      const originalMake = <A>(value: A) => Effect.sync(() => SynchronizedRef.makeUnsafe(value));
+      const makeSpy = vi.spyOn(SynchronizedRef, "make").mockImplementation((value) =>
+        originalMake(value).pipe(
+          Effect.map((ref) => {
+            if (typeof value === "object" && value !== null && "killFibers" in value) {
+              managerState = ref as typeof managerState;
+            }
+            return ref;
+          }),
+        ),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(() => makeSpy.mockRestore()));
+      for (const budget of [10, 15, 20, 25, 30, 40, 50, 75, 100, 150, 200, 500]) {
+        const { manager, ptyAdapter } = yield* createManager();
+        yield* manager.open(openInput());
+        const process = ptyAdapter.processes[0]!;
+        process.onKill = () => process.emitExit({ exitCode: 0, signal: 15 });
+        // Vary the caller's operation budget to cover child completion before
+        // and after the parent resumes its registration step.
+        yield* manager
+          .close({ threadId: "thread-1" })
+          .pipe(Effect.provideService(References.MaxOpsBeforeYield, budget));
+        yield* Effect.yieldNow;
+        expect(managerState).toBeDefined();
+        yield* Fiber.awaitAll(SynchronizedRef.getUnsafe(managerState!).killFibers.values());
+        expect(SynchronizedRef.getUnsafe(managerState!).killFibers.size, `budget ${budget}`).toBe(
+          0,
+        );
+        expect(process.killSignals).toEqual(["SIGTERM"]);
+      }
+    }),
+  );
+
+  it.effect("releases the exit listener when kill escalation is interrupted", () =>
+    Effect.gen(function* () {
+      const scope = yield* Scope.make("sequential");
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        processKillGraceMs: 10_000,
+      }).pipe(Effect.provideService(Scope.Scope, scope));
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      const sigterm = yield* Deferred.make<void>();
+      process.onKill = (signal) => {
+        if (signal === "SIGTERM") Deferred.doneUnsafe(sigterm, Effect.void);
+      };
+      yield* manager.close({ threadId: "thread-1" });
+      yield* Deferred.await(sigterm);
+      assert.isAbove(process.exitListenerCount, 0);
+
+      yield* Scope.close(scope, Exit.void);
+
+      assert.equal(process.exitListenerCount, 0);
+      assert.deepEqual(process.killSignals, ["SIGTERM"]);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
@@ -2081,8 +2163,6 @@ it.layer(
       expect(spawnInput.env.PORT).toBeUndefined();
       expect(spawnInput.env.T3CODE_PORT).toBeUndefined();
       expect(spawnInput.env.VITE_DEV_SERVER_URL).toBeUndefined();
-      // Arbitrary host env vars must pass through — terminals inherit the
-      // user's environment apart from the explicit blocklist.
       expect(spawnInput.env.TEST_TERMINAL_KEEP).toBe("keep-me");
     }),
   );
@@ -2128,23 +2208,14 @@ it.layer(
       expect(spawnInput).toBeDefined();
       if (!spawnInput) return;
 
-      // AppImage runtime markers must never reach the PTY — tools inside the
-      // terminal otherwise resolve against the AppImage mount (e.g. PHP_BINARY
-      // reporting the AppImage path instead of the real binary).
       expect(spawnInput.env.APPIMAGE).toBeUndefined();
       expect(spawnInput.env.APPDIR).toBeUndefined();
       expect(spawnInput.env.ARGV0).toBeUndefined();
       expect(spawnInput.env.OWD).toBeUndefined();
-      // PATH/LD_LIBRARY_PATH keep the user's real entries but drop the AppImage
-      // mount segments that the runtime prepended.
       expect(spawnInput.env.PATH).toBe("/usr/local/bin:/usr/bin:/bin");
       expect(spawnInput.env.LD_LIBRARY_PATH).toBe("/home/user/.local/lib");
-      // XDG_DATA_DIRS keeps the host entries but drops the AppImage share dir.
       expect(spawnInput.env.XDG_DATA_DIRS).toBe("/usr/local/share:/usr/share");
-      // GSETTINGS_SCHEMA_DIR pointed only at the mount, so it is removed and
-      // gsettings falls back to the host schema location.
       expect(spawnInput.env.GSETTINGS_SCHEMA_DIR).toBeUndefined();
-      // Unrelated host vars still pass through untouched.
       expect(spawnInput.env.TEST_TERMINAL_KEEP).toBe("keep-me");
     }),
   );
@@ -2155,8 +2226,6 @@ it.layer(
         env: {
           PATH: "/usr/local/bin:/usr/bin:/bin",
           LD_LIBRARY_PATH: "/home/user/.local/lib",
-          // Without APPIMAGE/APPDIR set, OWD is an ordinary variable and must
-          // not be stripped — only an AppImage launch gives it special meaning.
           OWD: "/home/user/keep-this",
         },
       });

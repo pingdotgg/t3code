@@ -1,9 +1,10 @@
 import {
   type DesktopPendingSnapShot,
+  type DesktopSnapShotEvent,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { useCallback, useEffect, useRef } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import {
   type DraftId,
@@ -11,6 +12,7 @@ import {
   useComposerDraftStore,
 } from "../../composerDraftStore";
 import { useHandleNewThread } from "../../hooks/useHandleNewThread";
+import { useStableCallback } from "../../hooks/useStableCallback";
 import { useClientSettings } from "../../hooks/useSettings";
 import { readThreadShell } from "../../state/entities";
 import { compressImageToByteLimit, dataUrlToFile } from "../../lib/imageCompression";
@@ -35,6 +37,11 @@ import { readFileAsDataUrl } from "../ChatView.logic";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 
 type CaptureTarget = DraftId | ScopedThreadRef;
+
+function isSameCaptureTarget(a: CaptureTarget, b: CaptureTarget): boolean {
+  if (typeof a === "string" || typeof b === "string") return a === b;
+  return a.environmentId === b.environmentId && a.threadId === b.threadId;
+}
 
 export function resolveExistingSnapShotTarget(
   target: CaptureTarget,
@@ -103,7 +110,6 @@ export function resolveSnapShotTargetOnce(
   return resolution;
 }
 
-// A capture keeps its destination even after its animation unmounts or the window blurs.
 export function resolveSnapShotDeliveryTarget(
   targets: Map<string, Promise<CaptureTarget | null>>,
   id: string,
@@ -208,25 +214,48 @@ export function SnapShotCoordinator() {
   );
   const animateCaptures = useClientSettings((settings) => settings.snapShotAnimations);
   const captureTargetsRef = useRef(new Map<string, Promise<CaptureTarget | null>>());
-  const lastTargetRef = useRef<CaptureTarget | null>(null);
   const targetResolutionRef = useRef<Promise<CaptureTarget | null> | null>(null);
   const drainingRef = useRef<Promise<void> | null>(null);
   const rerunRequestedRef = useRef(false);
   const soundedCaptureIdsRef = useRef(new Set<string>());
   const pendingAnimationStartsRef = useRef(new Set<string>());
 
+  // Captures go to the last thread or draft on screen, even from routes that show neither.
   const currentTarget = routeThreadRef ?? routeDraftId;
-  if (currentTarget) lastTargetRef.current = currentTarget;
+  const [lastRouteTarget, setLastRouteTarget] = useState(currentTarget);
+  if (
+    currentTarget &&
+    (lastRouteTarget === null || !isSameCaptureTarget(currentTarget, lastRouteTarget))
+  ) {
+    setLastRouteTarget(currentTarget);
+  }
+  // What a resolution settled on (a promoted draft, a new draft, or nothing) stands in for the
+  // route's target until the route moves on, so captures in one drain share one new draft.
+  const settledTargetRef = useRef<{
+    readonly routeTarget: CaptureTarget | null;
+    readonly target: CaptureTarget | null;
+  } | null>(null);
+  const readLastRouteTarget = useStableCallback(() => lastRouteTarget);
+  // A resolution records what it settled on against the route it started from, so a
+  // route change while it is pending cannot hand that draft to the new route.
+  const readSettledTarget = (routeTarget: CaptureTarget | null) => {
+    const settled = settledTargetRef.current;
+    return settled && settled.routeTarget === routeTarget ? settled.target : routeTarget;
+  };
+  const settleTarget = (routeTarget: CaptureTarget | null, target: CaptureTarget | null) => {
+    settledTargetRef.current = { routeTarget, target };
+  };
 
-  const resolveTarget = useCallback(async (): Promise<CaptureTarget | null> => {
-    const lastTarget = lastTargetRef.current;
+  const resolveTarget = async (): Promise<CaptureTarget | null> => {
+    const routeTarget = readLastRouteTarget();
+    const lastTarget = readSettledTarget(routeTarget);
     if (lastTarget) {
       const existingTarget = resolveExistingSnapShotTarget(lastTarget, routeThreadRef);
       if (existingTarget) {
-        lastTargetRef.current = existingTarget;
+        settleTarget(routeTarget, existingTarget);
         return existingTarget;
       }
-      lastTargetRef.current = null;
+      settleTarget(routeTarget, null);
     }
     const projectRef = resolveThreadActionProjectRef({
       activeDraftThread,
@@ -237,27 +266,21 @@ export function SnapShotCoordinator() {
     if (!projectRef) return null;
     const created = await handleNewThread(projectRef);
     if (!created) return null;
-    lastTargetRef.current = created.draftId;
+    settleTarget(routeTarget, created.draftId);
     return created.draftId;
-  }, [activeDraftThread, activeThread, defaultProjectRef, handleNewThread, routeThreadRef]);
+  };
 
-  const resolveCaptureTarget = useCallback(
-    () => resolveSnapShotTargetOnce(targetResolutionRef, resolveTarget),
-    [resolveTarget],
-  );
+  const resolveCaptureTarget = () => resolveSnapShotTargetOnce(targetResolutionRef, resolveTarget);
 
-  const playCaptureSound = useCallback(
-    (id: string) => {
-      if (!captureSound || soundedCaptureIdsRef.current.has(id)) return;
-      soundedCaptureIdsRef.current.add(id);
-      try {
-        playSnapShotSound(captureSound);
-      } catch {}
-    },
-    [captureSound],
-  );
+  const playCaptureSound = (id: string) => {
+    if (!captureSound || soundedCaptureIdsRef.current.has(id)) return;
+    soundedCaptureIdsRef.current.add(id);
+    try {
+      playSnapShotSound(captureSound);
+    } catch {}
+  };
 
-  const drain = useCallback(async () => {
+  const drain = async () => {
     const bridge = getDesktopSnapShotBridge();
     if (!bridge) return;
     if (drainingRef.current) {
@@ -327,19 +350,18 @@ export function SnapShotCoordinator() {
       });
     drainingRef.current = operation;
     return operation;
-  }, [playCaptureSound, resolveCaptureTarget, routeThreadRef]);
+  };
 
-  useEffect(() => {
-    const bridge = getDesktopSnapShotBridge();
-    if (!bridge) return;
-    void drain();
-    const unsubscribe = bridge.onSnapShotEvent((event) => {
+  // Subscriptions read the latest handlers through effect events, so they attach once
+  // instead of restarting (and re-draining) whenever a handler's inputs change.
+  const drainPending = useEffectEvent(() => drain());
+  const handleSnapShotEvent = useEffectEvent(
+    (bridge: DesktopSnapShotBridge, event: DesktopSnapShotEvent) => {
       switch (event.type) {
         case "requested": {
-          const current = lastTargetRef.current;
+          const current = readSettledTarget(readLastRouteTarget());
           const target = current ? resolveExistingSnapShotTarget(current, routeThreadRef) : null;
           // Creating a new draft would navigate the renderer before a self-capture finishes.
-          // Pin existing drafts now; create a destination after acquisition when none exists.
           if (target) {
             void resolveSnapShotDeliveryTarget(captureTargetsRef.current, event.id, () =>
               Promise.resolve(target),
@@ -386,19 +408,24 @@ export function SnapShotCoordinator() {
         case "shortcut-changed":
           return;
       }
-    });
-    return unsubscribe;
-  }, [animateCaptures, drain, playCaptureSound, resolveCaptureTarget, routeThreadRef]);
+    },
+  );
+  useEffect(() => {
+    const bridge = getDesktopSnapShotBridge();
+    if (!bridge) return;
+    void drainPending();
+    return bridge.onSnapShotEvent((event) => handleSnapShotEvent(bridge, event));
+  }, []);
 
   useEffect(() => {
     const dismissOnBlur = () => {
       pendingAnimationStartsRef.current.clear();
       dismissAllSnapShotAnimations();
     };
-    const drainOnFocus = () => void drain();
+    const drainOnFocus = () => void drainPending();
     const handleVisibilityChange = () => {
       if (document.visibilityState === "hidden") dismissOnBlur();
-      else void drain();
+      else void drainPending();
     };
     window.addEventListener("blur", dismissOnBlur);
     window.addEventListener("focus", drainOnFocus);
@@ -408,7 +435,7 @@ export function SnapShotCoordinator() {
       window.removeEventListener("focus", drainOnFocus);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [drain]);
+  }, []);
 
   return null;
 }

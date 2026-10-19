@@ -14,10 +14,6 @@ export function assertClaudeIdleResumeOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
 ) {
-  // The transcript itself enforces the regression: query.open:2 expects a
-  // `resume`-style open. A create-style reopen (the bug) fails the replay at
-  // the boundary before these assertions run. Both runs must complete — the
-  // pre-fix behavior burned the first post-idle message as a failed run.
   assertBaseProjection({
     result,
     transcript,

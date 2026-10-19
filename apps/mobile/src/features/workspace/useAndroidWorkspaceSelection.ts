@@ -1,8 +1,8 @@
-import { CommonActions, useNavigation } from "@react-navigation/native";
+import { useNavigation } from "@react-navigation/native";
 import { useCallback } from "react";
 import { Keyboard } from "react-native";
 import {
-  androidWorkspaceNavigationState,
+  resetAndroidWorkspace,
   type AndroidWorkspaceDestination,
 } from "../../lib/android-workspace-navigation";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
@@ -20,9 +20,7 @@ export function useAndroidWorkspaceSelection() {
         type: "select",
         tab: destination.name === "Thread" ? "threads" : "pullRequests",
       });
-      navigation.dispatch((state) =>
-        CommonActions.reset(androidWorkspaceNavigationState(state, destination, reviewers)),
-      );
+      resetAndroidWorkspace(navigation, destination, reviewers);
     },
     [navigation, dispatch],
   );

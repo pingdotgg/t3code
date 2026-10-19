@@ -21,7 +21,6 @@ export function ComposerServerUpdateIcon({
   return <DownloadIcon aria-hidden />;
 }
 
-/** One text line, clipped at the end so the error detail never squeezes its title. */
 export function ComposerServerUpdateStatus({
   state,
   serverLabel = "server",

@@ -37,7 +37,6 @@ export function installRecordingCursor(
   agentCursor.setAttribute("data-t3code-recording-agent-cursor", "");
   agentCursor.style.cssText =
     "position:fixed;left:0;top:0;width:20px;height:20px;pointer-events:none;z-index:2147483647;display:none;filter:drop-shadow(0 1px 2px #0003);transition:transform 150ms ease-out,opacity 150ms ease-out;";
-  // Match the MousePointer2 icon used by the live AgentBrowserCursor.
   agentCursor.innerHTML =
     '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="var(--recording-cursor-background,white)" stroke="var(--recording-cursor-primary,#2563eb)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transform:translate(-2px,-2px)"><path d="M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z"/></svg>';
   document.documentElement.append(style, cursor, agentCursor);

@@ -35,7 +35,22 @@ export function combinePullRequestDiffPages(
   const parsed = pages.map((page) => {
     const cached = cache.get(page.result);
     if (cached) return cached;
-    const value = buildReviewParsedDiff(page.result.patch, `${scope}:${page.cursor ?? "first"}`);
+    let value = buildReviewParsedDiff(page.result.patch, `${scope}:${page.cursor ?? "first"}`);
+    if (value.kind === "files" && page.result.omittedFileStats?.length) {
+      const omittedFileStats = new Map(
+        page.result.omittedFileStats.map((stat) => [stat.path, stat]),
+      );
+      const files = value.files.map((file) => {
+        const stat = omittedFileStats.get(file.path);
+        return stat ? { ...file, additions: stat.additions, deletions: stat.deletions } : file;
+      });
+      value = {
+        ...value,
+        files,
+        additions: files.reduce((total, file) => total + file.additions, 0),
+        deletions: files.reduce((total, file) => total + file.deletions, 0),
+      };
+    }
     cache.set(page.result, value);
     return value;
   });

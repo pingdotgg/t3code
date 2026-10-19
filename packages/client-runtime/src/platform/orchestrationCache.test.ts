@@ -161,7 +161,6 @@ describe("orchestration cache envelopes", () => {
   );
 
   it("rejects thread snapshots saved before queued-run items were kept, but not shells", () => {
-    // Version 3 thread windows may have dropped a queued run's items (#16987).
     const staleThread = encodeStoredThreadSnapshotJson({
       schemaVersion: ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
       environmentId,

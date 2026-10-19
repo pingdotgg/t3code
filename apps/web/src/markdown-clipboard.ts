@@ -1,11 +1,3 @@
-/**
- * Converts a DOM selection inside rendered chat markdown back into markdown
- * source so highlight-and-copy keeps formatting (links, emphasis, lists,
- * fences, tables) instead of flattening to plain text. The `text/plain`
- * clipboard flavor carries the markdown; `text/html` carries a sanitized
- * copy of the rendered fragment for rich-paste targets.
- */
-
 const SKIPPED_TAGS = new Set(["BUTTON", "INPUT", "SCRIPT", "STYLE", "TEMPLATE"]);
 const SKIPPED_CLASS_NAMES = ["select-none", "sr-only"];
 const SANITIZED_HTML_SELECTOR = [
@@ -29,7 +21,6 @@ function isSkippedElement(element: Element): boolean {
   return SKIPPED_CLASS_NAMES.some((className) => element.classList.contains(className));
 }
 
-/** Hoists surrounding whitespace outside the markers: "` bold `" → " **bold** ". */
 function wrapInlineMarker(content: string, marker: string): string {
   const match = /^(\s*)([\s\S]*?)(\s*)$/.exec(content);
   const core = match?.[2] ?? "";
@@ -38,10 +29,8 @@ function wrapInlineMarker(content: string, marker: string): string {
 }
 
 /**
- * A code element whose pre wrapper fell outside the copied range is still
- * block code, recognizable by its highlighter line spans or embedded
- * newlines. Wrapping it like inline code produces backtick-surrounded
- * shell commands on paste.
+ * A code element whose pre wrapper fell outside the copied range is still block
+ * code, recognizable by its highlighter line spans or embedded newlines.
  */
 function isBlockCodeElement(element: Element, content: string): boolean {
   if (content.includes("\n")) return true;
@@ -123,15 +112,17 @@ function serializeListItem(item: Element, ordered: boolean, index: number): stri
     ':scope > input[type="checkbox"], :scope > p > input[type="checkbox"]',
   );
   const task = checkbox ? `[${(checkbox as HTMLInputElement).checked ? "x" : " "}] ` : "";
-  const marker = ordered ? `${index}. ${task}` : `- ${task}`;
+  const bullet = ordered ? `${index}. ` : "- ";
+  const marker = `${bullet}${task}`;
   let content = serializeChildren(item)
     .replace(/\n{3,}/g, "\n\n")
     .trim();
-  // Tight list items (no paragraph children) keep nested lists on adjacent lines.
   if (!item.querySelector(":scope > p")) {
     content = content.replace(/\n{2,}/g, "\n");
   }
-  const continuationIndent = " ".repeat(marker.length);
+  // Nested content lines up with the item text, which starts after the bullet;
+  // a task box is part of that text, not of the list marker.
+  const continuationIndent = " ".repeat(bullet.length);
   const [first = "", ...rest] = content.split("\n");
   return [
     `${marker}${first}`,
@@ -191,8 +182,6 @@ function serializeChildren(node: Node): string {
 function serializeNode(node: Node): string {
   if (node.nodeType === Node.TEXT_NODE) {
     const text = node.textContent ?? "";
-    // Inter-block formatting whitespace from the renderer collapses to a
-    // newline; real inline whitespace passes through untouched.
     if (text.includes("\n") && text.trim().length === 0) return "\n";
     return text;
   }
@@ -258,10 +247,6 @@ function serializeNode(node: Node): string {
   }
 }
 
-/**
- * Tracks whether a fragment carries exactly one code block and nothing else a
- * reader would see.
- */
 interface SoleCodeBlockScan {
   pre: Element | null;
   other: boolean;
@@ -299,10 +284,6 @@ function scanForSoleCodeBlock(node: Node, scan: SoleCodeBlockScan): void {
       continue;
     }
     if (element.tagName === "LI") {
-      // serializeListItem emits a marker ("- ", "1. ", "[x] ") for every item,
-      // so an item that does not hold the block carries content of its own even
-      // when it renders no text. An item that wraps the block is just the
-      // structure around it, and a pre-only selection would drop the marker too.
       const preBeforeItem = scan.pre;
       scanForSoleCodeBlock(element, scan);
       if (!scan.other && scan.pre === preBeforeItem) scan.other = true;
@@ -315,9 +296,7 @@ function scanForSoleCodeBlock(node: Node, scan: SoleCodeBlockScan): void {
 /**
  * A drag that ends on a block's final newline pulls the closing `pre` into the
  * range, so the fragment holds the whole block even though the user only
- * highlighted code. Re-fencing that pastes stray backticks, so a fragment whose
- * only visible content is one code block copies as plain code, matching a
- * selection that never left the `pre`.
+ * highlighted code.
  */
 function soleCodeBlock(container: Node): Element | null {
   const scan: SoleCodeBlockScan = { pre: null, other: false };
@@ -325,7 +304,6 @@ function soleCodeBlock(container: Node): Element | null {
   return scan.other ? null : scan.pre;
 }
 
-/** Collapses serializer spacing artifacts without touching fenced code content. */
 function tidyMarkdown(markdown: string): string {
   return markdown
     .split(/(```[\s\S]*?(?:```|$))/)

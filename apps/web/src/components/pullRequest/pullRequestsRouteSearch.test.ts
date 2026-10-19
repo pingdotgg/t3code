@@ -8,7 +8,6 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { Route as PullRequestsRoute } from "../../routes/_chat.pull-requests";
 
-/** Matches a URL in a router shaped like the app's: a layout without its own search rules. */
 function matchedSearch(url: string) {
   const root = createRootRoute();
   const chat = createRoute({ getParentRoute: () => root, id: "_chat" });

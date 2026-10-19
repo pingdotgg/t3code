@@ -18,11 +18,6 @@ vi.mock("~/lib/syntaxHighlighting", () => ({ getSyntaxHighlighterPromise: vi.fn(
 
 const THEME = "github-dark" as DiffThemeName;
 
-/**
- * Stands in for the Shiki highlighter so the offset arithmetic can be checked
- * without loading a real grammar. Splits each line into whitespace-delimited
- * tokens, which is enough shape for the flattening logic under test.
- */
 function fakeHighlighter(colorFor: (content: string) => string | undefined) {
   return {
     codeToTokens(code: string) {
@@ -52,7 +47,6 @@ describe("composer code block highlighting", () => {
 
     const decorations = tokenizeBlock(highlighter, "one\ntwo", "ts", THEME);
 
-    // "one" is 3 characters, then the newline, so "two" starts at 4.
     expect(decorations).toEqual([{ from: 4, to: 7, color: "#00ff00" }]);
   });
 
@@ -84,8 +78,6 @@ describe("composer code block highlighting", () => {
 });
 
 describe("the highlighting size cap", () => {
-  // Each keystroke re-tokenizes the whole fence on the main thread; past a
-  // few hundred lines that stalls typing, so large fences stay plain.
   it("highlights a fence up to the cap", () => {
     expect(shouldHighlightCodeBlock("x".repeat(MAX_HIGHLIGHTED_CODE_BLOCK_LENGTH))).toBe(true);
   });
@@ -100,10 +92,6 @@ describe("a highlighter that fails to load", () => {
     vi.unstubAllGlobals();
   });
 
-  /**
-   * Shiki can fail to initialize at all. The blocks it could not reach stay
-   * plain, the ones it could are still painted, and nothing is left rejected.
-   */
   it("still repaints the blocks whose highlighter loaded", async () => {
     vi.mocked(getSyntaxHighlighterPromise).mockImplementation((language) =>
       language === "ts"

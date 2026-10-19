@@ -322,7 +322,6 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
       });
       const state = yield* harness.auth.controller.start(owner);
       yield* phase(harness.auth, "waiting");
-      // The client sends the callback, then its socket drops before Google answers.
       const request = yield* harness.auth.controller
         .complete(owner, { flowId: state.flowId!, callbackUrl })
         .pipe(Effect.forkScoped);

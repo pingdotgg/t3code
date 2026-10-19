@@ -1,11 +1,3 @@
-/**
- * Pins `./gitCafeHosts.ts`, which pass 2 creates as a plain module (no service):
- *
- * - `GITCAFE_HOSTS: readonly ["git.cafe", "staging.git.cafe"]` — the only hosts GitCafe lives on.
- * - `isGitCafeHost(host: string): boolean` — case-insensitive membership in `GITCAFE_HOSTS`.
- * - `parseGitCafeRemote(url: string): { readonly host: GitCafeHost; readonly repository: string } | null`
- *   — the host and `owner/name` of an https or ssh remote on a GitCafe host; null for anything else.
- */
 import { assert, describe, it } from "@effect/vitest";
 
 import * as GitCafeHosts from "./gitCafeHosts.ts";

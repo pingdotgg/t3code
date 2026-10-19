@@ -1,11 +1,3 @@
-/**
- * Multi-environment usage state.
- *
- * Every connected environment answers the same typed query; the client merges
- * the results. Raw transcripts never leave the machine that produced them.
- *
- * @module state/usage
- */
 import { useAtomValue } from "@effect/atom-react";
 import {
   AuthDiagnosticsReadScope,
@@ -20,7 +12,7 @@ import { needsCursorKeychainAccess, refreshUsage } from "@t3tools/client-runtime
 import { resolveUsageAccess } from "@t3tools/client-runtime/state/usage-access";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useCallback, useMemo, useState } from "react";
+import { useState } from "react";
 
 import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "@t3tools/shared/usageMerge";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -39,13 +31,6 @@ export interface EnvironmentUsageStatus {
   readonly needsCursorKeychainAccess: boolean;
 }
 
-/**
- * Reads every environment's summary for one window.
- *
- * Keyed by the serialised window so switching ranges does not thrash the atom
- * cache, and so each environment's query is shared with any other reader of the
- * same window.
- */
 const usageByWindowAtom = Atom.family((windowKey: string) =>
   Atom.make((get): readonly EnvironmentUsageStatus[] => {
     const input = JSON.parse(windowKey) as UsageSummaryInput;
@@ -95,29 +80,12 @@ export interface UsageView {
   readonly merged: MergedUsage;
   readonly environments: readonly EnvironmentUsageStatus[];
   readonly selectedEnvironments: readonly EnvironmentUsageStatus[];
-  /** True until at least one selected environment has answered. */
   readonly isPending: boolean;
-  /**
-   * The usage to draw: this window's once a selected environment answers,
-   * until then the last window answered for the same selection. Null while
-   * nothing has answered and something still could.
-   */
   readonly shown: { readonly window: UsageSummaryInput; readonly merged: MergedUsage } | null;
-  /**
-   * True while environments that have not failed are still answering. Failed
-   * environments are reported through their own error rows: totals will not
-   * improve by waiting on them, so they must not read as "still reporting".
-   */
   readonly isPartial: boolean;
   readonly refresh: (input?: UsageSummaryInput) => Promise<void>;
 }
 
-/**
- * Merges every environment that has answered. `keepBucket` narrows the merge,
- * for example to one model; source ownership still applies, so the result
- * matches that slice of the full merge. Session counts are per directory and
- * are not narrowed.
- */
 export function mergeAnsweredUsage(
   environments: readonly EnvironmentUsageStatus[],
   keepBucket?: (bucket: UsageBucket) => boolean,
@@ -141,10 +109,6 @@ export function mergeAnsweredUsage(
 
 const NO_HIDDEN_PROVIDERS: ReadonlySet<UsageProviderKind> = new Set();
 
-/**
- * Drops hidden providers' buckets and sources before merging, so totals,
- * shares, and session counts all describe only the visible providers.
- */
 function withoutProviders(
   environments: readonly EnvironmentUsageStatus[],
   hiddenProviders: ReadonlySet<UsageProviderKind>,
@@ -168,66 +132,69 @@ function withoutProviders(
   );
 }
 
+function deriveSelection(
+  environments: readonly EnvironmentUsageStatus[],
+  selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null,
+  hiddenProviders: ReadonlySet<UsageProviderKind>,
+) {
+  const selectedEnvironments =
+    selectedEnvironmentIds === null
+      ? environments
+      : environments.filter((environment) => selectedEnvironmentIds.has(environment.environmentId));
+  return {
+    environments,
+    selectedEnvironmentIds,
+    hiddenProviders,
+    selectedEnvironments,
+    merged: mergeAnsweredUsage(withoutProviders(selectedEnvironments, hiddenProviders)),
+  };
+}
+
 export function useUsage(
   input: UsageSummaryInput,
   selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null = null,
   hiddenProviders: ReadonlySet<UsageProviderKind> = NO_HIDDEN_PROVIDERS,
 ): UsageView {
-  const windowKey = useMemo(
-    () =>
-      JSON.stringify({
-        sinceDay: input.sinceDay,
-        untilDay: input.untilDay,
-        timeZone: input.timeZone,
-        resolution: input.resolution,
-        sinceTime: input.sinceTime,
-        untilTime: input.untilTime,
-      }),
-    [
-      input.sinceDay,
-      input.untilDay,
-      input.timeZone,
-      input.resolution,
-      input.sinceTime,
-      input.untilTime,
-    ],
-  );
+  const windowKey = JSON.stringify({
+    sinceDay: input.sinceDay,
+    untilDay: input.untilDay,
+    timeZone: input.timeZone,
+    resolution: input.resolution,
+    sinceTime: input.sinceTime,
+    untilTime: input.untilTime,
+  });
   const atom = usageByWindowAtom(windowKey);
   const environments = useAtomValue(atom);
-  const selectedEnvironments = useMemo(
-    () =>
-      selectedEnvironmentIds === null
-        ? environments
-        : environments.filter((environment) =>
-            selectedEnvironmentIds.has(environment.environmentId),
-          ),
-    [environments, selectedEnvironmentIds],
+  // The render-time sync below compares merged by identity, so the derivation is
+  // held in state keyed on its inputs rather than rebuilt every render.
+  const [derived, setDerived] = useState(() =>
+    deriveSelection(environments, selectedEnvironmentIds, hiddenProviders),
   );
+  let current = derived;
+  if (
+    derived.environments !== environments ||
+    derived.selectedEnvironmentIds !== selectedEnvironmentIds ||
+    derived.hiddenProviders !== hiddenProviders
+  ) {
+    current = deriveSelection(environments, selectedEnvironmentIds, hiddenProviders);
+    setDerived(current);
+  }
+  const { selectedEnvironments, merged } = current;
 
-  const refresh = useCallback(
-    (nextInput?: UsageSummaryInput) =>
-      refreshUsage({
-        registry: appAtomRegistry,
-        server: serverEnvironment,
-        presentations: environmentPresentations,
-        // Only environments this connection may read; the others report a
-        // permission error instead of a stale or failed rescan.
-        environmentIds: selectedEnvironments
-          .filter(
-            (environment) =>
-              environment.canReadDiagnostics &&
-              readEnvironmentScope(environment.environmentId, AuthDiagnosticsReadScope),
-          )
-          .map(({ environmentId }) => environmentId),
-        input: nextInput ?? (JSON.parse(windowKey) as UsageSummaryInput),
-      }),
-    [selectedEnvironments, windowKey],
-  );
-
-  const merged = useMemo(
-    () => mergeAnsweredUsage(withoutProviders(selectedEnvironments, hiddenProviders)),
-    [selectedEnvironments, hiddenProviders],
-  );
+  const refresh = (nextInput?: UsageSummaryInput) =>
+    refreshUsage({
+      registry: appAtomRegistry,
+      server: serverEnvironment,
+      presentations: environmentPresentations,
+      environmentIds: selectedEnvironments
+        .filter(
+          (environment) =>
+            environment.canReadDiagnostics &&
+            readEnvironmentScope(environment.environmentId, AuthDiagnosticsReadScope),
+        )
+        .map(({ environmentId }) => environmentId),
+      input: nextInput ?? (JSON.parse(windowKey) as UsageSummaryInput),
+    });
 
   const answeredCount = selectedEnvironments.filter(
     (environment) => environment.summary !== null,
@@ -237,8 +204,6 @@ export function useUsage(
   ).length;
   const isPending = answeredCount === 0 && stillReporting > 0;
 
-  // Stored during render, as React recommends for state that follows props, so
-  // the kept usage is on screen in the same frame the new window starts pending.
   const [lastAnswered, setLastAnswered] = useState<
     | (NonNullable<UsageView["shown"]> & {
         readonly selection: typeof selectedEnvironmentIds;
@@ -260,12 +225,10 @@ export function useUsage(
       hidden: hiddenProviders,
     });
   }
-  // Kept usage only stands in for the same environments and provider filter.
   const kept =
     lastAnswered?.selection === selectedEnvironmentIds && lastAnswered.hidden === hiddenProviders
       ? lastAnswered
       : null;
-  // With no answers, even failed ones keep the last answered usage on screen.
   const shown =
     answeredCount > 0
       ? { window: input, merged }

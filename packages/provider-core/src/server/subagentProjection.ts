@@ -98,6 +98,8 @@ export function makeSubagentConversationArtifacts(input: {
   readonly nativeItemRef: OrchestrationV2ProviderRef | null;
   readonly role: "user" | "assistant";
   readonly text: string;
+  /** Whether a user message is the script a workflow run executes; unset for older callers. */
+  readonly workflowScript?: boolean;
   readonly ordinal: number;
   readonly now: DateTime.Utc;
 }): {
@@ -114,6 +116,9 @@ export function makeSubagentConversationArtifacts(input: {
     role: input.role,
     ...(input.role === "user" && input.senderThreadId !== undefined
       ? { senderThreadId: input.senderThreadId }
+      : {}),
+    ...(input.role === "user" && input.workflowScript !== undefined
+      ? { workflowScript: input.workflowScript }
       : {}),
     text: input.text,
     attachments: [],
@@ -147,6 +152,7 @@ export function makeSubagentConversationArtifacts(input: {
           creationSource: "provider",
           type: "user_message",
           ...(input.senderThreadId === undefined ? {} : { senderThreadId: input.senderThreadId }),
+          ...(input.workflowScript === undefined ? {} : { workflowScript: input.workflowScript }),
           inputIntent: "turn_start",
           attachments: [],
         }
@@ -166,18 +172,6 @@ export function subagentResultForRun(
   readonly messageId: OrchestrationV2ConversationMessage["id"] | null;
   readonly turnItemId: OrchestrationV2TurnItem["id"] | null;
 } {
-  const message =
-    projection.messages
-      .filter(
-        (candidate) =>
-          candidate.runId === run.id &&
-          candidate.role === "assistant" &&
-          candidate.text.trim().length > 0,
-      )
-      .toSorted(
-        (left, right) =>
-          DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
-      )[0] ?? null;
   const turnItem =
     projection.turnItems
       .filter(
@@ -189,6 +183,22 @@ export function subagentResultForRun(
           candidate.text.trim().length > 0,
       )
       .toSorted((left, right) => right.ordinal - left.ordinal)[0] ?? null;
+  const messages = projection.messages.filter(
+    (candidate) =>
+      candidate.runId === run.id &&
+      candidate.role === "assistant" &&
+      candidate.text.trim().length > 0,
+  );
+  // Turn item order is authoritative: providers can finalize every message of a turn at once,
+  // so message timestamps can tie. They only order messages that have no turn item.
+  const message =
+    messages.find((candidate) => candidate.id === turnItem?.messageId) ??
+    messages.toSorted(
+      (left, right) =>
+        DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt) ||
+        DateTime.toEpochMillis(right.createdAt) - DateTime.toEpochMillis(left.createdAt),
+    )[0] ??
+    null;
   const failure =
     run.status === "failed"
       ? projection.turnItems
@@ -209,7 +219,6 @@ export function subagentResultForRun(
   };
 }
 
-/** A finished turn can still own live children or queued completion follow-ups. */
 export function delegatedTaskProgress(projection: {
   readonly runs: OrchestrationV2ThreadProjection["runs"];
   readonly messages: ReadonlyArray<
@@ -232,8 +241,6 @@ export function delegatedTaskProgress(projection: {
   const workRuns = projection.runs.filter(
     (run) => !monitorRuns.has(run.id) && run.status !== "rolled_back",
   );
-  // A held queue waits for the user to resume it (after Stop, a restart, or a
-  // provider failure), so its runs are not work the task still owes.
   const active = workRuns.some(
     (run) => !terminal(run.status) && !(run.status === "queued" && run.queueHeld === true),
   );
@@ -261,7 +268,6 @@ export function delegatedTaskProgress(projection: {
   };
 }
 
-/** Ids that `emitted` already wrote with an event of `type`. */
 function writtenIds(
   emitted: ReadonlyArray<OrchestrationV2DomainEvent>,
   type: "subagent.updated" | "node.updated" | "turn-item.updated",
@@ -269,11 +275,6 @@ function writtenIds(
   return new Set(emitted.flatMap((event) => (event.type === type ? [event.payload.id] : [])));
 }
 
-/**
- * Ends a provider-native subagent, its node and its turn item once the provider
- * process that ran it is gone, since no terminal event will come from it. Each
- * record is skipped if already settled or already ended by `emitted`.
- */
 export const endOrphanedNativeSubagent = <E>(input: {
   readonly projection: Pick<OrchestrationV2ThreadProjection, "nodes" | "subagents" | "turnItems">;
   readonly subagentId: NodeId;
@@ -351,11 +352,6 @@ export const endOrphanedNativeSubagent = <E>(input: {
     return events;
   });
 
-/**
- * Ends a provider-native subagent thread's work, a runless root turn plus the
- * items under it (Claude's live progress), which only the provider process that
- * ran it could settle. Skips records `emitted` already ended.
- */
 export const endRunlessRootTurns = <E>(input: {
   readonly threadId: ThreadId;
   readonly providerInstanceId: ProviderInstanceId;
@@ -384,8 +380,6 @@ export const endRunlessRootTurns = <E>(input: {
       ) {
         continue;
       }
-      // Recovery may have ended this node through one of its items; its other
-      // items still need ending.
       if (!endedNodeIds.has(node.id)) {
         events.push({
           ...scope,

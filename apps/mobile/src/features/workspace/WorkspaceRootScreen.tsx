@@ -5,10 +5,11 @@ import { useKeyboardState } from "react-native-keyboard-controller";
 import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { CompactBrandTitle } from "../../components/CompactBrandTitle";
-import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
+import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { NativePrimaryColumnContext } from "../../native/v5-workspace-context";
 import {
+  useDeviceType,
   useNativeColumnLayoutMetrics,
   useNativeLayoutMetrics,
 } from "../../native/native-layout-metrics";
@@ -32,7 +33,6 @@ const TAB_TITLES = {
   pullRequests: "Pull requests",
 };
 
-/** Brand and connection status occupy the same leading slot in both roots. */
 function WorkspaceRootTitle(props: {
   readonly maxWidth: number;
   readonly onOpenEnvironments: () => void;
@@ -58,12 +58,14 @@ function WorkspaceRootContent() {
   const primaryColumn = use(NativePrimaryColumnContext);
   const columnMetrics = useNativeColumnLayoutMetrics();
   const nativeMetrics = useNativeLayoutMetrics();
+  const deviceType = useDeviceType();
   const systemTabBar = useSystemWorkspaceTabBar();
   const sidebarTabs = useSidebarWorkspaceTabs();
+  const sidebarPicker = sidebarTabs === "picker";
   const sidebarNavigation =
     primaryColumn !== null &&
     (layout.usesSplitView ||
-      (Platform.OS === "ios" && Platform.isPad) ||
+      deviceType === "pad" ||
       (nativeMetrics !== null && nativeMetrics.verticalBarEdge !== "none"));
   const width = columnMetrics?.width ?? windowWidth;
   const insets = useSafeAreaInsets();
@@ -99,8 +101,8 @@ function WorkspaceRootContent() {
   return (
     <WorkspaceTabsContext value={context}>
       <View
-        className="flex-1 bg-screen"
-        style={sidebarTabs ? { paddingTop: insets.top } : undefined}
+        className={sidebarPicker ? "flex-1 bg-drawer" : "flex-1 bg-screen"}
+        style={sidebarPicker ? { paddingTop: insets.top } : undefined}
       >
         {Platform.OS === "ios" ? (
           <NativeStackScreenOptions
@@ -137,9 +139,8 @@ function WorkspaceRootContent() {
             ]}
           />
         )}
-        {sidebarTabs ? <WorkspaceSidebarTabs /> : null}
-        {/* The pinned picker already clears the navigation bar; lists must not inset it again. */}
-        <SafeAreaInsetsContext value={sidebarTabs ? { ...insets, top: 0 } : insets}>
+        {sidebarPicker ? <WorkspaceSidebarTabs /> : null}
+        <SafeAreaInsetsContext value={sidebarPicker ? { ...insets, top: 0 } : insets}>
           {state.selectedTab === "threads" ? <HomeRouteScreen /> : <PullRequestsScreen />}
         </SafeAreaInsetsContext>
         <WorkspaceToolbar
@@ -151,7 +152,6 @@ function WorkspaceRootContent() {
   );
 }
 
-/** Keep workspace state mounted as the native columns expand and collapse. */
 export function WorkspaceRootScreen() {
   const { layout } = useAdaptiveWorkspaceLayout();
   const workspace = useWorkspaceTabs();

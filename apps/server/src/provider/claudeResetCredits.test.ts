@@ -193,12 +193,10 @@ effectIt.layer(NodeServices.layer)("consumeClaudeResetCredit", (it) => {
       ]) {
         const result = yield* consume(client);
         expect(result).toMatchObject({ _tag: "Failure" });
-        // Claude answered, so a retry must be a new claim.
         if (result._tag === "Failure") {
           expect(ClaudeResetCredits.isSettledClaudeResetCreditFailure(result.failure)).toBe(true);
         }
       }
-      // No answer, or Claude could not confirm the claim: a retry is the same claim.
       for (const client of [respond(500, {}), respond(200, { result: "unavailable" })]) {
         const unanswered = yield* consume(client);
         expect(unanswered).toMatchObject({ _tag: "Failure" });

@@ -14,7 +14,6 @@ export type ServicePreflightResult =
     };
 
 export function runServicePreflight(input: {
-  /** Older servers always pass this flag when invoking a staged preflight. */
   readonly databasePath: string;
   readonly launcherProtocol: number;
   readonly version?: string;

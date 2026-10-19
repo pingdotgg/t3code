@@ -48,16 +48,16 @@ import {
   SquareIcon,
   UnplugIcon,
 } from "lucide-react";
-import { useMemo, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import {
   useProjects,
-  useServerConfigs,
   useThreadProjection,
-  useThreadShells,
+  useThreadRelationshipShells,
 } from "../../state/entities";
+import { useEnvironmentProviders } from "../../state/environments";
 import { threadEnvironment } from "../../state/threads";
 import { orchestrationEnvironment } from "../../state/orchestration";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -74,10 +74,6 @@ import {
   THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
 } from "./threadDetailsPanelStyles";
 
-// Lineage paging: a busy thread can accumulate dozens of forks and subagents,
-// and the panel it lives in already scrolls. Show a workable window, keep the
-// rest behind Show more, and bound what is shown so the sections below Lineage
-// stay reachable.
 const THREAD_LINEAGE_INITIAL_COUNT = 6;
 const THREAD_LINEAGE_PAGE_COUNT = 12;
 
@@ -89,7 +85,7 @@ export function resolveThreadLineageWindow<Row>(
   return { visibleRows, hiddenCount: rows.length - visibleRows.length };
 }
 
-export function ThreadLineageRowList(props: {
+function ThreadLineageRowList(props: {
   readonly hiddenCount: number;
   readonly onShowMore: () => void;
   readonly children: ReactNode;
@@ -97,14 +93,9 @@ export function ThreadLineageRowList(props: {
   return (
     <>
       {/*
-        Bounded rather than free-growing so Lineage cannot push the rest of the
-        thread details panel out of view. Plain overflow, not a ScrollArea
+        Plain overflow, not a ScrollArea
         component: this sits inside an already scrolling panel, where a
-        max-height-only virtual viewport measures badly. Every row is a focusable
-        button, so keyboard users reach and scroll the region through the rows
-        themselves and the container needs no extra tab stop of its own. An
-        expanded workflow asks for a taller window, so it raises the bound while
-        its tree is open.
+        max-height-only virtual viewport measures badly.
       */}
       <ul
         aria-label="Related threads"
@@ -182,10 +173,6 @@ function relationshipThreadTitle(input: {
   return formatSubagentDisplayTitle(input.title);
 }
 
-/**
- * The row's timer and hover card follow current child work, including queued
- * follow-ups whose provider turn has not started yet.
- */
 function currentSubagent<Agent extends RuntimeSubagent>(
   agent: Agent | undefined,
   childThread: OrchestrationV2ThreadShell | null | undefined,
@@ -211,7 +198,6 @@ function currentSubagent<Agent extends RuntimeSubagent>(
           : status,
     startedAt: startedAt ? DateTime.formatIso(startedAt) : null,
     completedAt: completedAt ? DateTime.formatIso(completedAt) : null,
-    // The task's output belongs to its recorded run, not newer child work.
     progress: null,
     result: null,
     error: null,
@@ -224,57 +210,10 @@ export function ThreadRelationshipsPanel(props: {
 }) {
   const ref = scopeThreadRef(props.environmentId, props.threadId);
   const projection = useThreadProjection(ref)?.projection ?? null;
-  const providers = useServerConfigs().get(props.environmentId)?.providers;
-  const runtimeSubagents = useMemo(
-    () => projectedSubagentsToRuntime(projection?.subagents ?? []),
-    [projection?.subagents],
-  );
-  const subagentsByThreadId = useMemo(() => {
-    const byId = new Map(runtimeSubagents.map((agent) => [agent.id, agent]));
-    return new Map(
-      (projection?.subagents ?? [])
-        .filter((subagent) => subagent.childThreadId !== null)
-        .map((subagent) => [
-          subagent.childThreadId,
-          {
-            ...byId.get(subagent.id)!,
-            id: subagent.id,
-            threadId: subagent.threadId,
-            runId: subagent.runId,
-            nativeTaskRef: subagent.nativeTaskRef,
-            nativeStatus: subagent.status,
-            driver: subagent.driver,
-            providerInstanceId: subagent.providerInstanceId,
-            origin: subagent.origin,
-            modelSelection: subagent.modelSelection,
-          },
-        ]),
-    );
-  }, [projection?.subagents, runtimeSubagents]);
-  // A workflow coordinator is already a subagent row here; the grouped model
-  // is what lets that row unfold into the phases and members it ran.
-  const workflowGroupsById = useMemo(
-    () =>
-      new Map(deriveWorkflowGroups(runtimeSubagents).map((group) => [group.workflow.id, group])),
-    [runtimeSubagents],
-  );
-  const threadShells = useThreadShells();
-  const projects = useProjects().filter((project) => project.environmentId === props.environmentId);
+  const providersByEnvironment = useEnvironmentProviders();
+  const relationshipShells = useThreadRelationshipShells(ref);
+  const allProjects = useProjects();
   const archived = useArchivedThreadSnapshots([props.environmentId]);
-  const archivedShells = archived.snapshots.find(
-    (entry) => entry.environmentId === props.environmentId,
-  )?.snapshot.threads;
-  const graph = useMemo(() => {
-    const shells: ReadonlyArray<OrchestrationV2ThreadShell> = [
-      ...threadShells
-        .filter((thread) => thread.environmentId === props.environmentId)
-        .map((thread) => thread.source),
-      ...(archivedShells ?? []),
-    ];
-    return deriveThreadRelationshipGraph({ threads: shells, projection });
-  }, [archivedShells, projection, props.environmentId, threadShells]);
-  const currentThread = projection?.thread ?? graph.nodes.get(props.threadId)?.thread;
-  const currentProject = projects.find((project) => project.id === currentThread?.projectId);
   const navigate = useNavigate();
   const mergeBack = useAtomCommand(threadEnvironment.mergeBack);
   const stopSession = useAtomCommand(threadEnvironment.stopSession);
@@ -285,27 +224,62 @@ export function ThreadRelationshipsPanel(props: {
   );
   const [busyAction, setBusyAction] = useState<"merge" | "detach" | null>(null);
   const [stoppingId, setStoppingId] = useState<string | null>(null);
+  // These lookups and the graph walk every subagent and thread, so they sit below
+  // the panel's hooks where the compiler can cache them.
+  const providers = providersByEnvironment.get(props.environmentId);
+  const projects = allProjects.filter((project) => project.environmentId === props.environmentId);
+  const archivedShells = archived.snapshots.find(
+    (entry) => entry.environmentId === props.environmentId,
+  )?.snapshot.threads;
+  const projected = projection?.subagents ?? [];
+  const runtimeSubagents = projectedSubagentsToRuntime(projected);
+  const byId = new Map(runtimeSubagents.map((agent) => [agent.id, agent]));
+  const subagentsByThreadId = new Map(
+    projected
+      .filter((subagent) => subagent.childThreadId !== null)
+      .map((subagent) => [
+        subagent.childThreadId,
+        {
+          ...byId.get(subagent.id)!,
+          id: subagent.id,
+          threadId: subagent.threadId,
+          runId: subagent.runId,
+          nativeTaskRef: subagent.nativeTaskRef,
+          nativeStatus: subagent.status,
+          driver: subagent.driver,
+          providerInstanceId: subagent.providerInstanceId,
+          origin: subagent.origin,
+          modelSelection: subagent.modelSelection,
+        },
+      ]),
+  );
+  const workflowGroupsById = new Map(
+    deriveWorkflowGroups(runtimeSubagents).map((group) => [group.workflow.id, group]),
+  );
+  const shells: ReadonlyArray<OrchestrationV2ThreadShell> = [
+    ...relationshipShells,
+    ...(archivedShells ?? []),
+  ];
+  const graph = deriveThreadRelationshipGraph({ threads: shells, projection });
+  const currentThread = projection?.thread ?? graph.nodes.get(props.threadId)?.thread;
+  const currentProject = projects.find((project) => project.id === currentThread?.projectId);
   const latestMergeBackRun = projection === null ? null : resolveLatestMergeBackRun(projection);
   const mergeTargetThreadId = resolveMergeBackTargetThreadId(projection);
-  const relationshipRows = useMemo(
-    () =>
-      orderWebThreadLineageRows({
-        graph,
-        rows: immediateThreadRelationships(graph, props.threadId),
-        currentThreadId: props.threadId,
-        mergeTargetThreadId,
-      }).map((row) => {
-        const agent =
-          row.edge.kind === "subagent" && !isParentThreadRelationship(row.edge, props.threadId)
-            ? subagentsByThreadId.get(row.threadId)
-            : undefined;
-        const workflowGroup = agent === undefined ? undefined : workflowGroupsById.get(agent.id);
-        return workflowGroup === undefined
-          ? row
-          : { ...row, edge: { ...row.edge, status: workflowGroup.workflow.status } };
-      }),
-    [graph, mergeTargetThreadId, props.threadId, subagentsByThreadId, workflowGroupsById],
-  );
+  const relationshipRows = orderWebThreadLineageRows({
+    graph,
+    rows: immediateThreadRelationships(graph, props.threadId),
+    currentThreadId: props.threadId,
+    mergeTargetThreadId,
+  }).map((row) => {
+    const agent =
+      row.edge.kind === "subagent" && !isParentThreadRelationship(row.edge, props.threadId)
+        ? subagentsByThreadId.get(row.threadId)
+        : undefined;
+    const workflowGroup = agent === undefined ? undefined : workflowGroupsById.get(agent.id);
+    return workflowGroup === undefined
+      ? row
+      : { ...row, edge: { ...row.edge, status: workflowGroup.workflow.status } };
+  });
   const canMerge = mergeTargetThreadId !== null && latestMergeBackRun !== null;
   const canDetach = projection ? canDetachThreadProviderSession(projection) : false;
 
@@ -327,7 +301,6 @@ export function ThreadRelationshipsPanel(props: {
     { id: "active", label: null, rows: active, expanded: true },
     { id: "previous", label: "Previous agents", rows: previous, expanded: false },
   ];
-  // Subagents without a child thread yet have no row, so count them separately.
   const runningCount =
     (projection?.subagents.filter(
       (agent) => agent.childThreadId === null && agent.status === "running",
@@ -474,7 +447,6 @@ export function ThreadRelationshipsPanel(props: {
                 agent.startedAt &&
                 ["pending", "running", "waiting"].includes(agent.status);
               const threadTitle = relationshipThreadTitle({
-                // A workflow's name is shorter than its child thread's title.
                 title:
                   workflowGroup?.workflow.workflowName ??
                   node?.thread?.title ??
@@ -560,8 +532,6 @@ export function ThreadRelationshipsPanel(props: {
                   ) : null}
                 </>
               );
-              // A workflow pairs this row with a disclosure, so it renders as the
-              // leading half of a split row; everything else renders it directly.
               const relationshipLink = (
                 <Tooltip>
                   <TooltipTrigger

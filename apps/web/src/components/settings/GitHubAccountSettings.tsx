@@ -15,14 +15,9 @@ import { redactedPlaceholder } from "./RedactedSensitiveText";
 /** Sentinel select value for "follow gh's active login"; logins never contain spaces. */
 const ACTIVE_ACCOUNT = "active gh account";
 
-/**
- * A login, blurred like RedactedSensitiveText until the panel reveals it. Plain text, not a
- * button, so it can sit inside select options; one panel toggle reveals every login.
- */
 function RedactedLogin(props: {
   readonly account: string;
   readonly revealed: boolean;
-  /** Distinguishes hidden logins from each other for a screen reader, e.g. "Account 2". */
   readonly label?: string;
 }) {
   return props.revealed ? (
@@ -37,10 +32,6 @@ function RedactedLogin(props: {
   );
 }
 
-/**
- * Per-host GitHub choices for one environment: turn a host off, or pin which of the
- * logins `gh` holds is used instead of its active one. Changes save immediately.
- */
 export function GitHubAccountSettings({
   environmentId,
   auth,
@@ -64,19 +55,16 @@ export function GitHubAccountSettings({
     change: { readonly enabled?: boolean; readonly account?: string | null },
   ) => {
     setSaving(true);
-    try {
-      const result = await updateSettings({
-        environmentId,
-        input: {
-          patch: {
-            sourceControlHosts: { github: { hosts: nextGitHubHosts(hosts, host, change) } },
-          },
+    const result = await updateSettings({
+      environmentId,
+      input: {
+        patch: {
+          sourceControlHosts: { github: { hosts: nextGitHubHosts(hosts, host, change) } },
         },
-      });
-      if (result._tag === "Success") onSaved();
-    } finally {
-      setSaving(false);
-    }
+      },
+    });
+    setSaving(false);
+    if (result._tag === "Success") onSaved();
   };
 
   if (groups.length === 0) {

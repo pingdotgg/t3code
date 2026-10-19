@@ -1,5 +1,6 @@
 import { PROVIDER_DISPLAY_NAMES, type ProviderDriverKind } from "@t3tools/contracts";
 import * as Predicate from "effect/Predicate";
+import * as SqlError from "effect/sql/SqlError";
 
 const GENERIC_ERROR_PREFIXES = [
   "Failed to dispatch orchestration V2 command",
@@ -7,11 +8,35 @@ const GENERIC_ERROR_PREFIXES = [
   "Provider adapter failed while dispatching orchestration command ",
 ];
 
-/**
- * User-facing prose for capability rejections. The internal error messages
- * keep command ids and capability codes for logs; the toast should say what
- * did not happen and why in the provider's own name.
- */
+const SQLITE_RECOVERY_MESSAGES: Readonly<Record<number, string>> = {
+  5: "The T3 Code server database is busy (SQLITE_BUSY). Wait a moment, then retry. If this keeps happening, check for another T3 Code process using the same data directory on the server.",
+  6: "The T3 Code server database is locked (SQLITE_LOCKED). Wait a moment, then retry. If this keeps happening, check the server logs for the process holding the database lock.",
+  8: "The T3 Code server database is read-only (SQLITE_READONLY). On the machine running the server, check that its data directory is writable and its disk is mounted read-write, then retry.",
+  10: "The T3 Code server could not read or write its database (SQLITE_IOERR). On the machine running the server, check free disk space and disk health, then retry. If it still fails, check the server logs.",
+  11: "The T3 Code server database appears damaged (SQLITE_CORRUPT). Preserve the server data directory and check the server logs before restoring a database backup.",
+  13: "The T3 Code server could not save this change because its database or disk is full (SQLITE_FULL). Free space on the machine running the server, then retry. If space is available, check the server logs for a database size limit.",
+  14: "The T3 Code server could not open a database file (SQLITE_CANTOPEN). On the machine running the server, check free disk space and that its data and temporary directories exist and are writable, then retry. If it still fails, check the server logs.",
+  26: "The T3 Code server could not read its database file (SQLITE_NOTADB). Preserve the server data directory and check the configured database path and server logs before restoring a database backup.",
+};
+
+function databaseErrorMessage(value: unknown): string | undefined {
+  if (!SqlError.isSqlError(value)) return undefined;
+
+  let cause: unknown = value.cause;
+  const seen = new Set<unknown>();
+  while (Predicate.isObject(cause) && !seen.has(cause)) {
+    seen.add(cause);
+    // node:sqlite uses extended result codes; their low byte is the primary code.
+    if (typeof cause.errcode === "number" && Number.isInteger(cause.errcode) && cause.errcode > 0) {
+      const message = SQLITE_RECOVERY_MESSAGES[cause.errcode & 0xff];
+      if (message !== undefined) return message;
+    }
+    cause = cause.cause;
+  }
+
+  return "The T3 Code server could not complete this database request. Retry once; if it still fails, check the server logs for the database error.";
+}
+
 const CAPABILITY_REJECTION_MESSAGES: Record<string, (provider: string) => string> = {
   queued_messages: (p) => `${p} cannot queue messages behind an active run.`,
   active_steering: (p) =>
@@ -38,7 +63,6 @@ function providerDisplayName(instanceId: string): string {
   return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
 }
 
-/** Friendly translation for command-policy rejections; undefined otherwise. */
 function policyRejectionMessage(value: unknown): string | undefined {
   if (!Predicate.isObject(value) || typeof value.providerInstanceId !== "string") return undefined;
   const provider = providerDisplayName(value.providerInstanceId);
@@ -86,6 +110,9 @@ function collectErrorMessages(value: unknown, seen: Set<unknown>): ReadonlyArray
   if (Array.isArray(value)) {
     return value.flatMap((item) => collectErrorMessages(item, seen));
   }
+
+  const databaseMessage = databaseErrorMessage(value);
+  if (databaseMessage !== undefined) return [databaseMessage];
 
   const message = messageFrom(value);
   if (!Predicate.isObject(value)) {

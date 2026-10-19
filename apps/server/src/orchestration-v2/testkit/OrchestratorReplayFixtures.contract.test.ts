@@ -74,8 +74,6 @@ describe("orchestrator replay fixture contract", () => {
               throw new Error(`${fixture.name}/${provider.driver} must start with thread.create`);
             }
             assert.equal(firstCommand.threadId, materialized.projectionThreadIds[0]);
-            // These fixture steps coordinate the test runtime; every other
-            // input step dispatches a command.
             const commandProducingSteps = fixture
               .buildInput()
               .steps.filter(

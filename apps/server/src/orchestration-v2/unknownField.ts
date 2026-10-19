@@ -1,4 +1,3 @@
-/** Readers for decoding undeclared provider payloads without trusting shapes. */
 export function field(source: unknown, key: string): unknown {
   return typeof source === "object" && source !== null ? Reflect.get(source, key) : undefined;
 }

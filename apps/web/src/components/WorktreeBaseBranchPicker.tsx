@@ -1,6 +1,6 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { ChevronDownIcon, GitBranchIcon } from "lucide-react";
-import { useDeferredValue, useMemo, useState } from "react";
+import { useDeferredValue, useState } from "react";
 
 import { usePaginatedBranches } from "../state/queries";
 import { useEnvironmentQuery } from "../state/query";
@@ -11,7 +11,6 @@ import { MiddleTruncate } from "./ui/middle-truncate";
 import { Button } from "./ui/button";
 import { ComboboxTrigger } from "./ui/combobox";
 
-/** Select a future worktree's base without changing the project's current checkout. */
 export function WorktreeBaseBranchPicker({
   environmentId,
   cwd,
@@ -57,10 +56,7 @@ export function WorktreeBaseBranchPicker({
     resolvedActiveBranchIsRemote: selectedRef ? selectedRef.isRemote === true : null,
     startFromOrigin,
   });
-  const branchByName = useMemo(
-    () => new Map(branches.refs.map((branch) => [branch.name, branch])),
-    [branches.refs],
-  );
+  const branchByName = new Map(branches.refs.map((branch) => [branch.name, branch]));
   const items = [...branchByName.keys()];
   const hasNextPage = branches.data?.nextCursor != null;
   const statusText =

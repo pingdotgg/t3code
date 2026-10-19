@@ -2,7 +2,6 @@ import type { PullRequestDetail, PullRequestLinkedThreadsResult } from "@t3tools
 
 export type PullRequestAgentTask = "ask" | "explain" | "feedback" | "conflicts" | "watch";
 
-/** An explicit new-thread choice must never fall back to the single linked thread. */
 export function pullRequestAgentThread(
   threads: PullRequestLinkedThreadsResult["threads"],
   threadId?: string,
@@ -11,7 +10,6 @@ export function pullRequestAgentThread(
   return threads.length === 1 ? threads[0] : undefined;
 }
 
-/** The PR itself travels as composer context; the field holds the reader's request. */
 export function pullRequestAgentPrompt(task: PullRequestAgentTask): string {
   switch (task) {
     case "ask":
@@ -52,7 +50,6 @@ export function pullRequestAgentActions(pr: PullRequestDetail, canWatch: boolean
   ] as const;
 }
 
-/** A helper appends to an existing draft without taking away anything the reader wrote. */
 export function appendPullRequestAgentPrompt(
   text: string,
   task: PullRequestAgentTask,

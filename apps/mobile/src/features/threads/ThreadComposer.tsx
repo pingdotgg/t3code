@@ -1,6 +1,9 @@
+import * as Dialog from "../../components/ui/Dialog";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { AsyncResult } from "effect/reactivity";
 import { useAtomValue } from "@effect/atom-react";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
 import { pastedTextDisposition, replaceTextSelection } from "@t3tools/client-runtime/text-paste";
@@ -23,17 +26,8 @@ import {
 } from "@t3tools/shared/usageLimits";
 import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { ReactNode } from "react";
-import {
-  memo,
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type RefObject,
-} from "react";
-import { Alert, Keyboard, Platform, Pressable, View, type ViewStyle } from "react-native";
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { Keyboard, Platform, Pressable, View, type ViewStyle } from "react-native";
 import { composerImageGallery } from "../../lib/composerImageGallery";
 import { filePreviewGallery } from "../../lib/filePreviewGallery";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
@@ -61,20 +55,21 @@ import {
   setComposerDraftText,
   composerContextImportsAtom,
   countComposerDraftAttachmentsAfterSelection,
+  useComposerDraft,
 } from "../../state/use-composer-drafts";
 import { appAtomRegistry } from "../../state/atom-registry";
 import type { ComposerDocumentAttachment } from "../../lib/composerContext";
 import { useProject, useThreadShells } from "../../state/entities";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 
-import { AppText as Text } from "../../components/AppText";
-import { ComposerAttachmentButton } from "../../components/ComposerAttachmentButton";
+import { AppText as Text } from "../../components/ui/AppText";
+import { ComposerAttachmentButton } from "./ComposerAttachmentButton";
 import {
   ComposerAttachmentStrip,
   ComposerAttachmentThumbnail,
 } from "../../components/ComposerAttachmentStrip";
 import { VideoPreviewModal, type VideoPreviewSource } from "../../components/VideoPreviewModal";
-import { GlassSurface } from "../../components/GlassSurface";
+import { GlassSurface } from "../../components/ui/GlassSurface";
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
 import { fileRoutePathSegments } from "../files/filePath";
 import {
@@ -85,7 +80,6 @@ import {
 import { ProviderIcon } from "../../components/ProviderIcon";
 import {
   composerStripAttachments,
-  type DraftComposerAttachment,
   type DraftComposerFileAttachment,
 } from "../../lib/composerImages";
 import {
@@ -96,7 +90,7 @@ import {
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import type { RemoteClientConnectionState } from "../../lib/connection";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
-import { ControlPillMenu } from "../../components/ControlPill";
+import { Menu } from "../../components/ui/Menu";
 import type { ActiveTurnComposerAction } from "@t3tools/client-runtime/state/composer-dispatch";
 import type { FollowUpBehavior } from "../../lib/followUpBehavior";
 import {
@@ -130,32 +124,17 @@ import {
   type NavigationWithFinishTransitioning,
 } from "./use-thread-settings-sheet-presentation";
 
-/**
- * Height of the collapsed composer (pill + vertical padding, excluding safe-area inset).
- * Exported so the parent can compute feed overlap / content insets.
- */
 export const COMPOSER_COLLAPSED_CHROME = 60;
 
-/**
- * Height of the expanded composer (card + toolbar + vertical padding, excluding safe-area inset).
- * Used by the parent to compute the larger feed bottom inset when the composer is focused.
- */
 export const COMPOSER_EXPANDED_CHROME = 156;
 
 export interface ThreadComposerProps {
   readonly canOperateThread: boolean;
-  readonly draftMessage: string;
-  readonly draftAttachments: ReadonlyArray<DraftComposerAttachment>;
   readonly placeholder: string;
   readonly contentMaxWidth?: number;
   readonly bottomInset?: number;
   readonly connectionState: RemoteClientConnectionState;
   readonly environmentLabel: string | null;
-  /**
-   * Message sync phase for the selected thread (drives the status pill):
-   * "loading" = first fetch, nothing to show yet; "syncing" = cached messages
-   * are on screen while they reconcile with the server.
-   */
   readonly threadSyncPhase?: "loading" | "syncing" | null;
   readonly selectedThread: EnvironmentThreadShell;
   readonly reportedModelSelection?: ModelSelection | null;
@@ -166,23 +145,14 @@ export interface ThreadComposerProps {
   readonly canStopThread: boolean;
   readonly environmentId: EnvironmentId;
   readonly projectCwd: string | null;
-  /** Why sending is blocked right now (shown as the send button's label), or null. */
   readonly sendBlockedReason?: string | null;
-  /** Where the composer's content lives. Defaults to this thread's own draft. */
   readonly draftKey?: string;
-  /**
-   * Set while a queued message is open for editing: the send button saves the
-   * edit instead of sending, and the message's server attachments stay visible
-   * above the composer so they can be removed.
-   */
   readonly queuedEdit?: {
     readonly existingAttachments: ReadonlyArray<ChatAttachment>;
     readonly saving: boolean;
     readonly onRemoveExistingAttachment: (attachmentId: string) => void;
   } | null;
-  /** The user's configured behavior for a message sent during a running turn. */
   readonly followUpBehavior: FollowUpBehavior;
-  /** Whether the live turn can actually be steered by this provider. */
   readonly canSteerActiveTurn: boolean;
   readonly editorRef?: RefObject<ComposerEditorHandle | null>;
   readonly onChangeDraftMessage: (value: string) => void;
@@ -193,36 +163,21 @@ export interface ThreadComposerProps {
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => void;
   readonly onSendMessage: (followUp?: ActiveTurnComposerAction) => Promise<MessageId | null>;
-  /** `/usage-limits` resolves locally; the host decides where the report shows. Null clears it. */
   readonly onShowUsageLimits: (report: UsageLimitsReport | null) => void;
-  /**
-   * Whether the model picker may offer providers other than this thread's.
-   * False keeps the catalog on the instance the thread's session runs on.
-   */
   readonly canSwitchProvider: boolean;
   readonly onUpdateModelSelection: (modelSelection: ModelSelection) => void;
   readonly onUpdateRuntimeMode: (runtimeMode: RuntimeMode) => void;
   readonly onUpdateInteractionMode: (interactionMode: ProviderInteractionMode) => void;
   readonly onExpandedChange?: (expanded: boolean) => void;
-  /** Fires on editor focus/blur; hosts use it to vet stale keyboard state. */
   readonly onEditorFocusChange?: (focused: boolean) => void;
 }
 
-/**
- * The pill / card container — renders with Expo's native GlassView on supported
- * iOS 26+ devices, with a frosted blur fallback where supported.
- * Exported so NewTaskDraftScreen can render the same composer chrome.
- */
-// The bottom-anchored dock position and clipped surface height use the same
-// transition so the card grows upward without exposing its final-size content.
-// Android gets NO layout transition: the composer rides the keyboard via
-// KeyboardStickyView (frame-synced to the IME), and a time-based morph
-// running alongside that translate reads as jitter. Snapping the layout and
-// letting the keyboard-synced slide be the only motion looks native there.
+// Android gets NO layout transition: the composer rides the keyboard via KeyboardStickyView
+// (frame-synced to the IME), and a time-based morph running alongside that translate reads as
+// jitter.
 export const COMPOSER_TRANSITION_DURATION_MS = 220;
 // Side panes already animate the dock's width. Nested horizontal layout
 // transitions would leave the surface trailing its toolbar's new position.
-// Keep the vertical pill/card morph while horizontal layout follows the dock.
 const composerHeightTransition: LayoutAnimationFunction = (values) => {
   "worklet";
   const timing = {
@@ -266,11 +221,6 @@ const FOLLOW_UP_ACTION_SUBTITLE = {
   restart: "Start the turn over with this message",
 } as const;
 
-/**
- * The composer's primary button. While a turn is running it also long-presses
- * into the two follow-up behaviors, which is mobile's stand-in for the Command
- * modifier a hardware keyboard has.
- */
 function SendActionButton(props: {
   readonly accessibilityLabel: string;
   readonly presentation: ComposerSendPresentation;
@@ -294,7 +244,7 @@ function SendActionButton(props: {
     (action): action is ActiveTurnComposerAction => action !== null,
   );
   return (
-    <ControlPillMenu
+    <Menu
       accessibilityLabel="Choose how to send this message"
       shouldOpenOnLongPress
       actions={actions.map((action) => ({
@@ -308,14 +258,13 @@ function SendActionButton(props: {
       }
     >
       {button}
-    </ControlPillMenu>
+    </Menu>
   );
 }
 
 export function ComposerSurface(props: {
   readonly children: ReactNode;
   readonly style: ViewStyle;
-  /** Morphs between the compact and expanded composer layouts. */
   readonly animateLayout?: boolean;
 }) {
   const colors = useUniwindTheme();
@@ -356,8 +305,6 @@ export function ComposerSurface(props: {
         fallbackColor={colors["--color-composer-surface"]}
         fallbackClassName="border border-composer-border"
         glassEffectStyle="regular"
-        // The composer is a passive material containing interactive controls.
-        // Keep native glass out of the interactive content's layout path.
         pointerEvents="none"
         tintColor="transparent"
         layout={layoutTransition}
@@ -376,7 +323,7 @@ export function ComposerSurface(props: {
   );
 }
 
-export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposerProps) {
+export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps) {
   const project = useProject(scopeProjectRef(props.environmentId, props.selectedThread.projectId));
   const { themeVariables: materialTheme } = useAppearancePreferences();
   const composerPanel = materialTheme["--color-composer-panel"];
@@ -400,17 +347,15 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
 
   const [previewFile, setPreviewFile] = useState<FilePreviewSource | null>(null);
   const [previewVideo, setPreviewVideo] = useState<VideoPreviewSource | null>(null);
+  const composerOwnerKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
+  const composerDraftKey = props.draftKey ?? composerOwnerKey;
+  const { text: draftMessage, attachments: draftAttachments } = useComposerDraft(composerDraftKey);
   const queuedEdit = props.queuedEdit ?? null;
   const hasContent =
-    props.draftMessage.trim().length > 0 ||
-    props.draftAttachments.length > 0 ||
+    draftMessage.trim().length > 0 ||
+    draftAttachments.length > 0 ||
     (queuedEdit?.existingAttachments.length ?? 0) > 0;
-  // Only media belongs above the composer; every other file reads as its inline chip.
-  const stripAttachments = useMemo(
-    () => composerStripAttachments(props.draftAttachments),
-    [props.draftAttachments],
-  );
-  // Stopping the agent is not what the send button means in edit mode.
+  const stripAttachments = composerStripAttachments(draftAttachments);
   const showStopAction = !hasContent && props.canStopThread && queuedEdit === null;
 
   const uploadStates = useAtomValue(composerAttachmentUploadsAtom);
@@ -418,12 +363,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     props.connectionState === "connected" &&
     composerAttachmentsStillUploading({
       environmentId: props.environmentId,
-      attachments: props.draftAttachments,
+      attachments: draftAttachments,
       serverConfig: props.serverConfig,
       states: uploadStates,
     });
-  // Every send goes through the outbox; the label says whether it leaves now
-  // or waits (for the connection, an earlier queued message, or an upload).
   const sendPresentation = resolveComposerSendPresentation({
     editingQueuedMessage: queuedEdit !== null,
     running: props.activeThreadBusy,
@@ -442,18 +385,14 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       currentModelSelection,
       props.selectedThread.projectId,
     );
-  const selectedProviderStatus = useMemo(() => {
+  const selectedProviderStatus = (() => {
     if (!props.serverConfig) return null;
     return (
       props.serverConfig.providers.find(
         (p) => p.instanceId === props.selectedThread.modelSelection.instanceId,
       ) ?? null
     );
-  }, [props.serverConfig, props.selectedThread.modelSelection.instanceId]);
-  const composerOwnerKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
-  // Content lives under the edit's own draft while a queued message is open;
-  // the owner key still identifies this composer for settings and dictation.
-  const composerDraftKey = props.draftKey ?? composerOwnerKey;
+  })();
   const openDraftDocument = (attachment: ComposerDocumentAttachment) => {
     Keyboard.dismiss();
     navigation.navigate("ThreadAttachment", {
@@ -467,8 +406,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     });
   };
   const { onSendMessage, onChangeDraftMessage, onShowUsageLimits } = props;
-  // T3 owns /usage-limits only where Limits has data for the selected provider;
-  // elsewhere the name stays the provider's own and is sent through untouched.
   const usageLimitsOffered =
     selectedProviderStatus !== null &&
     hasProviderUsageLimits(
@@ -476,8 +413,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       props.serverConfig?.providers ?? [],
       props.serverConfig?.usageLimitSources ?? [],
     );
-  // Answered locally from the last Limits snapshot; the agent never sees it.
-  const openUsageLimits = useCallback(() => {
+  const openUsageLimits = () => {
     const report = collectProviderUsageLimits(
       currentModelSelection.instanceId,
       props.serverConfig?.providers ?? [],
@@ -486,14 +422,14 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     );
     onShowUsageLimits(report);
     if (!report) {
-      Alert.alert("Usage limits unavailable", "This provider does not currently report limits.");
+      Dialog.alert("Usage limits unavailable", "This provider does not currently report limits.");
     }
     return report !== null;
-  }, [currentModelSelection.instanceId, onShowUsageLimits, props.serverConfig]);
+  };
 
   const composerMenu = useComposerCommandMenu({
-    draftMessage: props.draftMessage,
-    ownerKey: composerOwnerKey,
+    draftMessage: draftMessage,
+    ownerKey: composerDraftKey,
     environmentId: props.environmentId,
     threadShells: useThreadShells(),
     currentThreadId: props.selectedThread.id,
@@ -502,6 +438,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       ? (project?.id ?? null)
       : null,
     pullRequestRepository: project?.repositoryIdentity?.displayName ?? null,
+    threadPullRequests: props.selectedThread.pullRequests,
     selectedProviderStatus,
     hasThread: true,
     hasCompactableConversation: props.hasCompactableConversation,
@@ -511,9 +448,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         ? undefined
         : props.onUpdateInteractionMode,
     offersUsageLimits: usageLimitsOffered,
-    // With attachments aboard the pick just inserts the text, so it sends as a prompt.
     onUsageLimits:
-      usageLimitsOffered && props.draftAttachments.length === 0 ? openUsageLimits : undefined,
+      usageLimitsOffered && draftAttachments.length === 0 ? openUsageLimits : undefined,
   });
   const voiceInput = useVoiceInputController({
     ownerKey: composerDraftKey,
@@ -529,13 +465,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     voiceInput.elapsedSeconds,
   );
   const isVoiceInputPresented = voicePresentation.statusLabel !== null;
-  // An open draft stays visible; only a collapsed composer becomes a voice strip.
   const isExpanded = isFocused || settingsSheetPresentation.keepsComposerExpanded;
   const showsCompactDictation = isVoiceInputPresented && !isExpanded;
   const isToolbarVisible = isExpanded || isVoiceInputPresented;
   const attachmentBlockReason = composerAttachmentUploadBlockReason({
     environmentId: props.environmentId,
-    attachments: props.draftAttachments,
+    attachments: draftAttachments,
     connected: props.connectionState === "connected",
     serverConfig: props.serverConfig,
     states: uploadStates,
@@ -554,27 +489,23 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     sendBlockedReason === null &&
     !modelUnavailable;
 
-  // Keep the feed inset aligned with the card or compact dictation strip.
   useEffect(() => {
     onExpandedChange?.(isExpanded);
   }, [isExpanded, onExpandedChange]);
 
-  const onPressPreview = useCallback(
-    (source: FilePreviewSource) => {
-      wasExpandedBeforePreviewRef.current = isFocused;
-      setPreviewVideo(null);
-      setPreviewFile(
-        (current) =>
-          current ?? {
-            ...source,
-            gallery: filePreviewGallery(source, composerImageGallery(props.draftAttachments)),
-          },
-      );
-    },
-    [isFocused, props.draftAttachments],
-  );
+  const onPressPreview = (source: FilePreviewSource) => {
+    wasExpandedBeforePreviewRef.current = isFocused;
+    setPreviewVideo(null);
+    setPreviewFile(
+      (current) =>
+        current ?? {
+          ...source,
+          gallery: filePreviewGallery(source, composerImageGallery(draftAttachments)),
+        },
+    );
+  };
 
-  const closePreview = useCallback(() => {
+  const closePreview = () => {
     setPreviewFile(null);
     setPreviewVideo(null);
     if (wasExpandedBeforePreviewRef.current) {
@@ -582,158 +513,102 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         if (navigation.isFocused()) inputRef.current?.focus();
       }, 100);
     }
-  }, [inputRef, navigation]);
+  };
 
-  const onPressVideo = useCallback(
-    (attachment: DraftComposerFileAttachment, sourceIdentifier: string) => {
-      wasExpandedBeforePreviewRef.current = isFocused;
-      setPreviewFile(null);
-      setPreviewVideo((current) => current ?? { type: "local", attachment, sourceIdentifier });
-    },
-    [isFocused],
-  );
+  const onPressVideo = (attachment: DraftComposerFileAttachment, sourceIdentifier: string) => {
+    wasExpandedBeforePreviewRef.current = isFocused;
+    setPreviewFile(null);
+    setPreviewVideo((current) => current ?? { type: "local", attachment, sourceIdentifier });
+  };
 
   const onEditorFocusChange = props.onEditorFocusChange;
-  const handleFocus = useCallback(() => {
+  const handleFocus = () => {
     setIsFocused(true);
     onExpandedChange?.(true);
     onEditorFocusChange?.(true);
-  }, [onEditorFocusChange, onExpandedChange]);
+  };
 
-  const handleBlur = useCallback(() => {
+  const handleBlur = () => {
     setIsFocused(false);
     if (!settingsSheetPresentation.keepsComposerExpanded) {
       onExpandedChange?.(false);
     }
     onEditorFocusChange?.(false);
-  }, [onEditorFocusChange, onExpandedChange, settingsSheetPresentation.keepsComposerExpanded]);
-  const handleSend = useCallback(
-    async (followUp?: ActiveTurnComposerAction) => {
-      if (voiceInput.blocksSubmission || pendingPastedTextAttachmentCountRef.current > 0) return;
-      // Typed out in full rather than picked from the menu. Attachments mean the
-      // user is sending a prompt, so those go through as usual.
-      if (
-        usageLimitsOffered &&
-        isUsageLimitsCommand(props.draftMessage) &&
-        props.draftAttachments.length === 0
-      ) {
-        if (openUsageLimits()) onChangeDraftMessage("");
-        return;
-      }
-      const threadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
-      if (inFlightThreadIdsRef.current.has(threadKey)) return;
-      inFlightThreadIdsRef.current.add(threadKey);
-      try {
-        const messageId = await onSendMessage(followUp);
-        if (messageId === null) {
-          return;
-        }
-        // Sending a prompt starts agent work: arm the lock-screen card while the
-        // app is foregrounded and the activity token can be registered. Armed
-        // after the send so its preference read and native Activity start don't
-        // contend with the queued-message feedback on the tap frame.
-        armAgentAwarenessLiveActivityForLocalWork({
-          environmentId: props.environmentId,
-          threadTitle: props.selectedThread.title,
-          projectTitle: props.environmentLabel ?? "T3 Code",
-        });
-      } finally {
-        inFlightThreadIdsRef.current.delete(threadKey);
-      }
-    },
-    [
-      props.draftMessage,
-      props.draftAttachments.length,
-      onChangeDraftMessage,
-      openUsageLimits,
-      usageLimitsOffered,
-      onSendMessage,
-      props.environmentId,
-      props.environmentLabel,
-      props.selectedThread.id,
-      props.selectedThread.title,
-      voiceInput.blocksSubmission,
-    ],
-  );
+  };
+  const handleSend = async (followUp?: ActiveTurnComposerAction) => {
+    if (voiceInput.blocksSubmission || pendingPastedTextAttachmentCountRef.current > 0) return;
+    if (usageLimitsOffered && isUsageLimitsCommand(draftMessage) && draftAttachments.length === 0) {
+      if (openUsageLimits()) onChangeDraftMessage("");
+      return;
+    }
+    const threadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
+    if (inFlightThreadIdsRef.current.has(threadKey)) return;
+    inFlightThreadIdsRef.current.add(threadKey);
+    const sent = await settlePromise(() => onSendMessage(followUp));
+    inFlightThreadIdsRef.current.delete(threadKey);
+    if (AsyncResult.isFailure(sent)) {
+      // The composer state already surfaces send errors; only the lock needed releasing.
+      console.error("[composer] send failed", squashAtomCommandFailure(sent));
+      return;
+    }
+    if (sent.value === null) return;
+    // Armed after the send so its preference read and native Activity start don't contend
+    // with the queued-message feedback on the tap frame.
+    armAgentAwarenessLiveActivityForLocalWork({
+      environmentId: props.environmentId,
+      threadTitle: props.selectedThread.title,
+      projectTitle: props.environmentLabel ?? "T3 Code",
+    });
+  };
 
-  // ── Model menu ───────────────────────────────────────────
-  // A session that hands the conversation to another provider lets the picker
-  // offer the whole catalog; one that can't stays on its own instance.
   const lockedProviderInstanceId = props.canSwitchProvider
     ? undefined
     : currentModelSelection.instanceId;
-  const modelOptions = useMemo(
-    () =>
-      buildModelOptions(
-        props.serverConfig,
-        currentModelSelection,
-        lockedProviderInstanceId,
-        props.selectedThread.projectId,
-      ),
-    [
-      props.serverConfig,
-      currentModelSelection,
-      lockedProviderInstanceId,
-      props.selectedThread.projectId,
-    ],
+  const modelOptions = buildModelOptions(
+    props.serverConfig,
+    currentModelSelection,
+    lockedProviderInstanceId,
+    props.selectedThread.projectId,
   );
-  const threadProviderGroups = useMemo(() => groupByProvider(modelOptions), [modelOptions]);
+  const threadProviderGroups = groupByProvider(modelOptions);
   const currentModelOption =
     modelOptions.find(
       (option) =>
         option.selection.instanceId === currentModelSelection.instanceId &&
         option.selection.model === currentModelSelection.model,
     ) ?? null;
-  const providerOptionDescriptors = useMemo(
-    () =>
-      resolveProviderOptionDescriptors({
-        capabilities: currentModelOption?.capabilities,
-        selections: currentModelSelection.options,
-      }),
-    [currentModelOption?.capabilities, currentModelSelection.options],
-  );
+  const providerOptionDescriptors = resolveProviderOptionDescriptors({
+    capabilities: currentModelOption?.capabilities,
+    selections: currentModelSelection.options,
+  });
   const settingsOwnerId = composerOwnerKey;
-  const settingsRouteSession = useMemo<ExistingThreadSettingsRouteSession>(
-    () => ({
-      ownerId: settingsOwnerId,
-      environmentId: props.environmentId,
-      projectId: props.selectedThread.projectId,
-      providerInstanceId: currentModelSelection.instanceId,
-      ...(lockedProviderInstanceId ? { lockedProviderInstanceId } : {}),
-      providerGroups: threadProviderGroups,
-      selectedModel: currentModelSelection,
-      reportedModelSelection: props.reportedModelSelection,
-      onSelectModel: (option) =>
-        props.onUpdateModelSelection(withRememberedModelOptions(option.selection)),
-      optionDescriptors: providerOptionDescriptors,
-      onUpdateOptionSelections: (options) => {
-        rememberModelOptions(
-          currentModelSelection.instanceId,
-          currentModelSelection.model,
-          options ?? [],
-        );
-        props.onUpdateModelSelection({ ...currentModelSelection, options });
-      },
-      runtimeMode: currentRuntimeMode,
-      onUpdateRuntimeMode: props.onUpdateRuntimeMode,
-    }),
-    [
-      currentModelSelection,
-      props.reportedModelSelection,
-      currentRuntimeMode,
-      props.onUpdateModelSelection,
-      props.onUpdateRuntimeMode,
-      providerOptionDescriptors,
-      settingsOwnerId,
-      lockedProviderInstanceId,
-      threadProviderGroups,
-      props.selectedThread.projectId,
-    ],
-  );
-  const openSettings = useCallback(() => {
+  const settingsRouteSession = {
+    ownerId: settingsOwnerId,
+    environmentId: props.environmentId,
+    projectId: props.selectedThread.projectId,
+    providerInstanceId: currentModelSelection.instanceId,
+    ...(lockedProviderInstanceId ? { lockedProviderInstanceId } : {}),
+    providerGroups: threadProviderGroups,
+    selectedModel: currentModelSelection,
+    reportedModelSelection: props.reportedModelSelection,
+    onSelectModel: (option) =>
+      props.onUpdateModelSelection(withRememberedModelOptions(option.selection)),
+    optionDescriptors: providerOptionDescriptors,
+    onUpdateOptionSelections: (options) => {
+      rememberModelOptions(
+        currentModelSelection.instanceId,
+        currentModelSelection.model,
+        options ?? [],
+      );
+      props.onUpdateModelSelection({ ...currentModelSelection, options });
+    },
+    runtimeMode: currentRuntimeMode,
+    onUpdateRuntimeMode: props.onUpdateRuntimeMode,
+  } satisfies ExistingThreadSettingsRouteSession;
+  const openSettings = () => {
     settingsRoutePresentation.present(settingsRouteSession);
     settingsSheetPresentation.open();
-  }, [settingsRoutePresentation.present, settingsRouteSession, settingsSheetPresentation.open]);
+  };
 
   useEffect(() => {
     if (settingsSheetPresentation.isActive) {
@@ -750,17 +625,15 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     navigation.dispatch(StackActions.push("ThreadSettingsSheet"));
   }, [navigation, settingsSheetPresentation.isVisible]);
 
-  useFocusEffect(
-    useCallback(() => {
-      if (!settingsRoutePresentedRef.current) {
-        return;
-      }
+  useFocusEffect(() => {
+    if (!settingsRoutePresentedRef.current) {
+      return;
+    }
 
-      settingsRoutePresentedRef.current = false;
-      settingsSheetPresentation.onDismissed();
-      settingsRoutePresentation.clear(settingsOwnerId);
-    }, [settingsOwnerId, settingsRoutePresentation.clear, settingsSheetPresentation.onDismissed]),
-  );
+    settingsRoutePresentedRef.current = false;
+    settingsSheetPresentation.onDismissed();
+    settingsRoutePresentation.clear(settingsOwnerId);
+  });
 
   useEffect(
     () =>
@@ -850,8 +723,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   paddingTop: 14,
                 }
               : {
-                  // Keep the numeric radius close to the expanded card so the
-                  // shape morph stays bounded while rendering as a capsule.
                   borderRadius: 27,
                   overflow: "hidden" as const,
                   paddingVertical: 2,
@@ -928,13 +799,11 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   });
                 }}
                 onOpenAttachment={openDraftDocument}
-                // A rested composer full of chips left almost nowhere to tap to start typing:
-                // every chip opened its file instead. Collapsed, they focus the editor.
                 chipsInert={!isExpanded}
                 onInertChipPress={() => inputRef.current?.focus()}
                 ref={inputRef}
                 multiline
-                value={props.draftMessage}
+                value={draftMessage}
                 readOnly={voiceInput.freezesEditor}
                 skills={composerMenu.skills}
                 selection={composerMenu.selection}
@@ -998,7 +867,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                     } else if (!wouldExceedInputLimit) {
                       insertPaste();
                     } else {
-                      Alert.alert(
+                      Dialog.alert(
                         wouldExceedInputLimit
                           ? "Pasted text is too large for this message"
                           : "Could not attach pasted text",
@@ -1014,7 +883,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 placeholder={props.placeholder}
                 onFocus={handleFocus}
                 onBlur={handleBlur}
-                // Command-Return sends the other way, matching web's Mod+Enter.
                 onSubmit={(alternate) =>
                   void handleSend(
                     alternate && sendPresentation.alternate !== null
@@ -1029,8 +897,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                     : FOLLOW_UP_ACTION_LABEL[sendPresentation.alternate]
                 }
                 scrollEnabled={isExpanded}
-                // Android: collapsed single line centers natively (gravity) in
-                // a pill-height box matching the send button; iOS keeps insets.
                 singleLineCentered={!isExpanded}
                 contentInsetVertical={isExpanded || Platform.OS === "android" ? 0 : 6}
                 style={
@@ -1209,4 +1075,4 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       <FilePreviewModal source={previewFile} onRequestClose={closePreview} />
     </Animated.View>
   );
-});
+};

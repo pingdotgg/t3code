@@ -3,19 +3,14 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 
 import type { AcpSessionModeState } from "./runtimeModel.ts";
 
-/**
- * Maps ACP session configuration and session modes onto T3's provider option
- * descriptors so the existing model-options UI can drive them.
- *
- * Model selection stays on the dedicated model picker: `category: "model"`
- * options are excluded here because they already surface as models. Session
- * modes advertised through the modes API (rather than a config option) are
- * folded into one synthetic descriptor that the ACP adapter routes to
- * `session/set_mode`.
- */
-
-/** Synthetic descriptor ID for agents that expose modes outside config options. */
 export const ACP_SESSION_MODE_OPTION_ID = "_t3/session-mode";
+
+/**
+ * Agents use it for a real choice (GitHub Copilot's default agent), but T3
+ * option IDs must be non-empty. The ACP adapter maps it back to `""` before
+ * applying a selection.
+ */
+export const ACP_EMPTY_OPTION_VALUE = "_t3/empty";
 
 const MAX_OPTION_DESCRIPTORS = 16;
 const MAX_OPTION_CHOICES = 64;
@@ -27,6 +22,9 @@ const boundedText = (value: string | null | undefined, maximumLength: number): s
 
 const boundedOpaqueValue = (value: string, maximumLength: number): string | undefined =>
   value.length > 0 && value === value.trim() && value.length <= maximumLength ? value : undefined;
+
+const choiceId = (value: string): string | undefined =>
+  value === "" ? ACP_EMPTY_OPTION_VALUE : boundedOpaqueValue(value, MAX_TEXT_LENGTH);
 
 function flattenSelectChoices(
   options: EffectAcpSchema.SessionConfigSelectOptions,
@@ -44,7 +42,7 @@ function selectChoices(
   const seen = new Set<string>();
   const choices: Array<ProviderOptionChoice> = [];
   for (const candidate of candidates) {
-    const id = boundedOpaqueValue(candidate.value, MAX_TEXT_LENGTH);
+    const id = choiceId(candidate.value);
     if (id === undefined || seen.has(id)) continue;
     seen.add(id);
     const description = boundedText(candidate.description, MAX_DESCRIPTION_LENGTH);
@@ -101,7 +99,7 @@ export function acpProviderOptionDescriptors(input: {
     if (option.category === "thought_level") {
       mirroredModeChoiceSets.push(new Set(choices.map((choice) => choice.id)));
     }
-    const currentValue = option.currentValue;
+    const currentValue = choiceId(option.currentValue);
     descriptors.push({
       ...base,
       type: "select",
@@ -122,7 +120,7 @@ export function acpProviderOptionDescriptors(input: {
         description: mode.description,
       })),
     );
-    const currentValue = modeState.currentModeId;
+    const currentValue = choiceId(modeState.currentModeId);
     // Some agents mirror one knob through both the modes API and a config
     // option (codex-acp advertises its thinking levels as modes too). Skip
     // the synthetic descriptor when an existing descriptor already exposes

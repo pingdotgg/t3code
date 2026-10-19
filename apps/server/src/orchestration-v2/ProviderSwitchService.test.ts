@@ -284,10 +284,6 @@ it.effect.each(["stopped", "error"] as const)(
         projection: deadNativeThreadProjection(deadStatus, CodexProviderCapabilitiesV2),
         targetModelSelection: { instanceId: currentInstanceId, model: "gpt-5.2-codex" },
       });
-      // Static capabilities report no in-session switch, but the dead
-      // record's negotiated capabilities describe the provider: without
-      // them the ACP classification rejects the selection instead of
-      // reopening with the requested model on the next run.
       assert.equal(result.transition.type, "switch_model_in_session");
       assert.deepEqual(result.releaseProviderSessionIds, []);
     }).pipe(

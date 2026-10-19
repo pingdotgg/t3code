@@ -11,10 +11,10 @@ import {
   type ServerProvider,
   type ServerProviderVersionAdvisory,
 } from "@t3tools/contracts";
-import { compareSemverVersions } from "@t3tools/shared/semver";
+import { compareSemverVersions, satisfiesSemverRange } from "@t3tools/shared/semver";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { causeErrorTag } from "@t3tools/shared/observability";
-import { resolveCommandPath } from "@t3tools/shared/shell";
+import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Cache from "effect/Cache";
 import * as Config from "effect/Config";
 import * as DateTime from "effect/DateTime";
@@ -34,16 +34,11 @@ import { collectUint8StreamText } from "./collectStreamText.ts";
 import * as ProviderLatestVersions from "./ProviderLatestVersions.ts";
 
 const LATEST_VERSION_TIMEOUT_MS = 4_000;
-const HOMEBREW_INFO_TIMEOUT_MS = 10_000;
-const HOMEBREW_INFO_MAX_BYTES = 256 * 1_024;
+const PROBE_TIMEOUT_MS = 10_000;
+const PROBE_MAX_BYTES = 256 * 1_024;
 const MISE_WRAPPER_MAX_BYTES = 16 * 1_024;
 const PROVIDER_UPDATE_ACTION_TOAST_MESSAGE = "Install the update now or review provider settings.";
 
-/**
- * Ownership is re-derived from the executable this often. Installs do not
- * move on their own, so this mostly bounds how stale a Homebrew "latest" can
- * get; the npm registry check keeps its own cache.
- */
 const MAINTENANCE_CAPABILITIES_CACHE_TTL = Duration.hours(1);
 
 const compactEnv = (input: Record<string, Option.Option<string>>): NodeJS.ProcessEnv =>
@@ -65,13 +60,11 @@ const CommandLookupEnvConfig = Config.all({
 
 const readCommandLookupEnv = CommandLookupEnvConfig.pipe(Effect.orElseSucceed(() => ({})));
 
-/** Where the provider executable was found; every path is absolute. */
 export interface ProviderMaintenanceResolutionContext {
   readonly binaryPath: string;
   readonly resolvedCommandPath: string;
   readonly realCommandPath: string;
   readonly env: NodeJS.ProcessEnv;
-  /** Host platform; decides how the copyable command quotes the executable. */
   readonly platform: NodeJS.Platform;
 }
 
@@ -89,16 +82,9 @@ export interface ProviderMaintenanceCapabilitiesResolver {
 export interface PackageManagedProviderMaintenanceDefinition {
   readonly provider: ProviderDriverKind;
   readonly npmPackageName: string;
-  /**
-   * The provider's own updater (`claude update`, `pi update --self`). It runs
-   * first for paths its installer owns, and otherwise only when no package
-   * manager is proven, because these updaters detect their installer too.
-   */
   readonly nativeUpdate: {
     readonly args: ReadonlyArray<string>;
-    /** Paths the provider's own installer owns; omit when it has none. */
     readonly isCommandPath?: (commandPath: string) => boolean;
-    /** Environment the native updater needs to target this instance's install. */
     readonly env?: NodeJS.ProcessEnv;
   } | null;
 }
@@ -111,10 +97,6 @@ function nonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
-/**
- * The copyable command must paste into a shell as-is, so an executable path
- * with spaces or quotes is quoted for the host's default shell.
- */
 function quoteShellWord(word: string, platform: NodeJS.Platform): string {
   const safeWord = platform === "win32" ? /^[\w./:\\@=-]+$/ : /^[\w./:@=-]+$/;
   if (safeWord.test(word)) return word;
@@ -135,7 +117,6 @@ export function makeProviderMaintenanceCapabilities(input: {
   readonly updateExecutable: string | null;
   readonly updateArgs: ReadonlyArray<string>;
   readonly updateLockKey: string | null;
-  /** Shown to the user instead of `<executable> <args>`; use for a bare tool name like `brew`. */
   readonly updateCommand?: string;
   readonly platform?: NodeJS.Platform;
   readonly env?: NodeJS.ProcessEnv;
@@ -165,7 +146,6 @@ export function makeProviderMaintenanceCapabilities(input: {
   };
 }
 
-/** Pin only package-manager actions we own, preserving prefix, scripts, env and lock. */
 export function makeTargetedProviderUpdateAction(
   capabilities: ProviderMaintenanceCapabilities,
   version: string,
@@ -199,14 +179,18 @@ export function makeTargetedProviderUpdateAction(
 export function makeManualOnlyProviderMaintenanceCapabilities(input: {
   readonly provider: ProviderDriverKind;
   readonly packageName: string | null;
+  readonly installPath?: string;
 }): ProviderMaintenanceCapabilities {
-  return makeProviderMaintenanceCapabilities({
-    provider: input.provider,
-    packageName: input.packageName,
-    updateExecutable: null,
-    updateArgs: [],
-    updateLockKey: null,
-  });
+  return {
+    ...makeProviderMaintenanceCapabilities({
+      provider: input.provider,
+      packageName: input.packageName,
+      updateExecutable: null,
+      updateArgs: [],
+      updateLockKey: null,
+    }),
+    ...(input.installPath ? { installPath: input.installPath } : {}),
+  };
 }
 
 export function normalizeCommandPath(commandPath: string): string {
@@ -222,7 +206,6 @@ function isBunGlobalCommandPath(commandPath: string): boolean {
 }
 
 function isYarnGlobalCommandPath(commandPath: string): boolean {
-  // `~/.config/yarn/global/…` on POSIX, `%LOCALAPPDATA%\Yarn\Data\global\…` on Windows.
   return /\/yarn\/(?:data\/)?global\/node_modules\//.test(normalizeCommandPath(commandPath));
 }
 
@@ -230,6 +213,18 @@ function isYarnGlobalCommandPath(commandPath: string): boolean {
 function isMiseCommandPath(commandPath: string): boolean {
   const normalized = normalizeCommandPath(commandPath);
   return normalized.includes("/mise/installs/") || normalized.includes("/mise/shims/");
+}
+
+/**
+ * WinGet's Claude Code install under its user root (`<drive>:\Users\<name>\AppData\Local\Microsoft\WinGet`)
+ * or machine root (`<drive>:\Program Files\WinGet`): the `Links\claude.exe` link or the binary in the
+ * `Packages\Anthropic.ClaudeCode_…` directory.
+ */
+const winGetClaudeCommandPath =
+  /^[a-z]:\/(?:users\/[^/]+\/appdata\/local\/microsoft|program files(?: \(x86\))?)\/winget\/(?:links|packages\/anthropic\.claudecode_[^/]+)\/claude\.exe$/;
+
+function isWinGetClaudeCommandPath(commandPath: string): boolean {
+  return winGetClaudeCommandPath.test(normalizeCommandPath(commandPath));
 }
 
 function isPnpmGlobalCommandPath(commandPath: string): boolean {
@@ -243,13 +238,6 @@ function isPnpmGlobalCommandPath(commandPath: string): boolean {
   );
 }
 
-/**
- * The npm global prefix that owns a package, derived from the real path of
- * its entry point: `<prefix>/lib/node_modules/<pkg>/…`. Windows global
- * installs have no `lib` segment and are proven by the shim instead (see
- * `resolveNpmGlobalPrefix`). A project-local `node_modules` is not a global
- * install and yields null.
- */
 export function npmGlobalPrefixFromCommandPath(
   realCommandPath: string,
   packageName: string,
@@ -270,22 +258,14 @@ export function npmGlobalPrefixFromCommandPath(
   return packageIndex === 0 ? "/" : slashPath.slice(0, packageIndex);
 }
 
-// `<prefix>/Cellar/<name>/<version>/…` or `<prefix>/Caskroom/<name>/<version>/…`.
-// Homebrew always nests a version directory under the keg.
 const HOMEBREW_KEG_PATTERN = /^(.*)\/(cellar|caskroom)\/([^/]+)\/[^/]+\//i;
 
 export interface HomebrewOwnership {
   readonly kind: "formula" | "cask";
   readonly name: string;
-  /** The Homebrew prefix the keg sits under; must match `brew --prefix`. */
   readonly prefix: string;
 }
 
-/**
- * Homebrew looks like the owner when the real path runs through a versioned
- * keg or cask. It is only proven once the prefix matches the `brew` that will
- * run the upgrade (see `resolvePackageManagedProviderMaintenance`).
- */
 export function homebrewOwnershipFromCommandPath(
   realCommandPath: string,
 ): HomebrewOwnership | null {
@@ -326,23 +306,31 @@ export function parseHomebrewLatestVersion(
     ownership.kind === "formula"
       ? decoded.value.formulae?.[0]?.versions?.stable
       : decoded.value.casks?.[0]?.version?.split(",", 1)[0];
-  return nonEmptyString(raw);
+  const version = nonEmptyString(raw);
+  return version === "latest" ? null : version;
 }
 
-/** Run `brew <args>` and return stdout, or null on failure, timeout, or oversized output. */
-const runHomebrew = Effect.fn("runHomebrew")(function* (
-  brewPath: string,
+const runProbe = Effect.fn("runProbe")(function* (
+  command: string,
   args: ReadonlyArray<string>,
   env: NodeJS.ProcessEnv,
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const collect = Effect.gen(function* () {
-    const child = yield* spawner.spawn(ChildProcess.make(brewPath, args, { env, extendEnv: true }));
+    // Windows package managers are `.cmd` shims that need the shell.
+    const resolved = yield* resolveSpawnCommand(command, args, { env, extendEnv: true });
+    const child = yield* spawner.spawn(
+      ChildProcess.make(resolved.command, resolved.args, {
+        env,
+        extendEnv: true,
+        shell: resolved.shell,
+      }),
+    );
     yield* Effect.addFinalizer(() => child.kill().pipe(Effect.ignore));
-    // stderr is drained so a chatty brew cannot block on a full pipe.
+    // stderr is drained so a chatty tool cannot block on a full pipe.
     const [stdout, exitCode] = yield* Effect.all(
       [
-        collectUint8StreamText({ stream: child.stdout, maxBytes: HOMEBREW_INFO_MAX_BYTES }),
+        collectUint8StreamText({ stream: child.stdout, maxBytes: PROBE_MAX_BYTES }),
         child.exitCode,
         Stream.runDrain(child.stderr),
       ],
@@ -352,10 +340,11 @@ const runHomebrew = Effect.fn("runHomebrew")(function* (
   });
   return yield* collect.pipe(
     Effect.scoped,
-    Effect.timeoutOption(Duration.millis(HOMEBREW_INFO_TIMEOUT_MS)),
+    Effect.timeoutOption(Duration.millis(PROBE_TIMEOUT_MS)),
     Effect.map(Option.getOrNull),
     Effect.catchCause((cause) =>
-      Effect.logWarning("Homebrew probe failed", {
+      Effect.logWarning("Maintenance probe failed", {
+        command,
         subcommand: args[0],
         errorTag: causeErrorTag(cause),
       }).pipe(Effect.as(null)),
@@ -363,28 +352,34 @@ const runHomebrew = Effect.fn("runHomebrew")(function* (
   );
 });
 
-/**
- * Derive update capabilities from where the executable actually lives. Every
- * package-manager branch has evidence that the named tool owns that path, so
- * T3 Code never runs a package manager against an install it did not create.
- * An unproven install falls back to the provider's own updater, which detects
- * its installer itself, and stays manual-only without one.
- */
 export const resolvePackageManagedProviderMaintenance = Effect.fn(
   "resolvePackageManagedProviderMaintenance",
 )(function* (
   definition: PackageManagedProviderMaintenanceDefinition,
   context: ProviderMaintenanceResolutionContext | null,
 ) {
+  if (!context) {
+    return makeManualOnlyProviderMaintenanceCapabilities({
+      provider: definition.provider,
+      packageName: definition.npmPackageName,
+    });
+  }
   const manual = makeManualOnlyProviderMaintenanceCapabilities({
     provider: definition.provider,
     packageName: definition.npmPackageName,
+    installPath: context.realCommandPath,
   });
-  if (!context) {
-    return manual;
-  }
   const commandPaths = [context.resolvedCommandPath, context.realCommandPath];
   const packageName = definition.npmPackageName;
+  // WinGet owns these files: `claude update` only reports "managed by winget"
+  // and exits 0, and T3 Code does not run `winget upgrade` itself.
+  if (
+    definition.provider === "claudeAgent" &&
+    context.platform === "win32" &&
+    commandPaths.some(isWinGetClaudeCommandPath)
+  ) {
+    return manual;
+  }
 
   const nativeUpdate = definition.nativeUpdate;
   const native = nativeUpdate
@@ -427,11 +422,20 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     });
   }
   if (commandPaths.some(isPnpmGlobalCommandPath)) {
+    // pnpm 10 skips unapproved install scripts and still exits 0, leaving a
+    // package whose postinstall finishes the install broken. Global installs
+    // can only approve on the command line, and pnpm before 10.4 rejects the
+    // flag as an unknown option.
+    const pnpmVersion = yield* runProbe("pnpm", ["--version"], context.env);
+    const allowBuild =
+      pnpmVersion !== null && satisfiesSemverRange(pnpmVersion, ">=10.4.0")
+        ? [`--allow-build=${packageName}`]
+        : [];
     return makeProviderMaintenanceCapabilities({
       provider: definition.provider,
       packageName,
       updateExecutable: "pnpm",
-      updateArgs: ["add", "-g", `${packageName}@latest`],
+      updateArgs: ["add", "-g", ...allowBuild, `${packageName}@latest`],
       updateLockKey: "pnpm-global",
     });
   }
@@ -463,8 +467,8 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     // npm 12 blocks install scripts by default (empty allow-scripts allowlist)
     // and still exits 0, so a package whose postinstall finishes the install
     // (claude copies its native binary over a placeholder stub) is left broken
-    // while the update reports success. Allow this one package's scripts.
-    // Older npm warns about the unknown config and continues.
+    // while the update reports success. Older npm warns about the unknown
+    // config and continues.
     return makeProviderMaintenanceCapabilities({
       provider: definition.provider,
       packageName,
@@ -502,9 +506,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     if (!brewPath) {
       return fallback;
     }
-    // A keg-shaped path is only Homebrew's if it sits under the prefix of the
-    // `brew` that would upgrade it; `brew --prefix` is a cheap shell script.
-    const brewPrefix = nonEmptyString(yield* runHomebrew(brewPath, ["--prefix"], context.env));
+    const brewPrefix = nonEmptyString(yield* runProbe(brewPath, ["--prefix"], context.env));
     const realBrewPrefix = brewPrefix
       ? yield* fileSystem.realPath(brewPrefix).pipe(Effect.orElseSucceed(() => brewPrefix))
       : null;
@@ -518,7 +520,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
       homebrew.kind === "cask" ? ["upgrade", "--cask", homebrew.name] : ["upgrade", homebrew.name];
     // Homebrew lags npm by hours on every release, so compare against what
     // `brew upgrade` can actually deliver.
-    const info = yield* runHomebrew(brewPath, ["info", "--json=v2", homebrew.name], context.env);
+    const info = yield* runProbe(brewPath, ["info", "--json=v2", homebrew.name], context.env);
     return makeProviderMaintenanceCapabilities({
       provider: definition.provider,
       packageName,
@@ -533,7 +535,6 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
   return fallback;
 });
 
-/** A launcher script that runs the provider through mise (`exec mise x codex -- codex`). */
 const isMiseWrapperScript = Effect.fn("isMiseWrapperScript")(function* (
   context: ProviderMaintenanceResolutionContext,
 ) {
@@ -572,11 +573,6 @@ const isVoltaPackageInstall = Effect.fn("isVoltaPackageInstall")(function* (
   return yield* fileSystem.exists(packageDir).pipe(Effect.orElseSucceed(() => false));
 });
 
-/**
- * POSIX npm links `<prefix>/bin/<cmd>` into the package, so the real path is
- * proof. Windows npm writes `.cmd` shims beside `node_modules`, so the proof
- * is the package manifest next to the shim.
- */
 const resolveNpmGlobalPrefix = Effect.fn("resolveNpmGlobalPrefix")(function* (
   context: ProviderMaintenanceResolutionContext,
   packageName: string,
@@ -623,11 +619,6 @@ function makeManualProviderMaintenanceCapabilities(
   });
 }
 
-/**
- * Locate the configured provider executable, follow symlinks, and hand the
- * result to the resolver. A binary that cannot be found yields the resolver's
- * no-context answer.
- */
 export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
   "resolveProviderMaintenanceCapabilitiesEffect",
 )(function* (
@@ -643,9 +634,6 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
   }
 
   const env = options?.env ?? (yield* readCommandLookupEnv);
-  // resolveCommandPath checks explicit paths for existence too, so a missing
-  // binary always lands in the no-context branch and never gets an update
-  // command it cannot run.
   const resolvedCommandPath = yield* resolveCommandPath(binaryPath, { env });
   if (!resolvedCommandPath) {
     return yield* resolver.resolve(null);
@@ -670,8 +658,7 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
 /**
  * Turn a one-shot resolution into the shape drivers expose: a cached read for
  * advisories and a `fresh` read that update execution uses so it never trusts
- * ownership derived before the user clicked. An interrupted resolution is not
- * cached, so the next read resolves again.
+ * ownership derived before the user clicked.
  */
 export const makeCachedProviderMaintenanceResolution = Effect.fn(
   "makeCachedProviderMaintenanceResolution",
@@ -686,10 +673,20 @@ export const makeCachedProviderMaintenanceResolution = Effect.fn(
     options?.fresh ? Cache.invalidate(cache, undefined).pipe(Effect.andThen(cached)) : cached;
 });
 
+/**
+ * An install T3 Code cannot update gets no Update button or command, so its
+ * message names the version and the executable instead.
+ */
+function manualUpdateMessage(latestVersion: string, installPath: string | undefined): string {
+  return installPath
+    ? `Version ${latestVersion} is out. T3 Code runs ${installPath}; update it with the app or tool that installed it.`
+    : `Version ${latestVersion} is out. Update it with the app or tool that installed it.`;
+}
+
 function deriveVersionAdvisory(input: {
   readonly currentVersion: string | null;
   readonly latestVersion: string | null;
-  readonly compareVersions?: (current: string, latest: string) => number;
+  readonly capabilities: ProviderMaintenanceCapabilities;
 }): Pick<ServerProviderVersionAdvisory, "status" | "message"> {
   if (!input.currentVersion) {
     return { status: "unknown", message: null };
@@ -698,11 +695,17 @@ function deriveVersionAdvisory(input: {
     return { status: "unknown", message: null };
   }
   if (
-    (input.compareVersions ?? compareSemverVersions)(input.currentVersion, input.latestVersion) < 0
+    (input.capabilities.compareVersions ?? compareSemverVersions)(
+      input.currentVersion,
+      input.latestVersion,
+    ) < 0
   ) {
     return {
       status: "behind_latest",
-      message: PROVIDER_UPDATE_ACTION_TOAST_MESSAGE,
+      message:
+        input.capabilities.update === null
+          ? manualUpdateMessage(input.latestVersion, input.capabilities.installPath)
+          : PROVIDER_UPDATE_ACTION_TOAST_MESSAGE,
     };
   }
   return { status: "current", message: null };
@@ -721,7 +724,7 @@ export function createProviderVersionAdvisory(input: {
   const advisory = deriveVersionAdvisory({
     currentVersion: input.currentVersion,
     latestVersion,
-    ...(capabilities.compareVersions ? { compareVersions: capabilities.compareVersions } : {}),
+    capabilities,
   });
 
   return {

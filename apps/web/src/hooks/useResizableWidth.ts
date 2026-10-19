@@ -1,11 +1,5 @@
 import * as Schema from "effect/Schema";
-import {
-  type PointerEvent as ReactPointerEvent,
-  useCallback,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
+import { type PointerEvent as ReactPointerEvent, useLayoutEffect, useRef, useState } from "react";
 
 import { getLocalStorageItem, setLocalStorageItem } from "./useLocalStorage";
 import { useResizeDrag } from "./useResizeDrag";
@@ -13,22 +7,15 @@ import { useResizeDrag } from "./useResizeDrag";
 const WidthSchema = Schema.Finite;
 
 /**
- * Custom property the host element must size itself from. The drag handle sits
- * directly inside the host, and a drag writes this property on it each frame.
+ * Custom property the host element must size itself from.
  */
 export const RESIZABLE_WIDTH_PROPERTY = "--resizable-width";
 
 export interface UseResizableWidthOptions {
-  /** localStorage key the persisted width is stored under. */
   readonly storageKey: string;
   readonly defaultWidth: number;
   readonly minWidth: number;
   readonly maxWidth: number;
-  /**
-   * Which edge of the host element carries the drag handle:
-   *   - "left"  → panel grows leftward (right-anchored panels)
-   *   - "right" → panel grows rightward (left-anchored panels)
-   */
   readonly edge: "left" | "right";
 }
 
@@ -41,14 +28,8 @@ export interface ResizableWidthHandlers {
 }
 
 /**
- * Width state for a side-anchored panel resized via a drag handle on the
- * specified edge. Width is read on mount or storage-key changes and persisted on
- * drag-end (not on every rAF tick — would otherwise be ~60 writes/sec).
- *
- * During a drag the hook writes `RESIZABLE_WIDTH_PROPERTY` on the handle's
- * parent, so the panel follows the cursor in the same frame without
- * re-rendering the owner. `width` state and localStorage commit once when the
- * user lifts the pointer or the drag is interrupted.
+ * Width is read on mount or storage-key changes and persisted on drag-end (not on every rAF tick
+ * — would otherwise be ~60 writes/sec).
  */
 export function useResizableWidth(options: UseResizableWidthOptions): {
   readonly width: number;
@@ -56,15 +37,11 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
 } {
   const { storageKey, defaultWidth, minWidth, maxWidth, edge } = options;
 
-  const clamp = useCallback(
-    (value: number): number => {
-      if (!Number.isFinite(value)) return defaultWidth;
-      return Math.max(minWidth, Math.min(maxWidth, value));
-    },
-    [defaultWidth, maxWidth, minWidth],
-  );
+  const clamp = (value: number): number => {
+    if (!Number.isFinite(value)) return defaultWidth;
+    return Math.max(minWidth, Math.min(maxWidth, value));
+  };
 
-  // No cross-tab subscription: panel width is per-window state.
   const readWidth = () => {
     if (typeof window === "undefined") return defaultWidth;
     try {
@@ -76,7 +53,6 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
     }
   };
   const [widthState, setWidthState] = useState(() => ({ storageKey, width: readWidth() }));
-  // Panels stay mounted across threads; restore the destination width before paint.
   if (widthState.storageKey !== storageKey) {
     setWidthState({ storageKey, width: readWidth() });
   }
@@ -102,7 +78,6 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
       },
       finish(finalWidth) {
         setWidthState({ storageKey, width: finalWidth });
-        // Commit once at drag-end to avoid 60Hz localStorage writes.
         try {
           setLocalStorageItem(latestOptions.current.storageKey, finalWidth, WidthSchema);
         } catch (error) {

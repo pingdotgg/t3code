@@ -29,24 +29,8 @@ export function shouldUseRestingComposerLayout(input: {
   isScrollCollapsed: boolean;
   hasExpandedChrome: boolean;
   hasMultilinePrompt: boolean;
-  /** Whether the timeline has more content than fits above the composer. */
   timelineOverflows: boolean;
 }): boolean {
-  // Multiline drafts stay readable. Resting only clamps a single prompt
-  // line and overlays its actions; non-image attachment and context
-  // rows keep their natural height above it while image previews move inline.
-  // Banners and the tasks badge dock above the surface, so they are absent
-  // too. The context strip is optional: collapsed controls use it when
-  // present and otherwise occupy a compact row inside the composer.
-  //
-  // Only a timeline scroll rests the composer: the user asked for it with the
-  // gesture, and it lifts on the next composer interaction. Losing focus never
-  // rests it, so clicking a message, copying output, or selecting text for a
-  // citation leaves the composer where it was.
-  //
-  // Resting exists to give reading space back to the timeline. A thread that
-  // fits above the composer has nothing to reclaim, so it stays expanded and
-  // never shows the collapsed row that a fresh thread would otherwise open on.
   return (
     input.isExistingThread &&
     !input.isMobileViewport &&
@@ -66,16 +50,9 @@ export function shouldUseRestingComposerLayout(input: {
 export const COMPOSER_RESTING_EXPANSION_MIN_PX = 94;
 
 /**
- * The space the timeline reserves at its end for the composer overlay.
- *
- * The overlay is measured live, but a resting composer is much shorter than
- * an expanded one. Reserving only the resting height lets a scroll to the end
- * land flush against the short composer, and the expansion that follows then
- * covers the last rows because the timeline never moves for footer growth.
- * While resting, keep the measured expanded height. Estimate the empty
- * expansion only before that measurement exists: strip mounting can otherwise
- * inflate the estimate mid-transition and move the timeline. An expanded
- * measurement is authoritative and may shrink the reservation.
+ * Reserving only the resting height lets a scroll to the end land flush against the short
+ * composer, and the expansion that follows then covers the last rows because the timeline never
+ * moves for footer growth.
  */
 export function resolveComposerTimelineInset(input: {
   currentInset: number;
@@ -94,11 +71,6 @@ export function resolveComposerTimelineInset(input: {
     : input.overlayHeight;
 }
 
-/**
- * Whether the overlay's composer is resting. Only a mounted composer can be:
- * a status bar in its place (a native subagent thread) never is, even if the
- * composer it replaced last reported resting.
- */
 export function overlayComposerIsResting(input: {
   composerMounted: boolean;
   composerReportedResting: boolean;
@@ -159,12 +131,10 @@ function restingComposerControlsWidth(
 }
 
 /**
- * The width the resting controls take with nothing moved into overflow.
- *
- * The context strip reserves this much for the composer before deciding
- * whether its own labels may expand. Judging against the currently visible
- * controls instead lets the strip expand into space the composer just gave
- * up, which shrinks the host, hides the controls again, and repeats.
+ * The context strip reserves this much for the composer before deciding whether its own labels
+ * may expand. Judging against the currently visible controls instead lets the strip expand into
+ * space the composer just gave up, which shrinks the host, hides the controls again, and
+ * repeats.
  */
 export function resolveRestingComposerControlsNaturalWidth(
   input: RestingComposerControlsMeasurement,
@@ -172,15 +142,6 @@ export function resolveRestingComposerControlsNaturalWidth(
   return restingComposerControlsWidth(input, 0);
 }
 
-/**
- * Fit footer controls using natural widths: remove trailing labels first,
- * then move trailing blocks into overflow. Resting and expanded share this
- * decision, including the slack needed to safely restore controls.
- *
- * Trailing blocks compact before the model picker shrinks. Once they are all in
- * the overflow menu, the picker may contract to its minimum readable width;
- * below that the whole cluster hides rather than clipping.
- */
 const RESTING_CONTROLS_SLACK_PX = 1;
 
 export function resolveRestingComposerControlsLayout(

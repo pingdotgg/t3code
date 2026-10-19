@@ -8,36 +8,27 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
-/**
- * The storage and delivery rules of one environment's held webhook requests.
- * Runs inside the environment's `HookInboxObject` Durable Object against its SQLite
- * storage; written against `SqlClient` so tests can run it on any SQLite.
- */
-
-/** How long a held request waits for its environment. */
 const HOOK_INBOX_TTL_MS = 24 * 60 * 60 * 1000;
-/** Requests one environment may have waiting at once. */
+
 const HOOK_INBOX_MAX_REQUESTS = 1_000;
-/** Body bytes one environment may have waiting at once. */
+
 export const HOOK_INBOX_MAX_BYTES = 50 * 1_048_576;
 /**
- * Requests one hook may have waiting at once. The relay cannot check tokens,
- * so this keeps junk sent to one hook id from crowding out the others.
+ * The relay cannot check tokens, so this keeps junk sent to one hook id from
+ * crowding out the others.
  */
 export const HOOK_INBOX_MAX_PER_HOOK = 100;
-/** Requests pushed per alarm run; the next run starts right away while more wait. */
+
 const DELIVERIES_PER_RUN = 20;
-/** Requests read at a time; a run keeps reading past busy hooks' backlogs. */
+
 const ROWS_READ_PER_PAGE = 50;
-/** Wait before trying a hook whose environment answered busy again. */
+
 const BUSY_RETRY_MS = 30_000;
 const MAX_RETRY_DELAY = Duration.minutes(10);
-/** Past this many failures the schedule is at its cap, so stepping further changes nothing. */
+
 const MAX_COUNTED_FAILURES = 25;
 
 /**
- * Delays between delivery attempts while the environment is unreachable,
- * indexed by consecutive failures since it was last reached or woke us.
  * A wake means its tunnel just connected, but Cloudflare can take a few
  * minutes to route the hostname to it, so the first 3 minutes retry every
  * 10 s. After that the environment is likely gone again: 30 s, 1 min, 2 min,
@@ -63,21 +54,14 @@ export interface HeldHook {
   readonly rawToken: string;
   /** The decoded hook id, so every spelling of one hook shares its cap. */
   readonly hookKey: string;
-  /** Without the leading `?`. */
+
   readonly query: string;
   readonly headers: Readonly<Record<string, string>>;
   readonly body: Uint8Array;
 }
 
-/**
- * `delivered` deletes the request. `unreachable` keeps it and backs off the
- * whole inbox, since nothing else will get through either. `busy` keeps it
- * and its hook's later requests for the next run, but lets other hooks'
- * requests go ahead, so one stuck task cannot hold up the rest.
- */
 export type DeliveryOutcome = "delivered" | "busy" | "unreachable";
 
-/** The `retrySchedule` delay after `failures` consecutive unreachable attempts. */
 export const retryDelayMs = Effect.fn("HookInboxStore.retryDelayMs")(function* (failures: number) {
   const step = yield* Schedule.toStep(retrySchedule);
   let delay = MAX_RETRY_DELAY;
@@ -88,7 +72,7 @@ export const retryDelayMs = Effect.fn("HookInboxStore.retryDelayMs")(function* (
   ) {
     const next = yield* step(0, undefined).pipe(
       Effect.map(([, duration]) => Option.some(duration)),
-      // The schedule never ends; stay at the cap if it ever does.
+
       Pull.catchDone(() => Effect.succeedNone),
     );
     if (Option.isNone(next)) break;
@@ -138,7 +122,7 @@ export const migrate = Effect.gen(function* () {
     )
   `;
   yield* sql`CREATE INDEX IF NOT EXISTS held_hooks_hook ON held_hooks (hook_key)`;
-  // Where to push, and how many attempts in a row have failed. One row.
+
   yield* sql`
     CREATE TABLE IF NOT EXISTS held_hooks_target (
       id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -174,8 +158,8 @@ const resetFailures = Effect.gen(function* () {
 });
 
 /**
- * Counts one more unreachable attempt. Incremented in place, so a wake that
- * reset the count while this run's request was in flight is not overwritten.
+ * Incremented in place, so a wake that reset the count while this run's request
+ * was in flight is not overwritten.
  */
 const countFailure = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -193,8 +177,8 @@ const hasPending = Effect.gen(function* () {
 });
 
 /**
- * Stores a request for later delivery to `baseUrl`. Returns the time the
- * first attempt is due, or null when the inbox is full and nothing was stored.
+ * Returns the time the first attempt is due, or null when the inbox is full and
+ * nothing was stored.
  */
 export const hold = Effect.fn("HookInboxStore.hold")(function* (hook: HeldHook, baseUrl: string) {
   const sql = yield* SqlClient.SqlClient;
@@ -234,7 +218,6 @@ const backlogSize = Effect.gen(function* () {
   return rows[0] ?? { count: 0, bytes: 0 };
 });
 
-/** Which cap refused a request, or that it was already held, for traces. */
 const refusalReason = (hook: HeldHook) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -248,10 +231,6 @@ const refusalReason = (hook: HeldHook) =>
     return "max_per_hook";
   });
 
-/**
- * The environment is reachable again at `baseUrl`. Returns whether anything
- * is waiting, so the caller can deliver right away.
- */
 export const wake = Effect.fn("HookInboxStore.wake")(function* (baseUrl: string) {
   if (!(yield* hasPending)) return false;
   yield* setTarget(baseUrl, { resetFailures: true });
@@ -264,12 +243,6 @@ export const clear = Effect.gen(function* () {
   yield* sql`DELETE FROM held_hooks_target`;
 });
 
-/**
- * Pushes the oldest held requests to the environment, one at a time, in
- * order per hook. Stops at the first sign the environment is unreachable;
- * skips past a hook whose environment answered busy. Drops requests older
- * than the TTL. Returns when the next run is due, or null when nothing is left.
- */
 export const deliverDue = Effect.fn("HookInboxStore.deliverDue")(function* <R>(
   send: (baseUrl: string, hook: HeldHook) => Effect.Effect<DeliveryOutcome, never, R>,
 ) {
@@ -280,7 +253,7 @@ export const deliverDue = Effect.fn("HookInboxStore.deliverDue")(function* <R>(
     RETURNING id
   `;
   const target = yield* readTarget;
-  /** Oldest held requests after `afterSeq`, skipping hooks already found busy. */
+
   const readPage = (afterSeq: number, skip: ReadonlySet<string>) =>
     sql<HeldHookRow>`
       SELECT seq, id, received_at, method, raw_hook_id, raw_token, hook_key, query, headers, body
@@ -292,7 +265,6 @@ export const deliverDue = Effect.fn("HookInboxStore.deliverDue")(function* <R>(
   let batch = yield* readPage(0, new Set());
   if (batch.length === 0 || target === null) {
     if (target === null) yield* sql`DELETE FROM held_hooks`;
-    // Empty, so the next request held starts the schedule from the top.
     else yield* resetFailures;
     yield* Effect.annotateCurrentSpan({ "relay.inbox.expired": expired.length });
     return null;
@@ -304,7 +276,7 @@ export const deliverDue = Effect.fn("HookInboxStore.deliverDue")(function* <R>(
   let unreadable = 0;
   let longestWaitMs = 0;
   const busyHooks = new Set<string>();
-  /** What this run did, for the alarm's span; never request contents. */
+
   const annotateRun = (result: string) =>
     Effect.gen(function* () {
       const backlog = yield* backlogSize;
@@ -321,13 +293,22 @@ export const deliverDue = Effect.fn("HookInboxStore.deliverDue")(function* <R>(
         "relay.inbox.held_bytes": backlog.bytes,
       });
     });
+  const stillHeld = (seq: number) =>
+    sql<{ readonly seq: number }>`SELECT seq FROM held_hooks WHERE seq = ${seq}`.pipe(
+      Effect.map((rows) => rows.length > 0),
+    );
   // Pages run out only once every non-busy request has been tried, so a
   // backlog behind busy hooks never hides another hook's requests.
   pages: while (batch.length > 0) {
     for (const row of batch) {
       if (sent === DELIVERIES_PER_RUN) break pages;
-      // Later requests to a busy hook wait their turn, so its order is kept.
+
       if (busyHooks.has(row.hook_key)) continue;
+      // Clear can discard this prefetched page while an upstream send is in flight.
+      if (!(yield* stillHeld(row.seq))) {
+        yield* annotateRun("cleared");
+        return null;
+      }
       const headers = decodeHeaders(row.headers);
       if (Option.isNone(headers)) {
         // Unreadable: it can never be delivered, and must not block the rest.
@@ -347,6 +328,11 @@ export const deliverDue = Effect.fn("HookInboxStore.deliverDue")(function* <R>(
         headers: headers.value,
         body: row.body,
       });
+      // A cleared request must neither advance this run nor schedule a retry.
+      if (!(yield* stillHeld(row.seq))) {
+        yield* annotateRun("cleared");
+        return null;
+      }
       if (outcome === "unreachable") {
         failures = yield* countFailure;
         yield* annotateRun("unreachable");
@@ -372,7 +358,7 @@ export const deliverDue = Effect.fn("HookInboxStore.deliverDue")(function* <R>(
     yield* annotateRun("drained");
     return null;
   }
-  // Everything left this run was busy: give those tasks a moment to drain.
+
   const now = yield* Clock.currentTimeMillis;
   const idle = delivered === 0 && busyHooks.size > 0;
   yield* annotateRun(idle ? "busy" : "more_pending");

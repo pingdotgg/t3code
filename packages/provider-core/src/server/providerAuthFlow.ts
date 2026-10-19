@@ -25,7 +25,6 @@ import type * as ProviderAuth from "./auth.ts";
 
 export interface ProviderAuthFlowContext {
   readonly flowId: string;
-  /** The lifetime timeout interrupts authenticate before publishing its expired result. */
   readonly expiresAt: number;
   readonly returnUrl?: string;
   readonly callbackMode?: "server" | "client";
@@ -58,13 +57,11 @@ interface Flow {
     | undefined;
 }
 
-/** Adapters do login and credential handling; this owns client consent and flow lifetime. */
 export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
   readonly instanceId: ProviderInstanceId;
   readonly credentialBinding: NonNullable<ProviderAuth.ProviderAuthController["credentialBinding"]>;
   readonly methods: Effect.Effect<ReadonlyArray<ProviderAuthMethod>, ProviderSetupError>;
   readonly defaultMethodId?: string;
-  /** Stored account profiles can change the advertised methods after auth/logout. */
   readonly refreshMethodsAfterAuth?: boolean;
   /** Fail with ProviderSetupError containing safe text for the user, never native token data. */
   readonly authenticate: (
@@ -125,7 +122,6 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
     return active;
   });
 
-  // Method discovery does not start a sign-in flow.
   const refreshMethods = options.methods.pipe(
     Effect.flatMap((methods) =>
       SubscriptionRef.update(snapshot, (current) => ({
@@ -133,7 +129,6 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
         state: { ...current.state, methods },
       })),
     ),
-    // Keep the last known methods when a refresh fails or is interrupted.
     Effect.catch((error) =>
       SubscriptionRef.update(snapshot, (current) => ({
         ...current,
@@ -241,7 +236,7 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
               operation: "start",
               detail: "Provider setup is already in progress.",
             });
-          const id = yield* crypto.randomUUIDv4.pipe(
+          const id = yield* crypto.randomUUIDv4().pipe(
             Effect.mapError(
               () =>
                 new ProviderSetupError({

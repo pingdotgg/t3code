@@ -258,7 +258,6 @@ describe("orchestration V2 wire projection", () => {
       const projected = projectTurnItemForWire(item);
       expect(projected).not.toHaveProperty("output");
       expect(projected).toMatchObject({ input: "test", status: "completed" });
-      // Clients fetch withheld output on demand, so they need to know it exists.
       expect(projected.type === "command_execution" ? projected.outputOmitted : null).toBe(
         output ? true : undefined,
       );
@@ -320,7 +319,6 @@ describe("orchestration V2 wire projection", () => {
     };
     const projected = projectTurnItemForDetail(item);
     const output = projected.type === "dynamic_tool" ? projected.output : null;
-    // The truncated text block plus a fixed number of markers, however many images there are.
     expect(Array.isArray(output) ? output.length : null).toBe(1 + MAX_TOOL_OUTPUT_IMAGES);
     expect(Array.isArray(output) ? String(output[0]?.text).length : null).toBeLessThan(263_000);
     expect(toolOutputImages(output)).toHaveLength(MAX_TOOL_OUTPUT_IMAGES);
@@ -360,7 +358,6 @@ describe("orchestration V2 wire projection", () => {
     expect(projected).not.toHaveProperty("newStr");
     expect(projected).toMatchObject({ fileName: "src/main.ts", additions: 3, deletions: 1 });
     expect(item.diffStr).toBe("+new code");
-    // A failed edit keeps the provider's error so expanding the row can show it.
     const failed = projectTurnItemForWire({
       ...item,
       status: "failed",

@@ -6,9 +6,9 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { isHttpClientError } from "effect/http/HttpClientError";
 
 /**
- * A relay request that did not succeed. `unavailable` means it may succeed on
- * retry; the relay refused the other kinds. The description is safe to show:
- * it carries the relay's own explanation and trace ID, never request details.
+ * `unavailable` means it may succeed on retry; the relay refused the other
+ * kinds. The description is safe to show: it carries the relay's own
+ * explanation and trace ID, never request details.
  */
 export class RelayRequestError extends Schema.TaggedError<RelayRequestError>()(
   "RelayRequestError",
@@ -33,7 +33,6 @@ export function relayRequestError(cause: unknown): RelayRequestError {
       });
 }
 
-/** Whether a failure may succeed on retry: anything but a relay refusal. */
 export const shouldRetryRelayRequest = (error: unknown): boolean =>
   !isRelayRequestError(error) || error.rejection === "unavailable";
 
@@ -51,7 +50,6 @@ function recoveryHint(error: RelayProtectedError): string {
   }
 }
 
-/** Preserve relay diagnostics before converting permanent rejections into non-retryable errors. */
 export const filterRelayResponse = Effect.fn("cloud.filter_relay_response")(function* (
   response: HttpClientResponse.HttpClientResponse,
 ) {
@@ -65,6 +63,17 @@ export const filterRelayResponse = Effect.fn("cloud.filter_relay_response")(func
     ? `T3 Connect: ${decoded.value.message}. ${recoveryHint(decoded.value)} Trace ID: ${decoded.value.traceId}.`
     : `T3 Connect relay returned HTTP ${response.status} without a recognized error response. Check relay access and any proxy or firewall restrictions, then restart T3 Code.${requestId}`;
 
+  // The only 401 that clears itself: a proof signed with a skewed clock (a host
+  // that booted before NTP) expires on arrival, and the next attempt signs a new
+  // one. It is recognized only from a schema-decoded relay body. Every other
+  // 401, including a revoked bearer or an undecodable body, stays permanent.
+  if (
+    response.status === 401 &&
+    Option.isSome(decoded) &&
+    decoded.value._tag === "RelayEnvironmentLinkProofExpiredError"
+  ) {
+    return yield* new RelayRequestError({ rejection: "unavailable", description });
+  }
   if (response.status === 401) {
     return yield* new RelayRequestError({ rejection: "unauthorized", description });
   }

@@ -1,8 +1,3 @@
-/**
- * Pure checks behind T3 Connect link proofs and relay requests: which local
- * origin a link may point at, and which scopes and lifetimes a proof claims and
- * accepts.
- */
 import type {
   RelayEnvironmentLinkProofPayload,
   RelayLinkProofRequest,
@@ -100,10 +95,6 @@ export function isAllowedEndpointOrigin(input: {
   return input.origin.localHttpPort === endpointRequestPort(url);
 }
 
-// A managed (Cloudflare tunnel) endpoint is provisioned by the relay and must
-// point at a loopback origin. A manual endpoint is reached out of band (e.g.
-// Tailscale) or not advertised at all for publish-only links, so it is not
-// tied to the managed-tunnel scope.
 export function isSupportedLinkProviderKind(request: RelayLinkProofRequest): boolean {
   return (
     request.endpoint.providerKind === "cloudflare_tunnel" ||

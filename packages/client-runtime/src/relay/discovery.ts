@@ -333,10 +333,6 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
             yield* Ref.set(activeAccountId, Option.none());
             yield* Ref.set(offlineReportFingerprints, new Map());
             yield* SubscriptionRef.set(state, EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE);
-            // Refresh proactively — this wakeup fires when a session activates
-            // (sign-in or cold start), and the list should be populated before
-            // any screen asks for it. A signed-out refresh settles back to the
-            // clean empty state.
             yield* refresh.pipe(Effect.forkScoped);
           })
         : Effect.void,

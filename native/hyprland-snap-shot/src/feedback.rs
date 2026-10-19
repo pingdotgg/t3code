@@ -464,22 +464,22 @@ impl Feedback {
                 overlay
                     .subsurface
                     .set_position(dest.x.round() as i32, dest.y.round() as i32);
-                // Immutable textures are uploaded only when they change. Flight frames update
-                // the viewport and subsurface position, not megabytes of shared-memory pixels.
+                // Hyprland 0.56.2 retains the old surface size on viewport-only commits.
+                // Reattach the immutable buffer so the destination size is applied too.
                 let texture = if flashing {
                     Texture::Flash
                 } else {
                     Texture::Image
                 };
+                overlay.image.attach(
+                    Some((if flashing { &self.flash } else { &self.image }).wl_buffer()),
+                    0,
+                    0,
+                );
                 if overlay.texture != texture {
-                    overlay.image.attach(
-                        Some((if flashing { &self.flash } else { &self.image }).wl_buffer()),
-                        0,
-                        0,
-                    );
                     overlay.image.damage_buffer(0, 0, i32::MAX, i32::MAX);
-                    overlay.texture = texture;
                 }
+                overlay.texture = texture;
             } else {
                 if overlay.texture != Texture::None {
                     overlay.image.attach(None, 0, 0);

@@ -16,12 +16,14 @@ const ToggleGroupContext = React.createContext<VariantProps<typeof toggleVariant
 function ToggleGroup({
   className,
   variant = "segmented",
-  size = variant === "segmented" ? "segmented" : "default",
+  size: sizeProp,
   orientation = "horizontal",
   children,
   ...props
 }: ToggleGroupPrimitive.Props & VariantProps<typeof toggleVariants>) {
-  const value = React.useMemo(() => ({ size, variant }), [size, variant]);
+  const size =
+    sizeProp === undefined ? (variant === "segmented" ? "segmented" : "default") : sizeProp;
+  const value = { size, variant };
   return (
     <ToggleGroupPrimitive
       className={cn(

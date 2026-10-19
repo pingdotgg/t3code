@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { OrchestrationV2PendingBackgroundTask } from "@t3tools/contracts";
+import {
+  type OrchestrationV2PendingBackgroundTask,
+  ProviderInstanceId,
+  ProviderThreadId,
+} from "@t3tools/contracts";
 import {
   backgroundWorkHoldsCompletion,
   derivePendingBackgroundWork,
@@ -33,7 +37,6 @@ describe("backgroundWorkHoldsCompletion", () => {
     ["a monitor", true, [task("watch", "monitor")]],
     ["a command and a monitor", true, [task("dev", "command"), task("watch", "monitor")]],
     ["a command and a subagent", true, [task("dev", "command"), task("review", "subagent")]],
-    // Also what an unknown or missing kind decodes to.
     ["work the provider cannot name", true, [task("opaque", "background_task")]],
   ] as const)("with %s pending, holds completion: %s", (_case, holds, tasks) => {
     expect(backgroundWorkHoldsCompletion(tasks)).toBe(holds);
@@ -41,6 +44,50 @@ describe("backgroundWorkHoldsCompletion", () => {
 });
 
 describe("derivePendingBackgroundWork", () => {
+  it("takes each subagent item's instance from its joined owner", () => {
+    const owner = ProviderInstanceId.make("claude-owner");
+    const tasks = derivePendingBackgroundWork({
+      latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
+      providerThreads: [],
+      turnItems: [
+        {
+          id: "owned-item",
+          owningProviderInstanceId: owner,
+          type: "subagent",
+          status: "running",
+          title: null,
+        },
+        { id: "unknown-item", type: "subagent", status: "running", title: null },
+      ],
+    });
+    expect(tasks).toEqual([
+      { taskId: "owned-item", kind: "subagent", providerInstanceId: owner },
+      { taskId: "unknown-item", kind: "subagent" },
+    ]);
+  });
+
+  it("takes a roster subagent's instance from its owning provider thread", () => {
+    const owner = ProviderInstanceId.make("claude-owner");
+    const tasks = derivePendingBackgroundWork({
+      latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
+      providerThreads: [
+        {
+          id: ProviderThreadId.make("pt-owner"),
+          providerInstanceId: owner,
+          pendingBackgroundTasks: [
+            {
+              taskId: "roster-item",
+              kind: "subagent",
+              providerInstanceId: ProviderInstanceId.make("other"),
+            },
+          ],
+        },
+      ],
+      turnItems: [],
+    });
+    expect(tasks).toEqual([{ taskId: "roster-item", kind: "subagent", providerInstanceId: owner }]);
+  });
+
   it("returns empty while the latest run is not settled", () => {
     const tasks = derivePendingBackgroundWork({
       latestRun: { id: "run-1" as never, ordinal: 1, status: "running" },

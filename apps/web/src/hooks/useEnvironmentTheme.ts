@@ -23,11 +23,9 @@ function publishedThemeColors(
   appearance: ThemeAppearance,
   colors: Readonly<Record<string, string>> | undefined,
 ): ThemeColors {
-  // Seeds generate the base with the guided theme editor's generator, so a
-  // desktop theme arrives as a coherent T3 Code palette rather than a foreign
-  // one — but only for the appearance they describe. A variant builds on that
-  // appearance's stock defaults: the generator follows the seed canvas's
-  // luminance, so dark seeds would give a light variant unreadable colors.
+  // A variant builds on that appearance's stock defaults: the generator follows
+  // the seed canvas's luminance, so dark seeds would give a light variant
+  // unreadable colors.
   const base =
     appearance === theme.appearance && theme.canvas !== undefined && theme.accent !== undefined
       ? createVividThemeColors(appearance, theme.canvas, theme.accent)
@@ -35,12 +33,6 @@ function publishedThemeColors(
   return { ...base, ...lenientThemeColorOverrides(colors ?? {}) };
 }
 
-/**
- * A published theme as the theme library renders it. Both published forms are
- * accepted: the seeded short form a desktop generates, and the standard
- * exported theme file the Download button produces — so any theme someone
- * shared can be dropped into the machine's themes directory as-is.
- */
 export function environmentThemeDefinition(theme: EnvironmentTheme): ThemeDefinition {
   const variants: Partial<Record<ThemeAppearance, ThemeColors>> = {};
   for (const [variantAppearance, variantColors] of Object.entries(theme.variants ?? {})) {
@@ -93,17 +85,10 @@ export function publishedThemeDefinitions(
     .map(environmentThemeDefinition);
 }
 
-/** The published themes as library entries; empty while none are published. */
 export function useEnvironmentThemeDefinitions(): ReadonlyArray<ThemeDefinition> {
   return useSyncExternalStore(subscribeToCustomThemes, getEnvironmentThemes, () => []);
 }
 
-/**
- * Keeps the machine's published themes in the theme library for as long as
- * the primary environment publishes them. A client with a published theme
- * selected retints the moment the machine rewrites it; everyone else just
- * gains cards in the theme library.
- */
 export function useEnvironmentThemeSync(): void {
   const published = useAtomValue(primaryServerEnvironmentThemesAtom);
   const { refreshTheme } = useTheme();

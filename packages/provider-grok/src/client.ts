@@ -1,9 +1,3 @@
-/**
- * Grok's client definition: settings form, label, and glyph.
- * Browser- and React Native-safe.
- *
- * @module provider-grok/client
- */
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { defineProviderClient } from "@t3tools/provider-core/client";
 

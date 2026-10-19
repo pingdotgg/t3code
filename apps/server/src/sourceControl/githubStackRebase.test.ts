@@ -5,7 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 
-import * as GitHubApi from "@t3tools/source-control-github/server/GitHubApi";
+import * as GitHubRest from "@t3tools/source-control-github/server/GitHubRest";
 import { cascadeRebaseStack } from "@t3tools/source-control-github/server/githubStackRebase";
 
 import * as ServerSettings from "../serverSettings.ts";
@@ -15,10 +15,9 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as ServerSourceControlHost from "./ServerSourceControlHost.ts";
 
 const layer = Layer.mergeAll(
-  Layer.mock(GitHubApi.GitHubApi)({
+  Layer.mock(GitHubRest.GitHubRest)({
     credential: () => Effect.succeed({ token: Redacted.make("token"), fingerprint: "fp" }),
   }),
-  // The cascade runs real git through the server's host; the git driver itself is never asked.
   ServerSourceControlHost.layer.pipe(
     Layer.provide(ServerSettings.layerTest()),
     Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
@@ -27,10 +26,6 @@ const layer = Layer.mergeAll(
   ),
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
-/**
- * A bare "GitHub" holding the live-run stack: `main` moved ahead after the stack was cut, and a
- * second layer sits on the first. Returns each branch's head.
- */
 const setup = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const process = yield* VcsProcess.VcsProcess;
@@ -69,11 +64,11 @@ const setup = Effect.gen(function* () {
   yield* git(work, "add", "-A");
   yield* git(work, "commit", "--quiet", "-m", "Docs");
   yield* git(work, "push", "--quiet", "origin", "main", "feat/answer-42", "feat/answer-doc");
-  const head = (branch: string) => git(remote, "rev-parse", `refs/heads/${branch}`);
+  const head = (branch: string) => git(remote, "--git-dir=.", "rev-parse", `refs/heads/${branch}`);
   return {
     remote,
     head,
-    git: (...args: string[]) => git(remote, ...args),
+    git: (...args: string[]) => git(remote, "--git-dir=.", ...args),
     layers: [
       { number: 1, headBranch: "feat/answer-42", headSha: yield* head("feat/answer-42") },
       { number: 2, headBranch: "feat/answer-doc", headSha: yield* head("feat/answer-doc") },
@@ -97,7 +92,6 @@ it.layer(layer)("cascadeRebaseStack", (it) => {
       const main = yield* repo.head("main");
       const bottom = yield* repo.head("feat/answer-42");
       const top = yield* repo.head("feat/answer-doc");
-      // Bottom sits on the new main; top sits on the new bottom with only its own commit.
       expect(yield* repo.git("rev-parse", `${bottom}~1`)).toBe(main);
       expect(yield* repo.git("rev-parse", `${top}~1`)).toBe(bottom);
       expect(yield* repo.git("log", "--format=%s", `${bottom}..${top}`)).toBe(
@@ -109,11 +103,7 @@ it.layer(layer)("cascadeRebaseStack", (it) => {
   it.effect("refuses to overwrite a layer pushed after it was reviewed", () =>
     Effect.gen(function* () {
       const repo = yield* setup;
-      const stale = [
-        repo.layers[0]!,
-        // Reviewed at the bottom layer's head, but the branch is really at its own commit.
-        { ...repo.layers[1]!, headSha: repo.layers[0]!.headSha },
-      ];
+      const stale = [repo.layers[0]!, { ...repo.layers[1]!, headSha: repo.layers[0]!.headSha }];
       const error = yield* Effect.flip(
         cascadeRebaseStack({
           host: "github.com",
@@ -131,7 +121,6 @@ it.layer(layer)("cascadeRebaseStack", (it) => {
   it.effect("stops at a conflicting layer and leaves it untouched", () =>
     Effect.gen(function* () {
       const repo = yield* setup;
-      // Make main conflict with the bottom layer's change to the same line.
       const fs = yield* FileSystem.FileSystem;
       const process = yield* VcsProcess.VcsProcess;
       const scratch = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cascade-conflict-" });

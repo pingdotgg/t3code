@@ -1,17 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off
-// Entrypoint detection runs before any Effect runtime is built, so it stays on
-// Node built-ins.
 import * as NodeFS from "node:fs";
 import * as NodeURL from "node:url";
 
 /**
- * Whether the module identified by `moduleUrl` is the process entrypoint.
- *
  * `import.meta.main` answers this directly, but it only exists on Node 22.18+
  * and 24.2+. This package's `engines.node` range also accepts 22.16, 22.17 and
  * 23.11, where it is `undefined`: an `if (import.meta.main)` guard never runs,
- * so the process loads every module and exits 0 without output. Fall back to
- * comparing the entrypoint path on those versions.
+ * so the process loads every module and exits 0 without output.
  */
 export const isEntrypoint = (input: {
   readonly moduleUrl: string;

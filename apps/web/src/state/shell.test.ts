@@ -110,7 +110,6 @@ describe("project snapshot readiness", () => {
     registry.set(shells(LOCAL), shellState("live"));
     expect(registry.get(ready)).toBe(false);
 
-    // An old cache and a reconnect in progress can both omit a real project.
     registry.set(shells(REMOTE), shellState("cached"));
     expect(registry.get(ready)).toBe(false);
     registry.set(shells(REMOTE), shellState("synchronizing"));

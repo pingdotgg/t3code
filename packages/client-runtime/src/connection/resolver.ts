@@ -147,7 +147,6 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
       });
       return { ...authorized, target } satisfies PreparedConnection;
     }
-    // A learned route borrows the credential of the route it was learned from.
     const credential = yield* credentials.get(credentialConnectionId(target.connectionId)).pipe(
       Effect.flatMap(
         Option.match({
@@ -201,6 +200,7 @@ const makeRelayBroker = Effect.fn("clientRuntime.connection.broker.makeRelay")(f
 
 const makeSshBroker = Effect.fn("clientRuntime.connection.broker.makeSsh")(function* () {
   const profiles = yield* ConnectionProfileStore.ConnectionProfileStore;
+  const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
   const ssh = yield* ClientCapabilities.SshEnvironmentGateway;
   const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
 
@@ -223,11 +223,21 @@ const makeSshBroker = Effect.fn("clientRuntime.connection.broker.makeSsh")(funct
         actual: profile.environmentId,
       });
     }
+    // Each pairing adds a session on the host, so connects reuse the saved token.
+    const saved = Option.getOrUndefined(yield* credentials.get(target.connectionId));
+    const savedToken = saved !== undefined && isBearerCredential(saved) ? saved.token : undefined;
     const prepared = yield* ssh.prepare({
       connectionId: target.connectionId,
       expectedEnvironmentId: target.environmentId,
       target: profile.target,
+      ...(savedToken === undefined ? {} : { bearerToken: savedToken }),
     });
+    if (prepared.bearerToken !== savedToken) {
+      yield* credentials.put(
+        target.connectionId,
+        new BearerConnectionCredential({ token: prepared.bearerToken }),
+      );
+    }
     const preparedProfile = new SshConnectionProfile({
       connectionId: profile.connectionId,
       environmentId: profile.environmentId,

@@ -27,13 +27,10 @@ const withHostRuntime = (
 describe("build-target-arch", () => {
   it.effect("uses the resolved host arch when selecting the default Windows build arch", () =>
     Effect.gen(function* () {
-      // This mirrors the packaging script's default-path behavior: the current
-      // process is x64, but the machine itself is ARM64, so the default build
-      // target should be win-arm64 rather than win-x64.
       const arch = yield* getDefaultBuildArch("win", { archChoices: ["x64", "arm64"] }).pipe(
         withHostRuntime("win32", "x64", {
-          PROCESSOR_ARCHITECTURE: "AMD64", // The currently running Node process is x64.
-          PROCESSOR_ARCHITEW6432: "ARM64", // The process is x64, but the actual Windows host is ARM64.
+          PROCESSOR_ARCHITECTURE: "AMD64",
+          PROCESSOR_ARCHITEW6432: "ARM64",
         }),
       );
 

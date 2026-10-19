@@ -1,4 +1,4 @@
-import { use, useMemo, type CSSProperties } from "react";
+import { use, type CSSProperties } from "react";
 
 import { resolveDiffThemeName } from "../../lib/diffRendering";
 import type { EmbeddedScript } from "../../lib/embeddedScripts";
@@ -26,11 +26,8 @@ function syntaxTokenStyle(token: SyntaxToken): CSSProperties {
 }
 
 /**
- * Colors `code` inside the caller's `<pre>` without changing its text, so
- * selection and copy match the plain version. Suspends while the grammar
- * loads; wrap it in Suspense with the plain text as the fallback.
- * `wordClassName` goes on each whitespace-separated word. `embedded`
- * scripts are colored with their own grammar inside `code`.
+ * Suspends while the grammar loads; wrap it in Suspense with the plain text as
+ * the fallback.
  */
 export function HighlightedTokens({
   code,
@@ -46,49 +43,47 @@ export function HighlightedTokens({
   wordClassName?: string;
 }) {
   const highlighter = use(getSyntaxHighlighterPromise(language));
-  // Every grammar loads into the same shared highlighter.
   for (const script of embedded) use(getSyntaxHighlighterPromise(script.language));
-  const lines = useMemo(() => {
-    const themeName = resolveDiffThemeName(theme);
-    const tokenize = (text: string, lang: string) =>
-      highlighter.codeToTokens(text, { lang, theme: themeName }).tokens;
-    return keyedLines(
-      code,
-      withEmbeddedScripts(code, tokenize(code, language), embedded, tokenize),
-    );
-  }, [code, embedded, highlighter, language, theme]);
+  const themeName = resolveDiffThemeName(theme);
+  const tokenize = (text: string, lang: string) =>
+    highlighter.codeToTokens(text, { lang, theme: themeName }).tokens;
+  const lines = keyedLines(
+    code,
+    withEmbeddedScripts(code, tokenize(code, language), embedded, tokenize),
+  );
 
-  return lines.map(({ key, tokens, ending }) => (
-    <span key={key}>
-      {wordClassName
-        ? wordsOf(tokens).map((part) =>
-            typeof part === "string" ? (
-              part
-            ) : (
-              <span key={part.key} className={wordClassName}>
-                {part.pieces.map((piece) => (
-                  <span key={piece.key} style={syntaxTokenStyle(piece.token)}>
-                    {piece.text}
+  // A fragment, not the bare array: the compiler only treats this as a component when it
+  // returns JSX, since `use` alone does not count as a hook call for that inference.
+  return (
+    <>
+      {lines.map(({ key, tokens, ending }) => (
+        <span key={key}>
+          {wordClassName
+            ? wordsOf(tokens).map((part) =>
+                typeof part === "string" ? (
+                  part
+                ) : (
+                  <span key={part.key} className={wordClassName}>
+                    {part.pieces.map((piece) => (
+                      <span key={piece.key} style={syntaxTokenStyle(piece.token)}>
+                        {piece.text}
+                      </span>
+                    ))}
                   </span>
-                ))}
-              </span>
-            ),
-          )
-        : tokens.map((token) => (
-            <span key={`${token.offset}:${token.content}`} style={syntaxTokenStyle(token)}>
-              {token.content}
-            </span>
-          ))}
-      {ending}
-    </span>
-  ));
+                ),
+              )
+            : tokens.map((token) => (
+                <span key={`${token.offset}:${token.content}`} style={syntaxTokenStyle(token)}>
+                  {token.content}
+                </span>
+              ))}
+          {ending}
+        </span>
+      ))}
+    </>
+  );
 }
 
-/**
- * Recolors each embedded script's span of `code` with its own grammar,
- * outermost first so nested scripts win. A script whose grammar is missing
- * keeps the colors around it.
- */
 export function withEmbeddedScripts(
   code: string,
   lines: TokenLines,
@@ -116,7 +111,6 @@ export function withEmbeddedScripts(
   return restyledLines(code, styles);
 }
 
-/** Splits `code` into lines of tokens, one per run of characters sharing a style. */
 function restyledLines(
   code: string,
   styles: ReadonlyArray<SyntaxToken | undefined>,
@@ -151,9 +145,8 @@ function restyledLines(
 }
 
 /**
- * Keys each line by its start offset, which stays unique when several lines
- * are empty, and pairs it with the line ending `code` has after it. Shiki drops
- * `\n` and `\r\n` from tokens alike, so CRLF has to come back from the source.
+ * Shiki drops `\n` and `\r\n` from tokens alike, so CRLF has to come back from
+ * the source.
  */
 export function keyedLines<Token extends SyntaxToken>(
   code: string,
@@ -175,11 +168,6 @@ interface Word {
   readonly pieces: Array<{ key: string; text: string; token: SyntaxToken }>;
 }
 
-/**
- * Regroups a line's tokens into whitespace runs and whole words, matching
- * `text.split(/(\s+)/)`, so a word made of several tokens (`"$HOME/x"`) wraps
- * exactly like its plain-text fallback.
- */
 export function wordsOf(tokens: ReadonlyArray<SyntaxToken>): Array<string | Word> {
   const parts: Array<string | Word> = [];
   let word: Word | null = null;

@@ -27,6 +27,7 @@ import {
   RunId,
   ThreadId,
   type OrchestrationV2ProviderThread,
+  type ProviderOptionDescriptor,
 } from "@t3tools/contracts";
 import { GrokSettings } from "@t3tools/provider-grok/settings";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -58,7 +59,11 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
-import { ACP_SESSION_MODE_OPTION_ID } from "@t3tools/provider-acp/server/sessionConfig";
+import {
+  ACP_EMPTY_OPTION_VALUE,
+  ACP_SESSION_MODE_OPTION_ID,
+  acpProviderOptionDescriptors,
+} from "@t3tools/provider-acp/server/sessionConfig";
 import {
   extractXAiAcpSubagentEndNotice,
   extractXAiAcpSubagentUpdate,
@@ -337,17 +342,13 @@ function cleanupPublishedDetachedFixture(path: string): void {
           .filter(Boolean)
           .map(Number),
       );
-    } catch {
-      // The process already exited.
-    }
+    } catch {}
   }
   for (const [pid, start] of [...owned.entries()].toReversed()) {
     if (linuxProcessStart(pid) !== start) continue;
     try {
       process.kill(pid, "SIGKILL");
-    } catch {
-      // The exact fixture process already exited.
-    }
+    } catch {}
   }
 }
 
@@ -510,19 +511,19 @@ function rawProtocolRequestParam(
   return typeof params === "object" && params !== null ? Reflect.get(params, key) : undefined;
 }
 
-function rawProtocolPromptText(event: EffectAcpProtocol.AcpProtocolLogEvent): string {
+function rawProtocolPromptTextBlocks(
+  event: EffectAcpProtocol.AcpProtocolLogEvent,
+): Array<{ type: "text"; text: string }> {
   const prompt = rawProtocolRequestParam(event, "prompt");
-  if (!Array.isArray(prompt)) return "";
-  return prompt
-    .flatMap((block) =>
-      typeof block === "object" &&
-      block !== null &&
-      Reflect.get(block, "type") === "text" &&
-      typeof Reflect.get(block, "text") === "string"
-        ? [Reflect.get(block, "text") as string]
-        : [],
-    )
-    .join("\n");
+  if (!Array.isArray(prompt)) return [];
+  return prompt.flatMap((block) =>
+    typeof block === "object" &&
+    block !== null &&
+    Reflect.get(block, "type") === "text" &&
+    typeof Reflect.get(block, "text") === "string"
+      ? [{ type: "text" as const, text: Reflect.get(block, "text") as string }]
+      : [],
+  );
 }
 
 const pollProtocolMethods = (events: Queue.Queue<EffectAcpProtocol.AcpProtocolLogEvent>) =>
@@ -547,7 +548,6 @@ function makeTurnInput(input: {
   readonly now: DateTime.Utc;
   readonly ordinal?: number;
   readonly modelSelection?: ModelSelection;
-  /** agent+provider marks a post-settle continuation attach (drains wakeBuffer). */
   readonly messageCreatedBy?: "user" | "agent";
   readonly messageCreationSource?: "web" | "mobile" | "mcp" | "provider" | "server";
   readonly messageText?: string;
@@ -841,7 +841,12 @@ describe("AcpAdapterV2", () => {
           if (method === undefined) continue;
           methods.push(method);
           if (method === "session/prompt") {
-            return { methods, prompt: rawProtocolPromptText(event) };
+            const promptBlocks = rawProtocolPromptTextBlocks(event);
+            return {
+              methods,
+              prompt: promptBlocks.map((block) => block.text).join("\n"),
+              textBlockCount: promptBlocks.length,
+            };
           }
         }
       });
@@ -849,7 +854,13 @@ describe("AcpAdapterV2", () => {
       const command = yield* runTurn(0, defaultPolicy, "/compact");
       assert.isTrue(command.prompt.startsWith("/compact"));
       assert.notInclude(command.prompt, "<t3_code_instructions>");
-      const firstDefault = yield* runTurn(1, defaultPolicy, "First default request.");
+      assert.equal(command.textBlockCount, 1);
+      const whitespaceCommand = yield* runTurn(1, defaultPolicy, "  /repro-skill");
+      assert.equal(whitespaceCommand.prompt, "  /repro-skill");
+      assert.equal(whitespaceCommand.textBlockCount, 1);
+      assert.notInclude(whitespaceCommand.prompt, "<t3_code_instructions>");
+      const firstDefault = yield* runTurn(2, defaultPolicy, "First default request.");
+      assert.equal(firstDefault.textBlockCount, 2);
       assert.include(firstDefault.prompt, "T3 Code interaction mode: Default");
       assert.include(firstDefault.prompt, "T3 Code collaborative browser");
       assert.include(firstDefault.prompt, "T3 Code orchestration");
@@ -859,19 +870,19 @@ describe("AcpAdapterV2", () => {
         "Build should preserve the agent's advertised mode default",
       );
       assert.include(
-        (yield* runTurn(2, defaultPolicy, "Second default request.")).prompt,
+        (yield* runTurn(3, defaultPolicy, "Second default request.")).prompt,
         "Second default request.",
       );
 
       const planPolicy = policy("plan");
-      const firstPlan = yield* runTurn(3, planPolicy, "Plan this change.");
+      const firstPlan = yield* runTurn(4, planPolicy, "Plan this change.");
       assert.include(firstPlan.prompt, "T3 Code interaction mode: Plan");
       assert.include(firstPlan.methods, "session/set_config_option");
       assert.include(
-        (yield* runTurn(4, planPolicy, "Continue planning.")).prompt,
+        (yield* runTurn(5, planPolicy, "Continue planning.")).prompt,
         "Continue planning.",
       );
-      const restoredBuild = yield* runTurn(5, defaultPolicy, "Implement the change.");
+      const restoredBuild = yield* runTurn(6, defaultPolicy, "Implement the change.");
       assert.include(restoredBuild.prompt, "T3 Code interaction mode: Default");
       assert.include(
         restoredBuild.methods,
@@ -900,7 +911,6 @@ describe("AcpAdapterV2", () => {
             childProcessSpawner,
             mockAgentPath,
             protocolEvents,
-            // The model switch lands, then the agent rejects the mode step.
             environment: { T3_ACP_FAIL_SET_MODE_CONFIG_OPTION: "1" },
           }),
         },
@@ -1135,7 +1145,6 @@ describe("AcpAdapterV2", () => {
                     },
                     ...streamedWrite("root-write"),
                     ...streamedWrite("child-write", "child-a"),
-                    // Same-length output replacements are still live output.
                     ...Array.from({ length: 5 }, (_, index) => ({
                       sessionUpdate: "tool_call_update" as const,
                       toolCallId: "ticker",
@@ -1241,7 +1250,6 @@ describe("AcpAdapterV2", () => {
       const instanceId = ProviderInstanceId.make("devin-replay");
       const adapter = yield* makeAcpAdapterV2({
         instanceId,
-        // Production Devin runs commands through client terminals.
         clientTerminals: { shellCommands: true },
         selfInvocation: yield* resolveSelfInvocation(),
         flavor: {
@@ -1271,8 +1279,6 @@ describe("AcpAdapterV2", () => {
                     { sessionId: "mock-session-1", command: "true acp-mcp-call task_status {}" },
                     { requestId: "child-mcp-terminal", method: "terminal/create" },
                   );
-                  // Production thread 54aeb6d7 split after "(command". Metadata shapes
-                  // below were captured from live Devin sessions showy-mile/fragrant-chamomile.
                   const updates = [
                     {
                       sessionUpdate: "tool_call_update",
@@ -1496,7 +1502,6 @@ describe("AcpAdapterV2", () => {
       );
       assert.deepEqual([...childMessages.values()], ["Checking the code.", "ONE"]);
       assert.equal(task?.prompt, "Run pwd, then reply ONE.");
-      // Terminal-fallback MCP calls in a child session keep their T3 identity.
       assert.isTrue(
         items.some(
           (item) =>
@@ -1630,8 +1635,6 @@ describe("AcpAdapterV2", () => {
                         mode,
                       },
                     });
-                  // Shapes captured from Copilot CLI 1.0.95 with two sync and one
-                  // background subagent launched in one batch.
                   yield* chunk("Launching ");
                   yield* launch("task-a", "Describe a.txt", "sync");
                   yield* launch("task-b", "Describe b.txt", "sync");
@@ -2570,8 +2573,6 @@ describe("AcpAdapterV2", () => {
           },
         ],
       });
-      // Re-reading another binding must not reassign the forked native
-      // session's credential scope.
       yield* runtime.ensureThread({
         threadId: sourceThreadId,
         modelSelection,
@@ -3204,9 +3205,7 @@ describe("AcpAdapterV2", () => {
       const failedBackgroundMutationHandler = backgroundMutationHandlers[1];
       assert.isDefined(failedReplacementHandler);
       assert.isDefined(failedBackgroundMutationHandler);
-      while (Option.isSome(yield* Queue.poll(events))) {
-        // Discard setup events before exercising the stale callback.
-      }
+      while (Option.isSome(yield* Queue.poll(events))) {}
       yield* failedReplacementHandler!({
         sessionId: "failed-replacement-session",
         update: {
@@ -3394,7 +3393,6 @@ describe("AcpAdapterV2", () => {
           environment: {},
           hostPlatform: yield* HostProcess.Platform,
           selfInvocation: yield* resolveSelfInvocation(),
-          // Production Grok runtimes are wrapped by the x.ai prompt runtime.
           makeRuntime: (input) =>
             makeMockRuntime({ childProcessSpawner, mockAgentPath, protocolEvents })(input).pipe(
               Effect.flatMap(makeXAiPromptCompletionRuntime),
@@ -3441,7 +3439,6 @@ describe("AcpAdapterV2", () => {
         environment: {},
         hostPlatform: yield* HostProcess.Platform,
         selfInvocation: yield* resolveSelfInvocation(),
-        // Production Grok runtimes are wrapped by the x.ai prompt runtime.
         makeRuntime: (input) =>
           makeMockRuntime({ childProcessSpawner, mockAgentPath, protocolEvents })(input).pipe(
             Effect.flatMap(makeXAiPromptCompletionRuntime),
@@ -3464,9 +3461,6 @@ describe("AcpAdapterV2", () => {
         modelSelection: { instanceId, model: "composer-2" },
         runtimePolicy,
       });
-      // The mock session starts on default. Switching away and explicitly
-      // back must send the model configuration change; stale metadata can make
-      // the return trip a silent no-op that left the session on the alt model.
       for (const model of ["default", "composer-2"]) {
         yield* runtime.startTurn(
           makeTurnInput({
@@ -3522,9 +3516,6 @@ describe("AcpAdapterV2", () => {
         interactionMode: "default",
         cwd: process.cwd(),
       });
-      // A stale composer selection (probe-time union descriptor) must not wedge
-      // the session open in a retry loop; the option is skipped and the agent
-      // default applies.
       const runtime = yield* adapter.openSession({
         threadId,
         providerSessionId: ProviderSessionId.make("provider-session-acp-unsupported-option"),
@@ -3641,6 +3632,105 @@ describe("AcpAdapterV2", () => {
           rawProtocolRequestParam(event, "configId") === "model",
       );
       assert.lengthOf(modelConfigurationRequests, 2);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("keeps an agent's empty-valued default choice selectable", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
+      const instanceId = ProviderInstanceId.make("acp-test");
+      let agentDescriptor: ProviderOptionDescriptor | undefined;
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            environment: { T3_ACP_EMIT_EMPTY_DEFAULT_AGENT_OPTION: "1" },
+            protocolEvents,
+          }),
+          onSessionConfigurationUpdate: (configOptions, modeState) =>
+            Effect.sync(() => {
+              agentDescriptor = acpProviderOptionDescriptors({ configOptions, modeState }).find(
+                (descriptor) => descriptor.id === "agent",
+              );
+            }),
+        },
+        selfInvocation,
+      });
+      const threadId = ThreadId.make("thread-acp-empty-default-agent");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const customAgentSelection = {
+        instanceId,
+        model: "default",
+        options: [{ id: "agent", value: "example" }],
+      } satisfies ModelSelection;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-empty-default-agent"),
+        modelSelection: customAgentSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection: customAgentSelection,
+        runtimePolicy,
+      });
+      assert.deepEqual(agentDescriptor, {
+        id: "agent",
+        label: "Agent",
+        type: "select",
+        options: [
+          { id: ACP_EMPTY_OPTION_VALUE, label: "Copilot" },
+          { id: "example", label: "example" },
+        ],
+        currentValue: "example",
+      });
+
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          modelSelection: {
+            instanceId,
+            model: "default",
+            options: [{ id: "agent", value: ACP_EMPTY_OPTION_VALUE }],
+          },
+          now: yield* DateTime.now,
+        }),
+      );
+      yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+      );
+
+      assert.equal(
+        agentDescriptor?.type === "select" ? agentDescriptor.currentValue : undefined,
+        ACP_EMPTY_OPTION_VALUE,
+      );
+      const sentAgentValues = Array.from(yield* Queue.takeAll(protocolEvents))
+        .filter(
+          (event) =>
+            event.direction === "outgoing" &&
+            rawProtocolMethod(event) === "session/set_config_option" &&
+            rawProtocolRequestParam(event, "configId") === "agent",
+        )
+        .map((event) => rawProtocolRequestParam(event, "value"));
+      assert.deepEqual(sentAgentValues, ["example", ""]);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
@@ -5220,7 +5310,6 @@ describe("AcpAdapterV2", () => {
         providerTurnId,
         requestRuntimeRestart: true,
       });
-      // Second durable interrupt after activeTurn is cleared must not fail.
       const second = yield* Effect.exit(
         runtime.interruptTurn({
           providerThread,
@@ -5308,7 +5397,6 @@ describe("AcpAdapterV2", () => {
       yield* runtime.startTurn(
         makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now }),
       );
-      // The still-running subagent defers finalize after session/prompt returns.
       yield* Deferred.await(promptSettled);
 
       const providerTurnId = idAllocator.derive.providerTurn({
@@ -5365,10 +5453,7 @@ describe("AcpAdapterV2", () => {
                       childSessionId: null,
                       result: null,
                     }
-                  : // Hydration-only shape (empty prompt, null title): without a
-                    // carried-over lineage this update is dropped and the item
-                    // stays running forever.
-                    {
+                  : {
                       nativeTaskId: "task-generic-1",
                       prompt: "",
                       title: null,
@@ -5575,7 +5660,6 @@ describe("AcpAdapterV2", () => {
           }
         }
         assert.equal(firstTerminalStatus, "interrupted");
-        // Root settled with a live projected subagent in carryover: pin idle release.
         assert.isTrue(
           yield* hasPendingBackgroundWork,
           "carryover live subagent must pin hasPendingBackgroundWork after root settle",
@@ -5605,7 +5689,6 @@ describe("AcpAdapterV2", () => {
           }
         }
         assert.equal(secondTerminalStatus, "completed");
-        // Carryover is consumed into the next turn and terminalized; pin clears.
         assert.isFalse(
           yield* hasPendingBackgroundWork,
           "hasPendingBackgroundWork must clear after carryover subagent terminals",
@@ -5762,10 +5845,7 @@ describe("AcpAdapterV2", () => {
         yield* hasPendingBackgroundWork,
         "rehydrated live subagent must pin from activeTurn",
       );
-      while (Option.isSome(yield* Queue.poll(events))) {
-        // Discard setup events so the assertions below cover only child-session
-        // tool traffic after rehydration.
-      }
+      while (Option.isSome(yield* Queue.poll(events))) {}
 
       subagentPhase = "complete";
       yield* sessionUpdateHandler!({
@@ -5779,8 +5859,6 @@ describe("AcpAdapterV2", () => {
           rawOutput: { content: "SUB_DONE" },
         },
       });
-      // Duplicate terminal replay is harmless, and an older running frame cannot
-      // resurrect the completed lineage.
       yield* sessionUpdateHandler!({
         sessionId: childSessionId,
         update: {
@@ -5873,8 +5951,6 @@ describe("AcpAdapterV2", () => {
           const firstChildSessionId = "mock-child-session-finalize-window-first";
           const secondChildSessionId = "mock-child-session-finalize-window-second";
           let firstSubagentStatus: "running" | "completed" = "running";
-          // Keep the pending-work pin without blocking the deferred-finalize
-          // timer, so the test can stop inside finalizeTurn deterministically.
           let secondSubagentStatus: "waiting" | "completed" = "waiting";
           type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
           let sessionUpdateHandler:
@@ -6003,9 +6079,7 @@ describe("AcpAdapterV2", () => {
           });
           assert.isTrue(yield* hasPendingBackgroundWork);
 
-          while (Option.isSome(yield* Queue.poll(events))) {
-            // Discard setup and first-subagent events.
-          }
+          while (Option.isSome(yield* Queue.poll(events))) {}
 
           blockNextClockRead = true;
           const adjustFiber = yield* TestClock.adjust("3 seconds").pipe(Effect.forkScoped);
@@ -6191,9 +6265,6 @@ describe("AcpAdapterV2", () => {
         );
         assert.isDefined(sessionUpdateHandler, "session update handler must be wired");
 
-        // The interrupted root's subscription is already closed in execution
-        // service, so the adapter must retain this terminal without claiming it
-        // reached the projection.
         subagentPhase = "complete";
         yield* sessionUpdateHandler!({
           sessionId: childSessionId,
@@ -6294,7 +6365,6 @@ describe("AcpAdapterV2", () => {
           driver: ACP_TEST_DRIVER,
           capabilities: AcpProviderCapabilitiesV2,
           enablePostSettleContinuation: true,
-          // The spawn tool reports a background subagent that keeps running.
           extractSubagentUpdate: (toolCall) =>
             toolCall.toolCallId !== "tool-call-generic-1"
               ? undefined
@@ -6368,12 +6438,10 @@ describe("AcpAdapterV2", () => {
           rootStatus = event.status;
         }
       }
-      // The root completed with the subagent still running: it is carryover.
       assert.equal(rootStatus, "completed");
       assert.isTrue(yield* hasPendingBackgroundWork);
       assert.isDefined(finishSubagent);
       const subagentStatuses = Effect.gen(function* () {
-        // Adapter events reach this queue through the events stream fiber.
         yield* Effect.yieldNow;
         yield* Effect.yieldNow;
         const statuses: Array<[string, string | null]> = [];
@@ -6389,7 +6457,6 @@ describe("AcpAdapterV2", () => {
       });
       yield* subagentStatuses;
 
-      // A nested subagent reports to its own parent session, not the root.
       yield* finishSubagent!({
         sessionId: "some-other-session",
         childSessionId,
@@ -6551,8 +6618,7 @@ describe("AcpAdapterV2", () => {
       assert.isDefined(sessionUpdateHandler, "session update handler must be wired");
 
       // A production Grok spawn ACK has raw tool status completed but extracts
-      // as a running subagent with its original non-empty prompt. It buffers and
-      // offers a continuation after root settlement.
+      // as a running subagent with its original non-empty prompt.
       yield* sessionUpdateHandler!({
         sessionId: "mock-session-1",
         update: {
@@ -6580,8 +6646,6 @@ describe("AcpAdapterV2", () => {
         },
       });
 
-      // The child-session terminal bypasses the root wake buffer and projects
-      // eagerly through the still-observable completed-root subscriber.
       subagentPhase = "complete";
       yield* sessionUpdateHandler!({
         sessionId: childSessionId,
@@ -6792,8 +6856,6 @@ describe("AcpAdapterV2", () => {
         );
         assert.isDefined(sessionUpdateHandler, "session update handler must be wired");
 
-        // Root-session terminal tool is wake evidence and will buffer: in-memory
-        // only so the continuation drain projects exactly once.
         subagentPhase = "complete";
         yield* sessionUpdateHandler!({
           sessionId: "mock-session-1",
@@ -7066,8 +7128,6 @@ describe("AcpAdapterV2", () => {
         yield* Deferred.await(promptWireReturned);
         assert.isDefined(sessionUpdateHandler, "session update handler must be wired");
 
-        // The root turn consumes a terminal re-report while the native prompt is
-        // still open. The subagent flavor keeps its carried lineage running.
         yield* sessionUpdateHandler!({
           sessionId: "mock-session-1",
           update: {
@@ -7101,8 +7161,6 @@ describe("AcpAdapterV2", () => {
           "live carryover must remain pending after the superseded root settles",
         );
 
-        // The same tool is now a terminal carryover update. Since it was handled
-        // in-turn, bufferPostSettleWake drops it instead of offering a drain.
         subagentPhase = "complete";
         yield* sessionUpdateHandler!({
           sessionId: "mock-session-1",
@@ -7213,8 +7271,6 @@ describe("AcpAdapterV2", () => {
           deferFinalizeForBackgroundWork: true,
           enablePostSettleContinuation: true,
           extractSubagentEndNotice: (text) => {
-            // Prefer the production parser; fall back only if the harness text
-            // is too short for its UUID + outcome rules.
             const parsed = extractXAiAcpSubagentEndNotice(text);
             if (parsed !== undefined) return parsed;
             if (!text.includes(childSessionId)) return undefined;
@@ -7322,9 +7378,6 @@ describe("AcpAdapterV2", () => {
       );
       assert.isDefined(sessionUpdateHandler, "session update handler must be wired");
 
-      // End notices are root user_message_chunk text and never buffer. The
-      // interrupted root still cannot project them until the next subscription
-      // attaches.
       yield* sessionUpdateHandler!({
         sessionId: "mock-session-1",
         update: {
@@ -7536,8 +7589,6 @@ describe("AcpAdapterV2", () => {
         );
         assert.isDefined(sessionUpdateHandler, "session update handler must be wired");
 
-        // Root-session terminal + distinctive assistant text: both enter wakeBuffer
-        // and the terminal offers a continuation that will drain them.
         subagentPhase = "complete";
         yield* sessionUpdateHandler!({
           sessionId: "mock-session-1",
@@ -7567,7 +7618,6 @@ describe("AcpAdapterV2", () => {
           "pending continuation must keep hasPendingBackgroundWork pinned",
         );
 
-        // Child path must not wipe wakeBuffer or clear the sticky continuation pin.
         yield* sessionUpdateHandler!({
           sessionId: childSessionId,
           update: {
@@ -7605,7 +7655,6 @@ describe("AcpAdapterV2", () => {
           "child-session must not clear the pin while wakeBuffer still has delivery",
         );
 
-        // Continuation attach drains the preserved buffer and projects it.
         const continuationNow = yield* DateTime.now;
         yield* runtime.startTurn(
           makeTurnInput({
@@ -7801,9 +7850,6 @@ describe("AcpAdapterV2", () => {
         );
         assert.isDefined(sessionUpdateHandler, "session update handler must be wired");
 
-        // The interrupted root-session completion advances in-memory carryover
-        // without projecting and offers a continuation. Child-session replay
-        // must not project a second copy before that observable attach.
         subagentPhase = "complete";
         yield* sessionUpdateHandler!({
           sessionId: "mock-session-1",
@@ -7934,10 +7980,6 @@ describe("AcpAdapterV2", () => {
             driver: ACP_TEST_DRIVER,
             capabilities: AcpProviderCapabilitiesV2,
             deferFinalizeForBackgroundWork: true,
-            // Hard interrupt flags (stricter than production Grok, which no
-            // longer sets restartRuntimeOnEveryInterrupt): every interrupt
-            // would hard-kill the process group without the settled-soft gate
-            // under test.
             restartRuntimeAfterInterrupt: true,
             restartRuntimeOnEveryInterrupt: true,
             terminateRuntimeProcessGroupOnInterrupt: true,
@@ -7964,9 +8006,6 @@ describe("AcpAdapterV2", () => {
                       childSessionId: null,
                       result: "SUB_DONE",
                     },
-            // No ownDetachedProcessGroup: if the interrupt wrongly takes the
-            // hard path, terminateProcessGroup is missing and the interrupt
-            // fails loudly with a poisoned session.
             makeRuntime: makeMockRuntime({
               childProcessSpawner,
               mockAgentPath,
@@ -8009,8 +8048,6 @@ describe("AcpAdapterV2", () => {
         yield* runtime.startTurn(
           makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now }),
         );
-        // The still-running subagent defers finalize after session/prompt returns,
-        // so the interrupt below hits a settled turn held open for background work.
         yield* Deferred.await(promptSettled);
 
         const firstProviderTurnId = idAllocator.derive.providerTurn({
@@ -8049,8 +8086,6 @@ describe("AcpAdapterV2", () => {
             ordinal: 2,
           }),
         );
-        // Same runtime process (mock-session-1): a respawn would start
-        // mock-session-2 and drop the carryover on the session mismatch.
         const secondProviderTurnId = idAllocator.derive.providerTurn({
           driver: ACP_TEST_DRIVER,
           nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:2"),
@@ -8097,15 +8132,9 @@ describe("AcpAdapterV2", () => {
           driver: ACP_TEST_DRIVER,
           capabilities: AcpProviderCapabilitiesV2,
           restartRuntimeAfterInterrupt: true,
-          // Local hard-flavor gate: production Grok no longer sets
-          // restartRuntimeOnEveryInterrupt, but when a flavor does, the
-          // settled-soft gate must not leak onto an unsettled prompt.
           restartRuntimeOnEveryInterrupt: true,
           terminateRuntimeProcessGroupOnInterrupt: true,
           preserveRuntimeOnSettledInterrupt: true,
-          // No ownDetachedProcessGroup: the expected hard path fails loudly
-          // on the missing terminateProcessGroup, proving the settled-soft
-          // gate did not apply to an unsettled prompt.
           makeRuntime: makeMockRuntime({
             childProcessSpawner,
             mockAgentPath,
@@ -8185,18 +8214,11 @@ describe("AcpAdapterV2", () => {
             driver: ACP_TEST_DRIVER,
             capabilities: AcpProviderCapabilitiesV2,
             enablePostSettleContinuation: true,
-            // Production Grok interrupt flags: hard teardown only with
-            // requestRuntimeRestart (user Stop). Without
-            // restartRuntimeOnEveryInterrupt a mid-prompt steering interrupt
-            // stays soft: session/cancel, same process, session reuse.
             restartRuntimeAfterInterrupt: true,
             terminateRuntimeProcessGroupOnInterrupt: true,
             preserveRuntimeOnSettledInterrupt: true,
             registerExtensions: ({ runtime: extensionRuntime, applyBackgroundTaskMutation }) =>
               registerXAiBackgroundTaskTracking(extensionRuntime, applyBackgroundTaskMutation),
-            // No ownDetachedProcessGroup: if the interrupt wrongly takes the
-            // hard path, terminateProcessGroup is missing and the interrupt
-            // fails loudly with a poisoned session.
             makeRuntime: makeMockRuntime({
               childProcessSpawner,
               mockAgentPath,
@@ -8257,7 +8279,6 @@ describe("AcpAdapterV2", () => {
             makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 1 }),
           )
           .pipe(Effect.forkScoped);
-        // Wait for the running command tool so the interrupt lands mid-prompt.
         yield* Stream.fromQueue(protocolEvents).pipe(
           Stream.filter(
             (event) =>
@@ -8273,7 +8294,6 @@ describe("AcpAdapterV2", () => {
           driver: ACP_TEST_DRIVER,
           nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:1"),
         });
-        // No requestRuntimeRestart: a steering interrupt, not a user Stop.
         yield* runtime.interruptTurn({ providerThread, providerTurnId: firstProviderTurnId });
         assert.isTrue(
           cancelCalled,
@@ -8288,8 +8308,6 @@ describe("AcpAdapterV2", () => {
           }
         }
         assert.equal(firstTerminalStatus, "interrupted");
-        // The cancel handler emitted _x.ai/task_backgrounded for the detached
-        // command; the tracked task must report as pending background work.
         let backgroundTracked = false;
         for (let attempt = 0; attempt < 80 && !backgroundTracked; attempt += 1) {
           backgroundTracked = yield* hasPendingBackgroundWork;
@@ -8302,7 +8320,6 @@ describe("AcpAdapterV2", () => {
           "cancel-backgrounded task must be tracked as running background work",
         );
 
-        // The second prompt reuses the same process and session.
         const secondNow = yield* DateTime.now;
         yield* runtime.startTurn(
           makeTurnInput({
@@ -8332,8 +8349,6 @@ describe("AcpAdapterV2", () => {
           "soft mid-prompt interrupt must not respawn the ACP runtime process",
         );
 
-        // _x.ai/task_completed lands ~1.2s after the cancel and clears the
-        // tracked task without opening a synthetic continuation run.
         let backgroundPending = true;
         for (let attempt = 0; attempt < 50 && backgroundPending; attempt += 1) {
           backgroundPending = yield* hasPendingBackgroundWork;
@@ -8443,8 +8458,6 @@ describe("AcpAdapterV2", () => {
       if (applyMutation === null) {
         return yield* Effect.die("registerExtensions must capture applyBackgroundTaskMutation");
       }
-      // Plumbing sanity: pre-Stop mutations on the root session track and
-      // clear pending background work through the extension callback.
       yield* applyMutation({
         sessionId: "mock-session-1",
         taskId: "task-pre-stop",
@@ -8478,10 +8491,6 @@ describe("AcpAdapterV2", () => {
       }
       assert.equal(terminalStatus, "interrupted");
 
-      // Residual lifecycle from the stopped run: activeSessionId still points
-      // at the stopped session until the next turn respawns the runtime, so
-      // only the direct Stop quarantine stands between this mutation and the
-      // wake machinery.
       yield* applyMutation({
         sessionId: "mock-session-1",
         taskId: "task-late-after-stop",
@@ -8512,10 +8521,6 @@ describe("AcpAdapterV2", () => {
           driver: ACP_TEST_DRIVER,
           capabilities: AcpProviderCapabilitiesV2,
           enablePostSettleContinuation: true,
-          // The full production Grok interrupt flag set after the non-Stop
-          // softening: no restartRuntimeOnEveryInterrupt. User Stop
-          // (requestRuntimeRestart) must still take the hard teardown and
-          // respawn path, not the soft cancel path.
           restartRuntimeAfterInterrupt: true,
           terminateRuntimeProcessGroupOnInterrupt: true,
           preserveRuntimeOnSettledInterrupt: true,
@@ -8524,8 +8529,6 @@ describe("AcpAdapterV2", () => {
           makeRuntime: makeMockRuntime({
             childProcessSpawner,
             mockAgentPath,
-            // Only hang the interrupted first turn. The replacement process must
-            // complete normally so startTurn / session-load assertions can finish.
             environment: (runtimeOrdinal) => {
               runtimeOrdinalSeen = Math.max(runtimeOrdinalSeen, runtimeOrdinal);
               return runtimeOrdinal === 1 ? { T3_ACP_HANG_PROMPT_FOREVER: "1" } : {};
@@ -8589,8 +8592,7 @@ describe("AcpAdapterV2", () => {
 
       // Effect 4 Queue.takeAll waits for at least one element when empty. After
       // the session/prompt stream drain the protocol queue is often empty, so
-      // takeAll would hang forever. Use clear (non-blocking drain) instead so
-      // the session/resume wait cannot match residual pre-restart traffic.
+      // takeAll would hang forever.
       yield* Queue.clear(protocolEvents);
       yield* runtime.startTurn(
         makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 2 }),
@@ -8648,8 +8650,6 @@ describe("AcpAdapterV2", () => {
             driver: ACP_TEST_DRIVER,
             capabilities: AcpProviderCapabilitiesV2,
             deferFinalizeForBackgroundWork: true,
-            // Production Grok interrupt flags: soft settle keeps the process;
-            // only requestRuntimeRestart (user Stop) hard-kills.
             restartRuntimeAfterInterrupt: true,
             terminateRuntimeProcessGroupOnInterrupt: true,
             preserveRuntimeOnSettledInterrupt: true,
@@ -8730,8 +8730,6 @@ describe("AcpAdapterV2", () => {
         );
         yield* Deferred.await(promptSettled);
 
-        // Project an authoritative v2 assistant-message upsert onto the carryover
-        // subagent while the deferred turn is still active.
         assert.isDefined(sessionUpdateHandler, "session update handler must be wired");
         yield* sessionUpdateHandler!({
           sessionId: childSessionId,
@@ -8767,7 +8765,6 @@ describe("AcpAdapterV2", () => {
           driver: ACP_TEST_DRIVER,
           nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:1"),
         });
-        // Soft steer first: clears the turn, leaves the process alive.
         yield* runtime.interruptTurn({ providerThread, providerTurnId: firstProviderTurnId });
         assert.isFalse(
           cancelCalled,
@@ -8792,7 +8789,6 @@ describe("AcpAdapterV2", () => {
           "soft steer must leave the original ACP runtime process alive",
         );
 
-        // User Stop against the already-cleared turn: contain the orphan runtime.
         const stopExit = yield* runtime
           .interruptTurn({
             providerThread,
@@ -8806,8 +8802,6 @@ describe("AcpAdapterV2", () => {
           );
         }
 
-        // Orphan Stop must terminalize carried-over subagents (soft steer left them
-        // running on purpose; quarantine alone would leave them stuck "running").
         let subagentStopStatus: string | null = null;
         let subagentStopResult: string | null | undefined;
         let subagentStopProviderThreadId: string | null | undefined;
@@ -8886,9 +8880,6 @@ describe("AcpAdapterV2", () => {
           "Stop after soft steer must replace the orphan ACP runtime process",
         );
 
-        // nativeTurnId is `${sessionId}:turn:${ordinal}`. The mock always uses
-        // mock-session-1; ordinal 2 yields turn:2 on the replacement process.
-        // Carryover was quarantined by Stop, so turn-1's subagent must not re-attach.
         subagentPhase = "complete";
         const secondProviderTurnId = idAllocator.derive.providerTurn({
           driver: ACP_TEST_DRIVER,
@@ -9122,10 +9113,6 @@ describe("AcpAdapterV2", () => {
         let subagentPhase: "spawn" | "complete" = "spawn";
         let cancelCalled = false;
         const promptPhases: Array<string> = [];
-        // Gate adapter-visible prompt return so we can open the race window after
-        // the native stopReason is on the wire. Release lets Effect.tap mark
-        // promptWireSettled before the completion callback requests the permit;
-        // interrupt then ORs wire-done with promptSettled under the permit.
         const promptWireReturned = yield* Deferred.make<void>();
         const releasePromptCompletion = yield* Deferred.make<void>();
         const adapter = yield* makeAcpAdapterV2({
@@ -9134,7 +9121,6 @@ describe("AcpAdapterV2", () => {
             driver: ACP_TEST_DRIVER,
             capabilities: AcpProviderCapabilitiesV2,
             deferFinalizeForBackgroundWork: true,
-            // Production Grok flags: without settled-soft, a steer soft-cancels.
             restartRuntimeAfterInterrupt: true,
             terminateRuntimeProcessGroupOnInterrupt: true,
             preserveRuntimeOnSettledInterrupt: true,
@@ -9232,11 +9218,6 @@ describe("AcpAdapterV2", () => {
           driver: ACP_TEST_DRIVER,
           nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:1"),
         });
-        // Fork interrupt while the adapter-side return is still gated. Release so
-        // promptWireSettled completes (Effect.tap) before/while the completion
-        // callback contends for runtimeCallbackPermit. Holding the gate forever
-        // would also block the wire signal (same Effect resolution), so release
-        // is required; the assertion is cancel skipped after that race window.
         const interruptFiber = yield* runtime
           .interruptTurn({ providerThread, providerTurnId: firstProviderTurnId })
           .pipe(Effect.forkScoped);
@@ -9369,7 +9350,6 @@ describe("AcpAdapterV2", () => {
         }
         assert.equal(terminalStatus, "completed");
 
-        // Wait for the late post-finalize duplicate TaskOutput frame.
         yield* Stream.fromQueue(protocolEvents).pipe(
           Stream.filter(
             (event) =>
@@ -9797,9 +9777,6 @@ describe("AcpAdapterV2", () => {
           nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:1"),
         });
 
-        // Wait (real time) until the post-settle end notice and TaskOutput
-        // hydration are ingested: the hydrated monitor card carries the
-        // fetched listing.
         let reportSeen = false;
         const trackReport = (event: ProviderAdapter.ProviderAdapterV2Event): void => {
           if (
@@ -9826,8 +9803,6 @@ describe("AcpAdapterV2", () => {
         yield* Effect.yieldNow;
         yield* Effect.yieldNow;
 
-        // Pre-fix the 2s deferred-finalize debounce fires here and the report
-        // streamed by the injected turn afterwards is dropped on the floor.
         yield* TestClock.adjust("3 seconds");
         yield* Effect.yieldNow;
         yield* Effect.yieldNow;
@@ -9843,7 +9818,6 @@ describe("AcpAdapterV2", () => {
           drained = yield* Queue.poll(events);
         }
 
-        // Release the report, then the normal debounce finalizes the turn.
         yield* fileSystem.writeFileString(triggerPath, "go");
         yield* Stream.fromQueue(protocolEvents).pipe(
           Stream.filter(
@@ -10004,9 +9978,6 @@ describe("AcpAdapterV2", () => {
             hydrated = true;
           }
         }
-        // Settled-held window: prompt returned, deferred finalize is holding for
-        // the injected report. An x.ai/task_completed ext mutation must not arm
-        // midTurnUnreported and open a wake after the report streams.
         const applyMutation = capturedMutation.current;
         if (applyMutation === null) {
           return yield* Effect.die("registerExtensions must capture applyBackgroundTaskMutation");
@@ -10180,7 +10151,6 @@ describe("AcpAdapterV2", () => {
           return yield* Effect.die("registerExtensions must capture applyBackgroundTaskMutation");
         }
 
-        // Start a monitor mid-turn; leave it unhandled (no get_command).
         yield* sessionUpdateHandler!({
           sessionId: "mock-session-1",
           update: {
@@ -10205,7 +10175,6 @@ describe("AcpAdapterV2", () => {
           taskId: "task-monitor-1",
           status: "running",
         });
-        // Completion ext PRE-settle: arms midTurnUnreportedCompletedTaskIds.
         yield* applyMutation({
           sessionId: "mock-session-1",
           taskId: "task-monitor-1",
@@ -10217,8 +10186,6 @@ describe("AcpAdapterV2", () => {
           "pre-settle unhandled completion must not offer while the turn is active",
         );
 
-        // Settle without reporting. Tool stays in_progress so deferred finalize
-        // holds the turn open for the injected report.
         yield* Deferred.succeed(promptGate, { stopReason: "end_turn" });
         yield* Effect.yieldNow;
         yield* Effect.yieldNow;
@@ -10229,8 +10196,6 @@ describe("AcpAdapterV2", () => {
           "settle must hold for deferred background work; midTurn alone must not offer mid-hold",
         );
 
-        // The injected report can race ahead of the end notice. It must be
-        // remembered so the later notice consumes the pre-settle arm.
         yield* sessionUpdateHandler!({
           sessionId: "mock-session-1",
           update: {
@@ -10280,9 +10245,6 @@ describe("AcpAdapterV2", () => {
         }
         assert.isTrue(reportSeen, "injected report must project into the held turn");
 
-        // Hydration safety (60s) force-completes the monitor tool, then the 3s
-        // quiet window finalizes. No TaskOutput path: that would also clear
-        // midTurn and hide the agent_message_chunk consumption site under test.
         yield* TestClock.adjust("60 seconds");
         yield* Effect.yieldNow;
         yield* Effect.yieldNow;
@@ -10422,7 +10384,6 @@ describe("AcpAdapterV2", () => {
           return yield* Effect.die("registerExtensions must capture applyBackgroundTaskMutation");
         }
 
-        // Register monitors A and B in-turn; leave both unhandled.
         for (const [toolCallId, title] of [
           ["tool-call-monitor-a", "Monitor: staggered A"],
           ["tool-call-monitor-b", "Monitor: staggered B"],
@@ -10457,7 +10418,6 @@ describe("AcpAdapterV2", () => {
           taskId: "task-monitor-b",
           status: "running",
         });
-        // A completes pre-settle while unhandled: arms midTurnUnreportedCompletedTaskIds.
         yield* applyMutation({
           sessionId: "mock-session-1",
           taskId: "task-monitor-a",
@@ -10469,8 +10429,6 @@ describe("AcpAdapterV2", () => {
           "pre-settle unhandled completion must not offer while the turn is active",
         );
 
-        // Turn settles and finalizes with B still running: no offer at finalize
-        // (running set non-empty), but marks must be kept for the later end.
         yield* Deferred.succeed(promptGate, { stopReason: "end_turn" });
         const providerTurnId = idAllocator.derive.providerTurn({
           driver: ACP_TEST_DRIVER,
@@ -10490,9 +10448,6 @@ describe("AcpAdapterV2", () => {
           "finalize must not offer while B is still running",
         );
 
-        // B ends post-finalize via mutation-only end-notice (fails
-        // acpPostSettleWakeEvidence: extractBackgroundToolMutation matches).
-        // Without kept midTurn marks this path would neither buffer nor offer.
         const bEndNotice = {
           sessionId: "mock-session-1",
           update: {
@@ -10555,9 +10510,6 @@ describe("AcpAdapterV2", () => {
           flavor: {
             driver: ACP_TEST_DRIVER,
             capabilities: AcpProviderCapabilitiesV2,
-            // Hold finalize after prompt settle while monitor tools stay open so
-            // interrupt lands on the settled-soft path (cancel need not race the
-            // hang prompt).
             deferFinalizeForBackgroundWork: true,
             enablePostSettleContinuation: true,
             extractBackgroundTaskId: (toolCall) => {
@@ -10681,8 +10633,6 @@ describe("AcpAdapterV2", () => {
         });
         assert.lengthOf(continuationRequests, 0);
 
-        // Settle while B's tool row still open: deferred finalize holds the
-        // turn. Interrupt then takes the settled-soft path.
         yield* Deferred.succeed(promptGate, { stopReason: "end_turn" });
         yield* Effect.yieldNow;
         yield* Effect.yieldNow;
@@ -10879,7 +10829,6 @@ describe("AcpAdapterV2", () => {
           return yield* Effect.die("registerExtensions must capture applyBackgroundTaskMutation");
         }
 
-        // Turn 1: in-turn monitor + get_command hydrate + report.
         yield* sessionUpdateHandler!({
           sessionId: "mock-session-1",
           update: {
@@ -10952,7 +10901,6 @@ describe("AcpAdapterV2", () => {
         }
         assert.equal(firstTerminal, "completed");
 
-        // Post-finalize injected monitor-event + ack chatter (live Grok CLI path).
         yield* sessionUpdateHandler!({
           sessionId: "mock-session-1",
           update: {
@@ -10995,7 +10943,6 @@ describe("AcpAdapterV2", () => {
           "turn-1 injected-turn ack chatter must not remain as wake buffer evidence",
         );
 
-        // Turn 2: second in-turn monitor; mid-turn lifecycle must not wake.
         yield* runtime
           .startTurn(
             makeTurnInput({
@@ -11220,7 +11167,6 @@ describe("AcpAdapterV2", () => {
       yield* agentText("A_DONE");
       assert.lengthOf(continuationRequests, 1);
       assert.equal(continuationRequests[0]?.notification?.summary, 'Command "sleep a" finished');
-      // B ends while A's wake waits for its turn; that wake is already named.
       yield* endCommand("task-b", "sleep b");
       assert.lengthOf(continuationRequests, 1);
 
@@ -11240,7 +11186,6 @@ describe("AcpAdapterV2", () => {
       yield* TestClock.adjust("3 seconds");
       assert.equal(yield* awaitTerminal(2), "completed");
 
-      // B's own wake names it.
       yield* agentText("B_DONE");
       assert.lengthOf(continuationRequests, 2);
       assert.deepEqual(continuationRequests[1]?.notification, {
@@ -11362,8 +11307,6 @@ describe("AcpAdapterV2", () => {
         runtimePolicy,
       });
       const now = yield* DateTime.now;
-      // Seed turn: complete promptly, then dirty the wake buffer with a
-      // thought-only frame (buffers, no offer).
       yield* runtime
         .startTurn(
           makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 1 }),
@@ -11396,7 +11339,6 @@ describe("AcpAdapterV2", () => {
       assert.isTrue(yield* hasPendingBackgroundWork, "thought residue must dirty the wake buffer");
       assert.lengthOf(continuationRequests, 0);
 
-      // Active un-finalized turn 2: user-turn start clears prior residue.
       yield* runtime
         .startTurn(
           makeTurnInput({
@@ -11421,7 +11363,6 @@ describe("AcpAdapterV2", () => {
         return yield* Effect.die("extensions and session handler must be wired for turn 2");
       }
 
-      // Unhandled monitor: mid-turn complete must not offer while active.
       yield* sessionUpdateHandler({
         sessionId: "mock-session-1",
         update: {
@@ -11446,10 +11387,6 @@ describe("AcpAdapterV2", () => {
         taskId: "task-monitor-unhandled",
         status: "running",
       });
-      // Re-seed dirty wakeBuffer while the turn is still active by routing a
-      // post-settle-style frame is impossible (active context). Defect B is
-      // covered by the mid-turn unreported set: completion lands mid-turn
-      // with empty buffer and must still not offer until finalize.
       yield* applyMutation({
         sessionId: "mock-session-1",
         taskId: "task-monitor-unhandled",
@@ -11480,7 +11417,6 @@ describe("AcpAdapterV2", () => {
         "post-finalize must offer when mid-turn completion was never handled in-turn",
       );
 
-      // Third turn: hydrate in-turn before lifecycle complete; no offer.
       const firstOffer = continuationRequests[0]!;
       if (firstOffer.clearIfCurrent !== undefined) {
         yield* firstOffer.clearIfCurrent();
@@ -11668,7 +11604,6 @@ describe("AcpAdapterV2", () => {
             makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 1 }),
           )
           .pipe(Effect.forkScoped);
-        // Wait until the wrapped prompt is awaiting the gate.
         yield* Effect.yieldNow;
         yield* Effect.yieldNow;
         assert.isDefined(sessionUpdateHandler);
@@ -11677,7 +11612,6 @@ describe("AcpAdapterV2", () => {
           return yield* Effect.die("registerExtensions must capture applyBackgroundTaskMutation");
         }
 
-        // Start a monitor mid-turn; do not hydrate via get_command (unhandled).
         yield* sessionUpdateHandler!({
           sessionId: "mock-session-1",
           update: {
@@ -11789,8 +11723,6 @@ describe("AcpAdapterV2", () => {
         flavor: {
           driver: ACP_TEST_DRIVER,
           capabilities: AcpProviderCapabilitiesV2,
-          // Quiet window on empty-drain continuation; persistent so the root
-          // monitor does not pin deferred finalize after mid-turn complete.
           deferFinalizeForBackgroundWork: true,
           enablePostSettleContinuation: true,
           extractBackgroundTaskId: (toolCall) =>
@@ -11862,8 +11794,6 @@ describe("AcpAdapterV2", () => {
         return yield* Effect.die("registerExtensions must capture applyBackgroundTaskMutation");
       }
 
-      // Mid-turn unhandled completion arms midTurn and offers after finalize
-      // with an empty wakeBuffer (midTurn-only offer).
       yield* sessionUpdateHandler!({
         sessionId: "mock-session-1",
         update: {
@@ -11908,8 +11838,6 @@ describe("AcpAdapterV2", () => {
       assert.equal(rootTerminal, "completed");
       assert.lengthOf(continuationRequests, 1, "midTurn-only evidence must offer one continuation");
 
-      // Continuation attach with empty wakeBuffer: must schedule the quiet
-      // window rather than finalizing immediately blank.
       const rootInput = makeTurnInput({
         threadId,
         providerThread,
@@ -11937,7 +11865,6 @@ describe("AcpAdapterV2", () => {
         driver: ACP_TEST_DRIVER,
         nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:2"),
       });
-      // Still open: no terminal yet (quiet window).
       let polled = yield* Queue.poll(events);
       while (Option.isSome(polled)) {
         assert.notEqual(
@@ -11951,7 +11878,6 @@ describe("AcpAdapterV2", () => {
         polled = yield* Queue.poll(events);
       }
 
-      // Late wake frame during the quiet window attaches to this run.
       assert.isDefined(sessionUpdateHandler);
       yield* sessionUpdateHandler!({
         sessionId: "mock-session-1",
@@ -11963,7 +11889,6 @@ describe("AcpAdapterV2", () => {
       yield* Effect.yieldNow;
       yield* Effect.yieldNow;
 
-      // Partial advance keeps the window open; full 3s after rearm finalizes.
       yield* TestClock.adjust("1 second");
       yield* Effect.yieldNow;
       polled = yield* Queue.poll(events);
@@ -12170,7 +12095,6 @@ describe("AcpAdapterV2", () => {
         driver: ACP_TEST_DRIVER,
         nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:2"),
       });
-      // No frames: quiet window must still finalize (no wedge).
       yield* TestClock.adjust("3 seconds");
       let continuationTerminal: string | null = null;
       while (continuationTerminal === null) {
@@ -12570,9 +12494,7 @@ describe("AcpAdapterV2", () => {
         "failed teardown must leave both declared Bash and sleep PIDs live",
       );
 
-      while (Option.isSome(yield* Queue.poll(adapterEvents))) {
-        // Discard the interrupted turn's expected projection before residual traffic.
-      }
+      while (Option.isSome(yield* Queue.poll(adapterEvents))) {}
       yield* fileSystem.writeFileString(residualCallbackTriggerPath, "go");
       yield* Stream.fromQueue(protocolEvents).pipe(
         Stream.filter(
@@ -13043,9 +12965,7 @@ describe("AcpAdapterV2", () => {
       assert.isDefined(replacementHandlers.elicitation);
       assert.isDefined(replacementHandlers.requestUserInput);
       assert.lengthOf(runtimeInputs, 2);
-      while (Option.isSome(yield* Queue.poll(adapterEvents))) {
-        // Discard generation 1 terminal and generation 2 startup projection.
-      }
+      while (Option.isSome(yield* Queue.poll(adapterEvents))) {}
 
       yield* oldHandlers.sessionUpdate!({
         sessionId: "mock-session-1",
@@ -13279,9 +13199,7 @@ describe("AcpAdapterV2", () => {
       if (Exit.isSuccess(staleResponse)) {
         assert.fail("teardown must synchronously remove the old pending request");
       }
-      while (Option.isSome(yield* Queue.poll(events))) {
-        // Discard generation 1 cancellation and terminal projection.
-      }
+      while (Option.isSome(yield* Queue.poll(events))) {}
 
       yield* runtime.startTurn(
         makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 2 }),
@@ -13639,7 +13557,6 @@ describe("AcpAdapterV2", () => {
         "late post-Stop assistant text must not attach to the stopped run",
       );
 
-      // Give residual cancel-path updates a chance to mis-project if quarantine fails.
       yield* Effect.sleep("200 millis");
       yield* Effect.yieldNow;
       yield* Effect.yieldNow;
@@ -13967,7 +13884,6 @@ describe("AcpAdapterV2", () => {
         driver: ACP_TEST_DRIVER,
         nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:1"),
       });
-      // restart_active path: interrupt without requestRuntimeRestart.
       const interruptFiber = yield* runtime
         .interruptTurn({
           providerThread,
@@ -14165,7 +14081,6 @@ describe("acpPostSettleContinuationOfferEvidence", () => {
         },
       }),
     );
-    // Thoughts may still be wake evidence for buffering once a real offer opens.
     assert.isTrue(
       acpPostSettleWakeEvidence({
         sessionId,
@@ -14271,7 +14186,6 @@ describe("acpPostSettleContinuationOfferEvidence", () => {
         },
       },
     } as const;
-    // Raw frame looks terminal; the Grok flavor knows it is a running monitor.
     assert.isTrue(acpPostSettleContinuationOfferEvidence(monitorStartAck));
     assert.isFalse(
       acpPostSettleContinuationOfferEvidence(monitorStartAck, {
@@ -14330,14 +14244,10 @@ describe("acpPostSettleWakeShouldBuffer", () => {
 
 describe("acpIsAppOwnedWakeTurn", () => {
   it("recognizes only the orchestrator-injected app-owned wake", () => {
-    // Delegated-child wake: must preserve this session's own wake frames.
     assert.isTrue(acpIsAppOwnedWakeTurn({ createdBy: "agent", creationSource: "server" }));
-    // Provider-native continuation: handled by the continuation branch instead.
     assert.isFalse(acpIsAppOwnedWakeTurn({ createdBy: "agent", creationSource: "provider" }));
-    // Real user turns still clear stale wake residue.
     assert.isFalse(acpIsAppOwnedWakeTurn({ createdBy: "user", creationSource: "web" }));
     assert.isFalse(acpIsAppOwnedWakeTurn({ createdBy: "user", creationSource: "mcp" }));
-    // A user-authored message never counts, whatever its surface.
     assert.isFalse(acpIsAppOwnedWakeTurn({ createdBy: "user", creationSource: "server" }));
   });
 });

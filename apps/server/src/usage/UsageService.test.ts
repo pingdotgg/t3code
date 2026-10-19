@@ -29,7 +29,7 @@ import * as Layer from "effect/Layer";
 import * as Scheduler from "effect/Scheduler";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -98,10 +98,6 @@ const layerCursorUsageAccounts = <E, R>(
   reader: Layer.Layer<CursorAccountReader.CursorAccountReader, E, R>,
 ) => Layer.fresh(CursorUsageAccounts.layer).pipe(Layer.provide(reader));
 
-/**
- * A service with its own Cursor account caches over `read`, as a fresh server
- * process has. `awaitPersisted` also waits for the account cache writes.
- */
 const makeWithCursor = (read: CursorAccountReader.CursorAccountReader["Service"]["read"]) =>
   Effect.gen(function* () {
     const context = yield* Layer.build(
@@ -119,9 +115,12 @@ const layerService = (input: {
   readonly prefix: string;
   readonly home: string;
   readonly settings: Parameters<typeof ServerSettings.layerTest>[0];
-  readonly onRatesFetch?: () => void;
-  /** Defaults to an unparsable document so every scan retries the fetch. */
+  readonly onRatesFetch?: (request: HttpClientRequest.HttpClientRequest) => void;
   readonly ratesDocument?: unknown;
+  readonly ratesStatus?: () => number;
+  readonly ratesResponse?: (
+    request: HttpClientRequest.HttpClientRequest,
+  ) => Effect.Effect<Response, HttpClientError.HttpClientError>;
   readonly environment?: NodeJS.ProcessEnv;
   readonly platform?: NodeJS.Platform;
 }) =>
@@ -142,11 +141,18 @@ const layerService = (input: {
       Layer.succeed(
         HttpClient.HttpClient,
         HttpClient.make((request) =>
-          Effect.sync(() => {
-            input.onRatesFetch?.();
-            // Unparsable rates: every scan retries the fetch, which makes the
-            // fetch count a boundary-level observation of how many scans ran.
-            return HttpClientResponse.fromWeb(request, Response.json(input.ratesDocument ?? {}));
+          Effect.suspend(() => {
+            input.onRatesFetch?.(request);
+            const response = input.ratesResponse
+              ? input.ratesResponse(request)
+              : Effect.succeed(
+                  Response.json(input.ratesDocument ?? {}, {
+                    status: input.ratesStatus?.() ?? 200,
+                  }),
+                );
+            return response.pipe(
+              Effect.map((response) => HttpClientResponse.fromWeb(request, response)),
+            );
           }),
         ),
       ),
@@ -165,7 +171,6 @@ const layerService = (input: {
     ),
   );
 
-/** Outside `NARROW_WINDOW`, inside `WINDOW`. Seconds, as `utimes` takes them. */
 const BEFORE_NARROW_WINDOW = Date.parse("2026-08-01T10:00:00Z") / 1000;
 const NARROW_WINDOW: UsageSummaryInput = {
   timeZone: "UTC",
@@ -174,9 +179,7 @@ const NARROW_WINDOW: UsageSummaryInput = {
 };
 
 /**
- * A FIFO named like a transcript. A scan's read of it waits in `open` until
- * `openGate`, then fails at once, so a gate holds that scan's directory reads
- * in flight. Each waiting gate holds one libuv pool thread; keep at most three.
+ * Each waiting gate holds one libuv pool thread; keep at most three.
  */
 const makeGate = (path: string, lastWriteSeconds?: number) =>
   Effect.promise(async () => {
@@ -186,14 +189,9 @@ const makeGate = (path: string, lastWriteSeconds?: number) =>
     }
   });
 
-/**
- * Returns once a scan has opened the gate. A scan opens every file of a
- * directory at once, so it then holds the directory's transcripts open too.
- */
 const openGate = (path: string) =>
   Effect.promise(async () => (await NodeFSP.open(path, "w")).close());
 
-/** Replaces a file by rename, so a scan holding the old one keeps reading it. */
 const replaceFile = (path: string, content: string) =>
   Effect.promise(async () => {
     await NodeFSP.writeFile(path + ".next", content);
@@ -204,17 +202,10 @@ function totalOutputTokens(summary: { buckets: readonly { totals: { outputTokens
   return summary.buckets.reduce((sum, bucket) => sum + bucket.totals.outputTokens, 0);
 }
 
-/** Inside `WINDOW`: the time Cursor tests run at. */
 const CURSOR_NOW = Date.parse("2026-08-02T12:00:00Z");
 const HOUR_MS = 60 * 60 * 1000;
-/** The service's cache retention, which the Cursor account cache always covers. */
 const CURSOR_RETENTION_MS = 92 * 24 * HOUR_MS;
 
-/**
- * Stands in for Cursor's dashboard API. Each read returns the account's events
- * in its range, keyed like the real reader: occurrences count within one read.
- * While `gate` is set, reads wait for it.
- */
 function makeFakeCursor() {
   const state = {
     accountKey: "account-a",
@@ -401,7 +392,6 @@ describe("UsageService", () => {
             first.sources.filter((source) => source.fingerprint.provider === "pi").length,
             1,
           );
-          // Warm scans retain header state and only charge appended entries.
           yield* Effect.promise(() =>
             NodeFSP.appendFile(
               NodePath.join(dir, "fork.jsonl"),
@@ -615,8 +605,6 @@ describe("UsageService", () => {
         const service = yield* UsageService.make;
         return yield* service.readSummary(WINDOW);
       }).pipe(
-        // Scoped inside the state directory, so pending cache writes land
-        // before it is removed.
         Effect.scoped,
         Effect.provide(
           layerService({
@@ -714,12 +702,10 @@ describe("UsageService", () => {
       cursor.state.gate = gate;
       yield* Effect.gen(function* () {
         const service = yield* makeWithCursor(cursor.read);
-        // Cold: nothing cached yet, so Cursor answers empty while it refreshes.
         const cold = yield* service.readSummary(WINDOW);
         assert.strictEqual(cursorSource(cold)?.refreshing, true);
         assert.strictEqual(cursorSource(cold)?.status, "ok");
         assert.strictEqual(totalOutputTokens(cold), 0);
-        // A second reader joins the refresh in flight.
         const joined = yield* service.readSummary(WINDOW);
         assert.strictEqual(cursorSource(joined)?.refreshing, true);
 
@@ -733,14 +719,12 @@ describe("UsageService", () => {
         assert.strictEqual(totalOutputTokens(refreshed), 5);
         assert.strictEqual(cursor.state.calls.length, 1);
 
-        // Inside the TTL a plain read answers from the cache without refreshing.
         yield* TestClock.adjust(Duration.seconds(30));
         const cached = yield* service.readSummary(WINDOW);
         assert.isUndefined(cursorSource(cached)?.refreshing);
         assert.strictEqual(totalOutputTokens(cached), 5);
         assert.strictEqual(cursor.state.calls.length, 1);
 
-        // Past it, a plain read answers from the stale cache and refreshes.
         yield* TestClock.adjust(Duration.seconds(31));
         cursor.state.events.push({ timestampMs: CURSOR_NOW, outputTokens: 7 });
         const stale = yield* service.readSummary(WINDOW);
@@ -760,7 +744,6 @@ describe("UsageService", () => {
       yield* writeCursorLogin(home);
       yield* TestClock.setTime(CURSOR_NOW);
       const cursor = makeFakeCursor();
-      // Two identical billed rows inside the refetched hour must both survive it, once each.
       cursor.state.events = [
         { timestampMs: Date.parse("2026-07-10T10:00:00Z"), outputTokens: 17 },
         { timestampMs: CURSOR_NOW - 24 * HOUR_MS, outputTokens: 5 },
@@ -776,12 +759,10 @@ describe("UsageService", () => {
           { sinceMs: CURSOR_NOW - CURSOR_RETENTION_MS, untilMs: CURSOR_NOW },
         ]);
 
-        // A wider window is answered from the same cache.
         const wide = { ...WINDOW, sinceDay: UsageDay.make("2026-07-01") };
         assert.strictEqual(totalOutputTokens(yield* read(wide)), 36);
         assert.strictEqual(cursor.state.calls.length, 1);
 
-        // An event finalized late, inside the overlap, and a new one.
         cursor.state.events.push(
           { timestampMs: CURSOR_NOW - HOUR_MS / 6, outputTokens: 11 },
           { timestampMs: CURSOR_NOW + HOUR_MS, outputTokens: 13 },
@@ -793,7 +774,6 @@ describe("UsageService", () => {
           untilMs: CURSOR_NOW + 2 * HOUR_MS,
         });
 
-        // Another login replaces the cached account's history instead of adding to it.
         cursor.state.accountKey = "account-b";
         yield* TestClock.adjust(Duration.minutes(2));
         assert.strictEqual(totalOutputTokens(yield* read(wide)), 60);
@@ -826,13 +806,11 @@ describe("UsageService", () => {
         assert.isUndefined(cursorSource(failed)?.refreshing);
         assert.strictEqual(totalOutputTokens(failed), 5);
 
-        // The failure stands for the TTL; a plain read does not retry it.
         const again = yield* service.readSummary(WINDOW);
         assert.strictEqual(cursorSource(again)?.status, "partial");
         assert.isUndefined(cursorSource(again)?.refreshing);
         assert.strictEqual(cursor.state.calls.length, 2);
 
-        // A failing read of another login drops the previous account's history.
         yield* TestClock.adjust(Duration.minutes(2));
         cursor.state.accountKey = "account-b";
         const switched = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
@@ -869,7 +847,6 @@ describe("UsageService", () => {
         assert.deepStrictEqual(cursorSource(restored), cursorSource(original));
         assert.strictEqual(after.state.calls.length, 0);
 
-        // Once stale, the restored cache refreshes only its newest edge.
         yield* TestClock.adjust(Duration.minutes(2));
         const refreshed = yield* restarted.readSummary({ ...WINDOW, awaitRefresh: true });
         assert.deepStrictEqual(refreshed.buckets, original.buckets);
@@ -1083,7 +1060,6 @@ describe("UsageService", () => {
           [
             { type: "session_meta", payload: { id: "codex-account-session" } },
             { type: "turn_context", payload: { model: "gpt-5.6-sol" } },
-            // A-B-A at one timestamp must preserve both equal A events.
             ...[11, 12, 11].map((outputTokens) => ({
               type: "event_msg",
               timestamp: "2026-08-01T10:00:00Z",
@@ -1144,7 +1120,6 @@ describe("UsageService", () => {
                 },
                 [ProviderInstanceId.make("grok-work")]: {
                   driver: ProviderDriverKind.make("grok"),
-                  // An undecodable config must not hide history Grok reads by home alone.
                   config: { customModels: "not-a-list" },
                   environment: [{ name: "GROK_HOME", value: grokHome, sensitive: false }],
                 },
@@ -1422,7 +1397,6 @@ describe("UsageService", () => {
           );
           const warm = yield* service.readSummary(WINDOW);
           assert.deepStrictEqual(warm.buckets, first.buckets);
-          // The repeated content block has the same message/request identity.
           yield* Effect.promise(() => NodeFSP.appendFile(transcript, large + claudeLine(2, 100)));
           const appended = yield* service.readSummary(WINDOW);
           assert.strictEqual(totalOutputTokens(appended), 10000);
@@ -1501,8 +1475,6 @@ describe("UsageService", () => {
           yield* first.readSummary(WINDOW);
           yield* first.awaitPersisted;
 
-          // Rewrite the cache as a v4 server left it: every Codex record at
-          // speed 0 (standard), and no tier in the reducer state.
           const legacy = yield* Effect.promise(async () => {
             const document = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
               files: Record<string, { r: unknown[][]; cs: { speed?: unknown } }>;
@@ -1519,14 +1491,11 @@ describe("UsageService", () => {
           });
 
           const summary = yield* (yield* UsageService.make).readSummary(WINDOW);
-          // The live rollout re-parses at the ultrafast rate (10 x 6); the
-          // deleted one keeps its saved v4 usage at the standard rate (20 x 1).
           assert.strictEqual(totalOutputTokens(summary), 30);
           assert.strictEqual(
             summary.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0),
             80,
           );
-          // A v4 server sharing this state directory still finds its own cache.
           assert.strictEqual(
             yield* Effect.promise(() => NodeFSP.readFile(legacyPath, "utf8")),
             legacy,
@@ -1577,7 +1546,6 @@ describe("UsageService", () => {
         assert.deepStrictEqual(restored.buckets, first.buckets);
         assert.deepStrictEqual(restored.sources, first.sources);
 
-        // A moved transcript must not count the saved usage twice.
         yield* Effect.promise(() => NodeFSP.writeFile(transcript + ".jsonl", content));
         const moved = yield* restarted.readSummary(WINDOW);
         assert.deepStrictEqual(moved.buckets, first.buckets);
@@ -1630,8 +1598,6 @@ describe("UsageService", () => {
         assert.deepStrictEqual(outsideWindow.buckets, []);
         assert.strictEqual(outsideWindow.sources[0]?.distinctSessions, 0);
       }).pipe(
-        // Scoped inside the state directory, so pending cache writes land
-        // before it is removed.
         Effect.scoped,
         Effect.provide(
           layerService({
@@ -1659,8 +1625,6 @@ describe("UsageService", () => {
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;
       const dir = NodePath.dirname(transcript);
-      // The walk-first file is the original, padded so it finishes parsing
-      // after the small fork copy that repeats its record under a new session.
       const [first = "", second = ""] = yield* Effect.promise(async () => {
         await NodeFSP.writeFile(NodePath.join(dir, "a.jsonl"), "");
         await NodeFSP.writeFile(NodePath.join(dir, "b.jsonl"), "");
@@ -1711,7 +1675,6 @@ describe("UsageService", () => {
           const wide = yield* service.readSummary(WINDOW).pipe(Effect.forkChild);
           yield* openGate(probe);
           yield* replaceFile(transcript, claudeLine(1, 5) + claudeLine(2, 7));
-          // The narrow scan caches the newer read while the wide one waits.
           yield* service.readSummary(NARROW_WINDOW);
           yield* openGate(hold);
           yield* Fiber.join(wide);
@@ -1745,12 +1708,10 @@ describe("UsageService", () => {
           const wide = yield* service.readSummary(WINDOW).pipe(Effect.forkChild);
           yield* openGate(wideProbe);
           yield* replaceFile(transcript, claudeLine(1, 5) + claudeLine(2, 7));
-          // Made after the wide scan's walk, so only the narrow scan waits on them.
           yield* makeGate(narrowProbe);
           yield* makeGate(narrowHold);
           const narrow = yield* service.readSummary(NARROW_WINDOW).pipe(Effect.forkChild);
           yield* openGate(narrowProbe);
-          // Both scans started from an empty cache entry; the earlier read lands first.
           yield* openGate(wideHold);
           yield* Fiber.join(wide);
           yield* openGate(narrowHold);
@@ -1790,8 +1751,6 @@ describe("UsageService", () => {
       assert.deepStrictEqual(reached.buckets, first.buckets);
       assert.strictEqual(reached.sources[0]?.status, "ok");
 
-      // A missing source cannot claim this directory from another environment
-      // that still reads it, so it adds nothing to a window after its last write.
       const later = yield* service.readSummary({
         timeZone: "UTC",
         sinceDay: UsageDay.make("2026-08-10"),
@@ -1888,9 +1847,8 @@ describe("UsageService", () => {
         { concurrency: 2 },
       );
       assert.deepStrictEqual(first, second);
-      assert.strictEqual(ratesFetches, 1);
+      assert.strictEqual(ratesFetches, 2);
 
-      // A later request is fresh work again, not a stale cached answer.
       yield* service.readSummary(WINDOW);
       assert.strictEqual(ratesFetches, 2);
     }).pipe(Effect.scoped),
@@ -1922,13 +1880,10 @@ describe("UsageService", () => {
       assert.strictEqual(ratesFetches, 1);
       assert.strictEqual(first.pricing.status, "fresh");
 
-      // Inside the daily TTL a plain rescan keeps the cached table.
       yield* TestClock.adjust(Duration.minutes(2));
       yield* service.readSummary(WINDOW);
       assert.strictEqual(ratesFetches, 1);
 
-      // An explicit refresh fetches again so a newly listed model gets priced.
-      // A burst of refreshes shares that one fetch.
       const [refreshed] = yield* Effect.all([service.refreshRates, service.refreshRates], {
         concurrency: 2,
       });
@@ -1936,6 +1891,228 @@ describe("UsageService", () => {
       assert.strictEqual(refreshed.status, "fresh");
       assert.strictEqual(refreshed.knownModels, 1);
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.live("preserves cached estimates when both pricing downloads fail and recovers", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      let status = 200;
+      const requests: string[] = [];
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-rates-failure-test",
+            home,
+            settings,
+            ratesDocument: {
+              "claude-fable-5": { input_cost_per_token: 1e-5, output_cost_per_token: 5e-5 },
+            },
+            ratesStatus: () => status,
+            onRatesFetch: (request) => requests.push(request.url),
+          }),
+        ),
+      );
+      const first = yield* service.readSummary(WINDOW);
+      yield* TestClock.adjust(Duration.minutes(2));
+      status = 503;
+
+      const failed = yield* service.refreshRates;
+      assert.strictEqual(failed.status, "cached");
+      assert.strictEqual(failed.fetchedAt, first.pricing.fetchedAt);
+      assert.strictEqual(requests.length, 3);
+      assert.strictEqual(
+        requests[2],
+        "https://api.github.com/repos/BerriAI/litellm/contents/model_prices_and_context_window.json?ref=main",
+      );
+      const cached = yield* service.readSummary(WINDOW);
+      assert.deepStrictEqual(cached.buckets, first.buckets);
+
+      status = 200;
+      yield* TestClock.adjust(Duration.minutes(1));
+      const recovered = yield* service.refreshRates;
+      assert.strictEqual(recovered.status, "fresh");
+      assert.notStrictEqual(recovered.fetchedAt, first.pricing.fetchedAt);
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.live.each(["network", "http", "invalidJson", "empty"] as const)(
+    "recovers pricing through the GitHub API after a %s failure",
+    (failure) =>
+      Effect.gen(function* () {
+        const { transcript, settings, home } = yield* setup;
+        yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+        const requests: HttpClientRequest.HttpClientRequest[] = [];
+        const ratesDocument = {
+          "claude-fable-5": { input_cost_per_token: 1e-5, output_cost_per_token: 5e-5 },
+        };
+        const serviceLayer = layerService({
+          prefix: `usage-service-rates-fallback-${failure}-test`,
+          home,
+          settings,
+          onRatesFetch: (request) => requests.push(request),
+          ratesResponse: (request) => {
+            if (request.url.startsWith("https://api.github.com/")) {
+              return Effect.succeed(Response.json(ratesDocument));
+            }
+            if (failure === "network") {
+              return Effect.fail(
+                new HttpClientError.HttpClientError({
+                  reason: new HttpClientError.TransportError({
+                    request,
+                    cause: new Error("getaddrinfo ENOTFOUND raw.githubusercontent.com"),
+                  }),
+                }),
+              );
+            }
+            return Effect.succeed(
+              failure === "invalidJson"
+                ? new Response("not JSON")
+                : Response.json({}, { status: failure === "http" ? 503 : 200 }),
+            );
+          },
+        });
+        const service = yield* UsageService.make.pipe(Effect.provide(serviceLayer));
+
+        const summary = yield* service.readSummary(WINDOW);
+        assert.strictEqual(summary.pricing.status, "fresh");
+        assert.strictEqual(summary.pricing.knownModels, 1);
+        assert.closeTo(summary.buckets[0]?.costUsd ?? -1, 0.00035, 1e-12);
+        assert.deepStrictEqual(
+          requests.map((request) => request.url),
+          [
+            "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json",
+            "https://api.github.com/repos/BerriAI/litellm/contents/model_prices_and_context_window.json?ref=main",
+          ],
+        );
+        assert.strictEqual(requests[1]?.headers.accept, "application/vnd.github.raw+json");
+
+        const restarted = yield* UsageService.make.pipe(Effect.provide(serviceLayer));
+        const cached = yield* restarted.readSummary(WINDOW);
+        assert.strictEqual(cached.pricing.status, "cached");
+        assert.deepStrictEqual(cached.buckets, summary.buckets);
+        assert.strictEqual(requests.length, 2);
+      }).pipe(Effect.scoped),
+  );
+
+  it.live("tries the GitHub API after the primary pricing request times out", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const primaryStarted = yield* Deferred.make<void>();
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-rates-timeout-test",
+            home,
+            settings,
+            ratesResponse: (request) =>
+              request.url.startsWith("https://api.github.com/")
+                ? Effect.succeed(
+                    Response.json({
+                      "claude-fable-5": { input_cost_per_token: 1e-5, output_cost_per_token: 5e-5 },
+                    }),
+                  )
+                : Deferred.succeed(primaryStarted, undefined).pipe(Effect.andThen(Effect.never)),
+          }),
+        ),
+      );
+      const refresh = yield* service.refreshRates.pipe(Effect.forkChild);
+      yield* Deferred.await(primaryStarted);
+      yield* TestClock.adjust(Duration.seconds(10));
+      const pricing = yield* Fiber.join(refresh);
+      assert.strictEqual(pricing.status, "fresh");
+      assert.strictEqual(pricing.knownModels, 1);
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.live("keeps pricing unavailable when neither download has usable rates", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(layerService({ prefix: "usage-service-rates-empty-test", home, settings })),
+      );
+      const pricing = yield* service.refreshRates;
+      assert.strictEqual(pricing.status, "unavailable");
+      assert.isNull(pricing.fetchedAt);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live.each([false, true])(
+    "throttles failed pricing loads from completion with cached rates: %s",
+    (hasCachedRates) =>
+      Effect.gen(function* () {
+        const { settings, home } = yield* setup;
+        const primaryStarted = yield* Deferred.make<void>();
+        const fallbackStarted = yield* Deferred.make<void>();
+        let responding = true;
+        let requests = 0;
+        const service = yield* UsageService.make.pipe(
+          Effect.provide(
+            layerService({
+              prefix: "usage-service-rates-retry-floor-test",
+              home,
+              settings,
+              onRatesFetch: () => {
+                requests += 1;
+              },
+              ratesResponse: (request) =>
+                responding
+                  ? Effect.succeed(
+                      Response.json({
+                        "claude-fable-5": {
+                          input_cost_per_token: 1e-5,
+                          output_cost_per_token: 5e-5,
+                        },
+                      }),
+                    )
+                  : Deferred.succeed(
+                      request.url.startsWith("https://api.github.com/")
+                        ? fallbackStarted
+                        : primaryStarted,
+                      undefined,
+                    ).pipe(Effect.andThen(Effect.never)),
+            }),
+          ),
+        );
+        let fetchedAt: string | null = null;
+        if (hasCachedRates) {
+          fetchedAt = (yield* service.refreshRates).fetchedAt;
+          yield* TestClock.adjust(Duration.hours(24));
+        }
+        responding = false;
+        const refresh = yield* service.refreshRates.pipe(Effect.forkChild);
+        yield* Deferred.await(primaryStarted);
+        yield* TestClock.adjust(Duration.seconds(10));
+        yield* Deferred.await(fallbackStarted);
+        yield* TestClock.adjust(Duration.seconds(10));
+        const failed = yield* Fiber.join(refresh);
+        const expectedStatus = hasCachedRates ? "cached" : "unavailable";
+        assert.strictEqual(failed.status, expectedStatus);
+        assert.strictEqual(failed.fetchedAt, fetchedAt);
+        const requestsAfterFailure = requests;
+        assert.strictEqual(requestsAfterFailure, hasCachedRates ? 3 : 2);
+
+        responding = true;
+        const [immediate, summary] = yield* Effect.all(
+          [service.refreshRates, service.readSummary(WINDOW)],
+          { concurrency: 2 },
+        );
+        assert.strictEqual(immediate.status, expectedStatus);
+        assert.strictEqual(summary.pricing.status, expectedStatus);
+        assert.strictEqual(requests, requestsAfterFailure);
+        yield* TestClock.adjust(Duration.seconds(59));
+        const coolingDown = yield* service.refreshRates;
+        assert.strictEqual(coolingDown.status, expectedStatus);
+        assert.strictEqual(coolingDown.fetchedAt, fetchedAt);
+        assert.strictEqual(requests, requestsAfterFailure);
+
+        yield* TestClock.adjust(Duration.seconds(1));
+        const recovered = yield* service.refreshRates;
+        assert.strictEqual(recovered.status, "fresh");
+        assert.strictEqual(recovered.knownModels, 1);
+        assert.notStrictEqual(recovered.fetchedAt, fetchedAt);
+        assert.strictEqual(requests, requestsAfterFailure + 1);
+      }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
   it.live("does not orphan an in-flight scan when its first caller is interrupted", () =>
@@ -1970,9 +2147,6 @@ describe("UsageService", () => {
           },
         };
 
-        // Each candidate needs a distinct key because the broken case leaves
-        // its entry in the service's private in-flight map. The invalid window
-        // keeps the real scan synchronous once its detached fiber starts.
         const input: UsageSummaryInput = {
           ...WINDOW,
           sinceDay: UsageDay.make("2026-09-01"),

@@ -15,7 +15,6 @@ export interface TerminalMenuSession {
   readonly cwd: string | null;
   readonly status: "starting" | "running" | "exited" | "error" | "closed";
   readonly hasRunningSubprocess: boolean;
-  /** Server-authoritative title with the same fallback rules as web. */
   readonly displayLabel: string;
   readonly updatedAt: string | null;
 }
@@ -63,9 +62,9 @@ export function getTerminalStatusLabel(input: {
 }
 
 /**
- * Picks an id for "open another shell". Counts the terminal screen already mounted
- * (`activeRouteTerminalId`) as occupied so an empty session list on the primary route
- * still advances to `term-2` instead of `replace`-navigating to the same `default` tab.
+ * Counts the terminal screen already mounted (`activeRouteTerminalId`) as occupied so
+ * an empty session list on the primary route still advances to `term-2` instead of
+ * `replace`-navigating to the same `default` tab.
  */
 export function nextOpenTerminalId(input: {
   readonly listedTerminalIds: ReadonlyArray<string>;
@@ -116,8 +115,6 @@ export function buildTerminalMenuSessions(input: {
 }
 
 /**
- * Picks the session to show after a terminal exits: the nearest live session
- * below the exited id (terminal n-1), falling back to the nearest one above.
  * Returns null when no other live session remains and the terminal UI should
  * be dismissed instead.
  */

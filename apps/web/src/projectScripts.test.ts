@@ -143,7 +143,6 @@ describe("projectScripts helpers", () => {
     expect(primaryProjectScript(scripts)?.id).toBe("test");
     expect(setupProjectScript(scripts)?.id).toBe("setup");
     expect(settleProjectScript(scripts)?.id).toBe("clean");
-    // Cleanup is never the one-click run button, even when it is all there is.
     expect(primaryProjectScript(scripts.filter((script) => script.id === "clean"))).toBeNull();
   });
 

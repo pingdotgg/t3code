@@ -13,13 +13,11 @@ import {
   AlertDialogTitle,
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
-import type { RestartingMachine } from "./updateEverything.logic";
+import type { RestartingMachine, SkippedMachine } from "./updateEverything.logic";
 
-/** A thread an agent is working on now. A restart stops these; queued threads wait. */
 const isRunning = (status: string) =>
   status === "preparing" || status === "starting" || status === "running";
 
-/** Running threads across the environments in a newline-joined key. */
 const runningThreadCountAtom = Atom.family((environmentIds: string) =>
   Atom.make((get) =>
     environmentIds
@@ -42,15 +40,10 @@ interface UpdateEverythingDialogProps {
   readonly summary: string;
   readonly lines: ReadonlyArray<string>;
   readonly restarts: ReadonlyArray<RestartingMachine>;
+  readonly skipped: ReadonlyArray<SkippedMachine>;
   readonly onConfirm: () => void;
 }
 
-/**
- * Confirms an "update everything" run. It counts the running threads that the
- * restarts stop, and how many can resume afterwards because "Continue threads
- * after restarts" is on for their server. Recovery still skips some, such as a
- * thread waiting on the user, so the text says "can resume", not "will".
- */
 export function UpdateEverythingDialog({
   open,
   onOpenChange,
@@ -59,7 +52,7 @@ export function UpdateEverythingDialog({
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogPopup>
-        {/* The popup unmounts when closed, so the thread count is read only while open. */}
+        {}
         <UpdateEverythingDialogContent {...content} />
       </AlertDialogPopup>
     </AlertDialog>
@@ -70,6 +63,7 @@ function UpdateEverythingDialogContent({
   summary,
   lines,
   restarts,
+  skipped,
   onConfirm,
 }: Omit<UpdateEverythingDialogProps, "open" | "onOpenChange">) {
   const stopped = useAtomValue(
@@ -105,6 +99,11 @@ function UpdateEverythingDialogContent({
               : continuing === 0
                 ? `${threads} will be interrupted.`
                 : `${threads} will be interrupted. ${continuing} can resume after the restart.`}
+          </p>
+        ) : null}
+        {skipped.length > 0 ? (
+          <p className="whitespace-pre-line pt-2 text-sm">
+            {skipped.map((machine) => `Skips ${machine.label}: ${machine.reason}`).join("\n")}
           </p>
         ) : null}
       </AlertDialogHeader>

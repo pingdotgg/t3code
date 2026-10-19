@@ -27,7 +27,6 @@ export function haveProviderSnapshotSettingsChanged<Settings>(
   return !Equal.equals(previous, next);
 }
 
-/** The instance's settings paired with the host's server settings, as snapshots read them. */
 export const makeProviderSnapshotSettingsSource = <Settings>(
   provider: Settings,
 ): Effect.Effect<

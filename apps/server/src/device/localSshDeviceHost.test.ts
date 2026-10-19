@@ -19,7 +19,6 @@ const host = (target: string, port?: number) => ({
 const spawner = ChildProcessSpawner.make((command) =>
   Effect.gen(function* () {
     if (command._tag !== "StandardCommand") return yield* Effect.die("Unexpected command");
-    // Any attempt to actually connect fails this test.
     expect(command.args).toContain("-G");
     const target = command.args.at(-1);
     const configs: Record<string, string> = {

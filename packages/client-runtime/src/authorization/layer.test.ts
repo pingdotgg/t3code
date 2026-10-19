@@ -1,8 +1,4 @@
-import {
-  AuthAdministrativeScopes,
-  AuthStandardClientScopes,
-  EnvironmentId,
-} from "@t3tools/contracts";
+import { AuthStandardClientScopes, EnvironmentId } from "@t3tools/contracts";
 import {
   RelayEnvironmentConnectScope,
   type RelayEnvironmentConnectResponse,
@@ -408,7 +404,6 @@ describe("RemoteEnvironmentAuthorization", () => {
       expect(harness.fetch.calls.map(([url]) => String(url))).toEqual([
         "http://192.168.1.10:3773/.well-known/t3/environment",
       ]);
-      // The token stays saved for the T3 Connect route.
       expect((yield* Ref.get(harness.tokens)).get(ENVIRONMENT_ID)?.accessToken).toBe(
         "cached-access-token",
       );
@@ -497,7 +492,7 @@ describe("RemoteEnvironmentAuthorization", () => {
 
   it.effect.each([
     { name: "read-only", grantScopes: ["orchestration:read"] },
-    { name: "administrative", grantScopes: AuthAdministrativeScopes },
+    { name: "default", grantScopes: AuthStandardClientScopes },
   ] as const)(
     "inherits $name pairing grant scopes for websocket authorization and HTTP renewal",
     ({ grantScopes }) =>

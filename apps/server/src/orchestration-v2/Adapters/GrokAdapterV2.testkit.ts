@@ -44,7 +44,6 @@ function layerGrokProviderAdapterRegistryReplay(
       const path = yield* Path.Path;
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const hostPlatform = yield* HostProcess.Platform;
-      // Same queue the continuation worker drains when the fixture runs it.
       const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
       const replayGate = options.replayGate;
       const replayDir = yield* fileSystem
@@ -62,9 +61,6 @@ function layerGrokProviderAdapterRegistryReplay(
         environment: {},
         hostPlatform,
         selfInvocation: yield* resolveSelfInvocation(),
-        // Same wrapping as makeGrokAcpRuntime: client type and Ctrl+C cancel
-        // metadata and the x.ai prompt-completion race, so replay sends what
-        // production sends.
         makeRuntime: (runtimeInput) =>
           makeAcpReplayRuntime({
             transcript,

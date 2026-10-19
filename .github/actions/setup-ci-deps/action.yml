@@ -1,0 +1,30 @@
+name: Setup CI dependencies
+description: Install Vite+ and the workspace dependencies from cache.
+runs:
+  using: composite
+  steps:
+    # setup-vp reuses an installed exact version, so restoring its home skips the
+    # installer download on every job.
+    - name: Resolve Vite+ version
+      id: vp
+      shell: bash
+      run: |
+        echo "version=$(sed -nE 's/^  vite-plus: ([0-9][^ ]*)$/\1/p' pnpm-workspace.yaml)" >> "$GITHUB_OUTPUT"
+
+    - name: Cache Vite+
+      if: steps.vp.outputs.version != ''
+      uses: actions/cache@v6
+      with:
+        path: ~/.vite-plus
+        key: vite-plus-home-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.vp.outputs.version }}
+
+    # The pnpm store stays a cache tarball on the runner's own disk. A store on a
+    # Blacksmith sticky disk mounts in under a second, but pnpm then copies every
+    # package across filesystems instead of hard-linking it: install took 28-49s
+    # against 9s plus an 11s restore.
+    - name: Setup Vite+
+      uses: voidzero-dev/setup-vp@v1
+      with:
+        node-version-file: package.json
+        cache: true
+        run-install: true

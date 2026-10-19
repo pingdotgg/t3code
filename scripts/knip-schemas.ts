@@ -4,8 +4,6 @@ import type { Preprocessor } from "knip";
 // Knip needs the legacy compiler API, which TypeScript 7 no longer exports.
 import ts from "typescript-legacy";
 
-// Effect 4 schemas carry this marker, including aliases and Schema.Class constructors.
-// Checking the type avoids evaluating application modules or exempting schema factories/decoders.
 const schemaTypeId = "~effect/Schema/Schema";
 
 const preprocess: Preprocessor = (options) => {
@@ -62,7 +60,6 @@ const preprocess: Preprocessor = (options) => {
         checker.getExportsOfModule(module).flatMap((symbol) => {
           const exported =
             symbol.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol;
-          // Duplicate exports can name a private value with a public type of the same name.
           const target =
             exported.flags & ts.SymbolFlags.Value
               ? exported

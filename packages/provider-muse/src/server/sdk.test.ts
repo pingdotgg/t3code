@@ -294,14 +294,12 @@ describe("Muse launch", () => {
     ),
   );
 
-  // Node spawns neither a bare `muse` nor a `.cmd` file without a shell on Windows.
   it.effect("runs an exe directly and a launcher script under cmd.exe on Windows", () =>
     Effect.gen(function* () {
       expect(yield* onWindows("C:\\Muse\\muse.exe")).toEqual({
         command: "C:\\Muse\\muse.exe",
         args: [],
       });
-      // Node quotes a path with spaces, and the `@` before it keeps cmd from dropping the quotes.
       const spaced = "C:\\Users\\Jane Doe\\AppData\\Local\\Programs\\muse\\muse.cmd";
       expect(yield* onWindows(spaced)).toEqual({ command: CMD, args: ["/d", "/c", "@", spaced] });
       const spacedAmpersand = "C:\\Users\\R&D Team\\AppData\\Local\\Programs\\muse\\muse.cmd";
@@ -309,7 +307,6 @@ describe("Muse launch", () => {
         command: CMD,
         args: ["/d", "/c", "@", spacedAmpersand],
       });
-      // Unquoted, cmd would split the command at `&`.
       expect(yield* onWindows("C:\\Users\\R&D(1)\\muse.cmd")).toEqual({
         command: CMD,
         args: ["/d", "/c", "C:\\Users\\R^&D^(1^)\\muse.cmd"],
@@ -317,7 +314,6 @@ describe("Muse launch", () => {
       expect((yield* onWindows("C:\\Muse\\muse.bat", { SYSTEMROOT: "C:\\Windows" })).command).toBe(
         "C:\\Windows\\System32\\cmd.exe",
       );
-      // A binary that cannot be found is spawned as given, so the failure reports it.
       expect(yield* onWindows(undefined)).toEqual({ command: "muse", args: [] });
     }),
   );
@@ -435,7 +431,6 @@ describe("Muse workspace root", () => {
       expect(yield* museWorkspaceRoot("C:\\definitely-missing\\repo")).toBe(
         "\\\\?\\C:\\definitely-missing\\repo",
       );
-      // `/` would be taken literally inside a verbatim path.
       expect(yield* museWorkspaceRoot("C:/definitely-missing/repo")).toBe(
         "\\\\?\\C:\\definitely-missing\\repo",
       );

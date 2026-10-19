@@ -1,4 +1,5 @@
 import type { EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
+import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 
 export const REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL = "Remove queued message";
 
@@ -18,7 +19,6 @@ export function resolveThreadQueueRowControls(input: {
   readonly canPromoteToSteer: boolean;
   readonly canReorder: boolean;
   readonly index: number;
-  /** This row's message is already open in the composer. */
   readonly isEditing?: boolean;
   readonly queuedCount: number;
   readonly text: string;
@@ -35,7 +35,8 @@ export function resolveThreadQueueRowControls(input: {
     canMoveUp: mutationEnabled && input.canReorder && input.index > 0,
     canSteer: mutationEnabled && input.canPromoteToSteer && !isEditing,
     dismissAccessibilityLabel: REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL,
-    displayText: input.text,
+    // Edit and Steer keep the original text so quoted citations stay linked.
+    displayText: assistantCitationsToPlainText(input.text),
     isEditing,
   };
 }
@@ -60,7 +61,6 @@ export function buildCancelQueuedRunCommand(input: {
   };
 }
 
-/** Find the insertion anchor using the rows' original, untransformed layout. */
 export function resolveQueueDragBeforeRunId(
   rows: ReadonlyArray<{ id: RunId; y?: number; height?: number }>,
   runId: RunId,
@@ -74,7 +74,6 @@ export function resolveQueueDragBeforeRunId(
   return remaining.find((row) => center < row.y! + row.height! / 2)?.id ?? null;
 }
 
-/** Return the insertion anchor after a drag, or undefined when the order is unchanged. */
 export function resolveQueueDropBeforeRunId(
   rows: ReadonlyArray<{ id: RunId; y?: number; height?: number }>,
   runId: RunId,

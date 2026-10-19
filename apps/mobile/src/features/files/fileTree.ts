@@ -1,5 +1,4 @@
 import type { ProjectEntry } from "@t3tools/contracts";
-import { normalizeSearchQuery, scoreQueryMatch } from "@t3tools/shared/searchRanking";
 
 export interface FileTreeNode {
   readonly path: string;
@@ -7,8 +6,6 @@ export interface FileTreeNode {
   readonly kind: ProjectEntry["kind"];
   readonly ignored?: boolean;
   readonly children: ReadonlyArray<FileTreeNode>;
-  readonly searchSegments: ReadonlyArray<string>;
-  readonly searchWords: ReadonlyArray<string>;
 }
 
 export interface VisibleFileTreeNode {
@@ -37,43 +34,13 @@ function createMutableNode(
   };
 }
 
-function splitSearchWords(value: string): ReadonlyArray<string> {
-  return value
-    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .split(/[^A-Za-z0-9]+/)
-    .filter(Boolean)
-    .map((word) => word.toLowerCase());
-}
-
-function buildNodeSearchTerms(path: string): {
-  readonly segments: ReadonlyArray<string>;
-  readonly words: ReadonlyArray<string>;
-} {
-  const segments: string[] = [];
-  const words: string[] = [];
-
-  for (const segment of path.split("/")) {
-    if (!segment) {
-      continue;
-    }
-    segments.push(segment.toLowerCase());
-    words.push(...splitSearchWords(segment));
-  }
-
-  return { segments, words };
-}
-
 function freezeNode(node: MutableFileTreeNode): FileTreeNode {
-  const searchTerms = buildNodeSearchTerms(node.path);
   return {
     path: node.path,
     name: node.name,
     kind: node.kind,
     ...(node.ignored ? { ignored: true } : {}),
     children: [...node.children.values()].sort(compareNodes).map(freezeNode),
-    searchSegments: searchTerms.segments,
-    searchWords: searchTerms.words,
   };
 }
 
@@ -133,44 +100,21 @@ export function defaultExpandedTreePaths(nodes: ReadonlyArray<FileTreeNode>): Re
   return expanded;
 }
 
-function valueMatchesSearchToken(value: string, token: string, fuzzy: boolean): boolean {
-  return (
-    scoreQueryMatch({
-      value,
-      query: token,
-      exactBase: 0,
-      prefixBase: 2,
-      boundaryBase: 4,
-      includesBase: 6,
-      ...(fuzzy ? { fuzzyBase: 100 } : {}),
-      boundaryMarkers: ["/", "-", "_", "."],
-    }) !== null
-  );
-}
-
-function nodeMatchesSearch(node: FileTreeNode, tokens: ReadonlyArray<string>): boolean {
-  return tokens.every(
-    (token) =>
-      node.searchSegments.some((segment) => valueMatchesSearchToken(segment, token, false)) ||
-      node.searchWords.some((word) => valueMatchesSearchToken(word, token, true)),
-  );
-}
-
 function flattenNode(
   output: VisibleFileTreeNode[],
   node: FileTreeNode,
   depth: number,
   expanded: ReadonlySet<string>,
-  searchTokens: ReadonlyArray<string>,
+  searchResultPaths: ReadonlySet<string> | null,
 ): boolean {
-  const isSearching = searchTokens.length > 0;
-  const matches = isSearching && nodeMatchesSearch(node, searchTokens);
+  const isSearching = searchResultPaths !== null;
+  const matches = searchResultPaths?.has(node.path) ?? false;
   let descendantMatches = false;
   const childOutput: VisibleFileTreeNode[] = [];
 
   if (node.kind === "directory" && (expanded.has(node.path) || isSearching)) {
     for (const child of node.children) {
-      if (flattenNode(childOutput, child, depth + 1, expanded, searchTokens)) {
+      if (flattenNode(childOutput, child, depth + 1, expanded, searchResultPaths)) {
         descendantMatches = true;
       }
     }
@@ -189,13 +133,12 @@ function flattenNode(
 export function flattenFileTree(input: {
   readonly nodes: ReadonlyArray<FileTreeNode>;
   readonly expanded: ReadonlySet<string>;
-  readonly searchQuery?: string;
+  // Null restores normal directory expansion; an empty set is a search with no results.
+  readonly searchResultPaths?: ReadonlySet<string> | null;
 }): ReadonlyArray<VisibleFileTreeNode> {
   const output: VisibleFileTreeNode[] = [];
-  const normalizedSearch = normalizeSearchQuery(input.searchQuery ?? "");
-  const searchTokens = normalizedSearch.split(/[\s/\\._-]+/).filter(Boolean);
   for (const node of input.nodes) {
-    flattenNode(output, node, 0, input.expanded, searchTokens);
+    flattenNode(output, node, 0, input.expanded, input.searchResultPaths ?? null);
   }
   return output;
 }

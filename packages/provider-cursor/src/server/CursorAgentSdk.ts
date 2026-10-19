@@ -36,7 +36,34 @@ export class CursorAgentSdkRunnerError extends Schema.TaggedError<CursorAgentSdk
   }
 }
 
-const isCursorAgentSdkRunnerError = Schema.is(CursorAgentSdkRunnerError);
+/** The failure text a user sees: the SDK's own reason, which the error's message leaves out. */
+export function cursorSdkFailureMessage(error: CursorAgentSdkRunnerError): string {
+  const reason = sdkErrorReason(error.cause);
+  return reason === undefined
+    ? error.message
+    : `Cursor Agent SDK ${error.method} failed: ${reason}`;
+}
+
+/** Codes Cursor sends when it has no specific one. */
+const GENERIC_SDK_ERROR_CODES = new Set(["", "error", "unknown"]);
+
+/** The SDK's own message, with the code and HTTP status its errors carry. */
+function sdkErrorReason(cause: unknown): string | undefined {
+  if (!(cause instanceof Error)) return undefined;
+  const message = cause.message.trim();
+  if (message.length === 0) return undefined;
+  const code = Reflect.get(cause, "code");
+  const status = Reflect.get(cause, "status");
+  const details = [
+    ...(typeof code === "string" && !GENERIC_SDK_ERROR_CODES.has(code) && !message.includes(code)
+      ? [code]
+      : []),
+    ...(typeof status === "number" ? [`HTTP ${status}`] : []),
+  ];
+  return details.length === 0 ? message : `${message} (${details.join(", ")})`;
+}
+
+export const isCursorAgentSdkRunnerError = Schema.is(CursorAgentSdkRunnerError);
 
 export interface CursorAgentSdkOpenInput {
   readonly operation: "create" | "resume";
@@ -298,12 +325,6 @@ function makeCursorAgentSdkProtocolLogger(input: {
       .pipe(Effect.ignore);
 }
 
-/**
- * Runs agents through the Cursor SDK, logging every frame to the protocol
- * logger chosen for each opened agent. The live layer writes the native
- * provider event log; the replay recorder turns the same frames into a
- * transcript.
- */
 export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(function* (
   protocolLoggerFor: (input: CursorAgentSdkOpenInput) => CursorAgentSdkProtocolLogger | undefined,
 ) {
@@ -311,14 +332,10 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
 
   /**
    * The Cursor SDK decides once per process whether local sandboxing works, and
-   * caches the answer the first time any run starts. Only sandboxed runs point
-   * it at its `cursorsandbox` helper first, so after an unsandboxed (Full access)
+   * caches the answer the first time any run starts. Only sandboxed runs point it
+   * at its `cursorsandbox` helper first, so after an unsandboxed (Full access)
    * run it caches "unsupported" and rejects every later sandboxed run until the
-   * server restarts. Warming a bare sandboxed executor before the first
-   * unsandboxed agent opens lets the SDK find the helper and cache the real
-   * answer. Warming is best effort: on a machine without sandbox support it
-   * fails, the SDK caches "unsupported", and sandboxed runs report that as
-   * before.
+   * server restarts.
    */
   const sandboxSupportPrimeStarted = yield* Ref.make(false);
   const sandboxSupportPrimed = yield* Deferred.make<void>();

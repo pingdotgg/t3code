@@ -1,4 +1,3 @@
-import { useMemo } from "react";
 import { View } from "react-native";
 
 import type { DailyTotals } from "@t3tools/shared/usageMerge";
@@ -13,13 +12,9 @@ export interface UsageDailyChartProps {
   readonly height: number;
 }
 
-/**
- * Stacked daily bars drawn with plain views. Android and any platform without
- * Swift Charts land here; iOS resolves `UsageDailyChart.ios.tsx` instead.
- */
 export function UsageDailyChart({ days, daily, metric, height }: UsageDailyChartProps) {
   const colors = useProviderColors();
-  const chartDays = useMemo(() => buildChartDays(days, daily, metric), [days, daily, metric]);
+  const chartDays = buildChartDays(days, daily, metric);
   const max = chartDays.reduce((peak, day) => Math.max(peak, day.total), 0);
 
   return (

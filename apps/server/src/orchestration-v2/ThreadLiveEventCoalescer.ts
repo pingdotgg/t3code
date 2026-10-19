@@ -40,11 +40,6 @@ function stableToolCallIdentity(input: ThreadLiveEvent): string | null {
   return input.event.type === "turn-item.updated" ? input.event.payload.id : null;
 }
 
-/**
- * Retain only the latest in-flight update for each stable tool-call id in a
- * live run. Item IDs distinguish parallel calls with the same label.
- * Survivors remain in sequence order; terminal updates are never discarded.
- */
 export function coalesceLiveToolUpdatedEvents(
   events: ReadonlyArray<ThreadLiveEvent>,
 ): ReadonlyArray<ThreadLiveEvent> {
@@ -175,8 +170,6 @@ export const makeThreadLiveEventCoalescer = <E = never>(options?: {
 
               yield* cancelWindow();
               windowGeneration += 1;
-              // A non-update event closes the run immediately. The coalescer keeps
-              // that boundary after the final update from the run.
               yield* flushPending();
               if (input.kind === "synchronized") {
                 yield* budget.retain({ kind: "synchronized" as const }).pipe(
@@ -235,7 +228,6 @@ export const makeThreadLiveEventCoalescer = <E = never>(options?: {
     } as const;
   });
 
-/** Keep tool updates within a bounded live window; lifecycle events flush it immediately. */
 export const coalesceThreadLiveStream = <E, R>(source: Stream.Stream<ThreadLiveEvent, E, R>) =>
   Stream.unwrap(
     Effect.gen(function* () {

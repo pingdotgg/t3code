@@ -6,7 +6,6 @@ const encodeSubject = Schema.encodeEffect(
   Schema.fromJsonString(Schema.Struct({ title: Schema.String, body: Schema.String })),
 );
 
-/** Providers select supported links before the title lookup budget is applied. */
 export const resolveThreadTitleLinks = Effect.fn("resolveThreadTitleLinks")(function* (input: {
   message: string;
   cwd: string;

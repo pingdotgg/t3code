@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
-  type EnvironmentId,
+  EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
@@ -294,13 +294,43 @@ describe("provider update launch notification logic", () => {
   it("describes settings-only updates without one-click support", () => {
     const view = getProviderUpdateInitialToastView({
       updateProviders: [
-        updateCandidate({ driver: driver("codex"), canUpdate: false }),
-        updateCandidate({ driver: driver("cursor"), canUpdate: false }),
+        updateCandidate({ driver: driver("codex") }),
+        updateCandidate({ driver: driver("cursor") }),
       ],
       oneClickProviders: [],
     });
 
     expect(view.description).toBe("Codex and Cursor can be updated from provider settings.");
+  });
+
+  it("sends installs the server cannot update to the tool that installed them", () => {
+    const manual = { canUpdate: false, updateCommand: null };
+    expect(
+      getProviderUpdateInitialToastView({
+        updateProviders: [updateCandidate({ driver: driver("codex"), ...manual })],
+        oneClickProviders: [],
+      }).description,
+    ).toBe("Update Codex with the app or tool that installed it.");
+    expect(
+      getProviderUpdateInitialToastView({
+        updateProviders: [
+          updateCandidate({ driver: driver("codex"), ...manual }),
+          updateCandidate({ driver: driver("cursor") }),
+        ],
+        oneClickProviders: [],
+      }).description,
+    ).toBe(
+      "Cursor can be updated from provider settings. Update Codex with the app or tool that installed it.",
+    );
+    const oneClick = updateCandidate({ driver: driver("claudeAgent") });
+    expect(
+      getProviderUpdateInitialToastView({
+        updateProviders: [oneClick, updateCandidate({ driver: driver("codex"), ...manual })],
+        oneClickProviders: [oneClick],
+      }).description,
+    ).toBe(
+      "Install the update now or review provider settings. Update Codex with the app or tool that installed it.",
+    );
   });
 
   it("uses server update state for running progress", () => {
@@ -495,6 +525,68 @@ describe("provider update launch notification logic", () => {
       tone: "loading",
       title: "Updating Codex",
       description: "Codex update in progress.",
+    });
+  });
+
+  it("shows the active sidebar pill for an update on a non-default instance", () => {
+    const view = getProviderUpdateSidebarPillView([
+      provider({ driver: driver("claudeAgent") }),
+      provider({
+        driver: driver("claudeAgent"),
+        instanceId: instanceId("claude_work"),
+        updateState: {
+          status: "running",
+          startedAt: checkedAt,
+          finishedAt: null,
+          message: "Updating provider.",
+          output: null,
+        },
+      }),
+    ]);
+
+    expect(view).toMatchObject({
+      key: "loading:claudeAgent:running",
+      tone: "loading",
+      title: "Updating Claude",
+      description: "Claude update in progress.",
+    });
+  });
+
+  it("shows the latest terminal sidebar pill across instances of a driver", () => {
+    const view = getProviderUpdateSidebarPillView(
+      [
+        provider({
+          driver: driver("claudeAgent"),
+          updateState: {
+            status: "failed",
+            startedAt: checkedAt,
+            finishedAt: checkedAt,
+            message: "Update command exited with code 1.",
+            output: null,
+          },
+        }),
+        provider({
+          driver: driver("claudeAgent"),
+          instanceId: instanceId("claude_work"),
+          version: "1.1.0",
+          latestVersion: "1.1.0",
+          advisoryStatus: "current",
+          updateState: {
+            status: "succeeded",
+            startedAt: laterCheckedAt,
+            finishedAt: laterCheckedAt,
+            message: "Provider updated.",
+            output: null,
+          },
+        }),
+      ],
+      { visibleAfterIso: sessionStartedAt },
+    );
+
+    expect(view).toMatchObject({
+      key: "succeeded:claudeAgent:2026-04-23T10:01:00.000Z:Provider updated.",
+      tone: "success",
+      title: "Claude updated: v1.1.0",
     });
   });
 
@@ -924,12 +1016,6 @@ describe("provider update launch notification logic", () => {
     });
 
     it("treats running/initial as non-terminal so they are not persisted", () => {
-      // The per-environment update row uses this to decide what to store. A
-      // "running"/"initial" snapshot never re-polls, so persisting it would pin
-      // the row's spinner forever once pending clears (see the
-      // resolveEnvironmentUpdateRowStatus "keeps a non-terminal result on
-      // loading even after pending clears" case). Dropping these lets the live
-      // per-environment provider state drive the row so it self-heals.
       expect(isTerminalProviderUpdatePhase("running")).toBe(false);
       expect(isTerminalProviderUpdatePhase("initial")).toBe(false);
     });
@@ -988,8 +1074,6 @@ describe("provider update launch notification logic", () => {
     });
 
     it("falls through a non-terminal result to live server state", () => {
-      // The dispatch snapshot is still "running", but server state already
-      // reports success — the row must not stay pinned on "Updating…".
       expect(
         resolveEnvironmentUpdateRowStatus({
           group,
@@ -1014,8 +1098,6 @@ describe("provider update launch notification logic", () => {
     });
 
     it("keeps a non-terminal result on loading even after pending clears", () => {
-      // The dispatch returned an incomplete ("running") snapshot and pending was
-      // cleared in finally — the row must not revert to the idle Update button.
       expect(
         resolveEnvironmentUpdateRowStatus({
           group,
@@ -1076,6 +1158,7 @@ describe("getProviderUpdateRunToastView", () => {
     providerDriver: string,
     result: Parameters<typeof getProviderUpdateRunToastView>[0][number]["result"],
   ) => ({
+    environmentId: EnvironmentId.make(machineLabel),
     machineLabel,
     driver: driver(providerDriver),
     instanceId: instanceId(providerDriver),

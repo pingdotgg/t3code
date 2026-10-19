@@ -86,8 +86,6 @@ function roundTrip(value: string) {
   return serializeEditorDoc(doc);
 }
 
-// Plain mode: the same engine with the mark extensions off. Markers stay
-// literal characters and task lines stay paragraphs.
 const plainSchema = getSchemaByResolvedExtensions(
   resolveExtensions([
     StarterKit.configure({
@@ -457,7 +455,6 @@ describe("composer rich text document model", () => {
   it("clamps offsets inside a list marker to the start of the item text", () => {
     const value = "- item";
     const map = roundTrip(value);
-    // The marker owns no document characters, like a checkbox.
     for (let collapsed = 0; collapsed <= "- ".length; collapsed += 1) {
       expect(collapsedToFlat(map, collapsed)).toBe(0);
     }
@@ -475,11 +472,72 @@ describe("composer rich text document model", () => {
     "> **bold** and @README.md inside",
     "> - looks like a list but stays quote text",
     "> > nested stays literal inside the quote",
-    "before\n> quoted\nafter",
+    "before\n> quoted",
     "> quote\n\n> another",
     "- item\n> quote after list",
+    "> quoted\n\ncomment",
+    "> line one\n> line two\n\ncomment",
   ])("round-trips the quote %s through a real ProseMirror document", (value) => {
     expect(roundTrip(value).value).toBe(value);
+  });
+
+  describe("a paragraph after a quote", () => {
+    const paragraph = (text?: string) => ({
+      type: "paragraph",
+      ...(text ? { content: [{ type: "text", text }] } : {}),
+    });
+    const quote = (...lines: string[]) => ({
+      type: "blockquote",
+      attrs: { prefix: "> " },
+      content: lines.map((line) => paragraph(line)),
+    });
+    const serialize = (...content: object[]) => {
+      const doc = ProseMirrorNode.fromJSON(schema, { type: "doc", content });
+      doc.check();
+      return { doc, map: serializeEditorDoc(doc) };
+    };
+
+    it("is written after a blank line, or Markdown folds it into the quote", () => {
+      expect(serialize(quote("quoted"), paragraph("Comment to it")).map.value).toBe(
+        "> quoted\n\nComment to it",
+      );
+      expect(serialize(quote("a", "b"), paragraph("comment")).map.value).toBe(
+        "> a\n> b\n\ncomment",
+      );
+    });
+
+    it("does not double up on the empty line the user left themselves", () => {
+      expect(serialize(quote("quoted"), paragraph(), paragraph("Comment to it")).map.value).toBe(
+        "> quoted\n\nComment to it",
+      );
+    });
+
+    it("settles on the blank line when a draft glued it to the quote", () => {
+      const settled = "before\n> quoted\n\nafter";
+      expect(roundTrip("before\n> quoted\nafter").value).toBe(settled);
+      expect(roundTrip(settled).value).toBe(settled);
+    });
+
+    it.each(["# Heading", "- item", "3. item", "---", "```\ncode\n```"])(
+      "leaves %s on the next line, since it opens its own block",
+      (next) => {
+        const value = `> quoted\n${next}`;
+        expect(roundTrip(value).value).toBe(value);
+      },
+    );
+
+    it("keeps every offset mapped through the blank line", () => {
+      const { doc, map } = serialize(quote("quoted"), paragraph("Comment"));
+      for (let flat = 0; flat <= map.docLength; flat += 1) {
+        expect(collapsedToFlat(map, flatToCollapsed(map, flat))).toBe(flat);
+      }
+      // The caret on the end of the quote stays on it, and the blank line is
+      // not a place to type: it clamps to the start of the comment.
+      expect(flatToCollapsed(map, "quoted".length)).toBe("> quoted".length);
+      expect(collapsedToFlat(map, "> quoted\n".length)).toBe("quoted".length + 1);
+      expect(flatToCollapsed(map, "quoted".length + 1)).toBe("> quoted\n\n".length);
+      expect(flatToPm(map, "quoted".length + 1)).toBe(doc.child(0).nodeSize + 1);
+    });
   });
 
   it.each([
@@ -552,7 +610,6 @@ describe("composer rich text document model", () => {
       "horizontalRule",
       "paragraph",
       "horizontalRule",
-      // The empty line a final rule keeps for the caret.
       "paragraph",
     ]);
   });
@@ -560,7 +617,6 @@ describe("composer rich text document model", () => {
   it.each([
     ["---", "---"],
     ["a\n---", "a\n---"],
-    // That line and a trailing newline are the same document; the newline goes.
     ["---\n", "---"],
   ])("gives the caret a line after the final rule of %j, written %j", (value, expected) => {
     const map = roundTrip(value);
@@ -697,7 +753,6 @@ describe("composer rich text document model", () => {
     const value = "```ts\nfunc();\n```";
     const map = roundTrip(value);
     const endOfCode = "func();".length;
-    // Not the end of the string: the closing fence is a line of its own.
     expect(flatToCollapsed(map, endOfCode)).toBe("```ts\nfunc();".length);
     expect(flatToMarkdown(map, endOfCode)).toBe("```ts\nfunc();".length);
     expect(collapsedToFlat(map, flatToCollapsed(map, endOfCode))).toBe(endOfCode);
@@ -712,8 +767,6 @@ describe("composer rich text document model", () => {
   });
 
   it("still places the end of an inline mark after its markers", () => {
-    // The fence rule must not leak into inline marks, whose trailing edge is
-    // deliberately the position after the closing delimiter.
     const map = roundTrip("a **bold** c");
     expect(flatToMarkdown(map, 6)).toBe(10);
   });
@@ -722,13 +775,10 @@ describe("composer rich text document model", () => {
     const value = "```ts\nab\n```";
     const map = roundTrip(value);
     expect(map.value).toBe(value);
-    // The opening fence owns no document characters, so every offset in it
-    // lands on the first character of the code.
     for (let collapsed = 0; collapsed <= "```ts\n".length; collapsed += 1) {
       expect(collapsedToFlat(map, collapsed)).toBe(0);
     }
     expect(collapsedToFlat(map, "```ts\na".length)).toBe(1);
-    // Everything from the closing newline onwards clamps to the code's end.
     for (let collapsed = "```ts\nab".length; collapsed <= value.length; collapsed += 1) {
       expect(collapsedToFlat(map, collapsed)).toBe(2);
     }
@@ -809,7 +859,6 @@ describe("composer rich text document model", () => {
       ],
     });
     expect(serializeEditorDoc(doc).value).toBe("```\ncode\n```\nafter");
-    // At the end of the draft it stays unclosed, as it was written.
     expect(roundTrip("```\ncode").value).toBe("```\ncode");
   });
 
@@ -842,9 +891,6 @@ describe("composer rich text document model", () => {
     }
   });
 
-  // Flipping the rich text setting remounts the editor, and the caret is
-  // restored from the stored collapsed cursor. That only works because the
-  // coordinate means the same thing on both sides of the flip.
   it.each([
     "plain prose with no styling at all",
     "a chip @README.md counts one character in both modes",
@@ -866,9 +912,6 @@ describe("composer rich text document model", () => {
     const value = "a **bold** c";
     const plain = roundTripPlain(value);
     const rich = roundTrip(value);
-    // Between the two asterisks: a real caret position in plain mode, and no
-    // position at all in rich mode, where it lands on the first styled
-    // character instead. The flip moves the caret by a marker's width at most.
     expect(flatToMarkdown(plain, collapsedToFlat(plain, 3))).toBe(3);
     expect(flatToMarkdown(rich, collapsedToFlat(rich, 3))).toBe(4);
   });
@@ -877,7 +920,6 @@ describe("composer rich text document model", () => {
     const value = "a **bold** c";
     const map = roundTrip(value);
     expect(map.value).toBe(value);
-    // document text is "a bold c" (flat), markdown has the markers.
     expect(flatToMarkdown(map, 2)).toBe(4);
     expect(flatToMarkdown(map, 6)).toBe(10);
     expect(collapsedToFlat(map, 3)).toBe(2);
@@ -886,7 +928,6 @@ describe("composer rich text document model", () => {
 });
 
 describe("serializeSelection", () => {
-  /** The stored Markdown of the selection from the start of `first` to the end of `last`. */
   function copy(value: string, first: string, last: string) {
     const doc = ProseMirrorNode.fromJSON(
       schema,
@@ -945,8 +986,6 @@ describe("pasting into a list item or quote", () => {
 describe("pasting into a path query", () => {
   const skillLabelFor = (name: string) => ({ label: name, description: null });
 
-  // Inserts `pasted` at the end of a one-line prompt the way the composer's
-  // paste handler does. `prompt` may be a document, to place the caret after a chip.
   function paste(prompt: string | ProseMirrorNode, pasted: string, pathQueryActive = true) {
     const promptDoc =
       typeof prompt === "string"
@@ -1053,7 +1092,6 @@ describe("caret stops at styled edges", () => {
     const outside = inside.apply(step!);
     expect(caretTakesMarksBefore(outside)).toBe(true);
     expect(typed(outside, "x")).toBe("x**bold** tail");
-    // Already outside: the next ArrowLeft moves the caret as usual.
     expect(stepCaretAcrossStyledEdge(outside, -1)).toBeNull();
 
     const back = outside.apply(stepCaretAcrossStyledEdge(outside, 1)!);
@@ -1072,7 +1110,6 @@ describe("caret stops at styled edges", () => {
   });
 
   it("offers both stops where styled text meets plain text mid-line", () => {
-    // Caret after "a ": types plain until ArrowRight steps into the bold.
     const plain = stateAt("a **b** c", 3);
     expect(caretTakesMarksBefore(plain)).toBe(true);
     expect(typed(plain, "x")).toBe("a x**b** c");
@@ -1081,7 +1118,6 @@ describe("caret stops at styled edges", () => {
   });
 
   it("offers the plain stop between bold text and a chip right after it", () => {
-    // Markdown needs a space before a mention, but deleting it leaves them adjacent.
     const doc = schema.node("doc", null, [
       schema.node("paragraph", null, [
         schema.text("bold", [schema.marks.bold!.create()]),

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  alignListPaneToHinge,
   constrainAuxiliaryPaneWidth,
   deriveCenteredContentHorizontalPadding,
   deriveFileInspectorPaneLayout,
@@ -8,6 +9,7 @@ import {
   deriveThreadFeedInitialContentInset,
   deriveThreadWorkLogSizing,
   deriveWorkspacePaneLayout,
+  isPrimarySidebarPinned,
   SPLIT_LAYOUT_MIN_HEIGHT,
   SPLIT_LAYOUT_MIN_WIDTH,
 } from "./layout";
@@ -157,6 +159,36 @@ describe("deriveLayout", () => {
     expect(deriveLayout({ width: 720, height: 1_000 }).listPaneWidth).toBe(280);
     expect(deriveLayout({ width: 1_024, height: 768 }).listPaneWidth).toBe(328);
     expect(deriveLayout({ width: 1_600, height: 1_000 }).listPaneWidth).toBe(380);
+  });
+});
+
+describe("isPrimarySidebarPinned", () => {
+  it("lets native split columns collapse the sidebar on the workspace root", () => {
+    expect(
+      isPrimarySidebarPinned({ pathname: "/", nativeWorkspace: true, usesSplitView: true }),
+    ).toBe(false);
+  });
+
+  it("keeps compact native roots pinned so search cannot hide the sidebar for a later split", () => {
+    expect(
+      isPrimarySidebarPinned({ pathname: "/", nativeWorkspace: true, usesSplitView: false }),
+    ).toBe(true);
+  });
+
+  it("keeps the JS split layout pinned on the workspace root", () => {
+    expect(
+      isPrimarySidebarPinned({ pathname: "/", nativeWorkspace: false, usesSplitView: true }),
+    ).toBe(true);
+  });
+
+  it("never pins outside the workspace root", () => {
+    expect(
+      isPrimarySidebarPinned({
+        pathname: "/threads/a/b",
+        nativeWorkspace: false,
+        usesSplitView: true,
+      }),
+    ).toBe(false);
   });
 });
 
@@ -382,5 +414,22 @@ describe("deriveWorkspacePaneLayout", () => {
       auxiliaryPaneVisible: false,
       auxiliaryPaneWidth: null,
     });
+  });
+});
+
+describe("alignListPaneToHinge", () => {
+  const layout = deriveLayout({ width: 852, height: 880 });
+
+  it("ends the list pane at a book-posture hinge", () => {
+    expect(
+      alignListPaneToHinge({ layout, hinge: { x: 426, width: 0 }, viewportWidth: 852 }),
+    ).toMatchObject({ listPaneWidth: 426, listPaneGap: 0 });
+  });
+
+  it("keeps the default split when either side of the hinge would be too narrow", () => {
+    const narrowList = { layout, hinge: { x: 250, width: 0 }, viewportWidth: 852 };
+    const narrowDetail = { layout, hinge: { x: 600, width: 0 }, viewportWidth: 852 };
+    expect(alignListPaneToHinge(narrowList)).toBe(layout);
+    expect(alignListPaneToHinge(narrowDetail)).toBe(layout);
   });
 });

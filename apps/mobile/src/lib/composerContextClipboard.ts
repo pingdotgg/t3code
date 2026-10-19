@@ -60,7 +60,6 @@ export function writeComposerContextClipboard(
   return nativeClipboard().writeContextClipboard(text, encoded);
 }
 
-/** Copies signed source assets into owned local files; the usual upload queue handles the destination. */
 export async function importComposerContextClipboard(
   input: NativeContextClipboard,
   existingCount: number,

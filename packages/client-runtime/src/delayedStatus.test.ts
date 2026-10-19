@@ -37,7 +37,6 @@ describe("createDelayedStatus", () => {
     vi.advanceTimersByTime(STATUS_SHOW_DELAY_MS);
     expect(changes).toEqual([{ key: "a", value: "loading" }]);
 
-    // A new label gets its own full hold, even during the first label's hold.
     vi.advanceTimersByTime(1);
     status.update("a", "syncing");
     status.update("a", null);

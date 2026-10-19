@@ -1,36 +1,39 @@
 import type {
   PullRequestActivity,
   PullRequestCheck,
+  PullRequestChecksState,
   PullRequestDetail,
   PullRequestListEntry,
+  PullRequestMergeability,
 } from "@t3tools/contracts";
-import type { AppSymbolName } from "../../components/AppSymbol";
+import type { AppSymbolName } from "../../components/ui/AppSymbol";
+import { PullRequestGlyph } from "./pullRequestGlyphs";
 
 const STATES = {
   open: {
     label: "Open",
-    icon: "arrow.triangle.pull",
+    icon: PullRequestGlyph.pullRequest,
     tint: "accent-adaptive-emerald-600-400",
     text: "text-adaptive-emerald-600-400",
     background: "bg-adaptive-emerald-500-a12-a16",
   },
   merged: {
     label: "Merged",
-    icon: "arrow.triangle.merge",
+    icon: PullRequestGlyph.merged,
     tint: "accent-adaptive-violet-600-400",
     text: "text-adaptive-violet-600-400",
     background: "bg-adaptive-violet-500-a12-a16",
   },
   closed: {
     label: "Closed",
-    icon: "git.pull-request.closed",
+    icon: PullRequestGlyph.closed,
     tint: "accent-danger-foreground",
     text: "text-danger-foreground",
     background: "bg-danger",
   },
   draft: {
     label: "Draft",
-    icon: "git.pull-request.draft",
+    icon: PullRequestGlyph.draft,
     tint: "accent-icon-muted",
     text: "text-foreground-muted",
     background: "bg-grouped-card",
@@ -42,6 +45,16 @@ const STATES = {
 
 export function pullRequestStatus(pr: Pick<PullRequestListEntry, "state" | "isDraft">) {
   return STATES[pr.isDraft && pr.state === "open" ? "draft" : pr.state];
+}
+
+export function pullRequestConflict(pr: {
+  readonly state: PullRequestListEntry["state"];
+  readonly isDraft: boolean;
+  readonly mergeability?: PullRequestMergeability | undefined;
+  readonly baseBranch?: string | undefined;
+}) {
+  if (pr.state !== "open" || pr.isDraft || pr.mergeability !== "conflicting") return null;
+  return { label: pr.baseBranch ? `Conflicts with ${pr.baseBranch}` : "Has conflicts" };
 }
 
 export function checkStatus(check: PullRequestCheck) {
@@ -122,7 +135,6 @@ export function pullRequestChecksSummary(pr: Pick<PullRequestDetail, "checks">) 
   } as const;
 }
 
-/** A reviewer's latest verdict replaces their earlier approval or dismissal. */
 export function pullRequestReviewSummary(
   pr: Pick<PullRequestDetail, "reviewers">,
   activity: Pick<PullRequestActivity, "comments" | "commits"> | null,
@@ -200,4 +212,12 @@ export function pullRequestBranchSummary(
   if (pr.baseComparison === "behind") return `${pr.behindBy ?? ""} behind ${pr.baseBranch}`.trim();
   if (pr.baseComparison === "up-to-date") return "Up to date";
   return pr.mergeability === "mergeable" ? "No conflicts" : "Not reported";
+}
+
+export function pullRequestChecksStatus(state: PullRequestChecksState) {
+  if (state === "passing")
+    return { icon: "checkmark.circle", tint: "accent-adaptive-emerald-600-400" } as const;
+  if (state === "failing")
+    return { icon: "xmark.circle.fill", tint: "accent-danger-foreground" } as const;
+  return { icon: "clock", tint: "accent-warning-foreground" } as const;
 }

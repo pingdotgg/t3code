@@ -18,11 +18,11 @@ import {
   listLoginShellCandidates,
   mergePathEntries,
   mergePathValues,
+  npmShimExecutable,
   preferGitForWindowsBinary,
   readEnvironmentFromLoginShell,
   readEnvironmentFromWindowsShell,
   readPathFromLaunchctl,
-  readPathFromLoginShell,
   resolveCommandPath,
   resolveKnownWindowsCliDirs,
   resolveSpawnCommand,
@@ -57,7 +57,7 @@ const recordCommandTrace = Effect.fnUntraced(function* <A, E, R>(effect: Effect.
   return { result, spans };
 });
 
-describe("readPathFromLoginShell", () => {
+describe("readEnvironmentFromLoginShell probe", () => {
   it("uses a shell-agnostic printenv PATH probe", () => {
     const execFile = vi.fn<
       (
@@ -67,7 +67,9 @@ describe("readPathFromLoginShell", () => {
       ) => string
     >(() => "__T3CODE_ENV_PATH_START__\n/a:/b\n__T3CODE_ENV_PATH_END__\n");
 
-    expect(readPathFromLoginShell("/opt/homebrew/bin/fish", execFile)).toBe("/a:/b");
+    expect(readEnvironmentFromLoginShell("/opt/homebrew/bin/fish", ["PATH"], execFile).PATH).toBe(
+      "/a:/b",
+    );
     expect(execFile).toHaveBeenCalledTimes(1);
 
     const firstCall = execFile.mock.calls[0] as
@@ -451,10 +453,6 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
     }),
   );
 
-  // Records every path the scan stats, without ever reporting a match, so the
-  // walk runs to exhaustion and the probe set can be inspected. Assertions
-  // below count probes rather than naming paths: `Path` is the host's, so the
-  // separator differs between a Windows and a Linux CI runner.
   const recordProbes = (env: NodeJS.ProcessEnv) =>
     Effect.gen(function* () {
       const probed: Array<string> = [];
@@ -483,7 +481,6 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
         PATHEXT: ".COM;.EXE",
       });
 
-      // Two directories, two extensions, upper and lowercase spellings.
       expect(probed).toHaveLength(8);
       expect(new Set(probed).size).toBe(probed.length);
     }),
@@ -496,9 +493,9 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
         PATHEXT: ".COM;.EXE",
       });
 
-      // Deliberately not folded together. Windows 10+ can mark a directory
-      // case-sensitive, so the two spellings are not provably one directory and
-      // skipping the second could hide a command that is really there.
+      // Windows 10+ can mark a directory case-sensitive, so the two spellings
+      // are not provably one directory and skipping the second could hide a
+      // command that is really there.
       expect(probed).toHaveLength(8);
     }),
   );
@@ -520,7 +517,6 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
           Effect.provideService(CommandResolutionCache, new Map()),
           Effect.provideService(FileSystem.FileSystem, {
             ...fs,
-            // Keep this case-sensitive fixture portable to case-insensitive hosts.
             stat: (filePath) =>
               fs.stat(filePath === executable ? filePath : path.join(cwd, "missing")),
           }),
@@ -577,14 +573,13 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
         expect(yield* resolveCommandPath("cursor", { env })).toBe(path.join(first, "cursor.CMD"));
         expect(yield* isCommandAvailable("absent", { env })).toBe(false);
         yield* fs.writeFileString(path.join(second, "late.EXE"), "");
-        yield* fs.utimes(second, 4_102_444_800, 4_102_444_800); // seconds: 2100-01-01
+        yield* fs.utimes(second, 4_102_444_800, 4_102_444_800);
         expect(yield* resolveCommandPath("late", { env })).toBe(path.join(second, "late.EXE"));
       }).pipe(
         withPathDirectoryListings,
         Effect.provideService(FileSystem.FileSystem, {
           ...fs,
           stat: (file) => {
-            // Record candidate probes, not the per-lookup directory mtime checks.
             if (file !== first && file !== second) probed.push(file);
             return fs.stat(file);
           },
@@ -605,7 +600,6 @@ describe("preferGitForWindowsBinary", () => {
       paths.includes(filePath);
 
   it("runs the git.exe Git for Windows' launcher would start", () => {
-    // 2.56+ on x64. The PATHEXT scan returns the extension in PATHEXT's case.
     expect(
       preferGitForWindowsBinary(
         "C:\\Program Files\\Git\\cmd\\git.EXE",
@@ -616,7 +610,6 @@ describe("preferGitForWindowsBinary", () => {
         ),
       ),
     ).toBe("C:\\Program Files\\Git\\ucrt64\\bin\\git.exe");
-    // Before 2.56, and the portable build's bin launcher.
     expect(
       preferGitForWindowsBinary(
         "D:\\PortableGit\\bin\\git.exe",
@@ -662,6 +655,111 @@ describe("preferGitForWindowsBinary", () => {
   });
 });
 
+// Byte for byte what `npm install -g opencode-ai` writes as `opencode.cmd`.
+const NPM_OPENCODE_SHIM = [
+  "@ECHO off",
+  "GOTO start",
+  ":find_dp0",
+  "SET dp0=%~dp0",
+  "EXIT /b",
+  ":start",
+  "SETLOCAL",
+  "CALL :find_dp0",
+  '"%dp0%\\node_modules\\opencode-ai\\bin\\opencode.exe"   %*',
+  "",
+].join("\r\n");
+
+describe("npmShimExecutable", () => {
+  const shimPath = "C:\\Users\\me\\AppData\\Roaming\\npm\\opencode.cmd";
+  const executable =
+    "C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\opencode-ai\\bin\\opencode.exe";
+  const exists = (filePath: string) => filePath === executable;
+
+  it("finds the executable npm's shim runs", () => {
+    expect(npmShimExecutable(shimPath, () => NPM_OPENCODE_SHIM, exists)).toBe(executable);
+    expect(
+      npmShimExecutable(shimPath.replace(".cmd", ".CMD"), () => NPM_OPENCODE_SHIM, exists),
+    ).toBe(executable);
+  });
+
+  it("keeps a shim that does more than run the executable", () => {
+    const withSetting = NPM_OPENCODE_SHIM.replace(
+      "SETLOCAL",
+      "SETLOCAL\r\nSET OPENCODE_CONFIG=C:\\x",
+    );
+    expect(npmShimExecutable(shimPath, () => withSetting, exists)).toBeUndefined();
+    const nodeScript = NPM_OPENCODE_SHIM.replace(
+      '"%dp0%\\node_modules\\opencode-ai\\bin\\opencode.exe"   %*',
+      '"%_prog%"  "%dp0%\\node_modules\\opencode-ai\\bin\\opencode.js" %*',
+    );
+    expect(
+      npmShimExecutable(
+        shimPath,
+        () => nodeScript,
+        () => true,
+      ),
+    ).toBeUndefined();
+  });
+
+  it("keeps a shim CMD would read differently", () => {
+    // CMD keeps trailing characters in an unquoted `SET` value, so these point
+    // `dp0`, and with it the executable, somewhere else.
+    for (const suffix of ["\u00a0", "\t", " "]) {
+      const altered = NPM_OPENCODE_SHIM.replace("SET dp0=%~dp0", `SET dp0=%~dp0${suffix}`);
+      expect(
+        npmShimExecutable(
+          shimPath,
+          () => altered,
+          () => true,
+        ),
+      ).toBeUndefined();
+    }
+    const nonBreakingSeparator = NPM_OPENCODE_SHIM.replace(
+      'opencode.exe"   %*',
+      'opencode.exe"\u00a0%*',
+    );
+    expect(
+      npmShimExecutable(
+        shimPath,
+        () => nonBreakingSeparator,
+        () => true,
+      ),
+    ).toBeUndefined();
+    const indented = NPM_OPENCODE_SHIM.replace("SETLOCAL", "  SETLOCAL");
+    expect(
+      npmShimExecutable(
+        shimPath,
+        () => indented,
+        () => true,
+      ),
+    ).toBeUndefined();
+  });
+
+  it("keeps the shim when its executable is missing or it is not a .cmd", () => {
+    expect(
+      npmShimExecutable(
+        shimPath,
+        () => NPM_OPENCODE_SHIM,
+        () => false,
+      ),
+    ).toBeUndefined();
+    expect(
+      npmShimExecutable(
+        shimPath,
+        () => undefined,
+        () => true,
+      ),
+    ).toBeUndefined();
+    expect(
+      npmShimExecutable(
+        shimPath.replace(".cmd", ".bat"),
+        () => NPM_OPENCODE_SHIM,
+        () => true,
+      ),
+    ).toBeUndefined();
+  });
+});
+
 effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
   it.effect("runs Windows executables directly without a shell", () =>
     Effect.gen(function* () {
@@ -680,11 +778,58 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
     }),
   );
 
-  it.effect("escapes the executable and arguments for Windows command shims", () =>
+  it.effect.runIf(HostProcess.Platform.defaultValue() === "win32")(
+    "runs the executable behind an npm shim directly when asked",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const prefix = yield* fs.makeTempDirectoryScoped({ prefix: "t3-npm-shim-" });
+          const shim = path.join(prefix, "opencode.cmd");
+          const executable = path.join(
+            prefix,
+            "node_modules",
+            "opencode-ai",
+            "bin",
+            "opencode.exe",
+          );
+          yield* fs.makeDirectory(path.dirname(executable), { recursive: true });
+          yield* fs.writeFileString(executable, "");
+          yield* fs.writeFileString(shim, NPM_OPENCODE_SHIM);
+          const resolve = (bypassNpmShim: boolean) =>
+            resolveSpawnCommand("opencode", ["serve", "--port=4096"], {
+              env: { PATH: "", PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+              bypassNpmShim,
+            }).pipe(
+              Effect.provideService(HostProcess.Platform, "win32"),
+              Effect.provideService(CommandResolutionCache, new Map()),
+              Effect.provideService(SpawnExecutableResolution, () => shim),
+            );
+
+          expect(yield* resolve(true)).toEqual({
+            command: executable,
+            args: ["serve", "--port=4096"],
+            shell: false,
+          });
+          expect((yield* resolve(false)).shell).toBe(true);
+        }),
+      ),
+  );
+
+  it.effect("builds one escaped cmd.exe line for Windows command shims", () =>
     Effect.gen(function* () {
       const command = yield* resolveSpawnCommand(
         "vp",
-        ["run", "value & calc", "%PATH%", 'quote"value'],
+        [
+          "run",
+          "value & calc",
+          "%PATH%",
+          'quote"value',
+          "C:\\dir with space\\",
+          'slash\\"quote',
+          "x|y<z>^",
+        ],
         { env: { PATH: "", PATHEXT: ".COM;.EXE;.BAT;.CMD" } },
       ).pipe(
         Effect.provideService(HostProcess.Platform, "win32"),
@@ -695,15 +840,21 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
         ),
       );
 
-      expect(command.shell).toBe(true);
-      expect(command.command).not.toContain(" & ");
-      expect(command.command).toContain("^&");
-      expect(command.args).toEqual([
-        '^"run^"',
-        '^"value^ ^&^ calc^"',
-        '^"^%PATH^%^"',
-        '^"quote\\^"value^"',
-      ]);
+      // No args alongside `shell: true`: Node prints DEP0190 for that pairing.
+      expect(command).toEqual({
+        command: [
+          String.raw`^"C:\Program^ Files\npm^ ^&^ tools\vp.cmd^"`,
+          String.raw`^"run^"`,
+          String.raw`^"value^ ^&^ calc^"`,
+          String.raw`^"^%PATH^%^"`,
+          String.raw`^"quote\^"value^"`,
+          String.raw`^"C:\dir^ with^ space\\^"`,
+          String.raw`^"slash\\\^"quote^"`,
+          String.raw`^"x^|y^<z^>^^^"`,
+        ].join(" "),
+        args: [],
+        shell: true,
+      });
     }),
   );
 
@@ -749,12 +900,9 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
 
       expect((yield* resolve("git", "C:\\one")).command).toBe("C:\\one\\git.exe");
       expect((yield* resolve("git", "C:\\one")).command).toBe("C:\\one\\git.exe");
-      // A failed spawn is how a provider reports "not installed", so a miss
-      // must clear the moment the binary appears.
       yield* resolve("missing", "C:\\one");
       yield* resolve("missing", "C:\\one");
       expect((yield* resolve("git", "C:\\two")).command).toBe("C:\\two\\git.exe");
-      // Callers probe explicit paths they may have just written.
       yield* resolve("C:\\tools\\git.exe", "C:\\one");
       yield* resolve("C:\\tools\\git.exe", "C:\\one");
       expect(scans).toEqual([
@@ -770,7 +918,6 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
       yield* resolve("git", "C:\\one");
       expect(scans).toHaveLength(7);
 
-      // Another resolver sharing the cache gets its own answer, not the cached one.
       const elsewhere = yield* resolve("git", "C:\\one", () => "D:\\elsewhere\\git.exe");
       expect(elsewhere.command).toBe("D:\\elsewhere\\git.exe");
       expect((yield* resolve("git", "C:\\one")).command).toBe("C:\\one\\git.exe");
@@ -796,7 +943,6 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
       yield* resolve({});
       yield* resolve({});
       expect(scans).toBe(1);
-      // A swap made without MSYSTEM must not reach a child that has it set.
       yield* resolve({ MSYSTEM: "MINGW64" });
       expect(scans).toBe(2);
     }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
@@ -862,6 +1008,29 @@ effectIt.layer(NodeServices.layer)("resolveWindowsEnvironment", (it) => {
         expect.objectContaining({ env: expect.any(Object) }),
       );
     }),
+  );
+
+  it.effect(
+    "probes node with one PATH key when inherited environment records have mixed casing",
+    () =>
+      Effect.gen(function* () {
+        const probedEnvironments: Array<NodeJS.ProcessEnv | undefined> = [];
+
+        yield* withWindowsEnvironmentMocks(
+          resolveWindowsEnvironment({ Path: "C:\\Stale", PATH: "C:\\Windows\\System32" }),
+          () => ({ PATH: "C:\\Shell\\Bin" }),
+          (_command, options) =>
+            Effect.sync(() => {
+              probedEnvironments.push(options?.env);
+              return true;
+            }),
+        );
+
+        const pathEntries = Object.entries(probedEnvironments[0] ?? {}).filter(
+          ([key]) => key.toUpperCase() === "PATH",
+        );
+        expect(pathEntries).toEqual([["PATH", "C:\\Shell\\Bin;C:\\Windows\\System32"]]);
+      }),
   );
 
   it.effect("loads the PowerShell profile when baseline env cannot resolve node", () =>

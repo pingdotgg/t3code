@@ -17,7 +17,6 @@ type SnapShotAnimationDetails = {
 
 export type SnapShotAnimationDestination = {
   readonly frame: Electron.Rectangle;
-  /** Unit coordinates in T3's content area; GNOME supplies the real compositor origin. */
   readonly relativeFrame?: Electron.Rectangle | undefined;
   readonly backgroundColor: string;
   readonly borderColor: string;
@@ -53,6 +52,7 @@ type ActiveTransition = {
   details?: SnapShotAnimationDetails | undefined;
   timer?: Fiber.Fiber<void> | undefined;
   flight?: Promise<void> | undefined;
+  landed?: boolean | undefined;
 };
 
 type SnapShotTransitionOptions = {
@@ -207,6 +207,10 @@ export class SnapShotTransition {
   private readonly alwaysOnTopLevel: SnapShotTransitionOptions["alwaysOnTopLevel"];
   private readonly showWindow: (window: Electron.BaseWindow) => void;
 
+  get isAnimating(): boolean {
+    return this.active?.flight !== undefined && !this.active.landed;
+  }
+
   constructor(options: SnapShotTransitionOptions = {}) {
     this.boundOverlayToCaptureDisplays = options.boundOverlayToCaptureDisplays ?? false;
     this.waitForCompositorFrame = options.waitForCompositorFrame ?? false;
@@ -351,7 +355,9 @@ export class SnapShotTransition {
       }
       return;
     }
-    active.flight = this.runFlight(active, destination);
+    active.flight = this.runFlight(active, destination).finally(() => {
+      active.landed = true;
+    });
   }
 
   private async runFlight(
@@ -410,7 +416,6 @@ export class SnapShotTransition {
       }),
     );
     if (this.active !== active) return;
-    // One display failing must not cut the flight short on the others.
     await Promise.allSettled(
       prepared.map((result) => {
         if (result.status !== "fulfilled" || !result.value || result.value.window.isDestroyed()) {

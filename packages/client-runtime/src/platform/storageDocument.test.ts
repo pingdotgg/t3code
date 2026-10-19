@@ -365,7 +365,6 @@ describe("ConnectionCatalogDocument", () => {
     expect(disabled.disabledEnvironmentIds).toEqual([ENVIRONMENT_ID]);
     expect(disabled.targets).toEqual(registered.targets);
     expect(disabled.credentials).toEqual(registered.credentials);
-    // Idempotent: switching off twice stores the id once.
     expect(
       setConnectionEnabledInCatalog(disabled, ENVIRONMENT_ID, false).disabledEnvironmentIds,
     ).toEqual([ENVIRONMENT_ID]);
@@ -373,7 +372,6 @@ describe("ConnectionCatalogDocument", () => {
     expect(
       setConnectionEnabledInCatalog(disabled, ENVIRONMENT_ID, true).disabledEnvironmentIds,
     ).toEqual([]);
-    // Re-registering (editing label or URL) keeps the flag.
     expect(
       registerConnectionInCatalog(
         disabled,
@@ -389,7 +387,7 @@ describe("ConnectionCatalogDocument", () => {
     );
   });
 
-  it("persists the normalized SSH profile beside its target", () => {
+  it("persists the normalized SSH profile and its paired token beside its target", () => {
     const target = new SshConnectionTarget({
       environmentId: ENVIRONMENT_ID,
       label: "SSH",
@@ -408,12 +406,16 @@ describe("ConnectionCatalogDocument", () => {
     });
     const document = registerConnectionInCatalog(
       EMPTY_CONNECTION_CATALOG_DOCUMENT,
-      new SshConnectionRegistration({ target, profile }),
+      new SshConnectionRegistration({ target, profile, credential: BEARER_CREDENTIAL }),
     );
 
     expect(document.targets).toEqual([target]);
     expect(document.profiles).toEqual([profile]);
-    expect(document.credentials).toEqual([]);
+    expect(document.credentials).toEqual([
+      { connectionId: target.connectionId, credential: BEARER_CREDENTIAL },
+    ]);
+    // Removing the route forgets its token too.
+    expect(removeConnectionFromCatalog(document, ENVIRONMENT_ID).credentials).toEqual([]);
   });
 
   it("keeps every route of an environment and drops only a removed route's records", () => {
@@ -433,14 +435,12 @@ describe("ConnectionCatalogDocument", () => {
     expect(catalogRoutes(withRelay, ENVIRONMENT_ID)).toEqual([BEARER_TARGET, RELAY_TARGET]);
     expect(withRelay.credentials).toHaveLength(1);
 
-    // Dropping the bearer route forgets its credential; T3 Connect keeps its token.
     const relayOnly = setRoutesInCatalog(withRelay, ENVIRONMENT_ID, [RELAY_TARGET]);
     expect(relayOnly.targets).toEqual([RELAY_TARGET]);
     expect(relayOnly.profiles).toEqual([]);
     expect(relayOnly.credentials).toEqual([]);
     expect(relayOnly.remoteDpopTokens).toEqual([REMOTE_TOKEN]);
 
-    // Dropping T3 Connect forgets its token; the bearer route keeps its records.
     const bearerOnly = setRoutesInCatalog(withRelay, ENVIRONMENT_ID, [BEARER_TARGET]);
     expect(bearerOnly.credentials).toHaveLength(1);
     expect(bearerOnly.remoteDpopTokens).toEqual([]);

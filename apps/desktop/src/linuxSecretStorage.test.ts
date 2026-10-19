@@ -26,7 +26,6 @@ describe("linuxSecretStorage", () => {
       expect(
         resolveLinuxPasswordStoreSwitch({ preference, env: { XDG_CURRENT_DESKTOP: "niri" } }),
       ).toBe(preference);
-      // An explicit preference also wins where auto would have stayed out of the way.
       expect(
         resolveLinuxPasswordStoreSwitch({ preference, env: { XDG_CURRENT_DESKTOP: "KDE" } }),
       ).toBe(preference);
@@ -76,9 +75,6 @@ describe("linuxSecretStorage", () => {
   });
 
   it("overrides KDE sessions identified only by legacy variables", () => {
-    // Chromium reaches KWallet4 for some of these, such as DESKTOP_SESSION=kde with a version, and
-    // basic text for the rest. Either way these are the variables a previous session leaves behind,
-    // so they are treated as unproven and forced to a real keyring rather than a guessed wallet.
     expect(autoSwitch({ XDG_CURRENT_DESKTOP: "plasma" })).toBe("gnome-libsecret");
     for (const session of [
       "kde",
@@ -107,7 +103,6 @@ describe("linuxSecretStorage", () => {
     expect(
       autoSwitch({ XDG_CURRENT_DESKTOP: "niri", DESKTOP_SESSION: "gnome", GDMSESSION: "gnome" }),
     ).toBe("gnome-libsecret");
-    // A previous KDE session left these behind; the compositor running now is not KDE.
     expect(autoSwitch({ XDG_CURRENT_DESKTOP: "niri", KDE_SESSION_VERSION: "6" })).toBe(
       "gnome-libsecret",
     );

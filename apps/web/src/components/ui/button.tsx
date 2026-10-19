@@ -96,8 +96,6 @@ function Button({ className, variant, size, render, ...props }: ButtonProps) {
   });
 }
 
-// buttonVariants is exported for other components/ui modules only; app code
-// renders a Button (with `render` for other elements) instead.
 export { Button, buttonVariants, type ButtonSize, type ButtonVariant };
 
 const inlineButtonVariants = cva(
@@ -109,7 +107,6 @@ const inlineButtonVariants = cva(
         default: "text-foreground",
         muted: "text-muted-foreground hover:text-foreground",
         destructive: "text-destructive/80 hover:text-destructive",
-        /** Opens a menu from inside a sentence; the dotted underline marks it as a choice. */
         picker:
           "gap-1.5 text-foreground underline decoration-foreground/30 decoration-dotted decoration-from-font underline-offset-4 hover:decoration-foreground hover:decoration-solid data-popup-open:decoration-foreground data-popup-open:decoration-solid",
       },
@@ -117,7 +114,6 @@ const inlineButtonVariants = cva(
   },
 );
 
-/** An inline text action. Set --inline-button-white-space to normal in wrapping prose containers. */
 export function InlineButton({
   className,
   tone,

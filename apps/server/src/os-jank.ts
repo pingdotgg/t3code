@@ -2,9 +2,10 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   listLoginShellCandidates,
   mergePathEntries,
-  readPathFromLoginShell,
+  readEnvironmentFromLoginShell,
   readPathFromLaunchctl,
   resolveWindowsEnvironment,
+  setWindowsPath,
 } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -18,21 +19,28 @@ function logPathHydrationWarning(message: string, error?: unknown): void {
 }
 
 function hydratePosixPath(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): void {
-  let shellPath: string | undefined;
+  let shellEnvironment: Partial<Record<string, string>> = {};
   for (const shell of listLoginShellCandidates(platform, env.SHELL)) {
     try {
-      shellPath = readPathFromLoginShell(shell);
+      // mise's record of the PATH entries it added. It must travel with the
+      // shell's PATH, or `mise x` can rebuild PATH behind a same-named wrapper
+      // (`exec mise x claude -- claude`) that then re-runs itself forever.
+      shellEnvironment = readEnvironmentFromLoginShell(shell, ["PATH", "__MISE_DIFF"]);
     } catch (error) {
       logPathHydrationWarning(`Failed to read PATH from login shell ${shell}.`, error);
     }
 
-    if (shellPath) break;
+    if (shellEnvironment.PATH) break;
   }
 
+  const shellPath = shellEnvironment.PATH;
   const launchctlPath = platform === "darwin" && !shellPath ? readPathFromLaunchctl() : undefined;
   const mergedPath = mergePathEntries(shellPath ?? launchctlPath, env.PATH, platform);
   if (mergedPath) {
     env.PATH = mergedPath;
+  }
+  if (shellPath && shellEnvironment.__MISE_DIFF) {
+    env.__MISE_DIFF = shellEnvironment.__MISE_DIFF;
   }
 }
 
@@ -55,6 +63,9 @@ export const fixPath = Effect.fn("fixPath")(function* (options?: {
   const env = yield* HostProcess.Environment;
 
   if (platform === "win32") {
+    // The desktop already ran both PowerShell probes into the env this child
+    // extends. Repeating them here costs seconds of startup on Windows.
+    if (options?.shellEnvironmentPrepared === true) return;
     const repairedEnvironment = yield* resolveWindowsEnvironment(env).pipe(
       Effect.catchDefect((defect) =>
         Effect.sync(() => {
@@ -64,7 +75,10 @@ export const fixPath = Effect.fn("fixPath")(function* (options?: {
       ),
     );
     for (const [key, value] of Object.entries(repairedEnvironment)) {
-      if (value !== undefined) {
+      if (value === undefined) continue;
+      if (key === "PATH") {
+        setWindowsPath(env, value);
+      } else {
         env[key] = value;
       }
     }

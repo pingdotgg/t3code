@@ -8,6 +8,10 @@ import {
   type ThreadQueueWorkflowState,
 } from "./threadWorkflows.ts";
 import { deriveThreadTurnSubagents, type ThreadTurnSubagents } from "./threadSubagents.ts";
+import {
+  deriveThreadCheckpointSummaries,
+  type ThreadCheckpointSummary,
+} from "./threadCheckpoints.ts";
 import type { EnvironmentThread } from "./models.ts";
 import { EMPTY_ENVIRONMENT_THREAD_STATE, type EnvironmentThreadState } from "./threadState.ts";
 import {
@@ -20,6 +24,7 @@ import { arrayElementsEqual, parseThreadKey, threadKey } from "./entities.ts";
 const EMPTY_VISIBLE_TURN_ITEMS: OrchestrationV2ThreadProjection["visibleTurnItems"] = Object.freeze(
   [],
 );
+const EMPTY_CHECKPOINT_SUMMARIES: ReadonlyArray<ThreadCheckpointSummary> = Object.freeze([]);
 
 export function createEnvironmentThreadDetailAtoms<E>(
   threadStateAtom: (
@@ -123,6 +128,26 @@ export function createEnvironmentThreadDetailAtoms<E>(
     }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-turn-subagents:${key}`));
   });
 
+  const checkpointSummariesAtomFamily = Atom.family((key: string) => {
+    let previous: Pick<OrchestrationV2ThreadProjection, "checkpoints" | "messages"> | null = null;
+    let value = EMPTY_CHECKPOINT_SUMMARIES;
+    return Atom.make((get) => {
+      const projection = Option.getOrNull(get(threadStateValueAtomFamily(key)).data);
+      if (projection === null) {
+        previous = null;
+        value = EMPTY_CHECKPOINT_SUMMARIES;
+      } else if (
+        projection.checkpoints !== previous?.checkpoints ||
+        projection.messages !== previous?.messages
+      ) {
+        const { checkpoints, messages } = projection;
+        previous = { checkpoints, messages };
+        value = deriveThreadCheckpointSummaries(previous);
+      }
+      return value;
+    }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-checkpoint-summaries:${key}`));
+  });
+
   const worktreePathAtomFamily = Atom.family((key: string) =>
     Atom.make(
       (get) =>
@@ -189,6 +214,8 @@ export function createEnvironmentThreadDetailAtoms<E>(
     queueWorkflowAtom: (ref: ScopedThreadRef) => queueWorkflowAtomFamily(threadKey(ref)),
     queuedCountAtom: (ref: ScopedThreadRef) => queuedCountAtomFamily(threadKey(ref)),
     turnSubagentsAtom: (ref: ScopedThreadRef) => turnSubagentsAtomFamily(threadKey(ref)),
+    checkpointSummariesAtom: (ref: ScopedThreadRef) =>
+      checkpointSummariesAtomFamily(threadKey(ref)),
     stateAtom: (ref: ScopedThreadRef) => threadStateValueAtomFamily(threadKey(ref)),
     threadAtom: (ref: ScopedThreadRef) => threadAtomFamily(threadKey(ref)),
     visibleTurnItemsAtom: (ref: ScopedThreadRef) => visibleTurnItemsAtomFamily(threadKey(ref)),

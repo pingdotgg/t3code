@@ -1,4 +1,3 @@
-import { useCallback, useMemo } from "react";
 import * as Schema from "effect/Schema";
 
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "./hooks/useLocalStorage";
@@ -70,21 +69,18 @@ export function useDismissedProviderUpdateNotificationKeys() {
   );
   const dismissedKeys = dismissals.keys;
 
-  const dismissedKeySet = useMemo(() => new Set(dismissedKeys), [dismissedKeys]);
+  const dismissedKeySet = new Set(dismissedKeys);
 
-  const dismissNotificationKey = useCallback(
-    (key: string) => {
-      const trimmedKey = key.trim();
-      if (trimmedKey.length === 0 || dismissedKeySet.has(trimmedKey)) {
-        return;
-      }
+  const dismissNotificationKey = (key: string) => {
+    const trimmedKey = key.trim();
+    if (trimmedKey.length === 0 || dismissedKeySet.has(trimmedKey)) {
+      return;
+    }
 
-      setDismissals({
-        keys: [...dismissedKeys, trimmedKey],
-      });
-    },
-    [dismissedKeySet, dismissedKeys, setDismissals],
-  );
+    setDismissals({
+      keys: [...dismissedKeys, trimmedKey],
+    });
+  };
 
   return {
     dismissedNotificationKeys: dismissedKeySet,

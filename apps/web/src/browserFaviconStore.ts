@@ -5,12 +5,11 @@ import {
 } from "@t3tools/client-runtime/environment";
 import type { DesktopPreviewFavicon, ScopedProjectRef, ScopedThreadRef } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { useMemo } from "react";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import { normalizeHostname } from "~/browser/browserTargetResolver";
-import { useThreadShell } from "~/state/entities";
+import { useQuietThreadShell } from "~/state/entities";
 import { usePreparedConnection } from "~/state/session";
 
 import {
@@ -36,9 +35,7 @@ type PendingFaviconsByOrigin = Record<string, PendingFavicon>;
 
 export interface BrowserFaviconStoreState {
   byKey: Record<string, BrowserFaviconEntry>;
-  /** Capture buffering only. */
   pendingByThreadKey: Record<string, PendingFaviconsByOrigin>;
-  /** Non-persisted fallback for draft/background threads without a hydrated shell. */
   projectRefByThreadKey: Record<string, ScopedProjectRef>;
   recordFavicon: (
     key: string,
@@ -199,12 +196,10 @@ export function registerFaviconProjectForThread(
 }
 
 export function useFaviconProjectRefForThread(threadRef: ScopedThreadRef): ScopedProjectRef | null {
-  const shell = useThreadShell(threadRef);
+  const shell = useQuietThreadShell(threadRef);
   const shellProjectId = shell?.projectId ?? null;
-  const shellProjectRef = useMemo(
-    () => (shellProjectId ? scopeProjectRef(threadRef.environmentId, shellProjectId) : null),
-    [shellProjectId, threadRef.environmentId],
-  );
+  const environmentId = threadRef.environmentId;
+  const shellProjectRef = shellProjectId ? scopeProjectRef(environmentId, shellProjectId) : null;
   const registered = useBrowserFaviconStore(
     (state) => state.projectRefByThreadKey[scopedThreadKey(threadRef)] ?? null,
   );

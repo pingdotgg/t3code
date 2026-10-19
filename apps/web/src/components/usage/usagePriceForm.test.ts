@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { parseUsagePriceForm, usagePriceForm } from "./usagePriceForm.ts";
+import { isUsagePriceEdit, parseUsagePriceForm, usagePriceForm } from "./usagePriceForm.ts";
 
 describe("model price entry", () => {
   it("preserves exact model IDs and fractional rates", () => {
@@ -69,5 +69,21 @@ describe("model price entry", () => {
     expect(parseUsagePriceForm({ ...form, cacheReadCostPerMillionTokens: "-1" })).toBeNull();
     expect(parseUsagePriceForm({ ...form, cacheWriteCostPerMillionTokens: "invalid" })).toBeNull();
     expect(parseUsagePriceForm({ ...form, model: " " })).toBeNull();
+  });
+
+  it("lets price cells take only numbers while typing", () => {
+    for (const price of ["0.075", ".5", "15", "1e-7", " 2.5 "])
+      for (let end = 1; end <= price.length; end++)
+        expect(isUsagePriceEdit(price.slice(0, end - 1), price.slice(0, end))).toBe(true);
+    for (const next of ["a", "3a", "$3", "-1", "1.2.3", "e", "1,000"])
+      expect(isUsagePriceEdit("", next)).toBe(false);
+  });
+
+  it("never blocks deleting part of a price, but blocks replacing it with a non-number", () => {
+    expect(isUsagePriceEdit("1e-7", "e-7")).toBe(true);
+    expect(isUsagePriceEdit("1e-7", "1-7")).toBe(true);
+    expect(isUsagePriceEdit("1e-7", "a7")).toBe(false);
+    expect(isUsagePriceEdit("2.5", "x")).toBe(false);
+    expect(isUsagePriceEdit("123456", "1.2.3")).toBe(false);
   });
 });

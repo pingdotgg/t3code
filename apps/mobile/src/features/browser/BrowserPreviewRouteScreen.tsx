@@ -1,3 +1,6 @@
+import { Toolbar } from "../../components/ui/Toolbar";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
+import * as Dialog from "../../components/ui/Dialog";
 import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import {
@@ -8,12 +11,12 @@ import {
 } from "@t3tools/contracts";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, AppState, Platform, TextInput, View } from "react-native";
+import { AppState, Platform, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { ControlPill } from "../../components/ControlPill";
-import { ScreenHeader } from "../../components/ScreenHeader";
-import { NativeHeaderToolbar } from "../../native/StackHeader";
+import { ControlPill } from "../../components/ui/ControlPill";
+import { AppBar } from "../../components/ui/AppBar";
+
 import { useThreadServerBrowserTabs } from "../../state/preview";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { BrowserTabMenu } from "./BrowserTabMenu";
@@ -34,7 +37,6 @@ type BrowserPreviewRouteScreenProps = StaticScreenProps<{
   readonly tabId?: string;
 }>;
 
-/** The nested native stack supplies the navigation bar inside the modal. */
 export function BrowserPreviewRouteScreen({ route }: BrowserPreviewRouteScreenProps) {
   const navigation = useNavigation();
   const onClose = useCallback(() => navigation.goBack(), [navigation]);
@@ -81,14 +83,12 @@ function BrowserPreviewScreen({
   const [foreground, setForeground] = useState(AppState.currentState !== "background");
   const [selectedTabId, setSelectedTabId] = useState(initialTabId);
   const [pictureInPicture, setPictureInPicture] = useState(NO_PICTURE_IN_PICTURE);
-  // Address bar commands only reach a page that is streaming.
   const [streaming, setStreaming] = useState(false);
   const [canControl, setCanControl] = useState(false);
   const streamRef = useRef<PreviewStreamRef>(null);
   const { tabs, loaded } = useThreadServerBrowserTabs({ environmentId, threadId, enabled: true });
   const tab = tabs.find((entry) => entry.tabId === selectedTabId) ?? latestBrowserTab(tabs);
   const tabId = tab?.tabId ?? null;
-  // Pin the fallback so another tab's activity does not switch the view.
   if (tabId !== null && tabId !== selectedTabId) {
     setPictureInPicture(NO_PICTURE_IN_PICTURE);
     setSelectedTabId(tabId);
@@ -104,18 +104,17 @@ function BrowserPreviewScreen({
   }, [focused, loaded, tabs.length, onClose]);
   const onPictureInPicture = useCallback((state: PreviewPictureInPictureState, detail?: string) => {
     setPictureInPicture({ supported: state.supported, active: state.active });
-    if (detail) Alert.alert("Picture in picture is unavailable", detail);
+    if (detail) Dialog.alert("Picture in picture is unavailable", detail);
   }, []);
   const selectTab = (next: string) => {
     setPictureInPicture(NO_PICTURE_IN_PICTURE);
     setSelectedTabId(next);
   };
-  // System picture in picture keeps showing this stream after the app leaves the foreground.
   const live = (focused && foreground) || pictureInPicture.active;
 
   return (
     <View className="flex-1 bg-sheet" style={{ paddingBottom: insets.bottom }}>
-      <ScreenHeader
+      <AppBar
         title={tab ? browserTabTitle(tab) : "Browser"}
         sidebar={false}
         onBack={onClose}
@@ -157,14 +156,14 @@ function BrowserPreviewScreen({
         }
       />
       {Platform.OS === "ios" ? (
-        <NativeHeaderToolbar placement="left">
-          <NativeHeaderToolbar.Button
+        <Toolbar placement="left">
+          <Toolbar.Button
             icon="xmark"
             accessibilityLabel="Close browser"
             onPress={onClose}
             separateBackground
           />
-        </NativeHeaderToolbar>
+        </Toolbar>
       ) : null}
       {tab ? (
         <>
@@ -196,7 +195,7 @@ function BrowserPreviewScreen({
       ) : (
         <View className="flex-1 items-center justify-center">
           {focused && foreground ? (
-            <ActivityIndicator color={themeVariables["--color-icon"]} />
+            <AppActivityIndicator color={themeVariables["--color-icon"]} />
           ) : null}
         </View>
       )}
@@ -213,14 +212,11 @@ function BrowserAddressBar({
 }: {
   readonly environmentId: EnvironmentId;
   readonly tab: PreviewSessionSnapshot;
-  /** The viewer controls the page, so navigation and reload apply. */
   readonly ready: boolean;
-  /** The menu's changes need no control, only a live tab. */
   readonly streaming: boolean;
   readonly onCommand: PreviewStreamRef["command"];
 }) {
   const url = browserTabUrl(tab);
-  // Null while not editing, so agent navigation keeps the field current.
   const [draft, setDraft] = useState<string | null>(null);
   const submit = () => {
     const value = draft ?? url;
@@ -228,7 +224,7 @@ function BrowserAddressBar({
     try {
       onCommand({ type: "navigate", url: normalizePreviewUrl(value) });
     } catch {
-      Alert.alert("Could not open this address", "Enter an http or https URL.");
+      Dialog.alert("Could not open this address", "Enter an http or https URL.");
     }
   };
   return (
@@ -259,6 +255,7 @@ function BrowserAddressBar({
         keyboardType="url"
         returnKeyType="go"
         selectTextOnFocus
+        lineBreakModeIOS="tail"
         className="h-10 min-w-0 flex-1 rounded-full border border-input-border bg-input px-4 font-sans text-sm text-foreground"
       />
       <ControlPill

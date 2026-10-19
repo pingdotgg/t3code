@@ -35,12 +35,11 @@ export function resolveAttachmentReferences(
 }
 
 /**
- * As long as the pending file can live. The sweep counts its 24 hours from when
- * the upload finishes, which can be up to the upload URL's lifetime after issue.
+ * The sweep counts its 24 hours from when the upload finishes, which can be up
+ * to the upload URL's lifetime after issue.
  */
 const UPLOAD_OWNER_TTL_MS = 24 * 60 * 60 * 1000 + ATTACHMENT_UPLOAD_URL_TTL_MS;
 
-/** A thread owns its uploads across provider sessions; an outside client per MCP session. */
 const uploadOwner = McpInvocationContext.McpInvocationContext.pipe(
   Effect.map((scope) => scope.thread?.threadId ?? scope.requestNamespace),
 );
@@ -48,7 +47,6 @@ const uploadOwner = McpInvocationContext.McpInvocationContext.pipe(
 export const layer = McpToolAccess.toLayer(
   AttachmentToolkit,
   Effect.sync(() => {
-    // Which caller prepared each pending upload, so only that caller can discard it.
     const uploadOwners = new Map<string, { readonly owner: string; readonly issuedAt: number }>();
     return {
       t3_attachment_prepare_upload: McpToolAccess.writes((input) =>

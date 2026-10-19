@@ -10,10 +10,6 @@ function codeChildren(root: ReturnType<DiffsHighlighter["codeToHast"]>) {
   return code.children;
 }
 
-/** Resume tokenization after the last completed line. Keep its grammar state so
- * multiline strings, comments, and embedded languages continue to highlight as
- * they do in a full pass. The current line is always highlighted again.
- */
 export function createIncrementalHighlightedDocument(
   highlighter: DiffsHighlighter,
   language: string,

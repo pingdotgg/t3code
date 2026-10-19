@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   COMPOSER_TYPING_IDLE_MS,
   createComposerTypingGuardState,
@@ -29,16 +29,16 @@ export function useComposerTypingGuard(scope: string, requestIds: readonly strin
       ),
     }));
   }
-  const dispatch = useCallback((event: Parameters<typeof updateComposerTypingGuard>[1]) => {
+  const dispatch = (event: Parameters<typeof updateComposerTypingGuard>[1]) => {
     setSnapshot((current) => ({
       ...current,
       state: updateComposerTypingGuard(current.state, event),
     }));
-  }, []);
-  const onDraftChange = useCallback(() => dispatch({ type: "type", now: Date.now() }), [dispatch]);
-  const onFocus = useCallback(() => dispatch({ type: "focus" }), [dispatch]);
-  const onBlur = useCallback(() => dispatch({ type: "blur" }), [dispatch]);
-  const onSend = useCallback(() => dispatch({ type: "send" }), [dispatch]);
+  };
+  const onDraftChange = () => dispatch({ type: "type", now: Date.now() });
+  const onFocus = () => dispatch({ type: "focus" });
+  const onBlur = () => dispatch({ type: "blur" });
+  const onSend = () => dispatch({ type: "send" });
   useEffect(() => {
     if (state.held.size === 0) return;
     const timeout = window.setTimeout(

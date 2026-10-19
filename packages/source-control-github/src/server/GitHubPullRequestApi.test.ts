@@ -6,18 +6,21 @@ import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as Redacted from "effect/Redacted";
 
 import { HttpClient, HttpClientResponse } from "effect/http";
 
-import * as GitHubApi from "./GitHubApi.ts";
+import * as GitHubRest from "./GitHubRest.ts";
+import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitHubQuota from "./GitHubQuota.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as GitHubPullRequestApi from "./GitHubPullRequestApi.ts";
+import * as GitHubPullRequestProvider from "./GitHubPullRequestProvider.ts";
 import { KnownWorkflowRuns } from "./gitHubConditionalChecks.ts";
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -33,6 +36,21 @@ const coreResponse = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
         number: 7,
         title: "Pull request 7",
         url: "https://github.com/acme/web/pull/7",
+        body: "",
+        isDraft: false,
+        mergeable: "MERGEABLE",
+        reviewDecision: null,
+        additions: 0,
+        deletions: 0,
+        changedFiles: 0,
+        mergedAt: null,
+        closedAt: null,
+        isCrossRepository: false,
+        headRepositoryOwner: null,
+        headRepository: null,
+        headRef: null,
+        author: null,
+        autoMergeRequest: null,
         headRefName: "feature",
         baseRefName: "main",
         headRefOid: "abc123",
@@ -52,12 +70,20 @@ const coreResponse = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
   },
 });
 
-/** One request the CLI made, as the transport received it. */
 type ApiCall =
-  | ({ readonly kind: "graphql" } & GitHubApi.GitHubGraphQlInput)
-  | ({ readonly kind: "rest" } & GitHubApi.GitHubRestInput);
+  | {
+      readonly kind: "graphql";
+      readonly partial?: boolean;
+      /** The generated operation's name, which the routes below match on. */
+      readonly operationName?: string;
+      readonly host: string;
+      readonly operation: string;
+      readonly query: string;
+      readonly variables?: Readonly<Record<string, unknown>>;
+    }
+  | ({ readonly kind: "rest" } & GitHubRest.GitHubRestInput);
 
-type ApiAnswer = Effect.Effect<GitHubApi.GitHubRestResponse, GitHubApi.GitHubApiError>;
+type ApiAnswer = Effect.Effect<GitHubRest.GitHubRestResponse, GitHubRequestPolicy.GitHubApiError>;
 
 const mockedExecute = vi.fn<(call: ApiCall) => ApiAnswer>();
 const defaultCredential = (host: string) =>
@@ -67,57 +93,101 @@ const mockedStackMemberships = vi.fn<(call: ApiCall) => ApiAnswer>(() =>
   Effect.succeed(output('{"data":{}}')),
 );
 
-/**
- * A transport that answers from the mocks above but spends the real GraphQL quota from each
- * answer's headers, the way GitHubApi does, so the reserve behaviour is still the module's to prove.
- */
-const mockApi = Layer.effect(
-  GitHubApi.GitHubApi,
-  Effect.gen(function* () {
-    const quota = yield* GitHubQuota.GitHubQuota;
-    return GitHubApi.GitHubApi.of({
-      graphql: (input) =>
-        SourceControlRateLimit.Interactive.pipe(
-          Effect.flatMap((interactive) =>
-            quota.admit(input.host, "graphql", {
-              allowReserve: input.allowReserve ?? interactive,
-            }),
-          ),
-          Effect.andThen(() =>
-            (input.query.includes("query PullRequestStackMemberships")
-              ? mockedStackMemberships
-              : mockedExecute)({ kind: "graphql", ...input }),
-          ),
-          Effect.tap((answer) => quota.observe(input.host, answer.headers)),
-          Effect.map((answer) => answer.body),
-        ),
-      rest: (input) => mockedExecute({ kind: "rest", ...input }),
-      credential: (host) => mockedCredential(host),
-    });
+/** The REST transport, answered from the mocks above. */
+const mockApi = Layer.succeed(
+  GitHubRest.GitHubRest,
+  GitHubRest.GitHubRest.of({
+    rest: (input) => mockedExecute({ kind: "rest", ...input }),
+    credential: (host) => mockedCredential(host),
   }),
+);
+
+/**
+ * The HTTP side of the generated GraphQL reads, answered from the same mocks: a request to a
+ * host's GraphQL endpoint is recorded as a `graphql` call, carrying the `partial` flag the batches
+ * read with, and answered with the mocked body, status and headers.
+ */
+const mockHttp = Layer.succeed(
+  HttpClient.HttpClient,
+  HttpClient.make((request) =>
+    Effect.gen(function* () {
+      const host = new URL(request.url).hostname.replace(/^api\./, "");
+      const sent =
+        request.body._tag === "Uint8Array"
+          ? (JSON.parse(new TextDecoder().decode(request.body.body)) as {
+              readonly query: string;
+              readonly operationName: string;
+              readonly variables: Readonly<Record<string, unknown>>;
+            })
+          : { query: "", operationName: "", variables: {} };
+      const call: ApiCall = {
+        kind: "graphql",
+        host,
+        operation: "batch",
+        operationName: sent.operationName,
+        query: sent.query,
+        variables: sent.variables,
+        partial: true,
+      };
+      // A mocked failure with a status is what GitHub would have answered with it.
+      const answer = yield* (
+        sent.query.startsWith("query PullRequestStackMembership(")
+          ? mockedStackMemberships
+          : mockedExecute
+      )(call).pipe(
+        Effect.catchTags({
+          GitHubApiResponseError: (error) =>
+            Effect.succeed(output('{"message":"Bad gateway"}', false, false, {}, error.status)),
+        }),
+        Effect.orDie,
+      );
+      // A mutation mocked as `{}` is one whose answer the test does not read. GitHub always
+      // answers a mutation that ran with `data`, so it is sent as the null payload it selects.
+      const body =
+        answer.body === "{}" && sent.query.startsWith("mutation ")
+          ? encodeJson(mutationAnswer(sent.query))
+          : answer.body;
+      return HttpClientResponse.fromWeb(
+        request,
+        new Response(body, {
+          status: answer.status,
+          headers: { "content-type": "application/json", ...answer.headers },
+        }),
+      );
+    }),
+  ),
 );
 
 const layer = it.layer(
   GitHubPullRequestApi.layer.pipe(
     Layer.provideMerge(mockApi),
+    Layer.provideMerge(GitHubRequestPolicy.layer),
     Layer.provideMerge(GitHubQuota.layer),
+    Layer.provideMerge(SourceControlRateLimit.layer),
+    Layer.provideMerge(mockHttp),
+    Layer.provideMerge(
+      Layer.succeed(GitHubCredentials.GitHubCredentials, {
+        get: (host) =>
+          Effect.map(mockedCredential(host), (held) => ({ ...held, host, source: "gh" as const })),
+        invalidate: () => Effect.void,
+      }),
+    ),
     Layer.provide(NodeCrypto.layer),
     Layer.provide(TestSourceControlHost.layer()),
     Layer.provide(NodeServices.layer),
   ),
 );
 
-/** A successful answer; GraphQL reads take its body. */
 function output(
   body: string,
   truncated = false,
   invalidUtf8 = false,
   headers: Readonly<Record<string, string>> = {},
-): GitHubApi.GitHubRestResponse {
-  return { status: 200, headers, body, truncated, invalidUtf8 };
+  status = 200,
+): GitHubRest.GitHubRestResponse {
+  return { status, headers, body, truncated, invalidUtf8 };
 }
 
-/** GitHub's GraphQL quota headers, leaving `remaining` of 5,000 until `resetAt`. */
 function graphqlQuota(remaining: number, resetAt = "2099-08-13T14:00:00Z") {
   return {
     "x-ratelimit-resource": "graphql",
@@ -126,6 +196,23 @@ function graphqlQuota(remaining: number, resetAt = "2099-08-13T14:00:00Z") {
     "x-ratelimit-reset": String(Date.parse(resetAt) / 1000),
   };
 }
+
+/** What every listing row answers with, which a fixture overrides only where it matters. */
+const rowDefaults = {
+  author: null,
+  state: "OPEN",
+  isDraft: false,
+  mergeable: "UNKNOWN",
+  reviewDecision: null,
+  latestReviews: { nodes: [] },
+  mergedAt: null,
+  reviewRequests: { nodes: [] },
+  labels: { nodes: [] },
+  commits: { nodes: [] },
+};
+
+/** A connection's page info with no next page, as GitHub sends it: the cursor is always there. */
+const lastPage = { hasNextPage: false, endCursor: null };
 
 /**
  * Listing rows as GraphQL answers them. Overrides may use the flat shapes a test reads most
@@ -143,6 +230,7 @@ function rows(
       checks?: string;
     } & Record<string, unknown>;
     return {
+      ...rowDefaults,
       number,
       title: `Pull request ${number}`,
       url: `https://github.com/acme/web/pull/${number}`,
@@ -155,7 +243,12 @@ function rows(
         ? {}
         : {
             reviewRequests: {
-              nodes: reviewRequests.map((requestedReviewer) => ({ requestedReviewer })),
+              nodes: reviewRequests.map((requestedReviewer) => ({
+                requestedReviewer: {
+                  __typename: "slug" in requestedReviewer ? "Team" : "User",
+                  ...requestedReviewer,
+                },
+              })),
             },
           }),
       ...(checks === undefined
@@ -166,7 +259,6 @@ function rows(
   });
 }
 
-/** A page of the searched listing. */
 function pullRequests(
   count: number,
   firstNumber: number,
@@ -174,12 +266,11 @@ function pullRequests(
 ): string {
   return encodeJson({
     data: {
-      search: { pageInfo: { hasNextPage: false }, nodes: rows(count, firstNumber, overrides) },
+      search: { pageInfo: lastPage, nodes: rows(count, firstNumber, overrides) },
     },
   });
 }
 
-/** A page of a repository's own list, which is what the search-free fallback reads. */
 function listedPullRequests(
   count: number,
   firstNumber: number,
@@ -189,7 +280,7 @@ function listedPullRequests(
     data: {
       repository: {
         pullRequests: {
-          pageInfo: { hasNextPage: false },
+          pageInfo: lastPage,
           nodes: rows(count, firstNumber, overrides),
         },
       },
@@ -197,7 +288,6 @@ function listedPullRequests(
   });
 }
 
-/** A search that found nothing, which is also what GitHub says for a repository it does not index. */
 const emptySearch = () => output(pullRequests(0, 1));
 const emptyList = () => output(listedPullRequests(0, 1));
 
@@ -211,7 +301,6 @@ function pullRequestFiles(count: number, firstIndex: number): string {
   );
 }
 
-/** One thread's comments as the GraphQL read returns them, cursor and all. */
 function threadComments(
   ids: ReadonlyArray<string>,
   endCursor: string | null,
@@ -220,7 +309,15 @@ function threadComments(
   return {
     totalCount,
     pageInfo: { hasNextPage: endCursor !== null, endCursor },
-    nodes: ids.map((id) => ({ id, body: id, createdAt: "2026-07-01T00:00:00Z" })),
+    nodes: ids.map((id) => ({
+      id,
+      author: null,
+      body: id,
+      createdAt: "2026-07-01T00:00:00Z",
+      lastEditedAt: null,
+      url: `https://github.com/acme/web/pull/7#discussion_${id}`,
+      reactionGroups: [],
+    })),
   };
 }
 
@@ -242,6 +339,7 @@ function reviewThreadsPage(
 ): string {
   return encodeJson({
     data: {
+      viewer: { login: "viewer" },
       repository: {
         pullRequest: {
           reviewThreads: {
@@ -249,6 +347,16 @@ function reviewThreadsPage(
             pageInfo: { hasNextPage: endCursor !== null, endCursor },
             nodes,
           },
+          viewerCanUpdate: true,
+          viewerDidAuthor: false,
+          author: null,
+          reactionGroups: [],
+          comments: { nodes: [] },
+          reviews: { nodes: [] },
+          reviewRequests: { nodes: [] },
+          latestReviews: { nodes: [] },
+          reviewDismissals: { pageInfo: lastPage, nodes: [] },
+          commits: { nodes: [] },
         },
       },
     },
@@ -263,8 +371,10 @@ function threadCommentsPage(
 ): string {
   return encodeJson({
     data: {
+      viewer: { login: "viewer" },
       repository: { pullRequest: { id: "PR_7" } },
       node: {
+        __typename: "PullRequestReviewThread",
         pullRequest: { id: pullRequestId },
         comments: threadComments(ids, endCursor, totalCount),
       },
@@ -273,51 +383,51 @@ function threadCommentsPage(
 }
 
 /** What GitHub answers for a pull request it will not serve a whole diff for. */
-const diffRefused = new GitHubApi.GitHubApiResponseError({
+const diffRefused = new GitHubRequestPolicy.GitHubApiResponseError({
   host: "github.com",
   operation: "getPullRequestDiff",
   status: 406,
 });
 
-/** The nth request the CLI made. */
 function callAt(index: number): ApiCall {
   const call = mockedExecute.mock.calls[index];
   assert.isDefined(call);
   return call[0];
 }
 
-/** The GraphQL variables of the nth request. */
 function varsAt(index: number): Readonly<Record<string, unknown>> {
   const call = callAt(index);
   assert.strictEqual(call.kind, "graphql");
   return call.kind === "graphql" ? (call.variables ?? {}) : {};
 }
 
-/** The GraphQL document of the nth request. */
 function queryAt(index: number): string {
   const call = callAt(index);
   return call.kind === "graphql" ? call.query : "";
 }
 
-/** The REST path of the nth request. */
 function pathAt(index: number): string {
   const call = callAt(index);
   return call.kind === "rest" ? call.path : "";
 }
 
-/** The search the nth request carried, or undefined for a read that did not search. */
 function searchOfCall(index: number): string | undefined {
   const q = callAt(index).kind === "graphql" ? varsAt(index)["q"] : undefined;
   return typeof q === "string" ? q : undefined;
 }
 
-/** One row as a search answers it, which is the listing's row one connection deeper. */
 function searchItem(number: number, repository: string, updatedAt: string) {
   return {
+    ...rowDefaults,
     number,
     title: `Pull request ${number}`,
     url: `https://github.com/${repository}/pull/${number}`,
-    author: { login: "octocat", avatarUrl: "https://avatars/octocat" },
+    author: {
+      __typename: "User",
+      login: "octocat",
+      avatarUrl: "https://avatars/octocat",
+      name: null,
+    },
     headRefName: "feat/page",
     baseRefName: "main",
     state: "OPEN",
@@ -326,38 +436,64 @@ function searchItem(number: number, repository: string, updatedAt: string) {
     createdAt: "2026-07-01T00:00:00Z",
     updatedAt,
     repository: { nameWithOwner: repository },
-    reviewRequests: { nodes: [{ requestedReviewer: { login: "hubot" } }] },
+    reviewRequests: { nodes: [{ requestedReviewer: { __typename: "User", login: "hubot" } }] },
     labels: { nodes: [{ name: "bug", color: "ff0000" }] },
   };
 }
 
 function searchPage(nodes: ReadonlyArray<unknown>, hasNextPage = false) {
-  return output(encodeJson({ data: { search: { pageInfo: { hasNextPage }, nodes } } }));
+  return output(
+    encodeJson({
+      data: {
+        search: { pageInfo: { hasNextPage, endCursor: hasNextPage ? "next" : null }, nodes },
+      },
+    }),
+  );
 }
 
 const searchQueryOfCall = searchOfCall;
 
+/** Whether a request is the GraphQL operation `needle` names, or its document or path holds it. */
+function matches(call: ApiCall, needle: string): boolean {
+  return call.kind === "graphql"
+    ? call.operationName === needle || call.query.includes(needle)
+    : call.path.includes(needle);
+}
+
 /**
- * Answers every request with the body of the first route whose needle its GraphQL document or
- * REST path contains, and anything unrouted with an empty object, which a mutation never reads.
+ * Answers every request with the body of the first route whose needle it matches, and any
+ * unrouted mutation with the empty payload each one selects, which nothing reads back.
  */
 function route(...routes: ReadonlyArray<readonly [needle: string, body: unknown]>): void {
   mockedExecute.mockImplementation((call) => {
-    const target = call.kind === "graphql" ? call.query : call.path;
-    const match = routes.find(([needle]) => target.includes(needle));
-    return Effect.succeed(output(match === undefined ? "{}" : encodeJson(match[1])));
+    const match = routes.find(([needle]) => matches(call, needle));
+    return Effect.succeed(
+      output(
+        match !== undefined
+          ? encodeJson(match[1])
+          : call.kind === "graphql" && call.query.startsWith("mutation ")
+            ? encodeJson(mutationAnswer(call.query))
+            : "{}",
+      ),
+    );
   });
 }
 
-/** The variables of every GraphQL request whose document contains `needle`, in order. */
+/** What a mutation answers when nothing is asked of its payload: each root field, null. */
+function mutationAnswer(query: string) {
+  const root = /\)\{(\w+)(?:\(|\{|@)/.exec(query)?.[1];
+  return { data: root === undefined ? {} : { [root]: null } };
+}
+
+/** The variables of every GraphQL request `needle` matches, in order. */
 function variablesOf(needle: string): ReadonlyArray<Readonly<Record<string, unknown>>> {
   return mockedExecute.mock.calls.flatMap(([call]) =>
-    call.kind === "graphql" && call.query.includes(needle) ? [call.variables ?? {}] : [],
+    call.kind === "graphql" && matches(call, needle) ? [call.variables ?? {}] : [],
   );
 }
 
 /** Every REST request whose path contains `needle`, in order. */
-function restCallsTo(needle: string): ReadonlyArray<GitHubApi.GitHubRestInput> {
+function restCallsTo(needle: string): ReadonlyArray<GitHubRest.GitHubRestInput> {
   return mockedExecute.mock.calls.flatMap(([call]) =>
     call.kind === "rest" && call.path.includes(needle) ? [call] : [],
   );
@@ -367,12 +503,25 @@ function restCallsTo(needle: string): ReadonlyArray<GitHubApi.GitHubRestInput> {
  * The check that a client-given node hangs off the pull request it names. Routed before the node
  * id lookup, whose document it contains.
  */
-const SUBJECT_SCOPE_QUERY = "node(id: $subjectId)";
+const SUBJECT_SCOPE_QUERY = "PullRequestSubject";
 const subjectScope = (subjectId: string, pullRequestId: string) => ({
   data: {
     repository: { pullRequest: { id: pullRequestId } },
-    node: { id: subjectId, pullRequest: { id: pullRequestId } },
+    node: { __typename: "IssueComment", id: subjectId, pullRequest: { id: pullRequestId } },
   },
+});
+
+/** A check run as the `CheckContext` fragment answers it, with `fields` over the defaults. */
+const checkRun = (fields: Record<string, unknown>) => ({
+  __typename: "CheckRun",
+  name: "",
+  status: "COMPLETED",
+  conclusion: null,
+  startedAt: null,
+  completedAt: null,
+  detailsUrl: null,
+  checkSuite: { workflowRun: null },
+  ...fields,
 });
 
 /** One page of a head commit's check contexts, the read a rollup past one page is walked by. */
@@ -402,19 +551,16 @@ const checkContextsPage = (
     },
   });
 
-/** A pull request's base and head, as the REST read a file expansion starts from answers them. */
 const pullRequestRefs = encodeJson({ base: { sha: "a1b2c3d" }, head: { sha: "b1c2d3e" } });
 
-/** A cross-repository pull request whose head waits on a maintainer to run its workflows. */
 const crossRepositoryDetail = (headRefOid = "abc123") =>
   coreResponse({
     headRefName: "feat/page",
     headRefOid,
     isCrossRepository: true,
-    headRepositoryOwner: { login: "octocat" },
+    headRepositoryOwner: { __typename: "User", login: "octocat" },
   });
 
-/** Open pull requests on one head branch, every one of them from the same fork head. */
 const heads = (numbers: ReadonlyArray<number>) => ({
   data: {
     repository: {
@@ -424,7 +570,7 @@ const heads = (numbers: ReadonlyArray<number>) => ({
           number,
           headRefOid: "abc123",
           isCrossRepository: true,
-          headRepositoryOwner: { login: "octocat" },
+          headRepositoryOwner: { __typename: "User", login: "octocat" },
         })),
       },
     },
@@ -439,7 +585,6 @@ const workflowRuns = (ids: ReadonlyArray<number>) => ({
   })),
 });
 
-/** Answers the reads an approval makes: the detail, the heads, the runs; approvals return nothing. */
 function workflowApprovalRoutes(
   detail: () => unknown,
   headsAnswer: unknown,
@@ -452,7 +597,7 @@ function workflowApprovalRoutes(
           ? call.path.endsWith("/approve")
             ? ""
             : encodeJson(runsAnswer)
-          : call.query.includes("headRefName: $head")
+          : call.operationName === "PullRequestHeads"
             ? encodeJson(headsAnswer)
             : encodeJson(detail()),
       ),
@@ -461,7 +606,7 @@ function workflowApprovalRoutes(
 }
 
 /** The pull request node id lookup, which the layer caches for every test after the first. */
-const NODE_ID_QUERY = "pullRequest(number: $number) { id }";
+const NODE_ID_QUERY = "PullRequestNodeId";
 const nodeIdAnswer = (id: string) => ({ data: { repository: { pullRequest: { id } } } });
 
 afterEach(() => {
@@ -498,17 +643,25 @@ it.effect(
             requests.push({ url: request.url, authorization: request.headers["authorization"] });
             const body = request.url.endsWith("/user")
               ? { id: 123, login: "same-account" }
-              : { data: { repository: { pullRequest: { id: "PR_1" } }, addComment: {} } };
-            return HttpClientResponse.fromWeb(request, new Response(encodeJson(body)));
+              : {
+                  data: {
+                    repository: { pullRequest: { id: "PR_1" } },
+                    addComment: { clientMutationId: null },
+                  },
+                };
+            return HttpClientResponse.fromWeb(
+              request,
+              new Response(encodeJson(body), { headers: { "content-type": "application/json" } }),
+            );
           }),
         ),
       );
       const cli = yield* GitHubPullRequestApi.make.pipe(
         Effect.provide(
-          GitHubApi.layer.pipe(
-            Layer.provide(Layer.mergeAll(credentials, http)),
-            Layer.provide(GitHubQuota.layer),
-            Layer.provide(SourceControlRateLimit.layer),
+          GitHubRest.layer.pipe(
+            Layer.provideMerge(Layer.mergeAll(credentials, http)),
+            Layer.provideMerge(GitHubQuota.layer),
+            Layer.provideMerge(SourceControlRateLimit.layer),
             Layer.merge(TestSourceControlHost.layer()),
             Layer.provideMerge(NodeServices.layer),
           ),
@@ -533,7 +686,6 @@ it.effect(
       expect(first.credentialFingerprint).not.toBe(second.credentialFingerprint);
       expect(encodeJson([first, second])).not.toContain("broad-credential");
       expect(encodeJson([first, second])).not.toContain("restricted-credential");
-      // The comment was written under the credential the page verified, not the switched one.
       expect(
         requests
           .filter((request) => request.url.endsWith("/graphql"))
@@ -558,7 +710,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
       const quota = yield* GitHubQuota.GitHubQuota;
       const resetAt = "2099-08-13T14:00:00Z";
       yield* quota.observe("preview-budget.example", graphqlQuota(501, resetAt));
-      // GitHub's count, not ours: the answer below reports the reserve has been reached.
       mockedExecute.mockReturnValue(
         Effect.succeed(
           output(
@@ -617,6 +768,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
                     isDraft: false,
                     createdAt: "2026-07-01T00:00:00Z",
                     author: {
+                      __typename: "User",
                       login: "octocat",
                       name: "Octo Cat",
                       avatarUrl: "https://github.example/avatar.png",
@@ -692,7 +844,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         const input = { cwd: "/w", host: "github.identity-cancel.test" };
         const first = yield* cli.getRoutingIdentity(input).pipe(Effect.forkChild);
         yield* Deferred.await(firstStarted);
-        // The second reader is queued on the same credential's lock behind the first.
         const second = yield* cli.getRoutingIdentity(input).pipe(Effect.forkChild);
         yield* Effect.yieldNow;
         yield* Fiber.interrupt(first);
@@ -707,14 +858,21 @@ layer("GitHubPullRequestApi.layer", (it) => {
         number,
         title: `Pull request ${number}`,
         url: `https://github.com/acme/web/pull/${number}`,
-        author: { __typename: "User", login: "octocat", name: "Octo Cat", avatarUrl: null },
+        author: {
+          __typename: "User",
+          login: "octocat",
+          name: "Octo Cat",
+          avatarUrl: "https://avatars.githubusercontent.com/u/1",
+        },
         baseRefName: "main",
         headRefName: `feat/${number}`,
         state: "OPEN",
         isDraft: false,
         mergeable: "MERGEABLE",
         reviewDecision: null,
-        latestReviews: { nodes: [{ state: "APPROVED", author: { login: "reviewer" } }] },
+        latestReviews: {
+          nodes: [{ state: "APPROVED", author: { __typename: "User", login: "reviewer" } }],
+        },
         additions: 12,
         deletions: 3,
         changedFiles: 2,
@@ -727,7 +885,10 @@ layer("GitHubPullRequestApi.layer", (it) => {
         Effect.succeed(
           output(
             encodeJson({
-              data: { s0: { pullRequest: node(7) }, s1: { pullRequest: node(8) } },
+              data: {
+                _0_repository: { pullRequest: node(7) },
+                _1_repository: { pullRequest: node(8) },
+              },
             }),
           ),
         ),
@@ -773,13 +934,14 @@ layer("GitHubPullRequestApi.layer", (it) => {
       assert.strictEqual(eight?.headBranch, "feat/8");
       expect(mockedExecute).toHaveBeenCalledOnce();
       expect(queryAt(0)).toContain(
-        "s0: repository(owner: $s0_owner, name: $s0_name) { pullRequest(number: $s0_number)",
+        "_0_repository:repository(owner:$_0_owner name:$_0_name){pullRequest(number:$_0_number)",
       );
       expect(varsAt(0)).toMatchObject({
-        s0_owner: "acme",
-        s0_name: "web",
-        s0_number: 7,
-        s1_number: 8,
+        _0_owner: "acme",
+        _0_name: "web",
+        _0_number: 7,
+        _0_stacks: true,
+        _1_number: 8,
       });
     }),
   );
@@ -799,7 +961,10 @@ layer("GitHubPullRequestApi.layer", (it) => {
         Effect.succeed(
           output(
             JSON.stringify({
-              data: { w0: { pullRequest: node(1) }, w1: { pullRequest: null } },
+              data: {
+                _0_repository: { pullRequest: node(1) },
+                _1_repository: { pullRequest: null },
+              },
             }),
           ),
         ),
@@ -821,62 +986,85 @@ layer("GitHubPullRequestApi.layer", (it) => {
       const [seven, eight] = yield* Fiber.join(reads);
 
       expect(seven?.remarks.startsWith("1 ")).toBe(true);
-      // GitHub had no answer for #8, so its watch reads it in full.
       expect(eight).toBeNull();
       expect(mockedExecute).toHaveBeenCalledOnce();
       expect(queryAt(0)).toContain(
-        "w1: repository(owner: $w1_owner, name: $w1_name) { pullRequest(number: $w1_number)",
+        "_1_repository:repository(owner:$_1_owner name:$_1_name){pullRequest(number:$_1_number)",
       );
-      expect(varsAt(0)).toMatchObject({ w1_owner: "acme", w1_name: "web", w1_number: 8 });
+      expect(varsAt(0)).toMatchObject({ _1_owner: "acme", _1_name: "web", _1_number: 8 });
     }),
   );
 
-  it.effect("reads a pull request the batch said nothing about on its own", () =>
-    Effect.gen(function* () {
-      mockedExecute
-        .mockReturnValueOnce(Effect.succeed(output('{"data":{"s0":{"pullRequest":null}}}')))
-        .mockReturnValueOnce(
+  it.effect(
+    "fails only the pull request GitHub cannot find, and answers the rest of its batch",
+    () =>
+      Effect.gen(function* () {
+        mockedExecute.mockReturnValueOnce(
           Effect.succeed(
             output(
               encodeJson({
                 data: {
-                  s0: {
+                  _0_repository: { pullRequest: null },
+                  _1_repository: {
                     pullRequest: {
-                      number: 7,
-                      title: "Reuse the summary",
-                      url: "https://github.com/acme/web/pull/7",
-                      author: { login: "octocat", name: "Octo Cat" },
+                      number: 8,
+                      title: "Still here",
+                      url: "https://github.com/acme/web/pull/8",
+                      author: null,
                       baseRefName: "main",
-                      headRefName: "feat/summary",
+                      headRefName: "feat/eight",
                       state: "OPEN",
                       isDraft: false,
                       mergeable: "MERGEABLE",
-                      reviewDecision: "APPROVED",
-                      additions: 12,
-                      deletions: 3,
-                      changedFiles: 2,
+                      reviewDecision: null,
+                      latestReviews: { nodes: [] },
+                      additions: 1,
+                      deletions: 1,
+                      changedFiles: 1,
                       updatedAt: "2026-08-24T12:34:56.000Z",
-                      commits: { nodes: [{ commit: { statusCheckRollup: { state: "SUCCESS" } } }] },
+                      mergedAt: null,
+                      closedAt: null,
+                      commits: { nodes: [] },
+                      stack: null,
+                      stackEntry: null,
                     },
                   },
                 },
+                errors: [
+                  {
+                    type: "NOT_FOUND",
+                    path: ["_0_repository", "pullRequest"],
+                    message: "Could not resolve to a PullRequest with the number of 7.",
+                  },
+                ],
               }),
             ),
           ),
         );
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
 
-      const read = yield* cli
-        .getPullRequestSummary({ cwd: "/w", repository: "acme/web", host: "github.com", number: 7 })
-        .pipe(Effect.forkChild);
-      yield* TestClock.adjust("10 millis");
-      const summary = yield* Fiber.join(read);
+        const reads = yield* Effect.forEach(
+          [7, 8],
+          (number) =>
+            cli
+              .getPullRequestSummary({
+                cwd: "/w",
+                repository: "acme/web",
+                host: "github.com",
+                number,
+              })
+              .pipe(Effect.result),
+          { concurrency: "unbounded" },
+        ).pipe(Effect.forkChild);
+        yield* TestClock.adjust("10 millis");
+        const [seven, eight] = yield* Fiber.join(reads);
 
-      assert.strictEqual(summary.headBranch, "feat/summary");
-      assert.strictEqual(summary.checksState, "passing");
-      assert.strictEqual(mockedExecute.mock.calls.length, 2);
-      expect(varsAt(1)).toEqual({ owner: "acme", name: "web", number: 7 });
-    }),
+        expect(Result.isFailure(seven!) ? seven.failure._tag : null).toBe("GitHubApiNotFoundError");
+        expect(Result.isSuccess(eight!) ? eight.success.headBranch : null).toBe("feat/eight");
+        // One request answered both; nothing was read again on its own.
+        expect(mockedExecute).toHaveBeenCalledOnce();
+        expect(callAt(0)).toMatchObject({ kind: "graphql", partial: true });
+      }),
   );
 
   it.effect("reads the stack a pull request is in through the stacks preview, on its host", () =>
@@ -989,7 +1177,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(
         Effect.fail(
-          new GitHubApi.GitHubApiNotFoundError({
+          new GitHubRequestPolicy.GitHubApiNotFoundError({
             host: "github.com",
             operation: "getPullRequestStack",
           }),
@@ -1012,7 +1200,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(
         Effect.fail(
-          new GitHubApi.GitHubApiAuthenticationError({
+          new GitHubRequestPolicy.GitHubApiAuthenticationError({
             host: "github.com",
             operation: "getPullRequestStack",
           }),
@@ -1035,7 +1223,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
 
   it.effect("preserves transient stack failures instead of reporting no stack", () =>
     Effect.gen(function* () {
-      const failure = new GitHubApi.GitHubApiResponseError({
+      const failure = new GitHubRequestPolicy.GitHubApiResponseError({
         host: "github.com",
         operation: "getPullRequestStack",
         status: 503,
@@ -1093,7 +1281,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
       assert.isFalse(batch.truncated);
       expect(callAt(0)).toMatchObject({ kind: "graphql", host: "github.com" });
       expect(searchOfCall(0)).toBe("is:pr is:open sort:updated-desc repo:acme/web");
-      expect(queryAt(0)).toContain("first: 11");
+      expect(varsAt(0)["first"]).toBe(11);
     }),
   );
 
@@ -1119,7 +1307,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
 
   it.effect("reports truncation when GitHub repeats a cursor before the page is full", () =>
     Effect.gen(function* () {
-      // Two pages of 100 that hand back the same cursor, for a page of 250.
       const repeating = output(
         encodeJson({
           data: {
@@ -1152,7 +1339,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
     Effect.gen(function* () {
       mockedExecute.mockImplementation((call) =>
         Effect.succeed(
-          call.kind === "graphql" && call.query.includes("pullRequests(")
+          call.kind === "graphql" && call.operationName === "PullRequestList"
             ? emptyList()
             : emptySearch(),
         ),
@@ -1169,7 +1356,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         limit: 10,
       });
 
-      // A closed pull request may also be a merged one, so the tab narrows through search.
       expect(searchOfCall(0)).toBe("is:pr is:closed is:unmerged sort:updated-desc repo:acme/web");
     }),
   );
@@ -1178,7 +1364,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
     Effect.gen(function* () {
       mockedExecute.mockImplementation((call) =>
         Effect.succeed(
-          call.kind === "graphql" && call.query.includes("pullRequests(")
+          call.kind === "graphql" && call.operationName === "PullRequestList"
             ? emptyList()
             : emptySearch(),
         ),
@@ -1203,7 +1389,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
     Effect.gen(function* () {
       mockedExecute.mockImplementation((call) =>
         Effect.succeed(
-          call.kind === "graphql" && call.query.includes("pullRequests(")
+          call.kind === "graphql" && call.operationName === "PullRequestList"
             ? emptyList()
             : emptySearch(),
         ),
@@ -1243,9 +1429,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         cursor: { updatedBefore: "2026-07-02T00:00:00Z", delivered: 10 },
       });
 
-      // One request for both repositories, carrying everything the per-repository read expresses
-      // as a flag: the tab, the involvement, the reader's words, where to carry on from, and the
-      // order the page reads in.
       assert.strictEqual(mockedExecute.mock.calls.length, 1);
       assert.strictEqual(
         searchQueryOfCall(0),
@@ -1293,7 +1476,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         query: 'x" is:merged repo:evil/repo',
       });
 
-      // Quoted and escaped, so the words a reader typed narrow the listing rather than widening it.
       assert.strictEqual(
         searchQueryOfCall(0),
         'is:pr is:open "x\\" is:merged repo:evil/repo" sort:updated-desc repo:acme/web',
@@ -1317,7 +1499,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         }),
       );
 
-      // Nothing is sent: a name that could end its own qualifier is refused rather than escaped.
       assert.strictEqual(failure._tag, "GitHubRepositorySelectorError");
       assert.strictEqual(mockedExecute.mock.calls.length, 0);
     }),
@@ -1330,7 +1511,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
           searchPage([
             searchItem(7, "acme/web", "2026-07-03T00:00:00Z"),
             searchItem(9, "pingdotgg/t3code", "2026-07-02T00:00:00Z"),
-            // Not a pull request, which `is:pr` excludes and a decode skips rather than fails on.
             {},
           ]),
         ),
@@ -1354,7 +1534,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
           ["pingdotgg/t3code", 9, "https://avatars/octocat"],
         ],
       );
-      // The listing leaves the line counts to a read of their own.
       assert.deepStrictEqual(
         batch.items.map((item) => [item.additions, item.deletions]),
         [
@@ -1396,10 +1575,8 @@ layer("GitHubPullRequestApi.layer", (it) => {
       const overflowing = yield* read();
       const capped = yield* read();
 
-      // The extra row is the probe, and it is not handed on.
       assert.strictEqual(overflowing.items.length, 2);
       assert.isTrue(overflowing.truncated);
-      // A slice at GitHub's own ceiling has no extra row to probe with, so `hasNextPage` answers.
       assert.isTrue(capped.truncated);
     }),
   );
@@ -1418,13 +1595,13 @@ layer("GitHubPullRequestApi.layer", (it) => {
           output(
             encodeJson({
               data: {
-                s0: {
+                _0_repository: {
                   pullRequest: {
                     stack: { number: 3, size: 2, baseRefName: "main" },
                     stackEntry: { position: 1 },
                   },
                 },
-                s1: { pullRequest: { stack: null, stackEntry: null } },
+                _1_repository: { pullRequest: { stack: null, stackEntry: null } },
               },
             }),
           ),
@@ -1463,7 +1640,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
       mockedStackMemberships.mockImplementation((input) =>
         input.kind === "graphql" && Object.values(input.variables ?? {}).includes(26)
           ? Effect.fail(
-              new GitHubApi.GitHubApiResponseError({
+              new GitHubRequestPolicy.GitHubApiResponseError({
                 host: "github.com",
                 operation: "listPullRequestStackMemberships",
                 status: 502,
@@ -1472,14 +1649,22 @@ layer("GitHubPullRequestApi.layer", (it) => {
           : Effect.succeed(
               output(
                 encodeJson({
-                  data: {
-                    s0: {
-                      pullRequest: {
-                        stack: { number: 3, size: 2, baseRefName: "main" },
-                        stackEntry: { position: 1 },
-                      },
-                    },
-                  },
+                  data: Object.fromEntries(
+                    Object.keys(input.kind === "graphql" ? (input.variables ?? {}) : {})
+                      .filter((name) => name.endsWith("_number"))
+                      .map((name, index) => [
+                        name.replace(/number$/, "repository"),
+                        {
+                          pullRequest:
+                            index === 0
+                              ? {
+                                  stack: { number: 3, size: 2, baseRefName: "main" },
+                                  stackEntry: { position: 1 },
+                                }
+                              : { stack: null, stackEntry: null },
+                        },
+                      ]),
+                  ),
                 }),
               ),
             ),
@@ -1533,11 +1718,22 @@ layer("GitHubPullRequestApi.layer", (it) => {
         repository: "acme/web",
         number: index + 1,
       }));
-      mockedExecute.mockImplementation(() =>
-        // Every chunk answers for its first alias only, so a row GitHub said nothing about is
+      mockedExecute.mockImplementation((call) =>
+        // Every chunk finds only its first pull request, so a row GitHub had nothing for is
         // dropped rather than shown as a change of no size.
         Effect.succeed(
-          output(encodeJson({ data: { s0: { pullRequest: { additions: 4, deletions: 1 } } } })),
+          output(
+            encodeJson({
+              data: Object.fromEntries(
+                Object.keys(call.kind === "graphql" ? (call.variables ?? {}) : {})
+                  .filter((name) => name.endsWith("_number"))
+                  .map((name, index) => [
+                    name.replace(/number$/, "repository"),
+                    { pullRequest: index === 0 ? { additions: 4, deletions: 1 } : null },
+                  ]),
+              ),
+            }),
+          ),
         ),
       );
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
@@ -1548,14 +1744,13 @@ layer("GitHubPullRequestApi.layer", (it) => {
         changeRequests,
       });
 
-      // Twenty-five aliases a request, so twenty-six rows are two requests.
       assert.strictEqual(mockedExecute.mock.calls.length, 2);
       assert.deepStrictEqual(stats, [
         { repository: "acme/web", number: 1, additions: 4, deletions: 1 },
         { repository: "acme/web", number: 26, additions: 4, deletions: 1 },
       ]);
-      expect(queryAt(0)).toContain("s0: repository(owner: $s0_owner, name: $s0_name)");
-      expect(varsAt(0)).toMatchObject({ s0_owner: "acme", s0_name: "web", s24_number: 25 });
+      expect(queryAt(0)).toContain("_0_repository:repository(owner:$_0_owner name:$_0_name)");
+      expect(varsAt(0)).toMatchObject({ _0_owner: "acme", _0_name: "web", _24_number: 25 });
     }),
   );
 
@@ -1580,7 +1775,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
     Effect.gen(function* () {
       mockedExecute.mockImplementation((call) =>
         Effect.succeed(
-          call.kind === "graphql" && call.query.includes("pullRequests(")
+          call.kind === "graphql" && call.operationName === "PullRequestList"
             ? emptyList()
             : emptySearch(),
         ),
@@ -1598,8 +1793,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         query: "pull requests page",
       });
 
-      // The recency qualifier rides along, because free text would otherwise reorder the page
-      // by relevance and truncation would drop the newest matches.
       expect(searchOfCall(0)).toBe(
         'is:pr is:open "pull requests page" sort:updated-desc repo:acme/web',
       );
@@ -1610,7 +1803,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
     Effect.gen(function* () {
       mockedExecute.mockImplementation((call) =>
         Effect.succeed(
-          call.kind === "graphql" && call.query.includes("pullRequests(")
+          call.kind === "graphql" && call.operationName === "PullRequestList"
             ? emptyList()
             : emptySearch(),
         ),
@@ -1638,7 +1831,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
     Effect.gen(function* () {
       mockedExecute.mockImplementation((call) =>
         Effect.succeed(
-          call.kind === "graphql" && call.query.includes("pullRequests(")
+          call.kind === "graphql" && call.operationName === "PullRequestList"
             ? emptyList()
             : emptySearch(),
         ),
@@ -1663,8 +1856,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         },
       });
 
-      // Quotes around anything a reader typed, and the one character that could end a quoted
-      // value early dropped rather than escaped.
       expect(searchOfCall(0)).toBe(
         'is:pr is:open label:"needs design" label:"quote" -label:"wip" author:"octocat" ' +
           "draft:false review:changes_requested status:failure sort:updated-desc repo:acme/web",
@@ -1676,7 +1867,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
     Effect.gen(function* () {
       mockedExecute.mockImplementation((call) =>
         Effect.succeed(
-          call.kind === "graphql" && call.query.includes("pullRequests(")
+          call.kind === "graphql" && call.operationName === "PullRequestList"
             ? emptyList()
             : emptySearch(),
         ),
@@ -1702,7 +1893,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
     Effect.gen(function* () {
       mockedExecute.mockImplementation((call) =>
         Effect.succeed(
-          call.kind === "graphql" && call.query.includes("pullRequests(")
+          call.kind === "graphql" && call.operationName === "PullRequestList"
             ? emptyList()
             : emptySearch(),
         ),
@@ -1720,7 +1911,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         filters: { labels: [["size:S", "size:XS"], ["bug"]] },
       });
 
-      // One qualifier satisfied by either size, and a second one that must hold as well.
       expect(searchOfCall(0)).toBe(
         'is:pr is:open label:"size:S","size:XS" label:"bug" sort:updated-desc repo:acme/web',
       );
@@ -1754,10 +1944,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
           filters: { checks: "passing" },
         });
 
-        // The fallback's rows carry `checksState` exactly as a search's rows do, so `checks` is
-        // now a filter the fallback judges itself, the same as `draft`: an empty search answer
-        // under it is still ambiguous, and the row picked out afterwards is the one whose own
-        // `checksState` reads "passing".
         expect(searchOfCall(1)).toBeUndefined();
         assert.deepStrictEqual(
           batch.items.map((item) => item.number),
@@ -1785,8 +1971,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         filters: { checks: "passing" },
       });
 
-      // Pending equals neither "passing" nor "failing", so it satisfies neither filter value —
-      // the same row would also be dropped by `checks: "failing"`.
       assert.deepStrictEqual(batch.items, []);
     }),
   );
@@ -1812,10 +1996,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
           filters: { draft: "hide" },
         });
 
-        // `draft` is a filter the fallback can judge over its own rows just as search judges it,
-        // so an empty search answer under it alone is still ambiguous between "nothing matches"
-        // and "this repository is not indexed" — and the fallback applies the filter itself,
-        // keeping only the non-draft row.
         expect(searchOfCall(1)).toBeUndefined();
         expect(batch.items.map((item) => item.number)).toEqual([2]);
       }),
@@ -1848,7 +2028,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
     Effect.gen(function* () {
       mockedExecute.mockImplementation((call) =>
         Effect.succeed(
-          call.kind === "graphql" && call.query.includes("pullRequests(")
+          call.kind === "graphql" && call.operationName === "PullRequestList"
             ? emptyList()
             : emptySearch(),
         ),
@@ -1866,8 +2046,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         query: '-- is:merged label:secret "widen me"',
       });
 
-      // Every word stays inside one phrase: nothing before it, nothing after it, and the
-      // leading dashes are text rather than the start of another argument.
       expect(searchOfCall(0)).toBe(
         String.raw`is:pr is:open "-- is:merged label:secret \"widen me\"" sort:updated-desc repo:acme/web`,
       );
@@ -1878,7 +2056,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
     Effect.gen(function* () {
       mockedExecute.mockImplementation((call) =>
         Effect.succeed(
-          call.kind === "graphql" && call.query.includes("pullRequests(")
+          call.kind === "graphql" && call.operationName === "PullRequestList"
             ? emptyList()
             : emptySearch(),
         ),
@@ -1896,8 +2074,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         query: String.raw`a\" is:merged`,
       });
 
-      // GitHub reads `\\` as one backslash and `\"` as one quote, so the phrase ends where
-      // this says it does; escaping the quote alone would have closed it early.
       expect(searchOfCall(0)).toBe(
         String.raw`is:pr is:open "a\\\" is:merged" sort:updated-desc repo:acme/web`,
       );
@@ -1908,7 +2084,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
     Effect.gen(function* () {
       mockedExecute.mockImplementation((call) =>
         Effect.succeed(
-          call.kind === "graphql" && call.query.includes("pullRequests(")
+          call.kind === "graphql" && call.operationName === "PullRequestList"
             ? emptyList()
             : emptySearch(),
         ),
@@ -1926,8 +2102,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         query: "   ",
       });
 
-      // An empty phrase would match nothing rather than everything, so it is left out; the
-      // order the page reads rows in is asked for whether or not anything was typed.
       expect(searchOfCall(0)).toBe("is:pr is:open sort:updated-desc repo:acme/web");
     }),
   );
@@ -1948,8 +2122,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         cursor: { updatedBefore: "2026-07-02T00:00:00Z", delivered: 10 },
       });
 
-      // Inclusive, so the rows already sent at that instant come back for the caller to drop —
-      // which is what keeps the ones beside them from being skipped.
       expect(searchOfCall(0)).toBe(
         "is:pr is:open updated:<=2026-07-02T00:00:00Z sort:updated-desc repo:acme/web",
       );
@@ -1959,9 +2131,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
 
   it.effect("answers a search that found nothing with nothing, not with the whole repository", () =>
     Effect.gen(function* () {
-      // The fallback is for a repository the index does not cover. Under a text search an empty
-      // answer means the text matched nothing, and listing everything instead would fill the
-      // page with rows the reader did not search for.
       mockedExecute.mockReturnValueOnce(Effect.succeed(emptySearch()));
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
 
@@ -1983,7 +2152,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
 
   it.effect("reads a repository GitHub will not search from its own list", () =>
     Effect.gen(function* () {
-      // GitHub answers for a repository outside its search index with no rows and no error.
       mockedExecute.mockReturnValueOnce(Effect.succeed(emptySearch()));
       mockedExecute.mockReturnValueOnce(
         Effect.succeed(output(listedPullRequests(3, 1, () => ({ state: "CLOSED" })))),
@@ -2001,8 +2169,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
       });
 
       assert.strictEqual(batch.items.length, 3);
-      // The fallback itself uses no search, then narrows the decoded rows locally. They arrive
-      // newest-created first, so nothing can carry on from them.
       expect(searchOfCall(1)).toBeUndefined();
       expect(varsAt(1)).toMatchObject({ owner: "acme", name: "web", states: ["CLOSED", "MERGED"] });
       assert.isFalse(batch.continues);
@@ -2036,8 +2202,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         limit: 10,
       });
 
-      // Individual requests for this viewer and team requests survive. The fallback cannot
-      // resolve team membership, so dropping team-routed reviews would hide legitimate work.
       expect(batch.items.map((item) => item.number)).toEqual([1, 2]);
       expect(searchOfCall(1)).toBeUndefined();
       assert.isFalse(batch.continues);
@@ -2073,21 +2237,20 @@ layer("GitHubPullRequestApi.layer", (it) => {
       });
 
       expect(batch.items.map((item) => item.number)).toEqual([4]);
-      expect(queryAt(1)).toContain("first: 3,");
-      expect(queryAt(2)).toContain("first: 6,");
+      expect(varsAt(1)["first"]).toBe(3);
+      expect(varsAt(2)["first"]).toBe(6);
       assert.isFalse(batch.truncated);
     }),
   );
 
   it.effect("bounds a sparse search-free fallback and reports the unread tail", () =>
     Effect.gen(function* () {
-      // A repository with far more pull requests than the bound, none of them for this reader.
       let listed = 0;
       mockedExecute.mockImplementation((call) => {
-        if (call.kind !== "graphql" || !call.query.includes("pullRequests(")) {
+        if (call.kind !== "graphql" || call.operationName !== "PullRequestList") {
           return Effect.succeed(emptySearch());
         }
-        const first = Number(/first: (\d+)/.exec(call.query)?.[1]);
+        const first = Number(call.variables?.["first"]);
         const nodes = rows(first, listed + 1, () => ({
           reviewRequests: [{ login: "somebody-else" }],
         }));
@@ -2116,7 +2279,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         limit: 2,
       });
 
-      // The last widening reads a thousand rows, a page of a hundred at a time, and stops there.
       const last = mockedExecute.mock.calls.length - 1;
       expect(varsAt(last)["after"]).toBe(`c${listed - 100}`);
       expect(listed - (3 + 6 + 12 + 24 + 48 + 96 + 192 + 384 + 768)).toBe(1000);
@@ -2129,7 +2291,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
     Effect.gen(function* () {
       mockedExecute.mockImplementation((call) =>
         Effect.succeed(
-          call.kind === "graphql" && call.query.includes("pullRequests(")
+          call.kind === "graphql" && call.operationName === "PullRequestList"
             ? emptyList()
             : emptySearch(),
         ),
@@ -2147,13 +2309,10 @@ layer("GitHubPullRequestApi.layer", (it) => {
         cursor: { updatedBefore: "2026-07-02T00:00:00Z", delivered: 10 },
       });
 
-      // A repository that answered the search once answers it again, so an empty slice under a
-      // cursor is the end of it rather than a repository search cannot reach.
       assert.strictEqual(mockedExecute.mock.calls.length, 1);
     }),
   );
 
-  /** The state a merge or branch update reads first: behind its base and blocked on checks. */
   const actionState = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
     data: {
       repository: {
@@ -2197,7 +2356,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         updateMethod: "rebase",
       });
 
-      // GitHub's own default: a merge commit unless asked to rebase, pinned to the head it read.
       expect(variablesOf("updatePullRequestBranch(")).toEqual([
         { pullRequestId: "PR_7", expectedHeadOid: "abc123", updateMethod: "MERGE" },
         { pullRequestId: "PR_7", expectedHeadOid: "abc123", updateMethod: "REBASE" },
@@ -2223,6 +2381,242 @@ layer("GitHubPullRequestApi.layer", (it) => {
         { input: { pullRequestId: "PR_7", mergeMethod: "SQUASH" } },
       ]);
       expect(variablesOf("enablePullRequestAutoMerge(")).toEqual([]);
+    }),
+  );
+
+  it.effect.each([
+    {
+      description: "base-only write",
+      basePermission: "WRITE",
+      sourcePermission: "READ",
+      headRef: { id: "REF" },
+      expected: false,
+      actionAllowed: false,
+    },
+    {
+      description: "source-only write",
+      basePermission: "READ",
+      sourcePermission: "WRITE",
+      headRef: { id: "REF" },
+      expected: true,
+      actionAllowed: true,
+    },
+    {
+      description: "a deleted branch",
+      basePermission: "READ",
+      sourcePermission: "WRITE",
+      headRef: null,
+      expected: false,
+      actionAllowed: true,
+    },
+    {
+      description: "an unavailable source repository",
+      basePermission: "WRITE",
+      sourcePermission: null,
+      headRef: { id: "REF" },
+      expected: false,
+      actionAllowed: false,
+    },
+  ])(
+    "uses source branch access in both permission reads for $description",
+    ({ basePermission, sourcePermission, headRef, expected, actionAllowed }) =>
+      Effect.gen(function* () {
+        const answer = coreResponse({
+          headRepository:
+            sourcePermission === null
+              ? null
+              : { nameWithOwner: "acme/web", viewerPermission: sourcePermission },
+          headRef,
+        });
+        answer.data.repository.viewerPermission = basePermission;
+        mockedExecute.mockReturnValue(Effect.succeed(output(encodeJson(answer))));
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        const input = { cwd: "/w", repository: "acme/web", host: "github.com", number: 7 };
+        expect((yield* cli.getViewerAccess(input)).canDeleteBranch).toBe(actionAllowed);
+        expect((yield* cli.getPullRequestDetail(input)).viewerAccess.canDeleteBranch).toBe(
+          expected,
+        );
+        expect(variablesOf("ViewerPermissions")).toHaveLength(1);
+        expect(variablesOf("PullRequestCore")).toHaveLength(1);
+      }),
+  );
+
+  it.effect("preserves the actual source fork name in provider detail", () =>
+    Effect.gen(function* () {
+      const answer = coreResponse({
+        state: "MERGED",
+        isCrossRepository: true,
+        headRepository: { nameWithOwner: "contributor/web-fork", viewerPermission: "WRITE" },
+        headRef: { id: "REF" },
+      });
+      mockedExecute.mockReturnValue(Effect.succeed(output(encodeJson(answer))));
+      const provider = yield* GitHubPullRequestProvider.make;
+      const detail = yield* provider.getChangeRequest({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+      });
+      expect(detail.headRepositoryNameWithOwner).toBe("contributor/web-fork");
+      expect(detail.viewerPermissions.actions).toContain("delete-branch");
+      expect(queryAt(0)).toContain("headRepository{nameWithOwner viewerPermission}");
+    }),
+  );
+
+  const branchToDelete = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
+    data: {
+      repository: {
+        pullRequest: {
+          state: "MERGED",
+          headRefName: "feat/delete",
+          baseRefName: "main",
+          headRefOid: "abc123",
+          headRepository: { id: "FORK_REPO" },
+          ...pullRequest,
+        },
+      },
+    },
+  });
+  const sourceBranch = (repository: Readonly<Record<string, unknown>> = {}) => ({
+    data: {
+      node: {
+        __typename: "Repository",
+        defaultBranchRef: { name: "main" },
+        ref: { target: { __typename: "Commit", oid: "abc123" } },
+        ...repository,
+      },
+    },
+  });
+
+  it.effect.each(["MERGED", "CLOSED"])("deletes the exact remote fork branch of a %s PR", (state) =>
+    Effect.gen(function* () {
+      route(
+        ["PullRequestBranchToDelete", branchToDelete({ state })],
+        ["PullRequestSourceBranch", sourceBranch()],
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      yield* cli.runPullRequestAction({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.enterprise.test",
+        number: 7,
+        action: "delete-branch",
+      });
+      expect(variablesOf("PullRequestBranchToDelete")).toEqual([
+        { owner: "acme", name: "web", number: 7 },
+      ]);
+      expect(variablesOf("PullRequestSourceBranch")).toEqual([
+        { repositoryId: "FORK_REPO", ref: "refs/heads/feat/delete" },
+      ]);
+      expect(variablesOf("updateRefs(")).toEqual([
+        {
+          input: {
+            repositoryId: "FORK_REPO",
+            refUpdates: [
+              {
+                name: "refs/heads/feat/delete",
+                beforeOid: "abc123",
+                afterOid: "0000000000000000000000000000000000000000",
+              },
+            ],
+          },
+        },
+      ]);
+      expect(mockedExecute.mock.calls.at(-1)?.[0].host).toBe("github.enterprise.test");
+      expect(variablesOf("mergePullRequest(")).toEqual([]);
+      expect(variablesOf("closePullRequest(")).toEqual([]);
+    }),
+  );
+
+  it.effect.each([
+    { description: "an open PR", head: { state: "OPEN" }, source: {} },
+    { description: "a missing source repository", head: { headRepository: null }, source: {} },
+    { description: "the base branch", head: { headRefName: "main" }, source: {} },
+    {
+      description: "the default branch",
+      head: {},
+      source: { defaultBranchRef: { name: "feat/delete" } },
+    },
+    { description: "a missing default branch", head: {}, source: { defaultBranchRef: null } },
+    {
+      description: "a changed branch",
+      head: {},
+      source: { ref: { target: { __typename: "Commit", oid: "new-commit" } } },
+    },
+    { description: "an unavailable source repository", head: {}, source: null },
+  ])("refuses to delete $description", ({ head, source }) =>
+    Effect.gen(function* () {
+      route(
+        ["PullRequestBranchToDelete", branchToDelete(head)],
+        [
+          "PullRequestSourceBranch",
+          source === null ? { data: { node: null } } : sourceBranch(source),
+        ],
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const error = yield* Effect.flip(
+        cli.runPullRequestAction({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.com",
+          number: 7,
+          action: "delete-branch",
+        }),
+      );
+      expect(error._tag).toBe("GitHubBranchDeletionRefusedError");
+      expect(variablesOf("updateRefs(")).toEqual([]);
+    }),
+  );
+
+  it.effect("accepts an already deleted source branch", () =>
+    Effect.gen(function* () {
+      route(
+        ["PullRequestBranchToDelete", branchToDelete()],
+        ["PullRequestSourceBranch", sourceBranch({ ref: null })],
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      yield* cli.runPullRequestAction({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        action: "delete-branch",
+      });
+      expect(variablesOf("updateRefs(")).toEqual([]);
+    }),
+  );
+
+  it.effect("keeps the source branch when GitHub refuses deletion", () =>
+    Effect.gen(function* () {
+      route(
+        ["PullRequestBranchToDelete", branchToDelete()],
+        ["PullRequestSourceBranch", sourceBranch()],
+      );
+      const answer = mockedExecute.getMockImplementation()!;
+      mockedExecute.mockImplementation((call) =>
+        call.kind === "graphql" && call.query.includes("updateRefs(")
+          ? Effect.fail(
+              new GitHubRequestPolicy.GitHubApiResponseError({
+                host: call.host,
+                operation: call.operation,
+                status: 422,
+              }),
+            )
+          : answer(call),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const error = yield* Effect.flip(
+        cli.runPullRequestAction({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.com",
+          number: 7,
+          action: "delete-branch",
+        }),
+      );
+      expect(error._tag).toBe("GitHubApiResponseError");
+      expect(variablesOf("mergePullRequest(")).toEqual([]);
+      expect(variablesOf("closePullRequest(")).toEqual([]);
     }),
   );
 
@@ -2257,7 +2651,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
             input: {
               pullRequestId: "PR_7",
               mergeMethod: "SQUASH",
-              // Pinned to the head the message was read from, so it cannot describe other commits.
               expectedHeadOid: "abc123",
               commitBody: "Details\n\nCo-authored-by: Alice <alice@example.com>",
             },
@@ -2293,7 +2686,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         removeAgentCreditsOnMerge: true,
       });
       expect(variablesOf("query PullRequestMergeMessage")[0]?.["method"]).toBe("MERGE");
-      // A merge queue takes the pull request through auto-merge, with its own message.
       expect(variablesOf(queued ? "enablePullRequestAutoMerge(" : "mergePullRequest(")).toEqual([
         { input: { pullRequestId: "PR_7", mergeMethod: "MERGE" } },
       ]);
@@ -2386,7 +2778,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         action: "enable-auto-merge",
         mergeMethod: "squash",
       });
-      // No strategy asked for is GitHub's own default, exactly as it is for a merge now.
       yield* cli.runPullRequestAction({
         cwd: "/w",
         repository: "acme/web",
@@ -2472,7 +2863,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
                 headRefName: "feat/page",
                 headRefOid: "abc123",
                 isCrossRepository: false,
-                headRepositoryOwner: { login: "acme" },
+                headRepositoryOwner: { __typename: "Organization", login: "acme" },
                 baseRefName: "main",
                 createdAt: "2026-07-01T00:00:00Z",
                 updatedAt: "2026-07-02T00:00:00Z",
@@ -2509,16 +2900,15 @@ layer("GitHubPullRequestApi.layer", (it) => {
       });
 
       // Open pull requests on this head branch, and runs scoped to this exact head.
-      expect(variablesOf("headRefName: $head")[0]).toEqual({
+      // The first page sends no cursor at all, which reads from the start.
+      expect(variablesOf("PullRequestHeads")[0]).toEqual({
         owner: "acme",
         name: "web",
         head: "feat/page",
-        after: null,
       });
       expect(restCallsTo("actions/runs?")[0]?.path).toBe(
         "repos/acme/web/actions/runs?head_sha=abc123&branch=feat%2Fpage&event=pull_request&status=action_required&per_page=100&page=1",
       );
-      // Each run is approved only after the head is read again and still lists it.
       expect(restCallsTo("/approve").map((call) => [call.method, call.path])).toEqual([
         ["POST", "repos/acme/web/actions/runs/10/approve"],
         ["POST", "repos/acme/web/actions/runs/11/approve"],
@@ -2547,7 +2937,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
           Effect.provideService(KnownWorkflowRuns, {
             headSha: "abc123",
             runs: [
-              // Live shape: waiting on approval is completed + action_required.
               {
                 id: 10,
                 status: "completed",
@@ -2656,8 +3045,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
 
   it.effect("refuses workflow approval when the head list stops before its end", () =>
     Effect.gen(function* () {
-      // GitHub hands the same cursor back, so the second page is never read past. #7 looks
-      // unique on what was read, and an unread page could still hold another head like it.
       const repeating = heads([7]);
       repeating.data.repository.pullRequests.pageInfo = {
         hasNextPage: true,
@@ -2757,7 +3144,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         }),
       );
 
-      // Paged a hundred at a time, it stops at the first page past the bound.
       expect(error).toMatchObject({
         _tag: "GitHubWorkflowApprovalRefusedError",
         reason: "run-list-truncated",
@@ -2810,7 +3196,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
     Effect.gen(function* () {
       mockedExecute.mockImplementation((call) =>
         Effect.succeed(
-          call.kind === "graphql" && call.query.includes("pullRequests(")
+          call.kind === "graphql" && call.operationName === "PullRequestList"
             ? emptyList()
             : emptySearch(),
         ),
@@ -2827,7 +3213,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         limit: 10,
       });
 
-      // A request sent to github.com would read a different repository of the same name.
       assert.isAbove(mockedExecute.mock.calls.length, 0);
       expect(new Set(mockedExecute.mock.calls.map(([call]) => call.host))).toEqual(
         new Set(["github.acme.dev"]),
@@ -2838,17 +3223,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
 
   it.effect("asks a GitHub Enterprise host for its own review threads", () =>
     Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(
-        Effect.succeed(
-          output(
-            encodeJson({
-              data: {
-                repository: { pullRequest: { reviewThreads: { totalCount: 0, nodes: [] } } },
-              },
-            }),
-          ),
-        ),
-      );
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(reviewThreadsPage([], null))));
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
 
       yield* cli.listReviewThreadComments({
@@ -2878,9 +3253,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
       assert.strictEqual(diff.patch, "diff --git a/a b/a");
       assert.isNull(diff.nextCursor);
       assert.isFalse(diff.truncated);
-      // The common case pays for one request and not the files API on top of it.
       assert.strictEqual(mockedExecute.mock.calls.length, 1);
-      // GitHub's combined pull-request diff: one section per changed file, not one per commit.
       const call = callAt(0);
       assert.strictEqual(call.kind, "rest");
       if (call.kind === "rest") {
@@ -2892,7 +3265,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
 
   it.effect("reads one files page when GitHub refuses the diff, and says it is the last", () =>
     Effect.gen(function* () {
-      // GitHub answers 406 rather than a diff past 300 changed files.
       mockedExecute.mockReturnValueOnce(Effect.fail(diffRefused));
       mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequestFiles(2, 1))));
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
@@ -2905,7 +3277,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
       });
 
       assert.isFalse(diff.truncated);
-      // A short page is the end of the change set, so there is nothing to carry on from.
       assert.isNull(diff.nextCursor);
       expect(diff.patch).toContain("diff --git a/src/file1.ts b/src/file1.ts");
       expect(diff.patch).toContain("diff --git a/src/file2.ts b/src/file2.ts");
@@ -2927,7 +3298,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         number: 7,
       });
 
-      // A full page means more files, which the reader asks for; it is not a truncated slice.
       assert.isFalse(diff.truncated);
       assert.isNotNull(diff.nextCursor);
       assert.strictEqual(mockedExecute.mock.calls.length, 2);
@@ -2948,7 +3318,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
 
       assert.isNull(second.nextCursor);
       expect(second.patch).toContain("diff --git a/src/file100.ts b/src/file100.ts");
-      // The second slice is one request: the cursor already says where to read.
       assert.strictEqual(mockedExecute.mock.calls.length, 3);
       assert.strictEqual(pathAt(2), "repos/acme/web/pulls/7/files?per_page=100&page=2");
     }),
@@ -2988,10 +3357,8 @@ layer("GitHubPullRequestApi.layer", (it) => {
         commit: "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
       });
 
-      // One request: the commit's own changes never take the whole-diff road.
       assert.strictEqual(mockedExecute.mock.calls.length, 1);
       assert.isNull(diff.nextCursor);
-      // The commit endpoint wraps its files in an object, which the decoder unwraps.
       expect(diff.patch).toContain("diff --git a/src/file1.ts b/src/file1.ts");
       assert.strictEqual(
         pathAt(0),
@@ -3121,7 +3488,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         assert.strictEqual(error.path, "src/large.ts");
         assert.strictEqual(error.reason, "oversized");
       }
-      // A deleted file is read at the base revision only.
       assert.strictEqual(pathAt(1), "repos/acme/web/contents/src/large.ts?ref=a1b2c3d");
     }),
   );
@@ -3232,7 +3598,9 @@ layer("GitHubPullRequestApi.layer", (it) => {
           output(
             encodeJson({
               data: {
-                nodes: [{ login: "octocat", avatarUrl: "https://avatars/octocat" }],
+                nodes: [
+                  { __typename: "User", login: "octocat", avatarUrl: "https://avatars/octocat" },
+                ],
               },
             }),
           ),
@@ -3291,27 +3659,24 @@ layer("GitHubPullRequestApi.layer", (it) => {
         viewer: "maria-rcks",
       });
 
-      // The same credential again is answered from what was verified, without asking GitHub.
       expect(yield* cli.getRoutingIdentity(input)).toEqual({
         accountId: "123",
         viewer: "maria-rcks",
       });
       expect(mockedExecute).toHaveBeenCalledTimes(1);
 
-      // A switched credential is not trusted on the strength of the old one's answer.
       mockedCredential.mockImplementation((host) =>
         Effect.succeed({ token: Redacted.make("test-credential-b"), fingerprint: `${host}:b` }),
       );
       mockedExecute.mockReturnValueOnce(
         Effect.fail(
-          new GitHubApi.GitHubApiResponseError({
+          new GitHubRequestPolicy.GitHubApiResponseError({
             host: "github.com",
             operation: "getRoutingIdentity",
             status: 502,
           }),
         ),
       );
-      // GitHub's own refusal is reported as itself, so the page can say what went wrong.
       const failure = yield* cli.getRoutingIdentity(input).pipe(Effect.flip);
       expect(failure._tag).toBe("GitHubApiResponseError");
       expect(String(failure)).not.toContain("test-credential-b");
@@ -3340,7 +3705,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         comments: [{ path: "src/a.ts", position: { kind: "added", newLine: 4 }, body: "nit" }],
       });
 
-      // One request, so nothing is on the pull request until the verdict is.
       assert.strictEqual(mockedExecute.mock.calls.length, 1);
       expect(restCallsTo("/reviews")).toMatchObject([
         {
@@ -3400,7 +3764,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(queryAt(0)).not.toContain("unresolveReviewThread(");
       expect(queryAt(1)).toContain("unresolveReviewThread(");
       expect([varsAt(0), varsAt(1)]).toEqual([{ threadId: "PRRT_1" }, { threadId: "PRRT_1" }]);
-      // A GitHub Enterprise thread is resolved on its own host, not on github.com.
       expect([callAt(0).host, callAt(1).host]).toEqual(["github.acme.dev", "github.acme.dev"]);
     }),
   );
@@ -3438,7 +3801,11 @@ layer("GitHubPullRequestApi.layer", (it) => {
                 repository: { pullRequest: { id: "PR_thisOne" } },
                 // A comment on pull request #99 of a different repository, named as though it
                 // belonged to #7 here.
-                node: { id: "IC_99", pullRequest: { id: "PR_someOtherOne" } },
+                node: {
+                  __typename: "IssueComment",
+                  id: "IC_99",
+                  pullRequest: { id: "PR_someOtherOne" },
+                },
               },
             }),
           ),
@@ -3459,7 +3826,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
       );
 
       assert.strictEqual(error._tag, "GitHubSubjectScopeError");
-      // Refused before any mutation was sent.
       assert.strictEqual(mockedExecute.mock.calls.length, 1);
     }),
   );
@@ -3469,7 +3835,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
       route([NODE_ID_QUERY, nodeIdAnswer("PR_kwDOA")]);
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
 
-      // Its own pull request: a node id looked up once is remembered for the life of the service.
       yield* cli.setReaction({
         cwd: "/w",
         repository: "acme/web",
@@ -3522,7 +3887,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
       yield* rewrite({ body: "A better description." });
       yield* rewrite({ title: "Both", body: "at once." });
 
-      // One node id lookup for the pull request, then a mutation per rewrite.
       assert.strictEqual(variablesOf(NODE_ID_QUERY).length, 1);
       expect(variablesOf("updatePullRequest(")).toEqual([
         { pullRequestId: "PR_kwDOA", title: "A better title" },
@@ -3571,7 +3935,11 @@ layer("GitHubPullRequestApi.layer", (it) => {
             encodeJson({
               data: {
                 repository: { pullRequest: { id: "PR_thisOne" } },
-                node: { id: "IC_99", pullRequest: { id: "PR_someOtherOne" } },
+                node: {
+                  __typename: "IssueComment",
+                  id: "IC_99",
+                  pullRequest: { id: "PR_someOtherOne" },
+                },
               },
             }),
           ),
@@ -3594,7 +3962,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
       assert.strictEqual(error._tag, "GitHubSubjectScopeError");
       if (error._tag === "GitHubSubjectScopeError")
         assert.strictEqual(error.operation, "updateComment");
-      // Refused before any mutation was sent.
       assert.strictEqual(mockedExecute.mock.calls.length, 1);
     }),
   );
@@ -3625,7 +3992,13 @@ layer("GitHubPullRequestApi.layer", (it) => {
             encodeJson(
               coreResponse({
                 title: "Progressive detail",
-                author: { login: "octocat" },
+                author: {
+                  __typename: "User",
+                  id: "U_octocat",
+                  login: "octocat",
+                  name: null,
+                  avatarUrl: "https://a/o",
+                },
                 body: "Core body",
                 changedFiles: 2,
               }),
@@ -3640,7 +4013,12 @@ layer("GitHubPullRequestApi.layer", (it) => {
               data: {
                 repository: {
                   pullRequest: {
-                    author: { __typename: "User", login: "octocat", avatarUrl: "https://a/o" },
+                    author: {
+                      __typename: "User",
+                      login: "octocat",
+                      avatarUrl: "https://a/o",
+                      name: null,
+                    },
                     commits: { nodes: [] },
                     comments: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] },
                     reviews: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] },
@@ -3673,7 +4051,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         rebase: true,
       });
       expect(detail.comparison).toEqual({ behindBy: 2, viewerCanUpdate: true });
-      // Conversation activity is its own read, and asks for the head of the conversation once.
       expect(queryAt(1)).toContain("reviews(");
       expect(varsAt(1)).toMatchObject({ head: true, withComments: true, withReviews: true });
       assert.strictEqual(mockedExecute.mock.calls.length, 2);
@@ -3690,8 +4067,16 @@ layer("GitHubPullRequestApi.layer", (it) => {
                 baseRef: null,
                 reviewRequests: {
                   nodes: [
-                    { requestedReviewer: { login: "reviewer" } },
-                    { requestedReviewer: { slug: "maintainers", name: "Maintainers" } },
+                    { requestedReviewer: { __typename: "User", login: "reviewer", name: null } },
+                    {
+                      requestedReviewer: {
+                        __typename: "Team",
+                        slug: "maintainers",
+                        combinedSlug: "octo/maintainers",
+                        teamName: "Maintainers",
+                        teamAvatarUrl: "https://avatars.githubusercontent.com/t/1",
+                      },
+                    },
                   ],
                 },
                 labels: { nodes: [{ name: "bug", color: "ff0000" }] },
@@ -3702,20 +4087,18 @@ layer("GitHubPullRequestApi.layer", (it) => {
                         statusCheckRollup: {
                           contexts: {
                             nodes: [
-                              {
-                                __typename: "CheckRun",
+                              checkRun({
                                 name: "build",
                                 status: "COMPLETED",
                                 conclusion: "SUCCESS",
                                 checkSuite: { workflowRun: { workflow: { name: "linux" } } },
-                              },
-                              {
-                                __typename: "CheckRun",
+                              }),
+                              checkRun({
                                 name: "build",
                                 status: "COMPLETED",
                                 conclusion: "FAILURE",
                                 checkSuite: { workflowRun: { workflow: { name: "windows" } } },
-                              },
+                              }),
                             ],
                             pageInfo: { hasNextPage: false },
                           },
@@ -3740,6 +4123,13 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(detail.comparison).toBeNull();
       expect(detail.reviewRequestLogins).toEqual(["reviewer"]);
       expect(detail.hasTeamReviewRequest).toBe(true);
+      expect(detail.reviewRequestTeams).toEqual([
+        {
+          login: "octo/maintainers",
+          name: "Maintainers",
+          avatarUrl: "https://avatars.githubusercontent.com/t/1",
+        },
+      ]);
       expect(detail.labels).toEqual([{ name: "bug", color: "ff0000" }]);
       expect(detail.checks).toHaveLength(2);
       expect(detail.checksState).toBe("failing");
@@ -3759,7 +4149,13 @@ layer("GitHubPullRequestApi.layer", (it) => {
                       commit: {
                         statusCheckRollup: {
                           contexts: {
-                            nodes: [{ name: "first", status: "COMPLETED", conclusion: "SUCCESS" }],
+                            nodes: [
+                              checkRun({
+                                name: "first",
+                                status: "COMPLETED",
+                                conclusion: "SUCCESS",
+                              }),
+                            ],
                             pageInfo: { hasNextPage: true, endCursor: "c1" },
                           },
                         },
@@ -3777,8 +4173,8 @@ layer("GitHubPullRequestApi.layer", (it) => {
           output(
             checkContextsPage(
               [
-                { name: "first", status: "COMPLETED", conclusion: "SUCCESS" },
-                { name: "last", status: "COMPLETED", conclusion: "FAILURE" },
+                checkRun({ name: "first", status: "COMPLETED", conclusion: "SUCCESS" }),
+                checkRun({ name: "last", status: "COMPLETED", conclusion: "FAILURE" }),
               ],
               null,
             ),
@@ -3796,7 +4192,8 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(detail.checksState).toBe("failing");
       expect(detail.checksTruncated).toBe(false);
       // The whole rollup is walked from its start, so no check is counted twice or skipped.
-      expect(varsAt(1)).toMatchObject({ number: 7, after: null });
+      expect(varsAt(1)).toMatchObject({ number: 7 });
+      expect(varsAt(1)).not.toHaveProperty("after");
       assert.strictEqual(mockedExecute.mock.calls.length, 2);
     }),
   );
@@ -3885,16 +4282,12 @@ layer("GitHubPullRequestApi.layer", (it) => {
         }),
       );
 
-      // What matters is that it fails at all: an empty patch with no cursor would render as a
-      // change with no files and report the rest of it as already read. The refusal that sent
-      // the read down this road is the one reported, by design.
       assert.strictEqual(error, diffRefused);
     }),
   );
 
   it.effect("pages an oversized patch by file rather than handing back a severed one", () =>
     Effect.gen(function* () {
-      // The whole diff came back, but cut at a byte, which lands mid-file.
       mockedExecute.mockReturnValueOnce(
         Effect.succeed(output("diff --git a/a b/a\n@@ -1 +1 @@", true)),
       );
@@ -3908,7 +4301,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         number: 7,
       });
 
-      // The severed patch is thrown away; what comes back is assembled from whole files.
       assert.strictEqual(pathAt(1), "repos/acme/web/pulls/7/files?per_page=100&page=1");
       expect(slice.patch).toContain("src/file1.ts");
       expect(slice.patch).not.toContain("diff --git a/a b/a");
@@ -3934,8 +4326,8 @@ layer("GitHubPullRequestApi.layer", (it) => {
       });
 
       // The first page asks from the beginning; the next carries on from where it stopped.
-      expect(varsAt(0)["cursor"]).toBeNull();
-      expect(varsAt(1)["cursor"]).toBe("Y3Vyc29yOjE");
+      expect(varsAt(0)["after"]).toBeNull();
+      expect(varsAt(1)["after"]).toBe("Y3Vyc29yOjE");
       expect(conversation.comments.map((comment) => comment.id)).toEqual(["c1", "c2"]);
       assert.isFalse(conversation.truncated);
     }),
@@ -3943,7 +4335,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
 
   it.effect("stops at the thread bound and says the conversation was cut short", () =>
     Effect.gen(function* () {
-      // A host that never runs out of pages: the walk has to end itself.
       mockedExecute.mockReturnValue(
         Effect.succeed(
           output(
@@ -4022,7 +4413,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
         name: "web",
         number: 7,
         threadId: "PRRT_1",
-        cursor: "Y3Vyc29yOjI",
+        after: "Y3Vyc29yOjI",
       });
       assert.strictEqual(mockedExecute.mock.calls.length, 1);
       expect(page.comments.map((comment) => comment.id)).toEqual(["c2", "c3"]);
@@ -4066,7 +4457,11 @@ layer("GitHubPullRequestApi.layer", (it) => {
                     squashMergeAllowed: false,
                     rebaseMergeAllowed: true,
                     viewerPermission: "READ",
-                    pullRequest: { viewerCanUpdate: true, viewerDidAuthor: true },
+                    pullRequest: {
+                      viewerCanUpdate: true,
+                      viewerDidAuthor: true,
+                      headRepository: null,
+                    },
                   },
                 },
               }),
@@ -4082,13 +4477,13 @@ layer("GitHubPullRequestApi.layer", (it) => {
           number: 7,
         });
 
-        // One request, because both answers hang off the same repository object.
         assert.strictEqual(mockedExecute.mock.calls.length, 1);
         expect(varsAt(0)).toMatchObject({ owner: "acme", name: "web", number: 7 });
         expect(queryAt(0)).toContain("mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed");
         expect(access).toEqual({
           mergeCapabilities: { merge: true, squash: false, rebase: true },
           canWrite: false,
+          canDeleteBranch: false,
           canTriage: false,
           canUpdate: true,
           didAuthor: true,
@@ -4108,7 +4503,11 @@ layer("GitHubPullRequestApi.layer", (it) => {
                   squashMergeAllowed: false,
                   rebaseMergeAllowed: true,
                   viewerPermission: "READ",
-                  pullRequest: { viewerCanUpdate: true, viewerDidAuthor: true },
+                  pullRequest: {
+                    viewerCanUpdate: true,
+                    viewerDidAuthor: true,
+                    headRepository: null,
+                  },
                 },
               },
             }),
@@ -4152,7 +4551,11 @@ layer("GitHubPullRequestApi.layer", (it) => {
                     squashMergeAllowed: false,
                     rebaseMergeAllowed: true,
                     viewerPermission: "READ",
-                    pullRequest: { viewerCanUpdate: true, viewerDidAuthor: true },
+                    pullRequest: {
+                      viewerCanUpdate: true,
+                      viewerDidAuthor: true,
+                      headRepository: null,
+                    },
                   },
                 },
               }),
@@ -4172,7 +4575,11 @@ layer("GitHubPullRequestApi.layer", (it) => {
                     squashMergeAllowed: false,
                     rebaseMergeAllowed: true,
                     viewerPermission: "READ",
-                    pullRequest: { viewerCanUpdate: true, viewerDidAuthor: true },
+                    pullRequest: {
+                      viewerCanUpdate: true,
+                      viewerDidAuthor: true,
+                      headRepository: null,
+                    },
                   },
                 },
               }),
@@ -4199,6 +4606,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(access).toEqual({
         mergeCapabilities: { merge: true, squash: false, rebase: true },
         canWrite: false,
+        canDeleteBranch: false,
         canTriage: false,
         canUpdate: true,
         didAuthor: true,
@@ -4266,11 +4674,26 @@ layer("GitHubPullRequestApi.layer", (it) => {
                 repository: {
                   assignableUsers: {
                     pageInfo: { hasNextPage: false },
-                    nodes: [{ login: "bilal" }, { login: "octocat" }, { login: "hubot" }],
+                    nodes: ["bilal", "octocat", "hubot"].map((login) => ({
+                      login,
+                      name: null,
+                      avatarUrl: `https://avatars/${login}`,
+                    })),
                   },
                   pullRequest: {
-                    author: { login: "bilal" },
-                    reviewRequests: { nodes: [{ requestedReviewer: { login: "octocat" } }] },
+                    author: { __typename: "User", login: "bilal" },
+                    reviewRequests: {
+                      nodes: [
+                        {
+                          requestedReviewer: {
+                            __typename: "User",
+                            login: "octocat",
+                            name: null,
+                            avatarUrl: "https://avatars/octocat",
+                          },
+                        },
+                      ],
+                    },
                   },
                 },
               },
@@ -4287,8 +4710,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         number: 7,
       });
 
-      // The people, who has been asked and who opened the pull request all hang off the same
-      // repository object, so the menu costs one request.
       assert.strictEqual(mockedExecute.mock.calls.length, 1);
       expect(varsAt(0)).toMatchObject({ owner: "acme", name: "web", number: 7 });
       expect(list.candidates.map((candidate) => [candidate.login, candidate.isRequested])).toEqual([
@@ -4384,9 +4805,8 @@ layer("GitHubPullRequestApi.layer", (it) => {
       });
 
       assert.strictEqual(mockedExecute.mock.calls.length, 3);
-      // The first page asks from the start; each one after it carries the cursor before it.
       expect([varsAt(0)["after"], varsAt(1)["after"], varsAt(2)["after"]]).toEqual([
-        null,
+        undefined,
         "cursor-0",
         "cursor-1",
       ]);
@@ -4431,7 +4851,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         number: 7,
       });
 
-      // The same cursor twice is a page GitHub already gave, so reading stops there.
       assert.strictEqual(mockedExecute.mock.calls.length, 2);
       assert.isTrue(viewed.truncated);
     }),
@@ -4459,14 +4878,17 @@ layer("GitHubPullRequestApi.layer", (it) => {
         ],
       });
 
-      // One request to learn the pull request's node id, one for every press together.
       assert.strictEqual(mockedExecute.mock.calls.length, 2);
-      expect(queryAt(1)).toContain("f0: markFileAsViewed");
-      expect(queryAt(1)).toContain("f1: unmarkFileAsViewed");
+      expect(queryAt(1)).toContain("_0_markFileAsViewed:markFileAsViewed(");
+      expect(queryAt(1)).toContain("_1_unmarkFileAsViewed:unmarkFileAsViewed(");
+      // Each path travels as a variable, so none can be read as part of the document.
       expect(varsAt(1)).toEqual({
-        pullRequestId: "PR_1",
-        f0_path: "src/a.ts",
-        f1_path: "src/b.ts",
+        _0_pullRequestId: "PR_1",
+        _0_path: "src/a.ts",
+        _0_viewed: true,
+        _1_pullRequestId: "PR_1",
+        _1_path: "src/b.ts",
+        _1_viewed: false,
       });
     }),
   );
@@ -4509,14 +4931,13 @@ layer("GitHubPullRequestApi.layer", (it) => {
       });
       yield* cli.updatePullRequest({ ...pullRequest, title: "Ticked through" });
 
-      // One lookup, then a mutation per write, every one of them addressed by the id it answered.
       assert.strictEqual(mockedExecute.mock.calls.length, 4);
       expect(varsAt(0)).toEqual({ owner: "acme", name: "web", number: 24 });
-      expect([1, 2, 3].map((index) => varsAt(index)["pullRequestId"])).toEqual([
-        "PR_24",
-        "PR_24",
-        "PR_24",
-      ]);
+      expect(
+        [1, 2, 3].map(
+          (index) => varsAt(index)["pullRequestId"] ?? varsAt(index)["_0_pullRequestId"],
+        ),
+      ).toEqual(["PR_24", "PR_24", "PR_24"]);
     }),
   );
 
@@ -4546,19 +4967,15 @@ layer("GitHubPullRequestApi.layer", (it) => {
       yield* write();
 
       assert.strictEqual(mockedExecute.mock.calls.length, 3);
-      expect(varsAt(2)["pullRequestId"]).toEqual("PR_25");
+      expect(varsAt(2)["_0_pullRequestId"]).toEqual("PR_25");
     }),
   );
   it.effect("keeps the pull request being ticked through, not the one looked up first", () =>
     Effect.gen(function* () {
-      // Ordered by insertion alone, a hit does not renew its entry, so the review the reader is
-      // working down is the first thing evicted once a listing has walked a cache's worth of cold
-      // pull requests, and every press after that pays a round trip again.
-      // This block shares one cache, so these numbers are its own and it runs last.
       const HOT = 9_000;
       const lookupsOf = new Map<number, number>();
       mockedExecute.mockImplementation((input) => {
-        if (input.kind !== "graphql" || !input.query.includes(NODE_ID_QUERY)) {
+        if (input.kind !== "graphql" || input.operationName !== NODE_ID_QUERY) {
           return Effect.succeed(output("{}"));
         }
         const number = Number(input.variables?.["number"]);
@@ -4578,7 +4995,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         });
 
       yield* tick(HOT);
-      // A cache's worth of cold pull requests, with the open one pressed in between each of them.
       for (let filled = 0; filled < GitHubPullRequestApi.NODE_ID_CACHE_CAPACITY; filled += 1) {
         yield* tick(HOT + 1 + filled);
         yield* tick(HOT);

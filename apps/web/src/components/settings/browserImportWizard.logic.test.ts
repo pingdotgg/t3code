@@ -194,13 +194,10 @@ describe("isRetryableReason", () => {
   it("does not offer a retry for a permanent failure", () => {
     expect(isRetryableReason("unsupportedPlatform")).toBe(false);
     expect(isRetryableReason("unknownSourceProfile")).toBe(false);
-    // Retrying the same new-profile import cannot lower the profile count.
     expect(isRetryableReason("profileLimitReached")).toBe(false);
   });
 
   it("offers a retry once the user has signed in to create the missing key", () => {
-    // The blocked copy tells the user to sign in and retry, so the screen
-    // has to offer the retry it asks for.
     expect(isRetryableReason("keychainItemMissing")).toBe(true);
   });
 

@@ -1,8 +1,3 @@
-/**
- * Bitbucket's client definition. Browser- and React Native-safe.
- *
- * @module source-control-bitbucket/client/definition
- */
 import {
   makeProviderSettingsSchema,
   SourceControlProviderKind,
@@ -28,11 +23,6 @@ const text = (annotations: Schema.Annotations.Key<string>) =>
     Schema.annotateKey(annotations),
   );
 
-/**
- * Bitbucket API credentials, used before the `T3CODE_BITBUCKET_*` environment variables: an
- * access token, or an Atlassian account email with an API token. The access token wins when both
- * are saved.
- */
 export const settings = makeProviderSettingsSchema(
   {
     accessToken: text({
@@ -87,7 +77,6 @@ export const definition = defineSourceControlClient({
   authorProfileUrl: () => null,
   referenceAutolinkRepositoryUrl: () => null,
   reviewSummaryRequired: () => false,
-  // No checkout CLI, and the reference field never accepted Bitbucket URLs.
   checkoutCommandArgument: () => null,
   isChangeRequestReference: () => false,
   changeRequestUrlHost: (url) => url.hostname,

@@ -5,7 +5,6 @@ import { PanelRightIcon, PictureInPicture2, XIcon } from "lucide-react";
 import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
-  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -72,7 +71,6 @@ interface PointerGesture {
   moved: boolean;
 }
 
-// A touch that travels less than this is a tap on the handle, not a drag.
 const HANDLE_TAP_SLOP_PX = 6;
 
 interface Props {
@@ -82,7 +80,6 @@ interface Props {
 
 const frameCornerRadius = () => PREVIEW_MINI_PLAYER_CORNER_RADIUS;
 
-// Invisible grab zones straddling each edge; the cursor is the only affordance.
 const RESIZE_HANDLES: ReadonlyArray<{
   readonly direction: BrowserViewportResizeDirection;
   readonly className: string;
@@ -97,7 +94,6 @@ const RESIZE_HANDLES: ReadonlyArray<{
   { direction: "southeast", className: "-bottom-2 -right-2 size-4 cursor-nwse-resize" },
 ];
 
-/** Floats the thread's browser tab or device stream over chat. */
 export function ThreadPreviewMiniPlayer({ threadRef, miniPlayer }: Props) {
   const { source } = miniPlayer;
   return source.kind === "browser" ? (
@@ -267,10 +263,8 @@ function DeviceMiniPlayer({
   );
   const hostLabel =
     deviceState.hosts.find((host) => host.id === source.hostId)?.label ?? "Device host";
-  const cornerRadius = useCallback(
-    (player: PreviewMiniPlayerSize) => resolveDeviceMiniPlayerCornerRadius(source.platform, player),
-    [source.platform],
-  );
+  const cornerRadius = (player: PreviewMiniPlayerSize) =>
+    resolveDeviceMiniPlayerCornerRadius(source.platform, player);
 
   const openInPanel = () => {
     usePreviewMiniPlayerStore.getState().close(threadRef);
@@ -292,7 +286,6 @@ function DeviceMiniPlayer({
       cornerRadius={cornerRadius}
     >
       {() => (
-        // The stream is DOM, so it takes the band the browser's native webview would.
         <div
           className="pointer-events-auto absolute inset-0 overflow-hidden rounded-[inherit]"
           style={{ zIndex: PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX }}
@@ -314,9 +307,8 @@ function DeviceMiniPlayer({
 }
 
 /**
- * The frame, drag/resize gestures, and hover pill shared by every floating
- * source. Native clipping and the DOM frame use the same radius so their
- * separately composited edges stay aligned.
+ * Native clipping and the DOM frame use the same radius so their separately
+ * composited edges stay aligned.
  */
 function MiniPlayerShell({
   threadRef,
@@ -336,7 +328,6 @@ function MiniPlayerShell({
   readonly onOpenInPanel: () => void;
   readonly pillActions?: ReactNode;
   readonly recording?: boolean;
-  /** The clip radius for a given frame; the pill stays inside the curve. */
   readonly cornerRadius?: (frame: PreviewMiniPlayerSize) => number;
   readonly children: (frame: PreviewMiniPlayerFrame) => ReactNode;
 }) {
@@ -347,7 +338,6 @@ function MiniPlayerShell({
   const [pillOpen, setPillOpen] = useState(false);
   const handleTappedRef = useRef(false);
   const handleRef = useRef<HTMLDivElement | null>(null);
-  // The pill covers the handle, so a tap anywhere else dismisses it.
   useEffect(() => {
     if (!pillOpen) return;
     const dismiss = (event: PointerEvent) => {
@@ -384,7 +374,6 @@ function MiniPlayerShell({
   useLayoutEffect(() => () => clearPreview?.(sourceKey), [clearPreview, sourceKey]);
 
   const radius = frame ? cornerRadius(frame) : PREVIEW_MINI_PLAYER_CORNER_RADIUS;
-  // Inside a wide curve the default 8px inset would land on the clipped-away corner.
   const pillInset = Math.max(8, Math.round(radius * 0.55));
 
   const close = () => {

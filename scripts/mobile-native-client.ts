@@ -284,6 +284,45 @@ export const installedBinary = Effect.fn("installedBinary")(function* (
   return yield* digest(hashes.sort().join("\n"));
 });
 
+/**
+ * Run `expo prebuild --clean` without losing `android/.gradle` (task history) and
+ * `android/app/.cxx` (native compile outputs). Both invalidate by input, so a clean
+ * rebuild only redoes changed work. `app/build` stays out: its autolinking and JS
+ * bundle tasks do not declare every input. Each step is best-effort, because a lost
+ * cache costs one slower build and must never cost the build.
+ */
+export const prebuildAndroid = Effect.fn("nativeClient.prebuildAndroid")(function* <E, R>(
+  mobile: string,
+  prebuild: Effect.Effect<void, E, R>,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const android = path.join(mobile, "android");
+  // A sibling of android/ keeps the renames on one filesystem. It is gitignored, and a
+  // run killed mid-prebuild leaves it for the next run to clear.
+  const saved = path.join(mobile, ".android-cache");
+  const caches = [".gradle", "app/.cxx"];
+  const clear = fs.remove(saved, { recursive: true, force: true }).pipe(Effect.ignore);
+  const move = (from: string, to: string) =>
+    Effect.forEach(
+      caches,
+      (cache) =>
+        Effect.gen(function* () {
+          const source = path.join(from, cache);
+          const target = path.join(to, cache);
+          if (!(yield* fs.exists(source)) || (yield* fs.exists(target))) return;
+          yield* fs.makeDirectory(path.dirname(target), { recursive: true });
+          yield* fs.rename(source, target);
+        }).pipe(Effect.ignore),
+      { discard: true },
+    );
+  yield* Effect.acquireUseRelease(
+    clear.pipe(Effect.andThen(move(android, saved))),
+    () => prebuild,
+    () => move(saved, android).pipe(Effect.andThen(clear)),
+  );
+});
+
 const main = Command.make(
   "mobile-native-client",
   {
@@ -333,16 +372,16 @@ const main = Command.make(
             message:
               "Native directory contains tracked files; clean prebuild would overwrite them.",
           });
-        yield* command(
+        const prebuild = command(
           "vp",
           ["exec", "expo", "prebuild", "--clean", "--platform", platform, "--no-install"],
           true,
-        );
+        ).pipe(Effect.asVoid);
+        yield* platform === "android" ? prebuildAndroid((yield* roots).mobile, prebuild) : prebuild;
         if (platform === "ios") {
           const output = yield* fs.makeTempDirectoryScoped({ prefix: "t3-native-client-" });
           const { mobile } = yield* roots;
           yield* command("pod", ["install"], true, path.join(mobile, "ios"));
-          // Target this simulator only, without Expo's desktop activation or log streaming.
           yield* command(
             "xcrun",
             [

@@ -1,14 +1,13 @@
 import { Pressable, View } from "react-native";
 import Animated, { FadeIn, ReduceMotion } from "react-native-reanimated";
-import { AppText as Text } from "../../../components/AppText";
-import { SymbolView } from "../../../components/AppSymbol";
+import { AppText as Text } from "../../../components/ui/AppText";
+import { SymbolView } from "../../../components/ui/AppSymbol";
 import { PR_ROW_EXIT, PR_ROW_LAYOUT } from "../pullRequestAnimations";
 import { guideNoticeState } from "./reviewGuideState";
 import type { useReviewGuide } from "./useReviewGuide";
 
 const NOTICE_ENTER = FadeIn.delay(180).duration(120).reduceMotion(ReduceMotion.System);
 
-/** Keep the action in one place as loading, writing, and retry states change. */
 export function GuideNotice({ state }: { readonly state: ReturnType<typeof useReviewGuide> }) {
   const notice = guideNoticeState(state);
   if (notice.kind === "ready") return null;
