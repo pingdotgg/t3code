@@ -160,12 +160,16 @@ function codexAccountEmail(account: CodexSchema.V2GetAccountResponse["account"])
   return account.email;
 }
 
+export function codexDefaultReasoningEffortOverride(model: string): "medium" | undefined {
+  return codexModelFamily(model) === "gpt-6-astra" ? "medium" : undefined;
+}
+
 export function mapCodexModelCapabilities(
   model: CodexSchema.V2ModelListResponse__Model,
 ): ModelCapabilities {
   const reasoningOptions = model.supportedReasoningEfforts.map(({ reasoningEffort }) =>
     reasoningEffort ===
-    (codexModelFamily(model.model) === "gpt-6-astra" ? "medium" : model.defaultReasoningEffort)
+    (codexDefaultReasoningEffortOverride(model.model) ?? model.defaultReasoningEffort)
       ? {
           id: reasoningEffort,
           label: reasoningEffortLabel(reasoningEffort),
