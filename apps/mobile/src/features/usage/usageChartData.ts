@@ -7,7 +7,6 @@ export type UsageChartMetric = "cost" | "tokens";
 
 export interface UsageChartDay {
   readonly day: string;
-  /** In {@link PROVIDER_ORDER}, i.e. bottom of the stack first. */
   readonly values: readonly {
     readonly provider: UsageProviderKind;
     readonly thinking: boolean;

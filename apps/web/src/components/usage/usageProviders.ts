@@ -49,12 +49,10 @@ export const PROVIDER_PRESENTATION = {
   },
 } satisfies Record<UsageProviderKind, UsageProviderPresentation>;
 
-/** A softer shade that stays distinct even for the theme-aware neutral providers. */
 export function providerThinkingColor(provider: UsageProviderKind): string {
   return `color-mix(in oklab, ${PROVIDER_PRESENTATION[provider].color} 55%, var(--background))`;
 }
 
-/** Stable provider reading order across charts, summaries, tables, and hover rows. */
 export const PROVIDER_ORDER = Object.keys(PROVIDER_PRESENTATION) as UsageProviderKind[];
 
 export function providersWithUsage(

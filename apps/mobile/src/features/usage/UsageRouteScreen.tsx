@@ -967,6 +967,12 @@ function ModelsSection(props: {
                   ? "Unpriced"
                   : formatUsd(model.costUsd)}
             </Text>
+            {metric === "tokens" && model.tokens.reasoningTokens > 0 ? (
+              <Text className="text-xs text-foreground-muted">
+                {formatTokens(model.tokens.outputTokens - model.tokens.reasoningTokens)} output ·{" "}
+                {formatTokens(model.tokens.reasoningTokens)} thinking
+              </Text>
+            ) : null}
           </View>
         ))}
       </View>

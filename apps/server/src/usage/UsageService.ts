@@ -47,6 +47,7 @@ import {
   readTranscriptRecords,
 } from "./usageTranscriptReader.ts";
 import {
+  cachedFileRecords,
   decodeScanCache,
   dedupeWithinFile,
   LEGACY_SCAN_CACHE_FILE_NAMES,
@@ -388,20 +389,42 @@ export const make = Effect.gen(function* () {
           Effect.flatMap((raw) => decodeScanCacheFile(raw)),
           Effect.catchCause(() => Effect.succeed(null)),
         );
-      let document = yield* readDocument(scanCachePath);
-      for (const legacyScanCachePath of legacyScanCachePaths) {
-        if (document !== null) break;
-        document = yield* readDocument(legacyScanCachePath);
-        cacheDirty = document !== null;
-      }
-      if (document === null) return;
-      for (const [path, entry] of decodeScanCache(document, transcriptFormats)) {
-        fileCache.set(path, entry);
-      }
-      const sources = decodeCachedSources(document);
-      if (Option.isSome(sources)) {
-        for (const [key, source] of Object.entries(sources.value.sources))
-          sourceCache.set(key, source);
+      // Current format wins ties, but every supported cache can hold deleted history.
+      for (const filePath of [scanCachePath, ...legacyScanCachePaths]) {
+        const document = yield* readDocument(filePath);
+        if (document === null) continue;
+        for (const [path, entry] of decodeScanCache(document, transcriptFormats)) {
+          const previous = fileCache.get(path);
+          let selected =
+            previous === undefined || entry.mtimeMs > previous.mtimeMs ? entry : previous;
+          if (previous?.provider === "claude" && entry.provider === "claude") {
+            const older = selected === entry ? previous : entry;
+            const snapshots = new Map(
+              dedupeWithinFile([...selected.records, ...older.records])
+                .filter((record) => record.dedupeKey !== null)
+                .map((record) => [record.dedupeKey, record]),
+            );
+            const records = selected.records.map((record) =>
+              record.dedupeKey === null ? record : (snapshots.get(record.dedupeKey) ?? record),
+            );
+            if (records.some((record, index) => record !== selected.records[index])) {
+              selected = { ...selected, records };
+            }
+          }
+          if (selected !== previous) {
+            fileCache.set(path, selected);
+            if (filePath !== scanCachePath) cacheDirty = true;
+          }
+        }
+        const sources = decodeCachedSources(document);
+        if (Option.isSome(sources)) {
+          for (const [key, source] of Object.entries(sources.value.sources)) {
+            if (!sourceCache.has(key)) {
+              sourceCache.set(key, source);
+              if (filePath !== scanCachePath) cacheDirty = true;
+            }
+          }
+        }
       }
     }),
   );

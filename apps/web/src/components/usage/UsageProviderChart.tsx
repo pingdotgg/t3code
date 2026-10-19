@@ -201,7 +201,6 @@ function buildChart(
   const columns = buildPeriodColumns(periods, byPeriod, metric);
   const scale = chartScale(columns, loadingProviders);
   const stepX = periods.length < 2 ? 0 : VIEW_WIDTH / (periods.length - 1);
-  // Each provider's total, plus a dashed series for its recorded thinking.
   const paths = providers.flatMap((provider) => {
     const slot = PROVIDER_ORDER.indexOf(provider);
     return (["value", "thinking"] as const).flatMap((series) => {

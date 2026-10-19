@@ -3108,6 +3108,22 @@ describe("UsageService", () => {
         yield* Effect.gen(function* () {
           check(yield* (yield* UsageService.make).readSummary(WINDOW));
         }).pipe(Effect.scoped);
+        // Newer legacy metadata must not erase a fuller snapshot already saved in v6.
+        yield* Effect.promise(async () => {
+          const current = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
+            files: Record<string, { m: number }>;
+          };
+          const v5 = decodeUnknownJsonString(legacy.v5) as {
+            files: Record<string, { m: number }>;
+          };
+          v5.files[transcript]!.m = current.files[transcript]!.m + 1000;
+          legacy.v5 = encodeUnknownJsonString(v5);
+          await NodeFSP.writeFile(v5Path, legacy.v5);
+          await NodeFSP.rm(transcript);
+        });
+        yield* Effect.gen(function* () {
+          check(yield* (yield* UsageService.make).readSummary(WINDOW));
+        }).pipe(Effect.scoped);
         assert.strictEqual(
           yield* Effect.promise(() => NodeFSP.readFile(legacyPath, "utf8")),
           legacy.v4,

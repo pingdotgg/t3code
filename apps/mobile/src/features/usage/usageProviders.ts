@@ -1,6 +1,6 @@
 import type { UsageProviderKind } from "@t3tools/contracts";
+import { useResolveClassNames } from "uniwind";
 import { flattenThemeColor, themeColorWithAlpha } from "../../lib/mobileTheme";
-import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 
 export const PROVIDER_ORDER: readonly UsageProviderKind[] = [
@@ -44,10 +44,10 @@ export function useProviderColors(): Record<UsageProviderKind, string> {
   };
 }
 
-/** Flatten the lighter thinking bands against the chart card for native charts. */
 export function useProviderThinkingColors(): Record<UsageProviderKind, string> {
   const colors = useProviderColors();
-  const surface = useUniwindTheme()["--color-grouped-card"];
+  const { backgroundColor: surface } = useResolveClassNames("bg-grouped-card");
+  if (typeof surface !== "string") return colors;
   const thinking = { ...colors };
   for (const provider of PROVIDER_ORDER) {
     thinking[provider] = flattenThemeColor(themeColorWithAlpha(colors[provider], 0.45), surface);
@@ -55,11 +55,6 @@ export function useProviderThinkingColors(): Record<UsageProviderKind, string> {
   return thinking;
 }
 
-/**
- * Neutral steps for cost and token mixes, so they never borrow a provider's
- * color. Matches the web steps: oklab mixes of the codex ink into the
- * background, above the 15 ΔE separation floor for adjacent segments.
- */
 export function useUsageMixColors() {
   const { themeAppearance: scheme } = useAppearancePreferences();
   const dark = scheme === "dark";
