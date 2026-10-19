@@ -818,3 +818,114 @@ it.effect("keeps a held commentary draft before the steer when turn end flushes 
     }),
   ),
 );
+
+it.effect("keeps a queued message queued when promoted into a run that Stop reached", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { started, steered, layer, startFirstTurn } =
+        yield* nextTurnSelectionHarness("steering-after-stop");
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = yield* startFirstTurn;
+        const first = started[0]!;
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("queued"),
+          threadId,
+          messageId: MessageId.make("message:queued"),
+          text: "queued",
+          attachments: [],
+          modelSelection: runSelection,
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const queuedRun = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.status === "queued",
+        )!;
+        // The worker has not delivered the interrupt yet, so the run still reads as running.
+        yield* orchestrator.dispatch({
+          type: "run.interrupt",
+          commandId: CommandId.make("stop"),
+          threadId,
+          runId: first.runId,
+          holdQueue: true,
+        });
+
+        const promoteError = yield* orchestrator
+          .dispatch({
+            type: "queued-message.promote-to-steer",
+            commandId: CommandId.make("promote"),
+            threadId,
+            queuedRunId: queuedRun.id,
+            targetRunId: first.runId,
+          })
+          .pipe(Effect.flip);
+        yield* worker.drain();
+
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(promoteError._tag, "OrchestratorDispatchError");
+        assert.deepEqual(steered, []);
+        const queued = projection.runs.find((run) => run.id === queuedRun.id);
+        assert.equal(queued?.status, "queued");
+        assert.isTrue(queued?.queueHeld);
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
+it.effect("queues a plain send behind the stopped queue and releases its hold", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { started, steered, layer, startFirstTurn } =
+        yield* nextTurnSelectionHarness("plain-send-after-stop");
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = yield* startFirstTurn;
+        const send = (id: string, delivery: "queue" | "auto") =>
+          orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(id),
+            threadId,
+            messageId: MessageId.make(`message:${id}`),
+            text: id,
+            attachments: [],
+            modelSelection: runSelection,
+            ...(delivery === "queue"
+              ? { dispatchMode: { type: "queue_after_active" } }
+              : { dispatchMode: { type: "start_immediately" }, deliveryIntent: "auto" }),
+            createdBy: "user",
+            creationSource: "web",
+          });
+        yield* send("queued", "queue");
+        yield* orchestrator.dispatch({
+          type: "run.interrupt",
+          commandId: CommandId.make("stop"),
+          threadId,
+          runId: started[0]!.runId,
+          holdQueue: true,
+        });
+        // The provider has not stopped yet, so a plain send still resolves to a steer.
+        yield* send("sent", "auto");
+        yield* worker.drain();
+
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(steered, []);
+        assert.equal(started.length, 1);
+        const queued = projection.runs
+          .filter((run) => run.status === "queued")
+          .sort((left, right) => (left.queuePosition ?? 0) - (right.queuePosition ?? 0));
+        assert.deepEqual(
+          queued.map(
+            (run) => projection.messages.find((message) => message.id === run.userMessageId)?.text,
+          ),
+          ["queued", "sent"],
+        );
+        // The user sent it, so the queue they stopped runs again once the provider stops.
+        assert.isFalse(queued.some((run) => run.queueHeld === true));
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
