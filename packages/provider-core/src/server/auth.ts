@@ -21,6 +21,7 @@ export interface ProviderAuthController {
   readonly adoptCredentials?: (
     update: Effect.Effect<void, ProviderSetupError>,
     stopSessions: Effect.Effect<void, ProviderSetupError>,
+    prepare?: Effect.Effect<void, ProviderSetupError>,
   ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
   readonly isChangingCredentials?: Effect.Effect<boolean>;
   readonly invalidate?: Effect.Effect<void>;

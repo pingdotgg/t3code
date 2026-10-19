@@ -14,7 +14,10 @@ if (
   })
 ) {
   const command = process.argv[2];
-  if (command === "acp-mcp-bridge" || command === "acp-mcp-call") {
+  if (command === "__managed-chatgpt-token") {
+    const { runCodexManagedTokenCommand } = await import("./provider/codexManagedTokenCommand.ts");
+    await runCodexManagedTokenCommand(process.argv.slice(3));
+  } else if (command === "acp-mcp-bridge" || command === "acp-mcp-call") {
     const { runAcpMcpCliFastPath } = await import("./mcp/AcpMcpStdioBridge.ts");
     await runAcpMcpCliFastPath(command, process.argv.slice(3));
   } else {

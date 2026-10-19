@@ -229,7 +229,7 @@ it.layer(layerTest)("CodexDriver", (it) => {
         expect(restored.auth.email).toBe("account@example.test");
         expect(restored.runtimePaths?.homePath).toBe(sharedHome);
         expect(restored.runtimePaths?.shadowHomePath).toContain(
-          `providers/codex/${instanceId}/shadow`,
+          NodePath.join("providers", "codex", instanceId, "shadow"),
         );
         // The fixture app-server cannot start, so the workspace scan fails
         // instead of passing the machine snapshot off as the workspace's skills.
@@ -262,7 +262,10 @@ it.layer(layerTest)("CodexDriver", (it) => {
         const launch = launches[0]!;
         expect(launch.settings.binaryPath).toBe(executable.executablePath);
         expect(launch.settings.launchArgs).toContain("openai_token_sharing");
-        expect(launch.environment.ACCESS_TOKEN).toBe("dummy-owned-access");
+        expect(launch.settings.launchArgs).toContain("__managed-chatgpt-token");
+        expect(launch.environment.ACCESS_TOKEN).toBeUndefined();
+        expect(launch.environment.T3CODE_MANAGED_CODEX_AUTH_URL).toBeUndefined();
+        expect(launch.environment.T3CODE_MANAGED_CODEX_AUTH_SECRET).toBeUndefined();
         expect(launch.environment.OPENAI_API_KEY).toBeUndefined();
         expect(launch.environment.CODEX_HOME).toBe(launch.settings.homePath);
         const before = yield* instance.auth!.subscribe("test-owner").pipe(Stream.runHead);

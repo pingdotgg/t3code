@@ -140,7 +140,7 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
 
   const controller: ProviderAuth.ProviderAuthController = {
     credentialBinding: options.credentialBinding,
-    adoptCredentials: (update, stopSessions) =>
+    adoptCredentials: (update, stopSessions, prepare = Effect.void) =>
       Effect.gen(function* () {
         yield* lock.withPermit(
           Effect.gen(function* () {
@@ -154,6 +154,7 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
           }),
         );
         const result = yield* Effect.gen(function* () {
+          yield* prepare;
           yield* stopOwnedSessions;
           yield* stopSessions;
           yield* update;

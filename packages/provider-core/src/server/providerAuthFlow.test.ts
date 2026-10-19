@@ -557,3 +557,53 @@ it.effect("profile import stops owned sessions and gates access until credential
     );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+it.effect("profile import claims credential changes before pre-stop validation", () =>
+  Effect.gen(function* () {
+    const validationStarted = yield* Deferred.make<void>();
+    const releaseValidation = yield* Deferred.make<void>();
+    let stopped = false;
+    let loggedOut = false;
+    const controller = yield* ProviderAuthFlow.make({
+      instanceId,
+      credentialBinding: { owner: "t3", key: "handoff-validation" },
+      methods: Effect.succeed([method]),
+      authenticate: () => Effect.void,
+      logout: Effect.sync(() => {
+        loggedOut = true;
+      }),
+    });
+    const imported = yield* controller.adoptCredentials!(
+      Effect.void,
+      Effect.sync(() => {
+        stopped = true;
+      }),
+      Deferred.succeed(validationStarted, undefined).pipe(
+        Effect.andThen(Deferred.await(releaseValidation)),
+        Effect.andThen(
+          Effect.fail(
+            new ProviderSetupError({
+              instanceId,
+              operation: "import",
+              detail: "invalid transferred credentials",
+            }),
+          ),
+        ),
+      ),
+    ).pipe(Effect.result, Effect.forkChild);
+
+    yield* Deferred.await(validationStarted);
+    assert.isTrue(yield* controller.isChangingCredentials!);
+    const concurrentLogout = yield* controller.logout(Effect.void).pipe(Effect.result);
+    assert.strictEqual(concurrentLogout._tag, "Failure");
+    assert.isFalse(loggedOut);
+    assert.isFalse(stopped);
+
+    yield* Deferred.succeed(releaseValidation, undefined);
+    assert.strictEqual((yield* Fiber.join(imported))._tag, "Failure");
+    assert.isFalse(stopped);
+
+    yield* controller.logout(Effect.void);
+    assert.isTrue(loggedOut);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

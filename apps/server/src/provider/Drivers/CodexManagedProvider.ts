@@ -1,4 +1,9 @@
-import { ProviderDriverKind, TextGenerationError, type CodexSettings } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  ProviderSetupError,
+  TextGenerationError,
+  type CodexSettings,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -9,6 +14,7 @@ import { makeCodexTextGeneration } from "../../textGeneration/CodexTextGeneratio
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { chatGptModels } from "../CodexChatGptModels.ts";
 import { makeCodexManagedRuntime } from "../CodexManagedRuntime.ts";
+import { codexChatGptProfileKey } from "../CodexChatGptAuth.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { createCodexAdapterV2 } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import {
@@ -119,7 +125,10 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
       label: "ChatGPT",
       ...(saved.value.email?.trim() ? { email: saved.value.email.trim() } : {}),
     };
-    return yield* runtime.auth.controller.withAccess!(runtime.resolve).pipe(
+    const savedProfileKey = codexChatGptProfileKey(saved.value);
+    return yield* runtime.auth.controller.withAccess!(
+      runtime.resolveForProfile(savedProfileKey),
+    ).pipe(
       Effect.flatMap((effective) =>
         Effect.gen(function* () {
           const draft = yield* checkCodexProviderStatus(
@@ -128,10 +137,29 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
             effective.environment,
             managedAuth,
           );
-          const models = yield* chatGptModels(
-            effective.environment.ACCESS_TOKEN!,
-            draft.models,
-          ).pipe(Effect.provideService(HttpClient.HttpClient, http));
+          const credentials = yield* runtime.auth.accessForProfile(effective.revision);
+          if (
+            codexChatGptProfileKey(credentials) !== effective.revision ||
+            savedProfileKey !== effective.revision
+          )
+            return yield* new ProviderSetupError({
+              instanceId,
+              operation: "models",
+              detail: "The ChatGPT connection changed while checking Codex. Retry.",
+            });
+          const models = yield* chatGptModels(credentials.accessToken, draft.models).pipe(
+            Effect.provideService(HttpClient.HttpClient, http),
+          );
+          const current = yield* runtime.auth.read;
+          if (
+            Option.isNone(current) ||
+            codexChatGptProfileKey(current.value) !== effective.revision
+          )
+            return yield* new ProviderSetupError({
+              instanceId,
+              operation: "models",
+              detail: "The ChatGPT connection changed while checking Codex. Retry.",
+            });
           return { ...draft, models };
         }),
       ),

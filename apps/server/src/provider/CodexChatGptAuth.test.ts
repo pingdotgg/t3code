@@ -1753,6 +1753,25 @@ it.effect("primary completes OAuth and destination imports and owns the refresh 
   ),
 );
 
+it.effect("profile import stops credential users before taking the auth access lock", () =>
+  provision(
+    Effect.gen(function* () {
+      const h = yield* makeHarness;
+      yield* h.signIn;
+      yield* h.phase("succeeded");
+      const profile = yield* h.auth.exportProfile;
+      const destination = yield* h.destination;
+      yield* destination.auth.controller.importProfile!(profile, Effect.void);
+
+      const imported = yield* destination.auth.controller.importProfile!(
+        profile,
+        destination.auth.access.pipe(Effect.asVoid),
+      );
+      assert.strictEqual(imported.phase, "succeeded");
+    }),
+  ),
+);
+
 it.effect("transferred profiles reject mismatched identities without overwriting credentials", () =>
   provision(
     Effect.gen(function* () {
@@ -1770,11 +1789,15 @@ it.effect("transferred profiles reject mismatched identities without overwriting
         { ...profile.credentials, scopes: ["openid"] },
         { ...profile.credentials, expiresAt: 0 },
       ]) {
+        let stopped = false;
         const result = yield* destination.auth.controller.importProfile!(
           { ...profile, credentials },
-          Effect.void,
+          Effect.sync(() => {
+            stopped = true;
+          }),
         ).pipe(Effect.result);
         assert.strictEqual(result._tag, "Failure");
+        assert.isFalse(stopped);
         assert.deepEqual(Option.getOrThrow(yield* destination.auth.read), original);
       }
     }),
