@@ -88,7 +88,11 @@ import {
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import { OPENCODE_PROVIDER, openCodePermissionRequestKind } from "../adapter.ts";
-import { openCodeCommandFailed, openCodeToolTurnItem } from "../toolItems.ts";
+import {
+  openCodeCommandFailed,
+  openCodeToolTurnItem,
+  type OpenCodeToolContentBlock,
+} from "../toolItems.ts";
 
 const OpenCode2ProviderCapabilities = {
   sessions: {
@@ -507,15 +511,24 @@ const BASE64_DATA_URI = /^data:[^,]*;base64,(.+)$/s;
 /**
  * An image tool such as `image_generation` answers with a file block, not text.
  * Only raster images inlined as base64 are kept; anything else can't be served.
+ * Blocks keep the provider's order so text and images stay interleaved.
  */
-const imagesOf = (
-  content: ReadonlyArray<{ readonly type: string; readonly uri?: string; readonly mime?: string }>,
+const toolContentOf = (
+  content: ReadonlyArray<{
+    readonly type: string;
+    readonly text?: string;
+    readonly uri?: string;
+    readonly mime?: string;
+  }>,
 ) =>
-  content.flatMap((part) => {
+  content.flatMap((part): ReadonlyArray<OpenCodeToolContentBlock> => {
+    if (part.type === "text") return part.text ? [{ type: "text", text: part.text }] : [];
     const data = part.type === "file" ? BASE64_DATA_URI.exec(part.uri ?? "")?.[1] : undefined;
     const image =
       data === undefined ? null : readToolOutputImage({ type: "image", mimeType: part.mime, data });
-    return image?.data === undefined ? [] : [{ mimeType: image.mimeType, data: image.data }];
+    return image?.data === undefined
+      ? []
+      : [{ type: "image", mimeType: image.mimeType, data: image.data }];
   });
 
 const stringField = (record: Readonly<Record<string, unknown>> | undefined, key: string) => {
@@ -1015,7 +1028,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       status: "running" | "completed" | "failed" | "interrupted",
       result?: {
         readonly output: string | undefined;
-        readonly images?: ReadonlyArray<{ readonly mimeType: string; readonly data: string }>;
+        readonly content?: ReadonlyArray<OpenCodeToolContentBlock>;
         readonly metadata: unknown;
       },
     ) {
@@ -1039,7 +1052,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             name: tool.name,
             input: tool.input,
             output: result?.output,
-            ...(result?.images === undefined ? {} : { images: result.images }),
+            ...(result?.content === undefined ? {} : { content: result.content }),
             completedMetadata: status === "completed" ? result?.metadata : undefined,
           },
         ),
@@ -2118,7 +2131,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           }
           yield* emitTool(state, turn, event.data.id, "completed", {
             output: textOf(event.data.content),
-            images: imagesOf(event.data.content),
+            content: toolContentOf(event.data.content),
             metadata: event.data.metadata,
           });
           turn.tools.delete(event.data.id);
@@ -2577,7 +2590,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           if (part.state.status === "completed") {
             yield* emitTool(state, turn, part.id, "completed", {
               output: textOf(part.state.content),
-              images: imagesOf(part.state.content),
+              content: toolContentOf(part.state.content),
               metadata: part.state.metadata,
             });
             turn.tools.delete(part.id);

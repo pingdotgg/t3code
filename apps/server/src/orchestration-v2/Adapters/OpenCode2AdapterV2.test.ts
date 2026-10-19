@@ -2551,6 +2551,21 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
   );
 
   it.effect.each(toolResultSources)(
+    "keeps the order of interleaved text and images in a tool result, read from $source",
+    ({ toolOutputs }) =>
+      Effect.gen(function* () {
+        const JPEG = btoa("jpeg");
+        const second = { type: "file", uri: `data:image/jpeg;base64,${JPEG}`, mime: "image/jpeg" };
+        const secondBlock = { type: "image", mimeType: "image/jpeg", data: JPEG };
+        const closing = { type: "text", text: "And a dog." };
+        const unsupported = { type: "file", uri: "file:///work/cat.png", mime: "image/png" };
+        assert.deepEqual(yield* toolOutputs([generated, caption, unsupported, second, closing]), [
+          { content: [generatedBlock, caption, secondBlock, closing] },
+        ]);
+      }),
+  );
+
+  it.effect.each(toolResultSources)(
     "keeps a text-only tool result as text, read from $source",
     ({ toolOutputs }) =>
       Effect.gen(function* () {
