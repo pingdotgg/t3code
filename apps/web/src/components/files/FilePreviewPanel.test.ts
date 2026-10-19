@@ -211,6 +211,18 @@ describe("workspaceAssetResource", () => {
     });
   });
 
+  it("serves a file outside the workspace as host media, which workspace access rejects", () => {
+    expect(
+      workspaceAssetResource({ ...input, absolutePath: "/tmp/image.png", draft: false }),
+    ).toEqual({ _tag: "media-file", threadId: "thread-1", path: "/tmp/image.png" });
+  });
+
+  it("keeps a draft's file outside the workspace on the draft resource", () => {
+    expect(
+      workspaceAssetResource({ ...input, absolutePath: "/tmp/image.png", draft: true }),
+    ).toEqual({ _tag: "draft-workspace-file", cwd: "/repo", path: "/tmp/image.png" });
+  });
+
   it("names the workspace root for a draft, which the server cannot resolve from a thread", () => {
     expect(workspaceAssetResource({ ...input, draft: true })).toEqual({
       _tag: "draft-workspace-file",
