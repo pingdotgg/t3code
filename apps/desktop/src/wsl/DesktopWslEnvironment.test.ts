@@ -2,22 +2,30 @@
 import { describe, it } from "@effect/vitest";
 import { afterAll, expect } from "vite-plus/test";
 import * as NodeChildProcess from "node:child_process";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
 
+import * as DesktopConfig from "../app/DesktopConfig.ts";
+import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import {
   buildWslRuntimeInstallScript,
   buildWslRuntimeInvalidateScript,
   buildWslRuntimePruneScript,
   buildWslRuntimeProbeScript,
   DesktopWslDistroListError,
+  DesktopWslEnvironment,
   formatMissingToolsReason,
+  layer as wslEnvironmentLayer,
   parseNodePath,
   parseNodeVersion,
   parseResolvedPath,
@@ -156,6 +164,102 @@ describe("probeWslDistros", () => {
       expect(error.message).toContain("timed out");
     }).pipe(Effect.provide(layer));
   });
+});
+
+describe("WSL command deadlines", () => {
+  const makeControlledEnvironment = Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const exited = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+    const released = yield* Deferred.make<void>();
+    const spawner = ChildProcessSpawner.make(() =>
+      Effect.acquireRelease(
+        Deferred.succeed(started, undefined).pipe(
+          Effect.as(
+            ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(1),
+              exitCode: Deferred.await(exited),
+              isRunning: Deferred.isDone(exited).pipe(Effect.map((done) => !done)),
+              kill: () => Effect.void,
+              unref: Effect.succeed(Effect.void),
+              stdin: Sink.drain,
+              stdout: Stream.empty,
+              stderr: Stream.empty,
+              all: Stream.empty,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            }),
+          ),
+        ),
+        () => Deferred.succeed(released, undefined),
+      ),
+    );
+    const environment = yield* DesktopWslEnvironment.pipe(
+      Effect.provide(
+        wslEnvironmentLayer.pipe(
+          Layer.provide([
+            DesktopEnvironment.layer({
+              dirname: "/repo/apps/desktop",
+              homeDirectory: "/home/test",
+              platform: "win32",
+              processArch: "x64",
+              appVersion: "1.2.3",
+              appPath: "/repo",
+              isPackaged: true,
+              resourcesPath: "/repo/resources",
+              runningUnderArm64Translation: false,
+            }).pipe(Layer.provide([Path.layer, DesktopConfig.layerTest({})])),
+            FileSystem.layerNoop({ exists: () => Effect.succeed(true) }),
+            Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          ]),
+        ),
+      ),
+    );
+    return { environment, started, exited, released };
+  });
+
+  it.effect("waits for a cold distro to finish starting after 15 seconds", () =>
+    Effect.gen(function* () {
+      const { environment, started, exited, released } = yield* makeControlledEnvironment;
+      const fiber = yield* environment.preWarm("Ubuntu").pipe(Effect.forkScoped);
+      yield* Deferred.await(started);
+      yield* TestClock.adjust(Duration.seconds(15));
+      expect(yield* Deferred.isDone(released)).toBe(false);
+
+      yield* Deferred.succeed(exited, ChildProcessSpawner.ExitCode(0));
+      yield* Fiber.join(fiber);
+      expect(yield* Deferred.isDone(released)).toBe(true);
+    }),
+  );
+
+  it.effect("releases a stalled warmup process at the 30-second deadline", () =>
+    Effect.gen(function* () {
+      const { environment, started, released } = yield* makeControlledEnvironment;
+      const fiber = yield* environment.preWarm("Ubuntu").pipe(Effect.forkScoped);
+      yield* Deferred.await(started);
+      yield* TestClock.adjust(Duration.seconds(29));
+      expect(yield* Deferred.isDone(released)).toBe(false);
+
+      yield* TestClock.adjust(Duration.seconds(1));
+      yield* Fiber.join(fiber);
+      expect(yield* Deferred.isDone(released)).toBe(true);
+    }),
+  );
+
+  it.effect("still gives path conversion only 10 seconds and releases its process", () =>
+    Effect.gen(function* () {
+      const { environment, started, released } = yield* makeControlledEnvironment;
+      const fiber = yield* environment
+        .windowsToWslPath("Ubuntu", "C:\\project")
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(started);
+      yield* TestClock.adjust(Duration.seconds(9));
+      expect(yield* Deferred.isDone(released)).toBe(false);
+
+      yield* TestClock.adjust(Duration.seconds(1));
+      expect(yield* Fiber.join(fiber)).toEqual(Option.none());
+      expect(yield* Deferred.isDone(released)).toBe(true);
+    }),
+  );
 });
 
 describe("WSL runtime cache", () => {
