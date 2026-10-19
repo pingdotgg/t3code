@@ -15,6 +15,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
+import { ListRow } from "../../components/ui/ListRow";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import {
@@ -40,32 +41,13 @@ function LicenseRow(props: {
   readonly onPress: () => void;
 }) {
   return (
-    <Pressable
-      accessibilityHint="Opens the complete license notice"
-      accessibilityLabel={`${props.entry.name}, ${props.entry.license}`}
-      accessibilityRole="button"
-      onPress={props.onPress}
-      className="border-b border-border bg-grouped-card px-5 py-4 active:bg-card-alt"
-    >
-      <View className="flex-row items-start gap-3">
-        <View className="min-w-0 flex-1 gap-1">
-          <Text className="text-base font-t3-medium text-foreground" numberOfLines={2}>
-            {props.entry.name}
-          </Text>
-          <Text className="text-sm text-foreground-muted" numberOfLines={2}>
-            {props.entry.version ? `${props.entry.version} · ` : ""}
-            {props.entry.license}
-          </Text>
-        </View>
-        <SymbolView
-          name="chevron.right"
-          size={16}
-          tintColorClassName={"accent-chevron"}
-          type="monochrome"
-          weight="semibold"
-        />
-      </View>
-    </Pressable>
+    <View className="border-b border-border">
+      <ListRow
+        label={props.entry.name}
+        description={[props.entry.version, props.entry.license].filter(Boolean).join(" · ")}
+        onPress={props.onPress}
+      />
+    </View>
   );
 }
 
