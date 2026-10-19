@@ -471,6 +471,9 @@ function codexMcpToolOutput(
 // Reading an app's resource is one MCP round trip; a server that hangs must not
 // hold the item (and the run's ingestion) open.
 const MCP_APP_CAPTURE_TIMEOUT = "20 seconds";
+// Reading the in-memory thread list is cheap; even an error reply proves liveness.
+const CODEX_LIVENESS_PROBE_INTERVAL = "1 minute";
+const CODEX_LIVENESS_PROBE_TIMEOUT = "1 minute";
 
 function codexMcpAppResourceUri(item: CodexDynamicToolItem): string | undefined {
   if (item.type !== "mcpToolCall") return undefined;
@@ -1791,7 +1794,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           model: input.modelSelection.model,
           now,
         });
-        const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+        const events = yield* Queue.unbounded<
+          ProviderAdapter.ProviderAdapterV2Event,
+          ProviderAdapter.ProviderAdapterEventStreamError
+        >();
         const rateLimitSnapshot = yield* Ref.make<CodexRateLimitSnapshot | undefined>(undefined);
         const limitedTurnItems = yield* Ref.make(
           new Map<ProviderThreadId, Extract<OrchestrationV2TurnItem, { type: "error" }>>(),
@@ -6407,6 +6413,39 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               return { contents: response.contents };
             }).pipe(Effect.mapError(mcpAppsError("Codex MCP resource read failed."))),
         };
+
+        // Drain buffered events before failing every run sharing this process.
+        const unresponsive = Effect.gen(function* () {
+          while (true) {
+            yield* Effect.sleep(CODEX_LIVENESS_PROBE_INTERVAL);
+            const answered = yield* client
+              .request("thread/loaded/list", { limit: 1 })
+              .pipe(
+                Effect.catchTags({ CodexAppServerRequestError: () => Effect.void }),
+                Effect.timeoutOption(CODEX_LIVENESS_PROBE_TIMEOUT),
+              );
+            if (Option.isNone(answered)) {
+              return `Codex stopped responding: it did not answer a liveness check within ${CODEX_LIVENESS_PROBE_TIMEOUT}.`;
+            }
+          }
+        });
+        yield* Effect.raceFirst(
+          client.terminated,
+          // A probe that fails with a transport error is the termination above.
+          unresponsive.pipe(Effect.catch(() => Effect.never)),
+        ).pipe(
+          Effect.flatMap((cause) =>
+            Queue.fail(
+              events,
+              new ProviderAdapter.ProviderAdapterEventStreamError({
+                driver: CODEX_PROVIDER,
+                providerSessionId: input.providerSessionId,
+                cause,
+              }),
+            ),
+          ),
+          Effect.forkIn(scope),
+        );
 
         const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
           instanceId: adapterOptions.instanceId,

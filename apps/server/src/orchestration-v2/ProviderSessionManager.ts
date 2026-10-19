@@ -388,6 +388,10 @@ export const layerWithOptions = (
           }),
       );
       const sessions = yield* Ref.make(new Map<string, LiveSessionEntry>());
+      // The latest session opened under each id, kept until its release records it.
+      const latestOpened = yield* Ref.make(
+        new Map<string, ProviderAdapter.ProviderAdapterV2SessionRuntime>(),
+      );
       // One retry per released entry, so a later release with the same id
       // cannot drop cleanup for threads only the earlier session served.
       const releaseRecordRetries = yield* FiberSet.make();
@@ -836,39 +840,41 @@ export const layerWithOptions = (
         readonly detail?: string;
         readonly releasedBackgroundTasks: ReadonlyArray<ReleasedBackgroundTasks>;
         readonly releasedAt: DateTime.Utc;
-        readonly replaced: boolean;
       }) =>
-        Effect.all(
-          [
-            input.replaced
-              ? Effect.succeed(Exit.void)
-              : Effect.exit(writeReleasedSessionEvents(input)),
-            Effect.exit(
-              writeReleasedRuntimeRequestEvents(input).pipe(
-                input.entry.requestEventPermit.withPermits(1),
+        Effect.gen(function* () {
+          // The open lock protects status ownership, including after a replacement closes.
+          const key = sessionKey(input.entry.runtime.providerSessionId);
+          const ownsStatus = (yield* Ref.get(latestOpened)).get(key) === input.entry.runtime;
+          yield* Effect.all(
+            [
+              ownsStatus
+                ? Effect.exit(writeReleasedSessionEvents(input))
+                : Effect.succeed(Exit.void),
+              Effect.exit(
+                writeReleasedRuntimeRequestEvents(input).pipe(
+                  input.entry.requestEventPermit.withPermits(1),
+                ),
               ),
-            ),
-            Effect.exit(writeReleasedBackgroundWorkEvents(input.releasedBackgroundTasks)),
-          ],
-          { concurrency: 1 },
-        ).pipe(Effect.flatMap(Exit.asVoidAll));
+              Effect.exit(writeReleasedBackgroundWorkEvents(input.releasedBackgroundTasks)),
+            ],
+            { concurrency: 1 },
+          ).pipe(Effect.flatMap(Exit.asVoidAll));
+          if (!ownsStatus) return;
+          yield* Ref.update(latestOpened, (current) => {
+            const updated = new Map(current);
+            updated.delete(key);
+            return updated;
+          });
+        });
 
       // The session already left the live map, so a later release finds nothing
       // to do. Without a retry the UI would keep a ready session and answerable
       // approvals until a server restart.
-      const retryReleaseRecords = (
-        input: Omit<Parameters<typeof writeReleaseRecords>[0], "replaced">,
-      ) => {
+      const retryReleaseRecords = (input: Parameters<typeof writeReleaseRecords>[0]) => {
         const providerSessionId = input.entry.runtime.providerSessionId;
         const attempt = Effect.gen(function* () {
           const exit = yield* Effect.exit(
-            sessionOpen.withLock(
-              providerSessionId,
-              Effect.gen(function* () {
-                const replaced = (yield* Ref.get(sessions)).has(sessionKey(providerSessionId));
-                yield* writeReleaseRecords({ ...input, replaced });
-              }),
-            ),
+            sessionOpen.withLock(providerSessionId, writeReleaseRecords(input)),
           );
           if (Exit.isSuccess(exit) || Cause.hasInterruptsOnly(exit.cause)) return yield* exit;
           yield* Effect.logWarning("orchestration-v2.provider-session-release-records-failed", {
@@ -989,6 +995,8 @@ export const layerWithOptions = (
         readonly cancelIdleFiber?: boolean;
         readonly onlyIfIdleGeneration?: number;
         readonly gracefulSubscribers?: boolean;
+        /** Set by callers inside `open`, which already hold this session's open lock. */
+        readonly openLockHeld?: boolean;
       }) =>
         Effect.acquireUseRelease(
           removeLiveEntry(input),
@@ -1029,7 +1037,9 @@ export const layerWithOptions = (
                     releasedAt,
                   };
                   const recorded = yield* Effect.exit(
-                    writeReleaseRecords({ ...records, replaced: false }),
+                    input.openLockHeld === true
+                      ? writeReleaseRecords(records)
+                      : sessionOpen.withLock(input.providerSessionId, writeReleaseRecords(records)),
                   );
                   if (Exit.isFailure(recorded)) {
                     yield* retryReleaseRecords(records);
@@ -2211,6 +2221,7 @@ export const layerWithOptions = (
                 updated.set(key, entry);
                 return updated;
               });
+              yield* Ref.update(latestOpened, (current) => new Map(current).set(key, runtime));
               yield* dropReservation;
               yield* withActivityError(
                 input.providerSessionId,
@@ -2230,11 +2241,13 @@ export const layerWithOptions = (
                           providerSessionId: input.providerSessionId,
                           reason: "manual_shutdown",
                           detail: "The provider session start was interrupted.",
+                          openLockHeld: true,
                         }
                       : {
                           providerSessionId: input.providerSessionId,
                           reason: "runtime_error",
                           detail: "Failed to persist the provider-session attachment.",
+                          openLockHeld: true,
                         },
                   ).pipe(logReleaseFailure(input.providerSessionId)),
                 ),

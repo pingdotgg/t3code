@@ -39,6 +39,8 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as FileSystem from "effect/FileSystem";
 import { MCP_APP_OUTPUT_KEY, readMcpAppReference } from "@t3tools/shared/mcpApp";
@@ -59,6 +61,9 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as EffectWorker from "../EffectWorker.ts";
+import * as EventSink from "../EventSink.ts";
+import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
+import * as ProviderSessionManager from "../ProviderSessionManager.ts";
 import * as Orchestrator from "../Orchestrator.ts";
 import * as ProviderReplayHarness from "../testkit/ProviderReplayHarness.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -1940,6 +1945,244 @@ describe("CodexAdapterV2 session initialize", () => {
         Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
       ),
     ),
+  );
+});
+
+describe("CodexAdapterV2 lost app-server", () => {
+  it.effect.each(["SIGKILL", "exit code", "silence"] as const)(
+    "fails active turns and replaces the shared app-server after %s",
+    (termination) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-session-recovery-" });
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const handles: Array<ChildProcessSpawner.ChildProcessHandle> = [];
+        const testSpawner = ChildProcessSpawner.make(() =>
+          spawner
+            .spawn(
+              ChildProcess.make(
+                process.execPath,
+                [
+                  "--input-type=module",
+                  "-e",
+                  `import * as NodeFS from "node:fs";
+import * as NodeReadline from "node:readline";
+
+const fixture = JSON.parse(
+  NodeFS.readFileSync(process.argv[1], "utf8"),
+);
+let nextThreadId = 0;
+let nextTurnId = 0;
+const write = (message) => process.stdout.write(\`\${JSON.stringify(message)}\\n\`);
+
+NodeReadline.createInterface({ input: process.stdin }).on("line", (line) => {
+  const { id, method, params } = JSON.parse(line);
+  switch (method) {
+    case "initialize":
+      write({
+        id,
+        result: {
+          userAgent: "codex-session-recovery-mock",
+          codexHome: process.cwd(),
+          platformFamily: "unix",
+          platformOs: "linux",
+        },
+      });
+      break;
+    case "thread/start": {
+      const thread = {
+        ...fixture.responses.threadStart.thread,
+        id: \`thread-\${process.pid}-\${nextThreadId++}\`,
+      };
+      write({ id, result: { ...fixture.responses.threadStart, thread } });
+      break;
+    }
+    case "thread/resume": {
+      const thread = {
+        ...fixture.responses.threadStart.thread,
+        id: params.threadId,
+      };
+      write({ id, result: { ...fixture.responses.threadStart, thread } });
+      break;
+    }
+    case "turn/start": {
+      const turn = {
+        ...fixture.responses.turnStart.turn,
+        id: \`turn-\${process.pid}-\${nextTurnId++}\`,
+      };
+      write({ id, result: { turn } });
+      write({ method: "turn/started", params: { threadId: params.threadId, turn } });
+      break;
+    }
+    case "thread/loaded/list":
+      break;
+    case "test/exit":
+      process.exit(7);
+      break;
+    default:
+      if (id !== undefined) write({ id, result: {} });
+  }
+});`,
+                  path.join(
+                    import.meta.dirname,
+                    "../../provider/testFixtures/codexMultiAgentWire.json",
+                  ),
+                ],
+                { cwd },
+              ),
+            )
+            .pipe(Effect.tap((handle) => Effect.sync(() => handles.push(handle)))),
+        );
+        const layerFactory = CodexAdapterV2.layerAppServerClientFactory.pipe(
+          Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, testSpawner)),
+          Layer.provide(
+            Layer.succeed(
+              ProviderEventLoggers.ProviderEventLoggers,
+              ProviderEventLoggers.NoOpProviderEventLoggers,
+            ),
+          ),
+        );
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdaptersEffect(
+          Effect.gen(function* () {
+            const adapter = yield* CodexAdapterV2.makeCodexAdapterV2({
+              instanceId: CODEX_TEST_MODEL_SELECTION.instanceId,
+              settings: DEFAULT_CODEX_SETTINGS,
+              environment: {},
+              clientFactory: yield* CodexAdapterV2.CodexAppServerClientFactory,
+              crypto: yield* Crypto.Crypto,
+              fileSystem: yield* FileSystem.FileSystem,
+              idAllocator: yield* IdAllocator.IdAllocatorV2,
+              serverConfig: yield* ServerConfig.ServerConfig,
+            });
+            return [adapter];
+          }),
+        ).pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              layerFactory,
+              IdAllocator.layer,
+              ServerConfig.layerTest(cwd, { prefix: "t3-codex-session-recovery-config-" }),
+            ).pipe(Layer.provideMerge(NodeServices.layer)),
+          ),
+        );
+
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const eventSink = yield* EventSink.EventSinkV2;
+          const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+          const createAndStart = (threadId: ThreadId) =>
+            Effect.gen(function* () {
+              yield* orchestrator.dispatch({
+                type: "thread.create",
+                commandId: CommandId.make(`create:${threadId}`),
+                threadId,
+                projectId: ProjectId.make("project:codex-session-recovery"),
+                title: threadId,
+                modelSelection: CODEX_TEST_MODEL_SELECTION,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                branch: null,
+                worktreePath: cwd,
+                createdBy: "user",
+                creationSource: "web",
+              });
+              yield* send(threadId, "start");
+            });
+          const send = (threadId: ThreadId, text: string) =>
+            Effect.gen(function* () {
+              yield* orchestrator.dispatch({
+                type: "message.dispatch",
+                commandId: CommandId.make(`send:${threadId}:${text}`),
+                threadId,
+                messageId: MessageId.make(`message:${threadId}:${text}`),
+                text,
+                attachments: [],
+                dispatchMode: { type: "start_immediately" },
+                createdBy: "user",
+                creationSource: "web",
+              });
+              yield* worker.drain();
+              assert.equal(
+                (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)?.status,
+                "running",
+              );
+            });
+          const threadA = ThreadId.make("thread:codex-recovery-a");
+          const threadB = ThreadId.make("thread:codex-recovery-b");
+          yield* createAndStart(threadA);
+          yield* createAndStart(threadB);
+          assert.equal(handles.length, 1);
+          const sessionA = (yield* orchestrator.getThreadProjection(threadA)).providerSessions.at(
+            -1,
+          )!;
+          const sessionB = (yield* orchestrator.getThreadProjection(threadB)).providerSessions.at(
+            -1,
+          )!;
+          assert.equal(sessionA.id, sessionB.id);
+          const beforeTermination = yield* eventSink.latestSequence();
+          const handle = handles[0]!;
+          if (termination === "silence") {
+            yield* TestClock.adjust("1 minute");
+            yield* TestClock.adjust("1 minute");
+          } else if (termination === "SIGKILL") {
+            yield* handle.kill({ killSignal: "SIGKILL" });
+          } else {
+            const encoder = new TextEncoder();
+            yield* Stream.make(encoder.encode('{"id":999,"method":"test/exit"}\n')).pipe(
+              Stream.run(handle.stdin),
+            );
+          }
+          if (termination !== "silence") {
+            const exit = yield* Effect.exit(handle.exitCode);
+            assert.equal(Exit.isFailure(exit), termination === "SIGKILL");
+            if (Exit.isSuccess(exit)) assert.equal(Number(exit.value), 7);
+          }
+
+          // Await committed failures, rather than guessing when the event pump ran.
+          yield* eventSink
+            .stream({ afterSequence: beforeTermination, eventType: "provider-session.updated" })
+            .pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "provider-session.updated" && event.payload.status === "error",
+              ),
+              Stream.take(2),
+              Stream.runDrain,
+            );
+          yield* eventSink
+            .stream({ afterSequence: beforeTermination, eventType: "run.updated" })
+            .pipe(
+              Stream.filter(
+                ({ event }) => event.type === "run.updated" && event.payload.status === "failed",
+              ),
+              Stream.take(2),
+              Stream.runDrain,
+            );
+          yield* worker.drain();
+          assert.isTrue(Option.isNone(yield* manager.get(sessionA.id)));
+          for (const threadId of [threadA, threadB]) {
+            const projection = yield* orchestrator.getThreadProjection(threadId);
+            assert.equal(projection.runs.at(-1)?.status, "failed");
+            assert.equal(projection.providerSessions.at(-1)?.status, "error");
+          }
+
+          yield* createAndStart(ThreadId.make("thread:codex-recovery-new"));
+          assert.equal(handles.length, 2);
+          assert.notEqual(handles[0]!.pid, handles[1]!.pid);
+          yield* send(threadA, "retry");
+          assert.equal(handles.length, 2);
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              { name: `codex-session-recovery-${termination}`, runtimePolicyOverride: { cwd } },
+              layerRegistry,
+              { runEffectWorker: false },
+            ),
+          ),
+        );
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
 
