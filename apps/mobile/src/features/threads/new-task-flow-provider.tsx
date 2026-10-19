@@ -9,6 +9,7 @@ import { AsyncResult } from "effect/reactivity";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 
 import type {
+  ComposerContextRecord,
   EnvironmentId,
   ModelSelection,
   ProjectReadFileResult,
@@ -285,6 +286,7 @@ type NewTaskFlowContextValue = {
 const EMPTY_LOAD_BALANCING_WEIGHTS: Readonly<Record<string, number>> = {};
 const EMPTY_ENVIRONMENT_IDS: ReadonlyArray<EnvironmentId> = [];
 const EMPTY_PROJECTS: ReadonlyArray<EnvironmentProject> = [];
+const EMPTY_CONTEXT_RECORDS: ReadonlyArray<ComposerContextRecord> = [];
 
 const NewTaskFlowContext = React.createContext<NewTaskFlowContextValue | null>(null);
 
@@ -937,9 +939,13 @@ export function NewTaskFlowProvider(
   );
   const selectedModelInstanceId = selectedModel?.instanceId;
   const selectedModelName = selectedModel?.model;
+  const contextRecords = selectedProjectDraft.context?.records ?? EMPTY_CONTEXT_RECORDS;
   const loadBalancingCandidates = needsLoadBalancing
     ? balancedProjects.flatMap(({ environmentId, id }) =>
         (loadBalancingWeights[environmentId] ?? 50) > 0 &&
+        // An attached thread can only be read on its own machine.
+        threadContextsOutsideEnvironment({ text: prompt, records: contextRecords, environmentId })
+          .length === 0 &&
         // Resource checks only need read access; starting a task needs more.
         operableEnvironments.has(environmentId) &&
         connectedEnvironments.some(
@@ -997,6 +1003,15 @@ export function NewTaskFlowProvider(
     if (!target) return;
     const liveDraft = getComposerDraftSnapshot(selectedProjectDraftKey);
     if (liveDraft.attachments.length > 0) return;
+    if (
+      threadContextsOutsideEnvironment({
+        text: liveDraft.text,
+        records: liveDraft.context?.records ?? EMPTY_CONTEXT_RECORDS,
+        environmentId: target.environmentId,
+      }).length > 0
+    ) {
+      return;
+    }
     const movesMachine = target.environmentId !== selectedProject.environmentId;
     // The mode on screen travels even when it is only this machine's default,
     // as on web, so wait until that default has settled.
