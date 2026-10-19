@@ -3,6 +3,7 @@ import { projectComposerContextForProvider } from "@t3tools/shared/composerConte
 import {
   CommandId,
   latestProviderTurnForAttempt,
+  type OrchestrationV2ContextHandoff,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderThread,
@@ -1078,28 +1079,25 @@ export const layer: Layer.Layer<
         Effect.gen(function* () {
           const retryHandoff =
             missedItems.length === 0
-              ? []
-              : [
-                  yield* contextHandoffService.prepareProviderHandoff({
-                    threadId: projection.thread.id,
-                    targetRunId: run.id,
-                    transferId: null,
-                    fromProviderThreadIds: [providerThread.id],
-                    toProviderThreadId: providerThread.id,
-                    fromProviderInstanceId: run.providerInstanceId,
-                    toProviderInstanceId: run.providerInstanceId,
-                    coveredRunOrdinals: {
-                      from: missedRuns[0]!.ordinal,
-                      to: missedRuns.at(-1)!.ordinal,
-                    },
-                    strategy: "delta_since_target_last_seen",
-                    items: missedItems,
-                    runs: projection.runs,
-                    createdAt: yield* DateTime.now,
-                  }),
-                ];
-          const delivery = yield* deliverContextHandoffs({
-            handoffs: [...effectiveHandoffs, ...retryHandoff],
+              ? undefined
+              : yield* contextHandoffService.prepareProviderHandoff({
+                  threadId: projection.thread.id,
+                  targetRunId: run.id,
+                  transferId: null,
+                  fromProviderThreadIds: [providerThread.id],
+                  toProviderThreadId: providerThread.id,
+                  fromProviderInstanceId: run.providerInstanceId,
+                  toProviderInstanceId: run.providerInstanceId,
+                  coveredRunOrdinals: {
+                    from: missedRuns[0]!.ordinal,
+                    to: missedRuns.at(-1)!.ordinal,
+                  },
+                  strategy: "delta_since_target_last_seen",
+                  items: missedItems,
+                  runs: projection.runs,
+                  createdAt: yield* DateTime.now,
+                });
+          const deliveryInput = {
             deferInline: compact,
             providerThread: runningProviderThread,
             budget: Effect.gen(function* () {
@@ -1125,7 +1123,7 @@ export const layer: Layer.Layer<
                       ...history,
                     }),
                 }),
-            persist: (handoff) =>
+            persist: (handoff: OrchestrationV2ContextHandoff) =>
               Effect.gen(function* () {
                 const updatedAt = yield* DateTime.now;
                 yield* eventSink.write({
@@ -1144,7 +1142,47 @@ export const layer: Layer.Layer<
                   ],
                 });
               }),
-          });
+          };
+          const nativeThreadId = runningProviderThread.nativeThreadRef?.nativeId;
+          // Missed-run recovery is optional in an existing native thread. Required
+          // handoffs must still fit, and omissions settle only after turn acceptance.
+          const delivery = yield* deliverContextHandoffs({
+            ...deliveryInput,
+            handoffs:
+              retryHandoff === undefined ? effectiveHandoffs : [...effectiveHandoffs, retryHandoff],
+          }).pipe(
+            Effect.catchTags({
+              ContextHandoffBudgetError: Effect.fnUntraced(function* (error) {
+                if (retryHandoff === undefined || nativeThreadId == null || !sameNativeThread)
+                  return yield* error;
+                const required = yield* deliverContextHandoffs({
+                  ...deliveryInput,
+                  handoffs: effectiveHandoffs,
+                });
+                return {
+                  ...required,
+                  delivered: required.delivered.pipe(
+                    Effect.andThen(
+                      deliveryInput.persist({
+                        ...retryHandoff,
+                        delivery: {
+                          nativeThreadId,
+                          status: "inline",
+                          itemIds: [],
+                          omittedItemIds: [
+                            ...(retryHandoff.history?.omittedItemIds ?? []),
+                            ...(retryHandoff.history?.messages ?? []).map(
+                              (message) => message.itemId,
+                            ),
+                          ],
+                        },
+                      }),
+                    ),
+                  ),
+                };
+              }),
+            }),
+          );
           if (!(yield* isCurrentAttemptInStatus("running"))) return;
           const start = compact ? session.compactThread! : session.startTurn;
           const context = [delivery.context, restartNote]

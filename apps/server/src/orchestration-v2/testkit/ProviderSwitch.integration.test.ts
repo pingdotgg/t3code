@@ -1066,6 +1066,147 @@ describe("orchestration v2 provider switching", () => {
       ),
   );
 
+  it.live("omits failed-start recovery but preserves required handoffs", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("handoff-retry-full-window");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const injectedHistory = yield* Ref.make<ReadonlyArray<unknown>>([]);
+        const failStart = yield* Ref.make(false);
+        const generation = yield* Ref.make(0);
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: CODEX_MODEL_SELECTION.instanceId,
+            driver: CODEX_DRIVER,
+            capabilities: CodexProviderCapabilitiesV2,
+            modelSelection: CODEX_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+            injectedHistory,
+            failStartOnce: failStart,
+            nativeThreadGeneration: generation,
+            tokenUsageByRunOrdinal: { 1: { usedTokens: 366_046, maxTokens: 475_000 } },
+          }),
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+          }),
+        ]);
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const send = (ordinal: number, text: string, selection = CODEX_MODEL_SELECTION) =>
+            orchestrator
+              .dispatch({
+                type: "message.dispatch",
+                commandId: CommandId.make(`full-window:${ordinal}`),
+                threadId,
+                messageId: MessageId.make(`full-window:${ordinal}`),
+                createdBy: "user",
+                creationSource: "web",
+                text,
+                attachments: [],
+                modelSelection: selection,
+                dispatchMode: { type: "start_immediately" },
+              })
+              .pipe(
+                Effect.andThen(
+                  orchestrator.streamStoredEvents.pipe(
+                    Stream.filter(
+                      ({ event }) =>
+                        event.type === "run.updated" &&
+                        event.payload.ordinal === ordinal &&
+                        (event.payload.status === "completed" || event.payload.status === "failed"),
+                    ),
+                    Stream.runHead,
+                  ),
+                ),
+                Effect.andThen(worker.drain()),
+                Effect.andThen(orchestrator.getThreadProjection(threadId)),
+                Effect.map((projection) => projection.runs.at(-1)!),
+              );
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("full-window:create"),
+            threadId,
+            projectId,
+            createdBy: "user",
+            creationSource: "web",
+            title: "Full window retry",
+            modelSelection: CODEX_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          assert.equal((yield* send(1, "Long-running work")).status, "completed");
+          yield* Ref.set(failStart, true);
+          assert.equal((yield* send(2, "Request the provider never saw")).status, "failed");
+
+          assert.equal((yield* send(3, "Try that again")).status, "completed");
+          const retried = yield* orchestrator.getThreadProjection(threadId);
+          const missedRequest = retried.turnItems.find(
+            (item) =>
+              item.type === "user_message" && item.text === "Request the provider never saw",
+          )!;
+          const settled = retried.contextHandoffs.at(-1)!;
+          assert.equal(settled.strategy, "delta_since_target_last_seen");
+          assert.notEqual(settled.delivery?.status, "pending");
+          assert.include(settled.delivery?.omittedItemIds ?? [], missedRequest.id);
+
+          assert.equal((yield* send(4, "Next request")).status, "completed");
+          assert.deepEqual(
+            (yield* Ref.get(capturedTurns)).map((turn) => turn.text),
+            ["Long-running work", "Try that again", "Next request"],
+          );
+          assert.equal(yield* Ref.get(generation), 1);
+          assert.isEmpty(yield* Ref.get(injectedHistory));
+          assert.lengthOf(
+            (yield* orchestrator.getThreadProjection(threadId)).contextHandoffs,
+            retried.contextHandoffs.length,
+          );
+
+          yield* Ref.set(failStart, true);
+          assert.equal((yield* send(5, "Another missed request")).status, "failed");
+          assert.equal(
+            (yield* send(6, "Work on Claude", CLAUDE_MODEL_SELECTION)).status,
+            "completed",
+          );
+          const required = yield* send(7, "Return to Codex");
+          assert.equal(required.status, "failed");
+          const rejected = yield* orchestrator.getThreadProjection(threadId);
+          const failure = rejected.turnItems.find(
+            (item) => item.type === "error" && item.runId === required.id,
+          );
+          assert.include(
+            failure?.type === "error" ? failure.failure.message : "",
+            "Insufficient context allowance for the provider handoff",
+          );
+          assert.lengthOf(yield* Ref.get(capturedTurns), 4);
+          assert.isEmpty(yield* Ref.get(injectedHistory));
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: "handoff-retry-full-window",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: { type: "readOnly" },
+                },
+              },
+              layerRegistry,
+            ),
+          ),
+        );
+      }),
+    ),
+  );
+
   it.live.each(["native", "legacy"] as const)(
     "starts a replacement native thread as new after the resume fallback with %s attempts",
     (attempts) =>
