@@ -516,10 +516,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       >();
       const pendingPrompts = new Map<string, PendingPiPrompt>();
       const sessionApprovals = new Set<string>();
-      // Answering a dialog and terminalizing a turn both publish lifecycle
-      // events. Pi can settle immediately after `extension_ui_response`, so
-      // serialize the two paths to stop `turn.terminal` from overtaking the
-      // dialog's own resolution updates.
+      // Pi can settle immediately after extension_ui_response. Remove the answered
+      // prompt before processing terminal or expiry events that would cancel it.
       const sessionEventPermit = yield* Semaphore.make(1);
       let threadState: PiThreadState | null = null;
       let registrationAttempted = false;
@@ -2738,33 +2736,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             if (pending.method === "confirm" && requestInput.decision === "acceptForSession") {
               sessionApprovals.add(pending.approvalKey);
             }
-            const resolvedAt = yield* DateTime.now;
-            pending.runtimeRequest = {
-              ...pending.runtimeRequest,
-              status: "resolved",
-              resolvedAt,
-            };
-            yield* emit({
-              type: "runtime_request.updated",
-              driver: PI_PROVIDER,
-              threadId: pending.node.threadId,
-              runtimeRequest: pending.runtimeRequest,
-            });
-            yield* emit({
-              type: "node.updated",
-              driver: PI_PROVIDER,
-              node: { ...pending.node, status: "completed", completedAt: resolvedAt },
-            });
-            yield* emit({
-              type: "turn_item.updated",
-              driver: PI_PROVIDER,
-              turnItem: {
-                ...pending.turnItem,
-                status: "completed",
-                completedAt: resolvedAt,
-                updatedAt: resolvedAt,
-              },
-            });
+            // T3 already persisted the answer and card; cached updates would overwrite them.
           }).pipe(
             sessionEventPermit.withPermits(1),
             Effect.mapError(

@@ -222,13 +222,19 @@ interface ActiveTurn {
 }
 
 interface PendingRequest {
-  readonly native:
-    | { type: "approval"; value: MuseApproval }
-    | { type: "question"; value: MuseUserInput };
+  native: { type: "approval"; value: MuseApproval } | { type: "question"; value: MuseUserInput };
   request: OrchestrationV2RuntimeRequest;
   node: OrchestrationV2ExecutionNode;
   item: OrchestrationV2TurnItem;
-  response?: Pick<OrchestrationV2RuntimeRequest, "decision" | "answers">;
+  response?: {
+    readonly owner: "orchestrator" | "adapter";
+    readonly value: Pick<OrchestrationV2RuntimeRequest, "decision" | "answers" | "resolvedAt">;
+    readonly approval?: {
+      readonly requirementId: MuseApproval["currentRequirementId"];
+      inFlight: boolean;
+      terminal: boolean;
+    };
+  };
 }
 
 /**
@@ -252,6 +258,7 @@ const nativeRef = (nativeId: string) => ({
   strength: "strong" as const,
 });
 const recordSchema = Schema.Record(Schema.String, Schema.Unknown);
+const isAlreadyTerminal = Schema.is(Schema.Struct({ kind: Schema.Literal("alreadyTerminal") }));
 const INFORMATIONAL_NOTIFICATIONS = new Set([
   "session/contextUsage",
   "session/tokenUsage",
@@ -905,26 +912,33 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         entry: PendingRequest,
         status: "resolved" | "cancelled",
       ) {
+        pending.delete(entry.request.id);
+        // The orchestrator already persisted its response, node and card before delivery.
+        if (entry.response?.owner === "orchestrator") return;
         const time = yield* DateTime.now;
+        const decision = entry.response?.value.decision;
+        const settledStatus =
+          status === "resolved" && decision !== "decline" && decision !== "cancel"
+            ? "completed"
+            : "cancelled";
         entry.request = {
           ...entry.request,
-          ...(status === "resolved" ? entry.response : undefined),
+          ...(status === "resolved" ? entry.response?.value : undefined),
           status,
           resolvedAt: time,
           responseCapability: { type: "not_resumable", reason: "This Muse request has ended." },
         };
         entry.node = {
           ...entry.node,
-          status: status === "resolved" ? "completed" : "cancelled",
+          status: settledStatus,
           completedAt: time,
         };
         entry.item = {
           ...entry.item,
-          status: status === "resolved" ? "completed" : "cancelled",
+          status: settledStatus,
           completedAt: time,
           updatedAt: time,
         };
-        pending.delete(entry.request.id);
         yield* emit({
           type: "runtime_request.updated",
           driver: MUSE_PROVIDER,
@@ -1058,25 +1072,60 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       const decideApproval = Effect.fnUntraced(function* (
         entry: PendingRequest,
         decision: ProviderApprovalDecision | undefined,
+        owner: "orchestrator" | "adapter",
       ) {
         if (entry.native.type !== "approval") return;
         const approval = entry.native.value;
         const choice = decision && museApprovalChoices(approval).get(decision);
         if (!choice) return yield* protocolError("Muse did not offer this approval decision");
         // Recorded first: Muse can settle the approval before it acknowledges the command.
-        entry.response = { decision };
+        const roundTrip = {
+          requirementId: entry.response?.approval?.requirementId ?? approval.currentRequirementId,
+          inFlight: true,
+          terminal: entry.response?.approval?.terminal ?? false,
+        };
+        const response = {
+          owner,
+          value: { decision, resolvedAt: yield* DateTime.now },
+          approval: roundTrip,
+        };
+        entry.response = response;
         yield* request("approval/decide", {
           approvalId: approval.approvalId,
-          requirementId: approval.currentRequirementId,
+          requirementId: roundTrip.requirementId,
           choiceId: choice.choiceId,
-        }).pipe(Effect.tapError(() => Effect.sync(() => delete entry.response)));
+        }).pipe(
+          Effect.onExit((exit) =>
+            Effect.gen(function* () {
+              if (pending.get(entry.request.id) !== entry || entry.response !== response) return;
+              roundTrip.inFlight = false;
+              roundTrip.terminal ||= exit._tag === "Success" && exit.value.terminal === true;
+              if (exit._tag === "Failure" && owner === "adapter" && !roundTrip.terminal) {
+                delete entry.response;
+                if (
+                  entry.native.type === "approval" &&
+                  (entry.native.value.currentRequirementId.approvalId !==
+                    roundTrip.requirementId.approvalId ||
+                    entry.native.value.currentRequirementId.sourceIndex !==
+                      roundTrip.requirementId.sourceIndex)
+                )
+                  yield* publishRequest(entry.native);
+                return;
+              }
+              // Notifications keep flowing during the RPC; release an absorbed stage only now.
+              if (!roundTrip.terminal) yield* publishRequest(entry.native);
+            }).pipe(eventPermit.withPermits(1)),
+          ),
+        );
       });
       /**
        * A workflow child's approval is runless: the turn that started the workflow
        * may end long before the child asks, and T3 keeps a runless request on the
        * thread until Muse settles it.
        */
-      const publishRequest = Effect.fnUntraced(function* (native: PendingRequest["native"]) {
+      const publishRequest = Effect.fnUntraced(function* (
+        native: PendingRequest["native"],
+      ): Effect.fn.Return<void, ProviderAdapter.ProviderAdapterProtocolError> {
         const child = native.type === "approval" && native.value.subagentOrigin !== undefined;
         const turn = child ? undefined : active;
         if (
@@ -1089,11 +1138,34 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         const nativeId =
           native.type === "approval" ? native.value.approvalId : native.value.userInputId;
         if (turn?.settledRequests.has(`${native.type}:${nativeId}`)) return;
-        const previous = [...pending.values()].find(
+        let previous = [...pending.values()].find(
           (entry) =>
             entry.native.type === native.type &&
             entry.request.nativeRequestRef?.nativeId === nativeId,
         );
+        if (previous?.response) {
+          const answeredRequirement =
+            previous.response.approval?.requirementId ??
+            (previous.native.type === "approval"
+              ? previous.native.value.currentRequirementId
+              : undefined);
+          if (
+            answeredRequirement &&
+            native.type === "approval" &&
+            !previous.response.approval?.inFlight &&
+            !previous.response.approval?.terminal &&
+            (answeredRequirement.approvalId !== native.value.currentRequirementId.approvalId ||
+              answeredRequirement.sourceIndex !== native.value.currentRequirementId.sourceIndex)
+          ) {
+            // A new requirement needs its own answer without replacing the recorded one.
+            yield* resolvePending(previous, "resolved");
+            previous = undefined;
+          } else {
+            // A terminal ack can close even the new frontier named by a trailing update.
+            previous.native = native;
+            return;
+          }
+        }
         const providerTurnId = turn?.providerTurn.id ?? null;
         const threadId = turn?.input.threadId ?? thread.appThreadId ?? input.threadId;
         const requestId =
@@ -1215,7 +1287,10 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         // Muse does not give workflow children the session's allowAll mode, so in full
         // access T3 approves for them. If Muse rejects that, the request waits for the user.
         if (child && input.runtimePolicy.runtimeMode === "full-access")
-          yield* decideApproval(entry, "accept").pipe(Effect.ignore, Effect.forkIn(scope));
+          yield* decideApproval(entry, "accept", "adapter").pipe(
+            Effect.ignore,
+            Effect.forkIn(scope),
+          );
       });
       const handleRequestEvent = Effect.fnUntraced(function* (
         method: string,
@@ -1224,20 +1299,22 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       ) {
         switch (method) {
           case "approval/requested":
-          case "approval/updated":
-            if (
-              method === "approval/updated" &&
-              ![...pending.values()].some(
-                (entry) =>
-                  entry.native.type === "approval" &&
-                  entry.native.value.approvalId === params.approvalId,
-              )
-            )
+          case "approval/updated": {
+            const previous = [...pending.values()].find(
+              (entry) =>
+                entry.native.type === "approval" &&
+                entry.native.value.approvalId === params.approvalId,
+            );
+            if (method === "approval/updated" && isAlreadyTerminal(params.change)) {
+              if (previous?.response?.approval) previous.response.approval.terminal = true;
               return;
+            }
+            if (method === "approval/updated" && !previous) return;
             return yield* publishRequest({
               type: "approval",
               value: yield* decode(MuseApproval, params),
             });
+          }
           case "userInput/requested":
             return yield* publishRequest({
               type: "question",
@@ -1258,7 +1335,11 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                 method === "approval/resolved" && typeof params.decision === "string"
                   ? museApprovalDecision({ decision: params.decision, scope: "once" })
                   : undefined;
-              if (!entry.response && native) entry.response = { decision: native };
+              if (!entry.response && native)
+                entry.response = {
+                  owner: "adapter",
+                  value: { decision: native, resolvedAt: yield* DateTime.now },
+                };
               yield* resolvePending(entry, "resolved");
             }
             if (!pending.size) yield* updateSession(active ? "running" : "ready");
@@ -2081,7 +2162,11 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                 ]
               : [],
           ),
-          runtimeRequests: [...pending.values()].map((entry) => entry.request),
+          runtimeRequests: [...pending.values()].map((entry) =>
+            entry.response?.owner === "orchestrator"
+              ? { ...entry.request, ...entry.response.value, status: "resolved" as const }
+              : entry.request,
+          ),
           providerPayload: items,
         };
       });
@@ -2223,7 +2308,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           Effect.gen(function* () {
             const entry = pending.get(args.requestId);
             if (!entry) return yield* protocolError("This Muse request is no longer pending");
-            if (entry.native.type === "approval") yield* decideApproval(entry, args.decision);
+            if (entry.native.type === "approval")
+              yield* decideApproval(entry, args.decision, "orchestrator");
             else {
               const questionRequest = entry.native.value;
               const answers = [];
@@ -2255,11 +2341,14 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                   ...(freeText ? (selected.length ? { note: freeText } : { freeText }) : {}),
                 });
               }
-              if (args.answers) entry.response = { answers: args.answers };
+              entry.response = {
+                owner: "orchestrator",
+                value: { answers: args.answers, resolvedAt: yield* DateTime.now },
+              };
               yield* request("userInput/answer", {
                 userInputId: questionRequest.userInputId,
                 answers,
-              }).pipe(Effect.tapError(() => Effect.sync(() => delete entry.response)));
+              });
             }
           }).pipe(
             Effect.mapError(
