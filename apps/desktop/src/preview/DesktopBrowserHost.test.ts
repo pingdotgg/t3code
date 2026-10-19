@@ -3,14 +3,18 @@ import { describe, expect, it } from "@effect/vitest";
 import { DesktopBrowserEvent } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import { TestClock } from "effect/testing";
 import * as NodeEvents from "node:events";
+import { vi } from "vite-plus/test";
 
 import * as DesktopBrowserHost from "./DesktopBrowserHost.ts";
 
 const decodeEvent = Schema.decodeUnknownSync(Schema.fromJsonString(DesktopBrowserEvent));
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const decodeCdpReply = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Struct({ id: Schema.Number })),
 );
@@ -88,6 +92,71 @@ describe("DesktopBrowserHost", () => {
       expect(reply).toMatchObject({ type: "cdp" });
       expect(decodeCdpReply((reply as { message: string }).message).id).toBe(2);
     }).pipe(Effect.scoped),
+  );
+
+  it.effect.each(["slow success", "Chromium error"] as const)(
+    "returns the unscaled CDP screenshot's %s to the server",
+    (outcome) =>
+      Effect.gen(function* () {
+        const host = yield* DesktopBrowserHost.make;
+        const debuggee = makeDebuggee();
+        const capture = Promise.withResolvers<{ data: string }>();
+        const captureStarted = Promise.withResolvers<void>();
+        const probe = vi.fn(async () => false);
+        Object.assign(debuggee.tab.webContents, {
+          id: 42,
+          hostWebContents: { isDestroyed: () => false, executeJavaScript: probe },
+        });
+        Object.assign(debuggee.tab.debugger, {
+          sendCommand: (method: string) => {
+            expect(method).toBe("Page.captureScreenshot");
+            captureStarted.resolve();
+            return capture.promise;
+          },
+        });
+        host.attach(key, debuggee.tab);
+        const events = yield* Queue.unbounded<DesktopBrowserEvent>();
+        yield* host.events.pipe(
+          Stream.runForEach((line) =>
+            Queue.offer(events, decodeEvent(new TextDecoder().decode(line))),
+          ),
+          Effect.forkScoped,
+        );
+        expect(yield* Queue.take(events)).toEqual({ type: "attached", ...key });
+
+        yield* host.handleCommandLine(
+          encodeJson({
+            type: "cdp",
+            ...key,
+            message: encodeJson({
+              id: 1,
+              method: "Page.captureScreenshot",
+              sessionId: "t3-preview-page",
+            }),
+          }),
+        );
+        yield* Effect.promise(() => captureStarted.promise);
+        expect(probe).toHaveBeenCalledOnce();
+        const data = Buffer.from("viewport-detail").toString("base64");
+        const message = "Cannot take screenshot with 0 width";
+        if (outcome === "slow success") {
+          yield* TestClock.adjust("1500 millis");
+          capture.resolve({ data });
+        } else {
+          capture.reject(new Error(message));
+        }
+
+        const reply = yield* Queue.take(events);
+        expect(reply).toMatchObject({ type: "cdp", ...key });
+        if (reply.type !== "cdp") throw new Error("Expected a CDP screenshot reply");
+        expect(decodeJson(reply.message)).toEqual({
+          id: 1,
+          sessionId: "t3-preview-page",
+          ...(outcome === "slow success"
+            ? { result: { data } }
+            : { error: { code: -32000, message } }),
+        });
+      }).pipe(Effect.scoped),
   );
 
   it.effect("saves a server tab's download under its CDP guid where the server asked", () =>
