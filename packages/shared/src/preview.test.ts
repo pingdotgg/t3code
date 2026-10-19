@@ -64,6 +64,14 @@ describe("previewPdfAssetUrl", () => {
 });
 
 describe("resolveAddressBarInput", () => {
+  it.each([
+    ["localhost:3000/?next=https://example.com", "http://localhost:3000/?next=https://example.com"],
+    ["127.0.0.1:3000/#https://example.com", "http://127.0.0.1:3000/#https://example.com"],
+    ["example.com/https://example.org", "https://example.com/https://example.org"],
+  ])("opens the outer address when it contains another URL: %s", (input, expected) => {
+    expect(resolveAddressBarInput(input)).toBe(expected);
+  });
+
   it("opens what users type as addresses", () => {
     expect(resolveAddressBarInput("localhost:5173")).toBe("http://localhost:5173/");
     expect(resolveAddressBarInput("127.0.0.1:3000/path")).toBe("http://127.0.0.1:3000/path");
