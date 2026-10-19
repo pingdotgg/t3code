@@ -5637,6 +5637,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const hasActiveDescendants = Array.from((yield* Ref.get(activeTurns)).values()).some(
               (candidate) => isDescendantCodexTurn(candidate, input.context),
             );
+            // Native subagents run on their own threads, so a failed root leaves
+            // them working. Holding the root until they finish would keep the
+            // run open with no turn to steer. Stop interrupts the whole lineage,
+            // so an interrupted root still waits for its descendants to settle.
+            if (event.status === "failed" && hasActiveDescendants) {
+              yield* emitRootTerminal(input.context, { ...event, childTurnsContinue: true });
+              return;
+            }
             if (event.status !== "completed" && hasActiveDescendants) {
               yield* Ref.update(deferredRootTerminals, (current) => {
                 const updated = new Map(current);

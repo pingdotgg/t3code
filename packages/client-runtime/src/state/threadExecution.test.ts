@@ -6,6 +6,8 @@ import {
   ProviderThreadId,
   ProviderSessionId,
   ProviderDriverKind,
+  ProviderTurnId,
+  RunAttemptId,
   RunId,
   ThreadId,
   type OrchestrationV2ExecutionNode,
@@ -189,6 +191,34 @@ describe("thread execution presentation", () => {
       activeRunId: runningRun.id,
     });
     expect(threadRuntimeHasInterruptibleRun(runtime)).toBe(true);
+  });
+
+  it("marks an open run whose provider turn already ended", () => {
+    const attemptId = RunAttemptId.make("attempt-open");
+    const openRun = { ...run("run-open", 1, "running"), activeAttemptId: attemptId };
+    const providerTurn = (status: "running" | "failed") => ({
+      id: ProviderTurnId.make("provider-turn-open"),
+      providerThreadId: ProviderThreadId.make("provider-thread-open"),
+      nodeId: NodeId.make("node-open"),
+      runAttemptId: attemptId,
+      nativeTurnRef: null,
+      ordinal: 1,
+      status,
+      startedAt: now,
+      completedAt: status === "running" ? null : now,
+    });
+    const projection = (status: "running" | "failed") => ({
+      ...v2Projection,
+      runs: [openRun],
+      providerTurns: [providerTurn(status)],
+      updatedAt: now,
+    });
+
+    expect(deriveThreadActivityRun(projection("running"))?.turnEnded).toBeUndefined();
+    expect(deriveThreadActivityRun(projection("failed"))).toMatchObject({
+      status: "running",
+      turnEnded: true,
+    });
   });
 
   it("presents a held queue as the stopped run instead of queued work", () => {

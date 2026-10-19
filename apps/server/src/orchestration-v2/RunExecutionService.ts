@@ -167,6 +167,10 @@ function isRunOwnedSubagentTerminalStatus(
   return status === "interrupted" || status === "failed" || status === "cancelled";
 }
 
+function childTurnsContinue(terminal: ProviderTerminalEvent): boolean {
+  return terminal.status === "failed" && terminal.childTurnsContinue === true;
+}
+
 /**
  * A running subagent stays with the run that launched it, which keeps ingesting until it ends;
  * taking it over too would store its events twice.
@@ -645,7 +649,9 @@ export const layer: Layer.Layer<
           open.childTurnItems.size > 0 ||
           open.nodes.size > 0;
         const cascadedSubagentEvents =
-          isRunOwnedSubagentTerminalStatus(input.terminal.status) && hasOpenSubagentProjection
+          isRunOwnedSubagentTerminalStatus(input.terminal.status) &&
+          !childTurnsContinue(input.terminal) &&
+          hasOpenSubagentProjection
             ? yield* cascadeTerminalizeRunOwnedSubagents({
                 run: input.run,
                 open,
@@ -1011,7 +1017,10 @@ export const layer: Layer.Layer<
                   (cause) => new RunExecutionIngestError({ runId: input.run.id, cause }),
                 ),
               );
-              if (isRunOwnedSubagentTerminalStatus(terminal.status)) {
+              if (
+                isRunOwnedSubagentTerminalStatus(terminal.status) &&
+                !childTurnsContinue(terminal)
+              ) {
                 yield* Ref.set(openRunOwnedSubagents, emptyOpenRunOwnedSubagentProjection());
               }
               yield* Ref.set(rootRunFinalized, true);
@@ -1161,7 +1170,11 @@ export const layer: Layer.Layer<
               return false;
             }
             const terminal = yield* Ref.get(terminalEvent);
-            if (terminal !== null && terminal.status !== "completed") {
+            if (
+              terminal !== null &&
+              terminal.status !== "completed" &&
+              !childTurnsContinue(terminal)
+            ) {
               return true;
             }
             const childProviderTurns = yield* Ref.get(activeChildProviderTurns);

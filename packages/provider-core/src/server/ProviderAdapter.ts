@@ -164,6 +164,12 @@ export const ProviderAdapterV2Event = Schema.Union([
     retry: Schema.optional(OrchestrationV2ProviderRetry),
     retryStartedAt: Schema.optional(Schema.DateTimeUtc),
     threadDisposition: Schema.Literals(["reusable", "broken"]),
+    /**
+     * Child turns the root started outlive its failure and will report their
+     * own terminals, as after a completed root. Without it, the run settles
+     * every child it still sees as open.
+     */
+    childTurnsContinue: Schema.optional(Schema.Literal(true)),
   }),
 ]);
 export type ProviderAdapterV2Event = typeof ProviderAdapterV2Event.Type;

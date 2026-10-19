@@ -1929,6 +1929,44 @@ describe("deriveMessagesTimelineRows", () => {
     expect(rows.at(-1)).toMatchObject({ kind: "thinking" });
   });
 
+  it("does not show Thinking once the open run's provider turn has ended", () => {
+    const input = {
+      timelineEntries: [
+        {
+          id: "user-entry",
+          kind: "message" as const,
+          createdAt: "2026-01-01T00:00:00Z",
+          message: {
+            id: "user" as never,
+            role: "user" as const,
+            text: "Take over the queue",
+            runId: "turn-1" as never,
+            createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
+            streaming: false,
+          },
+        },
+      ],
+      latestRun: {
+        runId: "turn-1" as never,
+        status: "running" as const,
+        startedAt: "2026-01-01T00:00:00Z",
+        completedAt: null,
+      },
+      isWorking: true,
+      activeTurnStartedAt: "2026-01-01T00:00:00Z",
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    };
+
+    expect(deriveMessagesTimelineRows(input).at(-1)?.kind).toBe("thinking");
+    const ended = deriveMessagesTimelineRows({
+      ...input,
+      latestRun: { ...input.latestRun, turnEnded: true },
+    });
+    expect(ended.some((row) => row.kind === "thinking")).toBe(false);
+  });
+
   it("does not fold the active in-progress turn", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [

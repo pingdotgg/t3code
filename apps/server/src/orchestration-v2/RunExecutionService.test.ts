@@ -4377,6 +4377,9 @@ function runBackgroundItemScenario(
       ReadonlyArray<{ readonly id: TurnItemId; readonly runId: RunId }>
     >;
     readonly onSubscribe?: Effect.Effect<void>;
+    readonly onFinalized?: (
+      events: ReadonlyArray<OrchestrationV2DomainEvent>,
+    ) => Effect.Effect<void>;
   },
 ) {
   return Effect.gen(function* () {
@@ -4400,6 +4403,7 @@ function runBackgroundItemScenario(
                   )
                 ) {
                   yield* Ref.update(observed, (current) => [...current, "root-finalized"]);
+                  yield* options?.onFinalized?.(input.events) ?? Effect.void;
                 }
                 return [];
               }),
@@ -4503,6 +4507,54 @@ function runBackgroundItemScenario(
     return yield* Ref.get(observed);
   });
 }
+
+it.effect("keeps a failed root's still-running native children live while the run settles", () =>
+  Effect.gen(function* () {
+    const finalized = yield* Ref.make<ReadonlyArray<OrchestrationV2DomainEvent>>([]);
+    const childTurn = (
+      ids: BackgroundScenarioIds,
+      status: "running" | "completed",
+    ): ProviderAdapter.ProviderAdapterV2Event =>
+      ({
+        type: "provider_turn.updated",
+        driver,
+        threadId: ids.childThreadId,
+        providerTurn: {
+          id: ProviderTurnId.make(`${ids.rootProviderTurnId}:child`),
+          providerThreadId: ProviderThreadId.make(`${ids.providerThreadId}:child`),
+          nodeId: NodeId.make(`${ids.subagentNodeId}:child-root`),
+          runAttemptId: null,
+          status,
+        },
+      }) as ProviderAdapter.ProviderAdapterV2Event;
+    const observed = yield* runBackgroundItemScenario(
+      "failed-root-live-child",
+      (ids) => [
+        childThreadCreatedEvent(ids),
+        subagentEvent(ids, "running"),
+        childTurn(ids, "running"),
+        { ...rootTerminalEvent(ids, "failed"), childTurnsContinue: true },
+        subagentEvent(ids, "completed"),
+        childTurn(ids, "completed"),
+      ],
+      {
+        keepEventStreamOpen: true,
+        onFinalized: (events) => Ref.set(finalized, events),
+      },
+    );
+
+    assert.deepEqual(observed, ["subagent:running", "root-finalized", "subagent:completed"]);
+    const written = yield* Ref.get(finalized);
+    assert.deepEqual(
+      written.flatMap((event) => (event.type === "run.updated" ? [event.payload.status] : [])),
+      ["failed"],
+    );
+    assert.isFalse(
+      written.some((event) => event.type === "subagent.updated"),
+      "a child that outlives the failed root must not be settled with it",
+    );
+  }),
+);
 
 it.effect("releases ingestion after idle subagent rows and items settle", () =>
   Effect.gen(function* () {

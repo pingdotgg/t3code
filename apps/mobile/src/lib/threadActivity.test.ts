@@ -1314,6 +1314,20 @@ describe("buildThreadFeed", () => {
     ).toEqual([{ type: "thinking", id: "live-activity-row", createdAt: startedAt, runId }]);
   });
 
+  it("does not show Thinking once the open run's provider turn has ended", () => {
+    const startedAt = "2026-04-01T00:00:01.000Z";
+    const run = { runId, status: "running" as const, startedAt, completedAt: null };
+    expect(
+      deriveThreadFeedPresentation(
+        [],
+        { ...run, turnEnded: true },
+        new Set(),
+        new Set(),
+        startedAt,
+      ),
+    ).toEqual([]);
+  });
+
   it("uses a stable Thinking row while work has started without a projected item", () => {
     const startedAt = "2026-04-01T00:00:01.000Z";
     const presented = deriveThreadFeedPresentation([], null, new Set(), new Set(), startedAt);

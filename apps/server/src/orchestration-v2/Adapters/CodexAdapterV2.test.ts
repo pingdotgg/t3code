@@ -5804,6 +5804,87 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  const childTurnStartedIndex = interruptSubagentCommandTranscript.entries.findIndex(
+    (entry) => entry.type === "emit_inbound" && entry.label === "turn/started/child",
+  );
+  const failedRootLiveChildTranscript = makeCodexReplayTranscript({
+    scenario: "codex-failed-root-live-subagent",
+    entries: [
+      ...interruptSubagentCommandTranscript.entries.slice(0, childTurnStartedIndex + 1),
+      {
+        type: "emit_inbound",
+        label: "turn/completed/root-failed",
+        frame: {
+          method: "turn/completed",
+          params: {
+            threadId: INTERRUPT_NATIVE_THREAD,
+            turn: {
+              ...makeCodexReplayTurn({ id: INTERRUPT_NATIVE_TURN, status: "failed" }),
+              error: {
+                message: "unsupported websocket request type: response.interrupt",
+                codexErrorInfo: "other",
+                additionalDetails: null,
+              },
+            },
+          },
+        },
+      },
+      {
+        type: "emit_inbound",
+        label: "turn/completed/child",
+        afterMs: 30_000,
+        frame: {
+          method: "turn/completed",
+          params: {
+            threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+            turn: makeCodexReplayTurn({ id: INTERRUPT_CHILD_NATIVE_TURN, status: "completed" }),
+          },
+        },
+      },
+      { type: "runtime_exit", status: "success" },
+    ],
+  });
+
+  it.effect("settles a failed root without waiting for subagents that keep running", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeCodexReplayHarness(failedRootLiveChildTranscript);
+        const now = yield* DateTime.now;
+        const childTurnCompleted = () =>
+          harness.events.some(
+            (event) =>
+              event.type === "provider_turn.updated" &&
+              event.threadId !== harness.threadId &&
+              event.providerTurn.status === "completed",
+          );
+
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-codex-failed-root-live-subagent"),
+            text: INTERRUPT_PROMPT,
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "failed root terminal");
+
+        const terminal = harness.terminalEvents()[0];
+        assert.equal(terminal?.status, "failed");
+        assert.isTrue(terminal?.status === "failed" && terminal.childTurnsContinue === true);
+        assert.isFalse(childTurnCompleted(), "the subagent is still running");
+
+        yield* TestClock.adjust("30 seconds");
+        yield* awaitUntil(childTurnCompleted, "subagent turn completion");
+        assert.lengthOf(harness.terminalEvents(), 1);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   const childTerminationResponseIndex = interruptSubagentCommandTranscript.entries.findIndex(
     (entry) =>
       entry.type === "emit_inbound" && entry.label === "thread/backgroundTerminals/terminate/child",
