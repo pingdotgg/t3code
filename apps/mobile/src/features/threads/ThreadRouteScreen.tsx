@@ -696,7 +696,13 @@ function ThreadRouteContent(
         }
         return;
       }
-      if (result.value.status === "no-script") return;
+      if (result.value.status === "no-script") {
+        Dialog.alert(
+          "Couldn't run script",
+          `"${script.name}" is no longer saved with a reserved port. Check the action and try again.`,
+        );
+        return;
+      }
       if (result.value.threadId === selectedThread.id) {
         handleOpenTerminal(result.value.terminalId);
       } else {
