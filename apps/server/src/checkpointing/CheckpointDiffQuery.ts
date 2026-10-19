@@ -161,6 +161,18 @@ export const make = Effect.gen(function* () {
         });
       }
 
+      // Capture compares against the preceding scope ordinal, even when that
+      // checkpoint belongs to a stopped run or has no run.
+      const parentCheckpoint =
+        input.fromTurnCount === input.toTurnCount - 1
+          ? projection.checkpoints.find(
+              (checkpoint) =>
+                checkpoint.status === "ready" &&
+                checkpoint.scopeId === toCheckpoint.scopeId &&
+                checkpoint.ordinalWithinScope === toCheckpoint.ordinalWithinScope - 1,
+            )
+          : undefined;
+
       const firstScope =
         input.fromTurnCount === 0
           ? projection.checkpointScopes.find((scope) => scope.kind === "root_run")
@@ -173,8 +185,12 @@ export const make = Effect.gen(function* () {
                 scopeId: firstScope.id,
                 ordinalWithinScope: 0,
               }).pipe(Effect.provideService(Crypto.Crypto, crypto))
-          : readyCheckpoints.find((checkpoint) => checkpoint.appRunOrdinal === input.fromTurnCount)
-              ?.ref;
+          : (
+              parentCheckpoint ??
+              readyCheckpoints.find(
+                (checkpoint) => checkpoint.appRunOrdinal === input.fromTurnCount,
+              )
+            )?.ref;
       if (fromCheckpointRef === undefined) {
         return yield* new CheckpointRefUnavailableError({
           operation,

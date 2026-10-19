@@ -4184,6 +4184,11 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     () =>
       Effect.gen(function* () {
         const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const memoryStore = yield* ProjectionStore.ProjectionStoreV2.pipe(
+          Effect.provide(ProjectionStore.layerMemory),
+        );
+        const apply = (event: Parameters<typeof projectionStore.apply>[0]) =>
+          Effect.all([projectionStore.apply(event), memoryStore.apply(event)]);
         const sql = yield* SqlClient.SqlClient;
         const now = yield* DateTime.now;
         const threadId = ThreadId.make("thread:checkpoint-context");
@@ -4192,7 +4197,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         const scopeId = CheckpointScopeId.make("scope:checkpoint-context");
         const checkpointId = CheckpointId.make("checkpoint:checkpoint-context");
         const ref = CheckpointRef.make("refs/t3/checkpoint-context/1");
-        yield* projectionStore.apply({
+        yield* apply({
           id: EventId.make("event:checkpoint-context:thread"),
           type: "thread.created",
           threadId,
@@ -4221,7 +4226,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             deletedAt: null,
           },
         });
-        yield* projectionStore.apply({
+        yield* apply({
           id: EventId.make("event:checkpoint-context:run"),
           type: "run.created",
           threadId,
@@ -4244,7 +4249,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             contextHandoffId: null,
           },
         });
-        yield* projectionStore.apply({
+        yield* apply({
           id: EventId.make("event:checkpoint-context:scope"),
           type: "checkpoint-scope.created",
           threadId,
@@ -4263,7 +4268,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             createdAt: now,
           },
         });
-        yield* projectionStore.apply({
+        yield* apply({
           id: EventId.make("event:checkpoint-context:checkpoint"),
           type: "checkpoint.captured",
           threadId,
@@ -4302,15 +4307,19 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         SET payload_json = json_set(payload_json, '$.files', 'obsolete file summary')
         WHERE checkpoint_id = ${checkpointId}
       `;
-        assert.deepEqual(yield* projectionStore.getCheckpointContext(threadId), {
-          runs: [{ id: runId, ordinal: 1, status: "completed" }],
-          checkpointScopes: [{ id: scopeId, runId, kind: "root_run", cwd: "/repo/worktree" }],
-          checkpoints: [{ scopeId, runId, appRunOrdinal: 1, status: "ready", ref }],
-        });
-        const missing = yield* projectionStore
-          .getCheckpointContext(ThreadId.make("thread:checkpoint-context:missing"))
-          .pipe(Effect.flip);
-        assert.instanceOf(missing, ProjectionStore.ProjectionStoreThreadNotFoundError);
+        for (const store of [projectionStore, memoryStore]) {
+          assert.deepEqual(yield* store.getCheckpointContext(threadId), {
+            runs: [{ id: runId, ordinal: 1, status: "completed" }],
+            checkpointScopes: [{ id: scopeId, runId, kind: "root_run", cwd: "/repo/worktree" }],
+            checkpoints: [
+              { scopeId, runId, ordinalWithinScope: 1, appRunOrdinal: 1, status: "ready", ref },
+            ],
+          });
+          const missing = yield* store
+            .getCheckpointContext(ThreadId.make("thread:checkpoint-context:missing"))
+            .pipe(Effect.flip);
+          assert.instanceOf(missing, ProjectionStore.ProjectionStoreThreadNotFoundError);
+        }
       }),
   );
 
