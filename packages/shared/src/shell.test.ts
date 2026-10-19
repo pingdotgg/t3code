@@ -87,7 +87,12 @@ describe("readEnvironmentFromLoginShell probe", () => {
     expect(args?.[1]).toContain("printenv PATH || true");
     expect(args?.[1]).toContain("__T3CODE_ENV_PATH_START__");
     expect(args?.[1]).toContain("__T3CODE_ENV_PATH_END__");
-    expect(options).toEqual({ encoding: "utf8", timeout: 5000 });
+    expect(options).toEqual({
+      encoding: "utf8",
+      timeout: 5000,
+      detached: true,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
   });
 });
 
