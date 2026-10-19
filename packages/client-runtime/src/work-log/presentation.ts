@@ -23,7 +23,7 @@ import { isWorkspaceImagePreviewPath } from "@t3tools/shared/mediaPreview";
 import { formatTokens } from "@t3tools/shared/usageFormat";
 import { classifyToolActivity, deriveToolActivityPresentation } from "@t3tools/shared/toolActivity";
 import { toolOutputIndicatesFailure } from "@t3tools/shared/toolOutput";
-import { mariaDbPreview } from "./mariaDbPreview.js";
+import { mariaDbPreview } from "./mariaDbPreview.ts";
 
 import {
   summarizeT3ToolCalls,

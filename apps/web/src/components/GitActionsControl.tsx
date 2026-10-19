@@ -121,7 +121,6 @@ interface GitActionsControlProps {
   gitCwd: string | null;
   activeThreadRef: ScopedThreadRef | null;
   draftId?: DraftId;
-  compact?: boolean;
   showActions?: boolean;
   showChanges?: boolean;
   onOpenChanges?: () => void;
@@ -937,12 +936,10 @@ export default function GitActionsControl({
   gitCwd,
   activeThreadRef,
   draftId,
-  compact = false,
   showActions = true,
   showChanges = true,
   onOpenChanges,
 }: GitActionsControlProps) {
-  const panelAnchorRef = useRef<HTMLDivElement | null>(null);
   const updateThreadMetadata = useAtomCommand(
     threadEnvironment.updateMetadata,
     "thread branch metadata update",
@@ -1564,10 +1561,10 @@ export default function GitActionsControl({
                 nativeButton={false}
                 render={<span className="block w-full cursor-not-allowed" />}
               >
-                <MenuItem className="w-full" disabled>
+                <ThreadDetailsControl variant="ghost" part="row" panel className="w-full" disabled>
                   <GitActionItemIcon icon={item.icon} SourceControlIcon={SourceControlIcon} />
-                  <MenuItemLabel>{item.label}</MenuItemLabel>
-                </MenuItem>
+                  <span className={THREAD_DETAILS_PANEL_LABEL_CLASS}>{item.label}</span>
+                </ThreadDetailsControl>
               </PopoverTrigger>
               <PopoverPopup tooltipStyle side="left" align="center">
                 {disabledReason}
@@ -1577,7 +1574,10 @@ export default function GitActionsControl({
         }
 
         return (
-          <MenuItem
+          <ThreadDetailsControl
+            variant="ghost"
+            part="row"
+            panel
             key={`${item.id}-${item.label}`}
             disabled={!canWriteSourceControl || item.disabled}
             onClick={() => {
@@ -1585,11 +1585,14 @@ export default function GitActionsControl({
             }}
           >
             <GitActionItemIcon icon={item.icon} SourceControlIcon={SourceControlIcon} />
-            <MenuItemLabel>{item.label}</MenuItemLabel>
-          </MenuItem>
+            <span className={THREAD_DETAILS_PANEL_LABEL_CLASS}>{item.label}</span>
+          </ThreadDetailsControl>
         );
       })}
-      <MenuItem
+      <ThreadDetailsControl
+        variant="ghost"
+        part="row"
+        panel
         disabled={
           !canWriteSourceControl ||
           isGitActionRunning ||
@@ -1602,9 +1605,12 @@ export default function GitActionsControl({
         }}
       >
         <GitCommitIcon />
-        <MenuItemLabel>Split into logical commits...</MenuItemLabel>
-      </MenuItem>
-      <MenuItem
+        <span className={THREAD_DETAILS_PANEL_LABEL_CLASS}>Split into logical commits...</span>
+      </ThreadDetailsControl>
+      <ThreadDetailsControl
+        variant="ghost"
+        part="row"
+        panel
         disabled={
           !canWriteSourceControl ||
           isGitActionRunning ||
@@ -1613,18 +1619,21 @@ export default function GitActionsControl({
         onClick={() => setIsRewriteCommitMessagesDialogOpen(true)}
       >
         <GitCommitIcon />
-        <MenuItemLabel>Regenerate commit messages...</MenuItemLabel>
-      </MenuItem>
+        <span className={THREAD_DETAILS_PANEL_LABEL_CLASS}>Regenerate commit messages...</span>
+      </ThreadDetailsControl>
       {canPublishRepository ? (
-        <MenuItem
+        <ThreadDetailsControl
+          variant="ghost"
+          part="row"
+          panel
           disabled={isGitActionRunning}
           onClick={() => {
             setIsPublishDialogOpen(true);
           }}
         >
           <CloudUploadIcon />
-          <MenuItemLabel>Publish repository...</MenuItemLabel>
-        </MenuItem>
+          <span className={THREAD_DETAILS_PANEL_LABEL_CLASS}>Publish repository...</span>
+        </ThreadDetailsControl>
       ) : null}
       {gitStatusForActions?.refName === null && (
         <p className="px-2 py-1.5 text-xs text-warning">
@@ -1661,131 +1670,36 @@ export default function GitActionsControl({
             {initAction.isPending ? "Initializing..." : "Initialize Git"}
           </span>
         </ThreadDetailsControl>
-      ) : quietEmptyDraft || (compact && !gitActionProgress && !visibleInlineSuccess) ? null : (
-        <div
-          role="group"
-          aria-label="Git actions"
-          ref={panelAnchorRef}
-          className={cn(
-            "shrink-0",
-            THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS,
-            gitActionProgress && "bg-black/[0.035] dark:bg-white/[0.055]",
-          )}
-        >
+      ) : (
+        <div role="group" aria-label="Git actions" className="flex w-full flex-col">
           {gitActionProgress ? (
-            <ThreadDetailsControl
-              aria-label={
-                gitActionProgress.output
-                  ? `${gitActionProgress.status} ${gitActionProgress.output}`
-                  : gitActionProgress.status
-              }
-              part="primary"
-              panel
-              multiline
-              disabled
-              size="xs"
-              variant="ghost"
-            >
-              <GitActionProgressButtonContent progress={gitActionProgress} />
-            </ThreadDetailsControl>
+            <div className="flex items-start rounded-lg bg-black/[0.035] dark:bg-white/[0.055]">
+              <ThreadDetailsControl variant="ghost" multiline disabled part="row" panel>
+                <GitActionProgressButtonContent progress={gitActionProgress} />
+              </ThreadDetailsControl>
+              <GitActionElapsedTime
+                startedAtMs={gitActionProgress.startedAtMs}
+                className="flex h-8 shrink-0 items-center pe-2.5 text-2xs tabular-nums text-muted-foreground"
+              />
+            </div>
           ) : visibleInlineSuccess ? (
-            <ThreadDetailsControl part="primary" multiline disabled size="xs" variant="ghost">
+            <ThreadDetailsControl variant="ghost" multiline disabled part="row" panel>
               <GitActionSuccessButtonContent success={visibleInlineSuccess} />
             </ThreadDetailsControl>
-          ) : quickActionDisabledReason ? (
-            <Popover>
-              <PopoverTrigger
-                openOnHover
-                render={
-                  <ThreadDetailsControl
-                    aria-disabled="true"
-                    part="primary"
-                    panel
-                    size="xs"
-                    variant="ghost"
-                  />
-                }
-              >
-                <GitQuickActionIcon
-                  quickAction={quickAction}
-                  SourceControlIcon={SourceControlIcon}
-                  className={THREAD_DETAILS_PANEL_ICON_CLASS}
-                />
-                <span
-                  className={cn(
-                    "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5",
-                    cn("not-sr-only ml-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS),
-                  )}
-                >
-                  {quickAction.label}
-                </span>
-              </PopoverTrigger>
-              <PopoverPopup tooltipStyle side="bottom" align="start">
-                {quickActionDisabledReason}
-              </PopoverPopup>
-            </Popover>
-          ) : (
+          ) : null}
+          {quickAction.kind === "run_pull" ? (
             <ThreadDetailsControl
               variant="ghost"
-              size="xs"
-              part="primary"
+              part="row"
               panel
-              disabled={!canWriteSourceControl || isRefreshingQuickAction || isGitActionRunning || quickAction.disabled}
+              disabled={!canWriteSourceControl || isRefreshingQuickAction || isGitActionRunning}
               onClick={runQuickAction}
             >
-              <GitQuickActionIcon
-                quickAction={quickAction}
-                SourceControlIcon={SourceControlIcon}
-                className={THREAD_DETAILS_PANEL_ICON_CLASS}
-              />
-              <span
-                className={cn(
-                  "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5",
-                  cn("not-sr-only ml-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS),
-                )}
-              >
-                {quickAction.label}
-              </span>
+              <CloudDownloadIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
+              <span className={THREAD_DETAILS_PANEL_LABEL_CLASS}>{quickAction.label}</span>
             </ThreadDetailsControl>
-          )}
-          {gitActionProgress ? (
-            <GitActionElapsedTime
-              startedAtMs={gitActionProgress.startedAtMs}
-              className="flex h-8 shrink-0 items-center self-start pe-2.5 text-2xs font-normal tabular-nums text-muted-foreground"
-            />
-          ) : (
-            <>
-              <span aria-hidden="true" className={THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS} />
-              <Menu
-                onOpenChange={(open) => {
-                  if (open) {
-                    requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd);
-                  }
-                }}
-              >
-                <MenuTrigger
-                  render={
-                    <ThreadDetailsControl
-                      aria-label="Git action options"
-                      size="sm"
-                      variant="ghost"
-                      part="secondary"
-                      panel
-                    />
-                  }
-                  disabled={isGitActionRunning}
-                >
-                  <ChevronDownIcon
-                    aria-hidden="true"
-                    className={THREAD_DETAILS_PANEL_CHEVRON_CLASS}
-                  />
-                </MenuTrigger>
-                <MenuPopup align="end" anchor={panelAnchorRef} className="w-(--anchor-width)">
-                  {gitItems}
-                </MenuPopup>
-              </Menu>
-            </>
-          )}
+          ) : null}
+          {gitItems}
         </div>
       )}
 
