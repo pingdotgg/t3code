@@ -98,7 +98,11 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-async function renderPicker(availableEditors: readonly EditorId[] = editors, panel = false) {
+async function renderPicker(
+  availableEditors: readonly EditorId[] = editors,
+  panel = false,
+  { openInCwd = "/work/project", revealFileManager = false } = {},
+) {
   await act(async () => {
     for (const listener of state.listeners) listener();
     const node = (
@@ -106,7 +110,8 @@ async function renderPicker(availableEditors: readonly EditorId[] = editors, pan
         environmentId={selected}
         keybindings={DEFAULT_RESOLVED_KEYBINDINGS}
         availableEditors={availableEditors}
-        openInCwd="/work/project"
+        openInCwd={openInCwd}
+        revealFileManager={revealFileManager}
         displayMode={panel ? "panel" : "toolbar"}
         compact={!panel}
       />
@@ -205,6 +210,19 @@ describe("host editor access", () => {
       environmentId: selected,
       input: { cwd: "/work/project", editor: "vscode" },
     });
+  });
+});
+
+it("reveals a file in the file manager instead of opening it", async () => {
+  state.allowed.add(selected);
+  await renderPicker(["file-manager"], false, {
+    openInCwd: "/work/project/README.md",
+    revealFileManager: true,
+  });
+  await click(primaryButton());
+  expect(state.run).toHaveBeenCalledExactlyOnceWith({
+    environmentId: selected,
+    input: { cwd: "/work/project/README.md", editor: "file-manager", reveal: true },
   });
 });
 
