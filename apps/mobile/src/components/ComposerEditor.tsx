@@ -36,6 +36,7 @@ import { AppText as Text } from "./ui/AppText";
 import {
   composerDocumentAttachment,
   composerMentionPath,
+  composerSkill,
   type ComposerDocumentAttachment,
 } from "../lib/composerContext";
 
@@ -169,10 +170,7 @@ export function ComposerEditor({
   const selectedReference = selected
     ? collectComposerContextReferences(selected.source)[0]
     : undefined;
-  const selectedSkillName = selected?.source.match(/^\p{Sc}(.+)$/u)?.[1];
-  const selectedSkill = selectedSkillName
-    ? props.skills?.find((skill) => skill.name === selectedSkillName)
-    : undefined;
+  const selectedSkill = selected ? composerSkill(selected.source, props.skills) : undefined;
   const record = draft.context?.records.find(
     (entry) => entry.contextId === selectedReference?.contextId,
   );

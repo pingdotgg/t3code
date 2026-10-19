@@ -17,6 +17,7 @@ import {
   composerSkillLabels,
   composerContextSendBlockReason,
   composerMentionPath,
+  composerSkill,
   createComposerContextHistory,
   referencedComposerContext,
   reidentifyComposerContext,
@@ -145,6 +146,28 @@ describe("mobile composer context", () => {
         records: [terminal],
       }),
     ).toBeNull();
+  });
+
+  it("opens the picked skill among duplicate names and retains its path without catalog metadata", () => {
+    const personal = {
+      name: "review",
+      path: "/home/me/.agents/skills/review/SKILL.md",
+      displayName: "Personal review",
+      description: "Review personal work",
+    };
+    const project = {
+      name: "review",
+      path: "/repo/my skills/review/SKILL.md",
+      displayName: "Project review",
+      description: "Review project work",
+    };
+    const source = "[$review](/repo/my%20skills/review/SKILL.md)";
+    expect(composerSkill(source, [personal, project])).toEqual(project);
+    expect(composerSkill(source, [personal])).toEqual({ name: "review", path: project.path });
+    expect(composerSkill(source)).toEqual({ name: "review", path: project.path });
+    expect(composerSkill("$review", [personal, project])).toEqual(personal);
+    expect(composerSkill("$missing", [personal, project])).toBeUndefined();
+    expect(composerSkill(source + " extra", [personal, project])).toBeUndefined();
   });
 
   it("restores deleted payloads on undo without adding removed context to the current draft", () => {
