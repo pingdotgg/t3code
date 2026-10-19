@@ -69,6 +69,17 @@ export function projectAxisValue(search: SettingsScopeSearch): string {
   return search.project ?? ALL_PROJECTS_VALUE;
 }
 
+export function projectScopeMenuGroups(
+  groups: readonly SidebarProjectSnapshot[],
+  search: Pick<SettingsScopeSearch, "machine">,
+) {
+  const { machine } = search;
+  if (machine === undefined) return groups;
+  return groups.filter((group) =>
+    group.memberProjects.some((member) => member.environmentId === machine),
+  );
+}
+
 export function selectEnvironmentAxis(
   search: SettingsScopeSearch,
   value: string,
