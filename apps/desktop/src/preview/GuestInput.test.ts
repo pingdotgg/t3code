@@ -19,6 +19,8 @@ const makeGuest = ({
     focusedFrame: focused ? {} : null,
     insertText: vi.fn(async () => {}),
     sendInputEvent: vi.fn(),
+    reload: vi.fn(),
+    reloadIgnoringCache: vi.fn(),
   };
   return {
     webContents,
@@ -34,6 +36,19 @@ const makeGuest = ({
 };
 
 describe("preview guest input", () => {
+  it.each([undefined, false, true])(
+    "reloads only the guest with ignoreCache=%s",
+    async (ignoreCache) => {
+      const guest = makeGuest({ focused: false });
+      await expect(
+        guest.send("Page.reload", ignoreCache === undefined ? {} : { ignoreCache }),
+      ).resolves.toEqual({});
+      expect(guest.webContents.reload).toHaveBeenCalledTimes(ignoreCache ? 0 : 1);
+      expect(guest.webContents.reloadIgnoringCache).toHaveBeenCalledTimes(ignoreCache ? 1 : 0);
+      expect(guest.sendCommand).not.toHaveBeenCalled();
+    },
+  );
+
   it("types into an unfocused guest's own page, not the app's focused field", async () => {
     const guest = makeGuest({ focused: false });
     await guest.send("Input.insertText", { text: "pairing-code" });
