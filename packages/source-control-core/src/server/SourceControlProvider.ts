@@ -162,6 +162,14 @@ export class SourceControlProvider extends Context.Service<
       readonly repository: string;
       readonly visibility: SourceControlRepositoryVisibility;
     }) => Effect.Effect<SourceControlRepositoryCloneUrls, SourceControlProviderError>;
+    /**
+     * The protocol an `auto` clone or publish of the repository at `url` uses, from the host
+     * CLI's own setting. Absent, or `null`, means SSH.
+     */
+    readonly preferredCloneProtocol?: (input: {
+      readonly cwd: string;
+      readonly url: string;
+    }) => Effect.Effect<"ssh" | "https" | null>;
     readonly getDefaultBranch: (input: {
       readonly cwd: string;
       readonly context?: SourceControlProviderContext;

@@ -448,6 +448,14 @@ export function pullRequestCheckoutBranchName(input: {
 const contextHost = (context: SourceControlProvider.SourceControlProviderContext | undefined) =>
   context === undefined ? undefined : new URL(context.provider.baseUrl).host;
 
+const isCloneProtocol = Schema.is(Schema.Literals(["ssh", "https"]));
+
+/** `-h <host>` for a repository URL gh's per-host config can key on. */
+const hostArgs = (url: string): ReadonlyArray<string> => {
+  const host = URL.parse(url)?.host;
+  return host ? ["-h", host] : [];
+};
+
 export const make = Effect.gen(function* () {
   const api = yield* GitHubRest.GitHubRest;
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
@@ -1011,6 +1019,23 @@ export const make = Effect.gen(function* () {
           providerError("createRepository", input.cwd, { repository: input.repository }),
         ),
       ),
+    // gh prints its own default (https) when nothing is set, the protocol `gh repo clone` uses.
+    preferredCloneProtocol: (input) =>
+      process
+        .run({
+          operation: "GitHubSourceControlProvider.preferredCloneProtocol",
+          command: "gh",
+          args: ["config", "get", ...hostArgs(input.url), "git_protocol"],
+          cwd: input.cwd,
+          timeoutMs: 5_000,
+        })
+        .pipe(
+          Effect.map((output) => {
+            const protocol = output.stdout.trim();
+            return isCloneProtocol(protocol) ? protocol : null;
+          }),
+          Effect.orElseSucceed(() => null),
+        ),
     getDefaultBranch: (input) =>
       Effect.gen(function* () {
         const locator = yield* resolveRepository({
