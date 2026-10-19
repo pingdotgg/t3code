@@ -22,6 +22,7 @@ import {
   expandCollapsedComposerCursor,
   formatAssistantCitationForComposer,
   isCollapsedCursorAdjacentToInlineToken,
+  isPathSuggestionCurrent,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
 } from "./composer-logic";
@@ -47,6 +48,41 @@ const citation: AssistantCitation = {
   suffix: " 後",
 };
 const citationSource = serializeAssistantCitation(citation).replaceAll("+", "%20");
+
+describe("isPathSuggestionCurrent", () => {
+  const searchedTarget = {
+    environmentId: EnvironmentId.make("local"),
+    cwd: "/repo",
+    query: "alpha",
+  };
+
+  it("allows a file suggestion matching the live search", () => {
+    expect(
+      isPathSuggestionCurrent(
+        searchedTarget,
+        detectComposerTrigger("@alpha", 6),
+        searchedTarget.environmentId,
+        searchedTarget.cwd,
+      ),
+    ).toBe(true);
+  });
+
+  it.each([
+    ["query", { ...searchedTarget, query: "beta" }],
+    ["cwd", { ...searchedTarget, cwd: "/other-repo" }],
+    ["environment", { ...searchedTarget, environmentId: EnvironmentId.make("remote") }],
+  ] as const)("rejects a visible file suggestion after the live %s changes", (_change, current) => {
+    const prompt = `@${current.query}`;
+    expect(
+      isPathSuggestionCurrent(
+        searchedTarget,
+        detectComposerTrigger(prompt, prompt.length),
+        current.environmentId,
+        current.cwd,
+      ),
+    ).toBe(false);
+  });
+});
 
 describe("formatAssistantCitationForComposer", () => {
   it.each([undefined, "", " \n\t "])(
