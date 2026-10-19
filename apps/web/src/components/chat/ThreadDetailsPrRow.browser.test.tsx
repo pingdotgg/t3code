@@ -22,11 +22,46 @@ const state = vi.hoisted(() => ({
   checkoutError: null as Error | null,
   addToast: vi.fn(),
   updateToast: vi.fn(),
+  serverConfigs: new Map() as Map<unknown, unknown>,
+  stackError: null as string | null,
+  refreshStack: vi.fn(),
+  runStackAction: vi.fn(),
+  stackRefreshing: false,
+  stack: null as null | {
+    readonly id: string;
+    readonly number: number;
+    readonly url: string;
+    readonly base: string;
+    readonly layers: ReadonlyArray<{
+      number: number;
+      headBranch: string;
+      headSha: string;
+      state: "open" | "merged";
+    }>;
+  },
 }));
 
 vi.mock(import("~/state/entities"), async (importOriginal) => ({
   ...(await importOriginal()),
-  useServerConfigs: (() => new Map()) as never,
+  useServerConfigs: (() => state.serverConfigs) as never,
+}));
+vi.mock(import("~/state/use-atom-command"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useAtomCommand: (() => state.runStackAction) as never,
+}));
+vi.mock(import("~/state/usePullRequestStack"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  usePullRequestStackGate: (() => ({
+    stack: {
+      data: state.stack,
+      isFresh: state.stackError === null,
+      isPending: state.stackRefreshing,
+      error: state.stackError,
+      refresh: state.refreshStack,
+    },
+    supportsStackActions: state.stack !== null || state.stackError !== null,
+    canMergeSinglePullRequest: state.stack === null && state.stackError === null,
+  })) as never,
 }));
 const queryData = () => ({
   projectId: ProjectId.make("project"),
@@ -112,6 +147,120 @@ afterEach(() => {
   vi.unstubAllGlobals();
   state.status = "success";
   state.extraStatus = null;
+  state.serverConfigs = new Map();
+  state.stack = null;
+  state.stackError = null;
+  state.stackRefreshing = false;
+  state.refreshStack.mockReset();
+});
+
+it("offers a retry instead of a dead end when the stack lookup fails", () => {
+  state.stackError = "GitHub stack lookup failed";
+  act(() =>
+    root.render(
+      <ThreadDetailsPrRow
+        environmentId={EnvironmentId.make("environment")}
+        pr={null}
+        number={1}
+        status={null}
+        project={null}
+        label="Test PR"
+        openAriaLabel="Open PR"
+        onOpen={vi.fn()}
+      />,
+    ),
+  );
+  const labels = [...container.querySelectorAll("button")].map((button) =>
+    button.textContent?.trim(),
+  );
+  expect(labels).not.toContain("Merge");
+  act(() =>
+    [...container.querySelectorAll("button")]
+      .find((button) => button.textContent?.trim() === "Retry stack")!
+      .click(),
+  );
+  expect(state.refreshStack).toHaveBeenCalledTimes(1);
+});
+
+it("offers to merge a stacked pull request only with its whole stack", async () => {
+  state.runStackAction.mockReset().mockResolvedValue({ _tag: "Success" });
+  const environmentId = EnvironmentId.make("environment");
+  state.serverConfigs = new Map([
+    [environmentId, { environment: { capabilities: { pullRequests: true } } }],
+  ]);
+  state.stack = {
+    id: "stack",
+    number: 7,
+    url: "https://github.com/owner/repo/stacks/7",
+    base: "main",
+    layers: [
+      { number: 1, headBranch: "feature", headSha: "a1", state: "open" },
+      { number: 2, headBranch: "feature-2", headSha: "b2", state: "open" },
+    ],
+  };
+  act(() =>
+    root.render(
+      <ThreadDetailsPrRow
+        environmentId={environmentId}
+        pr={null}
+        number={1}
+        reference={{ host: "github.com", repository: "owner/repo", number: 1 }}
+        status={null}
+        project={{ id: ProjectId.make("project") } as never}
+        label="Test PR"
+        openAriaLabel="Open PR"
+        onOpen={vi.fn()}
+      />,
+    ),
+  );
+  const labels = [...container.querySelectorAll("button")].map((button) =>
+    button.textContent?.trim(),
+  );
+  expect(labels).toContain("Merge stack");
+  expect(labels).not.toContain("Merge");
+
+  act(() =>
+    [...container.querySelectorAll("button")]
+      .find((button) => button.textContent?.trim() === "Merge stack")!
+      .click(),
+  );
+  expect(document.body.textContent).toContain("Merge 2 pull requests?");
+
+  // A stale stack would replay old layer heads on the next attempt, so every stack result
+  // must refresh the stack lookup.
+  await act(async () =>
+    [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')]
+      .find((button) => button.textContent?.trim() === "Merge stack")!
+      .click(),
+  );
+  expect(state.runStackAction).toHaveBeenCalledWith(
+    expect.objectContaining({
+      input: expect.objectContaining({ number: 2, stackNumber: 7, action: "merge" }),
+    }),
+  );
+  expect(state.refreshStack).toHaveBeenCalledTimes(1);
+
+  // Until that refresh lands, the old layers must not be offered for another merge.
+  state.stackRefreshing = true;
+  act(() =>
+    root.render(
+      <ThreadDetailsPrRow
+        environmentId={environmentId}
+        pr={null}
+        number={1}
+        reference={{ host: "github.com", repository: "owner/repo", number: 1 }}
+        status={null}
+        project={{ id: ProjectId.make("project") } as never}
+        label="Test PR"
+        openAriaLabel="Open PR"
+        onOpen={vi.fn()}
+      />,
+    ),
+  );
+  const mergeStack = [...container.querySelectorAll("button")].find(
+    (button) => button.textContent?.trim() === "Merge stack",
+  );
+  expect(mergeStack?.disabled).toBe(true);
 });
 
 it("requires a new merge click after passing checks become pending and pass again", () => {

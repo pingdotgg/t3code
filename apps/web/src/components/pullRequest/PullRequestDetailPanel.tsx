@@ -1,6 +1,5 @@
-import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import { useAtomValue } from "@effect/atom-react";
-import { usePullRequestStack } from "~/state/usePullRequestStack";
+import { usePullRequestStackGate } from "~/state/usePullRequestStack";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { AnimatedWidth } from "~/components/AnimatedWidth";
 import {
@@ -164,7 +163,6 @@ import {
   resolvePullRequestReferenceHost,
   resolveDisplayedPullRequestDetail,
   resolvePullRequestPrimaryControl,
-  allowsSinglePullRequestMerge,
   canDeletePullRequestBranch,
   resolveBaseFreshness,
   resolvePullRequestMergeMethod,
@@ -562,16 +560,6 @@ function pullRequestMarkdownContext(
   };
 }
 
-function pullRequestStackReference(
-  detail: Pick<PullRequestDetail, "url" | "capabilities"> | null,
-  reference: PullRequestRef,
-  supportsThreadPullRequests: boolean,
-) {
-  return detail === null || detail.capabilities.stacks !== true || !supportsThreadPullRequests
-    ? null
-    : { ...reference, host: reference.host ?? parseChangeRequestUrl(detail.url)?.host };
-}
-
 export function PullRequestDetailPanel({
   environmentId,
   shortcutsEnabled,
@@ -808,21 +796,12 @@ export function PullRequestDetailPanel({
   const isStackedPullRequest =
     detail !== null &&
     isStackedPullRequestBase(detail.baseBranch, branchRefsQuery.data?.refs ?? []);
-  const stackReference = pullRequestStackReference(detail, reference, supportsThreadPullRequests);
-  const nativeStackQuery = usePullRequestStack(environmentId, stackReference);
-  const nativeStack = nativeStackQuery.data;
-  const supportsStackActions =
-    supportsThreadPullRequests &&
-    detail?.capabilities.stacks === true &&
-    detail.capabilities.stackActions === true &&
-    environmentConfigs.get(environmentId)?.environment.capabilities.pullRequestStackActions ===
-      true;
-  const canMergeSinglePullRequest = allowsSinglePullRequestMerge({
+  const {
+    stack: nativeStackQuery,
     supportsStackActions,
-    hasStack: nativeStack !== null,
-    stackPending: !nativeStackQuery.isFresh,
-    stackError: nativeStackQuery.error,
-  });
+    canMergeSinglePullRequest,
+  } = usePullRequestStackGate(environmentId, detail, reference);
+  const nativeStack = nativeStackQuery.data;
   const activityPending = activityQuery.isPending && activity === null;
   const activityError = activity === null ? activityQuery.error : null;
   const refreshDetail = () => {

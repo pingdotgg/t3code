@@ -19,7 +19,7 @@ vi.mock(import("./ThreadDetailsPrRow"), async (importOriginal) => {
       ) : (
         <div data-row={String(props.number)}>
           {props.onStopWatching ? (
-            <button onClick={props.onStopWatching}>Stop watching #{props.number}</button>
+            <button aria-label={`Stop watching #${props.number}`} onClick={props.onStopWatching} />
           ) : null}
         </div>
       ),
@@ -173,18 +173,30 @@ function toggle() {
   act(() => toggleButton()!.click());
 }
 
-it("shows only the current pull request until the rest are asked for", () => {
+const linkedRows = () =>
+  [...container.querySelectorAll('[aria-label^="https://github.com/pingdotgg/t3code/pull/"]')].map(
+    (node) => node.getAttribute("aria-label")!.split("/").at(-1),
+  );
+
+it("shows the current stack as a rail and hides other pull requests until asked for", () => {
   render([other, bottom, top], top);
+  expect(container.textContent).toContain("Stack of 2");
   expect(rows()).toEqual(["2"]);
-  expect(toggleLabel()).toBe("Show 2 more");
+  expect(linkedRows()).toEqual(["1"]);
+  expect(toggleLabel()).toBe("Show 1 more");
 
   toggle();
-  expect(rows()).toEqual(["2", "1", "3"]);
+  expect(linkedRows()).toEqual(["1", "3"]);
   expect(toggleLabel()).toBe("Show less");
 
   toggle();
-  expect(rows()).toEqual(["2"]);
-  expect(toggleLabel()).toBe("Show 2 more");
+  expect(linkedRows()).toEqual(["1"]);
+});
+
+it("names the layer that keeps the stack from merging", () => {
+  const failing = { ...bottom, snapshot: { ...bottom.snapshot!, checksState: "failing" as const } };
+  render([failing, top], top);
+  expect(container.textContent).toContain("#1 checks failing, so the stack cannot merge");
 });
 
 it("keeps the single row untouched when the thread links one pull request", () => {
@@ -211,9 +223,11 @@ it("lets only watched pull requests stop their watch", () => {
   render([other, watched, top], top);
   toggle();
   const stopButtons = [...container.querySelectorAll("button")].filter((button) =>
-    button.textContent?.startsWith("Stop watching"),
+    button.getAttribute("aria-label")?.startsWith("Stop watching"),
   );
-  expect(stopButtons.map((button) => button.textContent)).toEqual(["Stop watching #1"]);
+  expect(stopButtons.map((button) => button.getAttribute("aria-label"))).toEqual([
+    "Stop watching #1",
+  ]);
 
   act(() => stopButtons[0]!.click());
   expect(watchCommand).toHaveBeenCalledWith({

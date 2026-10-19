@@ -2,7 +2,14 @@ import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { selectEnvironmentQueryData } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentId, ProjectId, PullRequestRef } from "@t3tools/contracts";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import type {
+  EnvironmentId,
+  ProjectId,
+  PullRequestMergeMethod,
+  PullRequestRef,
+  PullRequestStack,
+} from "@t3tools/contracts";
 import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 import {
   ArrowUpRightIcon,
@@ -25,6 +32,7 @@ import {
   useEnvironmentQueryRefresh,
   useEnvironmentQuerySelector,
 } from "~/state/query";
+import { usePullRequestStackGate } from "~/state/usePullRequestStack";
 
 import {
   buildFixFindingsHandoff,
@@ -37,6 +45,7 @@ import {
   resolveThreadPanelPullRequestAction,
 } from "../pullRequest/pullRequestDetail.logic";
 import { PullRequestChecksPopover } from "../pullRequest/PullRequestChecksPopover";
+import { usePullRequestStackAction } from "../pullRequest/usePullRequestStackAction";
 import {
   pullRequestChecksState,
   PullRequestCheckStatusIcon,
@@ -167,7 +176,29 @@ export function ThreadDetailsPrRow({
   const { handoff, startHandoff } = usePullRequestHandoffs({ environmentId, detail });
   const [confirmingMerge, setConfirmingMerge] = useState(false);
 
-  const rowAction = resolveThreadPanelPullRequestAction(detail);
+  const stackGate = usePullRequestStackGate(environmentId, detail, reference);
+  const panelAction = resolveThreadPanelPullRequestAction(detail);
+  // A stacked layer merges with its stack, never alone; while the stack is unknown, offer neither.
+  // The card merges the whole stack, the way `gh stack` does, so it targets the top unmerged layer.
+  const stackTop = stackGate.stack.data?.layers.findLast((layer) => layer.state !== "merged");
+  const stackMerge =
+    panelAction === "merge" &&
+    !stackGate.canMergeSinglePullRequest &&
+    stackGate.stack.isFresh &&
+    stackGate.stack.data !== null &&
+    stackTop !== undefined &&
+    reference !== null &&
+    detail !== null
+      ? {
+          stack: stackGate.stack.data,
+          // A refresh keeps the old layers while it runs; merging on them replays stale heads.
+          refreshing: stackGate.stack.isPending,
+          reference: { ...reference, number: stackTop.number },
+          hostLabel: sourceControlClients.get(detail.provider).label,
+        }
+      : null;
+  const rowAction =
+    panelAction === "merge" && !stackGate.canMergeSinglePullRequest ? null : panelAction;
   if (confirmingMerge && rowAction !== "merge") {
     setConfirmingMerge(false);
   }
@@ -338,7 +369,19 @@ export function ThreadDetailsPrRow({
                 tooltip: `Merge this pull request (${selectedMergeMethod})`,
                 onClick: () => setConfirmingMerge(true),
               }
-            : null;
+            : panelAction === "merge" && stackGate.stack.error !== null
+              ? {
+                  // Nothing refreshes a failed stack lookup on its own, and without the stack
+                  // this row offers no merge at all.
+                  label: "Retry stack",
+                  pendingLabel: "Retrying...",
+                  pending: false,
+                  destructive: false,
+                  suffix: null,
+                  tooltip: "Could not load this pull request's stack. Retry to merge it.",
+                  onClick: stackGate.stack.refresh,
+                }
+              : null;
 
   const watching =
     onStopWatching !== undefined && (detail?.state ?? pr?.state ?? "open") === "open";
@@ -405,7 +448,7 @@ export function ThreadDetailsPrRow({
 
   return (
     <>
-      {detail !== null && (showChecks || trailingAction !== null || watching) ? (
+      {detail !== null && (showChecks || trailingAction !== null || stackMerge || watching) ? (
         <div className="pb-2">
           {openRow(detail.title, "row")}
           <div className="-mt-1 flex h-6 min-w-0 items-center gap-0.5 ps-9 pe-1 text-xs text-muted-foreground">
@@ -440,6 +483,19 @@ export function ThreadDetailsPrRow({
                 </TooltipTrigger>
                 <TooltipPopup side="top">{trailingAction.tooltip}</TooltipPopup>
               </Tooltip>
+            ) : null}
+            {stackMerge ? (
+              <ThreadDetailsStackMergeControl
+                environmentId={environmentId}
+                {...stackMerge}
+                mergeMethod={selectedMergeMethod}
+                onActed={() => {
+                  detailQuery.refresh();
+                  checksQuery.refresh();
+                  stackGate.stack.refresh();
+                  onActed?.();
+                }}
+              />
             ) : null}
           </div>
         </div>
@@ -479,6 +535,60 @@ export function ThreadDetailsPrRow({
           </AlertDialogPopup>
         </AlertDialog>
       ) : null}
+    </>
+  );
+}
+
+function ThreadDetailsStackMergeControl({
+  environmentId,
+  stack,
+  refreshing,
+  reference,
+  hostLabel,
+  mergeMethod,
+  onActed,
+}: {
+  environmentId: EnvironmentId;
+  stack: PullRequestStack;
+  refreshing: boolean;
+  reference: PullRequestRef;
+  hostLabel: string;
+  mergeMethod: PullRequestMergeMethod;
+  onActed: () => void;
+}) {
+  const action = usePullRequestStackAction({
+    hostLabel,
+    stack,
+    reference,
+    environmentId,
+    canMerge: true,
+    canRebase: false,
+    mergeMethod,
+    onActed,
+  });
+  return (
+    <>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <ThreadDetailsControl
+              type="button"
+              variant="ghost"
+              size="sm"
+              part="meta"
+              tone="primary"
+              disabled={refreshing || action.mergeDisabled}
+              onClick={() => action.request("merge")}
+            />
+          }
+        >
+          {action.pending ? "Merging..." : "Merge stack"}
+        </TooltipTrigger>
+        <TooltipPopup side="top">
+          Merge all {action.mergeLayers.length} pull requests in this stack into {stack.base}
+        </TooltipPopup>
+      </Tooltip>
+      {action.dialog}
     </>
   );
 }
