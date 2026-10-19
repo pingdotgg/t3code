@@ -148,3 +148,19 @@ export function canCheckForUpdate(state: DesktopUpdateState | null): boolean {
     state.status !== "checking" && state.status !== "downloading" && state.status !== "disabled"
   );
 }
+
+export function getDesktopUpdateDisabledReason(
+  state: Pick<DesktopUpdateState, "enabled" | "status" | "message"> | null,
+): string | null {
+  if (!state || (state.enabled && state.status !== "disabled")) return null;
+  return state.message?.trim() || "Automatic updates are not available in this build.";
+}
+
+export function getDesktopUpdateIdleTooltip(
+  state: Pick<DesktopUpdateState, "enabled" | "status" | "message"> | null,
+) {
+  const disabledReason = getDesktopUpdateDisabledReason(state);
+  return disabledReason
+    ? { title: "Updates unavailable", detail: disabledReason }
+    : { title: "Check for updates", detail: null };
+}

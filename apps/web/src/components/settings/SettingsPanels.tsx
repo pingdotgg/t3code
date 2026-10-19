@@ -60,6 +60,7 @@ import { MobileAppSettingsRow } from "./MobileAppSettingsRow";
 import {
   canCheckForUpdate,
   getDesktopUpdateButtonTooltip,
+  getDesktopUpdateDisabledReason,
   getDesktopUpdateInstallConfirmationMessage,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
@@ -419,7 +420,7 @@ function AboutVersionSection() {
   const description =
     action === "download" || action === "install"
       ? "Update available."
-      : "Current version of the application.";
+      : (getDesktopUpdateDisabledReason(updateState) ?? "Current version of the application.");
 
   return (
     <>
