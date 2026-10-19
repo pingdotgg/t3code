@@ -3137,12 +3137,14 @@ export const ServerNotification__McpToolCallProgressNotification = Schema.Struct
 
 export type ServerNotification__McpServerOauthLoginCompletedNotification = {
   readonly error?: string | null;
+  readonly loginId?: string | null;
   readonly name: string;
   readonly success: boolean;
   readonly threadId?: string | null;
 };
 export const ServerNotification__McpServerOauthLoginCompletedNotification = Schema.Struct({
   error: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+  loginId: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   name: Schema.String,
   success: Schema.Boolean,
   threadId: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
@@ -53560,12 +53562,14 @@ export const V2McpServerEventStreamNotification = Schema.Struct({
 
 export type V2McpServerOauthLoginCompletedNotification = {
   readonly error?: string | null;
+  readonly loginId?: string | null;
   readonly name: string;
   readonly success: boolean;
   readonly threadId?: string | null;
 };
 export const V2McpServerOauthLoginCompletedNotification = Schema.Struct({
   error: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+  loginId: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   name: Schema.String,
   success: Schema.Boolean,
   threadId: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
@@ -53601,9 +53605,13 @@ export const V2McpServerOauthLoginParams = Schema.Struct({
   ),
 }).annotate({ title: "McpServerOauthLoginParams" });
 
-export type V2McpServerOauthLoginResponse = { readonly authorizationUrl: string };
+export type V2McpServerOauthLoginResponse = {
+  readonly authorizationUrl: string;
+  readonly loginId?: string | null;
+};
 export const V2McpServerOauthLoginResponse = Schema.Struct({
   authorizationUrl: Schema.String,
+  loginId: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
 }).annotate({ title: "McpServerOauthLoginResponse" });
 
 export type V2McpServerRefreshResponse = { readonly [x: string]: Schema.Json };

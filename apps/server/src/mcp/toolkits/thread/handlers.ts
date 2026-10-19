@@ -20,6 +20,8 @@ import {
 } from "../../threadAccess.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
+import * as ThreadMcpServers from "../../../provider/ThreadMcpServers.ts";
+import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
 import { ThreadToolkit } from "./tools.ts";
 
@@ -74,7 +76,65 @@ const writesThread = <P extends { readonly threadId?: ThreadId | undefined }, A,
   handle: (params: P) => Effect.Effect<A, E, R>,
 ) => McpToolAccess.writesThreads((params: P) => [params.threadId], handle);
 
+const mcpCallerTarget = Effect.gen(function* () {
+  const context = yield* readCaller();
+  const scope = yield* McpInvocationContext.requireThreadScope(context.scope, "MCP server sign-in");
+  return { threadId: scope.thread.threadId, providerInstanceId: scope.thread.providerInstanceId };
+});
+
 export const layer = McpToolAccess.toLayer(ThreadToolkit, {
+  t3_mcp_server_status: McpToolAccess.readsAsCaller((input) =>
+    Effect.gen(function* () {
+      const caller = yield* mcpCallerTarget;
+      const servers = yield* ThreadMcpServers.ThreadMcpServers;
+      return yield* servers
+        .status({
+          ...input,
+          ...caller,
+        })
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new OrchestratorMcpFailure({ code: "invalid_request", message: error.message }),
+          ),
+        );
+    }),
+  ),
+  t3_mcp_server_login: McpToolAccess.writesEnvironment((input) =>
+    Effect.gen(function* () {
+      const caller = yield* mcpCallerTarget;
+      const servers = yield* ThreadMcpServers.ThreadMcpServers;
+      return yield* servers
+        .login({
+          ...input,
+          ...caller,
+        })
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new OrchestratorMcpFailure({ code: "invalid_request", message: error.message }),
+          ),
+        );
+    }),
+  ),
+  t3_mcp_server_login_wait: McpToolAccess.readsAsCaller((input) =>
+    Effect.gen(function* () {
+      const caller = yield* mcpCallerTarget;
+      const servers = yield* ThreadMcpServers.ThreadMcpServers;
+      const server = yield* servers
+        .waitForLogin({
+          ...input,
+          ...caller,
+        })
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new OrchestratorMcpFailure({ code: "invalid_request", message: error.message }),
+          ),
+        );
+      return { oauthCompleted: true as const, server };
+    }),
+  ),
   run_scheduled_task_now: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
       const scheduler = yield* ScheduledTasks.ScheduledTaskService;

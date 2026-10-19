@@ -1070,6 +1070,57 @@ describe("CodexAdapterV2 dynamic tool projection", () => {
 });
 
 describe("CodexAdapterV2 native protocol logging", () => {
+  it.effect("redacts MCP OAuth URLs and native completion errors", () =>
+    Effect.gen(function* () {
+      const writes: Array<unknown> = [];
+      const logger = CodexAdapterV2.makeCodexAppServerProtocolLogger({
+        threadId: ThreadId.make("thread-oauth"),
+        providerSessionId: ProviderSessionId.make("session-oauth"),
+        nativeEventLogger: {
+          filePath: "/tmp/events.log",
+          write: (event) =>
+            Effect.sync(() => {
+              writes.push(event);
+            }),
+          close: () => Effect.void,
+        },
+      });
+      if (!logger) return yield* Effect.die("Native protocol logger must be enabled");
+      yield* logger({
+        direction: "incoming",
+        stage: "decoded",
+        payload: {
+          id: 1,
+          result: {
+            authorizationUrl: "https://example.com/authorize?state=private-state",
+            loginId: "owned",
+          },
+        },
+      });
+      yield* logger({
+        direction: "incoming",
+        stage: "decoded",
+        payload: {
+          method: "mcpServer/oauthLogin/completed",
+          params: {
+            name: "example",
+            threadId: "native-thread",
+            loginId: "owned",
+            success: false,
+            error: "Request failed at https://example.com/callback?code=private-code",
+          },
+        },
+      });
+      assert.equal(writes.length, 2);
+      const serialized = encodeUnknownJson(writes);
+      assert.notInclude(serialized, "private-state");
+      assert.notInclude(serialized, "private-code");
+      assert.notInclude(serialized, "https://example.com");
+      assert.include(serialized, '"success":false');
+      assert.include(serialized, '"loginId":"owned"');
+    }),
+  );
+
   it.effect("logs decoded app-server frames once with credentials redacted", () =>
     Effect.gen(function* () {
       const writes: Array<{
@@ -1805,6 +1856,7 @@ describe("CodexAdapterV2 session initialize", () => {
         runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
       });
       return {
+        runtime,
         ensureThread: (threadId: string) =>
           runtime.ensureThread({
             threadId: ThreadId.make(threadId),
@@ -1817,6 +1869,108 @@ describe("CodexAdapterV2 session initialize", () => {
 
   const replayPreamble = (nativeThreadId: string) =>
     codexReplayPreamble({ nativeThreadId, nativeTurnId: "unused", prompt: "unused" });
+
+  it.effect(
+    "authenticates the actual native thread on its existing client and pins only that thread",
+    () =>
+      Effect.gen(function* () {
+        const session = yield* openReplaySession(
+          makeCodexReplayTranscript({
+            scenario: "mcp-oauth",
+            entries: [
+              ...replayPreamble("mcp-native-thread").slice(0, 5),
+              {
+                type: "expect_outbound",
+                frame: {
+                  id: 3,
+                  method: "mcpServer/oauth/login",
+                  params: { name: "example", threadId: "mcp-native-thread", timeoutSecs: 300 },
+                },
+              },
+              {
+                type: "emit_inbound",
+                frame: {
+                  method: "mcpServer/oauthLogin/completed",
+                  params: {
+                    name: "example",
+                    threadId: "mcp-native-thread",
+                    loginId: "owned",
+                    success: true,
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                frame: {
+                  id: 3,
+                  result: { loginId: "owned", authorizationUrl: "https://example.com/authorize" },
+                },
+              },
+              {
+                type: "expect_outbound",
+                frame: {
+                  id: 4,
+                  method: "mcpServerStatus/list",
+                  params: {
+                    threadId: "mcp-native-thread",
+                    serverName: "example",
+                    detail: "toolsAndAuthOnly",
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                frame: {
+                  id: 4,
+                  result: {
+                    data: [
+                      {
+                        name: "example",
+                        authStatus: "oAuth",
+                        runtimeStatus: "connected",
+                        tools: {},
+                        resources: [],
+                        resourceTemplates: [],
+                      },
+                    ],
+                    nextCursor: null,
+                  },
+                },
+              },
+            ],
+          }),
+        );
+        const providerThread = yield* session.ensureThread("thread-mcp-oauth");
+        const mcpServers = session.runtime.mcpServers;
+        if (!mcpServers) return yield* Effect.die("Codex runtime must expose MCP authentication");
+        const login = yield* mcpServers.login({ providerThread, server: "example" });
+        assert.isTrue(yield* session.runtime.hasPendingBackgroundWork!);
+        assert.isTrue(yield* session.runtime.hasPendingBackgroundWorkForThread!(providerThread));
+        assert.isFalse(
+          yield* session.runtime.hasPendingBackgroundWorkForThread!({
+            ...providerThread,
+            nativeThreadRef: {
+              driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+              nativeId: "sibling-native-thread",
+              strength: "strong",
+            },
+          }),
+        );
+        const server = yield* mcpServers.waitForLogin({
+          providerThread,
+          server: "example",
+          loginId: login.loginId,
+        });
+        assert.equal(server.status, "connected");
+        assert.isFalse(yield* session.runtime.hasPendingBackgroundWork!);
+        assert.equal(session.initializeRequests(), 1);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
 
   it.effect("sends one initialize when two threads start on a fresh session at once", () =>
     Effect.gen(function* () {
