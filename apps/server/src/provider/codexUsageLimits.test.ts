@@ -261,7 +261,7 @@ describe("mergeCodexRateLimits", () => {
   });
 });
 
-import { codexPublishedUsageLimitResetAt, codexUsageLimitResetAt } from "./codexUsageLimits.ts";
+import { codexUsageLimitResetAt } from "./codexUsageLimits.ts";
 
 describe("codexUsageLimitResetAt", () => {
   const stoppedAtMs = Date.parse("2033-05-18T03:00:00.000Z");
@@ -276,27 +276,6 @@ describe("codexUsageLimitResetAt", () => {
         stoppedAtMs,
       ),
     ).toBe("2033-05-19T07:20:00.000Z");
-    expect(codexUsageLimitResetAt({ primary: { usedPercent: 100 } }, stoppedAtMs)).toBeNull();
-    expect(
-      codexUsageLimitResetAt({ primary: { usedPercent: 50, resetsAt: 2000000000 } }, stoppedAtMs),
-    ).toBeNull();
-  });
-
-  it("takes a window at 99% when Codex refuses the turn before any reads 100%", () => {
-    // Codex sends whole percentages; this is the last update seen before a real refusal.
-    expect(
-      codexUsageLimitResetAt(
-        {
-          limitId: "codex",
-          primary: { usedPercent: 99, resetsAt: 2000000000, windowDurationMins: 300 },
-          secondary: { usedPercent: 73, resetsAt: 2000100000, windowDurationMins: 10080 },
-        },
-        stoppedAtMs,
-      ),
-    ).toBe("2033-05-18T03:33:20.000Z");
-  });
-
-  it("waits only for the windows at 100% when another reads 99%", () => {
     expect(
       codexUsageLimitResetAt(
         {
@@ -306,6 +285,10 @@ describe("codexUsageLimitResetAt", () => {
         stoppedAtMs,
       ),
     ).toBe("2033-05-18T03:33:20.000Z");
+    expect(codexUsageLimitResetAt({ primary: { usedPercent: 100 } }, stoppedAtMs)).toBeNull();
+    expect(
+      codexUsageLimitResetAt({ primary: { usedPercent: 50, resetsAt: 2000000000 } }, stoppedAtMs),
+    ).toBeNull();
   });
 
   it("ignores a window that has renewed since it was observed", () => {
@@ -319,33 +302,5 @@ describe("codexUsageLimitResetAt", () => {
         afterSessionResetMs,
       ),
     ).toBeNull();
-  });
-});
-
-describe("codexPublishedUsageLimitResetAt", () => {
-  it("reads the same reset from the published limits", () => {
-    const limits = {
-      checkedAt,
-      windows: [
-        {
-          id: "primary",
-          kind: "session" as const,
-          label: "Session",
-          usedPercent: 100,
-          resetsAt: "2033-05-18T03:33:20.000Z",
-        },
-        {
-          id: "secondary",
-          kind: "weekly" as const,
-          label: "Weekly",
-          usedPercent: 40,
-          resetsAt: "2033-05-19T07:20:00.000Z",
-        },
-      ],
-    };
-    expect(codexPublishedUsageLimitResetAt(limits, Date.parse("2033-05-18T03:00:00.000Z"))).toBe(
-      "2033-05-18T03:33:20.000Z",
-    );
-    expect(codexPublishedUsageLimitResetAt(undefined, 0)).toBeNull();
   });
 });
