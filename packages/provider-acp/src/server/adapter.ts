@@ -6354,6 +6354,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   new ProviderAdapter.ProviderAdapterProtocolError({
                     driver,
                     detail: `Failed to read attachment '${attachment.id}'`,
+                    reason: "attachment_unreadable",
                     payload: cause,
                   }),
               ),
@@ -6411,6 +6412,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                 driver,
                 detail: `ACP provider turn ${existing.providerTurnId} is still active`,
+                reason: "previous_turn_active",
               });
             }
             useProviderThreadIdentity(turnInput.providerThread);

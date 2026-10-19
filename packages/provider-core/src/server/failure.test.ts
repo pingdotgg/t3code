@@ -101,6 +101,65 @@ it("preserves actionable handoff errors wrapped by turn startup", () => {
   );
 });
 
+it.each([
+  ["previous_turn_active", "the previous turn is still running"],
+  ["attachment_unreadable", "an attachment could not be read"],
+] as const)("names %s without exposing provider detail or losing guidance", (reason, wording) => {
+  const failure = makeProviderFailure({
+    cause: Cause.fail({
+      _tag: "ProviderAdapterTurnStartError",
+      cause: Cause.fail(
+        new ProviderAdapter.ProviderAdapterProtocolError({
+          driver: ProviderDriverKind.make("claudeAgent"),
+          detail: `Private configuration: ${"x".repeat(5000)}`,
+          reason,
+        }),
+      ),
+    }),
+  });
+  assert.equal(
+    failure.message,
+    `The provider could not start this turn: ${wording}. Retry the turn; if it keeps failing, check the provider setup and server logs.`,
+  );
+});
+
+it("keeps unrecognized reasons and provider text out of category messages", () => {
+  for (const cause of [
+    "Private launch command",
+    { _tag: "ProviderAdapterProtocolError", detail: "Pi model 'private-config' is invalid" },
+    { _tag: "ProviderAdapterProtocolError", reason: "private-config" },
+    { _tag: "ProviderAdapterProtocolError", reason: "constructor" },
+    { _tag: "constructor", cause: "private-config" },
+  ]) {
+    assert.equal(
+      makeProviderFailure({ cause: { _tag: "ProviderAdapterTurnStartError", cause } }).message,
+      "The provider could not start this turn. Retry the turn; if it keeps failing, check the provider setup and server logs.",
+    );
+  }
+  assert.equal(
+    makeProviderFailure({
+      cause: { _tag: "ProviderAdapterProtocolError", reason: "previous_turn_active" },
+    }).message,
+    "Provider turn failed.",
+  );
+});
+
+it("uses the innermost category without carrying an outer reason into it", () => {
+  assert.equal(
+    makeProviderFailure({
+      cause: {
+        _tag: "ProviderAdapterTurnStartError",
+        cause: {
+          _tag: "ProviderAdapterProtocolError",
+          reason: "previous_turn_active",
+          cause: Cause.fail({ _tag: "ProviderAdapterOpenSessionError" }),
+        },
+      },
+    }).message,
+    "The provider session could not be opened. Check that the provider is installed and signed in, then retry the turn.",
+  );
+});
+
 it("does not expose defect text nested inside a known error category", () => {
   const failure = makeProviderFailure({
     cause: {

@@ -14,6 +14,7 @@ import * as DateTime from "effect/DateTime";
 import * as Cause from "effect/Cause";
 
 import * as IdAllocator from "./IdAllocator.ts";
+import type { ProviderAdapterFailureReason } from "./ProviderAdapter.ts";
 import * as Schema from "effect/Schema";
 
 export class ContextHandoffBudgetError extends Schema.TaggedError<ContextHandoffBudgetError>()(
@@ -30,9 +31,36 @@ export const MAX_PROVIDER_FAILURE_CODE_LENGTH = 128;
 
 const DEFAULT_PROVIDER_FAILURE_MESSAGE = "Provider turn failed.";
 
+const PROVIDER_FAILURE_CATEGORIES: Partial<
+  Record<string, { readonly summary: string; readonly guidance: string }>
+> = {
+  ProviderAdapterTurnStartError: {
+    summary: "The provider could not start this turn",
+    guidance: "Retry the turn; if it keeps failing, check the provider setup and server logs.",
+  },
+  ProviderAdapterEventStreamError: {
+    summary: "The provider event stream closed unexpectedly",
+    guidance: "Retry the turn; if it keeps failing, check the provider and server logs.",
+  },
+  ProviderAdapterOpenSessionError: {
+    summary: "The provider session could not be opened",
+    guidance: "Check that the provider is installed and signed in, then retry the turn.",
+  },
+  ProviderAdapterResumeThreadError: {
+    summary: "The provider conversation could not be resumed",
+    guidance: "Retry the turn; if it keeps failing, check the provider and server logs.",
+  },
+};
+
+const PROVIDER_FAILURE_REASONS: Record<ProviderAdapterFailureReason, string> = {
+  previous_turn_active: "the previous turn is still running",
+  attachment_unreadable: "an attachment could not be read",
+};
+
 function causeMessage(cause: unknown): string | undefined {
   const seen = new Set<unknown>();
-  let message: string | undefined;
+  let category: (typeof PROVIDER_FAILURE_CATEGORIES)[string];
+  let reason: string | undefined;
   for (let depth = 0; depth < 16 && cause != null && !seen.has(cause); depth++) {
     seen.add(cause);
     try {
@@ -41,7 +69,8 @@ function causeMessage(cause: unknown): string | undefined {
         continue;
       }
       if (typeof cause !== "object") break;
-      switch ((cause as Record<string, unknown>)._tag) {
+      const tag = (cause as Record<string, unknown>)._tag;
+      switch (tag) {
         case "ContextHandoffBudgetError":
           return new ContextHandoffBudgetError().message;
         case "ClaudeBackgroundWorkBlocksQueryReplacementError":
@@ -49,29 +78,31 @@ function causeMessage(cause: unknown): string | undefined {
           return stringField(cause, "message");
         case "ContextHandoffDeliveryUncertainError":
           return "T3 could not confirm whether conversation history reached the provider. Retry the turn to recover the session.";
-        case "ProviderAdapterTurnStartError":
-          message =
-            "The provider could not start this turn. Retry the turn; if it keeps failing, check the provider setup and server logs.";
+        case "ProviderAdapterProtocolError": {
+          const typedReason = (cause as Record<string, unknown>).reason;
+          if (
+            category !== undefined &&
+            typeof typedReason === "string" &&
+            Object.hasOwn(PROVIDER_FAILURE_REASONS, typedReason)
+          ) {
+            reason ??= PROVIDER_FAILURE_REASONS[typedReason as ProviderAdapterFailureReason];
+          }
           break;
-        case "ProviderAdapterEventStreamError":
-          message =
-            "The provider event stream closed unexpectedly. Retry the turn; if it keeps failing, check the provider and server logs.";
-          break;
-        case "ProviderAdapterOpenSessionError":
-          message =
-            "The provider session could not be opened. Check that the provider is installed and signed in, then retry the turn.";
-          break;
-        case "ProviderAdapterResumeThreadError":
-          message =
-            "The provider conversation could not be resumed. Retry the turn; if it keeps failing, check the provider and server logs.";
-          break;
+        }
+      }
+      if (typeof tag === "string" && Object.hasOwn(PROVIDER_FAILURE_CATEGORIES, tag)) {
+        category = PROVIDER_FAILURE_CATEGORIES[tag];
+        reason = undefined;
       }
       cause = (cause as Record<string, unknown>).cause;
     } catch {
       break;
     }
   }
-  return message;
+  if (category === undefined) return undefined;
+  return reason
+    ? `${category.summary}: ${reason}. ${category.guidance}`
+    : `${category.summary}. ${category.guidance}`;
 }
 
 function stringField(value: unknown, key: "message" | "code"): string | undefined {

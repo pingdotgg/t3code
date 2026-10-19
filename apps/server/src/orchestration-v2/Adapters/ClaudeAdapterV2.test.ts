@@ -8509,12 +8509,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           );
 
         yield* userTurn("attempt-failed-start-1", 1);
-        yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
-        yield* Queue.offer(harness.sdkMessages, turnOneResult);
-        yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");
-        yield* Queue.offer(harness.sdkMessages, wakeNotification);
-        let notificationYields = 0;
-        yield* awaitUntil(() => notificationYields++ >= 50, "notification to be recorded");
+        yield* harness.offerAndWait(wakeTaskStarted);
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        yield* harness.offerAndWait(wakeNotification);
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
 
         const missing = ChatImageAttachment.make({
@@ -8524,20 +8522,22 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           mimeType: "image/png",
           sizeBytes: 4,
         });
-        const failed = yield* Effect.exit(userTurn("attempt-failed-start-2", 2, [missing]));
-        assert.isTrue(Exit.isFailure(failed));
+        const failed = yield* userTurn("attempt-failed-start-2", 2, [missing]).pipe(Effect.flip);
+        assert.equal(
+          makeProviderFailure({ cause: failed }).message,
+          "The provider could not start this turn: an attachment could not be read. Retry the turn; if it keeps failing, check the provider setup and server logs.",
+        );
 
         yield* userTurn("attempt-failed-start-3", 2);
-        yield* Queue.offer(
-          harness.sdkMessages,
+        yield* harness.offerAndWait(
           makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000911", result: "Answered." }),
         );
-        yield* awaitUntil(() => harness.terminalEvents().length === 2, "second turn terminal");
+        yield* Queue.take(harness.terminalReceipts);
 
-        yield* Queue.offer(harness.sdkMessages, wakeAssistant);
-        yield* awaitUntil(() => harness.continuationRequests.length === 1, "command wake");
+        yield* harness.offerAndWait(wakeAssistant);
+        const continuation = yield* Queue.take(harness.continuationReceipts);
         assert.equal(
-          harness.continuationRequests[0]?.notification?.summary,
+          continuation.notification?.summary,
           `Command "${WAKE_TASK_DESCRIPTION}" finished`,
         );
       }).pipe(
