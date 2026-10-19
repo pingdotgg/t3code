@@ -194,6 +194,42 @@ async function click(element: HTMLElement) {
 }
 
 describe("MessagesTimeline work rows", () => {
+  it.each([
+    ["Enter", "{Enter}"],
+    ["Space", " "],
+  ])("opens a nested diff with %s without collapsing the tool row", async (_name, key) => {
+    const onOpenTurnDiff = vi.fn();
+    await renderTimeline(
+      [
+        work("file-change-1", {
+          label: "Updated src/index.ts",
+          tone: "tool",
+          itemType: "file_change",
+          toolLifecycleStatus: "completed",
+          projectedItem: v2Item("file_change", { id: "file-change-1", fileName: "src/index.ts" }),
+        }),
+      ],
+      { onOpenTurnDiff },
+    );
+    const row = container.querySelector<HTMLElement>('[data-v2-item-type="file_change"]')!;
+    const press = async (target: HTMLElement) => {
+      await act(async () => {
+        target.focus();
+        await userEvent.keyboard(key);
+      });
+    };
+    expect(row.getAttribute("aria-expanded")).toBe("false");
+    await press(row);
+    expect(row.getAttribute("aria-expanded")).toBe("true");
+    const openDiff = button("Open diff");
+    await press(openDiff);
+    expect(onOpenTurnDiff).toHaveBeenCalledWith("run-1", "src/index.ts");
+    expect(onOpenTurnDiff).toHaveBeenCalledTimes(1);
+    expect(row.getAttribute("aria-expanded")).toBe("true");
+    await press(row);
+    expect(row.getAttribute("aria-expanded")).toBe("false");
+  });
+
   it("shows dynamic tool input without cached output when the row is expanded", async () => {
     await renderTimeline([
       work("tool-with-cached-output", {
