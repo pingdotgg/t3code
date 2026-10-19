@@ -1,11 +1,7 @@
-import type { ChatAttachment, EnvironmentId } from "@t3tools/contracts";
-import { Image } from "expo-image";
-import { Pressable, ScrollView, View } from "react-native";
+import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
-import { useAssetUrl } from "../../state/assets";
-import { assetImageSource } from "../../lib/assetImageSource";
 
 export function ComposerQueuedEditBanner(props: {
   readonly saving: boolean;
@@ -26,87 +22,6 @@ export function ComposerQueuedEditBanner(props: {
         className="min-h-8 justify-center px-1 active:opacity-70 disabled:opacity-40"
       >
         <Text className="font-t3-medium text-xs text-primary">Cancel</Text>
-      </Pressable>
-    </View>
-  );
-}
-
-export function ComposerQueuedEditAttachments(props: {
-  readonly environmentId: EnvironmentId;
-  readonly attachments: ReadonlyArray<ChatAttachment>;
-  readonly disabled: boolean;
-  readonly onRemove: (attachmentId: string) => void;
-}) {
-  if (props.attachments.length === 0) return null;
-  return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      keyboardShouldPersistTaps="always"
-      className="grow-0"
-      contentContainerClassName="flex-row items-center gap-2"
-    >
-      {props.attachments.map((attachment) => (
-        <QueuedEditAttachmentChip
-          key={attachment.id}
-          environmentId={props.environmentId}
-          attachment={attachment}
-          disabled={props.disabled}
-          onRemove={props.onRemove}
-        />
-      ))}
-    </ScrollView>
-  );
-}
-
-function QueuedEditAttachmentChip(props: {
-  readonly environmentId: EnvironmentId;
-  readonly attachment: ChatAttachment;
-  readonly disabled: boolean;
-  readonly onRemove: (attachmentId: string) => void;
-}) {
-  const { attachment } = props;
-  const isImage = attachment.mimeType.startsWith("image/");
-  const resource = {
-    _tag: "attachment",
-    attachmentId: attachment.id,
-    fileName: attachment.name,
-    mimeType: attachment.mimeType,
-    disposition: "inline",
-  } as const;
-  const url = useAssetUrl(props.environmentId, isImage ? resource : null);
-
-  return (
-    <View className="max-w-[180px] flex-row items-center gap-2 rounded-xl border border-border bg-card py-1 pl-1 pr-2">
-      {isImage && url !== null ? (
-        <Image
-          source={assetImageSource(props.environmentId, resource, url)}
-          cachePolicy="memory-disk"
-          contentFit="cover"
-          style={{ width: 24, height: 24, borderRadius: 6 }}
-          accessibilityIgnoresInvertColors
-        />
-      ) : (
-        <View className="h-6 w-6 items-center justify-center rounded-md bg-subtle">
-          <SymbolView
-            name={isImage ? "photo" : "doc"}
-            size={12}
-            tintColorClassName="accent-icon-subtle"
-          />
-        </View>
-      )}
-      <Text className="min-w-0 shrink text-xs text-foreground" numberOfLines={1}>
-        {attachment.name}
-      </Text>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`Remove ${attachment.name}`}
-        disabled={props.disabled}
-        hitSlop={8}
-        onPress={() => props.onRemove(attachment.id)}
-        className="active:opacity-70 disabled:opacity-40"
-      >
-        <SymbolView name="xmark.circle.fill" size={14} tintColorClassName="accent-icon-subtle" />
       </Pressable>
     </View>
   );

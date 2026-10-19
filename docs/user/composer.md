@@ -72,6 +72,18 @@ Press `Option+Up` on macOS or `Alt+Up` on Windows and Linux with the cursor at t
 start of the composer to edit the most recently queued message. Change
 `thread.editQueuedMessage` to use another shortcut.
 
+Editing holds that message and the messages behind it until you Save or Cancel;
+the active turn continues. The hold survives disconnects, restarts, and resuming
+the queue. Return to the thread after navigating away or restarting the client to
+continue your edit. To edit a message held on another device, choose Edit and
+confirm takeover.
+If another editor takes over or the message is removed, unsaved changes stay in
+the composer or remain available as a saved queued edit above it. If another device
+saves a newer version, reopening Edit starts from that version and keeps the older
+draft under Saved queued edit. Failure and workspace pauses remain separate: finish
+the edit, then resume a paused queue. Older servers allow local editing but cannot
+hold the queue while you edit.
+
 Mobile has the same choice under **Settings → Follow-ups**. While a turn is
 running the send button shows which action it will take. Long-press it to use the
 other action for a single message, or hold `Cmd` while sending from a hardware

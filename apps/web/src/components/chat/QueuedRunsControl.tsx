@@ -130,6 +130,7 @@ export function QueuedRunsControl({
           name: attachment.name,
           url: queuedImageUrlById.get(attachment.id) ?? null,
         })),
+      held: run.queueEditId != null,
       pending: false,
     })),
     ...optimisticQueued.map((message) => ({
@@ -146,6 +147,7 @@ export function QueuedRunsControl({
           name: attachment.name,
           url: attachment.previewUrl ?? null,
         })),
+      held: false,
       pending: true,
     })),
   ];
@@ -170,7 +172,13 @@ export function QueuedRunsControl({
   };
 
   const steer = async (queuedRunId: RunId) => {
-    if (activeRun === null || !workflow?.canPromoteToSteer || steerInFlightRef.current) return;
+    if (
+      activeRun === null ||
+      !workflow?.canPromoteToSteer ||
+      steerInFlightRef.current ||
+      queued.find(({ run }) => run.id === queuedRunId)?.run.queueEditId != null
+    )
+      return;
     steerInFlightRef.current = true;
     setBusyRunId(queuedRunId);
     await promote({
@@ -184,7 +192,7 @@ export function QueuedRunsControl({
   useImperativeHandle(ref, () => ({
     steerNext(repeat) {
       const next = queued[0];
-      if (!next || !workflow?.canPromoteToSteer) return false;
+      if (!next || !workflow?.canPromoteToSteer || next.run.queueEditId != null) return false;
       if (!repeat && busyRunId === null) void steer(next.run.id);
       return true;
     },
@@ -338,6 +346,11 @@ export function QueuedRunsControl({
                     ) : null}
                   </ComposerBanner.Icon>
                   <ComposerBanner.Content className="text-foreground/80">
+                    {item.held && !isEditing ? (
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        Editing elsewhere
+                      </span>
+                    ) : null}
                     {isEditing ? <span className="sr-only">Editing queued message: </span> : null}
                     {item.pending ? (
                       <Clock3Icon
@@ -395,7 +408,11 @@ export function QueuedRunsControl({
                               <Button
                                 size="icon-xs"
                                 variant="ghost-muted"
-                                aria-label="Edit queued message"
+                                aria-label={
+                                  item.held
+                                    ? "Take over queued message edit"
+                                    : "Edit queued message"
+                                }
                                 disabled={item.runId === null || busyRunId !== null}
                                 onClick={() => {
                                   if (item.runId !== null && item.messageId !== null) {
@@ -413,7 +430,9 @@ export function QueuedRunsControl({
                             <PencilIcon />
                           </TooltipTrigger>
                           <TooltipPopup>
-                            {`Edit in the composer${item.serverIndex === queued.length - 1 && props.editShortcutLabel ? ` (${props.editShortcutLabel})` : ""}`}
+                            {item.held
+                              ? "Take over editing, then Save or Cancel to release the message."
+                              : `Edit in the composer${item.serverIndex === queued.length - 1 && props.editShortcutLabel ? ` (${props.editShortcutLabel})` : ""}`}
                           </TooltipPopup>
                         </Tooltip>
                         <Tooltip>
@@ -424,7 +443,9 @@ export function QueuedRunsControl({
                               disabled={
                                 item.runId === null ||
                                 busyRunId !== null ||
-                                !workflow?.canPromoteToSteer
+                                !workflow?.canPromoteToSteer ||
+                                queued.find(({ run }) => run.id === item.runId)?.run.queueEditId !=
+                                  null
                               }
                               onClick={() => {
                                 if (item.runId !== null) {

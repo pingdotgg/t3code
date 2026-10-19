@@ -1,4 +1,6 @@
 import {
+  CommandId,
+  RunId,
   EnvironmentId,
   EventId,
   MessageId,
@@ -41,6 +43,7 @@ import * as ThreadHistoryController from "./threadHistoryController.ts";
 import {
   EMPTY_ENVIRONMENT_THREAD_STATE,
   makeEnvironmentThreadState,
+  queuedRunEditOwnership,
   type EnvironmentThreadState,
   type ThreadSnapshotLoadResult,
 } from "./threads.ts";
@@ -320,6 +323,81 @@ const deleted = (sequence = 3): OrchestrationV2ThreadStreamItem => {
 };
 
 describe("EnvironmentThreads", () => {
+  it.effect(
+    "keeps edit ownership pending until the receipt sequence and detects a later takeover",
+    () =>
+      Effect.gen(function* () {
+        const run = {
+          id: RunId.make("queued-edit-run"),
+          threadId: THREAD_ID,
+          ordinal: 1,
+          providerInstanceId: BASE_PROJECTION.thread.providerInstanceId,
+          modelSelection: BASE_PROJECTION.thread.modelSelection,
+          providerThreadId: null,
+          userMessageId: MessageId.make("queued-edit-message"),
+          rootNodeId: null,
+          activeAttemptId: null,
+          status: "queued" as const,
+          queueEditId: CommandId.make("previous-editor"),
+          requestedAt: BASE_PROJECTION.updatedAt,
+          startedAt: null,
+          completedAt: null,
+          checkpointId: null,
+          contextHandoffId: null,
+        };
+        const h = yield* makeHarness({ cached: { ...BASE_PROJECTION, runs: [run] } });
+        const before = yield* awaitThreadState(h.observed, (value) => value.status === "live");
+        const edit = { runId: run.id, editId: CommandId.make("accepted-editor"), sequence: 10 };
+        expect(queuedRunEditOwnership(before, edit)).toBe("pending");
+
+        yield* Queue.offer(h.inputs, titleUpdated("Buffered before acquisition", 9));
+        const buffered = yield* awaitThreadState(h.observed, (value) => value.sequence === 9);
+        expect(queuedRunEditOwnership(buffered, edit)).toBe("pending");
+
+        yield* Queue.offer(h.inputs, {
+          kind: "event",
+          sequence: edit.sequence,
+          event: {
+            id: EventId.make("edit-acquired"),
+            type: "run.updated",
+            threadId: THREAD_ID,
+            occurredAt: BASE_PROJECTION.updatedAt,
+            payload: { ...run, queueEditId: edit.editId },
+          },
+        });
+        const acquired = yield* awaitThreadState(h.observed, (value) => value.sequence === 10);
+        expect(queuedRunEditOwnership(acquired, edit)).toBe("owned");
+        expect(queuedRunEditOwnership({ ...acquired, status: "cached" }, edit)).toBe("pending");
+        const legacy = { ...edit, editId: null, sequence: 0 };
+        expect(
+          queuedRunEditOwnership(
+            {
+              ...acquired,
+              data: Option.some({ ...BASE_PROJECTION, runs: [{ ...run, queueEditId: undefined }] }),
+            },
+            legacy,
+          ),
+        ).toBe("owned");
+        expect(queuedRunEditOwnership(acquired, legacy)).toBe("lost");
+
+        const reopened = { ...edit, editId: CommandId.make("reopened-editor"), sequence: 11 };
+        expect(queuedRunEditOwnership(acquired, reopened)).toBe("pending");
+        yield* Queue.offer(
+          h.inputs,
+          snapshot(
+            {
+              ...BASE_PROJECTION,
+              runs: [{ ...run, queueEditId: CommandId.make("another-device") }],
+            },
+            12,
+          ),
+        );
+        const superseded = yield* awaitThreadState(h.observed, (value) => value.sequence === 12);
+        expect(queuedRunEditOwnership(superseded, edit)).toBe("lost");
+        expect(queuedRunEditOwnership(superseded, reopened)).toBe("lost");
+      }),
+  );
+
   it.effect("loads the server thread when its local cache read fails", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness({

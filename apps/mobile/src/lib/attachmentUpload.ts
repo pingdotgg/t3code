@@ -179,7 +179,7 @@ function uploadedReference(
     sizeBytes: attachment.sizeBytes,
   };
   return isComposerImageAttachment(attachment)
-    ? { type: "image", ...fields }
+    ? { type: "image", ...fields, ...(attachment.source ? { source: attachment.source } : {}) }
     : {
         type: "file",
         ...fields,

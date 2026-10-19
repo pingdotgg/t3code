@@ -5437,12 +5437,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             FROM orchestration_v2_projection_threads t
             -- The newest run not waiting in a held queue, matching latestUnheldRun.
             LEFT JOIN orchestration_v2_projection_runs presented ON presented.run_id = (
+              WITH edit_position AS MATERIALIZED (
+                SELECT MIN(COALESCE(json_extract(edit.payload_json, '$.queuePosition'), edit.ordinal)) AS position
+                FROM orchestration_v2_projection_runs edit
+                WHERE edit.thread_id = t.thread_id AND edit.status = 'queued'
+                  AND json_extract(edit.payload_json, '$.queueEditId') IS NOT NULL
+              )
               SELECT candidate.run_id
               FROM orchestration_v2_projection_runs candidate
+              CROSS JOIN edit_position
               WHERE candidate.thread_id = t.thread_id
                 AND NOT (
                   candidate.status = 'queued'
-                  AND json_extract(candidate.payload_json, '$.queueHeld') IS 1
+                  AND (json_extract(candidate.payload_json, '$.queueHeld') IS 1
+                    OR COALESCE(COALESCE(json_extract(candidate.payload_json, '$.queuePosition'), candidate.ordinal) >= edit_position.position, 0))
                 )
               ORDER BY candidate.ordinal DESC, candidate.run_id DESC
               LIMIT 1

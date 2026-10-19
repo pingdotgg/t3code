@@ -237,7 +237,18 @@ export interface RetryWorkspacePreparationInput extends ThreadCommandInput {
   readonly runId: RunId;
 }
 
+export interface BeginQueuedRunEditInput extends ThreadCommandInput {
+  readonly runId: RunId;
+  readonly previousEditId: CommandId | null;
+}
+
+export interface CancelQueuedRunEditInput extends ThreadCommandInput {
+  readonly runId: RunId;
+  readonly editId: CommandId | null;
+}
+
 export interface EditQueuedRunInput extends ThreadCommandInput {
+  readonly editId?: CommandId | null;
   readonly runId: RunId;
   readonly text: string;
   /**
@@ -1020,6 +1031,37 @@ export const retryWorkspacePreparation = Effect.fn("EnvironmentCommands.retryWor
   },
 );
 
+export const beginQueuedRunEdit = Effect.fn("EnvironmentCommands.beginQueuedRunEdit")(function* (
+  input: BeginQueuedRunEditInput,
+) {
+  const config = yield* getInitialServerConfig();
+  if (config.environment.capabilities.queuedRunEditHold !== true) {
+    return { editId: null, sequence: 0 };
+  }
+  const editId = yield* allocateCommandId(input);
+  const receipt = yield* dispatch({
+    type: "queued-run.edit.begin",
+    commandId: editId,
+    threadId: input.threadId,
+    runId: input.runId,
+    previousEditId: input.previousEditId,
+  });
+  return { editId, sequence: receipt.sequence };
+});
+
+export const cancelQueuedRunEdit = Effect.fn("EnvironmentCommands.cancelQueuedRunEdit")(function* (
+  input: CancelQueuedRunEditInput,
+) {
+  if (input.editId === null) return { sequence: 0 };
+  return yield* dispatch({
+    type: "queued-run.edit.cancel",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    runId: input.runId,
+    editId: input.editId,
+  });
+});
+
 export const editQueuedRun = Effect.fn("EnvironmentCommands.editQueuedRun")(function* (
   input: EditQueuedRunInput,
 ) {
@@ -1032,6 +1074,7 @@ export const editQueuedRun = Effect.fn("EnvironmentCommands.editQueuedRun")(func
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
     runId: input.runId,
+    ...(input.editId == null ? {} : { editId: input.editId }),
     text: input.text,
     ...(attachments === undefined ? {} : { attachments }),
     ...(input.edit?.context && attachments

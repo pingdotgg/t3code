@@ -112,7 +112,7 @@ export async function importComposerContextClipboard(
   }
 }
 
-async function importAttachment(
+export async function importAttachment(
   record: Extract<ComposerContextRecord, { attachmentId: string }>,
   environmentId: EnvironmentId,
   signal: AbortSignal,

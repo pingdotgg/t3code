@@ -10,7 +10,6 @@ import { pastedTextDisposition, replaceTextSelection } from "@t3tools/client-run
 import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
-  type ChatAttachment,
   type EnvironmentId,
   type MessageId,
   type ModelSelection,
@@ -99,7 +98,6 @@ import {
 } from "./composerSendPresentation";
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
 import { ComposerPopoverAnchor } from "./ComposerPopoverAnchor";
-import { ComposerQueuedEditAttachments } from "./ComposerQueuedEdit";
 import { useComposerCommandMenu } from "./use-composer-command-menu";
 import {
   ComposerDictationCancelAction,
@@ -148,9 +146,7 @@ export interface ThreadComposerProps {
   readonly sendBlockedReason?: string | null;
   readonly draftKey?: string;
   readonly queuedEdit?: {
-    readonly existingAttachments: ReadonlyArray<ChatAttachment>;
     readonly saving: boolean;
-    readonly onRemoveExistingAttachment: (attachmentId: string) => void;
   } | null;
   readonly followUpBehavior: FollowUpBehavior;
   readonly canSteerActiveTurn: boolean;
@@ -353,10 +349,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const composerDraftKey = props.draftKey ?? composerOwnerKey;
   const { text: draftMessage, attachments: draftAttachments } = useComposerDraft(composerDraftKey);
   const queuedEdit = props.queuedEdit ?? null;
-  const hasContent =
-    draftMessage.trim().length > 0 ||
-    draftAttachments.length > 0 ||
-    (queuedEdit?.existingAttachments.length ?? 0) > 0;
+  const hasContent = draftMessage.trim().length > 0 || draftAttachments.length > 0;
   const stripAttachments = composerStripAttachments(draftAttachments);
   const showStopAction = !hasContent && props.canStopThread && queuedEdit === null;
   const onResumeQueue = props.onResumeQueue;
@@ -754,20 +747,6 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 onPickMedia={props.onPickDraftMedia}
                 onPickFiles={props.onPickDraftFiles}
               />
-            ) : null}
-            {isExpanded && queuedEdit !== null && queuedEdit.existingAttachments.length > 0 ? (
-              <Animated.View
-                className="px-[14px] pb-2.5"
-                entering={COMPOSER_ATTACHMENT_ENTERING}
-                exiting={FadeOut.duration(120)}
-              >
-                <ComposerQueuedEditAttachments
-                  environmentId={props.environmentId}
-                  attachments={queuedEdit.existingAttachments}
-                  disabled={queuedEdit.saving || voiceInput.isBusy}
-                  onRemove={queuedEdit.onRemoveExistingAttachment}
-                />
-              </Animated.View>
             ) : null}
             {isExpanded && stripAttachments.length > 0 ? (
               <Animated.View

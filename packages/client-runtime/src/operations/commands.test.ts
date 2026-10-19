@@ -43,6 +43,8 @@ import {
   createProject,
   dismissThreadUserInput,
   editQueuedRun,
+  beginQueuedRunEdit,
+  cancelQueuedRunEdit,
   forkThreadFromRun,
   interruptThreadTurn,
   mergeThreadBack,
@@ -79,6 +81,7 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
   readonly projection?: OrchestrationV2ThreadProjection;
   readonly projectionRequests?: ThreadId[];
   readonly advertiseServerResolvedCommandContext?: boolean;
+  readonly queuedRunEditHold?: boolean;
 }) {
   const client = {
     [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
@@ -126,6 +129,9 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
       environment: {
         capabilities: {
           repositoryIdentity: true,
+          ...(input.queuedRunEditHold === undefined
+            ? {}
+            : { queuedRunEditHold: input.queuedRunEditHold }),
           ...(input.advertiseServerResolvedCommandContext === false
             ? {}
             : { serverResolvedCommandContext: true }),
@@ -717,6 +723,42 @@ describe("V2 environment commands", () => {
           },
         ]);
         expect(commands[5]).not.toHaveProperty("attachments");
+      }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
+  it.effect.each([false, true])(
+    "negotiates queued edit holds with advertised capability %s",
+    (supported) =>
+      Effect.gen(function* () {
+        const commands: OrchestrationV2Command[] = [];
+        const supervisor = yield* makeSupervisor({
+          commands,
+          projects: [],
+          ...(supported ? { queuedRunEditHold: true } : {}),
+        });
+        const provide = Effect.provideService(
+          EnvironmentSupervisor.EnvironmentSupervisor,
+          supervisor,
+        );
+        const target = { threadId: v2ThreadId, runId: RunId.make("queued-run") };
+        const acquired = yield* beginQueuedRunEdit({
+          ...target,
+          commandId: CommandId.make("acquire"),
+          previousEditId: null,
+        }).pipe(provide);
+        expect(acquired).toEqual(
+          supported ? { editId: "acquire", sequence: 1 } : { editId: null, sequence: 0 },
+        );
+        yield* editQueuedRun({ ...target, editId: acquired.editId, text: "Saved" }).pipe(provide);
+        yield* cancelQueuedRunEdit({ ...target, editId: acquired.editId }).pipe(provide);
+        expect(commands.map((command) => command.type)).toEqual(
+          supported
+            ? ["queued-run.edit.begin", "queued-run.edit", "queued-run.edit.cancel"]
+            : ["queued-run.edit"],
+        );
+        const saved = commands.find((command) => command.type === "queued-run.edit");
+        if (supported) expect(saved).toHaveProperty("editId", acquired.editId);
+        else expect(saved).not.toHaveProperty("editId");
       }).pipe(Effect.provide(layerTestCrypto)),
   );
 

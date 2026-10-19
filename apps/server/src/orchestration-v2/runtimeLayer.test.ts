@@ -33,6 +33,7 @@ import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
@@ -6383,3 +6384,448 @@ it.layer(layerQueueResumeDisabledInstanceTest)(
     );
   },
 );
+
+const editableQueue = Effect.fnUntraced(function* (
+  name: string,
+  worktreePath: string | null = process.cwd(),
+) {
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const threadId = ThreadId.make(`edit-hold:${name}`);
+  const projectId = ProjectId.make(`${threadId}:project`);
+  yield* seedProject({
+    projectId,
+    title: name,
+    workspaceRoot: process.cwd(),
+    defaultModelSelection: modelSelection,
+    createdAt: DateTime.formatIso(yield* DateTime.now),
+  });
+  yield* orchestrator.dispatch({
+    type: "thread.create",
+    commandId: CommandId.make(`${threadId}:create`),
+    threadId,
+    projectId,
+    title: name,
+    modelSelection,
+    createdBy: "user",
+    creationSource: "web",
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath,
+  });
+  for (const [index, text] of ["Active", "Original", "Later"].entries()) {
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make(`${threadId}:message:${index}`),
+      threadId,
+      messageId: MessageId.make(`${threadId}:message:${index}`),
+      text,
+      attachments: [],
+      createdBy: "user",
+      creationSource: "web",
+      modelSelection,
+      dispatchMode: { type: index === 0 ? "start_immediately" : "queue_after_active" },
+    });
+  }
+  const [active, queued, later] = (yield* orchestrator.getThreadProjection(threadId)).runs;
+  assert.isDefined(active);
+  assert.isDefined(queued);
+  assert.isDefined(later);
+  const editId = CommandId.make(`${threadId}:begin`);
+  const begin = {
+    type: "queued-run.edit.begin" as const,
+    commandId: editId,
+    threadId,
+    runId: queued.id,
+    previousEditId: null,
+  };
+  const finish = (action: "save" | "cancel", token = editId) =>
+    action === "save"
+      ? {
+          type: "queued-run.edit" as const,
+          commandId: CommandId.make(`${threadId}:save:${token}`),
+          threadId,
+          runId: queued.id,
+          editId: token,
+          text: "Edited",
+        }
+      : {
+          type: "queued-run.edit.cancel" as const,
+          commandId: CommandId.make(`${threadId}:cancel:${token}`),
+          threadId,
+          runId: queued.id,
+          editId: token,
+        };
+  return { orchestrator, threadId, active, queued, later, editId, begin, finish };
+});
+
+const endQueueActiveRun = Effect.fnUntraced(function* (
+  active: OrchestrationV2Run,
+  reason: "completed" | "provider_error" | "missing_worktree" = "completed",
+) {
+  const sink = yield* EventSink.EventSinkV2;
+  const now = yield* DateTime.now;
+  yield* sink.write({
+    events: [
+      ...(reason === "provider_error"
+        ? [
+            {
+              id: EventId.make(`${active.id}:error`),
+              type: "turn-item.updated" as const,
+              threadId: active.threadId,
+              occurredAt: now,
+              payload: {
+                id: TurnItemId.make(`${active.id}:error`),
+                type: "error" as const,
+                threadId: active.threadId,
+                runId: active.id,
+                nodeId: active.rootNodeId,
+                providerThreadId: active.providerThreadId,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 2,
+                status: "failed" as const,
+                title: "Provider failure",
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+                failure: {
+                  class: "provider_error" as const,
+                  message: "Provider failed.",
+                  code: "provider_failed",
+                  retryable: null,
+                },
+              },
+            },
+          ]
+        : []),
+      {
+        id: EventId.make(`${active.id}:terminal`),
+        type: "run.updated",
+        threadId: active.threadId,
+        runId: active.id,
+        occurredAt: now,
+        payload: {
+          ...active,
+          status:
+            reason === "completed"
+              ? "completed"
+              : reason === "provider_error"
+                ? "failed"
+                : "interrupted",
+          completedAt: now,
+          ...(reason === "missing_worktree"
+            ? { workspacePreparation: { type: "worktree" as const, baseRef: "main" } }
+            : {}),
+        },
+      },
+    ],
+  });
+});
+
+// Hold the terminal listener before its first lock so user commands can race
+// with its queue-pause reconciliation after the terminal event is durable.
+const pauseQueueTerminalListener = Effect.fnUntraced(function* (threadId: ThreadId) {
+  const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+  const entered = yield* Deferred.make<void>();
+  const released = yield* Deferred.make<void>();
+  const withLock = executor.withLock;
+  let paused = false;
+  const intercept: typeof withLock = (key, effect) => {
+    if (key !== threadId || paused) return withLock(key, effect);
+    paused = true;
+    return Deferred.succeed(entered, undefined).pipe(
+      Effect.andThen(Deferred.await(released)),
+      Effect.andThen(withLock(key, effect)),
+    );
+  };
+  const spy = vi.spyOn(executor, "withLock").mockImplementation(intercept);
+  yield* Effect.addFinalizer(() =>
+    Effect.sync(() => spy.mockRestore()).pipe(
+      Effect.andThen(Deferred.succeed(released, undefined)),
+    ),
+  );
+  return { entered: Deferred.await(entered) };
+});
+
+it.layer(layerTest)("queued edit holds", (it) => {
+  it.effect("lets an explicit Resume release a missing-worktree pause", () =>
+    Effect.gen(function* () {
+      const q = yield* editableQueue("resume-missing-worktree", null);
+      yield* endQueueActiveRun(q.active, "missing_worktree");
+      yield* q.orchestrator.resumeQueuedRuns;
+      assert.isTrue(
+        (yield* q.orchestrator.getThreadProjection(q.threadId)).runs.find(
+          (run) => run.id === q.queued.id,
+        )?.queueHeld,
+      );
+      yield* q.orchestrator.dispatch({
+        type: "queue.resume",
+        commandId: CommandId.make(`${q.threadId}:resume`),
+        threadId: q.threadId,
+      });
+      assert.equal(
+        (yield* q.orchestrator.getThreadProjection(q.threadId)).runs.find(
+          (run) => run.id === q.queued.id,
+        )?.status,
+        "starting",
+      );
+    }),
+  );
+
+  it.effect.each(["save", "cancel"] as const)(
+    "%s releases a durable hold after the active run completes, preserving queue order",
+    (action) =>
+      Effect.gen(function* () {
+        const q = yield* editableQueue(action);
+        const acquired = yield* q.orchestrator.dispatch(q.begin);
+        assert.deepEqual(yield* q.orchestrator.dispatch(q.begin), acquired);
+        const holding = yield* q.orchestrator.getThreadProjection(q.threadId);
+        assert.deepEqual(
+          holding.runs.find((run) => run.id === q.active.id),
+          q.active,
+        );
+        assert.equal(holding.runs.find((run) => run.id === q.queued.id)?.queueEditId, q.editId);
+        const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+        assert.isTrue((yield* maintenance.rebuild).valid);
+        assert.equal(
+          (yield* q.orchestrator.getThreadProjection(q.threadId)).runs.find(
+            (run) => run.id === q.queued.id,
+          )?.queueEditId,
+          q.editId,
+        );
+
+        yield* endQueueActiveRun(q.active);
+        yield* q.orchestrator.resumeQueuedRuns;
+        yield* q.orchestrator.dispatch({
+          type: "queue.resume",
+          commandId: CommandId.make(`${q.threadId}:resume-while-editing`),
+          threadId: q.threadId,
+        });
+        const held = yield* q.orchestrator.getThreadProjection(q.threadId);
+        const shell = (yield* q.orchestrator.getShellSnapshot()).threads.find(
+          (thread) => thread.id === q.threadId,
+        );
+        assert.equal(shell?.latestRunId, q.active.id);
+        assert.equal(shell?.status, "completed");
+        assert.deepEqual(
+          held.runs.map((run) => run.status),
+          ["completed", "queued", "queued"],
+        );
+        assert.isFalse(
+          held.turnItems.some((item) => item.runId === q.queued.id || item.runId === q.later.id),
+        );
+
+        yield* q.orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`${q.threadId}:while-held`),
+          threadId: q.threadId,
+          messageId: MessageId.make(`${q.threadId}:while-held`),
+          text: "Queued while editing an idle thread",
+          attachments: [],
+          createdBy: "user",
+          creationSource: "web",
+          modelSelection,
+          dispatchMode: { type: "queue_after_active" },
+        });
+        assert.equal(
+          (yield* q.orchestrator.getThreadProjection(q.threadId)).runs.at(-1)?.status,
+          "queued",
+        );
+        const finish = q.finish(action);
+        yield* q.orchestrator.dispatch(finish);
+        yield* q.orchestrator.dispatch(finish);
+        const after = yield* q.orchestrator.getThreadProjection(q.threadId);
+        assert.deepEqual(
+          after.runs.map((run) => run.status),
+          ["completed", "starting", "queued", "queued"],
+        );
+        assert.isNull(after.runs.find((run) => run.id === q.queued.id)?.queueEditId);
+        const messages = after.turnItems.filter(
+          (item) => item.type === "user_message" && item.runId === q.queued.id,
+        );
+        assert.equal(messages.length, 1);
+        assert.equal(
+          messages[0]?.type === "user_message" ? messages[0].text : null,
+          action === "save" ? "Edited" : "Original",
+        );
+      }),
+  );
+
+  it.effect("requires explicit takeover and rejects stale saves, cancels, and steering", () =>
+    Effect.gen(function* () {
+      const q = yield* editableQueue("takeover");
+      yield* q.orchestrator.dispatch(q.begin);
+      assert.isTrue(
+        Exit.isFailure(
+          yield* Effect.exit(
+            q.orchestrator.dispatch({
+              ...q.begin,
+              commandId: CommandId.make("takeover:unconfirmed"),
+            }),
+          ),
+        ),
+      );
+      const replacementId = CommandId.make("takeover:confirmed");
+      yield* q.orchestrator.dispatch({
+        ...q.begin,
+        commandId: replacementId,
+        previousEditId: q.editId,
+      });
+      for (const action of ["save", "cancel"] as const) {
+        assert.isTrue(
+          Exit.isFailure(yield* Effect.exit(q.orchestrator.dispatch(q.finish(action)))),
+        );
+      }
+      assert.isTrue(
+        Exit.isFailure(
+          yield* Effect.exit(
+            q.orchestrator.dispatch({
+              type: "queued-run.edit",
+              commandId: CommandId.make("takeover:tokenless-save"),
+              threadId: q.threadId,
+              runId: q.queued.id,
+              text: "Unowned overwrite",
+            }),
+          ),
+        ),
+      );
+      assert.isTrue(
+        Exit.isFailure(
+          yield* Effect.exit(
+            q.orchestrator.dispatch({
+              type: "queued-message.promote-to-steer",
+              commandId: CommandId.make("takeover:steer"),
+              threadId: q.threadId,
+              queuedRunId: q.queued.id,
+              targetRunId: q.active.id,
+            }),
+          ),
+        ),
+      );
+      const held = yield* q.orchestrator.getThreadProjection(q.threadId);
+      assert.equal(held.runs.find((run) => run.id === q.queued.id)?.queueEditId, replacementId);
+      assert.equal(
+        held.messages.find((message) => message.id === q.queued.userMessageId)?.text,
+        "Original",
+      );
+      yield* q.orchestrator.dispatch(q.finish("save", replacementId));
+      const saved = yield* q.orchestrator.getThreadProjection(q.threadId);
+      assert.equal(
+        saved.messages.find((message) => message.id === q.queued.userMessageId)?.text,
+        "Edited",
+      );
+      assert.equal(saved.runs.find((run) => run.id === q.queued.id)?.status, "queued");
+    }),
+  );
+
+  it.effect("dispatches an unheld predecessor reordered ahead of the held head", () =>
+    Effect.gen(function* () {
+      const q = yield* editableQueue("reorder");
+      yield* q.orchestrator.dispatch(q.begin);
+      yield* endQueueActiveRun(q.active);
+      yield* q.orchestrator.resumeQueuedRuns;
+      const reorder = {
+        type: "queued-run.reorder" as const,
+        commandId: CommandId.make("edit-hold:reorder:move"),
+        threadId: q.threadId,
+        runId: q.later.id,
+        beforeRunId: q.queued.id,
+      };
+      yield* q.orchestrator.dispatch(reorder);
+      yield* q.orchestrator.dispatch(reorder);
+      const after = yield* q.orchestrator.getThreadProjection(q.threadId);
+      assert.equal(after.runs.find((run) => run.id === q.later.id)?.status, "starting");
+      assert.equal(after.runs.find((run) => run.id === q.queued.id)?.status, "queued");
+      assert.equal(after.runs.find((run) => run.id === q.queued.id)?.queueEditId, q.editId);
+      assert.isFalse(after.turnItems.some((item) => item.runId === q.queued.id));
+      assert.equal(
+        after.turnItems.filter((item) => item.type === "user_message" && item.runId === q.later.id)
+          .length,
+        1,
+      );
+    }),
+  );
+
+  it.effect.each(["provider_error", "missing_worktree"] as const)(
+    "Save and Cancel preserve a %s pause before the terminal listener runs",
+    (reason) =>
+      Effect.gen(function* () {
+        const q = yield* editableQueue(reason, null);
+        yield* q.orchestrator.dispatch(q.begin);
+        const laterEditId = CommandId.make(`${q.threadId}:later-edit`);
+        yield* q.orchestrator.dispatch({
+          ...q.begin,
+          runId: q.later.id,
+          commandId: laterEditId,
+        });
+        const listener = yield* pauseQueueTerminalListener(q.threadId);
+        yield* endQueueActiveRun(q.active, reason);
+        yield* listener.entered;
+        assert.isFalse(
+          (yield* q.orchestrator.getThreadProjection(q.threadId)).runs.some((run) => run.queueHeld),
+        );
+        yield* q.orchestrator.resumeQueuedRuns;
+        const pausedDuringEdit = yield* q.orchestrator.getThreadProjection(q.threadId);
+        assert.isTrue(pausedDuringEdit.runs.find((run) => run.id === q.queued.id)?.queueHeld);
+        assert.equal(
+          pausedDuringEdit.runs.find((run) => run.id === q.queued.id)?.queueEditId,
+          q.editId,
+        );
+        yield* q.orchestrator.dispatch(q.finish("save"));
+        yield* q.orchestrator.dispatch({
+          type: "queued-run.edit.cancel",
+          commandId: CommandId.make(`${q.threadId}:later-cancel`),
+          threadId: q.threadId,
+          runId: q.later.id,
+          editId: laterEditId,
+        });
+        yield* q.orchestrator.resumeQueuedRuns;
+        const after = yield* q.orchestrator.getThreadProjection(q.threadId);
+        for (const runId of [q.queued.id, q.later.id]) {
+          const run = after.runs.find((run) => run.id === runId);
+          assert.equal(run?.status, "queued");
+          assert.isTrue(run?.queueHeld);
+          assert.isNull(run?.queueEditId);
+          assert.isFalse(after.turnItems.some((item) => item.runId === runId));
+        }
+      }),
+  );
+
+  it.effect.each(["stop", "restart"] as const)(
+    "releasing edit holds preserves the %s pause",
+    (reason) =>
+      Effect.gen(function* () {
+        const q = yield* editableQueue(reason);
+        yield* q.orchestrator.dispatch(q.begin);
+        if (reason === "stop") {
+          yield* q.orchestrator.dispatch({
+            type: "run.interrupt",
+            commandId: CommandId.make(`${q.threadId}:stop`),
+            threadId: q.threadId,
+            runId: q.active.id,
+            holdQueue: true,
+          });
+        } else {
+          const recovery = yield* ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService;
+          yield* recovery.reconcile("startup");
+        }
+        assert.equal(
+          (yield* q.orchestrator.getThreadProjection(q.threadId)).runs.find(
+            (run) => run.id === q.queued.id,
+          )?.queueEditId,
+          q.editId,
+        );
+        yield* q.orchestrator.dispatch(q.finish(reason === "stop" ? "save" : "cancel"));
+        yield* q.orchestrator.resumeQueuedRuns;
+        const after = yield* q.orchestrator.getThreadProjection(q.threadId);
+        for (const id of [q.queued.id, q.later.id]) {
+          assert.equal(after.runs.find((run) => run.id === id)?.status, "queued");
+          assert.isTrue(after.runs.find((run) => run.id === id)?.queueHeld);
+          assert.isFalse(after.turnItems.some((item) => item.runId === id));
+        }
+        assert.isNull(after.runs.find((run) => run.id === q.queued.id)?.queueEditId);
+      }),
+  );
+});

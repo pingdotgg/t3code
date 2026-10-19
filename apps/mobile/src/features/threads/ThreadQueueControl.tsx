@@ -1,6 +1,14 @@
 import { type StaticScreenProps, useNavigation } from "@react-navigation/native";
 import { useAtomValue } from "@effect/atom-react";
-import type { ChatAttachment, EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  ComposerContextId,
+  type ChatAttachment,
+  type ChatImageAttachment,
+  type ChatFileAttachment,
+  type EnvironmentId,
+  type RunId,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
@@ -14,6 +22,7 @@ import { Screen, ScreenStack, ScreenStackHeaderConfig } from "react-native-scree
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Reanimated, { ReduceMotion, useAnimatedStyle, withTiming } from "react-native-reanimated";
 
+import * as Dialog from "../../components/ui/Dialog";
 import { Button } from "../../components/ui/Button";
 import { AndroidSheetHeader } from "../../components/ui/AndroidScreenHeader";
 import { AppText as Text } from "../../components/ui/AppText";
@@ -25,7 +34,14 @@ import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { NativeStackScreenOptions, nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
 import { useAssetUrl } from "../../state/assets";
 import { assetImageSource } from "../../lib/assetImageSource";
-import { beginQueuedRunEdit, useQueuedRunEdit } from "../../state/queued-run-edit";
+import {
+  prepareQueuedRunEditDraft,
+  queuedEditDraftKey,
+  useQueuedRunEdit,
+} from "../../state/queued-run-edit";
+import { getComposerDraftSnapshot } from "../../state/use-composer-drafts";
+import { importAttachment } from "../../lib/composerContextClipboard";
+import { recoverQueuedRunEdit } from "../../state/queued-run-edit";
 import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
@@ -70,6 +86,11 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
   const editing = useQueuedRunEdit(threadKey);
   const reorder = useAtomCommand(threadEnvironment.reorderQueuedRun, "reorder queued message");
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun, "promote queued message");
+  const acquireEdit = useAtomCommand(threadEnvironment.beginQueuedRunEdit, "edit queued message");
+  const releaseEdit = useAtomCommand(threadEnvironment.cancelQueuedRunEdit, "finish queued edit");
+  const releaseFailedPreparation = useAtomCommand(threadEnvironment.cancelQueuedRunEdit, {
+    reportFailure: false,
+  });
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun, "remove queued message");
   const resume = useAtomCommand(threadEnvironment.resumeThreadQueue, "resume queue");
   const [resuming, setResuming] = useState(false);
@@ -132,15 +153,123 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
     }
     if (action === "edit") {
       const entry = queuedRuns[index]!;
-      void Haptics.selectionAsync();
-      beginQueuedRunEdit(threadKey, {
-        runId,
-        messageId: entry.messageId,
-        originalText: entry.text,
-        existingAttachments: entry.attachments,
-        ...(entry.context ? { context: entry.context } : {}),
-      });
-      navigation.goBack();
+      const previousEditId = entry.run.queueEditId ?? null;
+      if (editing?.runId === runId && editing.editId === previousEditId) {
+        navigation.goBack();
+        return;
+      }
+      if (previousEditId !== null) {
+        const confirmed = await new Promise<boolean>((resolve) =>
+          Dialog.confirm({
+            title: "Take over editing?",
+            message:
+              "This message is being edited elsewhere. The other editor will keep their unsaved changes.",
+            confirmText: "Take over",
+            onConfirm: () => resolve(true),
+            onCancel: () => resolve(false),
+          }),
+        );
+        if (!confirmed) return;
+      }
+      busyRef.current = true;
+      setBusyRunId(runId);
+      try {
+        if (editing !== null) {
+          const released = await releaseEdit({
+            environmentId: target.environmentId,
+            input: { threadId: target.threadId, runId: editing.runId, editId: editing.editId },
+          });
+          if (released._tag !== "Success") return;
+          recoverQueuedRunEdit(threadKey);
+        }
+        const acquired = await acquireEdit({
+          environmentId: target.environmentId,
+          input: { threadId: target.threadId, runId, previousEditId },
+        });
+        if (acquired._tag !== "Success") return;
+        const preparation = prepareQueuedRunEditDraft(
+          threadKey,
+          {
+            ...acquired.value,
+            runId,
+            messageId: entry.messageId,
+            originalText: entry.text,
+            originalAttachmentIds: entry.attachments.map((attachment) => attachment.id),
+            ...(entry.context ? { context: entry.context } : {}),
+          },
+          async () => {
+            if (
+              entry.attachments.some(
+                (attachment) => attachment.type !== "image" && attachment.type !== "file",
+              )
+            )
+              throw new Error("This attachment cannot be edited.");
+            return await Promise.all(
+              entry.attachments
+                .filter(
+                  (attachment): attachment is ChatImageAttachment | ChatFileAttachment =>
+                    attachment.type === "image" || attachment.type === "file",
+                )
+                .map(async (attachment) => {
+                  const local = await importAttachment(
+                    {
+                      version: 1,
+                      kind: attachment.type,
+                      contextId: ComposerContextId.make(attachment.id),
+                      label: attachment.name,
+                      attachmentId: attachment.id,
+                      name: attachment.name,
+                      mimeType: attachment.mimeType,
+                      sizeBytes: attachment.sizeBytes,
+                    },
+                    target.environmentId,
+                    new AbortController().signal,
+                  );
+                  const restored = {
+                    ...local,
+                    id: attachment.id,
+                    uploadedAttachmentId: attachment.id,
+                    uploadEnvironmentId: target.environmentId,
+                  };
+                  if (restored.type === "image" && attachment.type === "image")
+                    return {
+                      ...restored,
+                      ...(attachment.source ? { source: attachment.source } : {}),
+                    };
+                  if (restored.type === "file" && attachment.type === "file")
+                    return {
+                      ...restored,
+                      ...(attachment.source ? { source: attachment.source } : {}),
+                    };
+                  return restored;
+                }),
+            );
+          },
+        );
+        const preparedEdit = getComposerDraftSnapshot(
+          queuedEditDraftKey(threadKey, runId),
+        ).queuedEdit;
+        try {
+          await preparation;
+        } catch (error) {
+          const released = await releaseFailedPreparation({
+            environmentId: target.environmentId,
+            input: { threadId: target.threadId, runId, editId: acquired.value.editId },
+          });
+          if (released._tag === "Success" && preparedEdit?.ownership)
+            recoverQueuedRunEdit(threadKey, preparedEdit);
+          Dialog.alert(
+            "Could not open queued edit",
+            error instanceof Error ? error.message : "Could not restore attachments.",
+          );
+          return;
+        }
+        void Haptics.selectionAsync();
+        navigation.goBack();
+      } finally {
+        busyRef.current = false;
+        setBusyRunId(null);
+      }
       return;
     }
     if (action !== "steer" && action !== "remove") return;
@@ -149,7 +278,11 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
     void Haptics.selectionAsync();
     if (action === "remove") {
       await cancel(buildCancelQueuedRunCommand({ ...target, runId }));
-    } else if (workflow?.activeRun && workflow.canPromoteToSteer) {
+    } else if (
+      workflow?.activeRun &&
+      workflow.canPromoteToSteer &&
+      queuedRuns[index]?.run.queueEditId == null
+    ) {
       await promote({
         ...target,
         input: {
@@ -220,7 +353,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
             : 0;
         const controls = resolveThreadQueueRowControls({
           busy: busyRunId !== null || draggedRunId !== null,
-          canPromoteToSteer: workflow?.canPromoteToSteer ?? false,
+          canPromoteToSteer: (workflow?.canPromoteToSteer ?? false) && run.queueEditId == null,
           canReorder: workflow?.canReorder ?? false,
           index,
           isEditing: editing?.runId === run.id,
@@ -361,7 +494,11 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel={title}
-                    accessibilityHint="Opens this message in the composer for editing"
+                    accessibilityHint={
+                      run.queueEditId != null && !controls.isEditing
+                        ? "Held on another client. Tap to take over, then Save or Cancel to release it."
+                        : "Opens this message in the composer for editing"
+                    }
                     disabled={!controls.canEdit}
                     onPress={() => void act(run.id, "edit")}
                     className="min-h-14 flex-row items-center gap-2.5 py-2.5 active:opacity-70"
@@ -380,9 +517,9 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                     >
                       {title}
                     </Text>
-                    {controls.isEditing ? (
+                    {controls.isEditing || run.queueEditId != null ? (
                       <Text className="shrink-0 text-2xs uppercase tracking-wide text-primary">
-                        Editing
+                        {controls.isEditing ? "Editing" : "Editing elsewhere"}
                       </Text>
                     ) : null}
                     {workflow?.canPromoteToSteer ? (

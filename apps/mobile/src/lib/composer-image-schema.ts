@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { EnvironmentId, PastedTextAttachmentSource } from "@t3tools/contracts";
+import { EnvironmentId, PastedTextAttachmentSource, SnapShotSource } from "@t3tools/contracts";
 
 export const DraftComposerImageAttachmentSchema = Schema.Struct({
   id: Schema.String,
@@ -12,6 +12,7 @@ export const DraftComposerImageAttachmentSchema = Schema.Struct({
   dataUrl: Schema.optional(Schema.String.check(Schema.isNonEmpty())),
   uploadedAttachmentId: Schema.optional(Schema.String),
   uploadEnvironmentId: Schema.optional(EnvironmentId),
+  source: Schema.optional(SnapShotSource),
 }).check(
   Schema.makeFilter(
     ({ fileUri, dataUrl }) =>

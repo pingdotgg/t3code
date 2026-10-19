@@ -4,6 +4,7 @@ import {
   ComposerContextId,
   EnvironmentId,
   MessageId,
+  RunId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -706,6 +707,21 @@ describe("mobile composer drafts", () => {
         fileUri: `file:///notes-${index}.txt`,
       }));
       appendComposerDraftAttachments(key, files, { appendReference: true });
+      const original = getComposerDraftSnapshot(key);
+      appAtomRegistry.set(composerDraftsAtom, {
+        ...appAtomRegistry.get(composerDraftsAtom),
+        [key]: {
+          ...original,
+          queuedEdit: {
+            runId: RunId.make("run-1"),
+            messageId: MessageId.make("message-1"),
+            sourceText: original.text,
+            originalText: original.text,
+            originalAttachmentIds: files.map((file) => file.id),
+            ownership: { editId: null, sequence: 0 },
+          },
+        },
+      });
       const firstLink = "[notes-0.txt](t3-context://v1/file/file-0)";
       const insertion = captureComposerDraftInsertion(key, { start: 0, end: firstLink.length });
       expect(countComposerDraftAttachmentsAfterSelection(key, insertion)).toBe(99);
@@ -751,6 +767,7 @@ describe("mobile composer drafts", () => {
       }
       const draft = getComposerDraftSnapshot(key);
       expect(draft.attachments.map((file) => file.id)).not.toContain("file-0");
+      expect(draft.queuedEdit?.removedAttachmentIds).toEqual(["file-0"]);
       expect(draft.attachments.slice(0, 99)).toEqual(files.slice(1));
       expect(draft.context?.records.some((record) => record.contextId === "file-0")).toBe(false);
       await cleanup.promise;

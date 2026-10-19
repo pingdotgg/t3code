@@ -8146,6 +8146,31 @@ export default function ChatView(props: ChatViewProps) {
                         : undefined
                     }
                   >
+                    {queuedRunEdit.savedEditDrafts.length > 0 ? (
+                      <div className="flex flex-wrap gap-2 py-1">
+                        {queuedRunEdit.recoveryTarget !== null ? (
+                          <Button
+                            size="xs"
+                            variant="ghost-muted"
+                            onClick={() => queuedRunEdit.selectRecoveryTarget(null)}
+                          >
+                            Main draft
+                          </Button>
+                        ) : null}
+                        {queuedRunEdit.savedEditDrafts.map((target, index) => (
+                          <Button
+                            key={target}
+                            size="xs"
+                            variant="ghost-muted"
+                            onClick={() => queuedRunEdit.selectRecoveryTarget(target)}
+                          >
+                            {queuedRunEdit.recoveryTarget === target
+                              ? "Recovered queued edit"
+                              : `Saved queued edit ${index + 1}`}
+                          </Button>
+                        ))}
+                      </div>
+                    ) : null}
                     <ComposerSurface.Shell
                       contextStrip={showComposerContextStrip || showComposerModelStrip}
                     >
@@ -8339,10 +8364,7 @@ export default function ChatView(props: ChatViewProps) {
                               setThreadError={setThreadError}
                               onExpandImage={onExpandTimelineImageStable}
                               onFileOpen={openFileAttachmentStable}
-                              editingQueuedAttachments={queuedRunEdit.editingAttachments}
-                              onRemoveEditingQueuedAttachment={
-                                queuedRunEdit.removeEditingAttachment
-                              }
+                              isEditingQueuedMessage={queuedRunEdit.isEditing}
                             />
                           )}
                         </div>
