@@ -14,6 +14,11 @@ export interface AgentScopeShape {
      * killed server left running before it resumes their sessions.
      */
     readonly survivesRestart?: boolean | undefined;
+    /**
+     * Keep a shared process running after a tool OOM when supported.
+     * Falls back to ordinary scope behavior on older systemd.
+     */
+    readonly shared?: boolean | undefined;
   }) => Effect.Effect<AgentScopeCommand>;
   readonly oomKilled: (threadId: string) => Effect.Effect<boolean>;
   /**

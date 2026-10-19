@@ -1366,6 +1366,7 @@ export const makeCodexAppServerSpawnCommand = Effect.fn(
     name: "codex",
     threadId: input.threadId,
     env: input.env,
+    shared: true,
   });
   const spawnCommand = yield* resolveSpawnCommand(launch.command, launch.args, {
     ...(input.env === undefined ? {} : { env: input.env }),
