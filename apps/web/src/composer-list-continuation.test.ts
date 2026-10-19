@@ -83,3 +83,37 @@ describe("nextOrderedMarkerText", () => {
     expect(nextOrderedMarkerText(marker)).toBe(expected);
   });
 });
+
+describe("composer list renumbering", () => {
+  it("renumbers following items with their padding and leaves the caret after the inserted marker", () => {
+    const value = "1. @README.md go\n2. two\n03. three\n10. four";
+    const edit = listContinuationForEnter(value, value.indexOf("go"))!;
+    expect(applyEdit(value, edit)).toBe("1. @README.md \n2. go\n3. two\n04. three\n5. four");
+    expect(edit.cursorAfter).toBe("1. @README.md \n2. ".length);
+  });
+
+  it("renumbers indented paren siblings across tab-indented children and stops at a parent", () => {
+    const value = "  1) a\n\t1) child\n  2) b\n1) parent\n  3) untouched";
+    const edit = listContinuationForEnter(value, value.indexOf("\n"))!;
+    expect(applyEdit(value, edit)).toBe(
+      "  1) a\n  2) \n\t1) child\n  3) b\n1) parent\n  3) untouched",
+    );
+    expect(edit.cursorAfter).toBe("  1) a\n  2) ".length);
+  });
+
+  it.each([
+    ["a blank line", ""],
+    ["plain text", "text"],
+    ["a different delimiter", "1) other list"],
+  ])("stops renumbering at %s", (_label, boundary) => {
+    const value = `1. a\n2. b\n${boundary}\n3. untouched`;
+    const edit = listContinuationForEnter(value, value.indexOf("\n"))!;
+    expect(applyEdit(value, edit)).toBe(`1. a\n2. \n3. b\n${boundary}\n3. untouched`);
+  });
+
+  it("preserves multiline chip contents while renumbering surrounding items", () => {
+    const value = '1. a\n2. @"file\n2. name" \n3. b';
+    const edit = listContinuationForEnter(value, value.indexOf("\n"))!;
+    expect(applyEdit(value, edit)).toBe('1. a\n2. \n3. @"file\n2. name" \n4. b');
+  });
+});
