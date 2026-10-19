@@ -412,12 +412,7 @@ export const make = Effect.gen(function* () {
                 record.dedupeKey === null ? record : (snapshots.get(record.dedupeKey) ?? record),
               );
             };
-            const tailKeys = new Set(selected.tailRecords.map((record) => record.dedupeKey));
-            // A matching tail must stay replaceable, even when its key also has a committed row.
-            const records = reconcile(selected.records, [
-              ...older.records,
-              ...older.tailRecords.filter((record) => !tailKeys.has(record.dedupeKey)),
-            ]);
+            const records = reconcile(selected.records, older.records);
             const tailRecords = reconcile(selected.tailRecords, [
               ...older.records,
               ...older.tailRecords,
