@@ -8,6 +8,9 @@ import {
 import { act, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { page } from "vite-plus/test/browser";
+
+import "../../index.css";
 
 const { listBrowserImportSources } = vi.hoisted(() => ({
   listBrowserImportSources: vi.fn().mockResolvedValue([]),
@@ -35,10 +38,6 @@ vi.mock(import("../../hooks/useSettings"), async (original) => ({
   usePrimarySettingsAvailable: () => true,
   usePrimarySettings: (() => DEFAULT_UNIFIED_SETTINGS) as never,
   useUpdatePrimarySettings: (() => vi.fn()) as never,
-}));
-vi.mock(import("./ProjectDefaultsSettings"), async (original) => ({
-  ...(await original()),
-  ProjectDefaultsSettings: (() => null) as never,
 }));
 vi.mock(import("./SettingsScopeContext"), async (original) => ({
   ...(await original()),
@@ -90,6 +89,16 @@ async function openSettings() {
 }
 
 describe("Integrations browser discovery", () => {
+  it("keeps agent browser access in the single Browser section", async () => {
+    await openSettings();
+
+    expect(page.getByRole("heading", { name: "Browser", exact: true }).elements()).toHaveLength(1);
+    const access = page.getByRole("switch", { name: "Agent browser access", exact: true });
+    await expect.element(access).toBeVisible();
+    expect(access.element().closest("section")).toBe(container.querySelector("section#browser"));
+    expect(access.element().closest("#agent-browser-access")).not.toBeNull();
+  });
+
   it("does not scan browser files when entering or revisiting settings", async () => {
     await openSettings();
     expect(listBrowserImportSources).not.toHaveBeenCalled();
