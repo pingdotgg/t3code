@@ -952,7 +952,10 @@ export function NewTaskFlowProvider(
           settings: serverConfigs.get(environmentId)?.settings,
           projectId: id,
           providerInstanceId: selectedModelInstanceId ?? null,
-          providerDriver: selectedProviderStatus?.driver ?? null,
+          // The option still knows the driver from the instance settings when
+          // this machine reports no status for it.
+          providerDriver:
+            selectedProviderStatus?.driver ?? selectedModelOption?.providerDriver ?? null,
         }) &&
         // The same checks the start button applies once the draft is there.
         !isNewTaskModelSelectionBlocked(
