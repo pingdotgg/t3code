@@ -2791,6 +2791,77 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("keeps frame capture closed when a replacement is destroyed during cleanup", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const windowEvents = new Map<string, () => void>();
+        const host = makeTestHostWebContents();
+        const capturePage = vi.fn(async () => ({
+          toJPEG: () => Buffer.from("recording-frame"),
+          getSize: () => ({ width: 1280, height: 720 }),
+        }));
+        const guest = makeTestPreviewWebContents(capturePage, 42, host);
+        fromId.mockReturnValue(guest);
+        yield* manager.createTab("tab_shutdown");
+        yield* manager.registerWebview("tab_shutdown", 42);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          once: (event: string, listener: () => void) => windowEvents.set(event, listener),
+          webContents: { setBackgroundThrottling: vi.fn() },
+        } as never);
+        yield* manager.startRecording("tab_shutdown");
+        const pip = makeTestPictureInPictureWindow();
+        browserWindowConstructor.mockImplementation(function () {
+          return pip.pictureInPictureWindow;
+        });
+        yield* manager.openPictureInPicture("tab_shutdown");
+        const capturesBeforeClose = capturePage.mock.calls.length;
+        const cleanupStarted = yield* Deferred.make<void>();
+        const releaseCleanup = yield* Deferred.make<void>();
+        yield* manager.subscribeStateChanges((_tabId, state) =>
+          state.pictureInPicture
+            ? Effect.void
+            : Deferred.succeed(cleanupStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseCleanup)),
+              ),
+        );
+
+        windowEvents.get("closed")!();
+        yield* Deferred.await(cleanupStarted);
+        let destroyed = false;
+        const replacement = yield* manager
+          .setMainWindow({
+            isDestroyed: () => destroyed,
+            once: vi.fn(),
+            webContents: { setBackgroundThrottling: vi.fn() },
+          } as never)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        try {
+          expect(replacement.pollUnsafe()).toBeUndefined();
+          destroyed = true;
+        } finally {
+          yield* Deferred.succeed(releaseCleanup, undefined);
+        }
+        yield* Fiber.join(replacement);
+
+        const restart = yield* Effect.exit(manager.startRecording("tab_shutdown"));
+        expect(Exit.isFailure(restart)).toBe(true);
+        if (Exit.isFailure(restart)) {
+          expect(Option.getOrThrow(Cause.findErrorOption(restart.cause))).toMatchObject({
+            _tag: "PreviewMainWindowClosedError",
+            tabId: "tab_shutdown",
+          });
+        }
+        expect(capturePage).toHaveBeenCalledTimes(capturesBeforeClose);
+        expect(pip.pictureInPictureWindow.isDestroyed()).toBe(true);
+        expect(guest.setBackgroundThrottling.mock.calls).toEqual([[false], [true]]);
+        const grants: Array<{ video?: unknown }> = [];
+        host.displayMediaHandler()?.({ frame: host.mainFrame }, (value) => grants.push(value));
+        expect(grants).toEqual([{}]);
+      }),
+    ),
+  );
+
   effectIt.effect("ignores close events from replaced main windows", () =>
     withManager((manager) =>
       Effect.gen(function* () {
