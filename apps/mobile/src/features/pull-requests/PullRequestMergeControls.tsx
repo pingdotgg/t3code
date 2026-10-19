@@ -280,13 +280,7 @@ export function PullRequestMergeControls(props: {
         </Text>
       ) : null}
       {stack.error && stack.supportsStackActions ? (
-        <Pressable
-          accessibilityRole="button"
-          onPress={stack.refresh}
-          className="min-h-11 justify-center px-1"
-        >
-          <Text className="text-sm text-primary-text">Retry stack lookup</Text>
-        </Pressable>
+        <Button label="Retry stack lookup" tone="text" onPress={stack.refresh} />
       ) : null}
     </View>
   );
