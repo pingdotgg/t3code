@@ -2,7 +2,11 @@ import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime
 import { AsyncResult } from "effect/reactivity";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
-import { useChildThreadInputs, useThreadReportedModelSelection } from "../../state/entities";
+import {
+  useChildThreadInputs,
+  useThreadReportedModelSelection,
+  useThreadShell,
+} from "../../state/entities";
 import { UsageLimitRecoveryCard } from "./UsageLimitRecoveryCard";
 import { useNavigation } from "@react-navigation/native";
 import type { WorktreeSetupCardProps } from "./worktree-setup-card";
@@ -318,6 +322,70 @@ const USER_INPUT_TOGGLE_TIMING = {
   duration: USER_INPUT_TOGGLE_DURATION_MS,
   easing: Easing.out(Easing.cubic),
 };
+
+// The visit watermark follows the shell's updatedAt, which ticks while a run
+// streams. Keeping it in a leaf lets the screen read the quiet shell.
+function ThreadVisitWatermark(props: {
+  readonly environmentId: EnvironmentId;
+  readonly selectedThread: EnvironmentThreadShell;
+  readonly showContent: boolean;
+}) {
+  const liveThread = useThreadShell({
+    environmentId: props.environmentId,
+    threadId: props.selectedThread.id,
+  });
+  const thread = liveThread ?? props.selectedThread;
+  const showContent = props.showContent;
+  const selectedThreadKey = scopedThreadKey(props.environmentId, thread.id);
+  const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
+  const lastDispatchedVisitRef = useRef<string | null>(null);
+  const lastVisitDispatchRef = useRef({ threadKey: selectedThreadKey, at: 0 });
+  const selectedThreadId = thread.id;
+  const selectedThreadUpdatedAt = thread.updatedAt;
+  const selectedThreadLastVisitedAt = thread.lastVisitedAt;
+  const selectedThreadCompletedAt = thread.latestRun?.completedAt;
+  useEffect(() => {
+    if (!showContent || selectedThreadLastVisitedAt === undefined) return;
+    const threadUpdatedAtMs = Date.parse(selectedThreadUpdatedAt);
+    if (Number.isNaN(threadUpdatedAtMs)) return;
+    const lastVisitedAtMs = selectedThreadLastVisitedAt
+      ? Date.parse(selectedThreadLastVisitedAt)
+      : NaN;
+    if (!Number.isNaN(lastVisitedAtMs) && lastVisitedAtMs >= threadUpdatedAtMs) return;
+    const dispatchKey = `${selectedThreadKey}:${selectedThreadUpdatedAt}`;
+    if (lastDispatchedVisitRef.current === dispatchKey) return;
+    const dispatch = () => {
+      lastDispatchedVisitRef.current = dispatchKey;
+      lastVisitDispatchRef.current = { threadKey: selectedThreadKey, at: Date.now() };
+      void visitThread({
+        environmentId: props.environmentId,
+        input: { threadId: selectedThreadId, visitedAt: selectedThreadUpdatedAt },
+      });
+    };
+    const completedAtMs = selectedThreadCompletedAt ? Date.parse(selectedThreadCompletedAt) : NaN;
+    const hasUnseenCompletion =
+      !Number.isNaN(completedAtMs) &&
+      (Number.isNaN(lastVisitedAtMs) || completedAtMs > lastVisitedAtMs);
+    const previous = lastVisitDispatchRef.current;
+    const elapsed = Date.now() - previous.at;
+    if (previous.threadKey !== selectedThreadKey || hasUnseenCompletion || elapsed >= 10_000) {
+      dispatch();
+      return;
+    }
+    const timer = setTimeout(dispatch, 10_000 - elapsed);
+    return () => clearTimeout(timer);
+  }, [
+    props.environmentId,
+    selectedThreadId,
+    selectedThreadKey,
+    selectedThreadLastVisitedAt,
+    selectedThreadCompletedAt,
+    selectedThreadUpdatedAt,
+    showContent,
+    visitThread,
+  ]);
+  return null;
+}
 
 export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetailScreenProps) {
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
@@ -785,54 +853,6 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
     setComposerFocused(false);
   }, [selectedThreadKey, showContent]);
 
-  const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
-  const lastDispatchedVisitRef = useRef<string | null>(null);
-  const lastVisitDispatchRef = useRef({ threadKey: selectedThreadKey, at: 0 });
-  const selectedThreadId = props.selectedThread.id;
-  const selectedThreadUpdatedAt = props.selectedThread.updatedAt;
-  const selectedThreadLastVisitedAt = props.selectedThread.lastVisitedAt;
-  const selectedThreadCompletedAt = props.selectedThread.latestRun?.completedAt;
-  useEffect(() => {
-    if (!showContent || selectedThreadLastVisitedAt === undefined) return;
-    const threadUpdatedAtMs = Date.parse(selectedThreadUpdatedAt);
-    if (Number.isNaN(threadUpdatedAtMs)) return;
-    const lastVisitedAtMs = selectedThreadLastVisitedAt
-      ? Date.parse(selectedThreadLastVisitedAt)
-      : NaN;
-    if (!Number.isNaN(lastVisitedAtMs) && lastVisitedAtMs >= threadUpdatedAtMs) return;
-    const dispatchKey = `${selectedThreadKey}:${selectedThreadUpdatedAt}`;
-    if (lastDispatchedVisitRef.current === dispatchKey) return;
-    const dispatch = () => {
-      lastDispatchedVisitRef.current = dispatchKey;
-      lastVisitDispatchRef.current = { threadKey: selectedThreadKey, at: Date.now() };
-      void visitThread({
-        environmentId: props.environmentId,
-        input: { threadId: selectedThreadId, visitedAt: selectedThreadUpdatedAt },
-      });
-    };
-    const completedAtMs = selectedThreadCompletedAt ? Date.parse(selectedThreadCompletedAt) : NaN;
-    const hasUnseenCompletion =
-      !Number.isNaN(completedAtMs) &&
-      (Number.isNaN(lastVisitedAtMs) || completedAtMs > lastVisitedAtMs);
-    const previous = lastVisitDispatchRef.current;
-    const elapsed = Date.now() - previous.at;
-    if (previous.threadKey !== selectedThreadKey || hasUnseenCompletion || elapsed >= 10_000) {
-      dispatch();
-      return;
-    }
-    const timer = setTimeout(dispatch, 10_000 - elapsed);
-    return () => clearTimeout(timer);
-  }, [
-    props.environmentId,
-    selectedThreadId,
-    selectedThreadKey,
-    selectedThreadLastVisitedAt,
-    selectedThreadCompletedAt,
-    selectedThreadUpdatedAt,
-    showContent,
-    visitThread,
-  ]);
-
   useEffect(() => {
     setAnchorMessageId(null);
     setSubmittedMessageId(null);
@@ -1003,6 +1023,11 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
   return (
     <View className="flex-1">
       {!usesNativeWorkspaceColumns ? <NativeLayoutObserver onChange={setScreenMetrics} /> : null}
+      <ThreadVisitWatermark
+        environmentId={props.environmentId}
+        selectedThread={props.selectedThread}
+        showContent={showContent}
+      />
       {showContent ? (
         <View
           style={{ flex: 1 }}

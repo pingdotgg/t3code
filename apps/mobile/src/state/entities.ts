@@ -99,6 +99,13 @@ export function useThreadShell(ref: ScopedThreadRef | null): EnvironmentThreadSh
   );
 }
 
+/** Streaming timestamps, item counts, and the latest message can be stale during a run. */
+export function useQuietThreadShell(ref: ScopedThreadRef | null): EnvironmentThreadShell | null {
+  return useAtomValue(
+    ref === null ? EMPTY_THREAD_SHELL_ATOM : environmentThreadShells.quietThreadShellAtom(ref),
+  );
+}
+
 export function useChildThreadInputs(ref: ScopedThreadRef) {
   return useAtomValue(environmentThreadShells.childThreadInputsAtom(ref));
 }
