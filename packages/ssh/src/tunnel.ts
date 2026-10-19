@@ -141,12 +141,8 @@ export interface SshEnvironmentManagerShape {
   readonly disconnectEnvironment: (
     target: DesktopSshEnvironmentTarget,
   ) => Effect.Effect<void, SshEnvironmentEffectError, SshEnvironmentEffectContext>;
-  /**
-   * Kills every local `ssh -L` forward without stopping remote servers. For
-   * process exits that skip the manager scope finalizer, which would
-   * otherwise orphan the forwards.
-   */
   readonly closeLocalForwards: Effect.Effect<void>;
+  readonly reopenLocalForwards: Effect.Effect<void>;
 }
 
 const RemoteLaunchResult = Schema.Struct({
@@ -1354,13 +1350,26 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
   const tunnels = new Map<string, SshTunnelEntry>();
   const targetLocks = yield* KeyedLock.make<string>();
   const authSecrets = new Map<string, string>();
+  // Remote ownership survives closing a forward, including before any reconnect.
+  const remoteFinalizers = new Map<string, Effect.Effect<void>>();
+  let forwardsClosed = false;
 
   // Keep one lock per target so reconnect cannot reuse a server while stop is pending.
   const withTargetLock = Effect.fn("ssh/tunnel.withTargetLock")(function* <A, E, R>(
     key: string,
     effect: Effect.Effect<A, E, R>,
-  ): Effect.fn.Return<A, E, R> {
-    return yield* targetLocks.withLock(key, effect);
+  ): Effect.fn.Return<A, E | SshReadinessError, R> {
+    return yield* targetLocks.withLock(
+      key,
+      Effect.gen(function* () {
+        if (forwardsClosed) {
+          return yield* new SshReadinessError({
+            message: "SSH forwards are closed for an update.",
+          });
+        }
+        return yield* effect;
+      }),
+    );
   });
 
   const closeTunnelEntry = Effect.fn("ssh/tunnel.closeTunnelEntry")(function* (
@@ -1383,12 +1392,19 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
 
   yield* Scope.addFinalizer(
     managerScope,
-    Effect.sync(() => [...tunnels.values()]).pipe(
-      Effect.flatMap((entries) =>
-        Effect.forEach(entries, closeTunnelEntry, { concurrency: "unbounded" }),
-      ),
-      Effect.ignore,
-    ),
+    Effect.gen(function* () {
+      yield* Effect.forEach([...tunnels.values()], closeTunnelEntry, {
+        concurrency: "unbounded",
+        discard: true,
+      });
+      if (!forwardsClosed) {
+        yield* Effect.all([...remoteFinalizers.values()], {
+          concurrency: "unbounded",
+          discard: true,
+        });
+      }
+      remoteFinalizers.clear();
+    }).pipe(Effect.ignore),
   );
 
   const promptForPassword = Effect.fn("ssh/tunnel.promptForPassword")(function* (
@@ -1567,8 +1583,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     yield* Scope.addFinalizer(
       entryScope,
       Effect.gen(function* () {
-        const stopRemote = tunnels.get(tunnelEntry.key) === tunnelEntry;
-        if (stopRemote) {
+        if (tunnels.get(tunnelEntry.key) === tunnelEntry) {
           tunnels.delete(tunnelEntry.key);
         }
         yield* tunnelEntry.process
@@ -1577,18 +1592,18 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
             forceKillAfter: TUNNEL_SHUTDOWN_TIMEOUT_MS,
           })
           .pipe(Effect.ignore);
-        if (!stopRemote) {
-          return;
-        }
-        yield* Effect.logDebug("ssh.environment.tunnel.finalizer.start", {
-          ...sshTargetLogFields(tunnelEntry.target),
-          key: tunnelEntry.key,
-          localPort: tunnelEntry.localPort,
-          remotePort: tunnelEntry.remotePort,
+      }).pipe(Effect.ignore),
+    );
+    remoteFinalizers.set(
+      input.key,
+      Effect.gen(function* () {
+        yield* Effect.logDebug("ssh.environment.remote.finalizer.start", {
+          ...sshTargetLogFields(input.resolvedTarget),
+          key: input.key,
         });
-        const authSecret = authSecrets.get(tunnelEntry.key) ?? null;
+        const authSecret = authSecrets.get(input.key) ?? null;
         yield* stopRemoteServer(
-          tunnelEntry.target,
+          input.resolvedTarget,
           authSecret === null
             ? {
                 batchMode: "yes",
@@ -1605,11 +1620,9 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
           Effect.provideService(FileSystem.FileSystem, fileSystemService),
           Effect.provideService(Path.Path, pathService),
         );
-        yield* Effect.logDebug("ssh.environment.tunnel.finalizer.succeeded", {
-          ...sshTargetLogFields(tunnelEntry.target),
-          key: tunnelEntry.key,
-          localPort: tunnelEntry.localPort,
-          remotePort: tunnelEntry.remotePort,
+        yield* Effect.logDebug("ssh.environment.remote.finalizer.succeeded", {
+          ...sshTargetLogFields(input.resolvedTarget),
+          key: input.key,
         });
       }).pipe(Effect.ignore),
     );
@@ -1655,8 +1668,6 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
         remotePort: entry.remotePort,
         cause: readinessExit.cause,
       });
-      // Closing a stale forward must not run the manager-owned remote stop.
-      tunnels.delete(key);
       yield* closeTunnelEntry(entry);
     }
 
@@ -1760,12 +1771,10 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
           key,
           hasTunnel: entry !== null,
         });
+        // Explicit disconnect owns the remote stop so its failure reaches the caller.
+        remoteFinalizers.delete(key);
         if (entry !== null) {
-          // Explicit disconnect owns the remote stop so its failure reaches the caller.
-          yield* Effect.gen(function* () {
-            tunnels.delete(key);
-            yield* closeTunnelEntry(entry);
-          }).pipe(Effect.uninterruptible);
+          yield* closeTunnelEntry(entry).pipe(Effect.uninterruptible);
         }
         yield* runWithSshAuth({
           key,
@@ -1780,14 +1789,36 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     );
   });
 
-  // Unregistering an entry first makes its finalizer skip the remote stop.
-  const closeLocalForwards = Effect.suspend(() => {
-    const entries = [...tunnels.values()];
-    tunnels.clear();
-    return Effect.forEach(entries, closeTunnelEntry, { concurrency: "unbounded" });
-  }).pipe(Effect.ignore, Effect.uninterruptible);
+  const closeLocalForwards = Effect.gen(function* () {
+    // Close admission before collecting keys: a resolving/new ensure must also check
+    // admission under its target lock before it can create a forward.
+    forwardsClosed = true;
+    const keys = new Set([...tunnels.keys(), ...(yield* targetLocks.activeKeys)]);
+    yield* Effect.forEach(
+      keys,
+      (key) =>
+        targetLocks.withLock(
+          key,
+          Effect.gen(function* () {
+            const entry = tunnels.get(key);
+            if (entry === undefined) return;
+            yield* closeTunnelEntry(entry);
+          }),
+        ),
+      { concurrency: "unbounded", discard: true },
+    );
+  }).pipe(Effect.uninterruptible);
 
-  return SshEnvironmentManager.of({ ensureEnvironment, disconnectEnvironment, closeLocalForwards });
+  const reopenLocalForwards = Effect.sync(() => {
+    forwardsClosed = false;
+  });
+
+  return SshEnvironmentManager.of({
+    ensureEnvironment,
+    disconnectEnvironment,
+    closeLocalForwards,
+    reopenLocalForwards,
+  });
 });
 
 /**
