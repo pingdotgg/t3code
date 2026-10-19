@@ -1145,18 +1145,19 @@ function AgentBrowserAccessSetting() {
 }
 
 function ComputerUseSettings() {
+  const gt = useGT();
   const { scope, environment, search } = useSettingsScope();
   const singleHost =
     scope.kind === "environment" || (scope.kind === "all" && scope.environmentIds.length === 1);
   return (
-    <SettingsSection id="computer" title="Computer">
+    <SettingsSection id="computer" title={gt("Computer")}>
       {singleHost && environment ? (
         <ComputerUseControls key={`${environment.environmentId}:${JSON.stringify(search)}`} />
       ) : (
         <SettingsScopeNotice target="environment" targetId="cua-computer-use">
           {singleHost
-            ? "Connect the selected environment to configure computer use."
-            : "Choose one environment to configure computer use on its host."}
+            ? gt("Connect the selected environment to configure computer use.")
+            : gt("Choose one environment to configure computer use on its host.")}
         </SettingsScopeNotice>
       )}
     </SettingsSection>
@@ -1164,6 +1165,8 @@ function ComputerUseSettings() {
 }
 
 function ComputerUseControls() {
+  const gt = useGT();
+  const searchableSetting = useSearchableSetting();
   const { environment: selected } = useSettingsScope();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
@@ -1173,7 +1176,7 @@ function ComputerUseControls() {
     selected?.connection.phase === "connected" && selected.serverConfig !== null
       ? selected.environmentId
       : null;
-  const hostLabel = selected?.label ?? "this computer";
+  const hostLabel = selected?.label ?? gt("this computer");
   const {
     data: status,
     error,
@@ -1208,26 +1211,23 @@ function ComputerUseControls() {
     selected?.entry.target._tag === "PrimaryConnectionTarget";
   const enabled = settings.enableCua;
   const statusText = error
-    ? `Could not check computer use: ${error}`
+    ? gt("Could not check computer use: {error}", { error })
     : status === null
-      ? "Checking host…"
+      ? gt("Checking host…")
       : platform === "other"
-        ? "Computer use is not supported on this host."
+        ? gt("Computer use is not supported on this host.")
         : !enabled
           ? null
           : status.running
-            ? "Running"
-            : (status.failure ?? "Starts with the next agent session");
+            ? gt("Running", { $context: "computer use driver status" })
+            : (status.failure ?? gt("Starts with the next agent session"));
 
   const save = async (enableCua: boolean) => {
     setSaving(true);
-    try {
-      const result = await updateSettings({ enableCua });
-      refresh();
-      return result;
-    } finally {
-      setSaving(false);
-    }
+    const result = await updateSettings({ enableCua });
+    refresh();
+    setSaving(false);
+    return result;
   };
 
   return (
@@ -1236,12 +1236,15 @@ function ComputerUseControls() {
         {...searchableSetting("cua-computer-use")}
         serverScoped
         settingKeys={["enableCua"]}
-        description={`Let agents see and use apps on ${hostLabel} through Cua Driver, in the background without moving your cursor. New agent sessions get the tools; turning this off stops the driver.`}
+        description={gt(
+          "Let agents see and use apps on {host} through Cua Driver, in the background without moving your cursor. New agent sessions get the tools; turning this off stops the driver.",
+          { host: hostLabel },
+        )}
         status={statusText}
         resetAction={
           enabled !== DEFAULT_SERVER_SETTINGS.enableCua && !saving && !setupOpen ? (
             <SettingResetButton
-              label="computer use"
+              ariaLabel={gt("Reset computer use to default")}
               onClick={() => void save(DEFAULT_SERVER_SETTINGS.enableCua)}
             />
           ) : null
@@ -1255,7 +1258,7 @@ function ComputerUseControls() {
                 disabled={saving || !canConfigure}
                 onClick={() => setSetupOpen(true)}
               >
-                Setup
+                <T>Setup</T>
               </Button>
             ) : null}
             <ScopedSwitch
@@ -1267,7 +1270,7 @@ function ComputerUseControls() {
                 environmentId === null ||
                 (!enabled && (status === null || !!error || platform === "other"))
               }
-              aria-label="Computer use"
+              aria-label={gt("Computer use")}
               onCheckedChange={(checked) => {
                 if (checked) setSetupOpen(true);
                 else void save(false);
@@ -1292,12 +1295,12 @@ function ComputerUseControls() {
           }}
           onEnable={async () => {
             if (!readEnvironmentScope(environmentId, AuthSettingsWriteScope)) {
-              throw new Error("This connection cannot change settings on this host.");
+              throw new Error(gt("This connection cannot change settings on this host."));
             }
             if (!enabled) {
               const result = await save(true);
               if (!result.saved)
-                throw new Error(result.message ?? "Could not save the setting. Try again.");
+                throw new Error(result.message ?? gt("Could not save the setting. Try again."));
             }
             // A driver started before the grants keeps macOS's cached denial.
             if (localMac) {
@@ -1305,7 +1308,7 @@ function ComputerUseControls() {
                 await window.desktopBridge?.restartCuaDriver();
               } catch {
                 throw new Error(
-                  "Computer use is on, but Cua Driver could not restart. Try Setup again.",
+                  gt("Computer use is on, but Cua Driver could not restart. Try Setup again."),
                 );
               }
             }

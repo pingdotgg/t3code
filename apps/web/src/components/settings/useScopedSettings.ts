@@ -172,7 +172,9 @@ export function useClearScopedSettings() {
   const run = useRunScopedPlan();
   return (keys: readonly ProjectScopedServerSettingKey[]) => {
     if (context === null) return;
-    void run(context.environments, (current) => planScopedSettingsClear(context.scope, current, keys));
+    void run(context.environments, (current) =>
+      planScopedSettingsClear(context.scope, current, keys),
+    );
   };
 }
 

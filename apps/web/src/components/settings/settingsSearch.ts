@@ -1100,10 +1100,12 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "cua-computer-use",
-    title: "Computer use",
+    title: msg("Computer use"),
     to: "/settings/devices",
     targetId: "computer",
-    searchTerms: ["cua driver apps desktop screen click type agents control mac linux windows"],
+    searchTerms: [
+      msg("cua driver apps desktop screen click type agents control mac linux windows"),
+    ],
   },
   {
     id: "device-hub",

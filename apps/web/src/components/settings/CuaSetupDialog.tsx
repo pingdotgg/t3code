@@ -1,4 +1,5 @@
 import type { CuaHostStatus } from "@t3tools/contracts";
+import { T, useGT, Var } from "gt-react";
 import { useRef, useState } from "react";
 
 import { MacAccessibilityIcon, MacScreenRecordingIcon } from "../Icons";
@@ -19,19 +20,6 @@ export type CuaPermission = "accessibility" | "screen-recording";
 
 const CUA_PERMISSIONS: readonly CuaPermission[] = ["accessibility", "screen-recording"];
 
-function hostRequirements(platform: CuaHostStatus["platform"], hostLabel: string): string {
-  switch (platform) {
-    case "darwin":
-      return `${hostLabel} needs Accessibility and Screen Recording. Finish setup at that Mac: in System Settings → Privacy & Security, grant access to the app or process running this environment. You can turn the setting on from here.`;
-    case "linux":
-      return `${hostLabel} needs a signed-in graphical session. On Wayland, someone at ${hostLabel} may need to approve a screen capture prompt.`;
-    case "win32":
-      return `${hostLabel} needs a signed-in desktop session. If Windows shows a security prompt for Cua Driver, someone at that computer must respond.`;
-    default:
-      return `Computer use needs a desktop on ${hostLabel}.`;
-  }
-}
-
 export function CuaSetupDialog({
   enabled,
   hostLabel,
@@ -51,6 +39,7 @@ export function CuaSetupDialog({
   onEnable: () => Promise<void>;
   onClose: () => void;
 }) {
+  const gt = useGT();
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);
   const [error, setError] = useState<string | null>(null);
@@ -71,11 +60,10 @@ export function CuaSetupDialog({
     try {
       await onAllow(target);
     } catch {
-      setError("Could not open System Settings. Try Allow again.");
-    } finally {
-      pending.current = false;
-      setBusy(false);
+      setError(gt("Could not open System Settings. Try Allow again."));
     }
+    pending.current = false;
+    setBusy(false);
   };
   const finish = async () => {
     if (pending.current || !ready) return;
@@ -86,12 +74,30 @@ export function CuaSetupDialog({
       await onEnable();
       onClose();
     } catch (error) {
-      setError(error instanceof Error ? error.message : "Could not save the setting. Try again.");
-    } finally {
-      pending.current = false;
-      setBusy(false);
+      setError(
+        error instanceof Error ? error.message : gt("Could not save the setting. Try again."),
+      );
     }
+    pending.current = false;
+    setBusy(false);
   };
+  const hostRequirements =
+    platform === "darwin"
+      ? gt(
+          "{host} needs Accessibility and Screen Recording. Finish setup at that Mac: in System Settings → Privacy & Security, grant access to the app or process running this environment. You can turn the setting on from here.",
+          { host: hostLabel },
+        )
+      : platform === "linux"
+        ? gt(
+            "{host} needs a signed-in graphical session. On Wayland, someone at {host} may need to approve a screen capture prompt.",
+            { host: hostLabel },
+          )
+        : platform === "win32"
+          ? gt(
+              "{host} needs a signed-in desktop session. If Windows shows a security prompt for Cua Driver, someone at that computer must respond.",
+              { host: hostLabel },
+            )
+          : gt("Computer use needs a desktop on {host}.", { host: hostLabel });
   return (
     <Dialog
       open
@@ -101,10 +107,17 @@ export function CuaSetupDialog({
     >
       <DialogPopup showCloseButton={!busy}>
         <DialogHeader>
-          <DialogTitle>Let agents use {hostLabel}</DialogTitle>
+          <DialogTitle>
+            <T>
+              Let agents use <Var>{hostLabel}</Var>
+            </T>
+          </DialogTitle>
           <DialogDescription>
-            Cua Driver lets agents see and use apps on {hostLabel} in the background, without moving
-            your cursor. Agent sessions started afterwards get the computer use tools.
+            <T>
+              Cua Driver lets agents see and use apps on <Var>{hostLabel}</Var> in the background,
+              without moving your cursor. Agent sessions started afterwards get the computer use
+              tools.
+            </T>
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -115,23 +128,23 @@ export function CuaSetupDialog({
                 {
                   id: "accessibility",
                   icon: <MacAccessibilityIcon className="size-8 shrink-0 drop-shadow-sm" />,
-                  title: "Accessibility",
-                  description: "Click, type, and read controls in other apps.",
+                  title: gt("Accessibility"),
+                  description: gt("Click, type, and read controls in other apps."),
                   granted: permission.status.accessibility,
                   onAllow: () => void allow("accessibility"),
                 },
                 {
                   id: "screen-recording",
                   icon: <MacScreenRecordingIcon className="size-8 shrink-0 drop-shadow-sm" />,
-                  title: "Screen Recording",
-                  description: "See the screen to decide what to do next.",
+                  title: gt("Screen Recording"),
+                  description: gt("See the screen to decide what to do next."),
                   granted: permission.status["screen-recording"],
                   onAllow: () => void allow("screen-recording"),
                 },
               ]}
             />
           ) : (
-            <p className="text-sm text-muted-foreground">{hostRequirements(platform, hostLabel)}</p>
+            <p className="text-sm text-muted-foreground">{hostRequirements}</p>
           )}
           {error || (localMac && permission.error) ? (
             <p role="status" className="mt-3 text-xs text-muted-foreground">
@@ -140,7 +153,7 @@ export function CuaSetupDialog({
           ) : null}
           {localMac && !ready ? (
             <p className="mt-3 text-xs text-muted-foreground">
-              If a permission stays off after you allow it, quit and reopen T3 Code.
+              <T>If a permission stays off after you allow it, quit and reopen T3 Code.</T>
             </p>
           ) : null}
         </DialogPanel>
@@ -152,10 +165,10 @@ export function CuaSetupDialog({
               if (!pending.current) onClose();
             }}
           >
-            {enabled ? "Close" : "Finish later"}
+            {enabled ? gt("Close") : gt("Finish later")}
           </Button>
           <PermissionContinueButton ready={ready} busy={busy} onClick={() => void finish()}>
-            {enabled ? "Done" : "Turn on"}
+            {enabled ? gt("Done") : gt("Turn on")}
           </PermissionContinueButton>
         </DialogFooter>
       </DialogPopup>
