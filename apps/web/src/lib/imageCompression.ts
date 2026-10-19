@@ -204,31 +204,49 @@ async function encodeCanvas(
   return blob?.type === mimeType ? blob : null;
 }
 
-const composerThumbnails = new WeakMap<File, Promise<string | null>>();
+const COMPOSER_THUMBNAIL_SIZES = {
+  square: { width: 256, height: 256 },
+  // The 208x112 snapshot tile at retina density and 2x app zoom.
+  snapshot: { width: 832, height: 448 },
+} as const;
+export type ComposerImageThumbnailMode = keyof typeof COMPOSER_THUMBNAIL_SIZES;
+const composerThumbnails = new WeakMap<
+  File,
+  Partial<Record<ComposerImageThumbnailMode, Promise<string | null>>>
+>();
 
-export function createComposerImageThumbnail(file: File): Promise<string | null> {
-  const cached = composerThumbnails.get(file);
+export function createComposerImageThumbnail(
+  file: File,
+  mode: ComposerImageThumbnailMode = "square",
+): Promise<string | null> {
+  const fileThumbnails = composerThumbnails.get(file);
+  const cached = fileThumbnails?.[mode];
   if (cached) return cached;
   const thumbnail = (async () => {
     if (!canRecompress()) return null;
     let bitmap: ImageBitmap | undefined;
     try {
       bitmap = await createImageBitmap(file);
+      if (bitmap.width <= 0 || bitmap.height <= 0) return null;
       const side = Math.min(bitmap.width, bitmap.height);
-      if (side <= 0) return null;
-      const dimension = Math.min(256, side);
-      const surface = createCanvas(dimension, dimension);
+      const sourceWidth = mode === "square" ? side : bitmap.width;
+      const sourceHeight = mode === "square" ? side : bitmap.height;
+      const bounds = COMPOSER_THUMBNAIL_SIZES[mode];
+      const scale = Math.min(1, bounds.width / sourceWidth, bounds.height / sourceHeight);
+      const width = Math.max(1, Math.round(sourceWidth * scale));
+      const height = Math.max(1, Math.round(sourceHeight * scale));
+      const surface = createCanvas(width, height);
       if (!surface) return null;
       surface.context.drawImage(
         bitmap,
-        (bitmap.width - side) / 2,
-        (bitmap.height - side) / 2,
-        side,
-        side,
+        (bitmap.width - sourceWidth) / 2,
+        (bitmap.height - sourceHeight) / 2,
+        sourceWidth,
+        sourceHeight,
         0,
         0,
-        dimension,
-        dimension,
+        width,
+        height,
       );
       const blob = await encodeCanvas(surface.canvas, 1, "image/png");
       return blob ? await readFileAsDataUrl(blob) : null;
@@ -238,7 +256,7 @@ export function createComposerImageThumbnail(file: File): Promise<string | null>
       bitmap?.close();
     }
   })();
-  composerThumbnails.set(file, thumbnail);
+  composerThumbnails.set(file, { ...fileThumbnails, [mode]: thumbnail });
   return thumbnail;
 }
 
