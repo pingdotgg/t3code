@@ -8,7 +8,7 @@ import type { LimitPresentations } from "@t3tools/shared/usageLimits";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 // Real pointer clicks need the dialog's stacking styles to land above Base UI's modal overlay.
 import "~/index.css";
@@ -26,47 +26,48 @@ vi.mock("../settings/RedactedSensitiveText", () => ({ RedactedSensitiveText: () 
 
 import { UsageLimitsPooled } from "./UsageLimitsPooled";
 
-const presentations: LimitPresentations = new Map([
-  [
-    EnvironmentId.make("env-a"),
-    {
-      entry: { target: { label: "Test" } },
-      serverConfig: {
-        usageLimitSources: [],
-        providers: [
-          {
-            instanceId: ProviderInstanceId.make("alpha"),
-            driver: ProviderDriverKind.make("codex"),
-            displayName: "Alpha",
-            enabled: true,
-            installed: true,
-            version: null,
-            status: "ready",
-            auth: { status: "authenticated", email: "alpha@example.com" },
-            checkedAt: "2026-09-03T11:00:00Z",
-            models: [],
-            slashCommands: [],
-            skills: [],
-            usageLimits: {
+const presentations = (resetsAt: string | undefined, availableCount: number): LimitPresentations =>
+  new Map([
+    [
+      EnvironmentId.make("env-a"),
+      {
+        entry: { target: { label: "Test" } },
+        serverConfig: {
+          usageLimitSources: [],
+          providers: [
+            {
+              instanceId: ProviderInstanceId.make("alpha"),
+              driver: ProviderDriverKind.make("codex"),
+              displayName: "Alpha",
+              enabled: true,
+              installed: true,
+              version: null,
+              status: "ready",
+              auth: { status: "authenticated", email: "alpha@example.com" },
               checkedAt: "2026-09-03T11:00:00Z",
-              resetCredits: { availableCount: 1 },
-              windows: [
-                {
-                  id: "five_hour",
-                  kind: "session",
-                  label: "Session",
-                  usedPercent: 40,
-                  windowDurationMins: 300,
-                  resetsAt: "2026-09-03T14:00:00Z",
-                },
-              ],
-            },
-          } satisfies ServerProvider,
-        ],
+              models: [],
+              slashCommands: [],
+              skills: [],
+              usageLimits: {
+                checkedAt: "2026-09-03T11:00:00Z",
+                resetCredits: { availableCount },
+                windows: [
+                  {
+                    id: "five_hour",
+                    kind: "session",
+                    label: "Session",
+                    usedPercent: resetsAt ? 40 : 0,
+                    windowDurationMins: 300,
+                    ...(resetsAt ? { resetsAt } : {}),
+                  },
+                ],
+              },
+            } satisfies ServerProvider,
+          ],
+        },
       },
-    },
-  ],
-]);
+    ],
+  ]);
 
 let root: Root;
 let container: HTMLDivElement;
@@ -77,7 +78,11 @@ beforeEach(async () => {
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
-  await act(() => root.render(<UsageLimitsPooled presentations={presentations} now={0} />));
+  await act(() =>
+    root.render(
+      <UsageLimitsPooled presentations={presentations("2026-09-03T14:00:00Z", 1)} now={0} />,
+    ),
+  );
 });
 
 afterEach(async () => {
@@ -129,4 +134,33 @@ it.each([
   expect(using?.disabled).toBe(true);
   await act(async () => answer(result));
   expect(status?.textContent).toBe(`Alpha ${text}`);
+});
+
+it("omits an empty reset plate but keeps countdowns and banked credits visible", async () => {
+  await page.viewport(1440, 900);
+  const now = Date.parse("2026-09-03T11:00:00Z");
+  const segment = page.getByRole("button", { name: /^Alpha:/ });
+  // The empty plate has no accessible text; select its painted background inside the real bar.
+  const plate = () =>
+    segment.element().querySelector<HTMLSpanElement>('[class~="bg-background/85"]');
+
+  await act(() =>
+    root.render(<UsageLimitsPooled presentations={presentations(undefined, 0)} now={now} />),
+  );
+  await expect.element(segment.getByText("100%", { exact: true })).toBeVisible();
+  expect(plate()).toBeNull();
+
+  await act(() =>
+    root.render(
+      <UsageLimitsPooled presentations={presentations("2026-09-03T14:00:00Z", 0)} now={now} />,
+    ),
+  );
+  await expect.element(plate()).toBeVisible();
+  expect(plate()?.textContent).toBe("↻ 3h 0m");
+
+  await act(() =>
+    root.render(<UsageLimitsPooled presentations={presentations(undefined, 1)} now={now} />),
+  );
+  await expect.element(plate()).toBeVisible();
+  expect(plate()?.textContent).toBe("1");
 });
