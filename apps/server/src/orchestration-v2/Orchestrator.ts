@@ -8547,6 +8547,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           liveness.set(providerThreadId, live);
           return live;
         });
+      const stillReportsBackgroundWork = Effect.fnUntraced(function* (
+        providerThread: OrchestrationV2ProviderThread,
+      ) {
+        if (providerThread.providerSessionId == null) return false;
+        const session = yield* providerSessions
+          .get(providerThread.providerSessionId)
+          .pipe(Effect.orElseSucceed(() => Option.none()));
+        if (
+          Option.isNone(session) ||
+          session.value.hasPendingBackgroundWorkForThread === undefined
+        ) {
+          return false;
+        }
+        return yield* session.value
+          .hasPendingBackgroundWorkForThread(providerThread)
+          // A failed probe cannot confirm that the work ended.
+          .pipe(Effect.catchCause(() => Effect.succeed(true)));
+      });
       for (const item of pendingBackgroundTurnItems({
         turnItems: input.projection.turnItems,
         runs: input.projection.runs,
@@ -8649,10 +8667,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
       }
       for (const providerThread of input.projection.providerThreads) {
-        if (
-          (providerThread.pendingBackgroundTasks?.length ?? 0) === 0 ||
-          (yield* hasLiveSession(providerThread.id))
-        ) {
+        if ((providerThread.pendingBackgroundTasks?.length ?? 0) === 0) continue;
+        if (providerThread.id === input.stoppedProviderThreadId) {
+          // A refused newer start can take ownership and reject the stopped
+          // turn's roster clear. Reconcile it without hiding surviving work.
+          if (yield* stillReportsBackgroundWork(providerThread)) continue;
+        } else if (yield* hasLiveSession(providerThread.id)) {
           continue;
         }
         yield* emitEvent({

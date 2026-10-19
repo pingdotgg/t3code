@@ -38,10 +38,12 @@ const stopEarlierBackgroundWork = ({
   failedStart = false,
   stopWithQueue,
   olderStart = false,
+  backgroundWorkAfterStop,
   stalledRun,
   workflowMember = false,
 }: {
   readonly failedStart?: boolean;
+  readonly backgroundWorkAfterStop?: "running" | "unknown";
   readonly stopWithQueue?: "thread.stop" | "run.interrupt";
   readonly olderStart?: boolean;
   readonly workflowMember?: boolean;
@@ -83,6 +85,22 @@ const stopEarlierBackgroundWork = ({
                 lastError: null,
               },
               events: Stream.fromQueue(events),
+              ...(failedStart
+                ? {
+                    hasPendingBackgroundWorkForThread: (providerThread) =>
+                      Effect.gen(function* () {
+                        if (
+                          !interrupts.some((input) => input.providerThread.id === providerThread.id)
+                        ) {
+                          return false;
+                        }
+                        if (backgroundWorkAfterStop === "unknown") {
+                          return yield* Effect.die("Background work probe failed");
+                        }
+                        return backgroundWorkAfterStop === "running";
+                      }),
+                  }
+                : {}),
               ensureThread: ({ threadId }) =>
                 Effect.succeed({
                   id: ProviderThreadId.make(`provider-thread:codex:${threadId}`),
@@ -412,6 +430,10 @@ const stopEarlierBackgroundWork = ({
 
         const codexProviderThread = (yield* orchestrator.getThreadProjection(threadId))
           .providerThreads[0]!;
+        const backgroundTasks = [
+          { taskId: "sleep", description: "Wait before the recheck", kind: "command" as const },
+        ];
+        const otherBackgroundTasks = [{ ...backgroundTasks[0]!, taskId: "other-sleep" }];
         const subagentThread = (name: string) =>
           Effect.gen(function* () {
             const subagentThreadId = ThreadId.make(`thread:${name}`);
@@ -735,40 +757,76 @@ const stopEarlierBackgroundWork = ({
                 id: otherProviderThreadId,
                 firstRunOrdinal: 4,
                 lastRunOrdinal: 4,
+                ...(failedStart ? { pendingBackgroundTasks: otherBackgroundTasks } : {}),
               },
             },
             ...latestRun.events,
           ],
         });
 
-        const failedRun = settledRun({ ordinal: 5, providerThreadId: otherProviderThreadId });
+        const failedRun = settledRun({ ordinal: 5, providerThreadId: codexProviderThread.id });
         if (failedStart) {
           yield* sink.write({
-            events: failedRun.events.flatMap((event): Array<OrchestrationV2DomainEvent> => {
-              switch (event.type) {
-                case "provider-turn.updated":
-                  return [];
-                case "run.created":
-                  return [{ ...event, payload: { ...event.payload, status: "failed" } }];
-                case "node.updated":
-                  return [
-                    {
-                      ...event,
-                      payload: { ...event.payload, status: "failed", providerTurnId: null },
-                    },
-                  ];
-                case "run-attempt.created":
-                  return [
-                    {
-                      ...event,
-                      payload: { ...event.payload, status: "failed", providerTurnId: null },
-                    },
-                  ];
-                default:
-                  return [event];
-              }
-            }),
+            events: [
+              {
+                id: EventId.make("failed-start-roster"),
+                type: "provider-thread.updated",
+                threadId,
+                occurredAt: now,
+                payload: {
+                  ...codexProviderThread,
+                  lastRunOrdinal: 5,
+                  pendingBackgroundTasks: backgroundTasks,
+                },
+              },
+              ...failedRun.events.flatMap((event): Array<OrchestrationV2DomainEvent> => {
+                switch (event.type) {
+                  case "provider-turn.updated":
+                    return [];
+                  case "run.created":
+                    return [{ ...event, payload: { ...event.payload, status: "failed" } }];
+                  case "node.updated":
+                    return [
+                      {
+                        ...event,
+                        payload: { ...event.payload, status: "failed", providerTurnId: null },
+                      },
+                    ];
+                  case "run-attempt.created":
+                    return [
+                      {
+                        ...event,
+                        payload: { ...event.payload, status: "failed", providerTurnId: null },
+                      },
+                    ];
+                  default:
+                    return [event];
+                }
+              }),
+            ],
           });
+          // The older turn reports an empty roster, but the refused run owns the row now.
+          const clear = yield* sink.writeIfProviderThreadOwner({
+            providerThreadId: codexProviderThread.id,
+            runId: reviewerRun.runId,
+            activeAttemptId: RunAttemptId.make("attempt:3"),
+            expectedLastRunOrdinal: 3,
+            events: [
+              {
+                id: EventId.make("dropped-roster-clear"),
+                type: "provider-thread.updated",
+                threadId,
+                occurredAt: now,
+                payload: { ...codexProviderThread, pendingBackgroundTasks: [] },
+              },
+            ],
+          });
+          assert.isFalse(clear.committed);
+          const beforeStop = (yield* orchestrator.getThreadProjection(
+            threadId,
+          )).providerThreads.find((thread) => thread.id === codexProviderThread.id)!;
+          assert.equal(beforeStop.lastRunOrdinal, 5);
+          assert.deepEqual(beforeStop.pendingBackgroundTasks, backgroundTasks);
         }
 
         if (stopWithQueue !== undefined) {
@@ -864,7 +922,9 @@ const stopEarlierBackgroundWork = ({
         assert.sameDeepMembers(
           interrupts.map((interrupt) => [interrupt.providerThread.id, interrupt.providerTurnId]),
           [
-            ...(olderStart ? [] : [[otherProviderThreadId, latestRun.providerTurnId]]),
+            ...(olderStart || failedStart
+              ? []
+              : [[otherProviderThreadId, latestRun.providerTurnId]]),
             [codexProviderThread.id, reviewerRun.providerTurnId],
           ],
         );
@@ -906,6 +966,18 @@ const stopEarlierBackgroundWork = ({
         }
         const testerThread = yield* orchestrator.getThreadProjection(tester.threadId);
         assert.equal(testerThread.nodes[0]?.status, "interrupted");
+        if (failedStart) {
+          assert.deepEqual(
+            after.providerThreads.find((candidate) => candidate.id === codexProviderThread.id)
+              ?.pendingBackgroundTasks,
+            backgroundWorkAfterStop === undefined ? [] : backgroundTasks,
+          );
+          assert.deepEqual(
+            after.providerThreads.find((candidate) => candidate.id === otherProviderThreadId)
+              ?.pendingBackgroundTasks,
+            otherBackgroundTasks,
+          );
+        }
       }).pipe(
         Effect.provide(
           ProviderReplayHarness.layerWithRegistry(
@@ -927,8 +999,16 @@ it.effect("Stop settles workflow members without subagent turn items", () =>
 );
 
 it.effect(
-  "Stop reaches earlier background work after the newest run fails before provider start",
+  "Stop clears a stale roster after a refused run takes ownership of the provider thread",
   () => stopEarlierBackgroundWork({ failedStart: true }),
+);
+
+it.effect("Stop preserves the roster when background work survives the interrupt", () =>
+  stopEarlierBackgroundWork({ failedStart: true, backgroundWorkAfterStop: "running" }),
+);
+
+it.effect("Stop preserves the roster when the background work probe fails", () =>
+  stopEarlierBackgroundWork({ failedStart: true, backgroundWorkAfterStop: "unknown" }),
 );
 
 it.effect.each(["thread.stop", "run.interrupt"] as const)(
