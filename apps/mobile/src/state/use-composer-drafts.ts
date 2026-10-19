@@ -489,7 +489,10 @@ function attachmentContextRecord(
     : { ...common, kind: "file" as const };
 }
 
-function restoreMissingComposerFileReferences(draft: ComposerDraft): ComposerDraft {
+function restoreMissingComposerFileReferences(
+  draft: ComposerDraft,
+  attachments = draft.attachments,
+): ComposerDraft {
   const records = [...(draft.context?.records ?? [])];
   const usedIds = new Set<string>(records.map((record) => record.contextId));
   const referenced = new Set(
@@ -499,7 +502,7 @@ function restoreMissingComposerFileReferences(draft: ComposerDraft): ComposerDra
   );
   let text = draft.text;
   let changed = false;
-  for (const attachment of draft.attachments) {
+  for (const attachment of attachments) {
     if (
       attachment.type === "image" ||
       imageMimeType(attachment) !== null ||
@@ -1578,13 +1581,20 @@ export function mergeComposerDraftContentState(
   }
   return {
     ...current,
-    [draftKey]: {
-      ...existing,
-      text,
-      attachments,
-      context,
-      ...(importedShareIds ? { importedShareIds } : {}),
-    },
+    // The composer shows non-image files only as inline chips, so a shared file
+    // merged without one would be attached but invisible until sent. Other
+    // merges carry their own text, and appending chips to it would defeat
+    // mergeComposerDraftText's duplicate check on a retried merge.
+    [draftKey]: restoreMissingComposerFileReferences(
+      {
+        ...existing,
+        text,
+        attachments,
+        context,
+        ...(importedShareIds ? { importedShareIds } : {}),
+      },
+      content.sourceShareId ? attachments.slice(existing.attachments.length) : [],
+    ),
   };
 }
 
