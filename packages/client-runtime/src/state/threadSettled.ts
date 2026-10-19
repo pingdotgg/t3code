@@ -81,12 +81,12 @@ export interface ThreadSnoozeShell extends QueuedThreadShell {
 export function threadRaisedHandWhileSnoozed(shell: ThreadSnoozeShell): boolean {
   if (shell.hasPendingApprovals || shell.hasPendingUserInput) return true;
   if (shell.pendingSubagentRequest != null) return true;
-  const runtime = shell.runtime ?? shell.session ?? null;
   const latestRun = shell.latestRun ?? shell.latestTurn ?? null;
+  const failedAt = failureEdgeAt(shell);
   if (
-    (runtime?.status === "error" || runtime?.status === "failed") &&
+    failedAt !== undefined &&
     (shell.snoozedAt == null ||
-      (runtime.updatedAt != null && Date.parse(runtime.updatedAt) > Date.parse(shell.snoozedAt)))
+      (failedAt != null && Date.parse(failedAt) > Date.parse(shell.snoozedAt)))
   ) {
     return true;
   }
@@ -99,6 +99,18 @@ export function threadRaisedHandWhileSnoozed(shell: ThreadSnoozeShell): boolean 
     return true;
   }
   return false;
+}
+
+// V2 runtime.updatedAt includes metadata writes; prefer the failed run's completion.
+// Legacy sessions only expose the runtime timestamp.
+function failureEdgeAt(shell: ThreadSnoozeShell): string | null | undefined {
+  const runtime = shell.runtime ?? shell.session ?? null;
+  if (runtime?.status !== "error" && runtime?.status !== "failed") return undefined;
+  const latestRun = shell.latestRun ?? shell.latestTurn ?? null;
+  if (latestRun?.status === "failed" && latestRun.completedAt != null) {
+    return latestRun.completedAt;
+  }
+  return runtime.updatedAt ?? null;
 }
 
 export function canSnooze(
@@ -145,7 +157,6 @@ export function threadWokeAt(
   // than that visit's lastVisitedAt).
   if (threadRaisedHandWhileSnoozed(shell)) {
     const latestRun = shell.latestRun ?? shell.latestTurn ?? null;
-    const runtime = shell.runtime ?? shell.session ?? null;
     if (
       shell.snoozedAt != null &&
       (latestRun?.state === "completed" || latestRun?.status === "completed") &&
@@ -154,6 +165,15 @@ export function threadWokeAt(
     ) {
       return latestRun.completedAt;
     }
+    // An old failure must not replace the activity time of an approval or input wake.
+    const failedAt = failureEdgeAt(shell);
+    if (
+      failedAt != null &&
+      (shell.snoozedAt == null || Date.parse(failedAt) > Date.parse(shell.snoozedAt))
+    ) {
+      return failedAt;
+    }
+    const runtime = shell.runtime ?? shell.session ?? null;
     return runtime?.updatedAt ?? shell.snoozedAt ?? null;
   }
   return wakeAtMs <= Date.parse(options.now) ? shell.snoozedUntil : null;

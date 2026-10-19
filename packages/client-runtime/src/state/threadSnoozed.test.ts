@@ -119,6 +119,46 @@ describe("effectiveSnoozed", () => {
     ).toBe(true);
   });
 
+  it.each([
+    {
+      reason: "stale failure",
+      completedAt: "2026-04-10T08:00:00.000Z",
+      pending: undefined,
+      wokeAt: null,
+    },
+    {
+      reason: "fresh failure",
+      completedAt: "2026-04-10T10:00:00.000Z",
+      pending: undefined,
+      wokeAt: "2026-04-10T10:00:00.000Z",
+    },
+    {
+      reason: "approval after a stale failure",
+      completedAt: "2026-04-10T08:00:00.000Z",
+      pending: "approval",
+      wokeAt: "2026-04-10T11:00:00.000Z",
+    },
+    {
+      reason: "input after a stale failure",
+      completedAt: "2026-04-10T08:00:00.000Z",
+      pending: "user-input",
+      wokeAt: "2026-04-10T11:00:00.000Z",
+    },
+  ] as const)(
+    "uses the wake event time for $reason despite newer metadata",
+    ({ completedAt, pending, wokeAt }) => {
+      const shell: ThreadSnoozeShell = {
+        ...makeShell({ snoozedUntil: FUTURE_WAKE }),
+        hasPendingApprovals: pending === "approval",
+        hasPendingUserInput: pending === "user-input",
+        runtime: { status: "failed", updatedAt: "2026-04-10T11:00:00.000Z" },
+        latestRun: { status: "failed", requestedAt: "2026-04-10T07:00:00.000Z", completedAt },
+      };
+      expect(effectiveSnoozed(shell, { now: NOW })).toBe(wokeAt === null);
+      expect(threadWokeAt(shell, { now: NOW })).toBe(wokeAt);
+    },
+  );
+
   it("stays snoozed while the session keeps working — snooze never pauses the agent", () => {
     expect(
       effectiveSnoozed(makeShell({ snoozedUntil: FUTURE_WAKE, sessionStatus: "running" }), {
