@@ -1,3 +1,7 @@
+import * as NodeEvents from "node:events";
+import * as NodeModule from "node:module";
+import { DebUpdater } from "electron-updater/out/DebUpdater.js";
+import { DownloadedUpdateHelper } from "electron-updater/out/DownloadedUpdateHelper.js";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { DesktopUpdateState } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -27,6 +31,7 @@ export interface UpdatesHarnessOptions {
   readonly setUpdateChannelError?: DesktopAppSettings.DesktopSettingsWriteError;
   readonly setDisableDifferentialDownload?: Effect.Effect<void>;
   readonly downloadUpdate?: Effect.Effect<void>;
+  readonly updater?: ElectronUpdater.ElectronUpdater["Service"];
   readonly quitAndInstall?: Effect.Effect<void, ElectronUpdater.ElectronUpdaterQuitAndInstallError>;
   readonly stopBackend?: Effect.Effect<void>;
   readonly startBackend?: Effect.Effect<void>;
@@ -298,7 +303,11 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
 
   const layer = DesktopUpdates.layer.pipe(
     Layer.provide(layerFileSystem),
-    Layer.provideMerge(layerUpdater),
+    Layer.provideMerge(
+      options.updater
+        ? Layer.succeed(ElectronUpdater.ElectronUpdater, options.updater)
+        : layerUpdater,
+    ),
     Layer.provideMerge(layerElectronApp),
     Layer.provideMerge(layerWindow),
     Layer.provideMerge(layerBackend),
@@ -340,6 +349,80 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
       for (const listener of listeners.get(eventName) ?? []) {
         listener(payload);
       }
+    },
+  };
+}
+
+// Keep BaseUpdater.quitAndInstall and DebUpdater.doInstall real; stub only OS commands.
+export async function makeInstalledDebUpdater(installError?: Error) {
+  const events = new NodeEvents.EventEmitter();
+  const steps: string[] = [];
+  class TestDebUpdater extends DebUpdater {
+    override hasCommand() {
+      return true;
+    }
+    override detectPackageManager() {
+      return "apt";
+    }
+    override runCommandWithSudoIfNeeded() {
+      steps.push("install");
+      if (installError) throw installError;
+      return "";
+    }
+    async stageDownload() {
+      const helper = new DownloadedUpdateHelper("/unused/cache");
+      const info = { url: "test.deb", sha512: "test" };
+      await helper.setDownloadedFile(
+        "/unused/test.deb",
+        null,
+        {
+          version: "1.2.4",
+          releaseDate: "2026-10-01",
+          files: [info],
+          path: info.url,
+          sha512: info.sha512,
+        },
+        { url: new URL("https://example.invalid/test.deb"), info },
+        "test.deb",
+        false,
+      );
+      this.downloadedUpdateHelper = helper;
+    }
+  }
+  const updater = new TestDebUpdater(null, {
+    version: "1.2.3",
+    name: "Test",
+    isPackaged: true,
+    appUpdateConfigPath: "/unused/app-update.yml",
+    userDataPath: "/unused/data",
+    baseCachePath: "/unused/cache",
+    whenReady: async () => {},
+    relaunch: () => {
+      steps.push("nativeRelaunch");
+    },
+    quit: () => {
+      steps.push("quit");
+      events.emit("quit");
+    },
+    onQuit: () => {},
+  });
+  updater.logger = null;
+  updater.channel = "latest";
+  await updater.stageDownload();
+
+  // electron-updater uses CJS require, which bypasses Vitest's ESM mocks.
+  const require = NodeModule.createRequire(import.meta.url);
+  const electronPath = require.resolve("electron");
+  require("electron");
+  const electronModule = require.cache[electronPath]!;
+  const previousExports: unknown = electronModule.exports;
+  electronModule.exports = { autoUpdater: events };
+  return {
+    updater,
+    steps,
+    events,
+    restore: () => {
+      electronModule.exports = previousExports;
     },
   };
 }
