@@ -249,17 +249,24 @@ describe("findProjectOnChangeRequestHost", () => {
   });
 
   it.each([
-    "ssh.dev.azure.com/v3/org-a/project/web",
-    "vs-ssh.visualstudio.com/v3/org-a/project/web",
-    "org-a.visualstudio.com/defaultcollection/project/_git/web",
-    "dev.azure.com/org-a/project/_git/web",
-  ])("matches Azure browser references against %s", (canonicalKey) => {
+    ["ssh.dev.azure.com/v3/org-a/project/web", "git@ssh.dev.azure.com:v3/org-a/project/web"],
+    [
+      "vs-ssh.visualstudio.com/v3/org-a/project/web",
+      "git@vs-ssh.visualstudio.com:v3/org-a/project/web",
+    ],
+    [
+      "org-a.visualstudio.com/defaultcollection/project/_git/web",
+      "https://org-a.visualstudio.com/DefaultCollection/Project/_git/Web",
+    ],
+    ["dev.azure.com/org-a/project/_git/web", "https://org-a@dev.azure.com/org-a/Project/_git/Web"],
+  ])("matches Azure browser references against %s", (canonicalKey, remoteUrl) => {
     const checkout = project("azure", {
-      canonicalKey,
-      provider: "azure-devops",
+      ...repositoryIdentity("azure-devops", canonicalKey, remoteUrl),
       displayName: canonicalKey.split("/").slice(1).join("/"),
     });
-    const reference = { host: "dev.azure.com", repository: "org-a/project/_git/web", number: 42 };
+    const reference = parseChangeRequestUrl(
+      "https://dev.azure.com/org-a/project/_git/web/pullrequest/42",
+    )!;
     expect(findProjectForChangeRequest([checkout], reference)).toBe(checkout);
     expect(findProjectOnChangeRequestHost([checkout], reference)).toBe(checkout);
     expect(
