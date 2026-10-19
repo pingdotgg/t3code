@@ -160,6 +160,28 @@ const layerBeforeUnchangedWriteEventSink = (before: Ref.Ref<Effect.Effect<void>>
     }),
   ).pipe(Layer.provide(layerTestEventSink));
 
+const layerPausingThreadRecords = (pause: {
+  readonly threadId: ThreadId;
+  readonly paused: Deferred.Deferred<void>;
+  readonly resume: Deferred.Deferred<void>;
+}) =>
+  Layer.effect(
+    ProjectionStore.ProjectionStoreV2,
+    Effect.gen(function* () {
+      const delegate = yield* ProjectionStore.ProjectionStoreV2;
+      return ProjectionStore.ProjectionStoreV2.of({
+        ...delegate,
+        getThreadRecords: (threadId, fields, filter) =>
+          threadId === pause.threadId && fields.some((field) => field === "providerThreads")
+            ? Deferred.succeed(pause.paused, undefined).pipe(
+                Effect.andThen(Deferred.await(pause.resume)),
+                Effect.andThen(delegate.getThreadRecords(threadId, fields, filter)),
+              )
+            : delegate.getThreadRecords(threadId, fields, filter),
+      });
+    }),
+  ).pipe(Layer.provide(layerTestStores));
+
 const CodexCapabilities: OrchestrationV2ProviderCapabilities = CodexProviderCapabilitiesV2;
 const ExclusiveCapabilities: OrchestrationV2ProviderCapabilities = {
   ...CodexCapabilities,
@@ -307,6 +329,133 @@ function makeProviderThread(input: {
     updatedAt: input.now,
   };
 }
+
+const makeNativeChildFixture = Effect.fnUntraced(function* (parentThreadId: ThreadId) {
+  const idAllocator = yield* IdAllocator.IdAllocatorV2;
+  const eventSink = yield* EventSink.EventSinkV2;
+  const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+  const now = yield* DateTime.now;
+  const childThreadId = ThreadId.make("native-child");
+  const providerSessionId = idAllocator.derive.providerSession({
+    providerInstanceId: modelSelection.instanceId,
+  });
+  const parentThreadEvent = yield* makeThreadCreatedEvent({
+    idAllocator,
+    threadId: parentThreadId,
+    now,
+  });
+  const childThreadEvent = yield* makeThreadCreatedEvent({
+    idAllocator,
+    threadId: childThreadId,
+    now,
+  });
+  const childProviderThread = makeProviderThread({
+    idAllocator,
+    threadId: childThreadId,
+    providerSessionId,
+    nativeThreadId: "native-child-thread",
+    now,
+  });
+  const parentRunId = idAllocator.derive.run({
+    threadId: parentThreadId,
+    ordinal: 1,
+  });
+  const parentNodeId = idAllocator.derive.rootNode({ runId: parentRunId });
+  const subagentId = idAllocator.derive.nodeFromProviderItem({
+    driver: CODEX_DRIVER,
+    nativeItemId: "native-child-task",
+  });
+  const childAppThreadEvent = {
+    ...childThreadEvent,
+    payload: {
+      ...childThreadEvent.payload,
+      createdBy: "agent" as const,
+      creationSource: "provider" as const,
+      activeProviderThreadId: null,
+      lineage: {
+        parentThreadId,
+        relationshipToParent: "subagent" as const,
+        rootThreadId: parentThreadId,
+      },
+    },
+  };
+  const events = [
+    parentThreadEvent,
+    childAppThreadEvent,
+    {
+      id: yield* idAllocator.allocate.event({ threadId: parentThreadId }),
+      type: "node.updated" as const,
+      threadId: parentThreadId,
+      nodeId: parentNodeId,
+      occurredAt: now,
+      payload: {
+        id: parentNodeId,
+        threadId: parentThreadId,
+        runId: parentRunId,
+        parentNodeId: null,
+        rootNodeId: parentNodeId,
+        kind: "root_turn" as const,
+        status: "completed" as const,
+        countsForRun: true,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        runtimeRequestId: null,
+        checkpointScopeId: null,
+        startedAt: now,
+        completedAt: now,
+      },
+    },
+    {
+      id: yield* idAllocator.allocate.event({ threadId: childThreadId }),
+      type: "provider-thread.updated" as const,
+      threadId: childThreadId,
+      occurredAt: now,
+      payload: childProviderThread,
+    },
+    {
+      id: yield* idAllocator.allocate.event({ threadId: parentThreadId }),
+      type: "subagent.updated" as const,
+      threadId: parentThreadId,
+      occurredAt: now,
+      payload: {
+        id: subagentId,
+        threadId: parentThreadId,
+        runId: parentRunId,
+        parentNodeId,
+        origin: "provider_native" as const,
+        createdBy: "agent" as const,
+        driver: CODEX_DRIVER,
+        providerInstanceId: modelSelection.instanceId,
+        providerThreadId: childProviderThread.id,
+        childThreadId,
+        nativeTaskRef: {
+          driver: CODEX_DRIVER,
+          nativeId: "native-child-task",
+          strength: "strong" as const,
+        },
+        prompt: "Review the parent task",
+        title: "Native child",
+        model: null,
+        status: "completed" as const,
+        result: "READY",
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+      },
+    },
+  ] satisfies ReadonlyArray<OrchestrationV2DomainEvent>;
+  yield* eventSink.write({ events });
+  const parent = { threadId: parentThreadId, providerSessionId };
+  const runtime = yield* manager.open({ ...parent, modelSelection, runtimePolicy });
+  const resumeChild = runtime.resumeThread({
+    providerThread: childProviderThread,
+    threadId: childThreadId,
+    modelSelection,
+    runtimePolicy,
+  });
+  return { manager, parent, resumeChild };
+});
 
 function unimplemented(detail: string) {
   return Effect.fail(
@@ -473,6 +622,7 @@ function layerTest(input: {
   readonly failReleaseEventWrites?: boolean;
   readonly flakyReleaseWrites?: FlakyReleaseWrites;
   readonly pauseAttachWrite?: Parameters<typeof layerPausingAttachEventSink>[0];
+  readonly pauseThreadRecords?: Parameters<typeof layerPausingThreadRecords>[0];
   readonly beforeUnchangedWrite?: Ref.Ref<Effect.Effect<void>>;
   readonly pauseResolve?: {
     readonly armed: Ref.Ref<boolean>;
@@ -499,6 +649,10 @@ function layerTest(input: {
           : input.failReleaseEventWrites
             ? layerFailingReleaseEventSink
             : layerTestEventSink;
+  const layerSessionProjectionStore =
+    input.pauseThreadRecords === undefined
+      ? layerTestStores
+      : layerPausingThreadRecords(input.pauseThreadRecords);
   const layerRegistry = Layer.unwrap(
     makeProviderAdapter(input.state, {
       failEventStream: input.failEventStream ?? false,
@@ -562,7 +716,7 @@ function layerTest(input: {
           IdAllocator.layer,
           layerProviderEventIngestorTest,
           layerConfiguredMcpRegistry,
-          layerTestStores,
+          layerSessionProjectionStore,
           ...(input.serverSettingsLayer === undefined ? [] : [input.serverSettingsLayer]),
           ...(input.projectServiceLayer === undefined ? [] : [input.projectServiceLayer]),
         ),
@@ -4443,6 +4597,75 @@ it.effect(
       });
 
       yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })));
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 preserves a native child attaching during parent detach, including its cached load",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const parentThreadId = ThreadId.make("native-parent");
+      const paused = yield* Deferred.make<void>();
+      const resume = yield* Deferred.make<void>();
+      yield* Effect.gen(function* () {
+        const { manager, parent, resumeChild } = yield* makeNativeChildFixture(parentThreadId);
+        const detach = yield* manager.detach(parent).pipe(Effect.forkScoped);
+        yield* Deferred.await(paused);
+        yield* resumeChild;
+        yield* Deferred.succeed(resume, undefined);
+        yield* Fiber.join(detach);
+
+        assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, []);
+        yield* resumeChild;
+        assert.equal((yield* Ref.get(state)).resumeCount, 1);
+        assert.isTrue(yield* manager.isLive(parent.providerSessionId));
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 1000,
+            pauseThreadRecords: { threadId: parentThreadId, paused, resume },
+          }),
+        ),
+        Effect.scoped,
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 unloads an unattached native mirror before a racing child resume reloads it",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const unloadStarted = yield* Deferred.make<void>();
+      const releaseUnload = yield* Deferred.make<void>();
+      let resumesBeforeUnload: number | undefined;
+      const beforeUnload = Effect.gen(function* () {
+        yield* Deferred.succeed(unloadStarted, undefined);
+        yield* Deferred.await(releaseUnload);
+        resumesBeforeUnload = (yield* Ref.get(state)).resumeCount;
+      });
+      yield* Effect.gen(function* () {
+        const { manager, parent, resumeChild } = yield* makeNativeChildFixture(
+          ThreadId.make("native-parent"),
+        );
+        const detach = yield* manager.detach(parent).pipe(Effect.forkScoped);
+        yield* Deferred.await(unloadStarted);
+        const childResume = yield* resumeChild.pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* Deferred.succeed(releaseUnload, undefined);
+        yield* Fiber.join(detach);
+        yield* Fiber.join(childResume);
+
+        assert.equal(resumesBeforeUnload, 0);
+        assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, ["native-child-thread"]);
+        assert.equal((yield* Ref.get(state)).resumeCount, 1);
+        yield* resumeChild;
+        assert.equal((yield* Ref.get(state)).resumeCount, 1);
+      }).pipe(
+        Effect.provide(layerTest({ state, idleTimeoutMs: 1000, beforeUnload })),
+        Effect.scoped,
+      );
     }),
 );
 
