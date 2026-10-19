@@ -276,7 +276,7 @@ export interface BoundComposerAttachment {
   attachmentId: string;
 }
 
-/** Clipboard payloads may only point at attachments that already exist on the server. */
+/** Returns null until the attachment has a server id. */
 export function uploadedAttachmentContextRecord(
   attachment: ComposerImageAttachment | ComposerFileAttachment,
   upload: AttachmentUploadState | undefined,
