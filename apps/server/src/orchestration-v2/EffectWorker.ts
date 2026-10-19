@@ -6,10 +6,12 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FiberSet from "effect/FiberSet";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 
 import {
   increment,
@@ -615,7 +617,7 @@ const isOrchestrationEffectWorkerError = Schema.is(OrchestrationEffectWorkerErro
 
 export interface OrchestrationEffectWorkerV2Shape {
   readonly awaitWork: Effect.Effect<void>;
-  readonly runOnce: Effect.Effect<boolean, OrchestrationEffectWorkerError>;
+  readonly runOnce: Effect.Effect<boolean, OrchestrationEffectWorkerError, Scope.Scope>;
   readonly runRecoveryOnce: Effect.Effect<boolean, OrchestrationEffectWorkerError>;
   readonly nextClaimableAt: Effect.Effect<
     Option.Option<DateTime.Utc>,
@@ -646,7 +648,7 @@ export const layerWithOptions = (
     Effect.gen(function* () {
       const outbox = yield* EffectOutbox.EffectOutboxV2;
       const executor = yield* OrchestrationEffectExecutorV2;
-      const workerScope = yield* Effect.scope;
+      const executions = yield* FiberSet.make();
       const workerId = options.workerId ?? `orchestration-v2:${process.pid}`;
       const maxAttempts = Math.max(1, options.maxAttempts ?? 5);
       const wasCancelled = (effectId: string) =>
@@ -739,9 +741,9 @@ export const layerWithOptions = (
           ? requeueClaim(effect, cause)
           : terminalizeClaim(effect, cause);
 
-      // The worker probes for work repeatedly, including when the outbox is empty.
+      // The worker probes repeatedly, including when the outbox is empty.
       const runOnce = Effect.fnUntraced(
-        function* (excludeRestartContinuations = false) {
+        function* (excludeRestartContinuations = false, executionScope?: Scope.Scope) {
           const claimExit = yield* Effect.exit(
             outbox.claimNext({ workerId, excludeRestartContinuations }),
           );
@@ -758,7 +760,7 @@ export const layerWithOptions = (
             return false;
           }
           const effect = claimed.value;
-          const settlement = yield* Effect.gen(function* () {
+          const settle = Effect.gen(function* () {
             // Arm cancellation before rereading durable state to close the read-to-registration race.
             const cancellation = outbox
               .awaitCancellation(effect.id)
@@ -849,10 +851,14 @@ export const layerWithOptions = (
               });
             }
             return true;
-          }).pipe(Effect.forkIn(workerScope));
+          });
+          // Drain and recovery must await settlement even after the lease expires.
+          if (executionScope === undefined) return yield* settle;
+          const settlement = yield* settle.pipe(Effect.forkIn(executionScope));
+          yield* FiberSet.add(executions, settlement);
           // Expiry frees capacity without replaying external work that may still
           // succeed. Keep the row running (and its thread ordered) until this
-          // scoped fiber settles; only process-loss recovery may reclaim it.
+          // execution settles; only process-loss recovery may reclaim it.
           const settled = yield* Fiber.await(settlement).pipe(
             Effect.timeoutOption(Duration.millis(leaseDurationMs)),
             Effect.onInterrupt(() => Fiber.interrupt(settlement)),
@@ -870,7 +876,7 @@ export const layerWithOptions = (
                 cause,
               }),
             ),
-            Effect.forkIn(workerScope),
+            Effect.forkIn(executionScope),
           );
           return true;
         },
@@ -886,7 +892,7 @@ export const layerWithOptions = (
 
       return OrchestrationEffectWorkerV2.of({
         awaitWork: outbox.awaitAvailable,
-        runOnce: runOnce(),
+        runOnce: Effect.flatMap(Effect.scope, (scope) => runOnce(false, scope)),
         runRecoveryOnce: runOnce(true),
         nextClaimableAt: outbox.nextClaimableAt.pipe(
           Effect.mapError(
