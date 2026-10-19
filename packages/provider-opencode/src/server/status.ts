@@ -396,28 +396,50 @@ function subProviderLabelFor(input: {
     : label;
 }
 
-/**
- * A server loads its catalog lazily and lists nothing for its first few
- * hundred milliseconds, and a local instance starts a fresh server for each
- * status check. So an empty list is read again for a while, and the last
- * non-empty list stands in if the catalog still has not loaded.
- */
+const catalogFingerprint = (models: ReadonlyArray<OpenCode2Model>) =>
+  models
+    .map((model) =>
+      JSON.stringify([
+        model.providerID,
+        model.id,
+        model.name,
+        model.providerName,
+        model.variants.map((variant) => variant.id).toSorted(),
+      ]),
+    )
+    .toSorted()
+    .join("\n");
+
+/** A cold server can list a partial catalog; two agreeing reads reduce that startup race. */
 export const makeOpenCode2ModelLoader = <E>(
   list: Effect.Effect<ReadonlyArray<OpenCode2Model>, E>,
 ) =>
   Effect.sync(() => {
     let lastLoaded: ReadonlyArray<OpenCode2Model> = [];
-    return list.pipe(
-      Effect.repeat({
-        until: (models) => models.length > 0,
-        schedule: Schedule.spaced("250 millis"),
-      }),
-      Effect.timeoutOption("5 seconds"),
-      Effect.map((loaded) => {
-        if (loaded._tag === "Some" && loaded.value.length > 0) lastLoaded = loaded.value;
-        return lastLoaded;
-      }),
-    );
+    return Effect.suspend(() => {
+      let previous: string | undefined;
+      let latest: ReadonlyArray<OpenCode2Model> = [];
+      return list.pipe(
+        Effect.repeat({
+          until: (models) => {
+            if (models.length > 0) latest = models;
+            const fingerprint = models.length > 0 ? catalogFingerprint(models) : undefined;
+            const settled = fingerprint !== undefined && fingerprint === previous;
+            previous = fingerprint;
+            return settled;
+          },
+          schedule: Schedule.spaced("250 millis"),
+        }),
+        Effect.catch((error) => (latest.length > 0 ? Effect.succeed(latest) : Effect.fail(error))),
+        Effect.timeoutOption("5 seconds"),
+        Effect.map((loaded) => {
+          // Fresh progress may still be partial, but a warm cache must not freeze slow catalogs.
+          if (loaded._tag === "Some") lastLoaded = loaded.value;
+          else if (latest.length > 0) lastLoaded = latest;
+          return lastLoaded;
+        }),
+      );
+    });
   });
 
 export interface OpenCode2Workspace {
