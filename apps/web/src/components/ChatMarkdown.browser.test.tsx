@@ -1,14 +1,27 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { searchableMessageSegments } from "@t3tools/shared/threadFindText";
 import { countThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
+import { AsyncResult } from "effect/reactivity";
 import { act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { filesystemEnvironment } from "../state/filesystem";
+import { useRightPanelStore } from "../rightPanelStore";
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import { MarkdownFindContext } from "./chat/markdownFindContext";
 import { useThreadFindHighlights } from "./chat/threadFindHighlights";
 import { setMarkdownTaskChecked } from "./files/filePreviewMode";
+
+const { workspaceSearch, filesystemMetadata } = vi.hoisted(() => ({
+  workspaceSearch: vi.fn(),
+  filesystemMetadata: vi.fn(),
+}));
+vi.mock(import("../state/use-atom-query-runner"), async (original) => ({
+  ...(await original()),
+  useAtomQueryRunner: ((family: unknown) =>
+    family === filesystemEnvironment.getMetadata ? filesystemMetadata : workspaceSearch) as never,
+}));
 
 // Atoms derived from the server config run in the real registry over a missing config.
 vi.mock(import("../state/server"), async (original) => {
@@ -47,6 +60,8 @@ import ChatMarkdown from "./ChatMarkdown";
 const roots: Root[] = [];
 
 beforeEach(() => {
+  workspaceSearch.mockReset().mockResolvedValue(AsyncResult.success({ entries: [] }));
+  filesystemMetadata.mockReset().mockResolvedValue(AsyncResult.success({ entries: [null] }));
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 });
 
@@ -397,6 +412,165 @@ describe("ChatMarkdown skill chips", () => {
 
     await rerender(<ChatMarkdown cwd="/tmp/project" text={text} skills={[]} />);
     expect(container.textContent).not.toContain("2Spec");
+  });
+});
+
+describe("ChatMarkdown workspace file opens", () => {
+  const threadRef = {
+    environmentId: EnvironmentId.make("workspace"),
+    threadId: ThreadId.make("thread"),
+  };
+
+  it.each([
+    {
+      cwd: "/school/courses/physics",
+      path: "courses/physics/notes/a.md",
+      indexedPath: "notes/a.md",
+    },
+    {
+      cwd: "C:/school/courses/Physics",
+      path: "courses/physics/notes/a.md",
+      indexedPath: "Notes/A.md",
+    },
+  ])(
+    "opens a repo-relative chip at its indexed path in $cwd",
+    async ({ cwd, path, indexedPath }) => {
+      workspaceSearch.mockResolvedValue(
+        AsyncResult.success({
+          entries: [
+            { path: indexedPath, kind: "file" },
+            { path, kind: "file" },
+          ],
+          truncated: false,
+        }),
+      );
+      const openFile = vi
+        .spyOn(useRightPanelStore.getState(), "openFile")
+        .mockImplementation(() => {});
+      const container = await renderText(`[Notes](${path}:7)`, { cwd, threadRef });
+
+      await act(async () => container.querySelector("a")!.click());
+
+      expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, indexedPath, 7);
+    },
+  );
+
+  it("prefers an existing literal nested file over the stripped Windows match", async () => {
+    filesystemMetadata.mockResolvedValue(
+      AsyncResult.success({ entries: [{ kind: "file", byteLength: 10 }] }),
+    );
+    workspaceSearch.mockResolvedValue(
+      AsyncResult.success({
+        entries: [
+          { path: "Notes/A.md", kind: "file" },
+          { path: "Physics/Notes/A.md", kind: "file" },
+        ],
+        truncated: false,
+      }),
+    );
+    const openFile = vi
+      .spyOn(useRightPanelStore.getState(), "openFile")
+      .mockImplementation(() => {});
+    const container = await renderText("[Notes](physics/notes/a.md)", {
+      cwd: "C:/school/Physics",
+      threadRef,
+    });
+
+    await act(async () => container.querySelector("a")!.click());
+
+    expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "physics/notes/a.md", undefined);
+  });
+
+  it("keeps a literal file omitted by a truncated search", async () => {
+    workspaceSearch.mockResolvedValue(
+      AsyncResult.success({
+        entries: [{ path: "notes/a.md", kind: "file" }],
+        truncated: true,
+      }),
+    );
+    filesystemMetadata.mockResolvedValue(
+      AsyncResult.success({ entries: [{ kind: "file", byteLength: 10 }] }),
+    );
+    const openFile = vi
+      .spyOn(useRightPanelStore.getState(), "openFile")
+      .mockImplementation(() => {});
+    const container = await renderText("[Notes](physics/notes/a.md:7)", {
+      cwd: "/school/physics",
+      threadRef,
+    });
+
+    await act(async () => container.querySelector("a")!.click());
+
+    expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "physics/notes/a.md", 7);
+    expect(filesystemMetadata).toHaveBeenCalledExactlyOnceWith({
+      environmentId: threadRef.environmentId,
+      input: { paths: ["/school/physics/physics/notes/a.md"] },
+    });
+  });
+
+  it.each([
+    {
+      kind: "absolute link",
+      href: "/school/physics/physics/notes/a.md:7",
+      imageBaseDir: undefined,
+    },
+    { kind: "nested preview", href: "notes/a.md:7", imageBaseDir: "/school/physics/physics" },
+  ])(
+    "keeps the literal target for a $kind when only its stripped twin exists",
+    async ({ href, imageBaseDir }) => {
+      workspaceSearch.mockResolvedValue(
+        AsyncResult.success({
+          entries: [{ path: "notes/a.md", kind: "file" }],
+          truncated: false,
+        }),
+      );
+      const openFile = vi
+        .spyOn(useRightPanelStore.getState(), "openFile")
+        .mockImplementation(() => {});
+      const container = await renderText(`[Notes](${href})`, {
+        cwd: "/school/physics",
+        imageBaseDir,
+        threadRef,
+      });
+
+      await act(async () => container.querySelector("a")!.click());
+
+      expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "physics/notes/a.md", 7);
+      expect(workspaceSearch).not.toHaveBeenCalled();
+      expect(filesystemMetadata).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps a newer absolute file open when an earlier repo-relative lookup finishes", async () => {
+    const result = AsyncResult.success({
+      entries: [{ path: "notes/a.md", kind: "file" }],
+      truncated: false,
+    });
+    let resolvePending!: (value: typeof result) => void;
+    const pending = new Promise<typeof result>((resolve) => {
+      resolvePending = resolve;
+    });
+    workspaceSearch.mockReturnValueOnce(pending);
+    const openFile = vi
+      .spyOn(useRightPanelStore.getState(), "openFile")
+      .mockImplementation(() => {});
+    const container = await renderText(
+      "[Notes](physics/notes/a.md) and [Other](/elsewhere/b.md:9)",
+      {
+        cwd: "/school/physics",
+        threadRef,
+      },
+    );
+    const [notes, other] = container.querySelectorAll("a");
+    await act(async () => notes!.click());
+    expect(workspaceSearch).toHaveBeenCalledOnce();
+    expect(openFile).not.toHaveBeenCalled();
+
+    await act(async () => other!.click());
+    await act(async () => resolvePending(result));
+
+    expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "/elsewhere/b.md", 9);
+    expect(workspaceSearch).toHaveBeenCalledOnce();
   });
 });
 
