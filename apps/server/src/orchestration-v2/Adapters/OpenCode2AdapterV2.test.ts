@@ -518,6 +518,33 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect.each([
+    ["provider.quota", "usage_limit"],
+    ["provider.rate-limit", "usage_limit"],
+    ["provider", "provider_error"],
+  ] as const)("classifies a %s execution failure as %s", ([code, failureClass]) =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.failed", {
+          sessionID: SESSION,
+          error: { type: code, message: "Provider rejected the request" },
+        }),
+      ]);
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(turnInput(thread));
+      const ended = yield* Fiber.join(terminal);
+      assert.equal(ended?.status, "failed");
+      assert.deepEqual(ended?.failure, {
+        class: failureClass,
+        code,
+        message: "Provider rejected the request",
+        retryable: null,
+      });
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("ends the turn when its terminal event is one this build cannot decode", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
