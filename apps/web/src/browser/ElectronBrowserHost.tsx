@@ -29,7 +29,7 @@ import { previewRuntimeTabId } from "./previewRuntimeTabId";
 export function ElectronBrowserHost() {
   const previewByThreadKey = useActivePreviewSessions();
   const primaryEnvironmentId = useAtomValue(primaryEnvironmentIdAtom);
-  const sessions = Object.entries(previewByThreadKey).flatMap(([threadKey, previewState]) => {
+  const activeSessions = Object.entries(previewByThreadKey).flatMap(([threadKey, previewState]) => {
     const threadRef = parseScopedThreadKey(threadKey);
     return threadRef
       ? Object.values(previewState.sessions)
@@ -48,6 +48,11 @@ export function ElectronBrowserHost() {
           }))
       : [];
   });
+  // Electron destroys a moved webview's guest, so the render order must not follow the server's
+  // updatedAt order. Any fixed order works; this one is not a display order.
+  const sessions = activeSessions.toSorted((left, right) =>
+    left.runtimeTabId < right.runtimeTabId ? -1 : left.runtimeTabId > right.runtimeTabId ? 1 : 0,
+  );
 
   useEffect(() => {
     const preview = window.desktopBridge?.preview;
