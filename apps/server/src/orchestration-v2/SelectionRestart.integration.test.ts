@@ -26,6 +26,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
+import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
@@ -1087,6 +1088,8 @@ it.live.each(["exclusive", "shared"] as const)(
         const sourceCwd = yield* checkpointWorkspace(`${name}-source`);
         const targetCwd = yield* checkpointWorkspace(`${name}-target`);
         const parentId = ThreadId.make(`thread:${name}:parent`);
+        const contextReadStarted = yield* Deferred.make<void>();
+        const finishContextRead = yield* Deferred.make<void>();
         const continuationStarted = yield* Deferred.make<void>();
         const finishContinuation = yield* Deferred.make<void>();
         const state = yield* Ref.make<RestartAdapterState>({
@@ -1167,18 +1170,14 @@ it.live.each(["exclusive", "shared"] as const)(
           });
           const task = (yield* orchestrator.getThreadProjection(parentId)).subagents[0]!;
           const childId = task.childThreadId!;
-          yield* worker.drain();
-          const child = yield* Deferred.await(childReady);
+          const startingChild = yield* worker.drain(1).pipe(Effect.forkScoped);
+          yield* Deferred.await(contextReadStarted);
+          assert.lengthOf((yield* Ref.get(state)).started, 1);
           const parent = yield* Deferred.await(parentReady);
           const parentSessionId = parent.input.providerThread.providerSessionId;
           assert.isNotNull(parentSessionId);
           const initialChild = yield* orchestrator.getThreadProjection(childId);
           assert.isEmpty(initialChild.providerTurns);
-          assert.equal(
-            child.input.providerThread.providerSessionId ===
-              parent.input.providerThread.providerSessionId,
-            sessionMode === "shared",
-          );
           const binding = {
             type: "thread.metadata.update" as const,
             commandId: CommandId.make(`${name}:bind`),
@@ -1225,6 +1224,18 @@ it.live.each(["exclusive", "shared"] as const)(
               .pipe(Effect.flip);
             assert.include(String(rejected.cause), "changed worktree binding");
           }
+          // The real outbox must keep the detach behind startup, even while
+          // the event subscriber exists and the app-context read is suspended.
+          assert.isFalse(yield* worker.runOnce);
+          assert.isFalse(yield* Deferred.isDone(childReady));
+          yield* Deferred.succeed(finishContextRead, undefined);
+          yield* Fiber.join(startingChild);
+          const child = yield* Deferred.await(childReady);
+          assert.equal(
+            child.input.providerThread.providerSessionId ===
+              parent.input.providerThread.providerSessionId,
+            sessionMode === "shared",
+          );
           yield* worker.drain(1);
           // A late provider message is a deterministic fence: a detached subscription
           // must end before it can ingest another event for the old run.
@@ -1343,7 +1354,18 @@ it.live.each(["exclusive", "shared"] as const)(
           );
         }).pipe(
           Effect.provide(
-            ProviderReplayHarness.layerWithRegistry({ name }, registry, { runEffectWorker: false }),
+            ProviderReplayHarness.layerWithRegistry({ name }, registry, {
+              runEffectWorker: false,
+              mcpAppModelContextLayer: Layer.mock(McpAppModelContext.McpAppModelContext)({
+                forThread: (threadId) =>
+                  threadId === parentId
+                    ? Effect.succeed([])
+                    : Deferred.succeed(contextReadStarted, undefined).pipe(
+                        Effect.andThen(Deferred.await(finishContextRead)),
+                        Effect.as([]),
+                      ),
+              }),
+            }),
           ),
         );
       }),
