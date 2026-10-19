@@ -210,13 +210,8 @@ export function codexUsageLimitMessage(
   return `Codex usage limit reached.${reset}${codexUsageLimitNextStep(snapshot?.rateLimitReachedType)}`;
 }
 
-/**
- * The reset a usage-limit stop at `atMs` waits for. All exhausted windows must
- * reset before a continuation can run. Codex reports whole percentages and can
- * refuse a turn while its last update still reads 99%, so a window at 99%
- * counts as exhausted when none reads 100%. A window whose reset has already
- * passed has renewed since it was observed, so its percentage no longer applies.
- */
+// Codex can refuse a turn at 99% because it reports whole percentages.
+// Prefer fully exhausted windows and discard observations whose reset has passed.
 function usageLimitStopResetAt(
   allWindows: ReadonlyArray<ServerProviderUsageWindow>,
   atMs: number,
@@ -236,7 +231,6 @@ function usageLimitStopResetAt(
   );
 }
 
-/** The stop's reset from the session's own rate-limit notifications. */
 export function codexUsageLimitResetAt(
   snapshot: CodexRateLimitSnapshot | undefined,
   atMs: number,
@@ -244,11 +238,7 @@ export function codexUsageLimitResetAt(
   return snapshot ? usageLimitStopResetAt(codexRateLimitsToWindows(snapshot), atMs) : null;
 }
 
-/**
- * The stop's reset from the instance's published limits, which the status
- * probe fills even when a session is refused before Codex sends it any
- * rate-limit notification.
- */
+// A refused first request may never receive a session rate-limit notification.
 export function codexPublishedUsageLimitResetAt(
   limits: ServerProviderUsageLimits | undefined,
   atMs: number,
