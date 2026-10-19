@@ -1,9 +1,7 @@
 import { SymbolView } from "../../../components/ui/AppSymbol";
 import type { ComponentProps } from "react";
-import { Platform, Pressable, View } from "react-native";
-import { AppText as Text } from "../../../components/ui/AppText";
+import { View } from "react-native";
 import { Button } from "../../../components/ui/Button";
-import { cn } from "../../../lib/cn";
 
 export function SheetActionButton(props: {
   readonly icon: ComponentProps<typeof SymbolView>["name"];
@@ -12,60 +10,10 @@ export function SheetActionButton(props: {
   readonly tone?: "primary" | "secondary" | "danger";
   readonly onPress: () => void;
 }) {
-  if (Platform.OS === "android")
-    return (
-      <View className="flex-1">
-        <Button
-          label={props.label}
-          icon={props.icon}
-          tone={props.tone}
-          disabled={props.disabled}
-          onPress={props.onPress}
-          fullWidth
-        />
-      </View>
-    );
-  const tone = props.tone ?? "secondary";
-  const textColorClassName =
-    tone === "primary"
-      ? "accent-primary-foreground"
-      : tone === "danger"
-        ? "accent-danger-foreground"
-        : "accent-secondary-foreground";
-
   return (
-    <Pressable
-      className={cn(
-        "min-h-[48px] flex-1 items-center justify-center rounded-[18px] px-3 py-3 disabled:opacity-[0.45]",
-        tone === "primary" ? "bg-primary" : tone === "danger" ? "bg-danger" : "bg-secondary",
-        tone !== "primary" &&
-          (tone === "danger" ? "border border-danger-border" : "border border-secondary-border"),
-      )}
-      accessibilityRole="button"
-      disabled={props.disabled}
-      onPress={props.onPress}
-    >
-      <View className="max-w-full flex-row items-center justify-center gap-1.5">
-        <SymbolView
-          name={props.icon}
-          size={16}
-          tintColorClassName={textColorClassName}
-          type="monochrome"
-        />
-        <Text
-          className={cn(
-            "shrink text-center text-xs font-t3-bold tracking-[0.9px] uppercase",
-            tone === "primary"
-              ? "text-primary-foreground"
-              : tone === "danger"
-                ? "text-danger-foreground"
-                : "text-secondary-foreground",
-          )}
-        >
-          {props.label}
-        </Text>
-      </View>
-    </Pressable>
+    <View className="flex-1">
+      <Button {...props} fullWidth />
+    </View>
   );
 }
 
