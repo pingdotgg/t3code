@@ -24,11 +24,11 @@ describe("retainReviewDiffSlices", () => {
   const first = { cursor: null, patch: "page-1" };
   const slices = [first, { cursor: "page-2", patch: "page-2" }];
 
-  it("keeps the first page and drops later ones when the same review refreshes", () => {
+  it("keeps every displayed page while the same review refreshes", () => {
     expect(retainReviewDiffSlices({ key: "pr-1", cursor: "page-2", slices }, "pr-1")).toEqual({
       key: "pr-1",
       cursor: null,
-      slices: [first],
+      slices,
     });
     const open = { key: "pr-1", cursor: null, slices: [first] };
     expect(retainReviewDiffSlices(open, "pr-1")).toBe(open);

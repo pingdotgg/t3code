@@ -7,24 +7,12 @@ export interface ReviewDiffSliceState<Slice> {
   readonly slices: ReadonlyArray<Slice>;
 }
 
-/**
- * A refresh rereads from the first page. That page stays on screen so the reader does not
- * jump. Later pages are positions in the snapshot being replaced: keeping them when the
- * first page comes back unchanged would leave those files stale for good.
- */
 export function retainReviewDiffSlices<Slice>(
   previous: ReviewDiffSliceState<Slice>,
   scopeKey: string,
 ): ReviewDiffSliceState<Slice> {
-  if (previous.key !== scopeKey) {
-    return { key: scopeKey, cursor: null, slices: [] };
-  }
-  const first = previous.slices[0];
-  if (first === undefined) {
-    return previous.cursor === null ? previous : { key: scopeKey, cursor: null, slices: [] };
-  }
-  if (previous.slices.length === 1 && previous.cursor === null) return previous;
-  return { key: scopeKey, cursor: null, slices: [first] };
+  if (previous.key !== scopeKey) return { key: scopeKey, cursor: null, slices: [] };
+  return previous.cursor === null ? previous : { ...previous, cursor: null };
 }
 
 /** Only rendered hunks can anchor comments; list others off-diff. */

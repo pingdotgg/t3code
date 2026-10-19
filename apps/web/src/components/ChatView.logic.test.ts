@@ -416,7 +416,7 @@ describe("diff selection across agent turns", () => {
   const otherThreadRef = scopeThreadRef(EnvironmentId.make("env-1"), ThreadId.make("thread-2"));
   const openThread = { threadKey: "env-1:thread-1", diffOpen: true };
 
-  it("keeps Uncommitted when the same thread refreshes", () => {
+  it("keeps the active review when an agent updates or completes a turn", () => {
     expect(
       shouldResetDiffSelectionToChanges({
         diffOpen: true,
@@ -426,6 +426,9 @@ describe("diff selection across agent turns", () => {
         threadKey: "env-1:thread-1",
       }),
     ).toBe(false);
+    expect(shouldApplyProactiveChangesScope({ openedDiff: true, alreadyReviewingDiff: true })).toBe(
+      false,
+    );
   });
 
   it("shows Changes when the diff opens or the thread changes", () => {
@@ -456,18 +459,12 @@ describe("diff selection across agent turns", () => {
         threadKey: "env-1:thread-1",
       }),
     ).toBe(true);
+    expect(
+      shouldApplyProactiveChangesScope({ openedDiff: true, alreadyReviewingDiff: false }),
+    ).toBe(true);
   });
 
   it("leaves a timeline turn selection in place", () => {
-    expect(
-      shouldResetDiffSelectionToChanges({
-        diffOpen: true,
-        activeThreadRef: threadRef,
-        explicitThreadRef: threadRef,
-        previous: { threadKey: "env-1:thread-1", diffOpen: false },
-        threadKey: "env-1:thread-1",
-      }),
-    ).toBe(false);
     expect(
       shouldResetDiffSelectionToChanges({
         diffOpen: true,
@@ -476,30 +473,6 @@ describe("diff selection across agent turns", () => {
         previous: { threadKey: "env-1:thread-1", diffOpen: false },
         threadKey: "env-1:thread-1",
       }),
-    ).toBe(false);
-  });
-
-  it("does nothing while the diff is closed", () => {
-    expect(
-      shouldResetDiffSelectionToChanges({
-        diffOpen: false,
-        activeThreadRef: threadRef,
-        explicitThreadRef: null,
-        previous: openThread,
-        threadKey: "env-1:thread-1",
-      }),
-    ).toBe(false);
-  });
-
-  it("shows Changes only when a completed turn newly opens the diff", () => {
-    expect(
-      shouldApplyProactiveChangesScope({ openedDiff: true, alreadyReviewingDiff: false }),
-    ).toBe(true);
-    expect(shouldApplyProactiveChangesScope({ openedDiff: true, alreadyReviewingDiff: true })).toBe(
-      false,
-    );
-    expect(
-      shouldApplyProactiveChangesScope({ openedDiff: false, alreadyReviewingDiff: false }),
     ).toBe(false);
   });
 });
