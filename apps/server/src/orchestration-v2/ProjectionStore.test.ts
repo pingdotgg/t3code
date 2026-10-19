@@ -9,6 +9,7 @@ import {
   MessageId,
   type ModelSelection,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2ThreadHistoryPage,
   type OrchestrationV2ThreadShellSnapshot,
   NodeId,
   ProjectId,
@@ -1091,7 +1092,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
-  it.effect("pages complete user turns through SQL regardless of tool count or payload size", () =>
+  it.effect("pages oversized user turns individually through SQL without splitting them", () =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const sql = yield* SqlClient.SqlClient;
@@ -1236,11 +1237,11 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         projection: initial.projection,
         snapshotSequence: 0,
       });
-      assert.lengthOf(bounded.projection.visibleTurnItems, 10 * 102);
-      assert.strictEqual(bounded.projection.visibleTurnItems[0]?.sourceItemId, allIds[35 * 102]);
+      assert.lengthOf(bounded.projection.visibleTurnItems, 102);
+      assert.strictEqual(bounded.projection.visibleTurnItems[0]?.sourceItemId, allIds[44 * 102]);
       const loaded = bounded.projection.visibleTurnItems.map((row) => String(row.sourceItemId));
       let cursor = bounded.historyCursor;
-      for (const turns of [20, 15]) {
+      for (let turn = 44; turn >= 1; turn -= 1) {
         assert.isNotNull(cursor);
         const anchor = decodeThreadHistoryCursor(cursor!);
         const snapshot = yield* projectionStore.getThreadSnapshotWindow(threadId, {
@@ -1254,7 +1255,8 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           cursor: cursor!,
           snapshotSequence: 0,
         });
-        assert.lengthOf(page.items, turns * 102);
+        assert.lengthOf(page.items, 102);
+        assert.strictEqual(page.items[0]?.sourceItemId, allIds[(turn - 1) * 102]);
         loaded.unshift(...page.items.map((row) => String(row.sourceItemId)));
         cursor = page.nextCursor;
       }
@@ -1423,11 +1425,12 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         projection: initial.projection,
         snapshotSequence: 0,
       });
-      assert.strictEqual(bounded.projection.visibleTurnItems[0]?.sourceItemId, startIds[262]);
+      assert.lengthOf(bounded.projection.visibleTurnItems, 75);
+      assert.strictEqual(bounded.projection.visibleTurnItems[0]?.sourceItemId, startIds[393]);
       const loaded = bounded.projection.visibleTurnItems.map((row) => String(row.sourceItemId));
       let cursor = bounded.historyCursor;
       for (let pages = 0; cursor !== null; pages += 1) {
-        assert.isBelow(pages, 5);
+        assert.isBelow(pages, 25);
         const anchor = decodeThreadHistoryCursor(cursor);
         const snapshot = yield* projectionStore.getThreadSnapshotWindow(threadId, {
           rowLimit: 77,
@@ -1441,6 +1444,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           cursor,
           snapshotSequence: 0,
         });
+        assert.isAtMost(page.items.length, THREAD_HISTORY_PAGE_POLICY.maxItems);
         loaded.unshift(...page.items.map((row) => String(row.sourceItemId)));
         cursor = page.nextCursor;
       }
@@ -2119,7 +2123,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         snapshotSequence: cancelledSuffixSnapshot.snapshotSequence,
       });
       assert.strictEqual(cancelledSuffixPage.latestLocalTurnOrdinal, 1_202);
-      assert.lengthOf(cancelledSuffixPage.projection.visibleTurnItems, 75);
+      assert.lengthOf(cancelledSuffixPage.projection.visibleTurnItems, 1);
       assert.isFalse(
         cancelledSuffixPage.projection.visibleTurnItems.some((row) =>
           String(row.sourceItemId).includes(":cancelled:"),
@@ -2130,6 +2134,28 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           (row) => row.sourceItemId === runlessQueuedId,
         ),
       );
+      assert.isTrue(cancelledSuffixPage.hasMoreHistory);
+      assert.isNotNull(cancelledSuffixPage.historyCursor);
+      const queuedSuffixIds = cancelledSuffixPage.projection.visibleTurnItems.map((row) =>
+        String(row.sourceItemId),
+      );
+      let queuedCursor: string | null = cancelledSuffixPage.historyCursor;
+      for (let pages = 0; queuedCursor !== null; pages += 1) {
+        assert.isBelow(pages, 14);
+        const page: OrchestrationV2ThreadHistoryPage = yield* projectionStore.getThreadHistoryPage(
+          threadId,
+          queuedCursor,
+        );
+        queuedSuffixIds.unshift(...page.items.map((row) => String(row.sourceItemId)));
+        queuedCursor = page.nextCursor;
+      }
+      assert.deepEqual(queuedSuffixIds, [
+        ...Array.from(
+          { length: 1_000 },
+          (_, index) => `turn-item:bounded-sql-history:${index + 1}`,
+        ),
+        runlessQueuedId,
+      ]);
 
       const interruptRunId = RunId.make("run:bounded-sql-history:interrupt");
       const interruptNodeId = NodeId.make("node:bounded-sql-history:interrupt");
@@ -5566,6 +5592,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         projection: yield* projectionStore
           .getThreadSnapshotWindow(nestedThreadId, {
             rowLimit: THREAD_HISTORY_PAGE_POLICY.maxItems + 2,
+            userTurnLimit: 10,
           })
           .pipe(Effect.map((snapshot) => snapshot.projection)),
         snapshotSequence: 1,
@@ -5582,6 +5609,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         const decoded = decodeThreadHistoryCursor(nestedCursor);
         const snapshot = yield* projectionStore.getThreadSnapshotWindow(nestedThreadId, {
           rowLimit: THREAD_HISTORY_PAGE_POLICY.maxItems + 2,
+          userTurnLimit: 20,
           anchorItemId: TurnItemId.make(decoded.si),
           anchorThreadId: ThreadId.make(decoded.st),
         });

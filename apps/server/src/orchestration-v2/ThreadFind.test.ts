@@ -986,6 +986,84 @@ describe("V2 history materialization", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect.each(["wake", "steering"] as const)(
+    "preserves full-history turn boundaries when paging %s notifications in SQL",
+    (kind) =>
+      Effect.gen(function* () {
+        const projection = yield* setup;
+        const notificationRun = kind === "wake" ? RunId.make("run:wake") : runId;
+        if (kind === "wake") yield* commit([run(threadId, notificationRun, 2)]);
+        const notification = {
+          ...item("notification", kind === "wake" ? 80 : 82, ""),
+          runId: notificationRun,
+          type: "notification" as const,
+          source: { kind: "monitor" as const },
+          outcome: "completed" as const,
+          summary: kind,
+        };
+        const newestTurn =
+          kind === "wake"
+            ? [
+                notification,
+                ...Array.from({ length: 200 }, (_, index) => ({
+                  ...item(`wake-tool:${index}`, 81 + index, ""),
+                  runId: notificationRun,
+                  type: "command_execution" as const,
+                  input: "pwd",
+                  output: "/work",
+                  exitCode: 0,
+                })),
+              ]
+            : [
+                {
+                  ...item("queued", 80, "next turn", "user_message"),
+                  runId: null,
+                  inputIntent: "queued_turn" as const,
+                },
+                item("answer:before-steer", 81, "a".repeat(700_000)),
+                notification,
+                item("answer:after-steer", 83, "b".repeat(700_000)),
+              ];
+        yield* putItems([
+          item("user", 0, "initial turn", "user_message"),
+          ...Array.from({ length: 79 }, (_, index) => item(`older:${index}`, index + 1, "work")),
+          ...newestTurn,
+        ]);
+        const snapshot = yield* projection.getThreadSnapshot(threadId);
+        const rows = snapshot.projection.visibleTurnItems.map((row) => ({
+          ...row,
+          item: projectTurnItemForWire(row.item),
+        }));
+        const cursor = encodeThreadHistoryCursor({
+          snapshotSequence: snapshot.snapshotSequence,
+          sourceThreadId: threadId,
+          sourceItemId: "absent",
+          position: rows.length,
+        });
+        const expected = selectHistoryPageFromCursor({
+          items: rows,
+          cursor,
+          snapshotSequence: snapshot.snapshotSequence,
+        });
+        const expectedCount = kind === "wake" ? 201 : 4;
+        const expectedFirstId = kind === "wake" ? "notification" : "queued";
+        assert.equal(expected.items.length, expectedCount);
+        assert.equal(expected.items[0]?.sourceItemId, expectedFirstId);
+        assert.deepEqual(
+          expected.items.map((row) => row.sourceItemId),
+          newestTurn.map((entry) => entry.id),
+        );
+        assert.isTrue(expected.hasMoreHistory);
+
+        const page = yield* projection.getThreadHistoryPage(threadId, cursor);
+        assert.deepEqual(
+          { count: page.items.length, firstId: page.items[0]?.sourceItemId },
+          { count: expectedCount, firstId: expectedFirstId },
+        );
+        assert.deepEqual(page, { snapshotSequence: snapshot.snapshotSequence, ...expected });
+      }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("enforces fallback item and byte limits and always admits an oversized row", () =>
     Effect.gen(function* () {
       const projection = yield* setup;

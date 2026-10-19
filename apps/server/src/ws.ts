@@ -1899,6 +1899,7 @@ const layerWsRpc = (
               threadManagement
                 .getThreadSnapshotWindow(input.threadId, {
                   rowLimit: THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
+                  userTurnLimit: THREAD_HISTORY_PAGE_POLICY.maxUserTurns,
                 })
                 .pipe(
                   Effect.map((snapshot) =>
