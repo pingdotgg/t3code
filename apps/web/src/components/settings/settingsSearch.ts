@@ -558,6 +558,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["logs traces processes resource history failures spans cpu memory"],
   },
   {
+    id: "triage",
+    title: "Triage an issue",
+    to: "/settings/general",
+    searchTerms: ["t3 triage troubleshoot bug report broken help debug support agent"],
+  },
+  {
     id: "open-source-licenses",
     title: "Open source licenses",
     to: "/settings/general",

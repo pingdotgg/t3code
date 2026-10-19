@@ -513,6 +513,20 @@ export const ServerSignalProcessResult = Schema.Struct({
 });
 export type ServerSignalProcessResult = typeof ServerSignalProcessResult.Type;
 
+export const ServerPrepareTriageResult = Schema.Struct({
+  prompt: TrimmedNonEmptyString,
+});
+export type ServerPrepareTriageResult = typeof ServerPrepareTriageResult.Type;
+
+export class ServerPrepareTriageError extends Schema.TaggedError<ServerPrepareTriageError>()(
+  "ServerPrepareTriageError",
+  { cause: Schema.optional(Schema.Defect()) },
+) {
+  override get message(): string {
+    return "T3 Code could not write the triage files on this environment.";
+  }
+}
+
 export const EnvironmentThemeColor = Schema.String.check(
   Schema.isPattern(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/),
 );

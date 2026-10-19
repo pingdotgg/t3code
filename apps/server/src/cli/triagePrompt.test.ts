@@ -24,7 +24,7 @@ it("stays byte-identical to .github/triage/PLAYBOOK.md", () => {
 });
 
 it("seed prompt names the context file and embeds the playbook", () => {
-  const prompt = buildTriageSeedPrompt("/tmp/triage-run/context.md");
+  const prompt = buildTriageSeedPrompt("/tmp/triage-run/context.md", "`t3 triage`");
   assert.include(prompt, "/tmp/triage-run/context.md");
   assert.include(prompt, TRIAGE_PLAYBOOK);
 });
@@ -41,6 +41,7 @@ it("launch prompt stays a single argv-safe line naming the prompt file", () => {
 it("context file carries every path the playbook depends on", () => {
   const context = buildTriageContext({
     generatedAt: "2026-08-13T00:00:00.000Z",
+    generatedBy: "`t3 triage`",
     cliVersion: "0.0.33",
     os: "linux x64 (7.0.0)",
     nodeVersion: "v24.0.0",
@@ -76,6 +77,7 @@ it("context file labels the CLI version as the CLI's, not the user's build", () 
   // happened on (#13337), so the agent must not read it as the user's version.
   const context = buildTriageContext({
     generatedAt: "2026-09-24T00:00:00.000Z",
+    generatedBy: "`t3 triage`",
     cliVersion: "0.0.42",
     os: "linux x64 (7.2.0)",
     nodeVersion: "v26.8.2",
