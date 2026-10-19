@@ -17,6 +17,56 @@ import {
 const exec = NodeUtil.promisify(NodeChildProcess.execFile);
 
 describe("host-bound agent commands", () => {
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "runs both desktop hops as Node with a stripped environment, preserving arguments and exit code",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const temp = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-target-" });
+        const dir = path.join(temp, "quotes '\" $HOME `literal`");
+        yield* fs.makeDirectory(dir);
+        const desktopApp = path.join(dir, "T3 Code");
+        // Dropping Node mode after checking it forces each hop to set it independently.
+        yield* fs.writeFileString(
+          desktopApp,
+          `#!/bin/sh
+if [ "\${ELECTRON_RUN_AS_NODE:-}" != "1" ]; then
+  echo "started the desktop app" >&2
+  exit 134
+fi
+unset ELECTRON_RUN_AS_NODE
+exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
+`,
+        );
+        yield* fs.chmod(desktopApp, 0o755);
+        const entryPath = path.join(dir, "cli.mjs");
+        yield* fs.writeFileString(
+          entryPath,
+          "console.log(JSON.stringify(process.argv.slice(2))); process.exitCode = 23;",
+        );
+        const shim = yield* ensureAgentDeviceShim({ entryPath, stateDir: dir }).pipe(
+          Effect.provideService(HostProcess.ExecutablePath, desktopApp),
+          Effect.provideService(HostProcess.IsExecutable, false),
+        );
+        const args = [
+          "snapshot",
+          "--config",
+          path.join(dir, "config.json"),
+          "--session",
+          "a!b!c",
+          "",
+        ];
+        yield* Effect.promise(() =>
+          expect(
+            exec(path.join(shim, "agent-device"), args, {
+              env: { PATH: process.env.PATH ?? "", HOME: temp },
+            }),
+          ).rejects.toMatchObject({ code: 23, stdout: `${JSON.stringify(args)}\n`, stderr: "" }),
+        );
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("runs two hosts concurrently and only updates the reconnected host", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
