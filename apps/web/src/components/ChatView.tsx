@@ -205,7 +205,6 @@ import {
 } from "../proposedPlan";
 import {
   DEFAULT_INTERACTION_MODE,
-  DEFAULT_THREAD_TERMINAL_ID,
   MAX_TERMINALS_PER_GROUP,
   type ChatMessage,
   type SessionPhase,
@@ -306,6 +305,7 @@ import {
 import { confirmTerminalClose } from "../lib/terminalCloseConfirm";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
+import { findReusableProjectScriptTerminal } from "../lib/projectScriptTerminal";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -1401,7 +1401,6 @@ export default function ChatView(props: ChatViewProps) {
   const storeSplitTerminal = useTerminalUiStateStore((s) => s.splitTerminal);
   const storeSplitTerminalVertical = useTerminalUiStateStore((s) => s.splitTerminalVertical);
   const storeNewTerminal = useTerminalUiStateStore((s) => s.newTerminal);
-  const storeSetActiveTerminal = useTerminalUiStateStore((s) => s.setActiveTerminal);
   const storeCloseTerminal = useTerminalUiStateStore((s) => s.closeTerminal);
   const serverThreadRefs = useThreadRefs();
   const serverThreadKeys = serverThreadRefs.map(scopedThreadKey);
@@ -1570,9 +1569,6 @@ export default function ChatView(props: ChatViewProps) {
   const activeServerOrderedTerminalIds = activeThreadKnownSessions.map(
     (session) => session.target.terminalId,
   );
-  const activeKnownTerminalIds = [
-    ...new Set([...activeServerOrderedTerminalIds, ...terminalUiState.terminalIds]),
-  ];
   const activeTerminalLabelsById = (() => {
     const labels = new Map<string, string>();
     for (const session of activeThreadKnownSessions) {
@@ -3450,14 +3446,21 @@ export default function ChatView(props: ChatViewProps) {
       });
     }
     const targetCwd = options?.cwd ?? gitCwd ?? activeProject.workspaceRoot;
-    const baseTerminalId =
-      terminalUiState.activeTerminalId || activeKnownTerminalIds[0] || DEFAULT_THREAD_TERMINAL_ID;
-    const isBaseTerminalBusy = runningTerminalIds.includes(baseTerminalId);
-    const wantsNewTerminal = Boolean(options?.preferNewTerminal) || isBaseTerminalBusy;
-    const shouldCreateNewTerminal =
-      wantsNewTerminal ||
+    const reusableTerminalId =
+      options?.preferNewTerminal ||
       !canReuseTerminal ||
-      !readEnvironmentScope(environmentId, AuthTerminalReadScope);
+      !readEnvironmentScope(environmentId, AuthTerminalReadScope)
+        ? null
+        : findReusableProjectScriptTerminal({
+            // Server sessions cover drawer terminals this client has not opened yet, such as a
+            // worktree setup shell; the helper drops the panel-owned ones.
+            drawerTerminalIds: [
+              ...new Set([...terminalUiState.terminalIds, ...activeServerOrderedTerminalIds]),
+            ],
+            activeTerminalId: terminalUiState.activeTerminalId,
+            panelTerminalIds,
+            runningTerminalIds,
+          });
     const targetWorktreePath = options?.worktreePath ?? activeThread.worktreePath ?? null;
 
     setTerminalUiLaunchContext({
@@ -3465,20 +3468,21 @@ export default function ChatView(props: ChatViewProps) {
       cwd: targetCwd,
       worktreePath: targetWorktreePath,
     });
-    setTerminalOpen(true);
     if (!activeThreadRef) {
       return;
     }
     setTerminalFocusRequestId((value) => value + 1);
 
     const launched = terminalActions.launchTerminal({
+      // The drawer opens with the target already placed: opening it empty would claim
+      // DEFAULT_THREAD_TERMINAL_ID, which a right-panel terminal may already own.
       place: (terminalId) =>
-        shouldCreateNewTerminal
+        reusableTerminalId === null
           ? storeNewTerminal(activeThreadRef, terminalId)
-          : storeSetActiveTerminal(activeThreadRef, terminalId),
-      ...(shouldCreateNewTerminal
+          : storeEnsureTerminal(activeThreadRef, terminalId, { open: true }),
+      ...(reusableTerminalId === null
         ? { size: { cols: SCRIPT_TERMINAL_COLS, rows: SCRIPT_TERMINAL_ROWS } }
-        : { terminalId: baseTerminalId }),
+        : { terminalId: reusableTerminalId }),
       location: { cwd: targetCwd, worktreePath: targetWorktreePath },
       ...(options?.env ? { extraEnv: options.env } : {}),
     });
