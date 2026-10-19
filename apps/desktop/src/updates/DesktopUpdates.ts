@@ -59,6 +59,7 @@ const CHANNEL_CHANGE_RETRIES = 30;
 const AUTO_UPDATE_STARTUP_DELAY = "15 seconds";
 const AUTO_UPDATE_POLL_INTERVAL = "4 minutes";
 const PREPARED_INSTALL_CHECK_WAIT = Duration.seconds(90);
+const SSH_FORWARD_DRAIN_TIMEOUT = Duration.seconds(10);
 
 type UpdateAction = "check" | "download" | "install" | "install-recovery" | "channel";
 
@@ -173,6 +174,15 @@ export class DesktopUpdateChannelManagedError extends Schema.TaggedError<Desktop
 ) {
   override get message(): string {
     return `${this.policyMessage} The ${this.channel} channel is not available.`;
+  }
+}
+
+class DesktopUpdateSshDrainTimeoutError extends Schema.TaggedError<DesktopUpdateSshDrainTimeoutError>()(
+  "DesktopUpdateSshDrainTimeoutError",
+  {},
+) {
+  override get message(): string {
+    return "Timed out preparing SSH connections for the update. Retry after connecting finishes.";
   }
 }
 
@@ -734,7 +744,7 @@ export const make = Effect.gen(function* () {
   }).pipe(installMutex.withPermit, Effect.uninterruptible);
 
   const recoverFailedInstall = Effect.fn("desktop.updates.recoverFailedInstall")(
-    function* (message: string) {
+    function* (message: string, status: "downloaded" | "error" = "downloaded") {
       const ownsRecovery = yield* Ref.modify(activeUpdateActionRef, (activeAction) =>
         Option.isSome(activeAction) && activeAction.value === "install"
           ? ([true, Option.some<UpdateAction>("install-recovery")] as const)
@@ -755,7 +765,10 @@ export const make = Effect.gen(function* () {
           concurrency: "unbounded",
           discard: true,
         }).pipe(Effect.exit);
-        yield* updateState((current) => reduceDesktopUpdateStateOnInstallFailure(current, message));
+        yield* updateState((current) => ({
+          ...reduceDesktopUpdateStateOnInstallFailure(current, message),
+          status,
+        }));
         if (Exit.isFailure(restartExit)) {
           yield* logUpdaterError(
             "Desktop update install recovery could not restart every backend.",
@@ -831,6 +844,15 @@ export const make = Effect.gen(function* () {
             yield* writeUpdateRestartMarker;
             const { downloadedVersion } = yield* Ref.get(updateStateRef);
             if (downloadedVersion !== null) yield* writeInstallRecord(downloadedVersion);
+            // The updater quit skips the scope finalizers that normally reap SSH
+            // forwards, so they would outlive this process.
+            // An admitted SSH startup can take minutes; abort the install instead of waiting.
+            yield* sshEnvironment.closeLocalForwards.pipe(
+              Effect.timeoutOrElse({
+                duration: SSH_FORWARD_DRAIN_TIMEOUT,
+                orElse: () => Effect.fail(new DesktopUpdateSshDrainTimeoutError({})),
+              }),
+            );
             // Stop pooled backends before quitAndInstall can outrun their scope finalizers.
             const instances = yield* pool.list;
             // stop clears desiredRunning, so retain the recovery set beforehand.
@@ -844,9 +866,6 @@ export const make = Effect.gen(function* () {
                 instance.stop({ timeout: DesktopBackendManager.BACKEND_QUIT_STOP_TIMEOUT }),
               { concurrency: "unbounded" },
             );
-            // The updater quit skips the scope finalizers that normally reap SSH
-            // forwards, so they would outlive this process.
-            yield* sshEnvironment.closeLocalForwards;
             const installError = yield* Ref.get(installErrorRef);
             if (Option.isSome(installError)) return yield* installError.value;
             yield* electronUpdater.quitAndInstall({
@@ -858,6 +877,11 @@ export const make = Effect.gen(function* () {
             installMutex.withPermit,
             restore,
             Effect.catchTags({
+              DesktopUpdateSshDrainTimeoutError: (error) =>
+                recoverFailedInstall(error.message, "error").pipe(
+                  Effect.andThen(logUpdaterError(error.message, { errorTag: error._tag })),
+                  Effect.as({ accepted: true, completed: false, failed: true }),
+                ),
               DesktopUpdaterReportedError: (error) =>
                 recoverFailedInstall(error.message).pipe(
                   Effect.as({ accepted: true, completed: false, failed: true }),
