@@ -27,7 +27,7 @@ jobs:
   deploy_relay:
     name: Deploy production relay
     # A manual run from another branch would deploy that branch to production.
-    if: github.ref == 'refs/heads/main'
+    if: github.repository == 'pingdotgg/t3code' && github.ref == 'refs/heads/main'
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 15
     environment:
