@@ -35,6 +35,7 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
     draftId === null ? null : store.getDraftSession(draftId),
   );
   const threadRefs = useThreadRefs();
+  // Promotion can begin before the server creates the reserved thread.
   const inferredThreadRef = draftSession
     ? (threadRefs.find(
         (ref) =>
@@ -43,7 +44,7 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
       ) ?? null)
     : null;
   const serverThreadRef: ScopedThreadRef | null =
-    target.kind === "server" ? target.threadRef : (draftSession?.promotedTo ?? inferredThreadRef);
+    target.kind === "server" ? target.threadRef : inferredThreadRef;
   const serverThread = useQuietThreadShell(serverThreadRef);
   const backgroundSubmissionPending = useBackgroundDraftSubmissionPending(
     target.kind === "draft" ? serverThreadRef : null,
