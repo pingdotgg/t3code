@@ -41,10 +41,12 @@ export function BrowserTabMenu({
   environmentId,
   tab,
   disabled,
+  onPaste,
 }: {
   readonly environmentId: EnvironmentId;
   readonly tab: PreviewSessionSnapshot;
   readonly disabled: boolean;
+  readonly onPaste?: () => void;
 }) {
   const adjust = useAtomCommand(previewEnvironment.adjust, "browser tab change");
   const resize = useAtomCommand(previewEnvironment.resize, "browser viewport change");
@@ -64,6 +66,7 @@ export function BrowserTabMenu({
         : "custom";
 
   const actions: MenuAction[] = [
+    ...(onPaste ? [{ id: "paste", title: "Paste", image: "doc.on.clipboard" }] : []),
     { id: "hard-reload", title: "Hard reload", image: "arrow.clockwise.circle" },
     {
       id: "appearance",
@@ -112,6 +115,7 @@ export function BrowserTabMenu({
   };
 
   const onAction = (id: string) => {
+    if (id === "paste") return onPaste?.();
     if (id === "hard-reload") return void run({ hardReload: true });
     if (id === "zoom:in") return void run({ zoomFactor: zoomTo(1) });
     if (id === "zoom:out") return void run({ zoomFactor: zoomTo(-1) });

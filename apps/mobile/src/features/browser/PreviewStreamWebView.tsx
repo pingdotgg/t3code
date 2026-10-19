@@ -39,6 +39,7 @@ import {
 
 export interface PreviewStreamRef {
   readonly command: (input: PreviewStreamInput) => void;
+  readonly paste: () => void;
   readonly togglePictureInPicture: () => void;
 }
 
@@ -271,6 +272,15 @@ function PreviewStreamDocumentView({
     webView.current?.injectJavaScript(
       `window.T3PreviewStream?.command(${JSON.stringify(input)}); true;`,
     );
+  // Reads here rather than in the screen: a tab switch during the iOS paste prompt unmounts
+  // this view and nulls its WebView ref, so the text can never type into another tab.
+  const paste = () =>
+    void Clipboard.getStringAsync().then(
+      (text) => {
+        if (text) command({ type: "text", text });
+      },
+      () => Dialog.alert("Could not read the clipboard"),
+    );
   const fail = (message: string) => {
     if (!active.current || failed.current) return;
     failed.current = true;
@@ -299,6 +309,7 @@ function PreviewStreamDocumentView({
   );
   useImperativeHandle(ref, () => ({
     command,
+    paste,
     togglePictureInPicture: () =>
       webView.current?.injectJavaScript("window.T3PreviewStream?.pictureInPicture(); true;"),
   }));
