@@ -14,6 +14,16 @@ those modes. Customize these shortcuts under **Settings → Keybindings**.
 On mobile, open **Settings → Appearance**. Mobile has its own themes and text,
 code, and terminal preferences. It does not follow environment themes or defaults.
 
+Under mobile **Appearance → Fonts**, choose fonts independently for the interface, replies,
+composer, and code in messages or Markdown previews. Reply and composer sizes can follow Text size
+or use their own size. Diffs and the terminal keep their existing fonts.
+
+To use your own font, choose **Import fonts from Files** and select static `.ttf` or `.otf` files.
+Import matching regular, bold, and italic faces together; they are grouped by family name. Variable
+font files and font collections are not supported by this import. Font files and selections stay on
+this device and are not uploaded to connected environments. Removing an imported family resets any
+choices using it to Default.
+
 On Android 12 or newer, choose the **Material You** theme in Appearance to use colors from
 your wallpaper. Selecting another theme replaces those colors. Like other themes, Material You
 can be selected separately for light and dark appearances.
