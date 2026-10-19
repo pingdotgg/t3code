@@ -2,6 +2,7 @@ import * as NodeNet from "node:net";
 
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import { vi } from "vite-plus/test";
 
 import * as NetService from "./Net.ts";
 
@@ -52,6 +53,33 @@ it.layer(NetService.layer)("NetService", (it) => {
 
         assert.ok(port > 0);
       }),
+    );
+
+    it.effect.each(["EAFNOSUPPORT", "EADDRNOTAVAIL"])(
+      "keeps ports available when IPv6 binds fail with %s",
+      (code) =>
+        Effect.gen(function* () {
+          const net = yield* NetService.NetService;
+          const port = yield* net.reserveLoopbackPort();
+          const listen = NodeNet.Server.prototype.listen;
+          const spy = vi.spyOn(NodeNet.Server.prototype, "listen").mockImplementation(function (
+            this: NodeNet.Server,
+            ...args
+          ) {
+            const [options] = args;
+            if (options?.host === "::1" || options?.host === "::") {
+              process.nextTick(() => this.emit("error", Object.assign(new Error(code), { code })));
+              return this;
+            }
+            return listen.apply(this, args);
+          });
+          try {
+            assert.equal(yield* net.isPortAvailableOnLoopback(port), true);
+            assert.equal(yield* net.canListenOnHost(port, "::"), true);
+          } finally {
+            spy.mockRestore();
+          }
+        }),
     );
 
     it.effect("isPortAvailableOnLoopback reports false for an occupied port", () =>
