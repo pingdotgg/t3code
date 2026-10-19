@@ -16,6 +16,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import { describeFixedTimeSchedule, MONTHS } from "@t3tools/client-runtime/scheduled-task-schedule";
 import {
   parseMaxDeliveryAge,
   parseWebhookFilterDrafts,
@@ -53,15 +54,11 @@ export function scheduleLabel(
       ? `Every ${minutes} min`
       : `Every ${Math.round(schedule.everyMs / 1000)} sec`;
   }
-  const weekdays = schedule.weekdays ?? [];
-  const days =
-    weekdays.length === 0
-      ? "Daily"
-      : weekdays.length === 5 && weekdays.every((day) => day >= 1 && day <= 5)
-        ? "Weekdays"
-        : weekdays.map((day) => WEEKDAY_LABELS[day]).join(", ");
   const zone = scheduleTimeZoneLabel(timeZone, runAt);
-  return `${days} at ${schedule.timeOfDay}${zone === undefined ? "" : ` ${zone}`}`;
+  return describeFixedTimeSchedule(
+    schedule,
+    zone === undefined ? schedule.timeOfDay : `${schedule.timeOfDay} ${zone}`,
+  );
 }
 
 export function matchesScheduledTaskScope(
@@ -90,6 +87,7 @@ export function validateScheduledTasksSearch(raw: Record<string, unknown>) {
 }
 
 export type ScheduleMode = "fixed" | "once" | "interval" | "webhook";
+export type DayMode = "week" | "month";
 export type WorkspaceMode = "root" | "worktree" | "existing_worktree";
 
 export interface DraftState {
@@ -104,7 +102,12 @@ export interface DraftState {
   readonly runAt: string;
   /** The stored ISO run time, sent back unchanged when the field was not edited. */
   readonly savedRunAt: string;
+  readonly dayMode: DayMode;
   readonly weekdays: ReadonlySet<number>;
+  readonly monthDays: ReadonlySet<number>;
+  /** Off runs in every month; the month choices are kept so switching back restores them. */
+  readonly limitMonths: boolean;
+  readonly months: ReadonlySet<number>;
   readonly projectId: string;
   readonly threadId: string;
   readonly threadMode: ScheduledTaskThreadMode;
@@ -263,21 +266,30 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
     const everyMs = Math.round(Number(draft.intervalMinutes) * 60_000);
     return { type: "interval", everyMs };
   }
-  const selectedEveryDay = draft.weekdays.size === 0 || draft.weekdays.size === 7;
+  const weekdays = draft.dayMode === "week" ? chosen(draft.weekdays, 7) : [];
   return {
     type: "fixed_time",
     timeOfDay: draft.timeOfDay || "09:00",
-    ...(selectedEveryDay ? {} : { weekdays: [...draft.weekdays].toSorted() }),
+    ...(weekdays.length > 0 ? { weekdays } : {}),
+    // Sent even when empty: the server keeps stored month days and months a save omits.
+    monthDays: draft.dayMode === "month" ? chosen(draft.monthDays, 31) : [],
+    months: draft.limitMonths ? chosen(draft.months, 12) : [],
   };
+}
+
+/** None and all both mean "no filter": an empty list. */
+function chosen(values: ReadonlySet<number>, all: number): number[] {
+  return values.size >= all ? [] : [...values].toSorted((a, b) => a - b);
 }
 
 export function taskToDraft(task: ScheduledTask): DraftState {
   const schedule = task.schedule;
   const filters = webhookFilterDrafts(schedule.type === "webhook" ? schedule.filters : undefined);
-  const weekdays =
-    schedule.type === "fixed_time" && schedule.weekdays && schedule.weekdays.length > 0
-      ? new Set(schedule.weekdays)
-      : new Set([0, 1, 2, 3, 4, 5, 6]);
+  const fixed = schedule.type === "fixed_time" ? schedule : null;
+  const months = new Set(fixed?.months?.length ? fixed.months : MONTHS);
+  const weekdays = fixed?.weekdays?.length
+    ? new Set(fixed.weekdays)
+    : new Set([0, 1, 2, 3, 4, 5, 6]);
   return {
     editingId: task.id,
     title: task.title,
@@ -287,10 +299,14 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     intervalMinutes:
       schedule.type === "interval" ? String(Math.max(1, schedule.everyMs / 60_000)) : "15",
     // A time input shows nothing for an unpadded hour such as 9:05, which agents may save.
-    timeOfDay: schedule.type === "fixed_time" ? schedule.timeOfDay.padStart(5, "0") : "09:00",
+    timeOfDay: fixed?.timeOfDay.padStart(5, "0") ?? "09:00",
     runAt: schedule.type === "once" ? toDateTimeLocalValue(new Date(schedule.runAt)) : "",
     savedRunAt: schedule.type === "once" ? schedule.runAt : "",
+    dayMode: fixed?.monthDays?.length ? "month" : "week",
     weekdays,
+    monthDays: new Set(fixed?.monthDays?.length ? fixed.monthDays : [1]),
+    limitMonths: months.size < 12,
+    months,
     projectId: task.projectId,
     threadId: task.threadId ?? "",
     threadMode: scheduledTaskThreadMode(task),
