@@ -84,13 +84,6 @@ describe("sshEnvironment", () => {
       const hosts = yield* sshEnvironment.discoverHosts({ homeDir });
       assert.deepEqual(hosts, [
         {
-          alias: "bastion.example.com",
-          hostname: "bastion.example.com",
-          username: null,
-          port: null,
-          source: "known-hosts",
-        },
-        {
           alias: "devbox",
           hostname: "devbox",
           username: null,
@@ -102,6 +95,13 @@ describe("sshEnvironment", () => {
           hostname: "known.example.com",
           username: null,
           port: null,
+          source: "known-hosts",
+        },
+        {
+          alias: "ssh://bastion.example.com:2222",
+          hostname: "bastion.example.com",
+          username: null,
+          port: 2222,
           source: "known-hosts",
         },
         {

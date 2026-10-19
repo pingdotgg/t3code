@@ -9,9 +9,11 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import {
   baseSshArgs,
+  buildSshHostSpecEffect,
   getLastNonEmptyOutputLine,
   parseSshResolveOutput,
   remoteStateKey,
@@ -80,6 +82,46 @@ describe("ssh command", () => {
         },
       );
     }),
+  );
+
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "preserves URI destinations through OpenSSH resolution and command execution",
+    () =>
+      Effect.gen(function* () {
+        for (const { alias, hostname, username, port } of [
+          {
+            alias: "ssh://developer%2Bops%25@host.example:2222",
+            hostname: "host.example",
+            username: null,
+            port: 2222,
+          },
+          {
+            alias: "SSH://[2001:db8::1]:2223",
+            hostname: "2001:db8::1",
+            username: "developer+ops%",
+            port: 2223,
+          },
+          {
+            alias: "SsH://[fe80::1%fixture0]:2200",
+            hostname: "fe80::1%fixture0",
+            username: "developer+ops%",
+            port: 2200,
+          },
+        ]) {
+          const { stdout } = yield* runSshCommand(
+            { alias, hostname, username, port: null },
+            { preHostArgs: ["-F", "/dev/null", "-G"] },
+          );
+          const resolved = parseSshResolveOutput(alias, stdout);
+          assert.deepEqual(resolved, { alias, hostname, username: "developer+ops%", port });
+          assert.equal(yield* buildSshHostSpecEffect(resolved), `developer+ops%@${hostname}`);
+
+          const rerun = yield* runSshCommand(resolved, {
+            preHostArgs: ["-F", "/dev/null", "-G"],
+          });
+          assert.deepEqual(parseSshResolveOutput(alias, rerun.stdout), resolved);
+        }
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("builds interactive ssh args without forcing batch mode", () =>
