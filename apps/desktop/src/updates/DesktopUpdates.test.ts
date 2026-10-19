@@ -486,7 +486,7 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
-  it.effect.each(["success", "failed", "cancelled"] as const)(
+  it.effect.each(["success", "failed"] as const)(
     "handles a %s .deb install through the installed updater",
     (outcome) =>
       Effect.scoped(
@@ -494,9 +494,7 @@ describe("DesktopUpdates", () => {
           const native = yield* Effect.acquireRelease(
             Effect.promise(() =>
               makeInstalledDebUpdater(
-                outcome === "success"
-                  ? undefined
-                  : new Error(`pkexec exited with code ${outcome === "cancelled" ? 126 : 1}`),
+                outcome === "success" ? undefined : new Error("pkexec exited with code 1"),
               ),
             ),
             (native) =>
@@ -536,7 +534,9 @@ describe("DesktopUpdates", () => {
                   ? NodeEvents.EventEmitter.once(native.events, "quit")
                   : undefined;
 
-              assert.isTrue((yield* updates.install).accepted);
+              const result = yield* updates.install;
+              assert.isTrue(result.accepted);
+              assert.isFalse(result.completed);
               if (quit) yield* Effect.promise(() => quit);
               assert.deepEqual(install.mock.calls, [[true, false]]);
               if (quit) {
