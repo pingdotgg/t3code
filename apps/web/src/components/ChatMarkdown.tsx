@@ -1128,7 +1128,7 @@ function MarkdownMermaidCodeBlock({
             <MermaidDiagram source={code} theme={theme} onExpand={onExpand} />
           </Suspense>
           {searching ? (
-            <pre ref={sourceRevealRef} hidden>
+            <pre ref={sourceRevealRef} hidden aria-hidden>
               {code}
             </pre>
           ) : null}
