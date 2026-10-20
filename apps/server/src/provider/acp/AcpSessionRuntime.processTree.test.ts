@@ -4,9 +4,12 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it, vi } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
@@ -71,6 +74,63 @@ function processExists(pid: number): boolean {
     return false;
   }
 }
+
+describe("AcpSessionRuntime child environment", () => {
+  it.live("does not re-inherit AppImage variables removed from the provider environment", () =>
+    Effect.gen(function* () {
+      const appDir = "/tmp/.mount_T3-Codeabc123";
+      const inherited = {
+        APPIMAGE: "/home/user/T3-Code.AppImage",
+        APPDIR: appDir,
+        ARGV0: "/home/user/T3-Code.AppImage",
+        OWD: "/home/user/project",
+        ELECTRON_RUN_AS_NODE: "1",
+        PATH: `${appDir}/usr/bin:${NodePath.dirname(process.execPath)}`,
+        LD_LIBRARY_PATH: `${appDir}/usr/lib`,
+        XDG_DATA_DIRS: `${appDir}/usr/share:/usr/share`,
+        GSETTINGS_SCHEMA_DIR: `${appDir}/usr/share/glib-2.0/schemas`,
+        T3_TEST_PROVIDER_VALUE: "inherited",
+      };
+      yield* Effect.addFinalizer(() => Effect.sync(() => vi.unstubAllEnvs()));
+      for (const [key, value] of Object.entries(inherited)) vi.stubEnv(key, value);
+      const env = yield* mergeProviderInstanceEnvironment([
+        { name: "T3_TEST_PROVIDER_VALUE", value: "configured", sensitive: false },
+      ]);
+      const reported = yield* Deferred.make<string>();
+      let stderr = "";
+      yield* AcpSessionRuntime.make({
+        spawn: {
+          command: process.execPath,
+          args: [
+            "-e",
+            `const keys = JSON.parse(process.argv[1]);
+             process.stderr.write(JSON.stringify(Object.fromEntries(
+               keys.map((key) => [key, process.env[key]])
+             )) + "\\n");
+             process.stdin.resume();`,
+            JSON.stringify(Object.keys(inherited)),
+          ],
+          env,
+          shell: false,
+        },
+        cwd: process.cwd(),
+        clientInfo: { name: "t3-test", version: "0.0.0" },
+        onStderr: (chunk) => {
+          stderr += chunk;
+          return stderr.includes("\n")
+            ? Deferred.succeed(reported, stderr).pipe(Effect.asVoid)
+            : Effect.void;
+        },
+      });
+
+      expect(JSON.parse(yield* Deferred.await(reported))).toEqual({
+        PATH: NodePath.dirname(process.execPath),
+        XDG_DATA_DIRS: "/usr/share",
+        T3_TEST_PROVIDER_VALUE: "configured",
+      });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+});
 
 describe("terminatePosixOwnedProcessTree", () => {
   it("parses unified cgroup paths and escaped cgroup2 mountinfo", () => {

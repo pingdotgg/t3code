@@ -71,4 +71,53 @@ describe("mergeProviderInstanceEnvironment", () => {
       });
     }),
   );
+
+  it.effect("scrubs the inherited AppImage environment before applying provider overrides", () =>
+    Effect.gen(function* () {
+      const appDir = "/tmp/.mount_T3-Codeabc123";
+      const baseEnv = Object.freeze({
+        APPIMAGE: "/home/user/T3-Code.AppImage",
+        APPDIR: appDir,
+        ARGV0: "/home/user/T3-Code.AppImage",
+        OWD: "/home/user/project",
+        ELECTRON_RUN_AS_NODE: "1",
+        PATH: `:${appDir}:${appDir}/usr/bin:/usr/bin::`,
+        LD_LIBRARY_PATH: `${appDir}/usr/lib`,
+        XDG_DATA_DIRS: `${appDir}/usr/share:/usr/share`,
+        GSETTINGS_SCHEMA_DIR: `${appDir}/usr/share/glib-2.0/schemas`,
+        HOME: "/home/user",
+      });
+      const userEnv = { PATH: "/usr/bin", XDG_DATA_DIRS: "/usr/share", HOME: "/home/user" };
+
+      expect(yield* mergeProviderInstanceEnvironment(undefined, baseEnv)).toEqual(userEnv);
+      expect(
+        yield* mergeProviderInstanceEnvironment(
+          [
+            { name: "ELECTRON_RUN_AS_NODE", value: "1", sensitive: false },
+            { name: "APPDIR", value: "/opt/configured", sensitive: false },
+            { name: "PATH", value: ":/opt/provider/bin:", sensitive: false },
+          ],
+          baseEnv,
+        ),
+      ).toEqual({
+        ...userEnv,
+        ELECTRON_RUN_AS_NODE: "1",
+        APPDIR: "/opt/configured",
+        PATH: ":/opt/provider/bin:",
+      });
+    }),
+  );
+
+  it.effect("removes incidental Electron mode without scrubbing a non-AppImage environment", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* mergeProviderInstanceEnvironment([], {
+          ELECTRON_RUN_AS_NODE: "1",
+          ARGV0: "custom-shell",
+          OWD: "/home/user/project",
+          PATH: ":/usr/bin::",
+        }),
+      ).toEqual({ ARGV0: "custom-shell", OWD: "/home/user/project", PATH: ":/usr/bin::" });
+    }),
+  );
 });

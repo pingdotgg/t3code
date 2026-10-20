@@ -24,7 +24,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.ts");
-const mockAgentCommand = "node";
+const mockAgentCommand = process.execPath;
 const mockAgentArgs = [mockAgentPath];
 const mockRuntimeOptions = {
   spawn: { command: mockAgentCommand, args: mockAgentArgs },

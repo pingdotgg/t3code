@@ -42,6 +42,7 @@ import {
   type ServerProviderDraft,
 } from "@t3tools/provider-core/server/snapshotProbe";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 import {
   codexRateLimitsFailureMessage,
@@ -481,20 +482,21 @@ export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(fu
     : undefined;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const environment = {
-    ...codexAppServerEnvironment(input.environment),
+    ...codexAppServerEnvironment(
+      input.environment ?? (yield* mergeProviderInstanceEnvironment(undefined)),
+    ),
     ...(resolvedHomePath ? { CODEX_HOME: resolvedHomePath } : {}),
   };
   const spawnCommand = yield* resolveSpawnCommand(
     input.binaryPath,
     codexAppServerArgs(input.launchArgs),
-    { env: environment, extendEnv: true },
+    { env: environment },
   );
   const child = yield* spawner
     .spawn(
       ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         cwd: input.cwd,
         env: environment,
-        extendEnv: true,
         forceKillAfter: CODEX_APP_SERVER_PROBE_FORCE_KILL_AFTER,
         shell: spawnCommand.shell,
       }),
@@ -709,7 +711,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   ServerSettingsError,
   ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
 > {
-  const resolvedEnvironment = environment ?? process.env;
+  const resolvedEnvironment = environment ?? (yield* mergeProviderInstanceEnvironment(undefined));
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const emptyModels = emptyCodexModelsFromSettings(codexSettings);
 

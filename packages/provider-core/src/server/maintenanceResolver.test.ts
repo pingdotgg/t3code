@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import { expect, it } from "@effect/vitest";
+import { expect, it, vi } from "@effect/vitest";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -744,6 +744,50 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         });
       }),
     { skip: !symlinksSupported || windowsHost },
+  );
+
+  it.effect.skipIf(windowsHost || !symlinksSupported)(
+    "uses the cleaned host for omitted probe environments and preserves supplied partial maps",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-maintenance-environment");
+        const link = linkIntoPackage(tempDir, "package-tool", [
+          "pnpm",
+          "global",
+          "5",
+          "node_modules",
+          "@example",
+          "package-tool",
+        ]);
+        const binDir = NodePath.dirname(link);
+        const pnpmPath = NodePath.join(binDir, "pnpm");
+        writeExecutable(pnpmPath);
+        NodeFS.writeFileSync(
+          pnpmPath,
+          '#!/bin/sh\n[ "$HOME" = "$T3_MAINTENANCE_HOME" ] && [ -n "$HOME" ] && [ -z "${APPDIR+x}${ELECTRON_RUN_AS_NODE+x}" ] || exit 1\nprintf "11.1.3\\n"\n',
+        );
+        yield* Effect.addFinalizer(() => Effect.sync(() => vi.unstubAllEnvs()));
+        vi.stubEnv("HOME", tempDir);
+        vi.stubEnv("T3_MAINTENANCE_HOME", tempDir);
+        vi.stubEnv("APPDIR", NodePath.join(tempDir, "appimage"));
+        vi.stubEnv("ELECTRON_RUN_AS_NODE", "1");
+        vi.stubEnv("PATH", `${tempDir}/appimage/bin:${binDir}`);
+
+        const inherited = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
+          binaryPath: "package-tool",
+        });
+        expect(inherited.update?.command).toBe(
+          "pnpm add -g --allow-build=@example/package-tool @example/package-tool@latest",
+        );
+
+        const env = { PATH: binDir };
+        const explicit = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
+          binaryPath: "package-tool",
+          env,
+        });
+        expect(explicit.update?.command).toBe("pnpm add -g @example/package-tool@latest");
+        expect(env).toEqual({ PATH: binDir });
+      }).pipe(Effect.scoped),
   );
 
   it.effect.skipIf(windowsHost)(

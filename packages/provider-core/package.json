@@ -11,6 +11,10 @@
       "types": "./src/server/adapterDriver.ts",
       "import": "./src/server/adapterDriver.ts"
     },
+    "./server/appImageRuntimeEnv": {
+      "types": "./src/server/appImageRuntimeEnv.ts",
+      "import": "./src/server/appImageRuntimeEnv.ts"
+    },
     "./server/attachmentPrompt": {
       "types": "./src/server/attachmentPrompt.ts",
       "import": "./src/server/attachmentPrompt.ts"
