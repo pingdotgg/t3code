@@ -282,6 +282,18 @@ function initRepo(
   });
 }
 
+const makeGitLabTemplateProvider = Effect.fnUntraced(function* () {
+  const git = yield* GitVcsDriver.GitVcsDriver;
+  return yield* GitLabSourceControlProvider.make.pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.mock(GitLabCli.GitLabCli)({}),
+        TestSourceControlHost.layer({ git: { execute: git.execute } }),
+      ),
+    ),
+  );
+});
+
 function createBareRemote(): Effect.Effect<
   string,
   PlatformError.PlatformError | GitCommandError,
@@ -2587,7 +2599,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const provider = yield* GitLabSourceControlProvider.make.pipe(
         Effect.provide(
           GitLabCli.layer.pipe(
-            Layer.provide(
+            Layer.provideMerge(
               TestSourceControlHost.layer({
                 process: {
                   run: (input) =>
@@ -5289,6 +5301,133 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         ghCalls.some((call) => call.includes("pr create --base main --head feature-create-pr")),
       ).toBe(true);
       expect(ghCalls.some((call) => call.startsWith("pr view "))).toBe(false);
+    }),
+  );
+
+  it.effect.each([true, false])(
+    "generates GitLab MR content with followChangeRequestTemplates=%s",
+    (followChangeRequestTemplates) =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const templateDir = NodePath.join(repoDir, ".gitlab", "merge_request_templates");
+        NodeFS.mkdirSync(templateDir, { recursive: true });
+        NodeFS.writeFileSync(
+          NodePath.join(templateDir, "dEfAuLt.MD"),
+          "  ## Summary\n\n## Testing\n",
+        );
+        NodeFS.writeFileSync(NodePath.join(templateDir, "Bugfix.md"), "Wrong sibling template");
+        yield* runGit(repoDir, ["add", ".gitlab"]);
+        yield* runGit(repoDir, ["commit", "-m", "Add merge request template"]);
+        yield* runGit(repoDir, ["checkout", "-b", "feature-gitlab-template"]);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        NodeFS.writeFileSync(NodePath.join(templateDir, "dEfAuLt.MD"), "Wrong feature template");
+        yield* runGit(repoDir, ["add", ".gitlab"]);
+        yield* runGit(repoDir, ["commit", "-m", "Feature commit"]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "feature-gitlab-template"]);
+        yield* runGit(repoDir, ["config", "branch.feature-gitlab-template.gh-merge-base", "main"]);
+        NodeFS.writeFileSync(
+          NodePath.join(templateDir, "dEfAuLt.MD"),
+          "Wrong uncommitted template",
+        );
+        const gitlab = yield* makeGitLabTemplateProvider();
+        const { service: fakeProvider } = createGitHubProviderWithFakeGh({
+          prListSequence: [
+            "[]",
+            JSON.stringify([
+              {
+                number: 7,
+                title: "Follow the GitLab template",
+                url: "https://gitlab.com/group/project/-/merge_requests/7",
+                baseRefName: "main",
+                headRefName: "feature-gitlab-template",
+              },
+            ]),
+          ],
+        });
+        let generatedChangeRequestTemplate: string | undefined;
+
+        const { manager } = yield* makeManager({
+          serverSettings: { sourceControlWritingStyle: { followChangeRequestTemplates } },
+          sourceControlProvider: {
+            ...fakeProvider,
+            kind: SourceControlProviderKind.make("gitlab"),
+            readChangeRequestTemplate: gitlab.readChangeRequestTemplate!,
+          },
+          textGeneration: {
+            generatePrContent: (input) => {
+              generatedChangeRequestTemplate = input.changeRequestTemplate;
+              return Effect.succeed({ title: "Follow the GitLab template", body: "Body" });
+            },
+          },
+        });
+        const result = yield* runStackedAction(manager, { cwd: repoDir, action: "create_pr" });
+
+        expect(result.pr.status).toBe("created");
+        expect(generatedChangeRequestTemplate).toBe(
+          followChangeRequestTemplates ? "## Summary\n\n## Testing" : undefined,
+        );
+      }),
+  );
+
+  it.effect("ignores unavailable or non-regular GitLab default templates", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const provider = yield* makeGitLabTemplateProvider();
+      const readTemplate = (treeish = "HEAD") =>
+        provider.readChangeRequestTemplate!({ cwd: repoDir, treeish });
+      expect(yield* readTemplate()).toEqual(Option.none());
+
+      const templateDir = NodePath.join(repoDir, ".gitlab", "merge_request_templates");
+      const templatePath = ".gitlab/merge_request_templates/Default.md";
+      NodeFS.mkdirSync(templateDir, { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(templateDir, "Bugfix.md"), "Not the default");
+      yield* runGit(repoDir, ["add", ".gitlab"]);
+      yield* runGit(repoDir, ["commit", "-m", "Add a selectable template"]);
+      expect(yield* readTemplate()).toEqual(Option.none());
+
+      NodeFS.writeFileSync(NodePath.join(repoDir, templatePath), " \n\n");
+      yield* runGit(repoDir, ["add", ".gitlab"]);
+      yield* runGit(repoDir, ["commit", "-m", "Add a blank default"]);
+      expect(yield* readTemplate()).toEqual(Option.none());
+
+      // Index modes exercise committed symlinks and submodules even on hosts without symlinks.
+      const { stdout: blob } = yield* runGit(repoDir, ["rev-parse", "HEAD:README.md"]);
+      yield* runGit(repoDir, ["update-index", "--cacheinfo", "120000", blob.trim(), templatePath]);
+      yield* runGit(repoDir, ["commit", "-m", "Replace default with a symlink"]);
+      expect(yield* readTemplate()).toEqual(Option.none());
+
+      const { stdout: commit } = yield* runGit(repoDir, ["rev-parse", "HEAD"]);
+      yield* runGit(repoDir, [
+        "update-index",
+        "--cacheinfo",
+        "160000",
+        commit.trim(),
+        templatePath,
+      ]);
+      yield* runGit(repoDir, ["commit", "-m", "Replace default with a submodule"]);
+      expect(yield* readTemplate()).toEqual(Option.none());
+      expect(yield* readTemplate("missing-base")).toEqual(Option.none());
+    }),
+  );
+
+  it.effect("bounds GitLab template content and marks truncation", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const templateDir = NodePath.join(repoDir, ".gitlab", "merge_request_templates");
+      const prefix = "a".repeat(8_000);
+      NodeFS.mkdirSync(templateDir, { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(templateDir, "Default.md"), prefix + "EXCLUDED_SUFFIX");
+      yield* runGit(repoDir, ["add", ".gitlab"]);
+      yield* runGit(repoDir, ["commit", "-m", "Add a large template"]);
+      const provider = yield* makeGitLabTemplateProvider();
+
+      expect(yield* provider.readChangeRequestTemplate!({ cwd: repoDir, treeish: "HEAD" })).toEqual(
+        Option.some(prefix + "\n\n[truncated]"),
+      );
     }),
   );
 
