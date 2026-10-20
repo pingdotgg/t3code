@@ -1,4 +1,6 @@
 import * as Updates from "expo-updates";
+// Metro namespace imports evaluate unrelated React Native getters, including unavailable native modules.
+import { AppState } from "react-native";
 
 import {
   type AtomCommandResult,
@@ -418,22 +420,19 @@ async function defaultFlushPendingWrites(): Promise<void> {
 async function defaultIsSafeToRestartInBackground(): Promise<boolean> {
   const { isForegroundHandoffActive } = await import("../../lib/foreground-handoff");
   if (isForegroundHandoffActive()) return false;
-  const { AppState } = await import("react-native");
   return AppState.currentState === "background";
 }
 
 function defaultOnNextBackground(apply: () => void, includeCurrent: boolean): void {
-  void import("react-native").then(({ AppState }) => {
-    const subscription = AppState.addEventListener("change", (state) => {
-      if (state !== "background") return;
-      subscription.remove();
-      apply();
-    });
-    if (includeCurrent && AppState.currentState === "background") {
-      subscription.remove();
-      apply();
-    }
+  const subscription = AppState.addEventListener("change", (state) => {
+    if (state !== "background") return;
+    subscription.remove();
+    apply();
   });
+  if (includeCurrent && AppState.currentState === "background") {
+    subscription.remove();
+    apply();
+  }
 }
 
 export const DEFERRED_INSTALL_PROMPT_AFTER_MS = 30 * 60 * 1000;
@@ -443,25 +442,23 @@ export const DEFERRED_INSTALL_PROMPT_AFTER_MS = 30 * 60 * 1000;
  * the timer running.
  */
 function defaultOnForegroundStay(apply: () => void): void {
-  void import("react-native").then(({ AppState }) => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const arm = () => {
-      timer ??= setTimeout(() => {
-        subscription.remove();
-        apply();
-      }, DEFERRED_INSTALL_PROMPT_AFTER_MS);
-    };
-    const disarm = () => {
-      if (timer === undefined) return;
-      clearTimeout(timer);
-      timer = undefined;
-    };
-    const subscription = AppState.addEventListener("change", (state) => {
-      if (state === "active") arm();
-      else if (state === "background") disarm();
-    });
-    if (AppState.currentState === "active") arm();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const arm = () => {
+    timer ??= setTimeout(() => {
+      subscription.remove();
+      apply();
+    }, DEFERRED_INSTALL_PROMPT_AFTER_MS);
+  };
+  const disarm = () => {
+    if (timer === undefined) return;
+    clearTimeout(timer);
+    timer = undefined;
+  };
+  const subscription = AppState.addEventListener("change", (state) => {
+    if (state === "active") arm();
+    else if (state === "background") disarm();
   });
+  if (AppState.currentState === "active") arm();
 }
 
 const defaultAppUpdateEnvironment: AppUpdateEnvironment = {
@@ -528,22 +525,20 @@ export function createAppUpdateForegroundRecheck(
   return () => {
     if (started || !isAppUpdateCheckAvailable(client)) return;
     started = true;
-    void import("react-native").then(({ AppState }) => {
-      let backgroundedAtMs: number | null = null;
-      AppState.addEventListener("change", (state) => {
-        if (state === "background") {
-          backgroundedAtMs = Date.now();
-          return;
-        }
-        if (state !== "active") return;
-        const shouldCheck = shouldRecheckAppUpdateOnForeground(
-          backgroundedAtMs,
-          Date.now(),
-          deferral.pendingInstall,
-        );
-        backgroundedAtMs = null;
-        if (shouldCheck) void runAppUpdateCheck({ client, deferral });
-      });
+    let backgroundedAtMs: number | null = null;
+    AppState.addEventListener("change", (state) => {
+      if (state === "background") {
+        backgroundedAtMs = Date.now();
+        return;
+      }
+      if (state !== "active") return;
+      const shouldCheck = shouldRecheckAppUpdateOnForeground(
+        backgroundedAtMs,
+        Date.now(),
+        deferral.pendingInstall,
+      );
+      backgroundedAtMs = null;
+      if (shouldCheck) void runAppUpdateCheck({ client, deferral });
     });
   };
 }

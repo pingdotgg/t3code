@@ -1,7 +1,9 @@
+import { AppState } from "react-native";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   createAppUpdateDeferral,
+  createAppUpdateForegroundRecheck,
   createAppUpdateLaunchCheck,
   FOREGROUND_APP_UPDATE_RECHECK_AFTER_MS,
   registerHiddenUpdateTap,
@@ -17,6 +19,13 @@ vi.mock("expo-updates", () => ({
   checkForUpdateAsync: vi.fn(),
   fetchUpdateAsync: vi.fn(),
   reloadAsync: vi.fn(),
+}));
+
+vi.mock("react-native", () => ({
+  AppState: {
+    currentState: "active",
+    addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+  },
 }));
 
 function makeUpdateClient(overrides: Partial<AppUpdateClient> = {}): AppUpdateClient {
@@ -638,5 +647,33 @@ describe("registerHiddenUpdateTap", () => {
     }
 
     expect(count).toBe(0);
+  });
+});
+
+describe("createAppUpdateForegroundRecheck", () => {
+  it("registers once and checks after returning from a long background stay", () => {
+    vi.stubGlobal("__DEV__", false);
+    const now = vi.spyOn(Date, "now");
+    const listener = vi.mocked(AppState.addEventListener);
+    listener.mockClear();
+    const client = makeUpdateClient();
+    const start = createAppUpdateForegroundRecheck(client, createAppUpdateDeferral());
+
+    try {
+      start();
+      start();
+      expect(listener).toHaveBeenCalledOnce();
+      const onChange = listener.mock.calls[0]![1];
+      now.mockReturnValue(1000);
+      onChange("background");
+      now.mockReturnValue(1000 + FOREGROUND_APP_UPDATE_RECHECK_AFTER_MS);
+      onChange("active");
+      expect(client.checkForUpdateAsync).toHaveBeenCalledOnce();
+      onChange("active");
+      expect(client.checkForUpdateAsync).toHaveBeenCalledOnce();
+    } finally {
+      now.mockRestore();
+      vi.unstubAllGlobals();
+    }
   });
 });
