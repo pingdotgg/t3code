@@ -1228,7 +1228,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           const message = recordString(event, "message") ?? "";
           if (turn === null || message.length === 0) return;
           const emittedAt = yield* DateTime.now;
-          const nativeItemId = `notify:${turn.nextItemOrdinal}`;
+          const nativeItemId = `notify:${turn.providerTurn.id}:${turn.nextItemOrdinal}`;
           yield* emitItemNode(turn, nativeItemId, "system", "completed", emittedAt, emittedAt);
           yield* emit({
             type: "turn_item.updated",
@@ -1389,7 +1389,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           return;
         }
         const emittedAt = yield* DateTime.now;
-        const nativeItemId = `extension-error:${turn.nextItemOrdinal}`;
+        const nativeItemId = `extension-error:${turn.providerTurn.id}:${turn.nextItemOrdinal}`;
         const extensionName = piExtensionDisplayName(recordString(event, "extensionPath"));
         const extensionEvent = recordString(event, "event");
         const detail = recordString(event, "error")?.trim();
