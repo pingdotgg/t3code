@@ -412,6 +412,10 @@ function formatDiffReviewRangeLabel(lines: ReadonlyArray<DiffReviewLine>): strin
     : `${marker}${firstNumber} to ${marker}${lastNumber}`;
 }
 
+export function diffReviewSelectionId(fileKey: string, range: SelectedLineRange): string {
+  return `${fileKey}:${range.side ?? "additions"}:${range.start}:${range.endSide ?? range.side ?? "additions"}:${range.end}`;
+}
+
 export function buildDiffReviewComment(input: {
   id: string;
   sectionId: string;

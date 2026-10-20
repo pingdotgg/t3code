@@ -1,4 +1,5 @@
 import {
+  DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   GitCommandError,
   GitManagerError,
@@ -9,6 +10,7 @@ import {
   type ScopedThreadRef,
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
+import { DEFAULT_CLIENT_SETTINGS, type UnifiedSettings } from "@t3tools/contracts/settings";
 import * as Cause from "effect/Cause";
 import { act, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -17,6 +19,14 @@ import { page, userEvent } from "vite-plus/test/browser";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { selectActiveRightPanelSurface, useRightPanelStore } from "~/rightPanelStore";
 import { RightPanelSurfaceContent } from "../chat/RightPanelSurfaceContent";
+
+import type { ReviewCommentContext } from "~/reviewCommentContext";
+import {
+  collectInlineContextIds,
+  insertInlineContextReference,
+  stripInlineContextReferences,
+} from "~/lib/composerContextReferences";
+import { reviewCommentContextId } from "~/lib/composerContextRecords";
 
 import "~/index.css";
 
@@ -49,7 +59,17 @@ vi.mock(import("~/state/session"), async (original) => ({
 }));
 vi.mock(import("~/hooks/useSettings"), async (original) => ({
   ...(await original()),
-  useEnvironmentSettings: (() => undefined) as never,
+  useEnvironmentSettings: ((
+    _environmentId: EnvironmentId,
+    selector?: (settings: UnifiedSettings) => unknown,
+  ) => {
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      ...DEFAULT_CLIENT_SETTINGS,
+      reviewGuidesEnabled: true,
+    };
+    return selector ? selector(settings) : settings;
+  }) as never,
 }));
 vi.mock(import("~/hooks/useHandleNewThread"), async (original) => ({
   ...(await original()),
@@ -153,6 +173,52 @@ vi.mock(import("./PullRequestSummaryTab"), async (original) => {
     }) as never,
   };
 });
+vi.mock(import("./PullRequestCodeTab"), async (original) => ({
+  ...(await original()),
+  default: (({
+    onAddToAgentSelection,
+    scrollerRef,
+  }: ComponentProps<typeof import("./PullRequestCodeTab").default>) => (
+    <div ref={scrollerRef} data-testid="code-scroller" className="h-full overflow-y-auto">
+      <button
+        type="button"
+        onClick={() =>
+          onAddToAgentSelection?.({
+            request: "Fix this line",
+            comment: {
+              id: "note-1",
+              sectionId: "file:a.ts",
+              sectionTitle: "a.ts",
+              filePath: "a.ts",
+              startIndex: 0,
+              endIndex: 0,
+              rangeLabel: "L1",
+              text: "Please fix",
+              diff: "+broken()",
+            },
+          })
+        }
+      >
+        Add to agent
+      </button>
+      <div className="h-[3000px]" />
+    </div>
+  )) as never,
+}));
+
+vi.mock(import("./PullRequestGuideTab"), async (original) => ({
+  ...(await original()),
+  PullRequestGuideTab: (({
+    active,
+    onAskAboutLines,
+  }: ComponentProps<typeof import("./PullRequestGuideTab").PullRequestGuideTab>) =>
+    active ? (
+      <button type="button" onClick={() => onAskAboutLines?.(guideComment, "Check the guide line")}>
+        Add guide line to agent
+      </button>
+    ) : null) as never,
+}));
+
 vi.mock(import("../ui/toast"), async (original) => {
   const actual = await original();
   return {
@@ -234,6 +300,18 @@ const diff = {
   ].join("\n"),
   truncated: false,
   nextCursor: null,
+};
+
+const guideComment: ReviewCommentContext = {
+  id: "guide-note",
+  sectionId: "file:b.ts",
+  sectionTitle: "b.ts",
+  filePath: "b.ts",
+  startIndex: 1,
+  endIndex: 1,
+  rangeLabel: "L2",
+  text: "Check the guide line",
+  diff: "+guideChange()",
 };
 
 const threadRef: ScopedThreadRef = {
@@ -818,4 +896,152 @@ it("keeps discussion counts and Timeline expansion in sync with activity refresh
   expectThread(false, "Review dismissed");
   await refreshActivity(false);
   expectThread(true, null);
+});
+
+describe("review handoffs preserve the composer", () => {
+  function expectCommentsRetained(
+    target: ScopedThreadRef | DraftId,
+    comments: readonly ReviewCommentContext[],
+  ) {
+    const draft = useComposerDraftStore.getState().getComposerDraft(target)!;
+    expect(draft.reviewComments).toEqual(expect.arrayContaining([...comments]));
+    expect(collectInlineContextIds(draft.prompt)).toEqual(
+      expect.arrayContaining(comments.map((comment) => reviewCommentContextId(comment.id))),
+    );
+  }
+
+  it.each([
+    ["own PR", stackThread, { ...threadRef, threadId: ThreadId.make("own-pr-review") }],
+    ["another PR", unrelatedThread, { ...threadRef, threadId: ThreadId.make("other-pr-review") }],
+    ["unsent draft", null, DraftId.make("unsent-review")],
+  ] as const)(
+    "appends Code and Guide comments and replaces only the general request in %s",
+    async (_name, thread, target) => {
+      const store = useComposerDraftStore.getState();
+      const readerComment = {
+        ...guideComment,
+        id: "reader-note",
+        filePath: "notes.ts",
+        text: "My note",
+      };
+      store.setPrompt(target, "Keep my draft");
+      store.addReviewComment(target, readerComment, { insertAtCaret: false });
+      await render({
+        context: thread ? pullRequestPanelContext(thread, surface) : "page",
+        composerDraftTarget: target,
+        threadRef,
+      });
+
+      await runAction("Explain this PR");
+      const general = store.getComposerDraft(target)!;
+      await runAction("Add to agent");
+      const firstLine = store.getComposerDraft(target)!;
+      expect(firstLine.prompt.startsWith(general.prompt)).toBe(true);
+      expectCommentsRetained(target, general.reviewComments);
+
+      await tab("Guide").click();
+      await tab("Add guide line to agent").click();
+      const bothLines = store.getComposerDraft(target)!;
+      expect(bothLines.prompt.startsWith(firstLine.prompt)).toBe(true);
+      expectCommentsRetained(target, firstLine.reviewComments);
+      expect(bothLines.reviewComments).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ filePath: "a.ts", diff: "+broken()" }),
+          expect.objectContaining({ filePath: "b.ts", diff: "+guideChange()" }),
+        ]),
+      );
+
+      await runAction("Ask a question");
+      const replaced = store.getComposerDraft(target)!;
+      expect(replaced.prompt).not.toContain("Explain this pull request.");
+      for (const text of ["Keep my draft", "Fix this line", "Check the guide line"]) {
+        expect(replaced.prompt).toContain(text);
+      }
+      expectCommentsRetained(target, [
+        readerComment,
+        ...bothLines.reviewComments.filter((comment) =>
+          ["a.ts", "b.ts"].includes(comment.filePath),
+        ),
+      ]);
+      const context = replaced.reviewComments.find(
+        (comment) => comment.pullRequest && comment.text.includes("Do not change any code"),
+      );
+      expect(context?.text).toContain("Answer the question");
+      expect(
+        replaced.reviewComments.some((comment) =>
+          comment.text.includes("Walk through this pull request"),
+        ),
+      ).toBe(false);
+      expect(newThread).not.toHaveBeenCalled();
+      expect(prepareThread).not.toHaveBeenCalled();
+    },
+  );
+
+  it("preserves identical reader prose and indentation when a caret citation shifts the generated request", async () => {
+    const target = DraftId.make("review-reader-copy");
+    const store = useComposerDraftStore.getState();
+    const readerText = "Explain this pull request.\n\n    const answer = 42;  \n\treturn answer;";
+    store.setPrompt(target, readerText);
+    await render({ composerDraftTarget: target });
+    await runAction("Explain this PR");
+
+    const caretComment = {
+      ...guideComment,
+      id: "reader-caret-note",
+      filePath: "Explain this pull request.",
+    };
+    store.setContextInsertionHandler(target, (references) => {
+      const reference = references[0];
+      if (!reference) return false;
+      const prompt = store.getComposerDraft(target)!.prompt;
+      store.setPrompt(
+        target,
+        insertInlineContextReference(prompt, readerText.length + 2, reference).prompt,
+      );
+      return true;
+    });
+    try {
+      store.addReviewComment(target, caretComment);
+    } finally {
+      store.setContextInsertionHandler(target, null);
+    }
+    await runAction("Add to agent");
+    const lineComments = store
+      .getComposerDraft(target)!
+      .reviewComments.filter((comment) => comment.filePath === "a.ts");
+    expect(lineComments).toHaveLength(1);
+    await runAction("Ask a question");
+
+    const draft = store.getComposerDraft(target)!;
+    expect(draft.prompt.startsWith(readerText)).toBe(true);
+    expect(
+      stripInlineContextReferences(draft.prompt).match(/Explain this pull request\./g),
+    ).toHaveLength(1);
+    expect(draft.prompt).toContain("Fix this line");
+    expectCommentsRetained(target, [caretComment]);
+    expectCommentsRetained(target, lineComments);
+  });
+
+  it("keeps an edited general request and an identical reader-authored paragraph", async () => {
+    const target = DraftId.make("review-edited-request");
+    const store = useComposerDraftStore.getState();
+    await render({ composerDraftTarget: target });
+    await runAction("Explain this PR");
+    store.setPrompt(
+      target,
+      store
+        .getComposerDraft(target)!
+        .prompt.replace(
+          "Explain this pull request.",
+          "Explain this pull request, especially caching.",
+        ) + "\n\nExplain this pull request.",
+    );
+    await runAction("Add to agent");
+    await runAction("Ask a question");
+
+    const prompt = stripInlineContextReferences(store.getComposerDraft(target)!.prompt);
+    expect(prompt).toContain("Explain this pull request, especially caching.");
+    expect(prompt.match(/Explain this pull request\./g)).toHaveLength(1);
+    expect(prompt).toContain("Fix this line");
+  });
 });

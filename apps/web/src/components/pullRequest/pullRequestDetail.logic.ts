@@ -36,8 +36,6 @@ import {
 } from "@t3tools/shared/threadPullRequests";
 
 import { inferReviewCommentFenceLanguage, type ReviewCommentContext } from "~/reviewCommentContext";
-import { reviewCommentContextId } from "~/lib/composerContextRecords";
-import { removeInlineContextReference } from "~/lib/composerContextReferences";
 
 export const PULL_REQUEST_MERGE_METHOD_LABELS: Record<PullRequestMergeMethod, string> = {
   merge: "Merge",
@@ -834,57 +832,6 @@ export interface FixFindingsHandoff {
   readonly reviewComments: ReadonlyArray<ReviewCommentContext>;
 }
 
-const HANDOFF_COMMENT_ID_PREFIX = "pull-request-";
-
-export function stripPullRequestHandoffReferences(
-  prompt: string,
-  comments: ReadonlyArray<ReviewCommentContext>,
-  retainedIds: ReadonlySet<string> = new Set(),
-): string {
-  let next = prompt;
-  for (const comment of comments) {
-    if (!comment.id.startsWith(HANDOFF_COMMENT_ID_PREFIX) || retainedIds.has(comment.id)) continue;
-    next = removeInlineContextReference(next, reviewCommentContextId(comment.id)).prompt;
-  }
-  return next;
-}
-
-export function handoffPrompt(
-  existing: {
-    readonly prompt: string;
-    /**
-     * What the last hand-off into this draft wrote — its own contribution alone, never the
-     * merged prompt it landed in, or a draft that held the reader's text before the first
-     * hand-off would read as all hand-off and be replaced wholesale by the second.
-     */
-    readonly lastHandoffPrompt: string | undefined;
-  },
-  incoming: string,
-): string {
-  if (existing.prompt.trim().length === 0) return incoming;
-  const last = existing.lastHandoffPrompt ?? "";
-  const kept =
-    last.length === 0
-      ? existing.prompt
-      : existing.prompt === last
-        ? ""
-        : existing.prompt.endsWith(`\n\n${last}`)
-          ? existing.prompt.slice(0, -(last.length + 2))
-          : existing.prompt;
-  if (kept.trim().length === 0) return incoming;
-  return incoming.length === 0 ? kept : `${kept}\n\n${incoming}`;
-}
-
-export function handoffReviewComments(
-  existing: ReadonlyArray<ReviewCommentContext>,
-  incoming: ReadonlyArray<ReviewCommentContext>,
-): ReviewCommentContext[] {
-  return [
-    ...existing.filter((comment) => !comment.id.startsWith(HANDOFF_COMMENT_ID_PREFIX)),
-    ...incoming,
-  ];
-}
-
 /**
  * Everything derived from the pull request is explicitly marked untrusted: review bodies
  * and check output are attacker-controlled on public repositories.
@@ -1061,8 +1008,8 @@ function pullRequestContextComment(
   instructions: ReadonlyArray<string>,
 ): ReviewCommentContext {
   return {
-    id: `pull-request-context:${input.number}`,
-    sectionId: `pull-request:${input.number}`,
+    id: `pull-request-context:${input.url}`,
+    sectionId: `pull-request:${input.url}`,
     sectionTitle: `PR #${input.number}`,
     filePath: `PR #${input.number}`,
     startIndex: 0,
@@ -1087,11 +1034,7 @@ function pullRequestContextComment(
   };
 }
 
-/**
- * It is the reader's own chip, so it sits outside the `pull-request-` namespace a
- * hand-off owns and sweeps: a later hand-off must not delete a reference the reader put
- * there themselves.
- */
+/** Reader-added references are independent of context owned by composer handoffs. */
 export function buildPullRequestReferenceContext(
   input: PullRequestContextMetadata,
 ): ReviewCommentContext {
@@ -1152,7 +1095,10 @@ export function buildAddSelectionToAgentHandoff(input: {
 }): FixFindingsHandoff {
   return {
     prompt: bounded(input.request),
-    reviewComments: [pullRequestContextComment(input, []), { ...input.comment, text: "" }],
+    reviewComments: [
+      { ...pullRequestContextComment(input, []), id: `pull-request-line-context:${input.url}` },
+      { ...input.comment, id: `pull-request-selection:${input.url}:${input.comment.id}`, text: "" },
+    ],
   };
 }
 
@@ -1189,8 +1135,8 @@ export function buildAskAboutGuideStopHandoff(input: {
     reviewComments: [
       pullRequestContextComment(input, ANSWER_INSTRUCTIONS),
       {
-        id: `pull-request-guide-stop:${input.number}:${stop.index}`,
-        sectionId: `pull-request:${input.number}`,
+        id: `pull-request-guide-stop:${input.url}:${stop.index}`,
+        sectionId: `pull-request:${input.url}`,
         sectionTitle: `PR #${input.number} review guide`,
         filePath: `Guide stop ${stop.index + 1}`,
         startIndex: 0,
