@@ -168,29 +168,20 @@ describe("effectiveSnoozed", () => {
     ).toBe(true);
   });
 
-  it.each([
-    { boundary: "before snooze", requestedAt: "2026-04-10T08:59:59.999Z", snoozed: true },
-    { boundary: "at snooze", requestedAt: SNOOZED_AT, snoozed: true },
-    { boundary: "unknown", requestedAt: null, snoozed: true },
-    { boundary: "after snooze", requestedAt: "2026-04-10T09:00:00.001Z", snoozed: false },
-  ])(
-    "classifies completion and its wake time with request time $boundary",
-    ({ requestedAt, snoozed }) => {
-      const completedAt = "2026-04-10T10:30:00.000Z";
-      const shell = {
-        ...makeShell({ snoozedUntil: FUTURE_WAKE }),
-        latestRun: {
-          status: "completed",
-          requestedAt,
-          startedAt: "2026-04-10T09:15:00.000Z",
-          completedAt,
-        },
-      };
+  it("stays snoozed when a run requested after the snooze completes", () => {
+    const shell = {
+      ...makeShell({ snoozedUntil: FUTURE_WAKE }),
+      latestRun: {
+        status: "completed",
+        requestedAt: "2026-04-10T09:00:00.001Z",
+        startedAt: "2026-04-10T09:15:00.000Z",
+        completedAt: "2026-04-10T10:30:00.000Z",
+      },
+    };
 
-      expect(effectiveSnoozed(shell, { now: NOW })).toBe(snoozed);
-      expect(threadWokeAt(shell, { now: NOW })).toBe(snoozed ? null : completedAt);
-    },
-  );
+    expect(effectiveSnoozed(shell, { now: NOW })).toBe(true);
+    expect(threadWokeAt(shell, { now: NOW })).toBe(null);
+  });
 
   it("ignores runs that completed before the snooze — the user saw that result", () => {
     expect(
@@ -347,16 +338,16 @@ describe("threadWokeAt", () => {
   });
 
   it("keeps the early wake authoritative after the scheduled time passes", () => {
-    expect(
-      threadWokeAt(
-        makeShell({
-          snoozedUntil: PAST_WAKE,
-          turnRequestedAt: "2026-04-10T09:15:00.000Z",
-          turnCompletedAt: "2026-04-10T09:30:00.000Z",
-        }),
-        { now: NOW },
-      ),
-    ).toBe("2026-04-10T09:30:00.000Z");
+    const shell: ThreadSnoozeShell = {
+      ...makeShell({ snoozedUntil: PAST_WAKE }),
+      runtime: { status: "failed", updatedAt: "2026-04-10T11:00:00.000Z" },
+      latestRun: {
+        status: "failed",
+        requestedAt: "2026-04-10T09:15:00.000Z",
+        completedAt: "2026-04-10T09:30:00.000Z",
+      },
+    };
+    expect(threadWokeAt(shell, { now: NOW })).toBe("2026-04-10T09:30:00.000Z");
   });
 });
 

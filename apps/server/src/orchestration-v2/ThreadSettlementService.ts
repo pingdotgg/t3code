@@ -177,12 +177,7 @@ export function isAutoSettlementCandidate(
 export function isSnoozed(
   thread: Pick<
     ProjectionStore.ProjectionSettlementCandidate,
-    | "snoozedUntil"
-    | "snoozedAt"
-    | "latestRunRequestedAt"
-    | "latestRunCompletedAt"
-    | "status"
-    | "pendingRuntimeRequest"
+    "snoozedUntil" | "snoozedAt" | "latestRunCompletedAt" | "status" | "pendingRuntimeRequest"
   >,
   nowMs: number,
 ): boolean {
@@ -190,19 +185,11 @@ export function isSnoozed(
   if (snoozedUntilMs === null || snoozedUntilMs <= nowMs) return false;
   if (thread.pendingRuntimeRequest !== null) return false;
   const snoozedAtMs = toMillis(thread.snoozedAt);
-  const requestedAtMs = toMillis(thread.latestRunRequestedAt);
   const completedAtMs = toMillis(thread.latestRunCompletedAt);
   const wokeOnError =
     thread.status === "failed" &&
     (snoozedAtMs === null || (completedAtMs !== null && completedAtMs > snoozedAtMs));
-  const wokeOnCompletion =
-    thread.status === "completed" &&
-    snoozedAtMs !== null &&
-    requestedAtMs !== null &&
-    requestedAtMs > snoozedAtMs &&
-    completedAtMs !== null &&
-    completedAtMs > snoozedAtMs;
-  return !wokeOnError && !wokeOnCompletion;
+  return !wokeOnError;
 }
 
 export function resolveAutoSettlementAt(input: {

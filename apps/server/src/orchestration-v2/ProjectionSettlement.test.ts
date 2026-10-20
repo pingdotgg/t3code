@@ -216,7 +216,7 @@ it.effect.each([
         snoozedUntil: DateTime.add(now, { days: 1 }),
         snoozedAt: DateTime.subtract(old, { days: 1 }),
       });
-      yield* createRun(woke);
+      yield* createRun(woke, "failed");
       const background = yield* createThread("idle-background");
       yield* createItem(background, yield* createRun(background), "idle");
       const persistent = yield* createThread("persistent-monitor");

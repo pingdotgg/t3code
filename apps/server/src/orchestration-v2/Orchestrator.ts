@@ -4922,7 +4922,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
       projection = yield* getProjectionWithPendingEvents(command.threadId, events);
     }
-    if (projection.thread.snoozedUntil != null) {
+    // Background wakes and delegated completions continue work the user already snoozed, so
+    // only a message someone actually sent ends the snooze.
+    const automaticWake =
+      command.notification !== undefined || command.delegatedCompletion !== undefined;
+    if (projection.thread.snoozedUntil != null && !automaticWake) {
       const now = yield* DateTime.now;
       const thread: OrchestrationV2AppThread = {
         ...projection.thread,
