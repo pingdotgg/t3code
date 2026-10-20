@@ -465,11 +465,49 @@ export const make = Effect.gen(function* () {
     runAction: (input) => {
       switch (input.action) {
         case "merge":
-          return write({
-            ...input,
-            path: `${pullPath(input)}/merge`,
-            method: "POST",
-            body: { Do: input.mergeMethod ?? "merge" },
+          return Effect.gen(function* () {
+            const deleteBranch = yield* Effect.gen(function* () {
+              const repo = yield* getRepo(input);
+              if (!repo.default_delete_branch_after_merge) return false;
+              const pr = yield* getPull(input);
+              return (
+                pr.head.repo?.permissions?.push === true &&
+                pr.head.repo.default_branch !== undefined &&
+                pr.head.ref !== pr.head.repo.default_branch
+              );
+            }).pipe(
+              Effect.mapError(
+                (error) =>
+                  new PullRequestProviderError({
+                    provider: SourceControlProviderKind.make("forgejo"),
+                    operation: "merge",
+                    reason: error.reason,
+                    detail: `The pull request was not merged because its branch deletion setting could not be read. ${error.detail}`,
+                    ...(error.retryAt === undefined ? {} : { retryAt: error.retryAt }),
+                    cause: error,
+                  }),
+              ),
+            );
+            yield* write({
+              ...input,
+              path: `${pullPath(input)}/merge`,
+              method: "POST",
+              body: { Do: input.mergeMethod ?? "merge", delete_branch_after_merge: deleteBranch },
+            }).pipe(
+              Effect.catch((error) =>
+                Effect.gen(function* () {
+                  if (!deleteBranch) return yield* error;
+                  // Forgejo merges before deleting the branch, so a deletion refusal can fail
+                  // the request after the merge has already landed.
+                  const pr = yield* getPull(input).pipe(Effect.mapError(() => error));
+                  if (!pr.merged) return yield* error;
+                  yield* Effect.logWarning(
+                    "Forgejo confirmed the merge after the merge request failed",
+                    { detail: error.detail },
+                  );
+                }),
+              ),
+            );
           });
         case "close":
         case "reopen":

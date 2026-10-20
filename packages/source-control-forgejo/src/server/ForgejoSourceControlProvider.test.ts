@@ -30,6 +30,209 @@ const requestJson = (request: HttpClientRequest.HttpClientRequest): unknown => {
 };
 const encodeJsonEffect = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
+const mergeInput = {
+  cwd: "/repo",
+  repository: "maria/project",
+  host: "forgejo.test",
+  number: 42,
+  action: "merge" as const,
+};
+const mergeHeadRepository = {
+  full_name: "maria/project",
+  default_branch: "main",
+  permissions: { push: true, admin: false },
+};
+const mergePull = {
+  number: 42,
+  title: "Merge target",
+  body: "",
+  html_url: "https://forgejo.test/maria/project/pulls/42",
+  user: null,
+  state: "open",
+  merged: false,
+  head: { ref: "feature", sha: "head", repo: mergeHeadRepository },
+  base: { ref: "main", sha: "base", repo: mergeHeadRepository },
+  created_at: "2026-09-13T00:00:00Z",
+  updated_at: "2026-09-13T00:00:00Z",
+  closed_at: null,
+  merged_at: null,
+  labels: [],
+};
+
+it.effect("merges Forgejo pull requests using the repository branch deletion preference", () =>
+  Effect.gen(function* () {
+    for (const setting of [true, false, undefined]) {
+      const writes: ForgejoCli.ForgejoApiInput[] = [];
+      const provider = yield* ForgejoPullRequestProvider.make.pipe(
+        Effect.provide(
+          Layer.mock(ForgejoCli.ForgejoCli)({
+            api: (input) => {
+              if (input.method === "POST") {
+                writes.push(input);
+                return Effect.succeed(processOutput(""));
+              }
+              assert.include(["repos/maria/project", "repos/maria/project/pulls/42"], input.path);
+              return encodeJsonEffect(
+                input.path.endsWith("/42")
+                  ? mergePull
+                  : { ...mergeHeadRepository, default_delete_branch_after_merge: setting },
+              ).pipe(Effect.orDie, Effect.map(processOutput));
+            },
+          }),
+        ),
+      );
+      yield* provider.runAction({ ...mergeInput, mergeMethod: "squash" });
+      assert.strictEqual(writes.length, 1);
+      assert.strictEqual(writes[0]?.path, "repos/maria/project/pulls/42/merge");
+      assert.deepStrictEqual(writes[0]?.body, {
+        Do: "squash",
+        delete_branch_after_merge: setting === true,
+      });
+    }
+  }),
+);
+
+it.effect("keeps non-deletable Forgejo heads but allows writable fork branches", () =>
+  Effect.gen(function* () {
+    const fork = { ...mergeHeadRepository, full_name: "contributor/project" };
+    for (const [repo, expectedDeletion] of [
+      [{ ...fork, permissions: { push: false, admin: false } }, false],
+      [{ ...fork, default_branch: "feature" }, false],
+      [{ ...fork, default_branch: undefined }, false],
+      [null, false],
+      [fork, true],
+    ] as const) {
+      const writes: ForgejoCli.ForgejoApiInput[] = [];
+      const provider = yield* ForgejoPullRequestProvider.make.pipe(
+        Effect.provide(
+          Layer.mock(ForgejoCli.ForgejoCli)({
+            api: (input) => {
+              if (input.method === "POST") {
+                writes.push(input);
+                return Effect.succeed(processOutput(""));
+              }
+              assert.include(["repos/maria/project", "repos/maria/project/pulls/42"], input.path);
+              return encodeJsonEffect(
+                input.path.endsWith("/42")
+                  ? { ...mergePull, head: { ...mergePull.head, repo } }
+                  : { ...mergeHeadRepository, default_delete_branch_after_merge: true },
+              ).pipe(Effect.orDie, Effect.map(processOutput));
+            },
+          }),
+        ),
+      );
+      yield* provider.runAction(mergeInput);
+      assert.strictEqual(writes.length, 1);
+      assert.strictEqual(writes[0]?.path, "repos/maria/project/pulls/42/merge");
+      assert.deepStrictEqual(writes[0]?.body, {
+        Do: "merge",
+        delete_branch_after_merge: expectedDeletion,
+      });
+    }
+  }),
+);
+
+it.effect("reports a Forgejo deletion refusal as success only when the merge landed", () =>
+  Effect.gen(function* () {
+    for (const outcome of ["merged", "open", "unavailable"] as const) {
+      const mergeError = new ForgejoCli.ForgejoCliError({
+        command: "fj",
+        cwd: "/repo",
+        httpStatus: outcome === "merged" ? 403 : 409,
+        detail: outcome === "merged" ? "the head branch is protected" : "Merge conflict",
+      });
+      let mergeRequested = false;
+      const provider = yield* ForgejoPullRequestProvider.make.pipe(
+        Effect.provide(
+          Layer.mock(ForgejoCli.ForgejoCli)({
+            api: (input) => {
+              if (input.method === "POST") {
+                assert.strictEqual(input.path, "repos/maria/project/pulls/42/merge");
+                mergeRequested = true;
+                return Effect.fail(mergeError);
+              }
+              assert.include(["repos/maria/project", "repos/maria/project/pulls/42"], input.path);
+              if (mergeRequested && outcome === "unavailable") {
+                return Effect.fail(
+                  new ForgejoCli.ForgejoCliError({
+                    command: "fj",
+                    cwd: "/repo",
+                    detail: "Cannot confirm merge",
+                    httpStatus: 503,
+                  }),
+                );
+              }
+              return encodeJsonEffect(
+                input.path.endsWith("/42")
+                  ? { ...mergePull, merged: mergeRequested && outcome === "merged" }
+                  : { ...mergeHeadRepository, default_delete_branch_after_merge: true },
+              ).pipe(Effect.orDie, Effect.map(processOutput));
+            },
+          }),
+        ),
+      );
+      const result = yield* provider.runAction(mergeInput).pipe(Effect.result);
+      assert.isTrue(mergeRequested);
+      if (outcome === "merged") {
+        assert.strictEqual(result._tag, "Success");
+      } else {
+        assert.strictEqual(result._tag, "Failure");
+        if (result._tag !== "Failure") return;
+        assert.strictEqual(result.failure.detail, mergeError.detail);
+        assert.strictEqual(result.failure.cause, mergeError);
+      }
+    }
+  }),
+);
+
+it.effect("does not merge Forgejo pull requests when repository settings cannot be read", () =>
+  Effect.gen(function* () {
+    for (const failure of ["request", "invalid", "truncated"] as const) {
+      let writes = 0;
+      const provider = yield* ForgejoPullRequestProvider.make.pipe(
+        Effect.provide(
+          Layer.mock(ForgejoCli.ForgejoCli)({
+            api: (input) => {
+              if (input.method === "POST") {
+                writes++;
+                return Effect.succeed(processOutput(""));
+              }
+              assert.strictEqual(input.path, "repos/maria/project");
+              if (failure === "request") {
+                return Effect.fail(
+                  new ForgejoCli.ForgejoCliError({
+                    command: "fj",
+                    cwd: "/repo",
+                    detail: "Settings unavailable",
+                    reason: "rate-limit",
+                  }),
+                );
+              }
+              return encodeJsonEffect({
+                ...mergeHeadRepository,
+                default_delete_branch_after_merge: failure === "invalid" ? "true" : true,
+              }).pipe(
+                Effect.orDie,
+                Effect.map((json) => ({
+                  ...processOutput(json),
+                  stdoutTruncated: failure === "truncated",
+                })),
+              );
+            },
+          }),
+        ),
+      );
+      const result = yield* provider.runAction(mergeInput).pipe(Effect.result);
+      assert.strictEqual(writes, 0);
+      assert.strictEqual(result._tag, "Failure");
+      if (result._tag !== "Failure") return;
+      assert.strictEqual(result.failure.operation, "merge");
+      assert.match(result.failure.detail, /not merged.*branch deletion setting could not be read/i);
+      if (failure === "request") assert.strictEqual(result.failure.reason, "rate-limited");
+    }
+  }),
+);
+
 it.effect("submits a Forgejo review without sending its summary in the preliminary GET", () => {
   const methods: string[] = [];
   const reviewClient = HttpClient.make((request) => {
