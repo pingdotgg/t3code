@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import * as appearanceFonts from "../../appearanceFonts";
 
 import { GhosttyTerminalCore, type GhosttyCell, type GhosttyRow } from "./core";
 import {
@@ -1594,10 +1595,13 @@ describe("terminal font resolution", () => {
   });
 
   it("ignores proportional families the cell grid cannot lay out", () => {
-    // Node has no canvas, so the probe answers "monospace" and the
-    // family is kept; the guard is exercised in the browser instead.
-    const stack = terminalFontFamily("Helvetica Neue");
-    expect(stack.endsWith("monospace")).toBe(true);
+    const probe = vi.spyOn(appearanceFonts, "isMonospaceFamily").mockReturnValueOnce(false);
+    try {
+      expect(terminalFontFamily("Helvetica Neue")).toBe(DEFAULT_TERMINAL_FONT_FAMILY);
+      expect(probe).toHaveBeenCalledWith('"Helvetica Neue"');
+    } finally {
+      probe.mockRestore();
+    }
   });
 
   it("quotes families the canvas font shorthand would otherwise reject", () => {

@@ -7,6 +7,7 @@ import {
   AssetPreviewTypeValidationError,
   ThreadId,
   TurnItemId,
+  type ToolActivityNativeAppReference,
 } from "@t3tools/contracts";
 import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon";
 import { MCP_APP_MAX_HTML_BYTES } from "@t3tools/shared/mcpApp";
@@ -1082,21 +1083,37 @@ describe("AssetAccess", () => {
       });
     }).pipe(Effect.provide(layerTest)),
   );
-  it.effect("issues signed native application icon capabilities", () =>
-    Effect.gen(function* () {
-      const result = yield* issueAssetUrl({
-        resource: {
-          _tag: "native-app-icon",
-          app: { _tag: "app-id", appId: "com.example.Editor" },
-        },
-      });
+  it.effect("issues signed native application icon capabilities", () => {
+    const resolvedApps: Array<ToolActivityNativeAppReference> = [];
+    return Effect.gen(function* () {
+      const app = { _tag: "app-id", appId: "com.example.Editor" } as const;
+      const result = yield* issueAssetUrl({ resource: { _tag: "native-app-icon", app } });
 
       expect(result.relativeUrl).toMatch(
         new RegExp(`^${ASSET_ROUTE_PREFIX}/[^/]+/native-app-icon\\.png$`, "u"),
       );
-      expect(result.expiresAt).toBeGreaterThan(0);
-    }).pipe(Effect.provide(layerTest)),
-  );
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separator = suffix.indexOf("/");
+      const token = suffix.slice(0, separator);
+      const name = suffix.slice(separator + 1);
+      expect(yield* resolveAsset(token, name)).toEqual({ kind: "file", path: "/icons/editor.png" });
+      expect(yield* resolveAsset(`${token}tampered`, name)).toBeNull();
+      expect(resolvedApps).toEqual([app]);
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          layerTest,
+          Layer.succeed(NativeAppIconResolver.NativeAppIconResolver, {
+            resolve: (app) =>
+              Effect.sync(() => {
+                resolvedApps.push(app);
+                return "/icons/editor.png";
+              }),
+          }),
+        ),
+      ),
+    );
+  });
 
   it.effect("serves document attachments inline when a viewer requests it", () =>
     Effect.gen(function* () {

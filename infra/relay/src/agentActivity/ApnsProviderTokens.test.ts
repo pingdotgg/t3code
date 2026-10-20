@@ -2,6 +2,8 @@
 import * as NodeCrypto from "node:crypto";
 
 import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
+import { p256 } from "@noble/curves/nist";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -61,12 +63,17 @@ describe("ApnsProviderTokens", () => {
 
   it.effect("serves repeat pushes from the isolate cache without re-signing", () => {
     ApnsProviderTokens.__resetApnsProviderTokenCacheForTest();
+    const sign = vi.spyOn(p256, "sign");
     return Effect.gen(function* () {
       const tokens = yield* ApnsProviderTokens.ApnsProviderTokens;
       const first = yield* tokens.getJwt({ ...signingInput, issuedAtUnixSeconds: WINDOW + 10 });
       const again = yield* tokens.getJwt({ ...signingInput, issuedAtUnixSeconds: WINDOW + 500 });
       expect(again).toBe(first);
+      expect(sign).toHaveBeenCalledTimes(1);
       ApnsProviderTokens.__resetApnsProviderTokenCacheForTest();
-    }).pipe(Effect.provide(ApnsProviderTokens.layer));
+    }).pipe(
+      Effect.provide(ApnsProviderTokens.layer),
+      Effect.ensuring(Effect.sync(() => sign.mockRestore())),
+    );
   });
 });

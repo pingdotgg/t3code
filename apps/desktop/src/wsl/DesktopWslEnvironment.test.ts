@@ -359,23 +359,6 @@ describe("WSL runtime cache", () => {
     expect(deleted).toBeGreaterThan(kept);
   });
 
-  it("treats a runtime whose executable no longer runs as a cache miss", () => {
-    const script = buildWslRuntimeInstallScript(
-      "/mnt/c/Program Files/T3 Code/wsl-runtime.tar.gz",
-      "1.2.3-x64",
-      "b".repeat(64),
-    );
-
-    expect(script).toContain('  [ -x "$1/t3" ] && "$1/t3" --version >/dev/null');
-
-    const entryCheckDefined = script.indexOf("runtime_entry_runs() {");
-    const readinessDefined = script.indexOf("runtime_is_ready() {");
-    const readyShortCircuit = script.indexOf("if runtime_is_ready; then");
-    expect(entryCheckDefined).toBeGreaterThan(-1);
-    expect(entryCheckDefined).toBeLessThan(readinessDefined);
-    expect(readinessDefined).toBeLessThan(readyShortCircuit);
-  });
-
   it("re-hashes the executable against the digest the install recorded", () => {
     const script = buildWslRuntimeInstallScript(
       "/mnt/c/Program Files/T3 Code/wsl-runtime.tar.gz",
@@ -622,6 +605,28 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
     expect(parseWslRuntimeRoot(repaired.stdout)).toBe(fixture.runtimeRoot);
     const restored = runShell(`set -eu\ncat ${sh(fixture.serverEntry)}`);
     expect(restored.stdout).toBe(SERVER_ENTRY_SOURCE);
+  });
+
+  it("reinstalls an executable that fails --version despite a matching recorded digest", () => {
+    const fixture = createFixture();
+    expect(fixture.install().status).toBe(0);
+    const brokenEntry = "#!/bin/sh\nexit 42\n";
+    const corrupt = runShell(
+      [
+        "set -eu",
+        `printf '%s' ${sh(brokenEntry)} > ${sh(fixture.serverEntry)}`,
+        `chmod +x ${sh(fixture.serverEntry)}`,
+        `sha256sum ${sh(fixture.serverEntry)} | cut -d ' ' -f 1 > ${sh(`${fixture.runtimeRoot}/.t3code-wsl-runtime-ready`)}`,
+      ].join("\n"),
+    );
+    expect(corrupt.status, corrupt.stderr).toBe(0);
+    expect(runShell(`${sh(fixture.serverEntry)} --version`).status).toBe(42);
+
+    const repaired = fixture.install();
+    expect(repaired.status, repaired.stderr).toBe(0);
+    expect(parseWslRuntimeRoot(repaired.stdout)).toBe(fixture.runtimeRoot);
+    expect(runShell(`cat ${sh(fixture.serverEntry)}`).stdout).toBe(SERVER_ENTRY_SOURCE);
+    expect(runShell(`${sh(fixture.serverEntry)} --version`).status).toBe(0);
   });
 
   it("falls back instead of launching a corrupted cache it cannot reinstall", () => {

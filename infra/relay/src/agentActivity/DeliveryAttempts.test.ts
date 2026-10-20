@@ -1,5 +1,7 @@
 import * as NodeCryptoLayer from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
+import type { SQL } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -274,7 +276,7 @@ describe("DeliveryAttempts", () => {
 
   it.effect("completes a claimed source job with the APNs outcome", () => {
     const updatedValues: Array<Record<string, unknown>> = [];
-    const whereClauses: Array<unknown> = [];
+    const whereClauses: Array<SQL> = [];
     const fakeDb = {
       update: (table: unknown) => {
         expect(table).toBe(relayDeliveryAttempts);
@@ -282,7 +284,7 @@ describe("DeliveryAttempts", () => {
           set: (values: Record<string, unknown>) => {
             updatedValues.push(values);
             return {
-              where: (clause: unknown) => {
+              where: (clause: SQL) => {
                 whereClauses.push(clause);
                 return Effect.void;
               },
@@ -301,7 +303,9 @@ describe("DeliveryAttempts", () => {
         apnsId: "apns-id",
       });
 
-      expect(whereClauses).toHaveLength(1);
+      expect(whereClauses.map((clause) => new PgDialect().sqlToQuery(clause))).toEqual([
+        { sql: '"relay_delivery_attempts"."source_job_id" = $1', params: ["job-1"] },
+      ]);
       expect(updatedValues).toEqual([
         {
           createdAt: expect.any(String),
