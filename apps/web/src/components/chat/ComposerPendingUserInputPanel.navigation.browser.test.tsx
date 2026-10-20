@@ -11,9 +11,11 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 import {
+  setPendingUserInputCustomAnswer,
   togglePendingUserInputOptionSelection,
   type PendingUserInputDraftAnswer,
 } from "../../pendingUserInput";
+import type { PendingUserInput } from "../../session-logic";
 
 vi.mock(import("../ChatMarkdown"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -40,17 +42,48 @@ const prompt = {
   })),
 };
 
-function Questions({ initialIndex = 0 }: { initialIndex?: number }) {
+const previewPrompt = {
+  ...prompt,
+  questions: prompt.questions.map((question, index) => ({
+    ...question,
+    options: ["First", "Second"].map((label) => ({
+      label,
+      value: index === 1 ? label : "same-answer",
+      description: "",
+      preview: `Preview body: ${label}, question ${index + 1}`,
+    })),
+  })),
+};
+
+function Questions({
+  initialIndex = 0,
+  pendingPrompt = prompt,
+}: {
+  initialIndex?: number;
+  pendingPrompt?: PendingUserInput;
+}) {
   const [questionIndex, setQuestionIndex] = useState(initialIndex);
   const [answers, setAnswers] = useState<Record<string, PendingUserInputDraftAnswer>>({});
+  const question = pendingPrompt.questions[questionIndex]!;
   const advance = () => setQuestionIndex(questionIndex + 1);
   return (
     <>
       <output>{questionIndex}</output>
       <button onClick={advance}>Next</button>
       <button onClick={() => setQuestionIndex(questionIndex - 1)}>Previous</button>
+      <input
+        aria-label="Custom answer"
+        value={answers[question.id]?.customAnswer ?? ""}
+        onChange={(event) => {
+          const value = event.currentTarget.value;
+          setAnswers((existing) => ({
+            ...existing,
+            [question.id]: setPendingUserInputCustomAnswer(existing[question.id], value, question),
+          }));
+        }}
+      />
       <ComposerPendingUserInputPanel
-        pendingUserInputs={[prompt]}
+        pendingUserInputs={[pendingPrompt]}
         cwd="/repo"
         threadRef={threadRef}
         disabled={false}
@@ -59,7 +92,7 @@ function Questions({ initialIndex = 0 }: { initialIndex?: number }) {
         questionIndex={questionIndex}
         onAdvance={advance}
         onToggleOption={(questionId, value) => {
-          const question = prompt.questions.find((entry) => entry.id === questionId)!;
+          const question = pendingPrompt.questions.find((entry) => entry.id === questionId)!;
           setAnswers((existing) => ({
             ...existing,
             [questionId]: togglePendingUserInputOptionSelection(
@@ -291,4 +324,95 @@ it("isolates drafts by environment, thread and request and discards only resolve
       index === 0 ? undefined : `Answer ${index}`,
     );
   }
+});
+
+function expectPreview(text: string | null) {
+  const previews = [...container.querySelectorAll("p")]
+    .map((element) => element.textContent)
+    .filter((content) => content?.startsWith("Preview body:"));
+  expect(previews).toEqual(text === null ? [] : [`Preview body: ${text}`]);
+}
+
+async function typeCustomAnswer(value: string) {
+  const input = container.querySelector("input")!;
+  await act(async () => {
+    input.focus();
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
+it("previews options by focus, click, and shortcut index but only restores unambiguous saved selections", async () => {
+  await act(async () => root.render(<Questions pendingPrompt={previewPrompt} />));
+  expectPreview("First, question 1");
+
+  await act(async () => buttonWithText("Second").focus());
+  expectPreview("Second, question 1");
+  await act(async () => buttonWithText("First").focus());
+  expectPreview("First, question 1");
+
+  await act(async () => buttonWithText("Second").click());
+  expectPreview("Second, question 1");
+  await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "1" })));
+  expectPreview("First, question 1");
+  await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "2" })));
+  expectPreview("Second, question 1");
+
+  await act(async () => vi.advanceTimersByTime(200));
+  expect(activeIndex()).toBe("1");
+  expectPreview("First, question 2");
+
+  await act(async () => buttonWithText("Second").focus());
+  expectPreview("Second, question 2");
+  await act(async () =>
+    root.render(
+      <Questions
+        pendingPrompt={{ ...previewPrompt, requestId: RuntimeRequestId.make("replacement") }}
+      />,
+    ),
+  );
+  expectPreview("First, question 2");
+
+  await act(async () => buttonWithText("Second").click());
+  expectPreview("Second, question 2");
+  await navigate("Next");
+  expectPreview("First, question 3");
+  await navigate("Previous");
+  expectPreview("Second, question 2");
+
+  await navigate("Previous");
+  expectPreview(null);
+  await act(async () =>
+    root.render(
+      <Questions
+        pendingPrompt={{ ...previewPrompt, requestId: RuntimeRequestId.make("remounted") }}
+      />,
+    ),
+  );
+  expectPreview(null);
+  await act(async () => buttonWithText("Second").click());
+  expectPreview("Second, question 1");
+});
+
+it("hides and clears hovered or focused previews while a custom answer is active", async () => {
+  await act(async () => root.render(<Questions pendingPrompt={previewPrompt} />));
+  await act(async () =>
+    buttonWithText("Second").dispatchEvent(new MouseEvent("mouseover", { bubbles: true })),
+  );
+  expectPreview("Second, question 1");
+
+  await typeCustomAnswer("Use a different approach");
+  expectPreview(null);
+  await typeCustomAnswer("");
+  expectPreview("First, question 1");
+
+  await typeCustomAnswer("Use a different approach");
+  await act(async () => buttonWithText("Second").focus());
+  expectPreview(null);
+  await act(async () =>
+    buttonWithText("Second").dispatchEvent(new MouseEvent("mouseover", { bubbles: true })),
+  );
+  expectPreview(null);
+  await typeCustomAnswer("");
+  expectPreview("First, question 1");
 });

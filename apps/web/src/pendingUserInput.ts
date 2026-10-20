@@ -1,4 +1,5 @@
-import type { ThreadContextRecord, UserInputQuestion } from "@t3tools/contracts";
+import type { ThreadContextRecord } from "@t3tools/contracts";
+import type { ThreadUserInputQuestion as UserInputQuestion } from "@t3tools/client-runtime/state/thread-requests";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 
