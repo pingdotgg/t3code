@@ -1,4 +1,5 @@
 import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
+import { sortChecks } from "@t3tools/source-control-core/server/pullRequestChecks";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import {
@@ -549,10 +550,12 @@ function checkStatus(check: (typeof GitCafeChecks.Type.items)[number]): PullRequ
 }
 
 export function toChecks(checks: typeof GitCafeChecks.Type): ReadonlyArray<PullRequestCheck> {
-  return checks.items.map((check) => ({
-    name: check.name,
-    status: checkStatus(check),
-    description: check.summary,
-    url: check.detailsUrl,
-  }));
+  return sortChecks(
+    checks.items.map((check) => ({
+      name: check.name,
+      status: checkStatus(check),
+      description: check.summary,
+      url: check.detailsUrl,
+    })),
+  );
 }

@@ -623,8 +623,8 @@ describe("pull request detail decoding", () => {
       check({ __typename: "StatusContext", context: "ci/legacy", state: "SUCCESS" }),
     ]);
     expect(detail.checks.map((check) => [check.name, check.status])).toEqual([
-      ["build", "pending"],
       ["test", "failure"],
+      ["build", "pending"],
       ["ci/legacy", "success"],
     ]);
   });

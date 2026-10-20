@@ -133,6 +133,25 @@ describe("dedupeChecks", () => {
     ]);
   });
 
+  it("puts failed and cancelled checks first, preserving each group's order after reruns", () => {
+    const checks = dedupeChecks([
+      entry("lint", "failure", { at: "2026-08-11T16:00:00Z" }),
+      entry("integration", "cancelled"),
+      entry("types", "pending"),
+      entry("unit", "failure"),
+      entry("format", "success"),
+      entry("lint", "success", { at: "2026-08-11T18:00:00Z" }),
+    ]);
+
+    expect(checks.map((check) => [check.name, check.status])).toEqual([
+      ["integration", "cancelled"],
+      ["unit", "failure"],
+      ["lint", "success"],
+      ["types", "pending"],
+      ["format", "success"],
+    ]);
+  });
+
   it("keeps distinct workflow and check pairs even when their names join to the same text", () => {
     const checks = dedupeChecks([
       entry("Linux tests", "success", {
@@ -181,8 +200,8 @@ describe("dedupeChecks", () => {
     ]);
 
     expect(checks.map((check) => [check.name, check.status])).toEqual([
-      ["CI / build", "success"],
       ["Release / build", "failure"],
+      ["CI / build", "success"],
     ]);
   });
 
@@ -193,6 +212,6 @@ describe("dedupeChecks", () => {
       entry("build", "failure", { workflowName: "CI", at: "2026-08-11T16:00:00Z" }),
     ]);
 
-    expect(checks.map((check) => check.name)).toEqual(["build", "CI / build"]);
+    expect(checks.map((check) => check.name)).toEqual(["CI / build", "build"]);
   });
 });
