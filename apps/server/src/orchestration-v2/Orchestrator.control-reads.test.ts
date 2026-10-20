@@ -1155,6 +1155,91 @@ it.effect("replays a thread.create receipt without changing the thread", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("guards armed limit recovery at dispatch while preserving manual settlement", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    for (const mode of ["automatic", "manual"] as const) {
+      const threadId = ThreadId.make(`thread:limit-settle:${mode}`);
+      const runId = RunId.make(`run:limit-settle:${mode}`);
+      const now = yield* DateTime.now;
+      const reset = DateTime.add(now, { days: 1 });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`limit-settle-create:${mode}`),
+        threadId,
+        projectId: ProjectId.make("project:limit-settle"),
+        title: "Limited thread",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* projections.apply({
+        id: EventId.make(`limit-settle-run:${mode}`),
+        type: "run.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: runId,
+          threadId,
+          ordinal: 1,
+          providerInstanceId: instanceId,
+          modelSelection,
+          providerThreadId: null,
+          userMessageId: MessageId.make(`message:limit-settle:${mode}`),
+          rootNodeId: null,
+          activeAttemptId: null,
+          status: "failed",
+          requestedAt: now,
+          startedAt: now,
+          completedAt: now,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      });
+      const before = yield* projections.getThread(threadId);
+      yield* projections.apply({
+        id: EventId.make(`limit-settle-arm:${mode}`),
+        type: "thread.metadata-updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          ...before,
+          limitRecovery: { runId, resetAt: DateTime.formatIso(reset), autoResume: true },
+        },
+      });
+      const automaticCommand = {
+        type: "thread.auto-settle" as const,
+        commandId: CommandId.make(`limit-auto-settle:${mode}`),
+        threadId,
+        snapshotAt: before.updatedAt,
+      };
+      assert.deepEqual((yield* projections.getThread(threadId)).updatedAt, before.updatedAt);
+      if (mode === "automatic") {
+        const error = yield* orchestrator.dispatch(automaticCommand).pipe(Effect.flip);
+        assert.instanceOf(error, Orchestrator.OrchestratorDispatchError);
+        assert.isNull((yield* projections.getThread(threadId)).settledOverride);
+        yield* TestClock.setTime(DateTime.toEpochMillis(reset));
+        yield* orchestrator.dispatch({
+          ...automaticCommand,
+          commandId: CommandId.make("limit-auto-settle-after-reset"),
+        });
+      } else {
+        yield* orchestrator.dispatch({
+          type: "thread.settle",
+          commandId: CommandId.make("limit-manual-settle"),
+          threadId,
+        });
+      }
+      assert.equal((yield* projections.getThread(threadId)).settledOverride, "settled");
+    }
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("explicit settle clears snooze atomically and stays idempotent after re-snoozing", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;

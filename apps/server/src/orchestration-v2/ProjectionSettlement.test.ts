@@ -212,6 +212,16 @@ it.effect.each([
           snoozedAt: now,
         }),
       );
+      yield* createRun(
+        yield* createThread("limit-armed", {
+          limitRecovery: {
+            runId: RunId.make("run:thread:settlement:limit-armed:1"),
+            resetAt: DateTime.formatIso(DateTime.add(now, { days: 1 })),
+            autoResume: true,
+          },
+        }),
+        "failed",
+      );
       const woke = yield* createThread("woke", {
         snoozedUntil: DateTime.add(now, { days: 1 }),
         snoozedAt: DateTime.subtract(old, { days: 1 }),
@@ -270,6 +280,7 @@ it.effect.each([
       for (const candidate of candidates) {
         const expected = shell.threads.find((thread) => thread.id === candidate.id)!;
         assert.deepEqual(candidate.pendingBackgroundTasks, expected.pendingBackgroundTasks);
+        assert.deepEqual(candidate.limitRecovery, expected.limitRecovery);
         const settings = {
           pullRequest: null,
           nowMs: DateTime.toEpochMillis(now),
@@ -301,11 +312,47 @@ it.effect.each([
 it.effect.each([
   ["sql", layerSql],
   ["memory", ProjectionStore.layerMemory],
-] as const)("%s: the user-authored message time ignores agent notifications", ([, testLayer]) =>
+] as const)("%s: queued notifications preserve recovery and user activity", ([, testLayer]) =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;
-    const threadId = yield* createThread("agent-woken");
-    yield* createRun(threadId);
+    const recovery = {
+      runId: RunId.make("run:thread:settlement:agent-woken:1"),
+      resetAt: DateTime.formatIso(now),
+      autoResume: true,
+    };
+    const threadId = yield* createThread("agent-woken", { limitRecovery: recovery });
+    const failedRunId = yield* createRun(threadId, "failed");
+    const queuedRunId = yield* createRun(threadId, "queued", 2);
+    yield* store.apply({
+      id: EventId.make("event:settlement:limit-error"),
+      type: "turn-item.updated",
+      threadId,
+      occurredAt: old,
+      payload: {
+        id: TurnItemId.make("item:settlement:limit-error"),
+        threadId,
+        runId: failedRunId,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        type: "error",
+        status: "failed",
+        title: "Usage limit reached",
+        startedAt: old,
+        completedAt: old,
+        updatedAt: old,
+        failure: {
+          class: "usage_limit",
+          message: "Plan limit reached.",
+          resetAt: recovery.resetAt,
+          code: "usageLimitExceeded",
+          retryable: null,
+        },
+      },
+    });
     const message = (
       id: string,
       createdBy: "user" | "agent",
@@ -320,9 +367,9 @@ it.effect.each([
         payload: {
           createdBy,
           creationSource,
-          id: MessageId.make(`message:settlement:${id}`),
+          id: MessageId.make(`message:${createdBy === "agent" ? queuedRunId : failedRunId}`),
           threadId,
-          runId: null,
+          runId: createdBy === "agent" ? queuedRunId : failedRunId,
           nodeId: null,
           role: "user",
           text: id,
@@ -332,13 +379,13 @@ it.effect.each([
           updatedAt: at,
         },
       });
-    const written = DateTime.subtract(now, { hours: 2 });
+    const written = DateTime.subtract(old, { hours: 2 });
     yield* message("written", "user", "web", written);
-    yield* message("notification", "agent", "provider", now);
+    yield* message("notification", "agent", "provider", old);
 
     const [candidate] = yield* store.getSettlementCandidates(threadId);
     assert.isDefined(candidate);
-    assert.equal(DateTime.formatIso(candidate.latestUserMessageAt!), DateTime.formatIso(now));
+    assert.equal(DateTime.formatIso(candidate.latestUserMessageAt!), DateTime.formatIso(old));
     assert.equal(
       DateTime.formatIso(candidate.latestUserAuthoredMessageAt!),
       DateTime.formatIso(written),
@@ -350,6 +397,30 @@ it.effect.each([
       DateTime.formatIso(shellThread!.latestUserAuthoredMessageAt!),
       DateTime.formatIso(written),
     );
+    assert.equal(shellThread!.latestRunId, recovery.runId);
+    assert.deepEqual(shellThread!.limitRecovery, recovery);
+    for (const thread of [shellThread!, candidate]) {
+      const input = {
+        thread: {
+          ...thread,
+          latestUserAuthoredMessageAt: thread.latestUserAuthoredMessageAt ?? null,
+        },
+        pullRequest: null,
+        autoSettleAfterDays: 1,
+        autoSettleOnMerge: false,
+      };
+      const resetMs = DateTime.toEpochMillis(now);
+      const windowEndMs = DateTime.toEpochMillis(DateTime.add(now, { days: 1 }));
+      for (const nowMs of [resetMs + 1, windowEndMs, resetMs - 1]) {
+        assert.isNull(
+          resolveAutoSettlementAt({ ...input, nowMs }),
+          "queued automatic delivery must wait for the full inactivity window after reset",
+        );
+      }
+      assert.deepEqual(resolveAutoSettlementAt({ ...input, nowMs: windowEndMs + 1 }), now);
+    }
+    assert.equal(candidate.latestRunId, shellThread!.latestRunId);
+    assert.deepEqual(candidate.limitRecovery, shellThread!.limitRecovery);
   }).pipe(Effect.provide(testLayer)),
 );
 
@@ -458,7 +529,7 @@ it.effect(
       );
       assert.isTrue(queries.every(([query]) => !query.includes("COUNT(")));
       const pendingQuery = queries.find(([query]) =>
-        query.includes("FROM orchestration_v2_projection_turn_items"),
+        query.trimStart().startsWith("SELECT i.thread_id, i.payload_json"),
       );
       assert.isDefined(pendingQuery);
       const metadata = yield* store.getThread(threadId);

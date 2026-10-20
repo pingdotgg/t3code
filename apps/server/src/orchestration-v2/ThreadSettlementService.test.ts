@@ -7,6 +7,7 @@ import {
   EventId,
   ProviderInstanceId,
   ProviderSessionId,
+  RunId,
   ThreadId,
   type OrchestrationProjectShell,
   type OrchestrationV2AppThread,
@@ -334,6 +335,55 @@ describe("resolveAutoSettlementAt", () => {
     expect(
       ThreadSettlementService.resolveAutoSettlementAt({ ...input, nowMs: NOW_MS + DAY_MS }),
     ).toEqual(at(-1_000));
+  });
+
+  it("holds only matching armed recovery until reset, then restarts inactivity", () => {
+    const recovery = {
+      runId: RunId.make("run-1"),
+      resetAt: DateTime.formatIso(at(DAY_MS)),
+      autoResume: true,
+    };
+    const thread = shell({
+      status: "failed",
+      latestRunId: recovery.runId,
+      latestRunCompletedAt: at(-4 * DAY_MS),
+      limitRecovery: recovery,
+    });
+    const input = {
+      thread,
+      pullRequest: null,
+      nowMs: NOW_MS,
+      autoSettleAfterDays: 1,
+      autoSettleOnMerge: true,
+    };
+    expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toBeNull();
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({
+        ...input,
+        pullRequest: { state: "merged", mergedAt: DateTime.formatIso(at(-1_000)) },
+      }),
+    ).toBeNull();
+    for (const overrides of [
+      { limitRecovery: { ...recovery, autoResume: false } },
+      { limitRecovery: { ...recovery, runId: RunId.make("run-0") } },
+      { latestRunId: null },
+    ]) {
+      expect(
+        ThreadSettlementService.resolveAutoSettlementAt({
+          ...input,
+          thread: { ...thread, ...overrides },
+        }),
+      ).toEqual(at(-4 * DAY_MS));
+    }
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({ ...input, nowMs: NOW_MS + DAY_MS }),
+    ).toBeNull();
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({ ...input, nowMs: NOW_MS + 2 * DAY_MS }),
+    ).toBeNull();
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({ ...input, nowMs: NOW_MS + 2 * DAY_MS + 1 }),
+    ).toEqual(at(DAY_MS));
   });
 
   it("settles on merge only after the user's last action and preserves the activity time", () => {

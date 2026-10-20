@@ -28,6 +28,7 @@ import * as TerminalManager from "../terminal/Manager.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { armedLimitResetAtMs } from "./UsageLimitRecovery.ts";
 
 export interface SettlementPullRequest {
   readonly state: "open" | "closed" | "merged";
@@ -166,6 +167,8 @@ export function isAutoSettlementCandidate(
   if (thread.activityRunStatus != null) return false;
   if (backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])) return false;
   if (threadHasQueuedTurnStart(thread, nowMs)) return false;
+  const limitResetAtMs = armedLimitResetAtMs(thread);
+  if (limitResetAtMs !== null && limitResetAtMs > nowMs) return false;
   // Interrupted runs must keep the same snooze protection the sidebar shows.
   return !isSnoozed(thread, nowMs);
 }
@@ -236,7 +239,12 @@ export function resolveAutoSettlementAt(input: {
   const timerWakeAtMs =
     snoozedUntilMs !== null && snoozedUntilMs <= input.nowMs ? snoozedUntilMs : null;
   const inactivityAtMs =
-    latestMillis([activityAtMs, toMillis(thread.lastSnoozeWakeAt), timerWakeAtMs]) ?? activityAtMs;
+    latestMillis([
+      activityAtMs,
+      toMillis(thread.lastSnoozeWakeAt),
+      timerWakeAtMs,
+      armedLimitResetAtMs(thread),
+    ]) ?? activityAtMs;
   return inactivityAtMs < input.nowMs - input.autoSettleAfterDays * DAY_MS
     ? DateTime.makeUnsafe(inactivityAtMs)
     : null;
