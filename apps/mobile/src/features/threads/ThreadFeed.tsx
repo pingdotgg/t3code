@@ -1,6 +1,7 @@
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
+import { useWorkspaceSettledContentWidth } from "../layout/workspace-content-width";
 import { ThreadMarkdownVideo, ThreadMediaVisibleContext } from "./ThreadMarkdownVideo";
 import { useMarkdownImageSource } from "../../native/useMarkdownImageSource";
 import { enrichedContextLinkCustomization } from "../../native/useEnrichedLinkVariants";
@@ -1696,9 +1697,12 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     previousTextSize.current = workRowSizing.textSizeKey;
     listRef.current?.clearCaches({ mode: "sizes" });
   }, [workRowSizing.textSizeKey, listRef]);
-  const [viewportWidth, setViewportWidth] = useState(() =>
+  const settledPaneWidth = useWorkspaceSettledContentWidth();
+  const [measuredViewportWidth, setViewportWidth] = useState(() =>
     props.layoutVariant === "split" ? 0 : windowWidth,
   );
+  const viewportWidth =
+    settledPaneWidth !== null ? Math.round(settledPaneWidth) : measuredViewportWidth;
   const [viewportHeight, setViewportHeight] = useState(0);
   const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
   // LegendList's maintainScrollAtEnd alone re-pins the feed whenever the
@@ -2402,6 +2406,14 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     if (previousContentWidth.current === contentWidth) return;
     previousContentWidth.current = contentWidth;
     if (hasHtmlRenders) listRef.current?.clearCaches({ mode: "sizes" });
+    // A reflow can grow the visible rows past LegendList's near-end threshold in one batch, and
+    // maintainScrollAtEnd then stops following. Pin the end the feed was following once the new
+    // sizes are in.
+    if (!endFollowEnabledRef.current || !listRef.current?.getState().isAtEnd) return;
+    const frame = requestAnimationFrame(() => {
+      if (endFollowEnabledRef.current) void listRef.current?.scrollToEnd({ animated: false });
+    });
+    return () => cancelAnimationFrame(frame);
   }, [contentWidth, hasHtmlRenders, listRef]);
 
   const renderItem = (info: { item: PendingThreadFeedEntry; index: number }) => (
