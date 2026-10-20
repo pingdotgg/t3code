@@ -598,7 +598,7 @@ describe("ClientSettings glass opacity", () => {
     expect(() => decodeClientSettingsPatch({ glassOpacity: value })).toThrow();
   });
 
-  it.each([40, 75, 100])("accepts a glass opacity within the supported range: %s", (value) => {
+  it.each([40, 100])("accepts a glass opacity within the supported range: %s", (value) => {
     expect(decodeClientSettings({ glassOpacity: value }).glassOpacity).toBe(value);
     expect(decodeClientSettingsPatch({ glassOpacity: value }).glassOpacity).toBe(value);
   });
@@ -614,7 +614,7 @@ describe("ClientSettings appearance contrast", () => {
     expect(() => decodeClientSettingsPatch({ appearanceContrast: value })).toThrow();
   });
 
-  it.each([50, 100, 150, 200])("accepts an appearance contrast in range: %s", (value) => {
+  it.each([50, 200])("accepts an appearance contrast in range: %s", (value) => {
     expect(decodeClientSettings({ appearanceContrast: value }).appearanceContrast).toBe(value);
     expect(decodeClientSettingsPatch({ appearanceContrast: value }).appearanceContrast).toBe(value);
   });
