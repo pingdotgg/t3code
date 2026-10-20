@@ -4,12 +4,14 @@ import {
   type ProviderAuthState,
   type ProviderInstanceId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -271,7 +273,10 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
                 expiresAt: null,
                 message: Exit.isSuccess(result)
                   ? "Signed in with Cursor."
-                  : "Cursor sign-in failed or expired. Start sign-in again.",
+                  : Option.match(Cause.findErrorOption(result.cause), {
+                      onNone: () => "Cursor sign-in failed or expired. Start sign-in again.",
+                      onSome: (error) => error.detail,
+                    }),
               });
             }),
           ),

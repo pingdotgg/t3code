@@ -294,7 +294,19 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
     yield* Effect.logWarning("Cursor SDK catalog probe failed", {
       cause: catalogResult.failure.cause,
     });
-    const authenticationFailure = catalogResult.failure.authenticationFailure;
+    const failure = catalogResult.failure;
+    let message = "Cursor SDK catalog request failed. Check server logs for details.";
+    if (failure.authenticationFailure) {
+      message =
+        authenticationType === "browser"
+          ? "Cursor sign-in expired or was rejected. Sign in again in provider settings."
+          : "Cursor SDK authentication failed. Check CURSOR_API_KEY.";
+    } else if (failure.planRequired) {
+      message =
+        authenticationType === "browser"
+          ? "Cursor needs a paid plan to run in T3 Code. Upgrade this account or sign in with a different one."
+          : "Cursor needs a paid plan to run in T3 Code. Upgrade the account that owns CURSOR_API_KEY or use a key from a paid account.";
+    }
     return buildServerProvider({
       presentation: CURSOR_PRESENTATION,
       enabled: cursorSettings.enabled,
@@ -304,12 +316,8 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
         installed: true,
         version: null,
         status: "error",
-        auth: { status: authenticationFailure ? "unauthenticated" : "unknown" },
-        message: authenticationFailure
-          ? authenticationType === "browser"
-            ? "Cursor sign-in expired or was rejected. Sign in again in provider settings."
-            : "Cursor SDK authentication failed. Check CURSOR_API_KEY."
-          : "Cursor SDK catalog request failed. Check server logs for details.",
+        auth: { status: failure.authenticationFailure ? "unauthenticated" : "unknown" },
+        message,
       },
     });
   }
