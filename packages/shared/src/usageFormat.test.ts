@@ -7,8 +7,32 @@ import {
   formatHourShort,
   formatPercent,
   formatRelativeHourShort,
+  formatTokens,
   makeWindow,
 } from "./usageFormat.ts";
+
+describe("formatTokens", () => {
+  it("promotes units when three-significant-figure rounding reaches the next unit", () => {
+    expect(formatTokens(999.6)).toBe("1K");
+    expect(formatTokens(999_600)).toBe("1M");
+    expect(formatTokens(999_600_000)).toBe("1B");
+    expect(formatTokens(999_600_000_000)).toBe("1T");
+  });
+
+  it("preserves ordinary counts below the rollover boundary", () => {
+    expect(formatTokens(0)).toBe("0");
+    expect(formatTokens(999.4)).toBe("999");
+    expect(formatTokens(1_234)).toBe("1.23K");
+    expect(formatTokens(999_499)).toBe("999K");
+    expect(formatTokens(12_345_678)).toBe("12.3M");
+  });
+
+  it("preserves negative signs and NaN", () => {
+    expect(formatTokens(-999.5)).toBe("-1K");
+    expect(formatTokens(-999_600)).toBe("-1M");
+    expect(formatTokens(Number.NaN)).toBe("NaN");
+  });
+});
 
 describe("formatPercent", () => {
   it("distinguishes a small positive share from zero", () => {
