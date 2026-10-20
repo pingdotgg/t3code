@@ -4673,7 +4673,7 @@ it.effect(
         const publish = Effect.fnUntraced(function* (
           event: ProviderAdapter.ProviderAdapterV2Event,
         ) {
-          const subscription = yield* failed.runtime.subscribeEvents!;
+          const subscription = yield* failed.runtime.subscribeEvents!();
           yield* Queue.offer(queue!, event);
           // Observing the exact event ensures the manager has handled it before resuming.
           assert.deepEqual(yield* subscription.events.pipe(Stream.runHead), Option.some(event));
