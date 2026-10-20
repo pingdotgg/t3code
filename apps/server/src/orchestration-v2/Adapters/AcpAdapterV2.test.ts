@@ -15,16 +15,11 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   CheckpointId,
   EnvironmentId,
-  MessageId,
   type ModelSelection,
-  NodeId,
-  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
-  RunAttemptId,
-  RunId,
   ThreadId,
   type OrchestrationV2ProviderThread,
   type ProviderOptionDescriptor,
@@ -73,6 +68,7 @@ import {
 } from "@t3tools/provider-grok/testing";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { makeTurnInput } from "./AcpAdapterV2.testkit.ts";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import {
   AcpProviderCapabilitiesV2,
@@ -539,69 +535,6 @@ const pollProtocolMethods = (events: Queue.Queue<EffectAcpProtocol.AcpProtocolLo
     }
     return methods;
   });
-
-function makeTurnInput(input: {
-  readonly threadId: ThreadId;
-  readonly providerThread: OrchestrationV2ProviderThread;
-  readonly instanceId: ProviderInstanceId;
-  readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
-  readonly now: DateTime.Utc;
-  readonly ordinal?: number;
-  readonly modelSelection?: ModelSelection;
-  readonly messageCreatedBy?: "user" | "agent";
-  readonly messageCreationSource?: "web" | "mobile" | "mcp" | "provider" | "server";
-  readonly messageText?: string;
-}): ProviderAdapter.ProviderAdapterV2TurnInput {
-  const ordinal = input.ordinal ?? 1;
-  const suffix = `${input.threadId}:${ordinal}`;
-  const modelSelection =
-    input.modelSelection ?? ({ instanceId: input.instanceId, model: "default" } as const);
-  return {
-    appThread: {
-      createdBy: "user",
-      creationSource: "web",
-      id: input.threadId,
-      projectId: ProjectId.make(`project:${input.threadId}`),
-      title: "ACP adapter test",
-      providerInstanceId: input.instanceId,
-      modelSelection,
-      runtimeMode: "approval-required",
-      interactionMode: "default",
-      branch: null,
-      worktreePath: null,
-      activeProviderThreadId: input.providerThread.id,
-      lineage: {
-        parentThreadId: null,
-        relationshipToParent: null,
-        rootThreadId: input.threadId,
-      },
-      forkedFrom: null,
-      createdAt: input.now,
-      updatedAt: input.now,
-      archivedAt: null,
-      settledOverride: null,
-      settledAt: null,
-      lastVisitedAt: null,
-      deletedAt: null,
-    },
-    threadId: input.threadId,
-    runId: RunId.make(`run:${suffix}`),
-    runOrdinal: ordinal,
-    providerTurnOrdinal: ordinal,
-    attemptId: RunAttemptId.make(`attempt:${suffix}`),
-    rootNodeId: NodeId.make(`node:${suffix}`),
-    providerThread: input.providerThread,
-    message: {
-      createdBy: input.messageCreatedBy ?? "user",
-      creationSource: input.messageCreationSource ?? "web",
-      messageId: MessageId.make(`message:${suffix}`),
-      text: input.messageText ?? "test prompt",
-      attachments: [],
-    },
-    modelSelection,
-    runtimePolicy: input.runtimePolicy,
-  };
-}
 
 describe("AcpAdapterV2", () => {
   it.live.each(["failed", "recovered", "completed", "cancelled"] as const)(

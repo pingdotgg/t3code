@@ -59,31 +59,36 @@ export function normalizeAcpRegistryWebUrl(value: string): string | undefined {
   return url.protocol === "https:" || url.protocol === "http:" ? url.href : undefined;
 }
 
+function normalizedModel(id: string, candidate: AcpRegistryProbeModel): AcpRegistryProbeModel {
+  return {
+    id,
+    name: boundedText(candidate.name, MAX_NAME_LENGTH) || id,
+    description:
+      candidate.description === null
+        ? null
+        : boundedText(candidate.description, MAX_DESCRIPTION_LENGTH) || null,
+  };
+}
+
 function normalizeModels(
-  modelChoices: ReadonlyArray<EffectAcpSchema.SessionConfigSelectOption>,
+  candidates: ReadonlyArray<AcpRegistryProbeModel>,
+  currentModelId: string | null,
 ): ReadonlyArray<AcpRegistryProbeModel> {
-  // Model discovery is the model config option's base models; ACP has no
-  // other portable model inventory.
-  const candidates = modelChoices.map((model) => ({
-    id: model.value,
-    name: model.name,
-    description: model.description ?? null,
-  }));
   const seen = new Set<string>();
   const models: Array<AcpRegistryProbeModel> = [];
   for (const candidate of candidates) {
+    if (models.length === MAX_MODELS) break;
     const id = boundedOpaqueValue(candidate.id, MAX_ID_LENGTH);
     if (id === undefined || seen.has(id)) continue;
     seen.add(id);
-    models.push({
-      id,
-      name: boundedText(candidate.name, MAX_NAME_LENGTH) || id,
-      description:
-        candidate.description === null
-          ? null
-          : boundedText(candidate.description, MAX_DESCRIPTION_LENGTH) || null,
-    });
-    if (models.length === MAX_MODELS) break;
+    models.push(normalizedModel(id, candidate));
+  }
+  // Keep the running model visible even when its advertised position exceeds the cap.
+  if (currentModelId !== null && models.length === MAX_MODELS && !seen.has(currentModelId)) {
+    const current = candidates.find((candidate) => candidate.id === currentModelId);
+    if (current !== undefined) {
+      models[MAX_MODELS - 1] = normalizedModel(currentModelId, current);
+    }
   }
   return models;
 }
@@ -168,13 +173,28 @@ export interface AcpRegistryLiveConfiguration {
 export function normalizeAcpRegistryLiveConfiguration(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
   modeState?: Parameters<typeof acpProviderOptionDescriptors>[0]["modeState"],
+  modelState?: EffectAcpSchema.SessionModelState | null,
 ): AcpRegistryLiveConfiguration {
   const modelOption = findModelConfigOption(configOptions);
-  const boundedCurrentModelId =
+  const currentModelId =
+    modelOption?.type === "select" ? modelOption.currentValue : modelState?.currentModelId;
+  const candidates =
     modelOption === undefined
+      ? (modelState?.availableModels ?? []).map((model) => ({
+          id: model.modelId,
+          name: model.name,
+          description: model.description ?? null,
+        }))
+      : flattenSelectChoices(modelOption.options).map((model) => ({
+          id: model.value,
+          name: model.name,
+          description: model.description ?? null,
+        }));
+  const boundedCurrentModelId =
+    currentModelId === undefined
       ? null
-      : (boundedOpaqueValue(modelOption.currentValue, MAX_ID_LENGTH) ?? null);
-  const models = normalizeModels(flattenSelectChoices(modelOption?.options ?? []));
+      : (boundedOpaqueValue(currentModelId, MAX_ID_LENGTH) ?? null);
+  const models = normalizeModels(candidates, boundedCurrentModelId);
   return {
     models,
     currentModelId: models.some((model) => model.id === boundedCurrentModelId)
@@ -236,6 +256,7 @@ export function acpRegistryProbeResult(
   const liveConfiguration = normalizeAcpRegistryLiveConfiguration(
     started.sessionSetupResult.configOptions ?? [],
     parseSessionModeState(started.sessionSetupResult),
+    started.sessionSetupResult.models,
   );
   return AcpRegistryProbeResult.make({
     instanceId,

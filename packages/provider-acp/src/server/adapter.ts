@@ -217,6 +217,7 @@ export interface AcpAdapterV2Flavor {
   readonly onSessionConfigurationUpdate?: (
     configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
     modeState: AcpSessionModeState | undefined,
+    modelState: EffectAcpSchema.SessionModelState | null | undefined,
   ) => Effect.Effect<void>;
   readonly onUrlElicitation?: (input: {
     readonly elicitationId: string;
@@ -231,6 +232,7 @@ export interface AcpAdapterV2Flavor {
     EffectAcpErrors.AcpError,
     ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope
   >;
+  readonly customModels?: ReadonlyArray<string>;
   readonly resolveModelId?: (selection: ModelSelection) => string | undefined;
   readonly getModelContextWindow?: (
     selection: ModelSelection,
@@ -516,14 +518,15 @@ function negotiatedCapabilities(
   const agent = started.initializeResult.agentCapabilities ?? {};
   const session = agent.sessionCapabilities;
   const setup = started.sessionSetupResult;
-  const hasModelConfig = findModelConfigOption(setup.configOptions) !== undefined;
+  const canSwitchModel =
+    findModelConfigOption(setup.configOptions) !== undefined || setup.models != null;
   const canLoad = agent.loadSession === true;
   const canFork = session?.fork != null;
   return {
     ...base,
     sessions: {
       ...base.sessions,
-      supportsModelSwitchInSession: hasModelConfig,
+      supportsModelSwitchInSession: canSwitchModel,
     },
     threads: {
       ...base.threads,
@@ -5129,6 +5132,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   flavor.onSessionConfigurationUpdate?.(
                     yield* runtime.getConfigOptions,
                     yield* runtime.getModeState,
+                    (yield* Ref.get(activeSessionSetup))?.sessionSetupResult.models,
                   ) ?? Effect.void
                 );
               }
@@ -5904,13 +5908,33 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               startResult,
               modelSelection,
             });
-          } else if (
-            requestedModel.length > 0 &&
-            requestedModel !== "auto" &&
-            requestedModel !== "default"
-          ) {
-            if (findModelConfigOption(startResult.sessionSetupResult.configOptions) !== undefined) {
-              yield* runtime.setModel(requestedModel);
+          } else if (requestedModel.length > 0) {
+            // Stored catalog choices can expire; explicitly configured custom IDs
+            // are validated by the agent instead.
+            const isCustomModel = flavor.customModels?.includes(requestedModel) === true;
+            const modelOption = findModelConfigOption(yield* runtime.getConfigOptions);
+            const modelState = startResult.sessionSetupResult.models;
+            if (modelOption?.type === "select") {
+              if (
+                isCustomModel ||
+                modelOption.options.some((entry) =>
+                  "value" in entry
+                    ? entry.value === requestedModel
+                    : entry.options.some((choice) => choice.value === requestedModel),
+                )
+              ) {
+                yield* runtime.setConfigOption(modelOption.id, requestedModel);
+                appliedModel = requestedModel;
+              }
+            } else if (
+              modelState != null &&
+              (isCustomModel ||
+                modelState.availableModels.some((model) => model.modelId === requestedModel))
+            ) {
+              if (modelState.currentModelId !== requestedModel) {
+                yield* runtime.setSessionModel(requestedModel);
+              }
+              appliedModel = requestedModel;
             }
           }
           if (appliedModel !== undefined) {
@@ -6078,6 +6102,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             flavor.onSessionConfigurationUpdate?.(
               yield* runtime.getConfigOptions,
               yield* runtime.getModeState,
+              (yield* Ref.get(activeSessionSetup))?.sessionSetupResult.models,
             ) ?? Effect.void
           );
         });

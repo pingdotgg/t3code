@@ -292,32 +292,42 @@ describe("ACP Registry probe", () => {
     ]);
   });
 
-  it("omits a current model that falls outside the bounded model catalog", () => {
-    const result = acpRegistryProbeResult(instanceId, {
-      sessionId: "probe-session",
-      initializeResult: { protocolVersion: 1 },
-      sessionSetupResult: {
+  it.each(["config option", "session model state"] as const)(
+    "retains the current model beyond the catalog cap from %s",
+    (source) => {
+      const models = Array.from({ length: 257 }, (_, index) => ({
+        modelId: `model-${index}`,
+        name: `Model ${index}`,
+      }));
+      const result = acpRegistryProbeResult(instanceId, {
         sessionId: "probe-session",
-        configOptions: [
-          {
-            id: "model",
-            name: "Model",
-            category: "model",
-            type: "select",
-            currentValue: "model-256",
-            options: Array.from({ length: 257 }, (_, index) => ({
-              value: `model-${index}`,
-              name: `Model ${index}`,
-            })),
-          },
-        ],
-      },
-      modelConfigId: "model",
-    } satisfies AcpSessionRuntime.AcpSessionRuntimeStartResult);
+        initializeResult: { protocolVersion: 1 },
+        sessionSetupResult: {
+          sessionId: "probe-session",
+          ...(source === "config option"
+            ? {
+                configOptions: [
+                  {
+                    id: "model",
+                    name: "Model",
+                    category: "model",
+                    type: "select",
+                    currentValue: "model-256",
+                    options: models.map(({ modelId, name }) => ({ value: modelId, name })),
+                  },
+                ],
+              }
+            : { models: { currentModelId: "model-256", availableModels: models } }),
+        },
+        modelConfigId: source === "config option" ? "model" : undefined,
+      } satisfies AcpSessionRuntime.AcpSessionRuntimeStartResult);
 
-    expect(result.models).toHaveLength(256);
-    expect(result.currentModelId).toBeNull();
-  });
+      expect(result.models).toHaveLength(256);
+      expect(result.models[0]?.id).toBe("model-0");
+      expect(result.models.at(-1)?.id).toBe("model-256");
+      expect(result.currentModelId).toBe("model-256");
+    },
+  );
 
   it("bounds and de-duplicates advertised commands", () => {
     const commands = normalizeAcpRegistryCommands([
