@@ -103,6 +103,9 @@ export const buildSshHostSpecEffect = (
       }),
   });
 
+// Every caller runs its own remote command over piped stdio or only forwards
+// ports, so an alias's RemoteCommand (ssh refuses it next to a command line)
+// and RequestTTY must not apply.
 export function baseSshArgs(
   target: DesktopSshEnvironmentTarget,
   input?: { readonly batchMode?: "yes" | "no" },
@@ -112,6 +115,10 @@ export function baseSshArgs(
     `BatchMode=${input?.batchMode ?? "no"}`,
     "-o",
     "ConnectTimeout=10",
+    "-o",
+    "RemoteCommand=none",
+    "-o",
+    "RequestTTY=no",
     ...(target.port !== null ? ["-p", String(target.port)] : []),
   ];
 }
