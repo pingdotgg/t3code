@@ -42,6 +42,7 @@ import {
   decodeThreadHistoryCursor,
   selectHistoryPageFromCursor,
   THREAD_HISTORY_PAGE_POLICY,
+  THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
 } from "./threadHistoryPaging.ts";
 
 const layerTest = Layer.mergeAll(
@@ -6071,6 +6072,161 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           ["local", targetThreadId, "command_execution"],
         ],
       );
+    }),
+  );
+
+  it.effect("skips parent bodies once a fork's own turns fill its first page", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const now = DateTime.makeUnsafe("2026-10-01T00:00:00.000Z");
+      const parentId = ThreadId.make("thread:filled-fork:parent");
+      const forkId = ThreadId.make("thread:filled-fork:fork");
+      const parentText = "parent prompt";
+      const createThread = (
+        threadId: ThreadId,
+        forkedFrom: { readonly threadId: ThreadId; readonly runId: RunId } | null,
+      ) =>
+        store.apply({
+          id: EventId.make(`event:${threadId}`),
+          type: "thread.created",
+          threadId,
+          occurredAt: now,
+          payload: {
+            createdBy: "user",
+            creationSource: "web",
+            id: threadId,
+            projectId: ProjectId.make("project:filled-fork"),
+            title: "Filled fork",
+            providerInstanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: null,
+            lineage: {
+              parentThreadId: forkedFrom?.threadId ?? null,
+              relationshipToParent: forkedFrom === null ? null : "fork",
+              rootThreadId: parentId,
+            },
+            forkedFrom: forkedFrom === null ? null : { type: "run", ...forkedFrom },
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+        });
+      const addTurn = Effect.fnUntraced(function* (threadId: ThreadId, turn: number, text: string) {
+        const runId = RunId.make(`run:${threadId}:${turn}`);
+        const nodeId = NodeId.make(`node:${threadId}:${turn}`);
+        yield* store.apply({
+          id: EventId.make(`event:${runId}`),
+          type: "run.created",
+          threadId,
+          runId,
+          nodeId,
+          driver,
+          occurredAt: now,
+          payload: {
+            id: runId,
+            threadId,
+            ordinal: turn,
+            providerInstanceId,
+            modelSelection,
+            providerThreadId: null,
+            userMessageId: MessageId.make(`message:${runId}`),
+            rootNodeId: nodeId,
+            activeAttemptId: null,
+            status: "completed",
+            requestedAt: now,
+            startedAt: now,
+            completedAt: now,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        });
+        yield* store.apply({
+          id: EventId.make(`event:${runId}:prompt`),
+          type: "turn-item.updated",
+          threadId,
+          runId,
+          driver,
+          occurredAt: now,
+          payload: {
+            id: TurnItemId.make(`item:${runId}`),
+            threadId,
+            runId,
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: turn,
+            status: "completed",
+            title: null,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "user_message",
+            messageId: MessageId.make(`message:${runId}`),
+            inputIntent: "turn_start",
+            createdBy: "user",
+            creationSource: "web",
+            text,
+            attachments: [],
+          },
+        });
+      });
+      const readFirstPage = Effect.fnUntraced(function* (
+        threadId: ThreadId,
+        parsesParent: boolean,
+      ) {
+        const full = yield* store.getThreadSnapshot(threadId);
+        // Measure only the window read; the full snapshot is the pagination oracle.
+        const parse = yield* Effect.acquireRelease(
+          Effect.sync(() => vi.spyOn(JSON, "parse")),
+          (spy) => Effect.sync(() => spy.mockRestore()),
+        );
+        const window = yield* store.getThreadSnapshotWindow(threadId, {
+          rowLimit: THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
+          userTurnLimit: THREAD_HISTORY_PAGE_POLICY.maxUserTurns,
+        });
+        assert.equal(
+          parse.mock.calls.some(([text]) => text.includes(parentText)),
+          parsesParent,
+        );
+        const page = buildBoundedThreadProjection(window);
+        assert.deepEqual(page, buildBoundedThreadProjection(full));
+        assert.isTrue(page.hasMoreHistory);
+        assert.isNotNull(page.historyCursor);
+        return page.projection.visibleTurnItems;
+      }, Effect.scoped);
+
+      yield* createThread(parentId, null);
+      for (const turn of [1, 2, 3]) yield* addTurn(parentId, turn, `${parentText} ${turn}`);
+      // The third parent turn is after the fork boundary and must stay excluded.
+      yield* createThread(forkId, { threadId: parentId, runId: RunId.make(`run:${parentId}:2`) });
+      for (let turn = 1; turn <= 9; turn += 1) yield* addTurn(forkId, turn, "fork prompt");
+      const partial = yield* readFirstPage(forkId, true);
+      assert.include(
+        partial.map((row) => row.visibility),
+        "inherited",
+      );
+
+      yield* addTurn(forkId, 10, "fork prompt");
+      const filled = yield* readFirstPage(forkId, false);
+      assert.notInclude(
+        filled.map((row) => row.visibility),
+        "inherited",
+      );
+
+      const nestedId = ThreadId.make("thread:filled-fork:nested");
+      yield* createThread(nestedId, { threadId: forkId, runId: RunId.make(`run:${forkId}:10`) });
+      for (let turn = 1; turn <= 10; turn += 1) yield* addTurn(nestedId, turn, "nested prompt");
+      yield* readFirstPage(nestedId, true);
     }),
   );
 
