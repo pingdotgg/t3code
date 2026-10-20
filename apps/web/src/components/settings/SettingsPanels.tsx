@@ -3751,7 +3751,7 @@ export function ArchivedThreadsPanel() {
                             type="button"
                             variant="outline"
                             size="icon-sm"
-                            aria-label="Unarchive"
+                            aria-label={`Unarchive ${thread.title}`}
                             disabled={
                               isBulkActionPending ||
                               pendingThreadKeys.has(
@@ -3777,7 +3777,7 @@ export function ArchivedThreadsPanel() {
                             type="button"
                             variant="destructive-outline"
                             size="icon-sm"
-                            aria-label="Delete"
+                            aria-label={`Delete ${thread.title}`}
                             disabled={
                               isBulkActionPending ||
                               pendingThreadKeys.has(
