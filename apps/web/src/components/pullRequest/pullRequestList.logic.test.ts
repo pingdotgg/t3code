@@ -1217,6 +1217,49 @@ describe("merging the environments' own listings", () => {
     );
   });
 
+  it.each([false, true])(
+    "merges worktree batches without duplicate rows (reversed: %s)",
+    (reverse) => {
+      const older = entry({
+        projectId: "worktree-1" as ProjectId,
+        number: 4,
+        updatedAt: "2026-07-01T00:00:00Z",
+      });
+      const newer = entry({
+        projectId: "worktree-101" as ProjectId,
+        number: 4,
+        updatedAt: "2026-07-02T00:00:00Z",
+      });
+      const rows = reverse ? [newer, older] : [older, newer];
+      const merged = mergePullRequestLists([
+        ...rows.map((row) => [ENV_1, answer({ entries: [row] })] as const),
+        [ENV_2, answer({ entries: [older] })],
+      ]);
+      expect(merged?.entries).toEqual([
+        { ...newer, environmentId: ENV_1 },
+        { ...older, environmentId: ENV_2 },
+      ]);
+    },
+  );
+
+  it("keeps Azure pull requests from distinct projects with the same repository name and number", () => {
+    const first = entry({
+      provider: SourceControlProviderKind.make("azure-devops"),
+      host: "dev.azure.com",
+      repository: "web",
+      number: 4,
+      projectId: "azure-first" as ProjectId,
+      url: "https://dev.azure.com/acme/first/_git/web/pullrequest/4",
+    });
+    const second = {
+      ...first,
+      projectId: "azure-second" as ProjectId,
+      url: "https://dev.azure.com/acme/second/_git/web/pullrequest/4",
+    };
+    const merged = mergePullRequestLists([[ENV_1, answer({ entries: [first, second] })]]);
+    expect(merged?.entries).toEqual([first, second]);
+  });
+
   it("keeps project errors scoped to the environment that reported them", () => {
     const error = {
       projectId: "project-1" as ProjectId,
@@ -1270,6 +1313,17 @@ describe("merging the environments' own listings", () => {
     expect(merged?.nextCursors).toEqual({
       [ENV_1]: { "github.com pingdotgg/t3code": "cursor-1" },
     });
+  });
+
+  it("keeps continuations from every project batch on the same environment", () => {
+    const merged = mergePullRequestLists([
+      [ENV_1, answer({ truncated: true, nextCursors: { "github.com acme/first": "cursor-1" } })],
+      [ENV_1, answer({ truncated: true, nextCursors: { "github.com acme/second": "cursor-2" } })],
+    ]);
+    expect(merged?.nextCursors).toEqual({
+      [ENV_1]: { "github.com acme/first": "cursor-1", "github.com acme/second": "cursor-2" },
+    });
+    expect(merged?.truncatedEnvironments).toEqual([ENV_1]);
   });
 
   it("reads the same key whichever order the environments connected in", () => {

@@ -1371,26 +1371,161 @@ it.effect("keeps one host listed when another is not set up", () =>
   }),
 );
 
-it.effect("fails as unavailable only when no host can be read", () =>
+it.effect("retains an unavailable host's summary when it is the only queried host", () =>
+  Effect.gen(function* () {
+    for (const reason of ["missing-tool", "unauthenticated"] as const) {
+      const service = yield* makeService({
+        projects: [
+          project({
+            id: "p1",
+            title: "t3code",
+            workspaceRoot: "/a",
+            repository: "pingdotgg/t3code",
+          }),
+        ],
+        providers: [
+          fakeProvider(SourceControlProviderKind.make("github"), {
+            getViewer: () =>
+              Effect.fail(unusable(SourceControlProviderKind.make("github"), reason)),
+          }),
+        ],
+      });
+
+      for (const filter of [{}, { host: "github.com" }]) {
+        const error = yield* service.list({ state: "open", ...filter }).pipe(Effect.flip);
+        assert.strictEqual(error._tag, "PullRequestUnavailableError");
+        assert.strictEqual(
+          error._tag === "PullRequestUnavailableError" ? error.reason : null,
+          reason === "missing-tool" ? "cli-missing" : "cli-unauthenticated",
+        );
+        assert.isDefined(error.listResult);
+        const result = error.listResult!;
+        assert.deepStrictEqual(result.entries, []);
+        assert.deepStrictEqual(result.viewers, {});
+        assert.deepStrictEqual(
+          result.providers.map(({ host, configured, projectIds }) => ({
+            host,
+            configured,
+            projectIds: projectIds?.map(String),
+          })),
+          [{ host: "github.com", configured: false, projectIds: undefined }],
+        );
+        assert.strictEqual(result.providers[0]?.detail?.includes("GitHub"), true);
+        assert.deepStrictEqual(
+          result.errors.map(({ projectId }) => projectId),
+          ["p1"],
+        );
+      }
+    }
+  }),
+);
+
+it.effect(
+  "retains a Bitbucket host summary when saved credentials are rejected with HTTP 403",
+  () =>
+    Effect.gen(function* () {
+      const provider = yield* BitbucketPullRequestProvider.make.pipe(
+        Effect.provide(
+          Layer.mock(BitbucketPullRequestApi.BitbucketPullRequestApi)({
+            getViewer: () =>
+              Effect.fail(
+                new BitbucketApi.BitbucketResponseError({
+                  operation: "request",
+                  status: 403,
+                  responseBodyLength: 0,
+                }),
+              ),
+          }),
+        ),
+      );
+      const service = yield* makeService({
+        projects: [
+          project({
+            id: "bitbucket",
+            title: "Widget",
+            workspaceRoot: "/widget",
+            repository: "acme/widget",
+            provider: "bitbucket",
+            host: "bitbucket.org",
+          }),
+        ],
+        providers: [provider],
+      });
+      for (const filter of [{}, { host: "bitbucket.org" }]) {
+        const error = yield* service.list({ state: "open", ...filter }).pipe(Effect.flip);
+        assert.strictEqual(error._tag, "PullRequestOperationError");
+        assert.isDefined(error.listResult);
+        const result = error.listResult!;
+        assert.deepStrictEqual(
+          result.providers.map(({ host, configured, projectIds }) => ({
+            host,
+            configured,
+            projectIds: projectIds?.map(String),
+          })),
+          [{ host: "bitbucket.org", configured: false, projectIds: undefined }],
+        );
+        assert.deepStrictEqual(result.entries, []);
+        assert.deepStrictEqual(
+          result.errors.map(({ projectId }) => projectId),
+          ["bitbucket"],
+        );
+      }
+    }),
+);
+
+it.effect("identifies every SSH worktree behind an unavailable refined Forgejo authority", () =>
   Effect.gen(function* () {
     const service = yield* makeService({
-      projects: [
-        project({ id: "p1", title: "t3code", workspaceRoot: "/a", repository: "pingdotgg/t3code" }),
-      ],
+      projects: ["ssh", "ssh-worktree"].map((id) =>
+        project({
+          id,
+          title: id,
+          workspaceRoot: `/${id}`,
+          repository: "team/repo",
+          provider: "forgejo",
+          host: "ssh.forge.example",
+          remoteUrl: "ssh://git@ssh.forge.example:2222/team/repo.git",
+        }),
+      ),
       providers: [
-        fakeProvider(SourceControlProviderKind.make("github"), {
-          getViewer: () =>
-            Effect.fail(unusable(SourceControlProviderKind.make("github"), "missing-tool")),
+        fakeProvider(SourceControlProviderKind.make("forgejo"), {
+          getViewer: ({ host }) => {
+            assert.strictEqual(host, "forge.example:3000");
+            return Effect.fail(
+              unusable(SourceControlProviderKind.make("forgejo"), "unauthenticated"),
+            );
+          },
+          listChangeRequests: () => Effect.die("An unauthenticated host must not be queried"),
         }),
       ],
+      resolveHandle: ({ context }) =>
+        Effect.succeed({
+          context: {
+            ...context!,
+            provider: {
+              kind: SourceControlProviderKind.make("forgejo"),
+              name: "Forgejo",
+              baseUrl: "http://forge.example:3000",
+            },
+          },
+          provider: undefined as never,
+        }),
     });
-
     const error = yield* service.list({ state: "open" }).pipe(Effect.flip);
-
-    assert.strictEqual(error._tag, "PullRequestUnavailableError");
-    assert.strictEqual(
-      error._tag === "PullRequestUnavailableError" ? error.reason : null,
-      "cli-missing",
+    assert.isDefined(error.listResult);
+    const result = error.listResult!;
+    assert.deepStrictEqual(
+      result.providers.map(({ host, configured, projectIds }) => ({
+        host,
+        configured,
+        projectIds: projectIds?.map(String),
+      })),
+      [{ host: "forge.example:3000", configured: false, projectIds: ["ssh", "ssh-worktree"] }],
+    );
+    assert.deepStrictEqual(result.entries, []);
+    assert.deepStrictEqual(
+      result.errors.map(({ projectId }) => projectId),
+      ["ssh"],
     );
   }),
 );
@@ -1426,6 +1561,7 @@ it.effect("reads a repository once when several worktrees share it", () =>
 
     assert.strictEqual(calls, 1);
     assert.strictEqual(result.entries.length, 1);
+    assert.isUndefined(result.providers[0]?.projectIds);
   }),
 );
 
@@ -3561,55 +3697,60 @@ it.effect("asks for no search when the reader has typed nothing", () =>
   }),
 );
 
-it.effect("asks another checkout who is signed in when the first one cannot answer", () =>
-  Effect.gen(function* () {
-    const asked: string[] = [];
-    const service = yield* makeService({
-      projects: [
-        project({
-          id: "p1",
-          title: "t3code (stale worktree)",
-          workspaceRoot: "/gone",
-          repository: "pingdotgg/t3code",
-        }),
-        project({
-          id: "p2",
-          title: "t3code",
-          workspaceRoot: "/healthy",
-          repository: "pingdotgg/t3code",
-        }),
-      ],
-      providers: [
-        fakeProvider(SourceControlProviderKind.make("github"), {
-          getViewer: (input) => {
-            asked.push(input.cwd);
-            return input.cwd === "/gone"
-              ? Effect.fail(
-                  new PullRequestProviderError({
-                    provider: SourceControlProviderKind.make("github"),
-                    operation: "getViewer",
-                    reason: "failed",
-                    detail: "not a git repository",
-                  }),
-                )
-              : Effect.succeed("bilal");
-          },
-          listChangeRequests: () =>
-            Effect.succeed({
-              items: [changeRequest(1, "2026-07-02T00:00:00Z")],
-              truncated: false,
-              continues: true,
-            }),
-        }),
-      ],
-    });
+it.effect.each([false, true])(
+  "asks another checkout when the first cannot answer (partial: %s)",
+  (partial) =>
+    Effect.gen(function* () {
+      const asked: string[] = [];
+      const service = yield* makeService({
+        projects: [
+          project({
+            id: "p1",
+            title: "t3code (stale worktree)",
+            workspaceRoot: "/gone",
+            repository: "pingdotgg/t3code",
+          }),
+          project({
+            id: "p2",
+            title: "t3code",
+            workspaceRoot: "/healthy",
+            repository: "pingdotgg/t3code",
+          }),
+        ],
+        providers: [
+          fakeProvider(SourceControlProviderKind.make("github"), {
+            getViewer: (input) => {
+              asked.push(input.cwd);
+              return input.cwd === "/gone"
+                ? Effect.fail(
+                    new PullRequestProviderError({
+                      provider: SourceControlProviderKind.make("github"),
+                      operation: "getViewer",
+                      reason: "failed",
+                      detail: "not a git repository",
+                    }),
+                  )
+                : Effect.succeed("bilal");
+            },
+            listChangeRequests: () =>
+              Effect.succeed({
+                items: [changeRequest(1, "2026-07-02T00:00:00Z")],
+                truncated: false,
+                continues: true,
+              }),
+          }),
+        ],
+      });
 
-    const result = yield* service.list({ state: "open" });
+      const result = yield* service.list({
+        state: "open",
+        ...(partial ? { projectIds: ["p1" as ProjectId, "p2" as ProjectId] } : {}),
+      });
 
-    assert.deepStrictEqual(asked, ["/gone", "/healthy"]);
-    assert.strictEqual(result.entries.length, 1);
-    assert.strictEqual(result.providers[0]?.configured, true);
-  }),
+      assert.deepStrictEqual(asked, ["/gone", "/healthy"]);
+      assert.strictEqual(result.entries.length, 1);
+      assert.strictEqual(result.providers[0]?.configured, true);
+    }),
 );
 
 it.effect("refuses to ask for a review on a host that cannot, before any call is made", () =>
