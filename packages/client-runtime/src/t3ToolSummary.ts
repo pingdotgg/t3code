@@ -273,20 +273,20 @@ export function summarizeT3ToolCalls(
       );
       break;
     case "question-list":
-      label = phrase("Listed", "list", `pending requests ${times}`);
+      label = phrase("Listed", "list", `pending questions ${times}`);
       break;
     case "question-read":
       label = phrase(
         "Read",
         "read",
-        quantity(countEntities(entityIds("requestId")), "pending request"),
+        quantity(countEntities(entityIds("requestId")), "pending question request"),
       );
       break;
     case "question-respond":
       label = phrase(
-        "Responded to",
-        "respond to",
-        quantity(countEntities(entityIds("requestId")), "pending request"),
+        "Answered",
+        "answer",
+        quantity(countEntities(entityIds("requestId")), "pending question request"),
       );
       break;
     case "secret-request":

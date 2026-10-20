@@ -67,7 +67,7 @@ describe("summarizeT3ToolCalls", () => {
         completed({ requestId: "request-1" }),
         completed({ requestId: "request-2" }),
       ]).label,
-    ).toBe("Responded to 2 pending requests");
+    ).toBe("Answered 2 pending question requests");
   });
 
   it("counts attachments in distinct messages and falls back when attachment counts are missing", () => {

@@ -266,10 +266,8 @@ If `hasPendingQuestion`, pass `threadId=childThreadId` to `t3_pending_request_li
 the user; the task's completion still wakes this thread. A pending live approval for the
 task's own unfinished work also ends the wait. Its identity appears in `pendingApproval`;
 it grants no approval authority. Read the fresh full request in the child thread before
-responding, since the durable record can outlive its provider callback. Read it with
-`t3_pending_request_read` and respond through `t3_pending_request_respond` using
-`decision`. Accepting requires a full-access/default caller; declining or cancelling
-does not. Async questions do not end the wait.
+responding, since the durable record can outlive its provider callback. Async questions
+do not end the wait.
 
 ```ts
 type DelegateTaskResult = {
@@ -476,7 +474,7 @@ a notification message telling it to answer with the pending request tools or
 ask the user. The message says whether the child is blocked or, for a Codex
 async question, still working. If the question is answered or dismissed before
 the notification starts a turn, that queued turn is cancelled. Approvals are not
-routed to the parent automatically.
+routed, because those tools cannot answer them.
 A parent still blocked in a `delegate_task` wait gets the blocking question
 through that wait instead.
 If the provider cuts that wait short, a still-pending live question wakes the

@@ -3072,10 +3072,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
 
     const cwd = repository.worktreeRoot;
-    const sourceKind = input.file?.sourceKind ?? input.sourceKind;
-    const dirtyRef = sourceKind === "branch-range" ? null : "HEAD";
+    const dirtyRef = input.file?.sourceKind === "branch-range" ? null : "HEAD";
     const review =
-      sourceKind === "working-tree"
+      input.file?.sourceKind === "working-tree"
         ? { baseRef: input.baseRef ?? null, mergeBase: null }
         : yield* resolveReviewMergeBase(cwd, repository.currentBranch, input.baseRef);
 
@@ -3198,10 +3197,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return {
       cwd: input.cwd,
       generatedAt: yield* DateTime.now,
-      sources:
-        input.file === undefined && sourceKind !== undefined
-          ? sources.filter((source) => source.kind === sourceKind)
-          : sources,
+      sources,
     };
   });
 

@@ -11,9 +11,6 @@ import {
   ProviderInteractionMode,
   RuntimeRequestId,
   ProviderUserInputAnswers,
-  ProviderApprovalDecision,
-  ProviderApprovalOption,
-  OrchestrationV2RuntimeRequest,
   IsoDateTime,
   OrchestratorMcpFailure,
   OrchestrationV2DispatchCommandResult,
@@ -33,7 +30,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
   description:
-    "Pin, snooze, settle, archive, or mark a thread read or unread. Omit threadId for this thread. snooze requires snoozedUntil. Existing thread lifecycle rules apply. Settling this thread takes effect when your turn completes, returning settlesWhenTurnEnds=true; a turn that fails or is interrupted, or a queued message, leaves it active.",
+    "Pin, snooze, settle, archive, or mark a thread unread. Omit threadId for this thread. snooze requires snoozedUntil. Existing thread lifecycle rules apply. Settling this thread takes effect when your turn completes, returning settlesWhenTurnEnds=true; a turn that fails or is interrupted, or a queued message, leaves it active.",
   parameters: Schema.Struct({
     threadId: Schema.optional(ThreadId),
     action: Schema.Literals([
@@ -45,7 +42,6 @@ const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
       "unsettle",
       "archive",
       "unarchive",
-      "mark_read",
       "mark_unread",
     ]),
     snoozedUntil: Schema.optional(IsoDateTime),
@@ -148,34 +144,23 @@ const question = Schema.Struct({
   initialAnswer: Schema.optional(Schema.String),
   required: Schema.optional(Schema.Boolean),
 });
-const pendingRequestKind = OrchestrationV2RuntimeRequest.fields.kind;
 const pendingRequest = Schema.Struct({
   requestId: RuntimeRequestId,
-  kind: pendingRequestKind,
-  questions: Schema.optional(Schema.Array(question)),
-  prompt: Schema.optional(Schema.String),
-  promptTruncated: Schema.optional(Schema.Boolean),
-  appName: Schema.optional(Schema.String),
-  options: Schema.optional(Schema.Array(ProviderApprovalOption)),
+  questions: Schema.Array(question),
 });
 const PendingRequestListTool = Tool.make("t3_pending_request_list", {
   ...commandTool,
   description:
-    "List pending user questions and approval requests in a thread. Omit threadId for this thread. requestIds holds only the questions.",
+    "List pending user questions in a thread. Omit threadId for this thread. Approval requests are not included.",
   parameters: Schema.Struct({ threadId: Schema.optional(ThreadId) }),
-  success: Schema.Struct({
-    requestIds: Schema.Array(RuntimeRequestId),
-    requests: Schema.Array(
-      Schema.Struct({ requestId: RuntimeRequestId, kind: pendingRequestKind }),
-    ),
-  }),
+  success: Schema.Struct({ requestIds: Schema.Array(RuntimeRequestId) }),
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
 const PendingRequestReadTool = Tool.make("t3_pending_request_read", {
   ...commandTool,
   description:
-    "Read a pending user question or approval request. Respond with t3_pending_request_respond; existing live or message response handling is used.",
+    "Read a pending user question. Answer with t3_pending_request_respond; existing live or message response handling is used.",
   parameters: Schema.Struct(requestTarget),
   success: pendingRequest,
 })
@@ -184,12 +169,8 @@ const PendingRequestReadTool = Tool.make("t3_pending_request_read", {
 const PendingRequestRespondTool = Tool.make("t3_pending_request_respond", {
   ...commandTool,
   description:
-    "Respond to a pending request using the existing runtime response command: answers for a user question, decision for an approval (one of its offered options, else cancel, decline, acceptForSession, or accept). Approving needs a full-access/default caller; declining or cancelling does not.",
-  parameters: Schema.Struct({
-    ...requestTarget,
-    answers: Schema.optional(ProviderUserInputAnswers),
-    decision: Schema.optional(ProviderApprovalDecision),
-  }),
+    "Answer a pending user-input request using the existing runtime response command. This cannot approve a permission request.",
+  parameters: Schema.Struct({ ...requestTarget, answers: ProviderUserInputAnswers }),
 })
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
