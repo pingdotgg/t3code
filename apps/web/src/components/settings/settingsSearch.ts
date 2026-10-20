@@ -299,6 +299,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/appearance",
   },
   {
+    id: "thread-details",
+    title: "Thread details",
+    to: "/settings/appearance",
+    searchTerms: ["workspace card panel hide default new thread git scripts open"],
+  },
+  {
     id: "project-grouping",
     title: "Project grouping",
     to: "/settings/general",

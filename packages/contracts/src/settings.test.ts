@@ -416,6 +416,18 @@ describe("ClientSettings composer context strip", () => {
   });
 });
 
+describe("ClientSettings thread details", () => {
+  it("stays open by default and accepts a closed preference", () => {
+    expect(decodeClientSettings({}).threadDetailsOpenByDefault).toBe(true);
+    expect(
+      decodeClientSettingsPatch({ threadDetailsOpenByDefault: false }).threadDetailsOpenByDefault,
+    ).toBe(false);
+    expect(
+      decodeClientSettings({ threadDetailsOpenByDefault: false }).threadDetailsOpenByDefault,
+    ).toBe(false);
+  });
+});
+
 describe("ClientSettings word wrap", () => {
   it("defaults word wrap on", () => {
     expect(decodeClientSettings({}).wordWrap).toBe(true);

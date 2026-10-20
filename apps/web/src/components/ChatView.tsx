@@ -1783,8 +1783,15 @@ export default function ChatView(props: ChatViewProps) {
       state.threadPanelVisibilityByThreadKey,
       activeThreadRef,
       threadPanelPresentation,
+      state.threadDetailsOpenByDefault,
     ),
   );
+  useLayoutEffect(() => {
+    if (!clientSettingsHydrated) return;
+    useRightPanelStore
+      .getState()
+      .setThreadDetailsOpenByDefault(settings.threadDetailsOpenByDefault);
+  }, [clientSettingsHydrated, settings.threadDetailsOpenByDefault]);
 
   useEffect(() => {
     if (!activeThreadRef || !previewSessionsReady) return;

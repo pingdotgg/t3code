@@ -29,6 +29,12 @@ The controls retreat as the composer docks after you send the first message.
 Turn on **Composer context** to keep those controls visible after the thread starts. This preference
 applies to the web and desktop clients.
 
+## Thread details
+
+Turn off **Thread details** in **Settings → Appearance** to leave the workspace card at the top
+right closed until you open it. The top-right button and its shortcut still toggle the card. This
+preference applies to the web and desktop clients.
+
 ## Math
 
 Turn on **Render math** in **Settings → Appearance** to typeset LaTeX in messages and Markdown

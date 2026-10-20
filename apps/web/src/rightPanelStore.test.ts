@@ -25,6 +25,7 @@ beforeEach(() => {
   useRightPanelStore.setState({
     byThreadKey: {},
     threadPanelVisibilityByThreadKey: {},
+    threadDetailsOpenByDefault: true,
     userActionRevisionByThreadKey: {},
     closeRevisionByThreadKey: {},
   });
@@ -760,6 +761,50 @@ describe("rightPanelStore", () => {
         "env-1:thread-A": { inlineOpen: false, popoverOpen: false },
       },
     });
+  });
+
+  it("keeps an explicit thread-details choice when the default changes", async () => {
+    const store = useRightPanelStore.getState();
+    const inline = (ref: typeof refA, openByDefault: boolean) =>
+      selectThreadPanelOpen(
+        useRightPanelStore.getState().threadPanelVisibilityByThreadKey,
+        ref,
+        "inline",
+        openByDefault,
+      );
+
+    store.setThreadDetailsOpenByDefault(false);
+    expect(inline(refA, false)).toBe(false);
+    expect(inline(refB, false)).toBe(false);
+
+    store.setThreadPanelOpen(refA, "inline", true);
+    await reloadRightPanelStore();
+    useRightPanelStore.getState().setThreadDetailsOpenByDefault(false);
+    expect(inline(refA, false)).toBe(true);
+    expect(inline(refB, false)).toBe(false);
+
+    useRightPanelStore.getState().setThreadPanelOpen(refA, "inline", false);
+    useRightPanelStore.getState().setThreadDetailsOpenByDefault(true);
+    expect(inline(refA, true)).toBe(false);
+    expect(inline(refB, true)).toBe(true);
+
+    useRightPanelStore.getState().setThreadDetailsOpenByDefault(false);
+    useRightPanelStore.getState().open(refA, "diff");
+    useRightPanelStore.getState().setThreadDetailsOpenByDefault(true);
+    expect(inline(refA, true)).toBe(false);
+
+    useRightPanelStore.getState().setThreadDetailsOpenByDefault(false);
+    useRightPanelStore.getState().setThreadPanelOpen(refB, "popover", true);
+    useRightPanelStore.getState().setThreadDetailsOpenByDefault(true);
+    useRightPanelStore.getState().toggleThreadPanel(refB, "inline");
+    expect(inline(refB, true)).toBe(false);
+
+    const refC = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-C"));
+    useRightPanelStore.getState().setThreadDetailsOpenByDefault(true);
+    useRightPanelStore.getState().setThreadPanelOpen(refC, "inline", true);
+    await reloadRightPanelStore();
+    useRightPanelStore.getState().setThreadDetailsOpenByDefault(false);
+    expect(inline(refC, false)).toBe(true);
   });
 
   it("tracks inline and popover visibility independently", () => {

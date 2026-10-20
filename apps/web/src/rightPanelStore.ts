@@ -102,7 +102,9 @@ export interface ThreadRightPanelState {
 }
 
 export interface ThreadPanelVisibility {
-  inlineOpen: boolean;
+  // Absent follows the setting. A boolean is this thread's choice, even when
+  // it matches the setting.
+  inlineOpen?: boolean;
   popoverOpen: boolean;
 }
 
@@ -112,6 +114,9 @@ interface RightPanelStoreState {
   requestMaximize: (ref: ScopedThreadRef) => void;
   consumeMaximizeRequest: (ref: ScopedThreadRef) => boolean;
   threadPanelVisibilityByThreadKey: Record<string, ThreadPanelVisibility>;
+  // Synced from client settings. Not persisted here; missing thread entries follow it.
+  threadDetailsOpenByDefault: boolean;
+  setThreadDetailsOpenByDefault: (open: boolean) => void;
   userActionRevisionByThreadKey: Record<string, number>;
   closeRevisionByThreadKey: Record<string, number>;
   getUserActionRevision: (ref: ScopedThreadRef) => number;
@@ -210,10 +215,11 @@ const EMPTY_THREAD_STATE: ThreadRightPanelState = {
   surfaces: [],
 };
 
-const DEFAULT_THREAD_PANEL_VISIBILITY: ThreadPanelVisibility = {
-  inlineOpen: true,
-  popoverOpen: false,
-};
+interface ResolvedThreadPanelVisibility {
+  readonly inlineOpen: boolean;
+  readonly popoverOpen: boolean;
+  readonly explicit: boolean;
+}
 
 const singletonSurface = (
   kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request">,
@@ -339,17 +345,30 @@ const updateThreadStateMap = (
 const updateThreadPanelVisibilityMap = (
   byThreadKey: Record<string, ThreadPanelVisibility>,
   threadKey: string,
-  updater: (current: ThreadPanelVisibility) => ThreadPanelVisibility,
+  openByDefault: boolean,
+  updater: (current: ResolvedThreadPanelVisibility) => ResolvedThreadPanelVisibility,
 ): Record<string, ThreadPanelVisibility> => {
-  const current = byThreadKey[threadKey] ?? DEFAULT_THREAD_PANEL_VISIBILITY;
+  const had = byThreadKey[threadKey];
+  const current: ResolvedThreadPanelVisibility = {
+    inlineOpen: had?.inlineOpen ?? openByDefault,
+    popoverOpen: had?.popoverOpen ?? false,
+    explicit: had?.inlineOpen !== undefined,
+  };
   const next = updater(current);
-  if (next.inlineOpen && !next.popoverOpen) {
-    if (!(threadKey in byThreadKey)) return byThreadKey;
+  if (next === current) return byThreadKey;
+
+  if (!next.explicit && !next.popoverOpen) {
+    if (!had) return byThreadKey;
     const { [threadKey]: _removed, ...rest } = byThreadKey;
     return rest;
   }
-  if (next === current) return byThreadKey;
-  return { ...byThreadKey, [threadKey]: next };
+  const stored: ThreadPanelVisibility = next.explicit
+    ? { inlineOpen: next.inlineOpen, popoverOpen: next.popoverOpen }
+    : { popoverOpen: next.popoverOpen };
+  if (had?.inlineOpen === stored.inlineOpen && had?.popoverOpen === stored.popoverOpen) {
+    return byThreadKey;
+  }
+  return { ...byThreadKey, [threadKey]: stored };
 };
 
 type RightPanelStoreData = Pick<
@@ -358,7 +377,7 @@ type RightPanelStoreData = Pick<
 >;
 
 const updateThread = (
-  state: RightPanelStoreData,
+  state: RightPanelStoreData & { readonly threadDetailsOpenByDefault: boolean },
   threadKey: string,
   updater: (current: ThreadRightPanelState) => ThreadRightPanelState,
 ): RightPanelStoreData => {
@@ -366,20 +385,23 @@ const updateThread = (
   const byThreadKey = updateThreadStateMap(state.byThreadKey, threadKey, updater);
   const next = byThreadKey[threadKey] ?? EMPTY_THREAD_STATE;
   let threadPanelVisibilityByThreadKey = state.threadPanelVisibilityByThreadKey;
+  const openByDefault = state.threadDetailsOpenByDefault;
 
   if (!current.isOpen && next.isOpen) {
     threadPanelVisibilityByThreadKey = updateThreadPanelVisibilityMap(
       threadPanelVisibilityByThreadKey,
       threadKey,
+      openByDefault,
       (visibility) => (visibility.popoverOpen ? { ...visibility, popoverOpen: false } : visibility),
     );
   } else if (current.isOpen && !next.isOpen) {
     threadPanelVisibilityByThreadKey = updateThreadPanelVisibilityMap(
       threadPanelVisibilityByThreadKey,
       threadKey,
+      openByDefault,
       (visibility) =>
         visibility.popoverOpen && !visibility.inlineOpen
-          ? { ...visibility, inlineOpen: true }
+          ? { ...visibility, inlineOpen: true, explicit: true }
           : visibility,
     );
   }
@@ -608,6 +630,11 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         return true;
       },
       threadPanelVisibilityByThreadKey: {},
+      threadDetailsOpenByDefault: true,
+      setThreadDetailsOpenByDefault: (open) =>
+        set((state) =>
+          state.threadDetailsOpenByDefault === open ? state : { threadDetailsOpenByDefault: open },
+        ),
       userActionRevisionByThreadKey: {},
       closeRevisionByThreadKey: {},
       getUserActionRevision: (ref) =>
@@ -1068,9 +1095,17 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           threadPanelVisibilityByThreadKey: updateThreadPanelVisibilityMap(
             state.threadPanelVisibilityByThreadKey,
             scopedThreadKey(ref),
+            state.threadDetailsOpenByDefault,
             (visibility) => {
-              const key = presentation === "inline" ? "inlineOpen" : "popoverOpen";
-              return visibility[key] === open ? visibility : { ...visibility, [key]: open };
+              if (presentation === "inline") {
+                // Matching the inherited default is still an explicit choice.
+                return visibility.explicit && visibility.inlineOpen === open
+                  ? visibility
+                  : { ...visibility, inlineOpen: open, explicit: true };
+              }
+              return visibility.popoverOpen === open
+                ? visibility
+                : { ...visibility, popoverOpen: open };
             },
           ),
         })),
@@ -1079,9 +1114,10 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           threadPanelVisibilityByThreadKey: updateThreadPanelVisibilityMap(
             state.threadPanelVisibilityByThreadKey,
             scopedThreadKey(ref),
+            state.threadDetailsOpenByDefault,
             (visibility) =>
               presentation === "inline"
-                ? { ...visibility, inlineOpen: !visibility.inlineOpen }
+                ? { ...visibility, inlineOpen: !visibility.inlineOpen, explicit: true }
                 : { ...visibility, popoverOpen: !visibility.popoverOpen },
           ),
         })),
@@ -1123,10 +1159,13 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             ([threadKey]) => !isPullRequestsPanelKey(threadKey),
           ),
         ),
+        // Popovers do not survive reload. Only an explicit inline choice does.
         threadPanelVisibilityByThreadKey: Object.fromEntries(
           Object.entries(state.threadPanelVisibilityByThreadKey).flatMap(
             ([threadKey, visibility]) =>
-              visibility.inlineOpen ? [] : [[threadKey, { inlineOpen: false, popoverOpen: false }]],
+              visibility.inlineOpen === undefined
+                ? []
+                : [[threadKey, { inlineOpen: visibility.inlineOpen, popoverOpen: false }]],
           ),
         ),
       }),
@@ -1172,17 +1211,23 @@ export function selectThreadRightPanelState(
 export function selectThreadPanelVisibility(
   byThreadKey: Record<string, ThreadPanelVisibility>,
   ref: ScopedThreadRef | null | undefined,
-): ThreadPanelVisibility {
-  if (!ref) return DEFAULT_THREAD_PANEL_VISIBILITY;
-  return byThreadKey[scopedThreadKey(ref)] ?? DEFAULT_THREAD_PANEL_VISIBILITY;
+  openByDefault = true,
+): { inlineOpen: boolean; popoverOpen: boolean } {
+  if (!ref) return { inlineOpen: openByDefault, popoverOpen: false };
+  const stored = byThreadKey[scopedThreadKey(ref)];
+  return {
+    inlineOpen: stored?.inlineOpen ?? openByDefault,
+    popoverOpen: stored?.popoverOpen ?? false,
+  };
 }
 
 export function selectThreadPanelOpen(
   byThreadKey: Record<string, ThreadPanelVisibility>,
   ref: ScopedThreadRef | null | undefined,
   presentation: ThreadPanelPresentation,
+  openByDefault = true,
 ): boolean {
-  const visibility = selectThreadPanelVisibility(byThreadKey, ref);
+  const visibility = selectThreadPanelVisibility(byThreadKey, ref, openByDefault);
   return presentation === "inline" ? visibility.inlineOpen : visibility.popoverOpen;
 }
 
