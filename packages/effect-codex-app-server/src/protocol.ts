@@ -445,10 +445,14 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
             Effect.matchEffect({
               onFailure: (error) => handleTermination(() => Effect.succeed(error)),
               onSuccess: () =>
-                handleTermination(
-                  () =>
-                    options.terminationError ??
+                // stdout can close while the process is still alive, so waiting
+                // for the exit status here would hang every pending request. An
+                // exit status that is already known still wins the race.
+                handleTermination(() =>
+                  Effect.raceFirst(
+                    options.terminationError ?? Effect.never,
                     Effect.succeed(new CodexError.CodexAppServerInputStreamEndedError({})),
+                  ),
                 ),
             }),
           ),

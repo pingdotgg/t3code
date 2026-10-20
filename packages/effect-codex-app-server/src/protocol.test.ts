@@ -878,4 +878,43 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
       assert.equal("cause" in error, false);
     }),
   );
+
+  it.effect("fails pending requests at input EOF while the process is still running", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+        stdio,
+        terminationError: Effect.never,
+      });
+      const pending = yield* transport.request("thread/read", {}).pipe(Effect.forkScoped);
+      yield* Queue.take(output);
+
+      yield* Queue.end(input);
+
+      const error = yield* Fiber.join(pending).pipe(
+        Effect.match({
+          onFailure: (error) => error,
+          onSuccess: () => assert.fail("Expected the pending request to fail"),
+        }),
+      );
+      assert.instanceOf(error, CodexError.CodexAppServerInputStreamEndedError);
+    }),
+  );
+
+  it.effect("reports an already known process exit at input EOF", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const exitError = new CodexError.CodexAppServerProcessExitedError({ code: 1, pid: 123 });
+      const termination = yield* Deferred.make<CodexError.CodexAppServerError>();
+      yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+        stdio,
+        terminationError: Effect.succeed(exitError),
+        onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
+      });
+
+      yield* Queue.end(input);
+
+      assert.strictEqual(yield* Deferred.await(termination), exitError);
+    }),
+  );
 });
