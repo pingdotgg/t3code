@@ -119,6 +119,7 @@ import {
 import { getSourceControlPresentation, sourceControlIcon } from "~/sourceControlPresentation";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
+import { hasStagedChanges, resolveCommitDialogSelection } from "@t3tools/client-runtime/state/vcs";
 import { useOpenLink } from "~/browser/useOpenLink";
 
 interface GitActionsControlProps {
@@ -139,6 +140,7 @@ interface PendingDefaultBranchAction {
   commitMessage?: string;
   onConfirmed?: () => void;
   filePaths?: string[];
+  includeUnstaged?: boolean;
 }
 
 type GitActionToastId = ReturnType<typeof toastManager.add>;
@@ -151,6 +153,7 @@ interface RunGitActionWithToastInput {
   statusOverride?: VcsStatusResult | null;
   featureBranch?: boolean;
   filePaths?: string[];
+  includeUnstaged?: boolean;
 }
 
 interface InlineGitActionSuccess {
@@ -1002,7 +1005,8 @@ export default function GitActionsControl({
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
-  const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(new Set());
+  const [editedExclusions, setEditedExclusions] = useState<ReadonlySet<string> | null>(null);
+  const [includeUnstaged, setIncludeUnstaged] = useState(false);
   const [isEditingFiles, setIsEditingFiles] = useState(false);
   const [isPublishDialogOpen, setIsPublishDialogOpen] = useState(false);
   const [inlineSuccess, setInlineSuccess] = useState<InlineGitActionSuccess | null>(null);
@@ -1096,6 +1100,12 @@ export default function GitActionsControl({
   // Changed-file paths are repository-relative, so they must resolve against
   // the worktree root from the same status snapshot, not the project cwd.
   const workingTreeRoot = gitStatusForActions?.workingTree.rootPath ?? null;
+  const hasStagedFiles = hasStagedChanges(allFiles);
+  const {
+    commitsStagedOnly,
+    excludedFiles,
+    request: dialogSelection,
+  } = resolveCommitDialogSelection({ files: allFiles, editedExclusions, includeUnstaged });
   const selectedFiles = allFiles.filter((f) => !excludedFiles.has(f.path));
   const allSelected = excludedFiles.size === 0;
   const noneSelected = selectedFiles.length === 0;
@@ -1214,6 +1224,7 @@ export default function GitActionsControl({
     statusOverride,
     featureBranch = false,
     filePaths,
+    includeUnstaged = false,
   }: RunGitActionWithToastInput) {
     if (
       activeEnvironmentId === null ||
@@ -1231,6 +1242,11 @@ export default function GitActionsControl({
     const includesCommit =
       actionCanCommit &&
       (action === "commit" || !!actionStatus?.hasWorkingTreeChanges || featureBranch);
+    const stagedOnly =
+      actionCanCommit &&
+      !filePaths &&
+      !includeUnstaged &&
+      hasStagedChanges(actionStatus?.workingTree.files ?? []);
     if (
       !skipDefaultBranchPrompt &&
       requiresDefaultBranchConfirmation(action, actionIsDefaultBranch) &&
@@ -1251,6 +1267,7 @@ export default function GitActionsControl({
         ...(commitMessage ? { commitMessage } : {}),
         ...(onConfirmed ? { onConfirmed } : {}),
         ...(filePaths ? { filePaths } : {}),
+        ...(includeUnstaged ? { includeUnstaged } : {}),
       });
       setIsDefaultBranchDialogOpen(true);
       return;
@@ -1267,6 +1284,7 @@ export default function GitActionsControl({
       ...(commitMessage ? { commitMessage } : {}),
       ...(featureBranch ? { featureBranch } : {}),
       ...(filePaths ? { filePaths } : {}),
+      ...(stagedOnly ? { stagedOnly } : {}),
       ...(activeServerThread ? { threadId: activeServerThread.id } : {}),
       ...(activeDraftThread ? { projectId: activeDraftThread.projectId } : {}),
     });
@@ -1366,13 +1384,15 @@ export default function GitActionsControl({
     if (!isDefaultBranchDialogOpen || !pendingDefaultBranchAction || !canWriteSourceControl) return;
     if (featureBranch && (!canChangeThreadBranch || featureBranchUnavailableReason !== null))
       return;
-    const { action, commitMessage, onConfirmed, filePaths } = pendingDefaultBranchAction;
+    const { action, commitMessage, onConfirmed, filePaths, includeUnstaged } =
+      pendingDefaultBranchAction;
     setIsDefaultBranchDialogOpen(false);
     void runGitActionWithToast({
       action,
       ...(commitMessage ? { commitMessage } : {}),
       ...(onConfirmed ? { onConfirmed } : {}),
       ...(filePaths ? { filePaths } : {}),
+      ...(includeUnstaged ? { includeUnstaged } : {}),
       featureBranch,
       skipDefaultBranchPrompt: true,
     });
@@ -1384,13 +1404,14 @@ export default function GitActionsControl({
 
     setIsCommitDialogOpen(false);
     setDialogCommitMessage("");
-    setExcludedFiles(new Set());
+    setEditedExclusions(null);
+    setIncludeUnstaged(false);
     setIsEditingFiles(false);
 
     void runGitActionWithToast({
       action: "commit",
       ...(commitMessage ? { commitMessage } : {}),
-      ...(!allSelected ? { filePaths: selectedFiles.map((f) => f.path) } : {}),
+      ...dialogSelection,
       featureBranch: true,
       skipDefaultBranchPrompt: true,
     });
@@ -1473,7 +1494,8 @@ export default function GitActionsControl({
       void runGitActionWithToast({ action: "create_pr" });
       return;
     }
-    setExcludedFiles(new Set());
+    setEditedExclusions(null);
+    setIncludeUnstaged(false);
     setIsEditingFiles(false);
     setIsCommitDialogOpen(true);
   };
@@ -1483,12 +1505,13 @@ export default function GitActionsControl({
     const commitMessage = dialogCommitMessage.trim();
     setIsCommitDialogOpen(false);
     setDialogCommitMessage("");
-    setExcludedFiles(new Set());
+    setEditedExclusions(null);
+    setIncludeUnstaged(false);
     setIsEditingFiles(false);
     void runGitActionWithToast({
       action: "commit",
       ...(commitMessage ? { commitMessage } : {}),
-      ...(!allSelected ? { filePaths: selectedFiles.map((f) => f.path) } : {}),
+      ...dialogSelection,
     });
   };
 
@@ -1854,7 +1877,8 @@ export default function GitActionsControl({
           if (!open) {
             setIsCommitDialogOpen(false);
             setDialogCommitMessage("");
-            setExcludedFiles(new Set());
+            setEditedExclusions(null);
+            setIncludeUnstaged(false);
             setIsEditingFiles(false);
           }
         }}
@@ -1883,7 +1907,7 @@ export default function GitActionsControl({
                         checked={allSelected}
                         indeterminate={!allSelected && !noneSelected}
                         onCheckedChange={() => {
-                          setExcludedFiles(
+                          setEditedExclusions(
                             allSelected ? new Set(allFiles.map((f) => f.path)) : new Set(),
                           );
                         }}
@@ -1906,6 +1930,15 @@ export default function GitActionsControl({
                     </Button>
                   )}
                 </div>
+                {hasStagedFiles && editedExclusions === null && !isEditingFiles ? (
+                  <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <Checkbox
+                      checked={includeUnstaged}
+                      onCheckedChange={(checked) => setIncludeUnstaged(Boolean(checked))}
+                    />
+                    Include unstaged changes
+                  </label>
+                ) : null}
                 {!gitStatusForActions || allFiles.length === 0 ? (
                   <p className="font-medium">none</p>
                 ) : (
@@ -1924,8 +1957,8 @@ export default function GitActionsControl({
                                   <Checkbox
                                     checked={!excludedFiles.has(file.path)}
                                     onCheckedChange={() => {
-                                      setExcludedFiles((prev) => {
-                                        const next = new Set(prev);
+                                      setEditedExclusions((prev) => {
+                                        const next = new Set(prev ?? excludedFiles);
                                         if (next.has(file.path)) {
                                           next.delete(file.path);
                                         } else {
@@ -1949,7 +1982,9 @@ export default function GitActionsControl({
                                   />
                                   <span className="shrink-0">
                                     {isExcluded ? (
-                                      <span className="text-muted-foreground">Excluded</span>
+                                      <span className="text-muted-foreground">
+                                        {commitsStagedOnly ? "Not staged" : "Excluded"}
+                                      </span>
                                     ) : (
                                       <>
                                         <span className="text-diff-addition">
@@ -1999,7 +2034,8 @@ export default function GitActionsControl({
               onClick={() => {
                 setIsCommitDialogOpen(false);
                 setDialogCommitMessage("");
-                setExcludedFiles(new Set());
+                setEditedExclusions(null);
+                setIncludeUnstaged(false);
                 setIsEditingFiles(false);
               }}
             >

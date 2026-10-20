@@ -729,6 +729,7 @@ function runStackedAction(
     commitMessage?: string;
     featureBranch?: boolean;
     filePaths?: readonly string[];
+    stagedOnly?: boolean;
   },
   options?: Parameters<GitManager.GitManager["Service"]["runStackedAction"]>[1],
 ) {
@@ -3918,6 +3919,73 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       );
       expect(statusStdout).toContain("b.txt");
       expect(statusStdout).not.toContain("a.txt");
+    }),
+  );
+
+  it.effect("commits the index as it is when stagedOnly is set", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\nstaged\n");
+      yield* runGit(repoDir, ["add", "README.md"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\nstaged\nunstaged\n");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "untracked.txt"), "untracked\n");
+      let stagedPatch = "";
+
+      const { manager } = yield* makeManager({
+        textGeneration: {
+          generateCommitMessage: (input) =>
+            Effect.sync(() => {
+              stagedPatch = input.stagedPatch;
+              return { subject: "Commit staged lines", body: "" };
+            }),
+        },
+      });
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        stagedOnly: true,
+      });
+
+      expect(result.commit.status).toBe("created");
+      expect(stagedPatch).toContain("+staged");
+      expect(stagedPatch).not.toContain("unstaged");
+      const committed = yield* runGit(repoDir, ["show", "HEAD:README.md"]);
+      expect(committed.stdout).toBe("hello\nstaged\n");
+      const status = yield* runGit(repoDir, ["status", "--porcelain"]);
+      expect(status.stdout).toContain(" M README.md");
+      expect(status.stdout).toContain("?? untracked.txt");
+    }),
+  );
+
+  it.effect("keeps an in-progress merge when committing only staged changes", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "feature\n");
+      yield* runGit(repoDir, ["commit", "-am", "feature change"]);
+      yield* runGit(repoDir, ["checkout", "main"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "main\n");
+      yield* runGit(repoDir, ["commit", "-am", "main change"]);
+      yield* runGit(repoDir, ["merge", "feature"], true);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "resolved\n");
+      yield* runGit(repoDir, ["add", "README.md"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "notes.txt"), "scratch\n");
+
+      const { manager } = yield* makeManager();
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        commitMessage: "Merge feature",
+        stagedOnly: true,
+      });
+
+      expect(result.commit.status).toBe("created");
+      const parents = yield* runGit(repoDir, ["rev-list", "--parents", "-n", "1", "HEAD"]);
+      expect(parents.stdout.trim().split(" ")).toHaveLength(3);
+      const status = yield* runGit(repoDir, ["status", "--porcelain"]);
+      expect(status.stdout).toContain("?? notes.txt");
     }),
   );
 

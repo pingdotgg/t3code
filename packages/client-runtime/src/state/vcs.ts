@@ -348,6 +348,18 @@ export function createVcsEnvironmentAtoms<R, E>(
       concurrency: vcsCommandConcurrency,
       onSettled: invalidateRefs,
     }),
+    stageFiles: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:stage-files",
+      tag: WS_METHODS.vcsStageFiles,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+    }),
+    unstageFiles: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:unstage-files",
+      tag: WS_METHODS.vcsUnstageFiles,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+    }),
     init: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:vcs:init",
       tag: WS_METHODS.vcsInit,

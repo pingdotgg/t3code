@@ -2690,6 +2690,114 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("splits uncommitted changes into staged and unstaged sources on request", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* writeTextFile(cwd, "README.md", "# test\nstaged line\n");
+        yield* git(cwd, ["add", "README.md"]);
+        yield* writeTextFile(cwd, "README.md", "# test\nstaged line\nunstaged line\n");
+        yield* writeTextFile(cwd, "untracked.txt", "untracked\n");
+
+        const plain = yield* driver.getReviewDiffPreview({ cwd });
+        assert.deepStrictEqual(
+          plain.sources.map((source) => source.kind),
+          ["working-tree", "branch-range"],
+        );
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd, includeIndexSources: true });
+        const staged = preview.sources.find((source) => source.kind === "staged")!;
+        const unstaged = preview.sources.find((source) => source.kind === "unstaged")!;
+        assert.deepStrictEqual(staged.files, [
+          { path: "README.md", previousPath: null, additions: 1, deletions: 0 },
+        ]);
+        assert.include(staged.diff, "+staged line");
+        assert.notInclude(staged.diff, "unstaged line");
+        assert.deepStrictEqual(unstaged.files, [
+          { path: "README.md", previousPath: null, additions: 1, deletions: 0 },
+          { path: "untracked.txt", previousPath: null, additions: 1, deletions: 0 },
+        ]);
+        assert.include(unstaged.diff, "+unstaged line");
+        assert.notInclude(unstaged.diff, "+staged line");
+
+        const file = yield* driver.getReviewDiffPreview({
+          cwd,
+          file: { path: "README.md", previousPath: null, sourceKind: "staged" },
+        });
+        assert.include(
+          file.sources.find((source) => source.kind === "staged")?.diff,
+          "+staged line",
+        );
+      }),
+    );
+
+    it.effect("lists a file removed from the index but kept on disk as an unstaged addition", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* writeTextFile(cwd, "secret.env", "token\n");
+        yield* git(cwd, ["add", "secret.env"]);
+        yield* git(cwd, ["commit", "-m", "add secret"]);
+        yield* git(cwd, ["rm", "--cached", "secret.env"]);
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd, includeIndexSources: true });
+
+        assert.deepStrictEqual(
+          preview.sources.map((source) => [source.kind, source.files]),
+          [
+            ["staged", [{ path: "secret.env", previousPath: null, additions: 0, deletions: 1 }]],
+            ["unstaged", [{ path: "secret.env", previousPath: null, additions: 1, deletions: 0 }]],
+          ],
+        );
+      }),
+    );
+
+    it.effect("reads staged changes before the first commit", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.initRepo({ cwd });
+        yield* writeTextFile(cwd, "first.txt", "first\n");
+        yield* git(cwd, ["add", "first.txt"]);
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd, includeIndexSources: true });
+
+        assert.deepStrictEqual(preview.sources.find((source) => source.kind === "staged")?.files, [
+          { path: "first.txt", previousPath: null, additions: 1, deletions: 0 },
+        ]);
+        assert.deepStrictEqual(
+          preview.sources.find((source) => source.kind === "unstaged")?.files,
+          [],
+        );
+      }),
+    );
+
+    it.effect("loads staged and unstaged file contents from the index", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* writeTextFile(cwd, "README.md", "# staged\n");
+        yield* git(cwd, ["add", "README.md"]);
+        yield* writeTextFile(cwd, "README.md", "# unstaged\n");
+
+        const staged = yield* driver.getReviewDiffFileContents(
+          makeReviewDiffFileContentsInput(cwd, { sourceKind: "staged", baseRef: null }),
+        );
+        const unstaged = yield* driver.getReviewDiffFileContents(
+          makeReviewDiffFileContentsInput(cwd, { sourceKind: "unstaged", baseRef: null }),
+        );
+
+        assert.deepStrictEqual(staged, { oldContents: "# test\n", newContents: "# staged\n" });
+        assert.deepStrictEqual(unstaged, {
+          oldContents: "# staged\n",
+          newContents: "# unstaged\n",
+        });
+      }),
+    );
+
     it.effect("loads full file contents for working-tree diff expansion", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
@@ -3328,6 +3436,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           path: "HEAD",
           insertions: 1,
           deletions: 0,
+          staged: "none",
         });
       }),
     );
@@ -3348,9 +3457,9 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const status = yield* driver.statusDetails(cwd);
 
         assert.deepEqual(status.workingTree.files, [
-          { path: "café notes.md", insertions: 1, deletions: 0 },
-          { path: "src/new.ts", insertions: 1, deletions: 0 },
-          { path: "src/old.ts", insertions: 0, deletions: 0 },
+          { path: "café notes.md", insertions: 1, deletions: 0, staged: "none" },
+          { path: "src/new.ts", insertions: 1, deletions: 0, staged: "partial" },
+          { path: "src/old.ts", insertions: 0, deletions: 0, staged: "partial" },
         ]);
         yield* driver.commit(cwd, "Commit selection", "", {
           stage: { filePaths: status.workingTree.files.map((file) => file.path) },
@@ -3378,9 +3487,9 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const status = yield* driver.statusDetails(nestedCwd);
 
         assert.deepEqual(status.workingTree.files, [
-          { path: "nested/new.txt", insertions: 0, deletions: 0 },
-          { path: "nested/tracked.txt", insertions: 1, deletions: 0 },
-          { path: "README.md", insertions: 1, deletions: 0 },
+          { path: "nested/new.txt", insertions: 0, deletions: 0, staged: "none" },
+          { path: "nested/tracked.txt", insertions: 1, deletions: 0, staged: "none" },
+          { path: "README.md", insertions: 1, deletions: 0, staged: "none" },
         ]);
         // The root is what the paths above are relative to, not the nested cwd, and it keeps
         // the trailing space so the resolved editor target is the file that exists.
@@ -3393,6 +3502,141 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           stage: { filePaths: ["nested/new.txt", "nested/tracked.txt"] },
         });
         assert.equal(yield* git(cwd, ["status", "--porcelain"]), "M README.md");
+      }),
+    );
+
+    it.effect("reports whether each changed file is staged", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, "all.txt", "one\n");
+        yield* writeTextFile(cwd, "partial.txt", "one\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "add files"]);
+        yield* writeTextFile(cwd, "all.txt", "one\ntwo\n");
+        yield* writeTextFile(cwd, "partial.txt", "one\ntwo\n");
+        yield* writeTextFile(cwd, "new.txt", "new\n");
+        yield* git(cwd, ["add", "all.txt", "partial.txt", "new.txt"]);
+        yield* writeTextFile(cwd, "partial.txt", "one\ntwo\nthree\n");
+        yield* writeTextFile(cwd, "untracked.txt", "untracked\n");
+
+        const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetails(cwd);
+
+        assert.deepEqual(
+          status.workingTree.files.map(({ path, staged }) => ({ path, staged })),
+          [
+            { path: "all.txt", staged: "all" },
+            { path: "new.txt", staged: "all" },
+            { path: "partial.txt", staged: "partial" },
+            { path: "untracked.txt", staged: "none" },
+          ],
+        );
+      }),
+    );
+
+    it.effect("stages and unstages repository-relative paths from a nested directory", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, "nested/tracked.txt", "one\n");
+        yield* writeTextFile(cwd, "gone.txt", "gone\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "add files"]);
+        yield* writeTextFile(cwd, "nested/tracked.txt", "one\ntwo\n");
+        yield* writeTextFile(cwd, "nested/with space.txt", "new\n");
+        yield* (yield* FileSystem.FileSystem).remove(path.join(cwd, "gone.txt"));
+        yield* writeTextFile(cwd, "README.md", "# test\nleft out\n");
+        const nestedCwd = path.join(cwd, "nested");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const selection = ["nested/with space.txt", "gone.txt", "nested/tracked.txt"];
+
+        yield* driver.stageFiles({ cwd: nestedCwd, filePaths: selection });
+
+        assert.deepEqual(
+          (yield* git(cwd, ["diff", "--cached", "--name-only"])).split("\n").toSorted(),
+          selection.toSorted(),
+        );
+        assert.equal(yield* git(cwd, ["diff", "--name-only"]), "README.md");
+
+        yield* driver.unstageFiles({
+          cwd: nestedCwd,
+          filePaths: ["gone.txt", "nested/tracked.txt"],
+        });
+
+        assert.equal(yield* git(cwd, ["diff", "--cached", "--name-only"]), "nested/with space.txt");
+      }),
+    );
+
+    it.effect("reports a file removed from the index but kept on disk as partly staged", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, "secret.env", "token\n");
+        yield* git(cwd, ["add", "secret.env"]);
+        yield* git(cwd, ["commit", "-m", "add secret"]);
+        yield* git(cwd, ["rm", "--cached", "secret.env"]);
+
+        const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetails(cwd);
+
+        assert.deepInclude(status.workingTree.files, {
+          path: "secret.env",
+          insertions: 0,
+          deletions: 1,
+          staged: "partial",
+        });
+      }),
+    );
+
+    it.effect("stages the paths that still exist when others are gone", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* writeTextFile(cwd, "kept.txt", "kept\n");
+
+        yield* driver.stageFiles({ cwd, filePaths: ["vanished.txt", "kept.txt"] });
+
+        assert.equal(yield* git(cwd, ["diff", "--cached", "--name-only"]), "kept.txt");
+      }),
+    );
+
+    it.effect("stages a deleted directory with more files than one ls-files batch", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const deleted = Array.from({ length: 250 }, (_, index) => `old/file-${index}.txt`);
+        yield* Effect.forEach(deleted, (file) => writeTextFile(cwd, file, `${file}\n`), {
+          concurrency: 16,
+        });
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "add old files"]);
+        yield* fileSystem.remove(path.join(cwd, "old"), { recursive: true });
+
+        yield* driver.stageFiles({ cwd, filePaths: deleted });
+
+        assert.lengthOf(
+          (yield* git(cwd, ["diff", "--cached", "--name-only", "--diff-filter=D"])).split("\n"),
+          deleted.length,
+        );
+      }),
+    );
+
+    it.effect("unstages files in a repository without commits", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.initRepo({ cwd });
+        yield* writeTextFile(cwd, "first.txt", "first\n");
+
+        yield* driver.stageFiles({ cwd, filePaths: ["first.txt"] });
+        assert.equal(yield* git(cwd, ["diff", "--cached", "--name-only"]), "first.txt");
+
+        yield* driver.unstageFiles({ cwd, filePaths: ["first.txt"] });
+        assert.equal(yield* git(cwd, ["diff", "--cached", "--name-only"]), "");
       }),
     );
 
@@ -3413,8 +3657,8 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const status = yield* driver.statusDetails(nestedCwd);
 
         assert.deepEqual(status.workingTree.files, [
-          { path: "nested/new.txt", insertions: 0, deletions: 0 },
-          { path: "nested/tracked.txt", insertions: 1, deletions: 0 },
+          { path: "nested/new.txt", insertions: 0, deletions: 0, staged: "none" },
+          { path: "nested/tracked.txt", insertions: 1, deletions: 0, staged: "none" },
         ]);
         assert.equal(
           NodeFS.realpathSync.native(status.workingTree.rootPath!),
@@ -3488,8 +3732,8 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           assert.equal(local.hasUpstream, hasUpstream);
           assert.isTrue(local.hasWorkingTreeChanges);
           assert.deepEqual(local.workingTree.files, [
-            { path: "feature.txt", insertions: 1, deletions: 0 },
-            { path: "untracked.txt", insertions: 0, deletions: 0 },
+            { path: "feature.txt", insertions: 1, deletions: 0, staged: "none" },
+            { path: "untracked.txt", insertions: 0, deletions: 0, staged: "none" },
           ]);
 
           commands.length = 0;

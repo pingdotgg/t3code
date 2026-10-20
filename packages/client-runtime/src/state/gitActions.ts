@@ -39,7 +39,7 @@ export type DefaultBranchConfirmableAction =
 
 export type GitActionRequestInput = Pick<
   GitRunStackedActionInput,
-  "action" | "commitMessage" | "featureBranch" | "filePaths"
+  "action" | "commitMessage" | "featureBranch" | "filePaths" | "stagedOnly"
 >;
 
 export function buildMenuItems(
@@ -351,4 +351,44 @@ export function resolveDefaultBranchActionDialogCopy(input: {
     description: `This action will push local commits and create a PR${suffix}`,
     continueLabel: "Push & create PR",
   };
+}
+
+export function hasStagedChanges(files: VcsStatusResult["workingTree"]["files"]): boolean {
+  return files.some((file) => file.staged === "all" || file.staged === "partial");
+}
+
+export function resolveUnstagedFiles(
+  files: VcsStatusResult["workingTree"]["files"],
+): ReadonlySet<string> {
+  if (!hasStagedChanges(files)) return new Set();
+  return new Set(files.filter((file) => file.staged === "none").map((file) => file.path));
+}
+
+/**
+ * Until the user edits the file list or includes unstaged changes, the dialog commits the index
+ * as it is, even when every file is at least partly staged.
+ */
+export function resolveCommitDialogSelection(input: {
+  readonly files: VcsStatusResult["workingTree"]["files"];
+  readonly editedExclusions: ReadonlySet<string> | null;
+  readonly includeUnstaged: boolean;
+}): {
+  readonly commitsStagedOnly: boolean;
+  readonly excludedFiles: ReadonlySet<string>;
+  readonly request: { readonly filePaths?: string[]; readonly includeUnstaged?: boolean };
+} {
+  const commitsStagedOnly = input.editedExclusions === null && !input.includeUnstaged;
+  const excludedFiles =
+    input.editedExclusions ??
+    (input.includeUnstaged ? new Set<string>() : resolveUnstagedFiles(input.files));
+  const request = commitsStagedOnly
+    ? {}
+    : excludedFiles.size === 0
+      ? { includeUnstaged: true }
+      : {
+          filePaths: input.files
+            .filter((file) => !excludedFiles.has(file.path))
+            .map((file) => file.path),
+        };
+  return { commitsStagedOnly, excludedFiles, request };
 }

@@ -239,6 +239,33 @@ describe("command permissions", () => {
   });
 });
 
+it.effect.each([WS_METHODS.vcsStageFiles, WS_METHODS.vcsUnstageFiles] as const)(
+  "%s requires source control write permission",
+  (method) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const command = createCommandPermissions(runtime, method);
+        const input = { cwd: "/repo", filePaths: ["README.md"] };
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(command.permissionAtom(env, input))).toBe(false);
+        expect(
+          (yield* command.authorize(registry, env, input).pipe(Effect.flip)).requiredPermission,
+        ).toBe(AuthSourceControlWriteScope);
+        registry.set(
+          sessions(env),
+          AsyncResult.success({
+            ...grant(false),
+            scopes: [AuthSourceControlWriteScope],
+            permissions: [AuthSourceControlWriteScope],
+          }),
+        );
+        expect(registry.get(command.permissionAtom(env, input))).toBe(true);
+        yield* command.authorize(registry, env, input);
+      }),
+    ),
+);
+
 it.effect(
   "requires source control alone for git, and both grants when attaching a worktree to a thread",
   () =>

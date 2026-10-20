@@ -4,6 +4,7 @@ import {
   type GitActionRequestInput,
   buildMenuItems,
   getGitActionDisabledReason,
+  hasStagedChanges,
   requiresDefaultBranchConfirmation,
 } from "@t3tools/client-runtime/state/vcs";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
@@ -143,8 +144,15 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
     }
   };
 
-  const runActionWithPrompt = async (input: GitActionRequestInput) => {
+  const runActionWithPrompt = async (requested: GitActionRequestInput) => {
     if (!canWriteSourceControl) return;
+    const input =
+      requested.action !== "push" &&
+      requested.action !== "create_pr" &&
+      !requested.filePaths &&
+      hasStagedChanges(gitStatus.data?.workingTree.files ?? [])
+        ? { ...requested, stagedOnly: true }
+        : requested;
     const confirmableAction =
       input.action === "push" ||
       input.action === "create_pr" ||
@@ -165,6 +173,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         confirmAction: confirmableAction,
         branchName,
         includesCommit: String(input.action === "commit_push" || input.action === "commit_push_pr"),
+        ...(input.stagedOnly ? { stagedOnly: "true" } : {}),
       });
       return;
     }

@@ -6,14 +6,16 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
-import type { ScopedThreadRef, RunId } from "@t3tools/contracts";
+import type { RunId, ScopedThreadRef } from "@t3tools/contracts";
 import {
   ArrowRightIcon,
   CheckIcon,
   ChevronDownIcon,
   Columns2Icon,
   FolderTreeIcon,
+  MinusIcon,
   PilcrowIcon,
+  PlusIcon,
   Rows3Icon,
   TextWrapIcon,
 } from "lucide-react";
@@ -48,6 +50,7 @@ import {
 } from "../lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "../lib/syntaxHighlighting";
 import { areAllDiffFilesCollapsed, toggleAllDiffFiles } from "../lib/diffCollapse";
+import { fileDiffStagingPaths, sectionPaths, type UncommittedSection } from "../lib/diffStaging";
 import { useWorkspaceMutationRefresh } from "../hooks/useWorkspaceMutationRefresh";
 import { useProject, useThreadCheckpointSummaries, useQuietThreadShell } from "../state/entities";
 import { useClientSettings, updateClientSettings } from "../hooks/useSettings";
@@ -116,6 +119,49 @@ function getCachedFileEntry(fileDiff: FileDiffMetadata) {
 }
 
 const EMPTY_COLLAPSED_DIFF_FILE_KEYS: ReadonlySet<string> = new Set();
+
+interface PendingStageMove {
+  readonly section: UncommittedSection;
+  readonly paths: ReadonlySet<string>;
+  readonly settledAt: number | null;
+}
+
+function DiffStageButton({
+  label,
+  staged,
+  disabled,
+  size,
+  onClick,
+}: {
+  label: string;
+  staged: boolean;
+  disabled: boolean;
+  size: "icon-micro" | "icon-sm";
+  onClick: () => void;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            size={size}
+            variant="ghost"
+            aria-label={label}
+            disabled={disabled}
+            onClick={(event) => {
+              event.stopPropagation();
+              onClick();
+            }}
+          />
+        }
+      >
+        {staged ? <MinusIcon className="size-3.5" /> : <PlusIcon className="size-3.5" />}
+      </TooltipTrigger>
+      <TooltipPopup side="top">{label}</TooltipPopup>
+    </Tooltip>
+  );
+}
 
 function DiffFileCollapseToggle({
   filePath,
@@ -292,16 +338,16 @@ export default function DiffPanel({
       : selectedTurn?.runId === latestTurn?.runId
         ? "Latest turn"
         : `Turn ${selectedCheckpointTurnCount ?? "?"}`;
-  const reviewSectionId = selectedTurn ? `turn:${selectedTurn.runId}` : selectedGitScope;
+  const [uncommittedSection, setUncommittedSection] = useState<UncommittedSection>("unstaged");
+  const reviewSectionId = selectedTurn
+    ? `turn:${selectedTurn.runId}`
+    : selectedGitScope === "unstaged"
+      ? uncommittedSection
+      : selectedGitScope;
   const collapseScopeKey = routeThreadRef
     ? `${routeThreadRef.environmentId}:${routeThreadRef.threadId}:${reviewSectionId}`
     : null;
   const codeViewMountKey = `${collapseScopeKey ?? reviewSectionId}:${codeViewRevision}`;
-  const reviewSectionTitle = selectedTurn
-    ? `Turn ${selectedCheckpointTurnCount ?? "?"}`
-    : selectedGitScope === "unstaged"
-      ? "Uncommitted"
-      : "Changes";
   const selectedCheckpointRange =
     typeof selectedCheckpointTurnCount === "number"
       ? {
@@ -328,6 +374,7 @@ export default function DiffPanel({
             cwd: activeCwd,
             ...(selectedBaseRef ? { baseRef: selectedBaseRef } : {}),
             ignoreWhitespace: diffIgnoreWhitespace,
+            ...(selectedGitScope === "unstaged" ? { includeIndexSources: true } : {}),
           },
         })
       : null,
@@ -338,10 +385,75 @@ export default function DiffPanel({
     ? `${routeThreadRef.environmentId}:${routeThreadRef.threadId}`
     : null;
 
-  const selectedGitSource = branchDiffPreview.data?.sources.find(
-    (source) => source.kind === (selectedGitScope === "unstaged" ? "working-tree" : "branch-range"),
+  const stagedSource = branchDiffPreview.data?.sources.find((source) => source.kind === "staged");
+  const unstagedSource = branchDiffPreview.data?.sources.find(
+    (source) => source.kind === "unstaged",
   );
+  // Servers that predate staging return only the combined working-tree source.
+  const showsIndexSections =
+    selectedRunId === null &&
+    selectedGitScope === "unstaged" &&
+    stagedSource !== undefined &&
+    unstagedSource !== undefined;
+  const selectedGitSource = showsIndexSections
+    ? uncommittedSection === "staged"
+      ? stagedSource
+      : unstagedSource
+    : branchDiffPreview.data?.sources.find(
+        (source) =>
+          source.kind === (selectedGitScope === "unstaged" ? "working-tree" : "branch-range"),
+      );
+  const reviewSectionTitle = selectedTurn
+    ? `Turn ${selectedCheckpointTurnCount ?? "?"}`
+    : showsIndexSections
+      ? uncommittedSection === "staged"
+        ? "Staged changes"
+        : "Unstaged changes"
+      : selectedGitScope === "unstaged"
+        ? "Uncommitted"
+        : "Changes";
   const refreshPreviewQuery = branchDiffPreview.refresh;
+  const stageFiles = useAtomCommand(vcsEnvironment.stageFiles, "stage files");
+  const unstageFiles = useAtomCommand(vcsEnvironment.unstageFiles, "unstage files");
+  const canStageFiles = useAtomValue(
+    vcsEnvironment.stageFiles.permissionAtom(activeThread?.environmentId ?? null),
+  );
+  const canUnstageFiles = useAtomValue(
+    vcsEnvironment.unstageFiles.permissionAtom(activeThread?.environmentId ?? null),
+  );
+  const canChangeSection = uncommittedSection === "staged" ? canUnstageFiles : canStageFiles;
+  const [pendingMoves, setPendingMoves] = useState<ReadonlyArray<PendingStageMove>>([]);
+  const previewUpdatedAt = branchDiffPreview.dataUpdatedAt;
+  const isMoveVisible = (move: PendingStageMove) =>
+    move.settledAt === null || previewUpdatedAt <= move.settledAt;
+  const hiddenPaths = new Set(
+    pendingMoves.flatMap((move) =>
+      move.section === uncommittedSection && isMoveVisible(move) ? [...move.paths] : [],
+    ),
+  );
+  const setFilesStaged = useStableCallback((paths: ReadonlyArray<string>, staged: boolean) => {
+    if (!activeThread || !activeCwd || paths.length === 0) return;
+    const move: PendingStageMove = {
+      section: uncommittedSection,
+      paths: new Set(paths),
+      settledAt: null,
+    };
+    setPendingMoves((current) => [...current.filter(isMoveVisible), move]);
+    const run = staged ? stageFiles : unstageFiles;
+    void run({
+      environmentId: activeThread.environmentId,
+      input: { cwd: activeCwd, filePaths: paths },
+    }).then((result) => {
+      setPendingMoves((current) =>
+        result._tag === "Failure"
+          ? current.filter((candidate) => candidate !== move)
+          : current.map((candidate) =>
+              candidate === move ? { ...candidate, settledAt: Date.now() } : candidate,
+            ),
+      );
+      refreshPreviewQuery();
+    });
+  });
   const refreshDiffFromUserAction = refreshPreviewQuery;
 
   const preview = branchDiffPreview.data;
@@ -531,7 +643,8 @@ export default function DiffPanel({
   const codeViewFiles = renderableFileEntries
     .filter(
       ({ fileDiff }) =>
-        !lazySource || !readyFilePaths || readyFilePaths.has(resolveFileDiffPath(fileDiff)),
+        (!lazySource || !readyFilePaths || readyFilePaths.has(resolveFileDiffPath(fileDiff))) &&
+        !hiddenPaths.has(resolveFileDiffPath(fileDiff)),
     )
     .map(({ fileDiff, fileKey, fileVersion }) => ({
       fileDiff,
@@ -545,7 +658,20 @@ export default function DiffPanel({
   const pendingFiles = renderableFiles.filter((file) => file.cacheKey?.endsWith(":pending"));
   const allDiffFilesCollapsed = areAllDiffFilesCollapsed(diffFileKeys, collapsedDiffFileKeys);
   const diffLineStat = sourceLineStat ?? getDiffLineStat(renderableFiles);
-  const fileTreeEntries = diffFileTreeEntries(renderableFiles);
+  const fileTreeEntries = diffFileTreeEntries(
+    hiddenPaths.size === 0
+      ? renderableFiles
+      : renderableFiles.filter((file) => !hiddenPaths.has(resolveFileDiffPath(file))),
+  );
+  const sectionStagingPaths =
+    showsIndexSections && selectedGitSource
+      ? sectionPaths({
+          section: uncommittedSection,
+          statusFiles: gitStatusQuery.data?.workingTree.files ?? [],
+          source: selectedGitSource,
+          renderedFiles: renderableFiles,
+        }).filter((path) => !hiddenPaths.has(path))
+      : [];
   const treeRevealScope = { collapseScopeKey, diffSelection };
   const requestTreeReveal = useCodeViewFileReveal(codeView, treeRevealScope, codeViewFileKeys);
   const revealDiffFile = (filePath: string) => {
@@ -660,6 +786,42 @@ export default function DiffPanel({
       if (turn) selectTurn(turn.runId);
     }
   };
+
+  const indexSectionBar = showsIndexSections ? (
+    <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/70 px-2 py-1.5">
+      <ToggleGroup
+        aria-label="Uncommitted changes"
+        variant="segmented"
+        value={[uncommittedSection]}
+        onValueChange={(value) => {
+          const next = value[0];
+          if (next === "staged" || next === "unstaged") setUncommittedSection(next);
+        }}
+      >
+        <Toggle value="unstaged">
+          Changes
+          {unstagedSource.files ? (
+            <span className="tabular-nums opacity-70">{unstagedSource.files.length}</span>
+          ) : null}
+        </Toggle>
+        <Toggle value="staged">
+          Staged
+          {stagedSource.files ? (
+            <span className="tabular-nums opacity-70">{stagedSource.files.length}</span>
+          ) : null}
+        </Toggle>
+      </ToggleGroup>
+      {sectionStagingPaths.length > 0 ? (
+        <DiffStageButton
+          label={uncommittedSection === "staged" ? "Unstage all changes" : "Stage all changes"}
+          staged={uncommittedSection === "staged"}
+          disabled={!canChangeSection}
+          size="icon-sm"
+          onClick={() => setFilesStaged(sectionStagingPaths, uncommittedSection === "unstaged")}
+        />
+      ) : null}
+    </div>
+  ) : null;
 
   const headerRow = (
     <>
@@ -995,6 +1157,7 @@ export default function DiffPanel({
       ) : (
         <>
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
+            {indexSectionBar}
             {isSelectedPatchTruncated && !lazySource && (
               <p className="shrink-0 border-b border-border/70 bg-muted/40 px-3 py-1.5 text-2xs text-muted-foreground">
                 This preview exceeds the size limit. Changes shown are incomplete.
@@ -1021,7 +1184,11 @@ export default function DiffPanel({
                 <div className="flex h-full items-center justify-center px-3 py-2 text-xs text-muted-foreground/70">
                   <p>
                     {hasNoNetChanges
-                      ? "No net changes in this selection."
+                      ? showsIndexSections
+                        ? uncommittedSection === "staged"
+                          ? "Nothing staged. Stage files from Changes."
+                          : "No unstaged changes."
+                        : "No net changes in this selection."
                       : "No patch available for this selection."}
                   </p>
                 </div>
@@ -1122,15 +1289,30 @@ export default function DiffPanel({
                     onRevealSearchMatch={unfoldDiffFile}
                     renderHeaderPrefix={(fileDiff, fileKey) => {
                       const unavailable = fileDiff.cacheKey?.endsWith(":pending") === true;
+                      const filePath = resolveFileDiffPath(fileDiff);
+                      const staged = uncommittedSection === "staged";
                       return (
-                        <DiffFileCollapseToggle
-                          filePath={resolveFileDiffPath(fileDiff)}
-                          fileKey={fileKey}
-                          collapsed={unavailable || collapsedDiffFileKeys.has(fileKey)}
-                          unavailable={unavailable}
-                          iconClassName={getDiffCollapseIconClassName(fileDiff)}
-                          onToggle={toggleDiffFileCollapsed}
-                        />
+                        <>
+                          {showsIndexSections ? (
+                            <DiffStageButton
+                              label={staged ? `Unstage ${filePath}` : `Stage ${filePath}`}
+                              staged={staged}
+                              disabled={!canChangeSection}
+                              size="icon-micro"
+                              onClick={() =>
+                                setFilesStaged(fileDiffStagingPaths(fileDiff), !staged)
+                              }
+                            />
+                          ) : null}
+                          <DiffFileCollapseToggle
+                            filePath={filePath}
+                            fileKey={fileKey}
+                            collapsed={unavailable || collapsedDiffFileKeys.has(fileKey)}
+                            unavailable={unavailable}
+                            iconClassName={getDiffCollapseIconClassName(fileDiff)}
+                            onToggle={toggleDiffFileCollapsed}
+                          />
+                        </>
                       );
                     }}
                     options={{

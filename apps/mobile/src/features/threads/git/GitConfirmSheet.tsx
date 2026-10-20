@@ -24,6 +24,7 @@ type GitConfirmSheetProps = StaticScreenProps<{
   readonly includesCommit?: string;
   readonly commitMessage?: string;
   readonly filePaths?: string;
+  readonly stagedOnly?: string;
 }>;
 
 export function GitConfirmSheet(props: GitConfirmSheetProps) {
@@ -66,6 +67,7 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
       action: confirmAction,
       ...(params.commitMessage ? { commitMessage: params.commitMessage } : {}),
       ...(params.filePaths ? { filePaths: params.filePaths.split(",") } : {}),
+      ...(params.stagedOnly === "true" ? { stagedOnly: true } : {}),
     });
   }, [
     canWriteSourceControl,
@@ -87,6 +89,7 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
         featureBranch: true,
         ...(params.commitMessage ? { commitMessage: params.commitMessage } : {}),
         ...(params.filePaths ? { filePaths: params.filePaths.split(",") } : {}),
+        ...(params.stagedOnly === "true" ? { stagedOnly: true } : {}),
       });
       return;
     }

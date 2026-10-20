@@ -20,6 +20,7 @@ import {
   type GitPullRequestRefInput,
   type VcsPullResult,
   type VcsRemoveWorktreeInput,
+  type VcsStageFilesInput,
   type GitResolvePullRequestResult,
   type GitRunStackedActionInput,
   type GitRunStackedActionResult,
@@ -123,6 +124,8 @@ export class GitWorkflowService extends Context.Service<
     readonly switchRef: (
       input: VcsSwitchRefInput,
     ) => Effect.Effect<VcsSwitchRefResult, GitCommandError>;
+    readonly stageFiles: (input: VcsStageFilesInput) => Effect.Effect<void, GitCommandError>;
+    readonly unstageFiles: (input: VcsStageFilesInput) => Effect.Effect<void, GitCommandError>;
     readonly renameBranch: (input: {
       readonly exactName?: boolean;
       readonly cwd: string;
@@ -459,6 +462,14 @@ export const make = Effect.gen(function* () {
         Effect.flatMap((handle) =>
           withCheckoutLease(handle.repository.rootPath, Effect.scoped(git.switchRef(input))),
         ),
+      ),
+    stageFiles: (input) =>
+      ensureGitCommand("GitWorkflowService.stageFiles", input.cwd).pipe(
+        Effect.andThen(git.stageFiles(input)),
+      ),
+    unstageFiles: (input) =>
+      ensureGitCommand("GitWorkflowService.unstageFiles", input.cwd).pipe(
+        Effect.andThen(git.unstageFiles(input)),
       ),
     renameBranch: (input) =>
       ensureGit("GitWorkflowService.renameBranch", input.cwd).pipe(

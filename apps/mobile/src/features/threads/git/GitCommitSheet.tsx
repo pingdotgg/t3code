@@ -4,6 +4,7 @@ import { useNavigation, type StaticScreenProps } from "@react-navigation/native"
 import { useState } from "react";
 import { Platform, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
+import { hasStagedChanges, resolveUnstagedFiles } from "@t3tools/client-runtime/state/vcs";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView } from "../../../components/ui/AppSymbol";
@@ -46,7 +47,9 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
   const allFiles = gitStatus.data?.workingTree?.files ?? [];
 
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
-  const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(new Set());
+  const [editedExclusions, setEditedExclusions] = useState<ReadonlySet<string> | null>(null);
+  const commitsStagedOnly = editedExclusions === null && hasStagedChanges(allFiles);
+  const excludedFiles = editedExclusions ?? resolveUnstagedFiles(allFiles);
 
   const selectedFiles = allFiles.filter((file) => !excludedFiles.has(file.path));
   const allSelected = excludedFiles.size === 0;
@@ -62,7 +65,11 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
       action: "commit",
       featureBranch,
       ...(commitMessage ? { commitMessage } : {}),
-      ...(!allSelected ? { filePaths: selectedFiles.map((file) => file.path) } : {}),
+      ...(commitsStagedOnly
+        ? { stagedOnly: true }
+        : !allSelected
+          ? { filePaths: selectedFiles.map((file) => file.path) }
+          : {}),
     });
   };
 
@@ -118,16 +125,23 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
             <View className="flex-1 gap-1">
               <Text className="text-base font-t3-bold text-foreground">Changed files</Text>
               <Text className="text-xs text-foreground-muted">
-                {selectedFiles.length} of {allFiles.length} selected · +
-                {formatDiffCount(selectedInsertions)} −{formatDiffCount(selectedDeletions)}
+                {selectedFiles.length} of {allFiles.length}{" "}
+                {commitsStagedOnly ? "staged" : "selected"} · +{formatDiffCount(selectedInsertions)}{" "}
+                −{formatDiffCount(selectedDeletions)}
               </Text>
             </View>
             {allFiles.length > 0 ? (
               <Button
-                label={allSelected ? "Deselect all" : "Select all"}
+                label={
+                  commitsStagedOnly
+                    ? "Include unstaged"
+                    : allSelected
+                      ? "Deselect all"
+                      : "Select all"
+                }
                 tone="text"
                 onPress={() =>
-                  setExcludedFiles(
+                  setEditedExclusions(
                     allSelected ? new Set(allFiles.map((file) => file.path)) : new Set(),
                   )
                 }
@@ -150,8 +164,8 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
                   accessibilityLabel={file.path}
                   accessibilityState={{ checked: included }}
                   onPress={() =>
-                    setExcludedFiles((current) => {
-                      const next = new Set(current);
+                    setEditedExclusions((current) => {
+                      const next = new Set(current ?? excludedFiles);
                       if (next.has(file.path)) next.delete(file.path);
                       else next.add(file.path);
                       return next;

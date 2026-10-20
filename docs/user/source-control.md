@@ -10,6 +10,13 @@ rebases, the files Git brought in are left out. A file stays in the list when th
 committed it, or fixed a conflict in it. Use the branch comparison to review everything that changed
 against your base branch. Restore still returns the complete saved workspace.
 
+## Stage changes for a commit
+
+The diff panel's **Uncommitted** view splits into **Changes** and **Staged**. A partly staged file
+appears in both, each showing only its own lines. While anything is staged, committing records
+just the staged changes, as `git commit` does; choose **Include unstaged changes** in the commit
+dialog to commit everything.
+
 ## Connect an account
 
 Install Git and configure authentication on the machine running your T3 Code server. For a remote

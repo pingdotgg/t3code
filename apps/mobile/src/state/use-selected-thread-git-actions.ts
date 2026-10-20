@@ -389,6 +389,7 @@ export function useSelectedThreadGitActions() {
             ...(input.commitMessage ? { commitMessage: input.commitMessage } : {}),
             ...(input.featureBranch ? { featureBranch: input.featureBranch } : {}),
             ...(input.filePaths?.length ? { filePaths: [...input.filePaths] } : {}),
+            ...(input.stagedOnly ? { stagedOnly: true } : {}),
             threadId: thread.id,
           });
           if (AsyncResult.isFailure(result)) {

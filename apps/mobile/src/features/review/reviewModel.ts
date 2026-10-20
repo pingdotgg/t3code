@@ -431,17 +431,23 @@ export function buildReviewSectionItems(input: {
     },
   );
 
-  const gitItems = input.gitSections.map<ReviewSectionItem>((section) => ({
-    id: `git:${section.kind}`,
-    kind: section.kind,
-    title: section.title,
-    subtitle: gitSubtitle(section),
-    diff: section.diff,
-    source: section,
-    ...(section.files ? { files: section.files } : {}),
-    truncated: section.truncated,
-    isLoading: false,
-  }));
+  const gitItems = input.gitSections.flatMap<ReviewSectionItem>((section) =>
+    section.kind === "working-tree" || section.kind === "branch-range"
+      ? [
+          {
+            id: `git:${section.kind}`,
+            kind: section.kind,
+            title: section.title,
+            subtitle: gitSubtitle(section),
+            diff: section.diff,
+            source: section,
+            ...(section.files ? { files: section.files } : {}),
+            truncated: section.truncated,
+            isLoading: false,
+          },
+        ]
+      : [],
+  );
   const hasChangesItem = gitItems.some((item) => item.id === CHANGES_SECTION_ID);
   const visibleGitItems =
     input.loadingGitSections && !hasChangesItem

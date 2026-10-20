@@ -119,6 +119,8 @@ export type GitBranchPullRequest = NonNullable<VcsStatusResult["pr"]> & {
   readonly headSha?: string | null;
 };
 
+type CommitSelection = Pick<GitRunStackedActionInput, "filePaths" | "stagedOnly">;
+
 interface SourceControlTextGenerationSettings {
   readonly modelSelection: ModelSelection;
   readonly style: SourceControlWritingStyleSettings;
@@ -2102,12 +2104,13 @@ export const make = Effect.gen(function* () {
       branch: string | null;
       commitMessage?: string;
       includeBranch?: boolean;
-      filePaths?: readonly string[];
+      selection: CommitSelection;
       settings: SourceControlTextGenerationSettings;
     }) {
       const customCommit = parseCustomCommitMessage(input.commitMessage ?? "");
-      const context = yield* gitCore.prepareCommitContext(input.cwd, input.filePaths, {
+      const context = yield* gitCore.prepareCommitContext(input.cwd, input.selection.filePaths, {
         includePatch: customCommit === null,
+        ...(input.selection.stagedOnly ? { stagedOnly: true } : {}),
       });
       if (!context) {
         return null;
@@ -2152,9 +2155,9 @@ export const make = Effect.gen(function* () {
     cwd: string,
     action: "commit" | "commit_push" | "commit_push_pr",
     branch: string | null,
-    commitMessage?: string,
-    preResolvedSuggestion?: CommitAndBranchSuggestion,
-    filePaths?: readonly string[],
+    commitMessage: string | undefined,
+    preResolvedSuggestion: CommitAndBranchSuggestion | undefined,
+    selection: CommitSelection,
     progressReporter?: GitActionProgressReporter,
     actionId?: string,
   ) {
@@ -2182,7 +2185,7 @@ export const make = Effect.gen(function* () {
         cwd,
         branch,
         ...(commitMessage ? { commitMessage } : {}),
-        ...(filePaths ? { filePaths } : {}),
+        selection,
         settings,
       });
     }
@@ -2242,7 +2245,11 @@ export const make = Effect.gen(function* () {
         : null;
     const { commitSha } = yield* gitCore.commit(cwd, suggestion.subject, suggestion.body, {
       timeoutMs: COMMIT_TIMEOUT_MS,
-      stage: filePaths ? { filePaths } : {},
+      ...(selection.filePaths
+        ? { stage: { filePaths: selection.filePaths } }
+        : selection.stagedOnly
+          ? {}
+          : { stage: {} }),
       ...(commitProgress ? { progress: commitProgress } : {}),
     });
     if (currentHookName !== null) {
@@ -3033,14 +3040,14 @@ export const make = Effect.gen(function* () {
     settings: SourceControlTextGenerationSettings,
     cwd: string,
     branch: string | null,
-    commitMessage?: string,
-    filePaths?: readonly string[],
+    commitMessage: string | undefined,
+    selection: CommitSelection,
   ) {
     const suggestion = yield* resolveCommitAndBranchSuggestion({
       cwd,
       branch,
       ...(commitMessage ? { commitMessage } : {}),
-      ...(filePaths ? { filePaths } : {}),
+      selection,
       includeBranch: true,
       settings,
     });
@@ -3164,7 +3171,7 @@ export const make = Effect.gen(function* () {
             input.cwd,
             initialStatus.branch,
             input.commitMessage,
-            input.filePaths,
+            input,
           );
           branchStep = result.branchStep;
           commitMessageForStep = result.resolvedCommitMessage;
@@ -3194,7 +3201,7 @@ export const make = Effect.gen(function* () {
                   currentBranch,
                   commitMessageForStep,
                   preResolvedCommitSuggestion,
-                  input.filePaths,
+                  input,
                   options?.progressReporter,
                   progress.actionId,
                 ),
