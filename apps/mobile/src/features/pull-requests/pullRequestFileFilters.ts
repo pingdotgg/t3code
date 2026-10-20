@@ -1,19 +1,10 @@
+import { classifyChangedFile } from "@t3tools/shared/changedFileKind";
 import type { ReviewParsedDiff } from "../review/reviewModel";
 
+/** Test support such as fixtures and snapshots is hidden along with the tests. */
 export function isPullRequestTestFile(path: string): boolean {
-  const segments = path.replaceAll("\\", "/").split("/");
-  const name = segments.at(-1) ?? "";
-  return (
-    segments
-      .slice(0, -1)
-      .some((segment) => /^(?:__tests__|__snapshots__|tests?|spec|e2e)$/i.test(segment)) ||
-    /\.(?:test|spec)\./i.test(name) ||
-    /\.snap$/i.test(name) ||
-    /^(?:test_.+|.+_test)\.py$/i.test(name) ||
-    /_test\.(?:go|rs|rb|c|cc|cpp|h|hpp)$/i.test(name) ||
-    /(?:Test|Tests|Spec)\.(?:java|kt|kts|swift|cs)$/.test(name) ||
-    /_spec\.rb$/i.test(name)
-  );
+  const kind = classifyChangedFile(path);
+  return kind === "tests" || kind === "mocks";
 }
 
 export function filterPullRequestTestFiles(

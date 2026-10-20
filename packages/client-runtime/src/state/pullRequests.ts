@@ -7,6 +7,7 @@ import {
   PullRequestListResult,
   PullRequestChecks,
   PullRequestDiffResult,
+  PullRequestChangeBreakdown,
   PullRequestFilesViewedResult,
   PullRequestLinkedThreadsResult,
   type EnvironmentId,
@@ -371,6 +372,14 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       tag: WS_METHODS.pullRequestsFilesViewed,
       execute: (input) => routedRequest(WS_METHODS.pullRequestsFilesViewed, input),
       staleTimeMs: 15_000,
+    }),
+    changeBreakdown: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:pull-requests:change-breakdown",
+      persistence: persistQuery(PullRequestChangeBreakdown),
+      tag: WS_METHODS.pullRequestsChangeBreakdown,
+      execute: (input) => routedRequest(WS_METHODS.pullRequestsChangeBreakdown, input),
+      staleTimeMs: 60_000,
+      refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
     }),
     /**
      * One write in flight per change request: the host applies these in order, and a reader

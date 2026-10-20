@@ -226,6 +226,16 @@ export interface ProviderFilesViewed {
   readonly truncated: boolean;
 }
 
+export interface ProviderFileStats {
+  readonly files: ReadonlyArray<{
+    readonly path: string;
+    readonly additions: number;
+    readonly deletions: number;
+  }>;
+  /** The host has more files than were read. */
+  readonly truncated: boolean;
+}
+
 /**
  * Opaque strings, compared only against one another, where the empty string is the answer for a
  * file the change request deletes rather than a gap. A path is absent only where the read could
@@ -407,6 +417,11 @@ export interface PullRequestProviderApi {
   readonly getFilesViewed?: (
     input: ProviderRepositoryRef & { readonly number: number },
   ) => Effect.Effect<ProviderFilesViewed, PullRequestProviderError>;
+
+  /** Line counts for every changed file. Optional: a host without one shows no breakdown. */
+  readonly getFileStats?: (
+    input: ProviderRepositoryRef & { readonly number: number },
+  ) => Effect.Effect<ProviderFileStats, PullRequestProviderError>;
 
   /**
    * A host with no bulk form is still owed one round trip for the batch rather than one per

@@ -56,6 +56,7 @@ import type {
   PullRequestCheckContexts,
   PullRequestCore,
   PullRequestFilesViewed,
+  PullRequestFileStats,
   PullRequestHeads,
   PullRequestPreview as PullRequestPreviewQuery,
   PullRequestSubject,
@@ -1801,6 +1802,29 @@ export function toPullRequestFilesViewedPage(
       node.path.length === 0
         ? []
         : [{ path: node.path, state: toFileViewedState(node.viewerViewedState) }],
+    ),
+    nextCursor: nextCursorOf(files?.pageInfo),
+  };
+}
+
+export interface GitHubPullRequestFileStat {
+  readonly path: string;
+  readonly additions: number;
+  readonly deletions: number;
+}
+
+export interface GitHubPullRequestFileStatsPage {
+  readonly files: ReadonlyArray<GitHubPullRequestFileStat>;
+  readonly nextCursor: string | null;
+}
+
+export function toPullRequestFileStatsPage(
+  result: PullRequestFileStats.Result,
+): GitHubPullRequestFileStatsPage {
+  const files = result.repository?.pullRequest?.files;
+  return {
+    files: nodesOf(files).flatMap(({ path, additions, deletions }) =>
+      path.length === 0 ? [] : [{ path, additions, deletions }],
     ),
     nextCursor: nextCursorOf(files?.pageInfo),
   };
