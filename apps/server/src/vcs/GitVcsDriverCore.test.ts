@@ -3542,14 +3542,16 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* git(cwd, ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk"]);
 
         const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const commands: ReadonlyArray<string>[] = [];
         let originHeadReads = 0;
         let failFirstOriginHead = false;
         const spawner = ChildProcessSpawner.make((command) =>
           Effect.gen(function* () {
-            if (
-              ChildProcess.isStandardCommand(command) &&
-              command.args.join(" ") === "symbolic-ref refs/remotes/origin/HEAD"
-            ) {
+            if (!ChildProcess.isStandardCommand(command)) {
+              return yield* Effect.die("expected a standard Git command");
+            }
+            commands.push(command.args);
+            if (command.args.join(" ") === "symbolic-ref refs/remotes/origin/HEAD") {
               originHeadReads++;
               if (failFirstOriginHead && originHeadReads === 1) return makeNonRepositoryHandle();
             }
@@ -3565,12 +3567,19 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.equal(status.isRepo, true);
         assert.equal(status.branch, "feature/remote-status");
         assert.equal(status.defaultBranch, "trunk");
+        assert.equal(status.isDefaultBranch, false);
+        assert.equal(status.upstreamRef, "origin/feature/remote-status");
         assert.equal(status.hasUpstream, true);
         assert.equal(status.aheadCount, 0);
         assert.equal(status.behindCount, 0);
         assert.equal(status.aheadOfDefaultCount, 1);
         assert.notProperty(status, "workingTree");
         assert.notProperty(status, "hasWorkingTreeChanges");
+        assert.deepEqual(
+          commands.filter((args) => args.length === 1 && args[0] === "remote"),
+          [],
+          `cached remote status should not enumerate remotes: ${JSON.stringify(commands)}`,
+        );
         assert.equal(originHeadReads, 1);
 
         // With no main/master fallback, the retry must resolve trunk to preserve the ahead count.
