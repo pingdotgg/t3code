@@ -224,7 +224,11 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
     }),
   );
 
-  it.effect("forwards Claude thinking settings without passing unsupported effort", () =>
+  it.effect.each([
+    { thinking: true, settings: '{"disableAllHooks":true,"alwaysThinkingEnabled":true}' },
+    { thinking: false, settings: '{"disableAllHooks":true,"alwaysThinkingEnabled":false}' },
+    { thinking: undefined, settings: '{"disableAllHooks":true}' },
+  ])("forwards only the explicit thinking choice ($thinking)", ({ thinking, settings }) =>
     withFakeClaudeEnv(
       {
         output: JSON.stringify({
@@ -233,7 +237,7 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
             body: "",
           },
         }),
-        argsMustContain: '--settings {"disableAllHooks":true,"alwaysThinkingEnabled":false}',
+        argsMustContain: `--settings ${settings}`,
         argsMustNotContain: "--effort",
       },
       (textGeneration) =>
@@ -243,16 +247,14 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
             branch: "feature/claude-effect",
             stagedSummary: "M README.md",
             stagedPatch: "diff --git a/README.md b/README.md",
-            modelSelection: {
-              ...createModelSelection(
-                ProviderInstanceId.make("claudeAgent"),
-                SYNTHETIC_CLAUDE_THINKING_MODEL,
-                [
-                  { id: "thinking", value: false },
-                  { id: "effort", value: "high" },
-                ],
-              ),
-            },
+            modelSelection: createModelSelection(
+              ProviderInstanceId.make("claudeAgent"),
+              SYNTHETIC_CLAUDE_THINKING_MODEL,
+              [
+                ...(thinking === undefined ? [] : [{ id: "thinking", value: thinking }]),
+                { id: "effort", value: "high" },
+              ],
+            ),
           });
 
           expect(generated.subject).toBe("Add important change");
