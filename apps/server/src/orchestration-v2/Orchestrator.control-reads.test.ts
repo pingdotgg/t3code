@@ -1155,6 +1155,87 @@ it.effect("replays a thread.create receipt without changing the thread", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect.each(["thread.archive", "thread.delete"] as const)(
+  "rejects fresh delegation after %s and preserves command receipts",
+  (operation) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = ThreadId.make(`parent:delegation-lifecycle:${operation}`);
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`create:${threadId}`),
+        threadId,
+        projectId: ProjectId.make("project:delegation-lifecycle"),
+        title: "Delegate work",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const lifecycle = (type: "thread.archive" | "thread.unarchive" | "thread.delete") =>
+        orchestrator.dispatch({ type, commandId: CommandId.make(`${type}:${threadId}`), threadId });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`message:${operation}`),
+        threadId,
+        messageId: MessageId.make(`message:${operation}`),
+        text: "Delegate work",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const run = (yield* projections.getThreadRecords(threadId, ["runs"])).runs[0]!;
+      const command = {
+        type: "delegated_task.request" as const,
+        commandId: CommandId.make(`delegate:${operation}`),
+        parentThreadId: threadId,
+        parentRunId: run.id,
+        parentNodeId: run.rootNodeId!,
+        task: "Inspect the project",
+        modelSelection,
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        createdBy: "agent" as const,
+        creationSource: "mcp" as const,
+      };
+      const accepted = yield* orchestrator.dispatch(command);
+      yield* lifecycle(operation);
+      const replayed = yield* orchestrator.dispatch(command);
+      assert.equal(replayed.sequence, accepted.sequence);
+      assert.deepEqual(
+        replayed.storedEvents.map((entry) => entry.event.id),
+        accepted.storedEvents.map((entry) => entry.event.id),
+      );
+      const rejected = { ...command, commandId: CommandId.make(`rejected:${operation}`) };
+      const error = yield* orchestrator.dispatch(rejected).pipe(Effect.flip);
+      assert.equal(error._tag, "OrchestratorDispatchError");
+      assert.equal(
+        error.cause,
+        `Parent thread ${threadId} is ${operation === "thread.delete" ? "deleted" : "archived"}.`,
+      );
+      if (operation === "thread.archive") yield* lifecycle("thread.unarchive");
+      const replay = yield* orchestrator.dispatch(rejected).pipe(Effect.flip);
+      assert.equal(replay._tag, "OrchestratorCommandPreviouslyRejectedError");
+      const parent = yield* projections.getThreadRecords(threadId, ["subagents"]);
+      assert.lengthOf(parent.subagents, 1);
+      if (operation === "thread.archive") {
+        yield* orchestrator.dispatch({
+          ...command,
+          commandId: CommandId.make("restored-delegation"),
+        });
+        assert.lengthOf(
+          (yield* projections.getThreadRecords(threadId, ["subagents"])).subagents,
+          2,
+        );
+      }
+    }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("explicit settle clears snooze atomically and stays idempotent after re-snoozing", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;

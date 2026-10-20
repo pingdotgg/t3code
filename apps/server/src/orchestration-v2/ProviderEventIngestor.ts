@@ -1,6 +1,7 @@
 import {
   NodeId,
   CommandId,
+  type OrchestrationV2AppThread,
   OrchestrationV2DomainEvent,
   OrchestrationV2StoredEvent,
   type OrchestrationV2PlanArtifact,
@@ -518,6 +519,25 @@ export const layer: Layer.Layer<
       return events;
     });
 
+    const subagentParentThreadId = (thread: OrchestrationV2AppThread) =>
+      thread.lineage.relationshipToParent === "subagent" &&
+      thread.lineage.parentThreadId !== thread.id
+        ? (thread.lineage.parentThreadId ?? undefined)
+        : undefined;
+
+    const inheritParentLifecycle = (thread: OrchestrationV2AppThread) => {
+      const parentThreadId = subagentParentThreadId(thread);
+      if (parentThreadId === undefined) return Effect.succeed(thread);
+      return projections.getThread(parentThreadId).pipe(
+        Effect.map((parent) => ({
+          ...thread,
+          archivedAt: parent.archivedAt,
+          deletedAt: thread.deletedAt ?? parent.deletedAt,
+        })),
+        Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(thread) }),
+      );
+    };
+
     const normalize: ProviderEventIngestorV2Shape["normalize"] =
       /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
       Effect.fnUntraced(
@@ -544,7 +564,7 @@ export const layer: Layer.Layer<
                   threadId: offered.id,
                   payload:
                     existing === null
-                      ? offered
+                      ? yield* inheritParentLifecycle(offered)
                       : {
                           ...existing,
                           title: offered.title,
@@ -860,10 +880,15 @@ export const layer: Layer.Layer<
                   );
                 }),
               ),
-              (effect) =>
-                input.event.type === "app_thread.created"
-                  ? threadCommands.withLock(input.event.appThread.id, effect)
-                  : effect,
+              (effect) => {
+                if (input.event.type !== "app_thread.created") return effect;
+                const write = threadCommands.withLock(input.event.appThread.id, effect);
+                const parentThreadId = subagentParentThreadId(input.event.appThread);
+                // Parent first serializes lifecycle inheritance with archive and delete commands.
+                return parentThreadId === undefined
+                  ? write
+                  : threadCommands.withLock(parentThreadId, write);
+              },
             ),
         ),
     });

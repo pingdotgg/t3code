@@ -4,6 +4,7 @@ import {
   CheckpointId,
   CheckpointRef,
   CheckpointScopeId,
+  CommandId,
   MessageId,
   GitCommandError,
   type ModelSelection,
@@ -35,6 +36,7 @@ import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import { vi } from "vite-plus/test";
 
 import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -44,6 +46,9 @@ import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as Orchestrator from "./Orchestrator.ts";
+import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
+import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
@@ -1705,6 +1710,8 @@ layer("ProviderEventIngestorV2", (it) => {
         ...rootEvent.payload,
         id: childThreadId,
         title: "inspect package",
+        archivedAt: now,
+        deletedAt: now,
         activeProviderThreadId: null,
         lineage: {
           parentThreadId: rootEvent.threadId,
@@ -1757,6 +1764,7 @@ layer("ProviderEventIngestorV2", (it) => {
 
       assert.equal(threadEvents[0]?.type, "thread.created");
       assert.equal(threadEvents[0]?.threadId, childThreadId);
+      assert.deepEqual(threadEvents[0]?.payload, childThread);
       assert.equal(messageEvents[0]?.type, "message.updated");
       assert.equal(messageEvents[0]?.threadId, childThreadId);
     }),
@@ -2007,6 +2015,8 @@ layer("ProviderEventIngestorV2", (it) => {
             payload: {
               ...rootEvent.payload,
               branch: "generated-branch",
+              archivedAt: now,
+              deletedAt: now,
               worktreePath: sharedPath,
             },
           },
@@ -2033,7 +2043,68 @@ layer("ProviderEventIngestorV2", (it) => {
       );
       assert.equal(child.worktreePath, actualPath);
       assert.deepEqual(child.lineage, offered.lineage);
+      assert.deepEqual(child.archivedAt, now);
+      assert.deepEqual(child.deletedAt, now);
     }),
+  );
+
+  it.effect(
+    "clears stale native archives after restore while preserving forks and explicit deletion",
+    () =>
+      Effect.gen(function* () {
+        const now = yield* DateTime.now;
+        const sink = yield* EventSink.EventSinkV2;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+        const ids = yield* IdAllocator.IdAllocatorV2;
+        const root = yield* threadCreatedEvent(now);
+        if (root.type !== "thread.created") throw new Error("Expected thread fixture");
+        yield* sink.write({ events: [{ ...root, payload: { ...root.payload, archivedAt: now } }] });
+        yield* sink.write({
+          events: [
+            {
+              ...root,
+              id: yield* ids.allocate.event({ threadId: root.threadId }),
+              type: "thread.unarchived",
+              payload: root.payload,
+            },
+          ],
+        });
+        const providerSessionId = yield* ids.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId: root.threadId,
+        });
+        for (const relationship of ["subagent", "deleted-subagent", "fork"] as const) {
+          const childId = ids.derive.threadFromProviderThread({
+            driver: CODEX_DRIVER,
+            nativeThreadId: `restored-parent:${relationship}`,
+          });
+          const deletedAt = relationship === "deleted-subagent" ? now : null;
+          yield* ingestor.ingestNormalized({
+            providerSessionId,
+            providerInstanceId: modelSelection.instanceId,
+            threadId: root.threadId,
+            event: {
+              type: "app_thread.created",
+              driver: CODEX_DRIVER,
+              appThread: {
+                ...root.payload,
+                id: childId,
+                archivedAt: now,
+                deletedAt,
+                lineage: {
+                  parentThreadId: root.threadId,
+                  rootThreadId: root.threadId,
+                  relationshipToParent: relationship === "fork" ? "fork" : "subagent",
+                },
+              },
+            },
+          });
+          const child = yield* projections.getThread(childId);
+          assert.deepEqual(child.archivedAt, relationship === "fork" ? now : null);
+          assert.deepEqual(child.deletedAt, deletedAt);
+        }
+      }),
   );
 
   it.effect("updates provider child metadata without recreating its saved thread", () =>
@@ -2114,6 +2185,7 @@ layer("ProviderEventIngestorV2", (it) => {
           ...offered,
           title: "Review checkout",
           modelSelection: { ...modelSelection, model: "gpt-6.1-sol" },
+          lineage: { ...offered.lineage, parentThreadId: childThreadId },
         }),
         [],
       );
@@ -2311,3 +2383,99 @@ layer("ProviderEventIngestorV2", (it) => {
     }),
   );
 });
+
+it.effect.each(["thread.archive", "thread.delete"] as const)(
+  "serializes native creation behind an ordinary %s command",
+  (operation) =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+      const ids = yield* IdAllocator.IdAllocatorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+      const root = yield* threadCreatedEvent(now);
+      if (root.type !== "thread.created") throw new Error("Expected thread fixture");
+      yield* sink.write({ events: [root] });
+      const childId = ids.derive.threadFromProviderThread({
+        driver: CODEX_DRIVER,
+        nativeThreadId: `lifecycle-race:${operation}`,
+      });
+      const providerSessionId = yield* ids.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: root.threadId,
+      });
+      const ready = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const creationLock = yield* Deferred.make<typeof root.threadId>();
+      const commit = sink.commitCommand;
+      const lock = executor.withLock;
+      const commitSpy = vi
+        .spyOn(sink, "commitCommand")
+        .mockImplementation((input) =>
+          input.commandType === operation
+            ? Deferred.succeed(ready, undefined).pipe(
+                Effect.andThen(Deferred.await(release)),
+                Effect.andThen(commit(input)),
+              )
+            : commit(input),
+        );
+      yield* Effect.gen(function* () {
+        const parentFiber = yield* orchestrator
+          .dispatch({
+            type: operation,
+            commandId: CommandId.make(`race:${operation}`),
+            threadId: root.threadId,
+          })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(ready);
+        const observe: typeof executor.withLock = (key, effect) =>
+          Deferred.succeed(creationLock, key).pipe(Effect.andThen(lock(key, effect)));
+        const lockSpy = vi.spyOn(executor, "withLock").mockImplementation(observe);
+        yield* Effect.gen(function* () {
+          const childFiber = yield* ingestor
+            .ingestNormalized({
+              providerSessionId,
+              providerInstanceId: modelSelection.instanceId,
+              threadId: root.threadId,
+              event: {
+                type: "app_thread.created",
+                driver: CODEX_DRIVER,
+                appThread: {
+                  ...root.payload,
+                  id: childId,
+                  lineage: {
+                    parentThreadId: root.threadId,
+                    rootThreadId: root.threadId,
+                    relationshipToParent: "subagent",
+                  },
+                },
+              },
+            })
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          const firstLock = yield* Deferred.await(creationLock);
+          yield* Deferred.succeed(release, undefined);
+          yield* Fiber.join(parentFiber);
+          yield* Fiber.join(childFiber);
+          const parent = yield* projections.getThread(root.threadId);
+          const child = yield* projections.getThread(childId);
+          assert.isNotNull(operation === "thread.archive" ? parent.archivedAt : parent.deletedAt);
+          assert.deepEqual(child.archivedAt, parent.archivedAt);
+          assert.deepEqual(child.deletedAt, parent.deletedAt);
+          assert.equal(firstLock, root.threadId);
+        }).pipe(Effect.ensuring(Effect.sync(() => lockSpy.mockRestore())));
+      }).pipe(Effect.ensuring(Effect.sync(() => commitSpy.mockRestore())));
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          layerTest,
+          ProviderReplayHarness.layerWithRegistry(
+            { name: "native-child-lifecycle-race" },
+            ProviderAdapterRegistry.layerFromAdapters([]),
+            { databaseLayer: layerTestDatabase, runEffectWorker: false },
+          ),
+        ),
+      ),
+    ),
+);
