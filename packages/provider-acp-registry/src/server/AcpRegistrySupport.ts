@@ -1,4 +1,5 @@
 import {
+  ACP_REGISTRY_MAX_AGENTS,
   AcpRegistryOperationError,
   AcpRegistryOperationErrorReason,
   TrimmedNonEmptyString,
@@ -51,7 +52,8 @@ const ACP_REGISTRY_URL = "https://cdn.agentclientprotocol.com/registry/v1/latest
 const MAX_REGISTRY_BYTES = 1024 * 1024;
 const MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024;
 const MAX_PACKAGE_MANIFEST_BYTES = 1024 * 1024;
-const MAX_SEARCH_RESULTS = 20;
+// Older clients omit the limit and validate responses against a 20-agent cap.
+const DEFAULT_SEARCH_LIMIT = 20;
 const REGISTRY_REQUEST_TIMEOUT = "30 seconds";
 const ARCHIVE_REQUEST_TIMEOUT = "20 minutes";
 const PACKAGE_INSTALL_TIMEOUT = "20 minutes";
@@ -170,7 +172,7 @@ type AcpRegistryPackageInstallReceipt = typeof AcpRegistryPackageInstallReceipt.
 
 const AcpRegistryIndexEnvelope = Schema.Struct({
   version: BoundedVersion,
-  agents: Schema.Array(Schema.Unknown).check(Schema.isMaxLength(512)),
+  agents: Schema.Array(Schema.Unknown).check(Schema.isMaxLength(ACP_REGISTRY_MAX_AGENTS)),
 });
 export interface AcpRegistryIndex {
   readonly version: string;
@@ -1614,8 +1616,9 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
           compareText(left.agent.name.toLowerCase(), right.agent.name.toLowerCase()) ||
           compareText(left.agent.id, right.agent.id),
       );
+      const limit = input.limit ?? DEFAULT_SEARCH_LIMIT;
       return {
-        agents: ranked.slice(0, MAX_SEARCH_RESULTS).map(({ agent, distribution }) => ({
+        agents: ranked.slice(0, limit).map(({ agent, distribution }) => ({
           id: agent.id,
           name: agent.name,
           version: agent.version,
