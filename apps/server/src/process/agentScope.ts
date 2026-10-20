@@ -121,31 +121,32 @@ export const make = Effect.gen(function* () {
   // Old agents keep their scopes when the server is killed, and the restarted
   // server resumes their sessions. Stop them first, so two copies of one
   // session never work in the same worktree.
-  const stopLeftoverAgents = (systemctl: string) =>
-    Effect.gen(function* () {
-      const shown = yield* run(systemctl, [
-        "--user",
-        "show",
-        ownedSlice,
-        "--property=ActiveState,ControlGroup",
-      ]);
-      if (shown._tag === "None") return;
-      const values = parseKeyValues(shown.value.stdout);
-      if (values.get("ActiveState") !== "active") return;
-      const controlGroup = values.get("ControlGroup") ?? "";
-      const events = controlGroup ? yield* readCgroupFile(controlGroup, "cgroup.events") : "";
-      if (parseCgroupCounter(events, "populated") === 0) return;
-      yield* Effect.logWarning("Stopping agents left by a previous server", { slice: ownedSlice });
-      const stopped = yield* runner
-        .run({ command: systemctl, args: ["--user", "stop", ownedSlice], timeout: "30 seconds" })
-        .pipe(Effect.option);
-      if (stopped._tag === "None" || stopped.value.code !== 0) {
-        yield* Effect.logWarning("Could not stop agents left by a previous server", {
-          slice: ownedSlice,
-          stderr: stopped._tag === "Some" ? stopped.value.stderr.trim() : undefined,
-        });
-      }
-    });
+  const stopLeftoverAgents = Effect.fn("agentScope.stopLeftoverAgents")(function* (
+    systemctl: string,
+  ) {
+    const shown = yield* run(systemctl, [
+      "--user",
+      "show",
+      ownedSlice,
+      "--property=ActiveState,ControlGroup",
+    ]);
+    if (shown._tag === "None") return;
+    const values = parseKeyValues(shown.value.stdout);
+    if (values.get("ActiveState") !== "active") return;
+    const controlGroup = values.get("ControlGroup") ?? "";
+    const events = controlGroup ? yield* readCgroupFile(controlGroup, "cgroup.events") : "";
+    if (parseCgroupCounter(events, "populated") === 0) return;
+    yield* Effect.logWarning("Stopping agents left by a previous server", { slice: ownedSlice });
+    const stopped = yield* runner
+      .run({ command: systemctl, args: ["--user", "stop", ownedSlice], timeout: "30 seconds" })
+      .pipe(Effect.option);
+    if (stopped._tag === "None" || stopped.value.code !== 0) {
+      yield* Effect.logWarning("Could not stop agents left by a previous server", {
+        slice: ownedSlice,
+        stderr: stopped._tag === "Some" ? stopped.value.stderr.trim() : undefined,
+      });
+    }
+  });
 
   const systemd = yield* Effect.cached(
     Effect.gen(function* () {
@@ -202,73 +203,76 @@ export const make = Effect.gen(function* () {
 
   const scopeByThread = new Map<string, { unit: string; oomKilled: boolean }>();
 
-  const readScope = (systemctl: string, unit: string) =>
-    Effect.gen(function* () {
-      const shown = yield* run(systemctl, [
-        "--user",
-        "show",
-        unit,
-        "--property=LoadState,ActiveState,Result,ControlGroup",
-      ]);
-      if (shown._tag === "None" || shown.value.code !== 0) return undefined;
-      const values = parseKeyValues(shown.value.stdout);
-      const controlGroup = values.get("ControlGroup") ?? "";
-      const memoryEvents = controlGroup ? yield* readCgroupFile(controlGroup, "memory.events") : "";
-      const cgroupEvents = controlGroup ? yield* readCgroupFile(controlGroup, "cgroup.events") : "";
-      const populated = parseCgroupCounter(cgroupEvents, "populated");
-      return {
-        loadState: values.get("LoadState") ?? "",
-        activeState: values.get("ActiveState") ?? "",
-        result: values.get("Result") ?? "",
-        oomKills: parseCgroupCounter(memoryEvents, "oom_kill") ?? 0,
-        populated: populated === undefined ? undefined : populated === 1,
-      } satisfies ScopeState;
-    });
+  const readScope = Effect.fn("agentScope.readScope")(function* (systemctl: string, unit: string) {
+    const shown = yield* run(systemctl, [
+      "--user",
+      "show",
+      unit,
+      "--property=LoadState,ActiveState,Result,ControlGroup",
+    ]);
+    if (shown._tag === "None" || shown.value.code !== 0) return undefined;
+    const values = parseKeyValues(shown.value.stdout);
+    const controlGroup = values.get("ControlGroup") ?? "";
+    const memoryEvents = controlGroup ? yield* readCgroupFile(controlGroup, "memory.events") : "";
+    const cgroupEvents = controlGroup ? yield* readCgroupFile(controlGroup, "cgroup.events") : "";
+    const populated = parseCgroupCounter(cgroupEvents, "populated");
+    return {
+      loadState: values.get("LoadState") ?? "",
+      activeState: values.get("ActiveState") ?? "",
+      result: values.get("Result") ?? "",
+      oomKills: parseCgroupCounter(memoryEvents, "oom_kill") ?? 0,
+      populated: populated === undefined ? undefined : populated === 1,
+    } satisfies ScopeState;
+  });
 
-  const clearFailed = (systemctl: string, unit: string) =>
-    Effect.gen(function* () {
-      for (let attempt = 0; attempt < CLEAR_FAILED_ATTEMPTS; attempt++) {
-        const state = yield* readScope(systemctl, unit);
-        if (state === undefined) return;
-        if (state.activeState === "failed") {
-          yield* run(systemctl, ["--user", "reset-failed", unit]);
-          return;
-        }
-        if (state.activeState !== "deactivating") return;
-        yield* Effect.sleep(CLEAR_FAILED_INTERVAL);
+  const clearFailed = Effect.fn("agentScope.clearFailed")(function* (
+    systemctl: string,
+    unit: string,
+  ) {
+    for (let attempt = 0; attempt < CLEAR_FAILED_ATTEMPTS; attempt++) {
+      const state = yield* readScope(systemctl, unit);
+      if (state === undefined) return;
+      if (state.activeState === "failed") {
+        yield* run(systemctl, ["--user", "reset-failed", unit]);
+        return;
       }
-    });
+      if (state.activeState !== "deactivating") return;
+      yield* Effect.sleep(CLEAR_FAILED_INTERVAL);
+    }
+  });
 
   const forget = (systemctl: string, unit: string) =>
     clearFailed(systemctl, unit).pipe(Effect.forkIn(layerScope), Effect.asVoid);
 
-  const evictOldest = (systemctl: string) =>
-    Effect.gen(function* () {
-      const oldest = scopeByThread.entries().next();
-      if (oldest.done === true) return;
-      const [threadId, tracked] = oldest.value;
-      const state = yield* readScope(systemctl, tracked.unit);
-      if (scopeByThread.get(threadId) !== tracked) return;
-      scopeByThread.delete(threadId);
-      const status = state === undefined ? "running" : classifyScope(state);
-      if (status === "running" || status === "stopping") {
-        scopeByThread.set(threadId, tracked);
-        return;
-      }
-      yield* forget(systemctl, tracked.unit);
-    });
+  const evictOldest = Effect.fn("agentScope.evictOldest")(function* (systemctl: string) {
+    const oldest = scopeByThread.entries().next();
+    if (oldest.done === true) return;
+    const [threadId, tracked] = oldest.value;
+    const state = yield* readScope(systemctl, tracked.unit);
+    if (scopeByThread.get(threadId) !== tracked) return;
+    scopeByThread.delete(threadId);
+    const status = state === undefined ? "running" : classifyScope(state);
+    if (status === "running" || status === "stopping") {
+      scopeByThread.set(threadId, tracked);
+      return;
+    }
+    yield* forget(systemctl, tracked.unit);
+  });
 
-  const track = (systemctl: string, threadId: string, unit: string | undefined) =>
-    Effect.gen(function* () {
-      const previous = scopeByThread.get(threadId);
-      scopeByThread.delete(threadId);
-      if (unit !== undefined) scopeByThread.set(threadId, { unit, oomKilled: false });
-      if (previous !== undefined) yield* forget(systemctl, previous.unit);
-      if (scopeByThread.size > MAX_TRACKED_THREADS) yield* evictOldest(systemctl);
-    });
+  const track = Effect.fn("agentScope.track")(function* (
+    systemctl: string,
+    threadId: string,
+    unit: string | undefined,
+  ) {
+    const previous = scopeByThread.get(threadId);
+    scopeByThread.delete(threadId);
+    if (unit !== undefined) scopeByThread.set(threadId, { unit, oomKilled: false });
+    if (previous !== undefined) yield* forget(systemctl, previous.unit);
+    if (scopeByThread.size > MAX_TRACKED_THREADS) yield* evictOldest(systemctl);
+  });
 
-  const oomKilled: AgentScopeShape["oomKilled"] = (threadId) =>
-    Effect.gen(function* () {
+  const oomKilled: AgentScopeShape["oomKilled"] = Effect.fn("agentScope.oomKilled")(
+    function* (threadId) {
       const tracked = scopeByThread.get(threadId);
       if (tracked === undefined) return false;
       if (tracked.oomKilled) return true;
@@ -293,14 +297,14 @@ export const make = Effect.gen(function* () {
         return true;
       }
       return false;
-    });
+    },
+  );
 
-  const clear: AgentScopeShape["clear"] = (threadId) =>
-    Effect.gen(function* () {
-      if (!scopeByThread.has(threadId)) return;
-      const scope = yield* systemd;
-      if (scope !== undefined) yield* track(scope.systemctl, threadId, undefined);
-    });
+  const clear: AgentScopeShape["clear"] = Effect.fn("agentScope.clear")(function* (threadId) {
+    if (!scopeByThread.has(threadId)) return;
+    const scope = yield* systemd;
+    if (scope !== undefined) yield* track(scope.systemctl, threadId, undefined);
+  });
 
   return {
     wrap: Effect.fn("AgentScope.wrap")(function* ({

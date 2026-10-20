@@ -206,20 +206,23 @@ const simctl = (run: Runner, udid: string, args: ReadonlyArray<string>, operatio
     Effect.flatMap(ok(operation)),
   );
 
-const axSettings = (ready: DeviceHostReady, udid: string, args: ReadonlyArray<string>) =>
-  Effect.gen(function* () {
-    const helper = ready.helpers.serveSimAxSettings;
-    if (!helper) {
-      return yield* new DeviceActionUnavailableError({
-        operation: "accessibility",
-        platform: "ios",
-        reason: "helper_missing",
-      });
-    }
-    return yield* ready
-      .run("xcrun", ["simctl", "spawn", udid, helper, ...args])
-      .pipe(Effect.flatMap(ok("accessibility")));
-  });
+const axSettings = Effect.fn("DeviceActions.axSettings")(function* (
+  ready: DeviceHostReady,
+  udid: string,
+  args: ReadonlyArray<string>,
+) {
+  const helper = ready.helpers.serveSimAxSettings;
+  if (!helper) {
+    return yield* new DeviceActionUnavailableError({
+      operation: "accessibility",
+      platform: "ios",
+      reason: "helper_missing",
+    });
+  }
+  return yield* ready
+    .run("xcrun", ["simctl", "spawn", udid, helper, ...args])
+    .pipe(Effect.flatMap(ok("accessibility")));
+});
 
 const runIos = Effect.fn("DeviceActions.runIos")(function* (
   ready: DeviceHostReady,
@@ -318,31 +321,30 @@ const runIos = Effect.fn("DeviceActions.runIos")(function* (
   }
 });
 
-const serveSimPermissions = (
+const serveSimPermissions = Effect.fn("DeviceActions.serveSimPermissions")(function* (
   ready: DeviceHostReady,
   udid: string,
   input: Extract<DeviceActionInput, { type: "setPermission" }>,
-) =>
-  Effect.gen(function* () {
-    const cli = ready.helpers.serveSimCli;
-    if (!cli)
-      return yield* new DeviceActionUnavailableError({
-        operation: "permission",
-        platform: "ios",
-        reason: "helper_missing",
-      });
-    yield* ready
-      .run(ready.nodePath, [
-        cli,
-        "permissions",
-        input.decision,
-        input.permission,
-        input.appId,
-        "-d",
-        udid,
-      ])
-      .pipe(Effect.flatMap(ok("permission")));
-  });
+) {
+  const cli = ready.helpers.serveSimCli;
+  if (!cli)
+    return yield* new DeviceActionUnavailableError({
+      operation: "permission",
+      platform: "ios",
+      reason: "helper_missing",
+    });
+  yield* ready
+    .run(ready.nodePath, [
+      cli,
+      "permissions",
+      input.decision,
+      input.permission,
+      input.appId,
+      "-d",
+      udid,
+    ])
+    .pipe(Effect.flatMap(ok("permission")));
+});
 
 const adb = (run: Runner, serial: string, args: ReadonlyArray<string>, operation: string) =>
   run("adb", ["-s", serial, ...args]).pipe(Effect.flatMap(ok(operation)));

@@ -126,20 +126,21 @@ const readStorage = Effect.gen(function* () {
  * refused while any other connection has the file open, even an idle one,
  * which is how a running server or desktop app is detected.
  */
-const lockExclusively = (databasePath: string) =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    yield* sql`PRAGMA busy_timeout = 0`;
-    yield* sql`PRAGMA locking_mode = EXCLUSIVE`;
-    yield* sql`BEGIN EXCLUSIVE`.pipe(
-      Effect.mapError((cause) =>
-        isSqlError(cause) && cause.reason._tag === "LockTimeoutError"
-          ? new DatabaseInUseError({ path: databasePath, cause })
-          : cause,
-      ),
-    );
-    yield* sql`COMMIT`;
-  });
+const lockExclusively = Effect.fn("DatabaseMaintenance.lockExclusively")(function* (
+  databasePath: string,
+) {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`PRAGMA busy_timeout = 0`;
+  yield* sql`PRAGMA locking_mode = EXCLUSIVE`;
+  yield* sql`BEGIN EXCLUSIVE`.pipe(
+    Effect.mapError((cause) =>
+      isSqlError(cause) && cause.reason._tag === "LockTimeoutError"
+        ? new DatabaseInUseError({ path: databasePath, cause })
+        : cause,
+    ),
+  );
+  yield* sql`COMMIT`;
+});
 
 const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;

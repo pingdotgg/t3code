@@ -493,32 +493,34 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       Effect.ignoreCause,
     );
 
-  const superviseHub = (hub: HubProcess, hubTool: DeviceToolPaths): Effect.Effect<void> =>
-    Effect.gen(function* () {
-      yield* Effect.result(hub.child.exitCode);
-      const running = yield* Ref.get(runningRef);
-      if (running?.hub.child.pid !== hub.child.pid) return;
-      const uptime = (yield* Clock.currentTimeMillis) - hub.startedAtMillis;
-      const delay = yield* Ref.modify(restartDelayRef, (current) => {
-        if (uptime >= HUB_RESTART_STABLE_UPTIME_MS) return [0, 0];
-        const next = current === 0 ? 1_000 : Math.min(current * 2, HUB_RESTART_MAX_DELAY_MS);
-        return [current, next];
-      });
-      yield* Effect.logWarning("Device hub exited; restarting", {
-        pid: Number(hub.child.pid),
-        delayMs: delay,
-      });
-      yield* Effect.sleep(Duration.millis(delay));
-      yield* startLock.withPermits(1)(
-        Effect.gen(function* () {
-          const current = yield* Ref.get(runningRef);
-          if (current?.hub.child.pid !== hub.child.pid) return;
-          const replacement = yield* spawnHub(hubTool, hub.nodePath);
-          yield* Ref.set(runningRef, { ...current, hub: replacement });
-          yield* Effect.forkDetach(superviseHub(replacement, hubTool));
-        }),
-      );
-    }).pipe(
+  // Waits for the hub's lifetime and re-forks on restart; a span would nest across restarts.
+  const superviseHub: (hub: HubProcess, hubTool: DeviceToolPaths) => Effect.Effect<void> =
+    Effect.fnUntraced(
+      function* (hub: HubProcess, hubTool: DeviceToolPaths) {
+        yield* Effect.result(hub.child.exitCode);
+        const running = yield* Ref.get(runningRef);
+        if (running?.hub.child.pid !== hub.child.pid) return;
+        const uptime = (yield* Clock.currentTimeMillis) - hub.startedAtMillis;
+        const delay = yield* Ref.modify(restartDelayRef, (current) => {
+          if (uptime >= HUB_RESTART_STABLE_UPTIME_MS) return [0, 0];
+          const next = current === 0 ? 1_000 : Math.min(current * 2, HUB_RESTART_MAX_DELAY_MS);
+          return [current, next];
+        });
+        yield* Effect.logWarning("Device hub exited; restarting", {
+          pid: Number(hub.child.pid),
+          delayMs: delay,
+        });
+        yield* Effect.sleep(Duration.millis(delay));
+        yield* startLock.withPermits(1)(
+          Effect.gen(function* () {
+            const current = yield* Ref.get(runningRef);
+            if (current?.hub.child.pid !== hub.child.pid) return;
+            const replacement = yield* spawnHub(hubTool, hub.nodePath);
+            yield* Ref.set(runningRef, { ...current, hub: replacement });
+            yield* Effect.forkDetach(superviseHub(replacement, hubTool));
+          }),
+        );
+      },
       Effect.catchCause((cause) => Effect.logWarning("Device hub supervisor failed", { cause })),
     );
 

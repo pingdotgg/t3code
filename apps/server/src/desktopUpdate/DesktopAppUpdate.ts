@@ -66,74 +66,71 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
       ? new ServerSelfUpdateError({ reason })
       : new ServerSelfUpdateError({ reason, cause });
 
-  const consumeReports = (
+  const consumeReports = Effect.fn("DesktopAppUpdate.consumeReports")(function* (
     requestId: string,
     changes: Stream.Stream<DesktopUpdateStatusReport>,
     reportProgress: (
       stage: ServerSelfUpdateProgressStage,
     ) => Effect.Effect<void, ServerSelfUpdateError>,
-  ) =>
-    Effect.gen(function* () {
-      const lastStage = yield* Ref.make<ServerSelfUpdateProgressStage | null>(null);
-      const emitStage = (
-        stage: ServerSelfUpdateProgressStage | null,
-      ): Effect.Effect<void, ServerSelfUpdateError> =>
-        stage === null
-          ? Effect.void
-          : Ref.get(lastStage).pipe(
-              Effect.flatMap((previous) =>
-                previous === stage
-                  ? Effect.void
-                  : Ref.set(lastStage, stage).pipe(Effect.andThen(reportProgress(stage))),
-              ),
-            );
+  ) {
+    const lastStage = yield* Ref.make<ServerSelfUpdateProgressStage | null>(null);
+    const emitStage = (
+      stage: ServerSelfUpdateProgressStage | null,
+    ): Effect.Effect<void, ServerSelfUpdateError> =>
+      stage === null
+        ? Effect.void
+        : Ref.get(lastStage).pipe(
+            Effect.flatMap((previous) =>
+              previous === stage
+                ? Effect.void
+                : Ref.set(lastStage, stage).pipe(Effect.andThen(reportProgress(stage))),
+            ),
+          );
 
-      const terminal = yield* changes.pipe(
-        Stream.filter((report) => report.requestId === requestId),
-        Stream.mapEffect(
-          (
-            report,
-          ): Effect.Effect<Option.Option<DesktopUpdateStatusReport>, ServerSelfUpdateError> =>
-            report.outcome === undefined
-              ? emitStage(desktopUpdateProgressStage(report.state)).pipe(
-                  Effect.as(Option.none<DesktopUpdateStatusReport>()),
-                )
-              : Effect.succeedSome(report),
-        ),
-        Stream.filterMap(
-          Option.match({
-            onNone: () => Result.failVoid,
-            onSome: Result.succeed,
-          }),
-        ),
-        Stream.runHead,
-      );
-      if (Option.isNone(terminal)) {
-        return yield* failWith("The desktop app stopped reporting its update.");
-      }
+    const terminal = yield* changes.pipe(
+      Stream.filter((report) => report.requestId === requestId),
+      Stream.mapEffect(
+        (report): Effect.Effect<Option.Option<DesktopUpdateStatusReport>, ServerSelfUpdateError> =>
+          report.outcome === undefined
+            ? emitStage(desktopUpdateProgressStage(report.state)).pipe(
+                Effect.as(Option.none<DesktopUpdateStatusReport>()),
+              )
+            : Effect.succeedSome(report),
+      ),
+      Stream.filterMap(
+        Option.match({
+          onNone: () => Result.failVoid,
+          onSome: Result.succeed,
+        }),
+      ),
+      Stream.runHead,
+    );
+    if (Option.isNone(terminal)) {
+      return yield* failWith("The desktop app stopped reporting its update.");
+    }
 
-      const report = terminal.value;
-      if (report.outcome === "ready-to-install") {
-        yield* emitStage("installing");
-        const targetVersion =
-          report.state.downloadedVersion ??
-          report.state.availableVersion ??
-          report.state.currentVersion;
-        yield* Effect.logInfo("Desktop app update prepared for install.", {
-          targetVersion,
-        });
-        yield* Ref.set(inFlight, false);
-        return { targetVersion, method: "desktop-app" as const, desktopUpdateToken: requestId };
-      }
-      if (report.outcome === "up-to-date") {
-        return yield* failWith(
-          `The T3 Code desktop app on this machine is already up to date on ${report.state.currentVersion}.`,
-        );
-      }
+    const report = terminal.value;
+    if (report.outcome === "ready-to-install") {
+      yield* emitStage("installing");
+      const targetVersion =
+        report.state.downloadedVersion ??
+        report.state.availableVersion ??
+        report.state.currentVersion;
+      yield* Effect.logInfo("Desktop app update prepared for install.", {
+        targetVersion,
+      });
+      yield* Ref.set(inFlight, false);
+      return { targetVersion, method: "desktop-app" as const, desktopUpdateToken: requestId };
+    }
+    if (report.outcome === "up-to-date") {
       return yield* failWith(
-        report.reason ?? report.state.message ?? "The desktop app update failed.",
+        `The T3 Code desktop app on this machine is already up to date on ${report.state.currentVersion}.`,
       );
-    });
+    }
+    return yield* failWith(
+      report.reason ?? report.state.message ?? "The desktop app update failed.",
+    );
+  });
 
   const run: DesktopAppUpdate["Service"]["run"] = Effect.fn("desktopUpdate.desktopAppUpdate.run")(
     function* (reportProgress) {

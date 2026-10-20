@@ -783,16 +783,17 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       }),
     );
 
-  const resolveGitCommonDir = (cwd: string) =>
-    Effect.gen(function* () {
-      const result = yield* execute({
-        operation: "GitVcsDriver.checkpoints.resolveGitCommonDir",
-        cwd,
-        args: ["rev-parse", "--git-common-dir"],
-      });
-      const gitCommonDir = result.stdout.trim();
-      return path.isAbsolute(gitCommonDir) ? gitCommonDir : path.resolve(cwd, gitCommonDir);
+  const resolveGitCommonDir = Effect.fn("GitVcsDriver.resolveGitCommonDir")(function* (
+    cwd: string,
+  ) {
+    const result = yield* execute({
+      operation: "GitVcsDriver.checkpoints.resolveGitCommonDir",
+      cwd,
+      args: ["rev-parse", "--git-common-dir"],
     });
+    const gitCommonDir = result.stdout.trim();
+    return path.isAbsolute(gitCommonDir) ? gitCommonDir : path.resolve(cwd, gitCommonDir);
+  });
 
   // Git renames loose objects and refs into place without fsync by default, so
   // an unclean restart can leave 0-byte files under refs/t3/** that break every

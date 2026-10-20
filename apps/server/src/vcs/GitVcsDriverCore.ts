@@ -600,14 +600,16 @@ const nowUnixNano = DateTime.now.pipe(
   Effect.map((now) => BigInt(DateTime.toEpochMillis(now)) * 1_000_000n),
 );
 
-const addCurrentSpanEvent = (name: string, attributes: Record<string, unknown>) =>
-  Effect.gen(function* () {
-    const span = yield* Effect.currentSpan;
-    const timestamp = yield* nowUnixNano;
-    yield* Effect.sync(() => {
-      span.event(name, timestamp, compactTraceAttributes(attributes));
-    });
-  }).pipe(
+const addCurrentSpanEvent =
+  /* This helper annotates the existing operation span. */
+  Effect.fnUntraced(
+    function* (name: string, attributes: Record<string, unknown>) {
+      const span = yield* Effect.currentSpan;
+      const timestamp = yield* nowUnixNano;
+      yield* Effect.sync(() => {
+        span.event(name, timestamp, compactTraceAttributes(attributes));
+      });
+    },
     Effect.catchTags({
       NoSuchElementError: () => Effect.void,
     }),
@@ -1440,15 +1442,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }),
     },
   );
-  const invalidateStatusStaticCaches = (cwd: string) =>
-    Effect.gen(function* () {
+  const invalidateStatusStaticCaches = Effect.fn("GitVcsDriverCore.invalidateStatusStaticCaches")(
+    function* (cwd: string) {
       const repositoryPaths = yield* resolveRepositoryPaths(cwd).pipe(
         Effect.catchTags({ GitCommandError: () => Effect.succeed(null) }),
       );
       const cacheKey = repositoryPaths?.gitCommonDir ?? normalizeRepositoryPathsCacheKey(cwd);
       yield* Cache.invalidate(defaultBranchCache, cacheKey);
       yield* Cache.invalidate(originExistsCache, cacheKey);
-    });
+    },
+  );
 
   const resolveGitCommonDir = Effect.fn("resolveGitCommonDir")(function* (cwd: string) {
     const repositoryPaths = yield* resolveRepositoryPaths(cwd);
@@ -3994,22 +3997,22 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
    * Unlinks links under `target` without following them and removes the
    * directories that leaves empty. Returns false when anything else remains.
    */
-  const removeLeftoverLinks = (
+  // Recursive filesystem traversal can visit many entries; removeWorktree owns the operation span.
+  const removeLeftoverLinks = Effect.fnUntraced(function* (
     target: string,
-  ): Effect.Effect<boolean, PlatformError.PlatformError | Cause.UnknownError> =>
-    Effect.gen(function* () {
-      if (Option.isSome(yield* fileSystem.readLink(target).pipe(Effect.option))) {
-        yield* fileSystem.remove(target);
-        return true;
-      }
-      if ((yield* fileSystem.stat(target)).type !== "Directory") return false;
-      let empty = true;
-      for (const name of yield* fileSystem.readDirectory(target)) {
-        if (!(yield* removeLeftoverLinks(path.join(target, name)))) empty = false;
-      }
-      // Only an empty directory goes, so files written since the listing stay.
-      return empty && (yield* removeEmptyDirectory(target));
-    });
+  ): Effect.fn.Return<boolean, PlatformError.PlatformError | Cause.UnknownError> {
+    if (Option.isSome(yield* fileSystem.readLink(target).pipe(Effect.option))) {
+      yield* fileSystem.remove(target);
+      return true;
+    }
+    if ((yield* fileSystem.stat(target)).type !== "Directory") return false;
+    let empty = true;
+    for (const name of yield* fileSystem.readDirectory(target)) {
+      if (!(yield* removeLeftoverLinks(path.join(target, name)))) empty = false;
+    }
+    // Only an empty directory goes, so files written since the listing stay.
+    return empty && (yield* removeEmptyDirectory(target));
+  });
 
   const removeWorktree: GitVcsDriver.GitVcsDriver["Service"]["removeWorktree"] = Effect.fn(
     "removeWorktree",

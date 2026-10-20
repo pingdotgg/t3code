@@ -555,88 +555,87 @@ export const make = Effect.gen(function* () {
       );
     });
 
-  const makeRemoteRefreshLoop = (
+  // A subscription owns this loop; keep each poll's spans out of a never-ending parent span.
+  const makeRemoteRefreshLoop = Effect.fnUntraced(function* (
     cwd: string,
     demandCwdsRef: Ref.Ref<ReadonlyMap<string, number>>,
     refreshImmediately: boolean,
-  ) => {
-    return Effect.gen(function* () {
-      const consecutiveFailuresRef = yield* Ref.make(0);
-      const needsInitialRefreshRef = yield* Ref.make(refreshImmediately);
-      const refreshRemoteStatusIfEnabled = Effect.gen(function* () {
-        const configuredInterval = yield* automaticFetchInterval;
-        const activeInterval = Duration.isZero(configuredInterval)
-          ? DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL
-          : configuredInterval;
-        const needsInitialRefresh = yield* Ref.get(needsInitialRefreshRef);
-        if (Duration.isZero(configuredInterval) && !needsInitialRefresh) {
-          return activeInterval;
-        }
-
-        const demandCwds = yield* Ref.get(demandCwdsRef);
-        const shouldRun =
-          needsInitialRefresh ||
-          (yield* Effect.forEach(
-            [...demandCwds.keys()],
-            (demandCwd) =>
-              backgroundPolicy.shouldRunScopeWork({
-                type: "vcs-status",
-                cwd: demandCwd,
-              }),
-            { concurrency: "unbounded" },
-          )).some(Boolean);
-        if (!shouldRun) {
-          return activeInterval;
-        }
-
-        const exit = yield* refreshRemoteStatus(cwd, {
-          refreshUpstream: !Duration.isZero(configuredInterval),
-          policyCwds: [...demandCwds.keys()],
-        }).pipe(Effect.exit);
-        if (Exit.isSuccess(exit)) {
-          yield* Ref.set(needsInitialRefreshRef, false);
-          yield* Ref.set(consecutiveFailuresRef, 0);
-          return activeInterval;
-        }
-
-        const interruptionReasons = exit.cause.reasons.filter(Cause.isInterruptReason);
-        if (interruptionReasons.length > 0) {
-          return yield* Effect.failCause(Cause.fromReasons<never>(interruptionReasons));
-        }
-
-        const consecutiveFailures = yield* Ref.updateAndGet(
-          consecutiveFailuresRef,
-          (count) => count + 1,
-        );
-        const nextDelay = remoteRefreshFailureDelay(consecutiveFailures, activeInterval);
-        yield* Effect.logWarning("VCS remote status refresh failed", {
-          cwdLength: cwd.length,
-          ...remoteRefreshFailureDiagnostics(exit.cause),
-          consecutiveFailures,
-          nextDelayMs: Duration.toMillis(nextDelay),
-        });
-        return nextDelay;
-      });
-
-      if (!refreshImmediately) {
-        const configuredInterval = yield* automaticFetchInterval;
-        yield* Effect.sleep(
-          Duration.isZero(configuredInterval)
-            ? DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL
-            : configuredInterval,
-        );
+  ) {
+    const consecutiveFailuresRef = yield* Ref.make(0);
+    const needsInitialRefreshRef = yield* Ref.make(refreshImmediately);
+    const refreshRemoteStatusIfEnabled = Effect.gen(function* () {
+      const configuredInterval = yield* automaticFetchInterval;
+      const activeInterval = Duration.isZero(configuredInterval)
+        ? DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL
+        : configuredInterval;
+      const needsInitialRefresh = yield* Ref.get(needsInitialRefreshRef);
+      if (Duration.isZero(configuredInterval) && !needsInitialRefresh) {
+        return activeInterval;
       }
 
-      return yield* refreshRemoteStatusIfEnabled.pipe(
-        Effect.repeat(
-          Schedule.identity<Duration.Duration>().pipe(
-            Schedule.addDelay(({ output: delay }) => Effect.succeed(delay)),
-          ),
-        ),
-        Effect.asVoid,
+      const demandCwds = yield* Ref.get(demandCwdsRef);
+      const shouldRun =
+        needsInitialRefresh ||
+        (yield* Effect.forEach(
+          [...demandCwds.keys()],
+          (demandCwd) =>
+            backgroundPolicy.shouldRunScopeWork({
+              type: "vcs-status",
+              cwd: demandCwd,
+            }),
+          { concurrency: "unbounded" },
+        )).some(Boolean);
+      if (!shouldRun) {
+        return activeInterval;
+      }
+
+      const exit = yield* refreshRemoteStatus(cwd, {
+        refreshUpstream: !Duration.isZero(configuredInterval),
+        policyCwds: [...demandCwds.keys()],
+      }).pipe(Effect.exit);
+      if (Exit.isSuccess(exit)) {
+        yield* Ref.set(needsInitialRefreshRef, false);
+        yield* Ref.set(consecutiveFailuresRef, 0);
+        return activeInterval;
+      }
+
+      const interruptionReasons = exit.cause.reasons.filter(Cause.isInterruptReason);
+      if (interruptionReasons.length > 0) {
+        return yield* Effect.failCause(Cause.fromReasons<never>(interruptionReasons));
+      }
+
+      const consecutiveFailures = yield* Ref.updateAndGet(
+        consecutiveFailuresRef,
+        (count) => count + 1,
       );
+      const nextDelay = remoteRefreshFailureDelay(consecutiveFailures, activeInterval);
+      yield* Effect.logWarning("VCS remote status refresh failed", {
+        cwdLength: cwd.length,
+        ...remoteRefreshFailureDiagnostics(exit.cause),
+        consecutiveFailures,
+        nextDelayMs: Duration.toMillis(nextDelay),
+      });
+      return nextDelay;
     });
-  };
+
+    if (!refreshImmediately) {
+      const configuredInterval = yield* automaticFetchInterval;
+      yield* Effect.sleep(
+        Duration.isZero(configuredInterval)
+          ? DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL
+          : configuredInterval,
+      );
+    }
+
+    return yield* refreshRemoteStatusIfEnabled.pipe(
+      Effect.repeat(
+        Schedule.identity<Duration.Duration>().pipe(
+          Schedule.addDelay(({ output: delay }) => Effect.succeed(delay)),
+        ),
+      ),
+      Effect.asVoid,
+    );
+  });
 
   const retainRemotePoller = Effect.fn("VcsStatusBroadcaster.retainRemotePoller")(function* (
     cwd: string,

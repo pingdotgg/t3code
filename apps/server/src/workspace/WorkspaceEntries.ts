@@ -160,20 +160,21 @@ export const make = Effect.gen(function* () {
         if (!(yield* RcMap.has(workspaceSearchIndexes.rcMap, indexKey))) {
           continue;
         }
-        const recoverRefreshFailure = (
-          cause:
-            | WorkspaceSearchIndex.WorkspaceSearchIndexCreateFailed
-            | WorkspaceSearchIndex.WorkspaceSearchIndexScanTimedOut
-            | WorkspaceSearchIndex.WorkspaceSearchIndexRefreshFailed,
-        ) =>
-          Effect.gen(function* () {
+        const recoverRefreshFailure = Effect.fn("WorkspaceEntries.recoverRefreshFailure")(
+          function* (
+            cause:
+              | WorkspaceSearchIndex.WorkspaceSearchIndexCreateFailed
+              | WorkspaceSearchIndex.WorkspaceSearchIndexScanTimedOut
+              | WorkspaceSearchIndex.WorkspaceSearchIndexRefreshFailed,
+          ) {
             yield* Effect.logWarning("Failed to refresh workspace search index", {
               cwd,
               variant,
               cause,
             });
             yield* workspaceSearchIndexes.invalidate(indexKey);
-          });
+          },
+        );
         yield* Effect.gen(function* () {
           const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
           yield* searchIndex.refresh();

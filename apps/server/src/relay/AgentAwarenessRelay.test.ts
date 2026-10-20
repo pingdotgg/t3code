@@ -15,6 +15,7 @@ import {
   TurnItemId,
 } from "@t3tools/contracts";
 import { RelayAgentActivityState } from "@t3tools/contracts/relay";
+import { RelayClientTracer } from "@t3tools/shared/relayTracing";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -24,6 +25,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
@@ -372,6 +374,29 @@ describe("AgentAwarenessRelay", () => {
       ]);
     }),
   );
+
+  it.effect("exports the publication span through the relay tracer", () => {
+    const relaySpans: string[] = [];
+    const localSpans: string[] = [];
+    const collectingTracer = (spans: string[]) =>
+      Tracer.make({
+        span: (options) => {
+          spans.push(options.name);
+          return new Tracer.NativeSpan(options);
+        },
+      });
+
+    return Effect.gen(function* () {
+      const { relay, publications } = yield* makeTestRelay();
+      yield* relay.publishThread(THREAD_ID);
+      assert.equal(publications.length, 1);
+      assert.include(relaySpans, "relay.agent_activity.publish");
+      assert.notInclude(localSpans, "relay.agent_activity.publish");
+    }).pipe(
+      Effect.provideService(RelayClientTracer, Option.some(collectingTracer(relaySpans))),
+      Effect.withTracer(collectingTracer(localSpans)),
+    );
+  });
 
   it.effect("deduplicates state and republishes title changes", () =>
     Effect.gen(function* () {

@@ -451,66 +451,63 @@ export const make = Effect.gen(function* () {
    * than completion order: saved records of deleted transcripts aggregate in
    * cache order, where the first copy of a duplicate wins.
    */
-  const readFileRecords = (
+  const readFileRecords = Effect.fn("UsageService.readFileRecords")(function* (
     filePath: string,
     size: number,
     mtimeMs: number,
     provider: UsageProviderKind,
     format: TranscriptUsageFormat<unknown>,
-  ): Effect.Effect<{
+  ): Effect.fn.Return<{
     readonly records: readonly UsageRecord[];
     readonly failed?: true;
     readonly update?: { readonly entry: CachedFile; readonly replaces: CachedFile | undefined };
-  }> =>
-    Effect.gen(function* () {
-      const cached = fileCache.get(filePath);
-      // Provider is part of the identity: if both providers were ever pointed
-      // at one directory, a hit parsed by the other parser must not be reused.
-      if (
-        cached &&
-        cached.size === size &&
-        cached.mtimeMs === mtimeMs &&
-        cached.provider === provider
-      ) {
-        return {
-          records:
-            cached.tailRecords.length === 0
-              ? cached.records
-              : [...cached.records, ...cached.tailRecords],
-        };
-      }
-
-      // Only a strictly grown file may resume. Same size with a new mtime, or
-      // a shrunken file, means rewritten content; re-parse it whole.
-      const resumeFrom =
-        cached !== undefined && cached.provider === provider && size > cached.size
-          ? cached.position
-          : undefined;
-
-      const parsed = yield* Effect.promise(() =>
-        readTranscriptRecords(filePath, format, resumeFrom),
-      );
-      // A read failure is not an empty transcript: caching it under this
-      // (size, mtime) would silently drop the file's usage until it changes.
-      if (parsed === null)
-        return {
-          records: cached?.provider === provider ? [...cached.records, ...cached.tailRecords] : [],
-          failed: true,
-        };
-
-      const base = parsed.resumed && cached !== undefined ? cached.records : [];
-      const seen = new Set<string>();
-      const records = dedupeWithinFile([...base, ...parsed.records], seen);
-      const tailRecords = dedupeWithinFile(parsed.tailRecords, seen);
-
+  }> {
+    const cached = fileCache.get(filePath);
+    // Provider is part of the identity: if both providers were ever pointed
+    // at one directory, a hit parsed by the other parser must not be reused.
+    if (
+      cached &&
+      cached.size === size &&
+      cached.mtimeMs === mtimeMs &&
+      cached.provider === provider
+    ) {
       return {
-        records: tailRecords.length === 0 ? records : [...records, ...tailRecords],
-        update: {
-          entry: { size, mtimeMs, provider, records, tailRecords, position: parsed.position },
-          replaces: cached,
-        },
+        records:
+          cached.tailRecords.length === 0
+            ? cached.records
+            : [...cached.records, ...cached.tailRecords],
       };
-    });
+    }
+
+    // Only a strictly grown file may resume. Same size with a new mtime, or
+    // a shrunken file, means rewritten content; re-parse it whole.
+    const resumeFrom =
+      cached !== undefined && cached.provider === provider && size > cached.size
+        ? cached.position
+        : undefined;
+
+    const parsed = yield* Effect.promise(() => readTranscriptRecords(filePath, format, resumeFrom));
+    // A read failure is not an empty transcript: caching it under this
+    // (size, mtime) would silently drop the file's usage until it changes.
+    if (parsed === null)
+      return {
+        records: cached?.provider === provider ? [...cached.records, ...cached.tailRecords] : [],
+        failed: true,
+      };
+
+    const base = parsed.resumed && cached !== undefined ? cached.records : [];
+    const seen = new Set<string>();
+    const records = dedupeWithinFile([...base, ...parsed.records], seen);
+    const tailRecords = dedupeWithinFile(parsed.tailRecords, seen);
+
+    return {
+      records: tailRecords.length === 0 ? records : [...records, ...tailRecords],
+      update: {
+        entry: { size, mtimeMs, provider, records, tailRecords, position: parsed.position },
+        replaces: cached,
+      },
+    };
+  });
 
   interface ScannedDir {
     readonly provider: UsageProviderKind;

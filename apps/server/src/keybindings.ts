@@ -66,24 +66,23 @@ export const ResolvedKeybindingFromConfig = KeybindingRule.pipe(
           Effect.map((resolved) => resolved),
         ),
 
-      encode: (resolved) =>
-        Effect.gen(function* () {
-          const key = encodeShortcut(resolved.shortcut);
-          if (!key) {
-            return yield* Effect.fail(
-              new SchemaIssue.InvalidValue({
-                message: "Resolved shortcut cannot be encoded to key string",
-              }),
-            );
-          }
+      encode: Effect.fn("keybindings.encode")(function* (resolved) {
+        const key = encodeShortcut(resolved.shortcut);
+        if (!key) {
+          return yield* Effect.fail(
+            new SchemaIssue.InvalidValue({
+              message: "Resolved shortcut cannot be encoded to key string",
+            }),
+          );
+        }
 
-          const when = resolved.whenAst ? encodeWhenAst(resolved.whenAst) : undefined;
-          return {
-            key,
-            command: resolved.command,
-            when,
-          };
-        }),
+        const when = resolved.whenAst ? encodeWhenAst(resolved.whenAst) : undefined;
+        return {
+          key,
+          command: resolved.command,
+          when,
+        };
+      }),
     }),
   ),
 );

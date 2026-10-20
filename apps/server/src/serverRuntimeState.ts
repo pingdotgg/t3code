@@ -85,30 +85,31 @@ export const persistServerRuntimeState = (input: {
     ),
   );
 
-export const clearPersistedServerRuntimeState = (path: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    yield* fs.remove(path, { force: true }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ServerRuntimeStateError({
-            operation: "clear",
-            statePath: path,
-            cause,
+export const clearPersistedServerRuntimeState = Effect.fn(
+  "serverRuntimeState.clearPersistedServerRuntimeState",
+)(function* (path: string) {
+  const fs = yield* FileSystem.FileSystem;
+  yield* fs.remove(path, { force: true }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ServerRuntimeStateError({
+          operation: "clear",
+          statePath: path,
+          cause,
+        }),
+    ),
+    Effect.catchTags({
+      ServerRuntimeStateError: (error) =>
+        Effect.logWarning(error.message).pipe(
+          Effect.annotateLogs({
+            operation: error.operation,
+            statePath: error.statePath,
+            cause: error,
           }),
-      ),
-      Effect.catchTags({
-        ServerRuntimeStateError: (error) =>
-          Effect.logWarning(error.message).pipe(
-            Effect.annotateLogs({
-              operation: error.operation,
-              statePath: error.statePath,
-              cause: error,
-            }),
-          ),
-      }),
-    );
-  });
+        ),
+    }),
+  );
+});
 
 /**
  * Signal 0 delivers nothing; it only reports whether the pid exists. EPERM
@@ -124,8 +125,10 @@ export const isProcessAlive = (pid: number): boolean => {
   }
 };
 
-export const readPersistedServerRuntimeState = (path: string) =>
-  Effect.gen(function* () {
+export const readPersistedServerRuntimeState = Effect.fn(
+  "serverRuntimeState.readPersistedServerRuntimeState",
+)(
+  function* (path: string) {
     const fs = yield* FileSystem.FileSystem;
     const raw = yield* fs.readFileString(path).pipe(
       Effect.matchEffect({
@@ -162,16 +165,16 @@ export const readPersistedServerRuntimeState = (path: string) =>
           }),
       ),
     );
-  }).pipe(
-    Effect.catchTags({
-      ServerRuntimeStateError: (error) =>
-        Effect.logWarning(error.message).pipe(
-          Effect.annotateLogs({
-            operation: error.operation,
-            statePath: error.statePath,
-            cause: error,
-          }),
-          Effect.as(Option.none<PersistedServerRuntimeState>()),
-        ),
-    }),
-  );
+  },
+  Effect.catchTags({
+    ServerRuntimeStateError: (error) =>
+      Effect.logWarning(error.message).pipe(
+        Effect.annotateLogs({
+          operation: error.operation,
+          statePath: error.statePath,
+          cause: error,
+        }),
+        Effect.as(Option.none<PersistedServerRuntimeState>()),
+      ),
+  }),
+);

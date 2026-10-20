@@ -153,8 +153,8 @@ export const make = Effect.gen(function* () {
         lock.withPermits(1),
       );
     }),
-    invalidate: (scope) =>
-      Effect.gen(function* () {
+    invalidate: Effect.fn("PullRequestReadCache.invalidate")(
+      function* (scope) {
         const now = clock.currentTimeMillisUnsafe();
         const current = yield* Cache.get(revisions, undefined);
         const next = Object.fromEntries(
@@ -164,14 +164,14 @@ export const make = Effect.gen(function* () {
         const encoded = yield* Schema.encodeEffect(revisionCodec)(next);
         yield* backing.set("revisions", encoded);
         yield* Cache.set(revisions, undefined, next);
-      }).pipe(
-        Effect.catch(() => {
-          enabled = false;
-          return Effect.logWarning("PR cache disabled after clearing failed");
-        }),
-        Effect.uninterruptible,
-        lock.withPermits(CONCURRENT_READS),
-      ),
+      },
+      Effect.catch(() => {
+        enabled = false;
+        return Effect.logWarning("PR cache disabled after clearing failed");
+      }),
+      Effect.uninterruptible,
+      lock.withPermits(CONCURRENT_READS),
+    ),
   });
 });
 

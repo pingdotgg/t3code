@@ -247,8 +247,8 @@ const make = Effect.gen(function* () {
         );
       });
 
-  const measureWorktree = (worktreePath: string) =>
-    Effect.gen(function* () {
+  const measureWorktree = Effect.fn("storageCleanup.measureWorktree")(
+    function* (worktreePath: string) {
       const root = yield* fs.realPath(worktreePath);
       const pending = [root];
       let entries = 1;
@@ -289,10 +289,10 @@ const make = Effect.gen(function* () {
         }
       }
       return bytes;
-    }).pipe(
-      Effect.timeout("30 seconds"),
-      Effect.orElseSucceed(() => null),
-    );
+    },
+    Effect.timeout("30 seconds"),
+    Effect.orElseSucceed(() => null),
+  );
 
   // The snapshot takes seconds on large databases, so it runs on the reader
   // worker instead of the event loop.

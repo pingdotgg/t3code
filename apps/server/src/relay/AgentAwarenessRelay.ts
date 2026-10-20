@@ -462,54 +462,53 @@ export const make = Effect.gen(function* () {
     }
     const environmentId = yield* serverEnvironment.getEnvironmentId;
 
-    const publishState = (input: {
+    const publishState = Effect.fn("relay.agent_activity.publish")(function* (input: {
       readonly projectId: string | null;
       readonly state: RelayAgentActivityState | null;
       readonly reason: string;
-    }) =>
-      Effect.gen(function* () {
-        if (cachedRelayClient === undefined) {
-          cachedRelayClient = yield* makeRelayClient(relayConfig);
-        }
-        const relayClient = cachedRelayClient;
-        const proof = yield* makePublishProof({
-          privateKey: cloudLinkKeyPair.privateKey,
-          relayIssuer: relayConfig.issuer,
-          environmentId,
-          threadId,
-          state: input.state,
-          jti: yield* crypto.randomUUIDv4(),
-        });
+    }) {
+      if (cachedRelayClient === undefined) {
+        cachedRelayClient = yield* makeRelayClient(relayConfig);
+      }
+      const relayClient = cachedRelayClient;
+      const proof = yield* makePublishProof({
+        privateKey: cloudLinkKeyPair.privateKey,
+        relayIssuer: relayConfig.issuer,
+        environmentId,
+        threadId,
+        state: input.state,
+        jti: yield* crypto.randomUUIDv4(),
+      });
 
-        yield* Effect.logInfo("publishing agent activity for thread", {
-          environmentId,
-          threadId,
-          projectId: input.projectId,
-          statePhase: input.state?.phase ?? null,
-          hasState: input.state !== null,
-          reason: input.reason,
-        });
+      yield* Effect.logInfo("publishing agent activity for thread", {
+        environmentId,
+        threadId,
+        projectId: input.projectId,
+        statePhase: input.state?.phase ?? null,
+        hasState: input.state !== null,
+        reason: input.reason,
+      });
 
-        const response = yield* relayClient.server
-          .publishAgentActivity({
-            params: {
-              environmentId,
-              threadId,
-            },
-            payload: {
-              state: input.state,
-              proof,
-            },
-          })
-          .pipe(Effect.timeout("10 seconds"));
+      const response = yield* relayClient.server
+        .publishAgentActivity({
+          params: {
+            environmentId,
+            threadId,
+          },
+          payload: {
+            state: input.state,
+            proof,
+          },
+        })
+        .pipe(Effect.timeout("10 seconds"));
 
-        yield* Effect.logInfo("agent activity publish completed", {
-          environmentId,
-          threadId,
-          ok: response.ok,
-          deliveries: deliveryStats(response.deliveries),
-        });
-      }).pipe(Effect.withSpan("relay.agent_activity.publish"), withRelayClientTracing);
+      yield* Effect.logInfo("agent activity publish completed", {
+        environmentId,
+        threadId,
+        ok: response.ok,
+        deliveries: deliveryStats(response.deliveries),
+      });
+    });
 
     // Per-thread shell read: this publish runs for every activity-relevant
     // domain event, so materializing the full shell here would make the cost
@@ -614,7 +613,7 @@ export const make = Effect.gen(function* () {
       projectId: snapshot.projectId,
       state: snapshot.state,
       reason: snapshot.reason,
-    });
+    }).pipe(withRelayClientTracing);
     publishConfirmDeadlines.delete(threadId);
     yield* Ref.update(publishedStateByThreadRef, (publishedStates) => {
       const nextPublishedStates = new Map(publishedStates);
@@ -729,31 +728,33 @@ export const make = Effect.gen(function* () {
 
   // Many environments never link, so while unlinked the retry backs off from 5
   // s to 60 s. A linked environment keeps the 5 s retry, because `t3 connect
-  // publish` can turn publishing on from another process.
-  const publishActiveThreadsOnceWhenConfigured = (logEnabledWhenReady: boolean) =>
-    Effect.gen(function* () {
-      let unlinkedRetryDelayMs = 5_000;
-      while (!(yield* Ref.get(activeSnapshotPublishedRef))) {
-        const result = yield* publishActiveThreadsUnsafe.pipe(
-          Effect.orElseSucceed(() => "failed" as const),
-        );
-        if (result === "published") {
-          yield* Ref.set(activeSnapshotPublishedRef, true);
-          if (logEnabledWhenReady) {
-            const relayConfig = yield* readRelayConfig.pipe(Effect.orElseSucceed(() => null));
-            yield* Effect.logInfo("agent activity publishing enabled after link reconciliation", {
-              relayUrl: relayConfig?.url,
-            });
-          }
-          return;
+  // publish` can turn publishing on from another process. Keep this untraced:
+  // an unlinked environment can retry for the lifetime of the process.
+  const publishActiveThreadsOnceWhenConfigured = Effect.fnUntraced(function* (
+    logEnabledWhenReady: boolean,
+  ) {
+    let unlinkedRetryDelayMs = 5_000;
+    while (!(yield* Ref.get(activeSnapshotPublishedRef))) {
+      const result = yield* publishActiveThreadsUnsafe.pipe(
+        Effect.orElseSucceed(() => "failed" as const),
+      );
+      if (result === "published") {
+        yield* Ref.set(activeSnapshotPublishedRef, true);
+        if (logEnabledWhenReady) {
+          const relayConfig = yield* readRelayConfig.pipe(Effect.orElseSucceed(() => null));
+          yield* Effect.logInfo("agent activity publishing enabled after link reconciliation", {
+            relayUrl: relayConfig?.url,
+          });
         }
-        const retryDelayMs = result === "unlinked" ? unlinkedRetryDelayMs : 5_000;
-        yield* Effect.race(Effect.sleep(retryDelayMs), Queue.take(catchUpRequests));
-        if (result === "unlinked") {
-          unlinkedRetryDelayMs = Math.min(unlinkedRetryDelayMs * 2, 60_000);
-        }
+        return;
       }
-    });
+      const retryDelayMs = result === "unlinked" ? unlinkedRetryDelayMs : 5_000;
+      yield* Effect.race(Effect.sleep(retryDelayMs), Queue.take(catchUpRequests));
+      if (result === "unlinked") {
+        unlinkedRetryDelayMs = Math.min(unlinkedRetryDelayMs * 2, 60_000);
+      }
+    }
+  });
 
   schedulePublishConfirm = (threadId) =>
     Effect.forkIn(

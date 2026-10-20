@@ -333,8 +333,9 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
 
   const ingestNative = (snapshot: NativeTelemetryClient.NativeTelemetrySnapshot) =>
     rebuild({ nativeSnapshot: snapshot, updatePrevious: true });
-  const ingestDesktop = (snapshot: DesktopHostTelemetrySnapshot) =>
-    Effect.gen(function* () {
+  const ingestDesktop =
+    /* Desktop samples arrive continuously; avoid a span per telemetry sample. */
+    Effect.fnUntraced(function* (snapshot: DesktopHostTelemetrySnapshot) {
       const electronRoot = snapshot.electronProcesses.find(
         (process) => process.pid === snapshot.electronPid,
       );
@@ -412,39 +413,38 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
   );
   const liveChanges = Stream.unwrap(Effect.map(subscribe, ({ changes }) => changes));
 
-  const readHistory: ResourceTelemetry["Service"]["readHistory"] = (input) =>
-    Effect.gen(function* () {
-      const readAt = yield* DateTime.now;
-      const normalizedInput = normalizeResourceTelemetryHistoryInput(input);
-      const historyResult = yield* Effect.result(
-        nativeClient.readHistory(normalizedInput.windowMs),
-      );
-      if (Result.isFailure(historyResult)) {
-        yield* Effect.logWarning("Failed to read native resource telemetry history", {
-          cause: historyResult.failure.message,
-        });
-      }
-      const [nativeHealth, desktopHealth] = yield* Effect.all([
-        nativeClient.health,
-        desktopReceiver.health,
-      ]);
-      const current = yield* Ref.get(state);
-      return buildResourceTelemetryHistory({
-        readAt,
-        windowMs: normalizedInput.windowMs,
-        bucketMs: normalizedInput.bucketMs,
-        sampleIntervalMs: nativeHealth.sampleIntervalMs,
-        serverPid: process.pid,
-        sidecarPid: Option.map(nativeHealth.hello, (hello) => hello.sidecarPid),
-        desktopSnapshot: current.desktopSnapshot,
-        snapshots: Result.isSuccess(historyResult) ? historyResult.success : [],
-        health: buildHealth({
-          native: nativeHealth,
-          desktop: desktopHealth,
-          nativeSnapshot: current.nativeSnapshot,
-        }),
+  const readHistory: ResourceTelemetry["Service"]["readHistory"] = Effect.fn(
+    "ResourceTelemetry.readHistory",
+  )(function* (input) {
+    const readAt = yield* DateTime.now;
+    const normalizedInput = normalizeResourceTelemetryHistoryInput(input);
+    const historyResult = yield* Effect.result(nativeClient.readHistory(normalizedInput.windowMs));
+    if (Result.isFailure(historyResult)) {
+      yield* Effect.logWarning("Failed to read native resource telemetry history", {
+        cause: historyResult.failure.message,
       });
+    }
+    const [nativeHealth, desktopHealth] = yield* Effect.all([
+      nativeClient.health,
+      desktopReceiver.health,
+    ]);
+    const current = yield* Ref.get(state);
+    return buildResourceTelemetryHistory({
+      readAt,
+      windowMs: normalizedInput.windowMs,
+      bucketMs: normalizedInput.bucketMs,
+      sampleIntervalMs: nativeHealth.sampleIntervalMs,
+      serverPid: process.pid,
+      sidecarPid: Option.map(nativeHealth.hello, (hello) => hello.sidecarPid),
+      desktopSnapshot: current.desktopSnapshot,
+      snapshots: Result.isSuccess(historyResult) ? historyResult.success : [],
+      health: buildHealth({
+        native: nativeHealth,
+        desktop: desktopHealth,
+        nativeSnapshot: current.nativeSnapshot,
+      }),
     });
+  });
   yield* nativeHealthSubscription.changes.pipe(
     Stream.runForEach(() => refreshHealth),
     Effect.forkScoped,

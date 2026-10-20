@@ -101,12 +101,13 @@ export interface WithMetricsOptions {
   ) => Readonly<Record<string, unknown>>;
 }
 
-const recordMetrics = (
-  options: WithMetricsOptions,
-  startedAt: bigint,
-  exit: Exit.Exit<unknown, unknown>,
-) =>
-  Effect.gen(function* () {
+const recordMetrics =
+  /* Instrumentation must not create its own span for every recorded operation. */
+  Effect.fnUntraced(function* (
+    options: WithMetricsOptions,
+    startedAt: bigint,
+    exit: Exit.Exit<unknown, unknown>,
+  ) {
     const duration = Duration.nanos((yield* Clock.monotonicTimeNanos) - startedAt);
     const baseAttributes =
       typeof options.attributes === "function" ? options.attributes() : (options.attributes ?? {});
