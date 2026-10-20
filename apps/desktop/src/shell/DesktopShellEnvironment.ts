@@ -1,4 +1,5 @@
 import { listLoginShellCandidates, setWindowsPath } from "@t3tools/shared/shell";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -377,12 +378,16 @@ const readWindowsEnvironment = Effect.fn("desktop.shellEnvironment.readWindowsEn
       captureWindowsEnvironmentCommand(names),
     ];
 
+    const deadline =
+      (yield* Clock.monotonicTimeNanos) + Duration.toNanosUnsafe(LOGIN_SHELL_TIMEOUT);
     for (const command of WINDOWS_SHELL_CANDIDATES) {
+      const remainingNanos = deadline - (yield* Clock.monotonicTimeNanos);
+      if (remainingNanos <= 0n) break;
       const output = yield* runCommandOutput({
         probe: options.loadProfile ? "powershell-profile" : "powershell-no-profile",
         command,
         args,
-        timeout: LOGIN_SHELL_TIMEOUT,
+        timeout: Duration.nanos(remainingNanos),
       });
       const environment = extractEnvironment(output, names);
       if (Object.keys(environment).length > 0) {
