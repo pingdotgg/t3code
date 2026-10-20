@@ -28,9 +28,14 @@ vi.mock("electron", async (importOriginal) => ({
     })),
   },
   screen: {
+    getPrimaryDisplay: vi.fn(() => ({
+      bounds: { x: 0, y: 0, width: 1920, height: 1080 },
+      workArea: { x: 0, y: 0, width: 1920, height: 1080 },
+    })),
     getAllDisplays: vi.fn(() => [
       {
         bounds: { x: 0, y: 0, width: 1920, height: 1080 },
+        workArea: { x: 0, y: 0, width: 1920, height: 1080 },
       },
     ]),
   },
@@ -1241,7 +1246,7 @@ describe("DesktopWindow", () => {
   it.effect("does not persist bounds that fail the domain schema", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
-      fakeWindow.getBounds.mockReturnValue({ x: 100.4, y: 80.2, width: 839.4, height: 619.4 });
+      fakeWindow.getBounds.mockReturnValue({ x: 100.4, y: 80.2, width: 0.4, height: 0.4 });
       const createCount = yield* Ref.make(0);
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
       const mainWindowBoundsUpdates: DesktopAppSettings.DesktopWindowBounds[] = [];
@@ -1379,6 +1384,85 @@ describe("DesktopWindow", () => {
         assert.equal(fakeWindow.getNormalBounds.mock.calls.length, 1);
       }).pipe(Effect.provide(layer));
     }),
+  );
+
+  it.effect.each([
+    {
+      scenario: "missing saved bounds and a taskbar on a small display",
+      workArea: { x: -1280, y: 26, width: 1280, height: 694 },
+      savedBounds: null,
+      expected: { x: -1190, y: 26, width: 1100, height: 694, minWidth: 360, minHeight: 320 },
+    },
+    {
+      scenario: "offscreen saved bounds and a work area below the preferred minimum",
+      workArea: { x: 40, y: 26, width: 280, height: 240 },
+      savedBounds: { x: 2040, y: 80, width: 1320, height: 880 },
+      expected: { x: 40, y: 26, width: 280, height: 240, minWidth: 280, minHeight: 240 },
+    },
+    {
+      scenario: "saved bounds below the preferred minimum on a large display",
+      workArea: { x: 0, y: 0, width: 1920, height: 1080 },
+      savedBounds: { x: 12, y: 563, width: 280, height: 240 },
+      expected: { x: 12, y: 563, width: 280, height: 240, minWidth: 280, minHeight: 240 },
+    },
+    {
+      scenario: "saved bounds overlapping the taskbar within the full display",
+      workArea: { x: 0, y: 0, width: 1920, height: 1040 },
+      savedBounds: { x: 100, y: 286, width: 1100, height: 780 },
+      expected: { x: 100, y: 286, width: 1100, height: 780, minWidth: 360, minHeight: 320 },
+    },
+    {
+      scenario: "a small primary display listed after a large secondary display",
+      workArea: { x: -800, y: 26, width: 800, height: 574 },
+      secondaryWorkArea: { x: 0, y: 0, width: 1920, height: 1080 },
+      savedBounds: null,
+      expected: { x: -800, y: 26, width: 800, height: 574, minWidth: 360, minHeight: 320 },
+    },
+  ])(
+    "opens a window that fits with $scenario",
+    ({ workArea, secondaryWorkArea, savedBounds, expected }) =>
+      Effect.gen(function* () {
+        const previousPrimary = Electron.screen.getPrimaryDisplay();
+        const display = {
+          ...Electron.screen.getAllDisplays()[0]!,
+          bounds: { x: workArea.x, y: 0, width: workArea.width, height: workArea.height + 26 },
+          workArea,
+        };
+        vi.mocked(Electron.screen.getAllDisplays).mockReturnValueOnce([
+          ...(secondaryWorkArea
+            ? [{ ...display, bounds: secondaryWorkArea, workArea: secondaryWorkArea }]
+            : []),
+          display,
+        ]);
+        vi.mocked(Electron.screen.getPrimaryDisplay).mockReturnValue(display);
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            vi.mocked(Electron.screen.getPrimaryDisplay).mockReturnValue(previousPrimary);
+          }),
+        );
+        const fakeWindow = makeFakeBrowserWindow();
+        const createCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        const createdWindowOptions: Electron.BrowserWindowConstructorOptions[] = [];
+        const layer = layerTest({
+          window: fakeWindow.window,
+          createCount,
+          mainWindow,
+          createdWindowOptions,
+          desktopSettings: {
+            ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+            mainWindowBounds: savedBounds,
+          },
+        });
+
+        yield* Effect.gen(function* () {
+          const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        }).pipe(Effect.provide(layer));
+
+        assert.equal(createdWindowOptions.length, 1);
+        assert.containsSubset(createdWindowOptions[0], expected);
+      }).pipe(Effect.scoped),
   );
 
   it.effect("logs display lookup failures before falling back to the default size", () =>
