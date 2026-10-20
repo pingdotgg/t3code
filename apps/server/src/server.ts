@@ -108,6 +108,8 @@ import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
+import * as JjWorkflow from "./jj/JjWorkflow.ts";
+import * as JjVcsDriver from "./vcs/JjVcsDriver.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
 import * as PullRequestReadCache from "./pullRequest/PullRequestReadCache.ts";
@@ -315,6 +317,7 @@ const layerPlatformServices = NodeServices.layer;
 
 const layerPersistence = Layer.empty.pipe(Layer.provideMerge(SqlitePersistence.layerConfig));
 
+// The registry and workflow must reuse JjVcsDriver.layer so Effect shares their repository caches.
 const layerVcsDriverRegistry = VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer));
 
 const layerSourceControlProviderRegistry = SourceControlProviderRegistry.layer.pipe(
@@ -369,14 +372,23 @@ const layerGit = Layer.empty.pipe(
   Layer.provideMerge(GitVcsDriver.layer),
 );
 
+const layerJjWorkflow = JjWorkflow.layer.pipe(
+  Layer.provide(Layer.merge(ProjectionStoreV2.layer, ProjectStore.layer)),
+  Layer.provideMerge(JjVcsDriver.layer),
+  Layer.provideMerge(layerGitManager),
+);
+
 const layerGitWorkflow = GitWorkflowService.layer.pipe(
   Layer.provideMerge(layerVcsDriverRegistry),
   Layer.provideMerge(layerGit),
+  Layer.provideMerge(layerJjWorkflow),
 );
 
 const layerSourceControlRepositoryService = SourceControlRepositoryService.layer.pipe(
   Layer.provideMerge(GitVcsDriver.layer),
   Layer.provideMerge(layerSourceControlProviderRegistry),
+  Layer.provideMerge(layerVcsDriverRegistry),
+  Layer.provideMerge(layerJjWorkflow),
 );
 
 const layerProjectCloneTracker = ProjectCloneTracker.layer.pipe(
@@ -386,6 +398,8 @@ const layerProjectCloneTracker = ProjectCloneTracker.layer.pipe(
 const layerKnownWorkspaces = KnownWorkspaces.layer.pipe(
   Layer.provide(ProjectStore.layer),
   Layer.provide(GitVcsDriver.layer),
+  Layer.provide(layerVcsDriverRegistry),
+  Layer.provide(JjVcsDriver.layer),
 );
 
 const layerReview = ReviewService.layer.pipe(

@@ -1,4 +1,4 @@
-import { cloneElement, type ReactElement, type ReactNode } from "react";
+import { cloneElement, type ComponentProps, type ReactElement, type ReactNode } from "react";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   EnvironmentId,
@@ -25,6 +25,7 @@ const state = vi.hoisted(() => ({
   command: vi.fn().mockResolvedValue({ _tag: "Success" }),
   workflowCommand: vi.fn().mockResolvedValue({ _tag: "Success" }),
   toast: vi.fn(),
+  tooltipEnvironment: vi.fn(),
 }));
 
 vi.mock(import("@tanstack/react-router"), async (original) => ({
@@ -94,6 +95,16 @@ vi.mock(import("../ui/tooltip"), async () => {
       state.showTooltips ? <div role="tooltip">{children}</div> : null) as never,
   };
 });
+vi.mock(import("./SubagentTooltipContent"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    SubagentTooltipContent: (props: ComponentProps<typeof actual.SubagentTooltipContent>) => {
+      state.tooltipEnvironment(props.title, props.environmentId);
+      return <actual.SubagentTooltipContent {...props} />;
+    },
+  };
+});
 
 import { act, render as renderUi } from "../../../test/render";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
@@ -108,6 +119,7 @@ async function setup() {
   state.workflowCommand.mockReset().mockResolvedValue({ _tag: "Success" });
   state.toast.mockClear();
   state.projection = null;
+  state.tooltipEnvironment.mockClear();
   state.projections = null;
 
   await using stack = new AsyncDisposableStack();
@@ -396,6 +408,12 @@ it("opens the correct chat for every workflow phase and unphased member", async 
   expect(byLabel("Collapse Verify phase, running")).toBeDefined();
   for (const phase of phaseButtons().slice(0, 2)) await click(phase);
   expect(memberButtons()).toHaveLength(7);
+  for (const agent of agents) {
+    expect(state.tooltipEnvironment).toHaveBeenCalledWith(
+      agent.label,
+      EnvironmentId.make("remote"),
+    );
+  }
   for (const button of memberButtons()) {
     expect(button.disabled).toBe(true);
     await click(button);

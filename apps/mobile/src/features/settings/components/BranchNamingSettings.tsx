@@ -5,6 +5,7 @@ import { View } from "react-native";
 import { AppText as Text, AppTextInput } from "../../../components/ui/AppText";
 import { SettingsChoiceRow } from "./SettingsChoiceRow";
 import { SettingsSection } from "./SettingsSection";
+import { DEFAULT_VCS_TERMINOLOGY, type VcsTerminology } from "@t3tools/shared/vcs";
 
 const MODES = {
   static: { label: "Static prefix", description: "Add your prefix to the generated branch name." },
@@ -24,6 +25,7 @@ export function BranchNamingSettings(props: {
   instructions: string | null;
   disabled: boolean;
   onChange: (patch: ServerSettingsPatch) => void;
+  terminology?: VcsTerminology;
 }) {
   // Typed text waits here until it saves. Android's Back closes the keyboard
   // without ending editing, so leaving the screen saves it too.
@@ -55,9 +57,11 @@ export function BranchNamingSettings(props: {
     send({ ...take("branchNamePrefix"), ...take("branchNameInstructions") }),
   );
   useEffect(() => () => saveDrafts(), []);
+  const terminology = props.terminology ?? DEFAULT_VCS_TERMINOLOGY;
+  const refNounTitle = terminology.refNounTitle;
   return (
     <SettingsSection
-      title="Worktree branch naming"
+      title={`${terminology.workspaceNounTitle} ${terminology.refNoun} naming`}
       trailing={
         props.mode === null ? <Text className="text-xs text-foreground-muted">Mixed</Text> : null
       }
@@ -66,7 +70,11 @@ export function BranchNamingSettings(props: {
         <SettingsChoiceRow
           key={mode}
           label={MODES[mode].label}
-          description={MODES[mode].description}
+          description={
+            mode === "static"
+              ? `Add your prefix to the generated ${terminology.refNoun} name.`
+              : MODES[mode].description
+          }
           selected={props.mode === mode}
           separated={index > 0}
           disabled={props.disabled}
@@ -80,7 +88,7 @@ export function BranchNamingSettings(props: {
           </Text>
           <AppTextInput
             key={props.prefix}
-            accessibilityLabel="Branch prefix"
+            accessibilityLabel={`${refNounTitle} prefix`}
             onChangeText={(text) => edit("branchNamePrefix", text)}
             defaultValue={props.prefix ?? ""}
             placeholder={props.prefix === null ? "Mixed" : "No prefix"}
@@ -99,7 +107,7 @@ export function BranchNamingSettings(props: {
           </Text>
           <AppTextInput
             key={props.instructions}
-            accessibilityLabel="Branch naming instructions"
+            accessibilityLabel={`${refNounTitle} naming instructions`}
             onChangeText={(text) => edit("branchNameInstructions", text)}
             defaultValue={props.instructions ?? ""}
             placeholder={

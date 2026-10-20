@@ -172,6 +172,24 @@ describe("GitRunStackedActionInput", () => {
 });
 
 describe("VcsStatusLocalResult", () => {
+  it("accepts only supported VCS descriptors and requires informational Git notice", () => {
+    const status = {
+      isRepo: true,
+      hasPrimaryRemote: false,
+      isDefaultRef: false,
+      refName: null,
+      hasWorkingTreeChanges: false,
+      workingTree: { files: [], insertions: 0, deletions: 0 },
+    };
+    expect(decodeVcsStatusLocalResult({ ...status, vcs: { kind: "jj" } }).vcs?.kind).toBe("jj");
+    expect(
+      decodeVcsStatusLocalResult({ ...status, vcs: { kind: "git", notice: "Using Git." } }).vcs,
+    ).toEqual({ kind: "git", notice: "Using Git." });
+    expect(() => decodeVcsStatusLocalResult({ ...status, vcs: { kind: "unknown" } })).toThrow();
+    expect(() => decodeVcsStatusLocalResult({ ...status, vcs: { kind: "git" } })).toThrow();
+    expect(decodeVcsStatusLocalResult(status).vcs).toBeUndefined();
+  });
+
   it("preserves leading and trailing whitespace in working-tree paths", () => {
     const parsed = decodeVcsStatusLocalResult({
       isRepo: true,

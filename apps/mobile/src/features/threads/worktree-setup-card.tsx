@@ -1,4 +1,5 @@
 import { Button } from "../../components/ui/Button";
+import { DEFAULT_VCS_TERMINOLOGY, type VcsTerminology } from "@t3tools/shared/vcs";
 import {
   worktreeSetupStageLabel,
   type WorktreeSetupSnapshot,
@@ -17,6 +18,8 @@ import { ShimmeringWorkContent } from "./thread-work-log";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
 
 export interface WorktreeSetupCardProps {
+  vcsTerminology?: VcsTerminology;
+  unsupportedReason?: string | null;
   snapshot: WorktreeSetupSnapshot;
   turnStarted: boolean;
   turnStartedAt: string | null;
@@ -40,7 +43,13 @@ const icons: Record<WorktreeSetupStage["status"], AppSymbolName> = {
 };
 
 export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
-  const { snapshot, turnStarted, turnStartedAt, working } = props;
+  const {
+    snapshot,
+    turnStarted,
+    turnStartedAt,
+    working,
+    vcsTerminology = DEFAULT_VCS_TERMINOLOGY,
+  } = props;
   const handedOff = turnStarted && worktreeSetupAgentStarted(snapshot);
   const running = snapshot.phase === "running";
   const backgroundSetup = handedOff && running;
@@ -55,17 +64,17 @@ export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
       : running
         ? handedOff
           ? "Setup continues…"
-          : "Setting up worktree…"
+          : `Setting up ${vcsTerminology.workspaceNoun}…`
         : snapshot.phase === "cancelled"
-          ? "Worktree setup cancelled"
+          ? `${vcsTerminology.workspaceNounTitle} setup cancelled`
           : snapshot.phase === "failed"
-            ? "Worktree setup failed"
+            ? `${vcsTerminology.workspaceNounTitle} setup failed`
             : failed
               ? "Setup script failed"
-              : "Worktree ready";
+              : `${vcsTerminology.workspaceNounTitle} ready`;
 
   return (
-    <View accessibilityLabel="Worktree setup" className="py-1">
+    <View accessibilityLabel={`${vcsTerminology.workspaceNounTitle} setup`} className="py-1">
       <View className="min-h-11 flex-row items-center gap-2 border-b border-border px-1">
         <HeaderLabel
           label={label}
@@ -85,7 +94,7 @@ export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
           accessibilityLabel={
             backgroundSetup
               ? `${scriptName} is still running. Show setup progress.`
-              : "Worktree setup details"
+              : `${vcsTerminology.workspaceNounTitle} setup details`
           }
           accessibilityState={{ expanded: detailsOpen }}
           onPress={() => setDetailsOpen(true)}
@@ -132,6 +141,7 @@ export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
               <StageRow
                 key={stage.id}
                 stage={stage}
+                vcsTerminology={vcsTerminology}
                 scriptName={snapshot.setupScript?.name ?? null}
                 now={now}
                 compact
@@ -192,6 +202,8 @@ function HeaderLabel({
 function SetupDetailsSheet({
   snapshot,
   turnStarted,
+  vcsTerminology = DEFAULT_VCS_TERMINOLOGY,
+  unsupportedReason,
   onCancel,
   onWorkLocally,
   onClose,
@@ -201,7 +213,11 @@ function SetupDetailsSheet({
   const [bodyHeight, setBodyHeight] = useState(0);
   const canCancel = snapshot.phase === "running" && !turnStarted;
   return (
-    <WorktreeSetupSheet height={bodyHeight} onClose={onClose}>
+    <WorktreeSetupSheet
+      height={bodyHeight}
+      onClose={onClose}
+      title={`${vcsTerminology.workspaceNounTitle} setup`}
+    >
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         bounces={false}
@@ -212,11 +228,21 @@ function SetupDetailsSheet({
           paddingBottom: Math.max(20, insets.bottom),
         }}
       >
+        {unsupportedReason ? (
+          <Text accessibilityRole="alert" className="mb-3 text-sm text-danger-foreground">
+            {unsupportedReason}
+          </Text>
+        ) : null}
         {snapshot.stages
           .filter((stage) => stage.id !== "agent")
           .map((stage) => (
             <View key={stage.id}>
-              <StageRow stage={stage} scriptName={snapshot.setupScript?.name ?? null} now={now} />
+              <StageRow
+                stage={stage}
+                vcsTerminology={vcsTerminology}
+                scriptName={snapshot.setupScript?.name ?? null}
+                now={now}
+              />
               {stage.id === "setup-script" &&
               (stage.status === "running" || stage.status === "failed" || stage.tail.length > 0) ? (
                 <OutputTail lines={stage.tail} failed={stage.status === "failed"} />
@@ -233,7 +259,7 @@ function SetupDetailsSheet({
             <Button
               label="Cancel setup"
               tone="danger"
-              accessibilityLabel="Cancel worktree setup"
+              accessibilityLabel={`Cancel ${vcsTerminology.workspaceNoun} setup`}
               onPress={() => {
                 onClose();
                 onCancel();
@@ -258,21 +284,25 @@ function SetupDetailsSheet({
 
 function StageRow({
   stage,
+  vcsTerminology,
   scriptName,
   now,
   compact = false,
   animate = true,
 }: {
   stage: WorktreeSetupStage;
+  vcsTerminology: VcsTerminology;
   scriptName: string | null;
   now: number;
   compact?: boolean;
   animate?: boolean;
 }) {
   const label =
-    stage.id === "setup-script"
-      ? (scriptName ?? worktreeSetupStageLabel(stage.id))
-      : worktreeSetupStageLabel(stage.id);
+    stage.id === "fetch"
+      ? `Fetch base ${vcsTerminology.refNoun}`
+      : stage.id === "setup-script"
+        ? (scriptName ?? worktreeSetupStageLabel(stage.id))
+        : worktreeSetupStageLabel(stage.id);
   const detail =
     stage.status === "pending"
       ? null

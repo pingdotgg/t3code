@@ -30,11 +30,12 @@ function request(name: string, error?: string): ProjectScriptEditorRequest {
   };
 }
 
-const open = (screen: Screen, nextRequest: ProjectScriptEditorRequest) =>
+const open = (screen: Screen, nextRequest: ProjectScriptEditorRequest, workspaceNoun?: string) =>
   screen.rerender(
     <StrictMode>
       <ProjectScriptEditorDialog
         environmentId={EnvironmentId.make("test")}
+        {...(workspaceNoun === undefined ? {} : { workspaceNoun })}
         request={nextRequest}
         scripts={[]}
         onSubmit={onSubmit}
@@ -68,6 +69,28 @@ function setup() {
 }
 
 describe("project action editor save lifecycle", () => {
+  it.each([
+    [undefined, "worktree"],
+    ["workspace", "workspace"],
+  ])("saves the settle action using %s terminology", async (workspaceNoun, expectedNoun) => {
+    setup();
+    await using screen = await render(null);
+    onSubmit.mockResolvedValue(AsyncResult.success(undefined));
+    await open(screen, request("build"), workspaceNoun);
+    const settleLabel = [...document.querySelectorAll("label")].find(
+      (label) => label.textContent === `Run in the thread's ${expectedNoun} when the thread settles`,
+    );
+    expect(settleLabel).toBeDefined();
+    await act(async () => {
+      settleLabel!.click();
+    });
+    await act(async () => submit());
+    expect(onSubmit).toHaveBeenCalledWith(
+      "build",
+      expect.objectContaining({ runOnSettle: true }),
+    );
+  });
+
   it("blocks repeated submits and edits until the current save completes", async () => {
     setup();
     await using screen = await render(null);

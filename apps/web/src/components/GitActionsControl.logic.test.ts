@@ -1,21 +1,42 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import type { VcsStatusResult } from "@t3tools/contracts";
+import { JJ_VCS_TERMINOLOGY } from "@t3tools/shared/vcs";
 import { assert, describe, it } from "vite-plus/test";
 import {
   buildGitActionProgressStages,
-  buildMenuItems,
   formatGitActionElapsed,
-  requiresDefaultBranchConfirmation,
   resolveAutoFeatureBranchName,
-  resolveDefaultBranchActionDialogCopy,
-  resolveFeatureBranchUnavailableReason,
   resolveGitActionProgressPresentation,
   resolveGitActionResultToastTiming,
   resolveLiveThreadBranchUpdate,
-  resolveQuickAction,
   resolveThreadBranchUpdate,
   resolveThreadBranchMetadataPatch,
 } from "./GitActionsControl.logic";
+import {
+  buildMenuItems as buildSharedMenuItems,
+  resolveQuickAction as resolveSharedQuickAction,
+  getGitActionDisabledReason as getSharedDisabledReason,
+  resolveDefaultBranchActionDialogCopy as resolveSharedDialogCopy,
+  requiresDefaultBranchConfirmation,
+  resolveFeatureBranchUnavailableReason,
+} from "@t3tools/client-runtime/state/vcs";
+
+const buildMenuItems = (status: VcsStatusResult | null, busy: boolean, remote = true) =>
+  buildSharedMenuItems(status, busy, remote, "web");
+const resolveQuickAction = (
+  status: VcsStatusResult | null,
+  busy: boolean,
+  defaultRef = false,
+  remote = true,
+) => resolveSharedQuickAction(status, busy, defaultRef, remote, "web");
+const getGitActionDisabledReason = (
+  input: Omit<Parameters<typeof getSharedDisabledReason>[0], "hasOriginRemote"> & {
+    hasPrimaryRemote: boolean;
+  },
+) => getSharedDisabledReason({ ...input, hasOriginRemote: input.hasPrimaryRemote, surface: "web" });
+const resolveDefaultBranchActionDialogCopy = (
+  input: Parameters<typeof resolveSharedDialogCopy>[0],
+) => resolveSharedDialogCopy({ ...input, surface: "web" });
 
 function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
   return {
@@ -36,6 +57,96 @@ function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
     ...overrides,
   };
 }
+
+describe("upstream Git copy and jj action guards", () => {
+  it("keeps the exact upstream detached-ref hint", () => {
+    assert.deepEqual(resolveQuickAction(status({ refName: null }), false), {
+      label: "Commit",
+      disabled: true,
+      kind: "show_hint",
+      hint: "Create and checkout a ref before pushing or opening a pull request.",
+    });
+  });
+
+  it("keeps upstream disabled-action reasons and their priority", () => {
+    const dirty = status({ hasWorkingTreeChanges: true, behindCount: 1 });
+    const push = buildMenuItems(dirty, false).find((item) => item.id === "push")!;
+    assert.equal(
+      getGitActionDisabledReason({
+        item: push,
+        gitStatus: dirty,
+        isBusy: false,
+        hasPrimaryRemote: true,
+      }),
+      "Commit or stash local changes before pushing.",
+    );
+    const clean = status();
+    const commit = buildMenuItems(clean, false)[0]!;
+    assert.equal(
+      getGitActionDisabledReason({
+        item: commit,
+        gitStatus: clean,
+        isBusy: false,
+        hasPrimaryRemote: true,
+      }),
+      "Worktree is clean. Make changes before committing.",
+    );
+  });
+
+  it("does not suggest stashing jj working-copy changes before pushing", () => {
+    const dirty = status({
+      hasWorkingTreeChanges: true,
+      aheadCount: 0,
+      vcs: { kind: "jj" },
+    });
+    const push = buildMenuItems(dirty, false).find((item) => item.id === "push")!;
+    assert.equal(
+      getGitActionDisabledReason({
+        item: push,
+        gitStatus: dirty,
+        isBusy: false,
+        hasPrimaryRemote: true,
+      }),
+      "Commit local changes before pushing.",
+    );
+  });
+
+  it("blocks every action when jj is unsupported", () => {
+    const unsupported = status({
+      hasWorkingTreeChanges: true,
+      aheadCount: 1,
+      vcs: { kind: "jj", unsupportedReason: "Jujutsu is unavailable." },
+    });
+    assert.isTrue(buildMenuItems(unsupported, false).every((item) => item.disabled));
+    assert.deepInclude(resolveQuickAction(unsupported, false), {
+      disabled: true,
+      kind: "show_hint",
+      hint: "Jujutsu is unavailable.",
+    });
+  });
+
+  it("retains jj bookmark wording in feature action stages and confirmation", () => {
+    assert.deepEqual(
+      buildGitActionProgressStages({
+        action: "commit",
+        hasCustomCommitMessage: true,
+        hasWorkingTreeChanges: true,
+        featureBranch: true,
+        vcsTerminology: JJ_VCS_TERMINOLOGY,
+      }),
+      ["Preparing feature bookmark...", "Committing..."],
+    );
+    assert.equal(
+      resolveDefaultBranchActionDialogCopy({
+        action: "push",
+        branchName: "main",
+        includesCommit: false,
+        vcsTerminology: JJ_VCS_TERMINOLOGY,
+      }).title,
+      "Push to default bookmark?",
+    );
+  });
+});
 
 describe("git action progress presentation", () => {
   it("keeps the phase on the first row and hook output on the second", () => {
@@ -1034,6 +1145,17 @@ describe("resolveFeatureBranchUnavailableReason", () => {
     );
   });
 
+  it("names bookmarks throughout the jj default-ref explanation", () => {
+    assert.equal(
+      resolveFeatureBranchUnavailableReason({
+        branchName: "main",
+        hasWorkingTreeChanges: false,
+        vcsTerminology: JJ_VCS_TERMINOLOGY,
+      }),
+      "There are no changes to commit, so a feature bookmark can't be named. Create a bookmark yourself or continue on main.",
+    );
+  });
+
   it("allows the feature branch when there are changes to commit", () => {
     assert.isNull(
       resolveFeatureBranchUnavailableReason({ branchName: "main", hasWorkingTreeChanges: true }),
@@ -1110,6 +1232,16 @@ describe("buildGitActionProgressStages", () => {
       "Generating PR content...",
       "Creating pull request...",
     ]);
+  });
+
+  it("names the feature ref with Git nouns when no VCS terminology is supplied", () => {
+    const stages = buildGitActionProgressStages({
+      action: "commit",
+      hasCustomCommitMessage: true,
+      hasWorkingTreeChanges: true,
+      featureBranch: true,
+    });
+    assert.deepEqual(stages, ["Preparing feature ref...", "Committing..."]);
   });
 });
 
