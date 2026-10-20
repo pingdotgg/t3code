@@ -457,6 +457,30 @@ it.effect(
     ),
 );
 
+it.effect("requires access management to answer a link request", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const registry = yield* setup;
+      registry.set(sessions(env), AsyncResult.success(grant(true)));
+      const answer = createCommandPermissions(runtime, WS_METHODS.peerLinksAnswerRequest);
+      expect(registry.get(answer.permissionAtom(env))).toBe(false);
+      expect((yield* answer.authorize(registry, env).pipe(Effect.flip)).requiredPermission).toBe(
+        AuthAccessWriteScope,
+      );
+      registry.set(
+        sessions(env),
+        AsyncResult.success({
+          ...grant(false),
+          scopes: [AuthAccessWriteScope],
+          permissions: [AuthAccessWriteScope],
+        }),
+      );
+      expect(registry.get(answer.permissionAtom(env))).toBe(true);
+      yield* answer.authorize(registry, env);
+    }),
+  ),
+);
+
 it.effect("honors exact empty permissions and preserves legacy parent grants", () =>
   Effect.scoped(
     Effect.gen(function* () {
