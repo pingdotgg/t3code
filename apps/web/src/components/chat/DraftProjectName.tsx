@@ -6,23 +6,22 @@ import { truncateProjectName } from "./DraftProjectName.logic";
 
 export function DraftProjectName({ value }: { value: string }) {
   const containerRef = useRef<HTMLSpanElement>(null);
+  const measurementRef = useRef<HTMLSpanElement>(null);
   const [displayName, setDisplayName] = useState(value);
 
   useLayoutEffect(() => {
     const container = containerRef.current;
-    const context = document.createElement("canvas").getContext("2d");
-    if (!container || !context) return;
+    const measurement = measurementRef.current;
+    if (!container || !measurement) return;
 
     const update = () => {
-      const style = getComputedStyle(container);
-      context.font = style.font;
-      context.letterSpacing = style.letterSpacing === "normal" ? "0px" : style.letterSpacing;
+      // Canvas text metrics can differ from layout for the same font, weight, and zoom.
+      // Measure in the DOM so a name that fits never loses characters to that mismatch.
       setDisplayName(
-        truncateProjectName(
-          value,
-          container.getBoundingClientRect().width,
-          (text) => context.measureText(text).width,
-        ),
+        truncateProjectName(value, container.getBoundingClientRect().width, (text) => {
+          measurement.textContent = text;
+          return measurement.getBoundingClientRect().width;
+        }),
       );
     };
     update();
@@ -37,7 +36,7 @@ export function DraftProjectName({ value }: { value: string }) {
   return (
     <span
       ref={containerRef}
-      className="inline-grid min-w-0 max-w-full overflow-hidden align-baseline whitespace-nowrap"
+      className="relative inline-grid min-w-0 max-w-full overflow-hidden align-baseline whitespace-nowrap"
     >
       {/* Keep the full name's intrinsic width so fitting the visible text cannot shrink its budget. */}
       <span
@@ -49,6 +48,11 @@ export function DraftProjectName({ value }: { value: string }) {
       <span aria-label={value} className="col-start-1 row-start-1 min-w-0 overflow-hidden">
         {displayName}
       </span>
+      <span
+        ref={measurementRef}
+        aria-hidden="true"
+        className="invisible absolute top-0 left-0 w-max select-none"
+      />
     </span>
   );
 }
