@@ -9,9 +9,9 @@ export function readDesktopPrimaryBearerToken(): Promise<string | null> {
     return Promise.resolve(null);
   }
 
-  desktopBearerTokenPromise ??= bridge.getLocalEnvironmentBearerToken().catch((error) => {
+  // Main owns expiry and renewal; only share pending reads here.
+  desktopBearerTokenPromise ??= bridge.getLocalEnvironmentBearerToken().finally(() => {
     desktopBearerTokenPromise = null;
-    throw error;
   });
   return desktopBearerTokenPromise;
 }

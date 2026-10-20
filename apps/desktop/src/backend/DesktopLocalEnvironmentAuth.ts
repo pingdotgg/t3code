@@ -19,6 +19,8 @@ import * as DesktopBackendPool from "./DesktopBackendPool.ts";
 const BOOTSTRAP_TRANSIENT_RETRY_TIMEOUT = Duration.seconds(15);
 const BOOTSTRAP_TRANSIENT_RETRY_INTERVAL = Duration.millis(500);
 const TRANSIENT_BOOTSTRAP_STATUS_CODES = new Set([502, 503, 504]);
+// Renew before expiry closes the session's sockets.
+const BEARER_TOKEN_RENEWAL_SKEW_MS = 60_000;
 
 const isTransientBearerBootstrapError = (error: RemoteEnvironmentRequestError): boolean => {
   switch (error._tag) {
@@ -67,15 +69,21 @@ export class DesktopLocalEnvironmentAuth extends Context.Service<
 export const make = Effect.gen(function* () {
   const pool = yield* DesktopBackendPool.DesktopBackendPool;
   const httpClient = yield* HttpClient.HttpClient;
-  const tokenRef = yield* Ref.make(Option.none<string>());
+  const tokenRef = yield* Ref.make(
+    Option.none<{ readonly accessToken: string; readonly expiresAtMillis: number }>(),
+  );
   const mutex = yield* Semaphore.make(1);
 
   const getBearerToken = mutex
     .withPermits(1)(
       Effect.gen(function* () {
         const cached = yield* Ref.get(tokenRef);
-        if (Option.isSome(cached)) {
-          return cached.value;
+        if (
+          Option.isSome(cached) &&
+          cached.value.expiresAtMillis >
+            (yield* Clock.currentTimeMillis) + BEARER_TOKEN_RENEWAL_SKEW_MS
+        ) {
+          return cached.value.accessToken;
         }
 
         const instances = yield* pool.list;
@@ -117,7 +125,13 @@ export const make = Effect.gen(function* () {
               }),
           ),
         );
-        yield* Ref.set(tokenRef, Option.some(session.access_token));
+        yield* Ref.set(
+          tokenRef,
+          Option.some({
+            accessToken: session.access_token,
+            expiresAtMillis: (yield* Clock.currentTimeMillis) + session.expires_in * 1_000,
+          }),
+        );
         return session.access_token;
       }),
     )

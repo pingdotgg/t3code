@@ -16,7 +16,6 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
-import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -231,23 +230,7 @@ export class PairingGrantStore extends Context.Service<
   }
 >()("t3/auth/PairingGrantStore") {}
 
-interface StoredBootstrapGrant extends BootstrapGrant {
-  readonly remainingUses: number | "unbounded";
-}
-
-type ConsumeResult =
-  | {
-      readonly _tag: "error";
-      readonly reason: "not-found" | "expired" | "scope-not-granted";
-      readonly error: BootstrapCredentialError;
-    }
-  | {
-      readonly _tag: "success";
-      readonly grant: BootstrapGrant;
-    };
-
 const DEFAULT_ONE_TIME_TOKEN_TTL_MINUTES = Duration.minutes(5);
-const DESKTOP_BOOTSTRAP_TTL_HOURS = Duration.hours(24);
 const DEV_STARTUP_TTL_HOURS = Duration.hours(24);
 const PAIRING_TOKEN_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 const PAIRING_TOKEN_LENGTH = 12;
@@ -258,7 +241,6 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const config = yield* ServerConfig.ServerConfig;
   const pairingLinks = yield* AuthPairingLinks.AuthPairingLinkRepository;
-  const seededGrantsRef = yield* Ref.make(new Map<string, StoredBootstrapGrant>());
   const changesPubSub = yield* PubSub.unbounded<BootstrapCredentialChange>();
   const generatePairingToken = Effect.gen(function* () {
     let credential = "";
@@ -284,13 +266,6 @@ export const make = Effect.gen(function* () {
     return credential;
   });
 
-  const seedGrant = (credential: string, grant: StoredBootstrapGrant) =>
-    Ref.update(seededGrantsRef, (current) => {
-      const next = new Map(current);
-      next.set(credential, grant);
-      return next;
-    });
-
   const emitUpsert = (pairingLink: AuthPairingLink) =>
     PubSub.publish(changesPubSub, {
       type: "pairingLinkUpserted",
@@ -302,32 +277,6 @@ export const make = Effect.gen(function* () {
       type: "pairingLinkRemoved",
       id,
     }).pipe(Effect.asVoid);
-
-  // A desktop that sends its secret rotates the renderer's token, so accept
-  // whichever token the secret derives for the current window instead of
-  // seeding one fixed token. Older desktops only send the token.
-  const desktopBootstrapSecret = config.desktopBootstrapSecret;
-  const consumeRotatingDesktopToken = (credential: string, nowMs: number) =>
-    desktopBootstrapSecret !== undefined &&
-    isValidDesktopBootstrapToken(desktopBootstrapSecret, credential, nowMs);
-
-  if (config.desktopBootstrapToken && desktopBootstrapSecret === undefined) {
-    const now = yield* DateTime.now;
-    yield* seedGrant(config.desktopBootstrapToken, {
-      method: "desktop-bootstrap",
-      scopes: AuthStandardClientScopes,
-      subject: "desktop-bootstrap",
-      expiresAt: DateTime.add(now, {
-        milliseconds: Duration.toMillis(DESKTOP_BOOTSTRAP_TTL_HOURS),
-      }),
-      // Unbounded uses so the renderer can re-exchange the seed for a
-      // fresh bearer session after a page reload (or after the prior
-      // bearer expires). The seed itself stays inside the desktop
-      // process and the rendered page, both of which the user already
-      // implicitly trusts.
-      remainingUses: "unbounded",
-    });
-  }
 
   const listActive: PairingGrantStore["Service"]["listActive"] = Effect.fn(
     "PairingGrantStore.listActive",
@@ -437,7 +386,21 @@ export const make = Effect.gen(function* () {
   const consume: PairingGrantStore["Service"]["consume"] = Effect.fn("PairingGrantStore.consume")(
     function* (credential, input) {
       const now = yield* DateTime.now;
-      if (consumeRotatingDesktopToken(credential, now.epochMilliseconds)) {
+      // Configured desktop credentials must outlive bearer sessions, including long suspends.
+      const secret = config.desktopBootstrapSecret;
+      const isDesktopCredential =
+        secret !== undefined
+          ? isValidDesktopBootstrapToken(secret, credential, now.epochMilliseconds)
+          : config.desktopBootstrapToken && credential === config.desktopBootstrapToken;
+      if (isDesktopCredential) {
+        if (
+          input?.requestedScopes !== undefined &&
+          !input.requestedScopes.some((scope) =>
+            AuthStandardClientScopes.some((grantedScope) => grantedScope === scope),
+          )
+        ) {
+          return yield* new BootstrapCredentialScopeNotGrantedError({});
+        }
         return {
           method: "desktop-bootstrap",
           scopes: AuthStandardClientScopes,
@@ -447,97 +410,6 @@ export const make = Effect.gen(function* () {
           }),
         } satisfies BootstrapGrant;
       }
-      const seededResult: ConsumeResult = yield* Ref.modify(
-        seededGrantsRef,
-        (current): readonly [ConsumeResult, Map<string, StoredBootstrapGrant>] => {
-          const grant = current.get(credential);
-          if (!grant) {
-            return [
-              {
-                _tag: "error",
-                reason: "not-found",
-                error: new UnknownBootstrapCredentialError({}),
-              },
-              current,
-            ];
-          }
-
-          const next = new Map(current);
-          if (DateTime.isGreaterThanOrEqualTo(now, grant.expiresAt)) {
-            next.delete(credential);
-            return [
-              {
-                _tag: "error",
-                reason: "expired",
-                error: new ExpiredBootstrapCredentialError({}),
-              },
-              next,
-            ];
-          }
-
-          if (grant.proofKeyThumbprint && grant.proofKeyThumbprint !== input?.proofKeyThumbprint) {
-            return [
-              {
-                _tag: "error",
-                reason: "not-found",
-                error: new BootstrapCredentialProofKeyMismatchError({}),
-              },
-              next,
-            ];
-          }
-
-          if (
-            input?.requestedScopes !== undefined &&
-            !input.requestedScopes.some((scope) => grant.scopes.includes(scope))
-          ) {
-            return [
-              {
-                _tag: "error",
-                reason: "scope-not-granted",
-                error: new BootstrapCredentialScopeNotGrantedError({}),
-              },
-              current,
-            ];
-          }
-
-          const remainingUses = grant.remainingUses;
-          if (typeof remainingUses === "number") {
-            if (remainingUses <= 1) {
-              next.delete(credential);
-            } else {
-              next.set(credential, {
-                ...grant,
-                remainingUses: remainingUses - 1,
-              });
-            }
-          }
-
-          return [
-            {
-              _tag: "success",
-              grant: {
-                method: grant.method,
-                scopes: grant.scopes,
-                subject: grant.subject,
-                ...(grant.label ? { label: grant.label } : {}),
-                ...(grant.proofKeyThumbprint
-                  ? { proofKeyThumbprint: grant.proofKeyThumbprint }
-                  : {}),
-                expiresAt: grant.expiresAt,
-              } satisfies BootstrapGrant,
-            },
-            next,
-          ];
-        },
-      );
-
-      if (seededResult._tag === "success") {
-        return seededResult.grant;
-      }
-      if (seededResult.reason !== "not-found") {
-        return yield* seededResult.error;
-      }
-
       // The scope check is part of the UPDATE's WHERE clause so a rejected
       // request cannot consume a one-time link. The re-check below only
       // explains why nothing matched.

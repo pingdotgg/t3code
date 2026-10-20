@@ -16,15 +16,30 @@ describe("desktop primary auth", () => {
     Reflect.deleteProperty(globalThis, "window");
   });
 
-  it("reuses the main-process bearer token across renderer requests", async () => {
-    const getLocalEnvironmentBearerToken = vi.fn().mockResolvedValue("desktop-bearer-token");
+  it("shares in-flight reads but asks the main process again after they settle", async () => {
+    let resolveToken!: (token: string) => void;
+    const pending = new Promise<string>((resolve) => {
+      resolveToken = resolve;
+    });
+    const getLocalEnvironmentBearerToken = vi
+      .fn()
+      .mockReturnValueOnce(pending)
+      .mockResolvedValueOnce("renewed-bearer-token");
     window.desktopBridge = {
       getLocalEnvironmentBearerToken,
     } as unknown as DesktopBridge;
 
-    await expect(readDesktopPrimaryBearerToken()).resolves.toBe("desktop-bearer-token");
-    await expect(readDesktopPrimaryBearerToken()).resolves.toBe("desktop-bearer-token");
+    const first = readDesktopPrimaryBearerToken();
+    const second = readDesktopPrimaryBearerToken();
     expect(getLocalEnvironmentBearerToken).toHaveBeenCalledTimes(1);
+    resolveToken("initial-bearer-token");
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      "initial-bearer-token",
+      "initial-bearer-token",
+    ]);
+
+    await expect(readDesktopPrimaryBearerToken()).resolves.toBe("renewed-bearer-token");
+    expect(getLocalEnvironmentBearerToken).toHaveBeenCalledTimes(2);
   });
 
   it("does not require desktop auth in a browser", async () => {

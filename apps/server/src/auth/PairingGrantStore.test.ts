@@ -155,18 +155,18 @@ it.layer(NodeServices.layer)("PairingGrantStore.layer", (it) => {
     }).pipe(Effect.provide(layerPairingGrantStore())),
   );
 
-  it.effect("seeds the desktop bootstrap credential as a reusable grant", () =>
+  it.effect("accepts only the configured legacy desktop credential as a reusable grant", () =>
     Effect.gen(function* () {
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
       const first = yield* bootstrapCredentials.consume("desktop-bootstrap-token");
       const second = yield* bootstrapCredentials.consume("desktop-bootstrap-token");
-      const third = yield* bootstrapCredentials.consume("desktop-bootstrap-token");
+      const wrong = yield* Effect.flip(bootstrapCredentials.consume("wrong-desktop-token"));
 
       expect(first.method).toBe("desktop-bootstrap");
       expect(first.scopes).toEqual(AuthStandardClientScopes);
       expect(first.subject).toBe("desktop-bootstrap");
       expect(second.method).toBe("desktop-bootstrap");
-      expect(third.method).toBe("desktop-bootstrap");
+      expect(wrong._tag).toBe("UnknownBootstrapCredentialError");
     }).pipe(
       Effect.provide(
         layerPairingGrantStore({
@@ -176,38 +176,13 @@ it.layer(NodeServices.layer)("PairingGrantStore.layer", (it) => {
     ),
   );
 
-  it.effect("reports seeded desktop bootstrap credentials as expired after their ttl", () =>
-    Effect.gen(function* () {
-      const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
-
-      yield* TestClock.adjust(Duration.hours(12));
-      const stillValid = yield* bootstrapCredentials.consume("desktop-bootstrap-token");
-      expect(stillValid.method).toBe("desktop-bootstrap");
-
-      yield* TestClock.adjust(Duration.hours(13));
-      const expired = yield* Effect.flip(bootstrapCredentials.consume("desktop-bootstrap-token"));
-
-      expect(expired._tag).toBe("ExpiredBootstrapCredentialError");
-      expect(expired.message).toContain("Bootstrap credential expired");
-    }).pipe(
-      Effect.provide(
-        Layer.merge(
-          layerPairingGrantStore({
-            desktopBootstrapToken: "desktop-bootstrap-token",
-          }),
-          TestClock.layer(),
-        ),
-      ),
-    ),
-  );
-
   it.effect("accepts rotating desktop bootstrap tokens derived from the desktop secret", () =>
     Effect.gen(function* () {
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
       const window = DESKTOP_BOOTSTRAP_TOKEN_WINDOW_MS;
 
-      yield* TestClock.adjust(Duration.days(5));
-      const now = 5 * 24 * 60 * 60 * 1000;
+      yield* TestClock.adjust(Duration.days(31));
+      const now = Duration.toMillis(Duration.days(31));
       const current = yield* bootstrapCredentials.consume(
         currentDesktopBootstrapToken("desktop-secret", now),
       );
