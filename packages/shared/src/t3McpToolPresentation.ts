@@ -156,7 +156,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "workflow-stop",
   ),
   t3_background_wait: tool(
-    ["Mark", "Marking", "Marked", "background work as awaited"],
+    ["Update", "Updating", "Updated", "background waits"],
     "background-wait",
   ),
   t3_thread_interrupt: tool(
