@@ -204,11 +204,6 @@ export async function navigateAfterThreadDeletion(navigate: () => Promise<void>)
   }
 }
 
-/**
- * Runs one command per archived thread in order, then refreshes each reached
- * environment's archive once instead of once per thread. Stops at the first
- * interruption and reports the first failure.
- */
 export async function runArchivedThreadBatch(
   targets: readonly ScopedThreadRef[],
   run: (target: ScopedThreadRef) => Promise<AtomCommandResult<unknown, unknown>>,
@@ -379,8 +374,6 @@ export function useThreadActions() {
       });
     });
 
-  // Archived threads have no live session, worktree prompt, or route to leave;
-  // the server's deletion reactor stops leftover sessions and terminals.
   const deleteArchivedThreads = (targets: readonly ScopedThreadRef[]) =>
     runArchivedThreadBatch(targets, async (target) => {
       const permissionFailure = threadOperationFailure(target);
