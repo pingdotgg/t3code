@@ -128,3 +128,16 @@ export class PeerLinkRequestError extends Schema.TaggedError<PeerLinkRequestErro
     return PEER_LINK_REQUEST_FAILURE_MESSAGES[this.reason];
   }
 }
+
+/**
+ * Moving a thread to a linked environment failed or was refused. The message
+ * says why and what to do; the move itself, when one started, records it too.
+ */
+export class ThreadHandoffError extends Schema.TaggedError<ThreadHandoffError>()(
+  "ThreadHandoffError",
+  {
+    reason: Schema.Literals(["not_found", "refused", "failed"]),
+    message: Schema.String,
+    cause: Schema.optionalKey(Schema.Defect()),
+  },
+) {}
