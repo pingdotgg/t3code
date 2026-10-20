@@ -38,28 +38,32 @@ export function buildActiveShellSnapshot(input: {
  * because the server shares one SQLite connection and decoding a large shell takes longer than
  * reading it.
  */
-export const loadShellSnapshotParts = <E1, E2, E3, E4>(input: {
+export const loadShellSnapshotParts = Effect.fn("ShellStream.loadShellSnapshotParts")(function* <
+  E1,
+  E2,
+  E3,
+  E4,
+>(input: {
   readonly sql: SqlClient.SqlClient;
   readonly readThreads: Effect.Effect<Effect.Effect<OrchestrationV2ThreadShellSnapshot, E2>, E1>;
   readonly listProjects: Effect.Effect<ReadonlyArray<OrchestrationProjectShell>, E3>;
   readonly latestSequence: Effect.Effect<number, E4>;
-}) =>
-  Effect.gen(function* () {
-    const read = yield* input.sql
-      .withTransaction(
-        Effect.all({
-          decodeThreads: input.readThreads,
-          projects: input.listProjects,
-          snapshotSequence: input.latestSequence,
-        }),
-      )
-      .pipe(NodeSqliteClient.readOnly);
-    return {
-      projects: read.projects,
-      threads: yield* read.decodeThreads,
-      snapshotSequence: read.snapshotSequence,
-    };
-  });
+}) {
+  const read = yield* input.sql
+    .withTransaction(
+      Effect.all({
+        decodeThreads: input.readThreads,
+        projects: input.listProjects,
+        snapshotSequence: input.latestSequence,
+      }),
+    )
+    .pipe(NodeSqliteClient.readOnly);
+  return {
+    projects: read.projects,
+    threads: yield* read.decodeThreads,
+    snapshotSequence: read.snapshotSequence,
+  };
+});
 
 export type ShellApplicationEvent =
   | Pick<

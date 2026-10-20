@@ -207,45 +207,41 @@ type LiveStreamLimits = {
   readonly maxSerializedBytes?: number;
 };
 
-const retainLiveStream = <A extends object, E, R>(
-  source: Stream.Stream<A, E, R>,
-  budget: LiveStreamBudget,
-) =>
-  Effect.gen(function* () {
-    const queue = yield* Queue.unbounded<
-      RetainedLiveItem<A>,
-      E | LiveStreamBufferError | Cause.Done
-    >();
-    let closed = false;
-    const close = (error?: LiveStreamBufferError) =>
-      Effect.gen(function* () {
-        if (closed) return;
-        closed = true;
-        budget.release(yield* Queue.clear(queue).pipe(Effect.orElseSucceed(() => [])));
-        if (error) yield* Queue.fail(queue, error);
-        yield* Queue.shutdown(queue);
-      });
-    yield* Effect.addFinalizer(() => close());
-    yield* budget.failed.pipe(
-      Effect.catchTags({ LiveStreamBufferError: close }),
-      Effect.forkScoped,
-    );
-    yield* source.pipe(
-      Stream.runForEach((value) =>
-        budget.retain(value).pipe(
-          Effect.flatMap((item) => Queue.offer(queue, item)),
-          Effect.uninterruptible,
-        ),
-      ),
-      Effect.raceFirst(budget.failed),
-      Effect.exit,
-      Effect.flatMap((exit) =>
-        Exit.isFailure(exit) ? Queue.failCause(queue, exit.cause) : Queue.end(queue),
-      ),
-      Effect.forkScoped({ startImmediately: true }),
-    );
-    return Stream.fromQueue(queue);
+const retainLiveStream = Effect.fn("LiveStreamBudget.retainLiveStream")(function* <
+  A extends object,
+  E,
+  R,
+>(source: Stream.Stream<A, E, R>, budget: LiveStreamBudget) {
+  const queue = yield* Queue.unbounded<
+    RetainedLiveItem<A>,
+    E | LiveStreamBufferError | Cause.Done
+  >();
+  let closed = false;
+  const close = Effect.fn("LiveStreamBudget.close")(function* (error?: LiveStreamBufferError) {
+    if (closed) return;
+    closed = true;
+    budget.release(yield* Queue.clear(queue).pipe(Effect.orElseSucceed(() => [])));
+    if (error) yield* Queue.fail(queue, error);
+    yield* Queue.shutdown(queue);
   });
+  yield* Effect.addFinalizer(() => close());
+  yield* budget.failed.pipe(Effect.catchTags({ LiveStreamBufferError: close }), Effect.forkScoped);
+  yield* source.pipe(
+    Stream.runForEach((value) =>
+      budget.retain(value).pipe(
+        Effect.flatMap((item) => Queue.offer(queue, item)),
+        Effect.uninterruptible,
+      ),
+    ),
+    Effect.raceFirst(budget.failed),
+    Effect.exit,
+    Effect.flatMap((exit) =>
+      Exit.isFailure(exit) ? Queue.failCause(queue, exit.cause) : Queue.end(queue),
+    ),
+    Effect.forkScoped({ startImmediately: true }),
+  );
+  return Stream.fromQueue(queue);
+});
 
 export const bufferLiveStream = <A extends object, E, R>(
   source: Stream.Stream<A, E, R>,
