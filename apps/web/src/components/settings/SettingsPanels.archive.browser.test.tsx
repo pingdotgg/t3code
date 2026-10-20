@@ -146,6 +146,13 @@ afterEach(async () => {
 });
 
 async function runBulkAction(label: string) {
+  const button = [...container.querySelectorAll("button")].find(
+    (item) => item.textContent === label,
+  );
+  if (button) {
+    await act(async () => button.click());
+    return;
+  }
   await act(async () => {
     container
       .querySelector<HTMLButtonElement>('button[aria-label="Archived thread actions for Project"]')!
@@ -165,6 +172,8 @@ function openContextMenu() {
 }
 
 it.each([
+  ["Unarchive all", "unarchiveThreads"],
+  ["Delete all", "deleteArchivedThreads"],
   ["Unarchive all in project", "unarchiveThreads"],
   ["Delete all in project", "deleteArchivedThreads"],
 ] as const)(

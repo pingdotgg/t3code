@@ -3518,6 +3518,11 @@ export function ArchivedThreadsPanel() {
       }
     });
 
+  const archivedThreadCount = archivedGroups.reduce(
+    (count, group) => count + group.threads.length,
+    0,
+  );
+
   const handleBulkArchivedThreadAction = async (
     action: "unarchive" | "delete",
     threads: ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly id: ThreadId }>,
@@ -3587,6 +3592,47 @@ export function ArchivedThreadsPanel() {
 
   return (
     <SettingsPageContainer>
+      {archivedGroups.length > 0 ? (
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-3 sm:px-4">
+          <p className="text-sm text-muted-foreground">
+            {archivedThreadCount} archived thread{archivedThreadCount === 1 ? "" : "s"}
+          </p>
+          <div className="flex items-center gap-1.5">
+            <Button
+              type="button"
+              variant="outline"
+              size="xs"
+              disabled={isBulkActionPending || pendingThreadKeys.size > 0}
+              onClick={() => {
+                void handleBulkArchivedThreadAction(
+                  "unarchive",
+                  archivedGroups.flatMap((group) => group.threads),
+                  "",
+                );
+              }}
+            >
+              <ArchiveX className="size-3.5" />
+              <span>Unarchive all</span>
+            </Button>
+            <Button
+              type="button"
+              variant="destructive-outline"
+              size="xs"
+              disabled={isBulkActionPending || pendingThreadKeys.size > 0}
+              onClick={() => {
+                void handleBulkArchivedThreadAction(
+                  "delete",
+                  archivedGroups.flatMap((group) => group.threads),
+                  archivedGroups.length === 1 ? ` in ${archivedGroups[0]!.title}` : "",
+                );
+              }}
+            >
+              <Trash2Icon className="size-3.5" />
+              <span>Delete all</span>
+            </Button>
+          </div>
+        </div>
+      ) : null}
       {archivedGroups.length === 0 ? (
         <SettingsSection
           id={isLoadingArchive ? undefined : searchableSetting("archive").id}
