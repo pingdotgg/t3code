@@ -701,6 +701,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       args,
       name: "opencode",
       env: input.environment,
+      shared: true,
     });
     const spawnCommand = yield* resolveCommand(launch.command, launch.args, input.environment);
     const serverPassword = resolveOpenCodeServerPassword({

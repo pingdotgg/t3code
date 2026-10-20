@@ -238,6 +238,21 @@ describe("AgentScope service", () => {
     ),
   );
 
+  it.effect("requests OOM continuation only for shared scopes when systemd supports it", () =>
+    withFakeSystemd(({ scope }) =>
+      Effect.gen(function* () {
+        const server = yield* scope.wrap({ command: "agent", args: [], name: "s", shared: true });
+        const agent = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+        expect(server.args.filter((arg) => arg.startsWith("--property=OOMPolicy="))).toEqual([
+          "--property=OOMPolicy=continue",
+        ]);
+        expect(agent.args.filter((arg) => arg.startsWith("--property=OOMPolicy="))).toEqual([
+          "--property=OOMPolicy=stop",
+        ]);
+      }),
+    ),
+  );
+
   it.effect("leaves a quiet slice alone", () =>
     withFakeSystemd(({ scope, calls }) =>
       Effect.gen(function* () {
