@@ -286,7 +286,7 @@ const ACTION_ACCESS_REFUSALS: Record<PullRequestAction, string> = {
   reopen:
     "You need write access on this repository, or to have opened this change request, to reopen it.",
   "enable-auto-merge":
-    "You need write access on this repository to have it merged for you once it is ready.",
+    "Auto-merge needs write access on this repository, and the repository has to allow it.",
   "disable-auto-merge":
     "You need write access on this repository to stop it being merged for you once it is ready.",
   revert: "You need write access on this repository to open a revert pull request.",

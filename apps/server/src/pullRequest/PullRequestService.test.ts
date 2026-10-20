@@ -1810,6 +1810,7 @@ it.effect("keeps branch deletion on the credential that passed source repository
                   mergeCommitAllowed: true,
                   squashMergeAllowed: true,
                   rebaseMergeAllowed: true,
+                  autoMergeAllowed: true,
                   viewerPermission: "READ",
                   pullRequest: {
                     viewerCanUpdate: false,
@@ -1948,7 +1949,7 @@ it.effect("gates arming a merge for later exactly as it gates merging now", () =
       service.runAction({ ...reference, action: "enable-auto-merge", mergeMethod: "squash" }),
     );
     assert.strictEqual(refused._tag, "PullRequestOperationError");
-    assert.include(refused.message, "merged for you once it is ready");
+    assert.include(refused.message, "the repository has to allow it");
     assert.strictEqual(ranWith, null);
 
     const wrongStrategy = yield* Effect.flip(
