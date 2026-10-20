@@ -75,6 +75,8 @@ export class DesktopShellEnvironment extends Context.Service<
 
 const LOGIN_SHELL_ENV_NAMES = [
   "PATH",
+  "ANDROID_HOME",
+  "ANDROID_SDK_ROOT",
   "DBUS_SESSION_BUS_ADDRESS",
   "DISPLAY",
   "LANG",
@@ -99,6 +101,7 @@ const LOGIN_SHELL_ENV_NAMES = [
 ] as const;
 const WINDOWS_PROFILE_ENV_NAMES = ["PATH", "FNM_DIR", "FNM_MULTISHELL_PATH"] as const;
 const LOCALE_ENV_NAMES = ["LANG", "LC_ALL", "LC_CTYPE"] as const;
+const ANDROID_SDK_ENV_NAMES = ["ANDROID_HOME", "ANDROID_SDK_ROOT"] as const;
 const FALLBACK_LC_CTYPE = "en_US.UTF-8";
 const WINDOWS_SHELL_CANDIDATES = ["pwsh.exe", "powershell.exe"] as const;
 const LOGIN_SHELL_TIMEOUT = Duration.seconds(5);
@@ -462,6 +465,17 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
     ] as const) {
       if (!config.env[name] && shellEnvironment[name]) {
         config.env[name] = shellEnvironment[name];
+      }
+    }
+
+    // The device host picks the Android SDK from ANDROID_HOME before ANDROID_SDK_ROOT,
+    // so a profile-only ANDROID_HOME must not shadow an inherited ANDROID_SDK_ROOT.
+    if (ANDROID_SDK_ENV_NAMES.every((name) => Option.isNone(trimNonEmpty(config.env[name])))) {
+      for (const name of ANDROID_SDK_ENV_NAMES) {
+        const value = trimNonEmpty(shellEnvironment[name]);
+        if (Option.isSome(value)) {
+          config.env[name] = value.value;
+        }
       }
     }
 
