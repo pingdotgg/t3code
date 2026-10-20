@@ -463,6 +463,9 @@ function PullRequestCodeTab({
     resolve: hostReview.resolve && detail.viewerPermissions.resolve,
   };
   const canCommentOnLines = review.inlineComment && commit === null;
+  // Agent context is local, so it does not require host comment permission.
+  const canSelectLines =
+    commit === null && (review.inlineComment || onAddToAgentSelection !== undefined);
   // The cache key carries the theme, which is what the tokenizer caches against, so a theme
   // change is still a fresh parse. The patch's own hash is part of it too: a refreshed page
   // reuses its cursor, and a key of position alone would hand back the parse it replaced.
@@ -708,7 +711,7 @@ function PullRequestCodeTab({
     range: SelectedLineRange | null,
     context: { item: CodeViewItem<ReviewAnnotationGroup> },
   ) => {
-    if (!range || !canCommentOnLines) return;
+    if (!range || !canSelectLines) return;
     const item = context.item;
     if (item.type !== "diff") return;
     const file = files.find((candidate) => buildFileDiffRenderKey(candidate) === item.id);
@@ -832,8 +835,8 @@ function PullRequestCodeTab({
     themeType: resolvedTheme,
     stickyHeaders: true,
     loadDiffFiles,
-    enableGutterUtility: canCommentOnLines && draft === null,
-    enableLineSelection: canCommentOnLines && draft === null,
+    enableGutterUtility: canSelectLines && draft === null,
+    enableLineSelection: canSelectLines && draft === null,
     onGutterUtilityClick: beginComment,
     onLineSelectionEnd: beginComment,
   };
@@ -930,13 +933,13 @@ function PullRequestCodeTab({
           onRemove={() => removeComment(reviewKey, comment.id)}
         />
       ))}
-      {annotation.metadata.draft && draft ? (
+      {annotation.metadata.draft && draft && canSelectLines ? (
         <DiffCommentAnnotation
           kind="draft"
           rangeLabel={`${draft.path}:${getReviewPositionAnchor(draft.position).line}`}
           text=""
-          submitLabel="Add to review"
-          {...(onAddToAgentSelection
+          submitLabel={canCommentOnLines ? "Add to review" : "Add to agent"}
+          {...(canCommentOnLines && onAddToAgentSelection
             ? {
                 secondaryAction: {
                   label: "Add to agent",
@@ -952,6 +955,14 @@ function PullRequestCodeTab({
             setSelectedLines(null);
           }}
           onComment={(body) => {
+            if (!canCommentOnLines) {
+              if (onAddToAgentSelection) {
+                finishSelection(draft, body, (comment) =>
+                  onAddToAgentSelection({ comment, request: body }),
+                );
+              }
+              return;
+            }
             addComment(reviewKey, {
               id: nextPendingReviewCommentId(),
               path: draft.path,
