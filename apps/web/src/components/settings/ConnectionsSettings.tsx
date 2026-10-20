@@ -1107,9 +1107,16 @@ function ConnectionsSettingsContent({
                   {gt("Off", { $context: "WSL backend is off" })}
                 </SelectItem>
                 {desktopWslState.distros.length === 0 ? (
-                  <SelectItem hideIndicator value={BACKEND_VALUE_DEFAULT_WSL}>
-                    <T>Default distro</T>
-                  </SelectItem>
+                  <>
+                    <SelectItem hideIndicator value={BACKEND_VALUE_DEFAULT_WSL}>
+                      <T>Default distro</T>
+                    </SelectItem>
+                    {desktopWslState.distro !== null ? (
+                      <SelectItem hideIndicator value={desktopWslState.distro}>
+                        {desktopWslState.distro}
+                      </SelectItem>
+                    ) : null}
+                  </>
                 ) : (
                   desktopWslState.distros.map((distro) => (
                     <SelectItem hideIndicator key={distro.name} value={distro.name}>
