@@ -23,6 +23,7 @@ export function PullRequestSavedViewsMenu({
   const selectedView =
     views.find((view) => view.id === selectedId) ??
     views.find((view) => pullRequestViewMatches(view, scope));
+  if (selectedId === null && selectedView) setSelectedId(selectedView.id);
   const modified = selectedView !== undefined && !pullRequestViewMatches(selectedView, scope);
 
   async function applyView(view: PullRequestSavedView) {

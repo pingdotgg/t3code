@@ -90,11 +90,17 @@ export function PullRequestSavedViewsMenu({
     const id = editor.id ?? randomUUID();
     const name = editor.name.trim();
     const editingId = editor.id;
-    const saved = persist((current) =>
-      editingId
+    let missing = false;
+    const saved = persist((current) => {
+      if (editingId && !current.some((view) => view.id === editingId)) { missing = true; return current; }
+      return editingId
         ? current.map((view) => (view.id === editingId ? { ...view, name } : view))
         : [...current, { id, name, preferences: pullRequestListPreferences(preferences) }],
-    );
+    });
+    if (missing) {
+      toastManager.add({ type: "error", title: "This saved view was removed", description: "Your name has been kept. Save it as a new view or cancel." });
+      return;
+    }
     if (!saved) return;
     setSelectedId(id);
     setEditor(null);
