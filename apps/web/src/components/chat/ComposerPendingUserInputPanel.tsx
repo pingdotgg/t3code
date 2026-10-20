@@ -1,5 +1,5 @@
 import { type RuntimeRequestId, type ScopedThreadRef } from "@t3tools/contracts";
-import { memo, useEffect, useEffectEvent, useRef, useState } from "react";
+import { memo, useEffect, useEffectEvent, useId, useRef, useState } from "react";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { type PendingUserInput } from "../../session-logic";
 import {
@@ -98,6 +98,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   const [collapsedQuestionId, setCollapsedQuestionId] = useState<string | null>(null);
   // The active question keys the shortcut listener, so it must keep its identity across renders.
   const progress = derivePendingUserInputProgress(prompt.questions, answers, questionIndex);
+  const optionIdPrefix = useId();
+  const headerId = `${optionIdPrefix}-header`;
+  const previewId = `${optionIdPrefix}-preview`;
   const activeQuestion = progress.activeQuestion;
   const customAnswerActive = progress.customAnswer.trim().length > 0;
   // Read here, before the hooks below, so the compiler can keep `activeQuestion` cached.
@@ -173,7 +176,11 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     const handler = (event: globalThis.KeyboardEvent) => {
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       const target = event.target;
-      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLMediaElement
+      ) {
         return;
       }
       if (
@@ -206,25 +213,35 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
         setCollapsedQuestionId(open ? null : activeQuestion.id);
       }}
     >
-      <CollapsibleTrigger
-        render={<ComposerBanner.Row render={<button type="button" />} />}
-        title={
-          isCollapsed ? "Show the question and its options" : "Hide the question and its options"
-        }
-        data-pending-user-input-toggle={isCollapsed ? "collapsed" : "expanded"}
-      >
-        <ComposerBanner.Icon />
-        <ComposerBanner.Content>
-          <span className="shrink-0 font-medium text-muted-foreground">
+      <ComposerBanner.Row className="relative">
+        <CollapsibleTrigger
+          render={<button type="button" />}
+          className="absolute inset-0 cursor-pointer rounded-md focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+          aria-labelledby={headerId}
+          aria-describedby={isCollapsed ? previewId : undefined}
+          title={
+            isCollapsed ? "Show the question and its options" : "Hide the question and its options"
+          }
+          data-pending-user-input-toggle={isCollapsed ? "collapsed" : "expanded"}
+        />
+        <ComposerBanner.Icon className="pointer-events-none relative" />
+        <ComposerBanner.Content className="pointer-events-none relative">
+          <span id={headerId} className="shrink-0 font-medium text-muted-foreground">
             {activeQuestion.header}
           </span>
           {isCollapsed ? (
-            <span className="min-w-0 flex-1 truncate text-secondary-label">
-              {activeQuestion.question}
+            <span id={previewId} inert className="min-w-0 flex-1" data-pending-user-input-preview>
+              <ChatMarkdown
+                text={activeQuestion.question}
+                parseRawHtml={false}
+                cwd={cwd}
+                threadRef={threadRef}
+                className="line-clamp-1 max-h-lh text-xs/4 text-secondary-label"
+              />
             </span>
           ) : null}
         </ComposerBanner.Content>
-        <ComposerBanner.Actions>
+        <ComposerBanner.Actions className="pointer-events-none relative">
           {prompt.questions.length > 1 ? (
             <span className="text-3xs font-medium text-muted-foreground tabular-nums">
               {questionIndex + 1}/{prompt.questions.length}
@@ -232,27 +249,18 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
           ) : null}
           <ComposerBanner.ToggleIcon expanded={!isCollapsed} />
           {prompt.dismissible ? (
-            <ComposerBanner.Dismiss
-              render={<span role="button" tabIndex={0} />}
-              aria-label="Dismiss question without answering"
-              title="Dismiss question without answering"
-              disabled={isResponding}
-              data-pending-user-input-dismiss
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                onDismiss(prompt.requestId);
-              }}
-              onKeyDown={(event) => {
-                if (event.key !== "Enter" && event.key !== " ") return;
-                event.preventDefault();
-                event.stopPropagation();
-                onDismiss(prompt.requestId);
-              }}
-            />
+            <span className="pointer-events-auto inline-flex">
+              <ComposerBanner.Dismiss
+                aria-label="Dismiss question without answering"
+                title="Dismiss question without answering"
+                disabled={isResponding}
+                data-pending-user-input-dismiss
+                onClick={() => onDismiss(prompt.requestId)}
+              />
+            </span>
           ) : null}
         </ComposerBanner.Actions>
-      </CollapsibleTrigger>
+      </ComposerBanner.Row>
       <CollapsiblePanel>
         <ComposerBanner.Scroll>
           <ComposerBanner.Body className="pe-1 pb-1 wrap-anywhere">
@@ -274,55 +282,87 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                 const isSelected =
                   isOptimisticallySelected || draftSelectedOptions?.[index] === true;
                 const shortcutKey = index < 9 ? index + 1 : null;
-                const className = cn(
-                  "group flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left outline-none transition-colors duration-150 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/25",
-                  isSelected
-                    ? "bg-muted/55 text-foreground"
-                    : "bg-transparent text-foreground/85 hover:bg-muted/30",
-                  (disabled || isResponding) && "opacity-50 cursor-not-allowed",
-                  !disabled && !isResponding && "cursor-pointer",
-                );
-                const content = (
-                  <>
-                    <div className="min-w-0 flex-1 flex flex-col gap-0.5">
-                      <span className="text-sm font-medium">{option.label}</span>
-                      {option.description && option.description !== option.label ? (
-                        <span className="text-secondary-label text-2xs">{option.description}</span>
-                      ) : null}
-                    </div>
-                    {isSelected ? (
-                      <CheckIcon className="size-3.5 shrink-0 text-primary" />
-                    ) : shortcutKey !== null ? (
-                      <kbd
-                        className={cn(
-                          "flex size-5 shrink-0 items-center justify-center text-3xs font-medium text-muted-foreground tabular-nums",
-                        )}
-                      >
-                        {shortcutKey}
-                      </kbd>
-                    ) : null}
-                  </>
-                );
+                const labelId = `${optionIdPrefix}-${index}-label`;
+                const descriptionId = `${optionIdPrefix}-${index}-description`;
+                const hasDescription = option.description && option.description !== option.label;
                 return (
-                  <button
+                  <div
                     // Options keep their positions within a question and may share answer values.
                     // oxlint-disable-next-line react/no-array-index-key
                     key={`${activeQuestion.id}:${index}`}
-                    type="button"
-                    disabled={disabled || isResponding}
+                    className={cn(
+                      "group flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left transition-colors duration-150 has-[:focus-visible]:ring-1 has-[:focus-visible]:ring-inset has-[:focus-visible]:ring-primary/25",
+                      isSelected
+                        ? "bg-muted/55 text-foreground"
+                        : "bg-transparent text-foreground/85 hover:bg-muted/30",
+                      (disabled || isResponding) && "opacity-50 cursor-not-allowed",
+                      !disabled && !isResponding && "cursor-pointer",
+                    )}
                     onMouseEnter={() =>
                       setFocusedOption({ questionId: activeQuestion.id, optionIndex: index })
                     }
-                    onFocus={() =>
-                      setFocusedOption({ questionId: activeQuestion.id, optionIndex: index })
-                    }
-                    onClick={() => {
+                    onClick={(event) => {
+                      const target = event.target;
+                      if (
+                        event.defaultPrevented ||
+                        !(target instanceof Element) ||
+                        !event.currentTarget.contains(target)
+                      )
+                        return;
+                      // Markdown controls and scroll surfaces keep their own click behavior.
+                      const control = target.closest(
+                        'a, button, input, select, textarea, summary, video, audio, [role="button"], [role="link"], [contenteditable], [data-slot^="scroll-area-"], pre, .overflow-x-auto',
+                      );
+                      if (control && event.currentTarget.contains(control)) return;
                       handleOptionSelection(activeQuestion.id, optionValue, index);
                     }}
-                    className={className}
                   >
-                    {content}
-                  </button>
+                    <button
+                      type="button"
+                      disabled={disabled || isResponding}
+                      aria-labelledby={labelId}
+                      aria-describedby={hasDescription ? descriptionId : undefined}
+                      aria-pressed={isSelected}
+                      onFocus={() =>
+                        setFocusedOption({ questionId: activeQuestion.id, optionIndex: index })
+                      }
+                      onClick={() => handleOptionSelection(activeQuestion.id, optionValue, index)}
+                      className="order-last flex w-5 shrink-0 self-stretch items-center justify-center rounded-sm outline-none disabled:cursor-not-allowed"
+                    >
+                      {isSelected ? (
+                        <CheckIcon aria-hidden className="size-3.5 text-primary" />
+                      ) : shortcutKey !== null ? (
+                        <kbd
+                          aria-hidden
+                          className="text-3xs font-medium text-muted-foreground tabular-nums"
+                        >
+                          {shortcutKey}
+                        </kbd>
+                      ) : null}
+                    </button>
+                    <div className="min-w-0 flex-1 flex flex-col gap-0.5">
+                      <div id={labelId}>
+                        <ChatMarkdown
+                          text={option.label}
+                          cwd={cwd}
+                          threadRef={threadRef}
+                          parseRawHtml={false}
+                          className="text-sm font-medium text-current"
+                        />
+                      </div>
+                      {hasDescription ? (
+                        <div id={descriptionId}>
+                          <ChatMarkdown
+                            text={option.description}
+                            cwd={cwd}
+                            threadRef={threadRef}
+                            parseRawHtml={false}
+                            className="text-secondary-label text-2xs"
+                          />
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
                 );
               })}
             </div>

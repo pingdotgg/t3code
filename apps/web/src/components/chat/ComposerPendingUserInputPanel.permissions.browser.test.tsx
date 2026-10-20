@@ -2,6 +2,7 @@ import { EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
+import { page } from "vite-plus/test/browser";
 
 vi.mock(import("../ChatMarkdown"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -52,9 +53,7 @@ it("cancels an answer's pending auto-submit on revocation and resumes after a ne
   const root = createRoot(container);
   // A disabled button swallows the click, as it would for a user.
   const chooseOption = () =>
-    [...container.querySelectorAll("button")]
-      .find((button) => button.textContent?.includes("Incremental"))!
-      .click();
+    (page.getByRole("button", { name: "Incremental" }).element() as HTMLButtonElement).click();
   try {
     await act(async () => root.render(panel(false)));
     await act(async () => chooseOption());
