@@ -51,7 +51,7 @@ describe("T3 orchestration provider instructions", () => {
     assert.equal(t3OrchestrationSystemPrompt(true), T3_CODE_ORCHESTRATION_INSTRUCTIONS);
   });
 
-  it("gives ACP sessions provider-neutral mode, browser, and orchestration guidance", () => {
+  it("gives MCP-enabled ACP sessions mode, browser, orchestration, and fallback guidance", () => {
     const injected = t3AcpPromptWithInstructions({
       prompt: "Inspect the repository.",
       state: { interactionMode: "default", hasT3Mcp: true },
@@ -60,6 +60,7 @@ describe("T3 orchestration provider instructions", () => {
     assert.include(injected, "T3 Code interaction mode: Default");
     assert.include(injected, "T3 Code collaborative browser");
     assert.include(injected, "T3 Code orchestration");
+    assert.include(injected, "acp-mcp-call");
     assert.include(injected, "<user_request>\nInspect the repository.\n</user_request>");
   });
 

@@ -59,6 +59,17 @@ describe("buildCodexAdditionalContext", () => {
       T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim(),
     );
   });
+
+  it("gives Codex its code-mode hint without the ACP terminal fallback", () => {
+    const context = Object.values(
+      buildCodexAdditionalContext({ model: "gpt-5.3-codex", reasoningEffort: "high" }),
+    )
+      .map((entry) => entry.value)
+      .join("\n");
+
+    NodeAssert.match(context, /tools\.mcp__t3_code__orchestrator_capabilities/);
+    NodeAssert.doesNotMatch(context, /acp-mcp-call/);
+  });
 });
 
 describe("buildCodexDeveloperInstructions", () => {
