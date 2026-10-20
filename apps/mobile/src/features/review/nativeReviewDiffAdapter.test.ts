@@ -252,6 +252,91 @@ describe("getCachedNativeReviewDiffData", () => {
   });
 });
 
+describe("buildNativeReviewDiffData row bound", () => {
+  function singleFilePatch(path: string, lineCount: number) {
+    return [
+      `diff --git a/${path} b/${path}`,
+      `--- a/${path}`,
+      `+++ b/${path}`,
+      `@@ -0,0 +1,${lineCount} @@`,
+      ...Array.from({ length: lineCount }, (_, index) => `+const value${index} = ${index};`),
+    ].join("\n");
+  }
+
+  it("caps each huge file excerpt while preserving full counts and ordinary files", () => {
+    const data = buildNativeReviewDiffData(
+      buildReviewParsedDiff(
+        [singleFilePatch("huge.ts", 200_000), singleFilePatch("ordinary.ts", 1_000)].join("\n"),
+        "native-review-row-bound",
+      ),
+    );
+    const hugeHeader = data.rows.find((row) => row.kind === "file" && row.filePath === "huge.ts");
+    const ordinaryHeader = data.rows.find(
+      (row) => row.kind === "file" && row.filePath === "ordinary.ts",
+    );
+    expect(hugeHeader).toMatchObject({ additions: 200_000, deletions: 0 });
+    expect(ordinaryHeader).toMatchObject({ additions: 1_000, deletions: 0 });
+    expect(data).toMatchObject({ additions: 201_000, deletions: 0 });
+    const hugeRows = data.rows.filter((row) => row.fileId === hugeHeader?.fileId);
+    expect(hugeRows.filter((row) => row.kind === "line" || row.kind === "hunk")).toHaveLength(
+      2_000,
+    );
+    expect(hugeRows.at(-2)).toMatchObject({ kind: "line", newLineNumber: 1_999 });
+    expect(hugeRows.at(-1)).toMatchObject({
+      kind: "notice",
+      text: "This diff is too large to show in full.",
+    });
+    const ordinaryRows = data.rows.filter((row) => row.fileId === ordinaryHeader?.fileId);
+    expect(ordinaryRows.filter((row) => row.kind === "line")).toHaveLength(1_000);
+    expect(ordinaryRows.at(-1)).toMatchObject({
+      kind: "line",
+      newLineNumber: 1_000,
+      content: "const value999 = 999;",
+    });
+    expect(ordinaryRows.some((row) => row.kind === "notice")).toBe(false);
+  });
+
+  it("omits comments beyond the excerpt and retains overlapping ranges at its boundary", () => {
+    const diff = buildReviewParsedDiff(singleFilePatch("example.ts", 3_000), "excerpt-comments");
+    const visible = { ...makeComment("Visible"), id: "visible", startIndex: 10, endIndex: 10 };
+    const overlapping = {
+      ...makeComment("Overlapping"),
+      id: "overlapping",
+      startIndex: 1_998,
+      endIndex: 2_001,
+      rangeLabel: "+1999 to +2002",
+    };
+    const omitted = {
+      ...makeComment("Outside excerpt"),
+      id: "omitted",
+      startIndex: 1_999,
+      endIndex: 1_999,
+      rangeLabel: "+2000",
+    };
+    const data = getCachedNativeReviewDiffData({
+      parsedDiff: diff,
+      comments: [visible, overlapping, omitted],
+    });
+
+    const visibleIndex = data.rows.findIndex((row) => row.id === visible.id);
+    expect(data.rows[visibleIndex - 1]).toMatchObject({ kind: "line", newLineNumber: 11 });
+    const overlappingIndex = data.rows.findIndex((row) => row.id === overlapping.id);
+    expect(data.rows[overlappingIndex - 1]).toMatchObject({ kind: "line", newLineNumber: 1_999 });
+    expect(data.rows[overlappingIndex]).toMatchObject({
+      commentRangeLabel: overlapping.rangeLabel,
+      commentText: overlapping.text,
+    });
+    expect(data.rows.filter((row) => row.kind === "comment").map((row) => row.id)).toEqual([
+      visible.id,
+      overlapping.id,
+    ]);
+    expect(data.rows[overlappingIndex + 1]).toMatchObject({ kind: "notice" });
+    expect(getCachedNativeReviewDiffData({ parsedDiff: diff }).rows).toEqual(
+      data.rows.filter((row) => row.kind !== "comment"),
+    );
+  });
+});
+
 describe("createNativeReviewDiffTheme", () => {
   it("serializes every native color as cross-platform opaque hex", () => {
     for (const themeId of MOBILE_THEME_IDS) {
