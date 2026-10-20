@@ -276,17 +276,17 @@ function writtenIds(
   return new Set(emitted.flatMap((event) => (event.type === type ? [event.payload.id] : [])));
 }
 
-export const endOrphanedNativeSubagent = <E>(input: {
-  readonly projection: Pick<OrchestrationV2ThreadProjection, "nodes" | "subagents" | "turnItems">;
-  readonly subagentId: NodeId;
-  readonly status: "completed" | "failed" | "interrupted" | "cancelled";
-  readonly completedAt?: DateTime.Utc;
-  readonly result?: string | null;
-  readonly now: DateTime.Utc;
-  readonly emitted: ReadonlyArray<OrchestrationV2DomainEvent>;
-  readonly allocateEventId: () => Effect.Effect<EventId, E>;
-}) =>
-  Effect.gen(function* () {
+export const endOrphanedNativeSubagent = Effect.fn("subagentProjection.endOrphanedNativeSubagent")(
+  function* <E>(input: {
+    readonly projection: Pick<OrchestrationV2ThreadProjection, "nodes" | "subagents" | "turnItems">;
+    readonly subagentId: NodeId;
+    readonly status: "completed" | "failed" | "interrupted" | "cancelled";
+    readonly completedAt?: DateTime.Utc;
+    readonly result?: string | null;
+    readonly now: DateTime.Utc;
+    readonly emitted: ReadonlyArray<OrchestrationV2DomainEvent>;
+    readonly allocateEventId: () => Effect.Effect<EventId, E>;
+  }) {
     const { now, status, subagentId, completedAt = now } = input;
     const subagent = input.projection.subagents.find((entry) => entry.id === subagentId);
     if (subagent?.origin !== "provider_native") return [];
@@ -351,9 +351,12 @@ export const endOrphanedNativeSubagent = <E>(input: {
       });
     }
     return events;
-  });
+  },
+);
 
-export const endRunlessRootTurns = <E>(input: {
+export const endRunlessRootTurns = Effect.fn("subagentProjection.endRunlessRootTurns")(function* <
+  E,
+>(input: {
   readonly threadId: ThreadId;
   readonly providerInstanceId: ProviderInstanceId;
   readonly projection: Pick<OrchestrationV2ThreadProjection, "nodes" | "turnItems">;
@@ -362,63 +365,62 @@ export const endRunlessRootTurns = <E>(input: {
   readonly now: DateTime.Utc;
   readonly emitted: ReadonlyArray<OrchestrationV2DomainEvent>;
   readonly allocateEventId: () => Effect.Effect<EventId, E>;
-}) =>
-  Effect.gen(function* () {
-    const { now, status, completedAt = now } = input;
-    const endedNodeIds = writtenIds(input.emitted, "node.updated");
-    const endedItemIds = writtenIds(input.emitted, "turn-item.updated");
-    const scope = {
-      threadId: input.threadId,
-      providerInstanceId: input.providerInstanceId,
-      occurredAt: now,
-    };
-    const events: Array<OrchestrationV2DomainEvent> = [];
-    for (const node of input.projection.nodes) {
+}) {
+  const { now, status, completedAt = now } = input;
+  const endedNodeIds = writtenIds(input.emitted, "node.updated");
+  const endedItemIds = writtenIds(input.emitted, "turn-item.updated");
+  const scope = {
+    threadId: input.threadId,
+    providerInstanceId: input.providerInstanceId,
+    occurredAt: now,
+  };
+  const events: Array<OrchestrationV2DomainEvent> = [];
+  for (const node of input.projection.nodes) {
+    if (
+      node.kind !== "root_turn" ||
+      node.runId !== null ||
+      !isOrchestrationV2WorkActive(node.status)
+    ) {
+      continue;
+    }
+    if (!endedNodeIds.has(node.id)) {
+      events.push({
+        ...scope,
+        id: yield* input.allocateEventId(),
+        type: "node.updated",
+        nodeId: node.id,
+        payload: { ...node, status, completedAt },
+      });
+    }
+    for (const item of input.projection.turnItems) {
       if (
-        node.kind !== "root_turn" ||
-        node.runId !== null ||
-        !isOrchestrationV2WorkActive(node.status)
+        item.nodeId !== node.id ||
+        item.runId !== null ||
+        !isOrchestrationV2WorkActive(item.status) ||
+        endedItemIds.has(item.id)
       ) {
         continue;
       }
-      if (!endedNodeIds.has(node.id)) {
-        events.push({
-          ...scope,
-          id: yield* input.allocateEventId(),
-          type: "node.updated",
-          nodeId: node.id,
-          payload: { ...node, status, completedAt },
-        });
-      }
-      for (const item of input.projection.turnItems) {
-        if (
-          item.nodeId !== node.id ||
-          item.runId !== null ||
-          !isOrchestrationV2WorkActive(item.status) ||
-          endedItemIds.has(item.id)
-        ) {
-          continue;
-        }
-        events.push({
-          ...scope,
-          id: yield* input.allocateEventId(),
-          type: "turn-item.updated",
-          nodeId: node.id,
-          payload: {
-            ...item,
-            status:
-              status === "completed" &&
-              (item.type === "command_execution" || item.type === "dynamic_tool")
-                ? "failed"
-                : status,
-            completedAt,
-            updatedAt: now,
-            ...(item.type === "reasoning" || item.type === "assistant_message"
-              ? { streaming: false }
-              : {}),
-          },
-        });
-      }
+      events.push({
+        ...scope,
+        id: yield* input.allocateEventId(),
+        type: "turn-item.updated",
+        nodeId: node.id,
+        payload: {
+          ...item,
+          status:
+            status === "completed" &&
+            (item.type === "command_execution" || item.type === "dynamic_tool")
+              ? "failed"
+              : status,
+          completedAt,
+          updatedAt: now,
+          ...(item.type === "reasoning" || item.type === "assistant_message"
+            ? { streaming: false }
+            : {}),
+        },
+      });
     }
-    return events;
-  });
+  }
+  return events;
+});

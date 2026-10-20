@@ -217,8 +217,9 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
         ] as const;
       }).pipe(Effect.flatten);
 
-    const offerOutgoing = (message: Record<string, unknown>) =>
-      Effect.gen(function* () {
+    const offerOutgoing =
+      /* Every protocol write reaches this helper; request spans cover the operation. */
+      Effect.fnUntraced(function* (message: Record<string, unknown>) {
         const failure = yield* Ref.get(terminationFailure);
         if (Option.isSome(failure)) return yield* failure.value;
 
@@ -447,25 +448,27 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
 
     yield* Stream.fromQueue(outgoing).pipe(Stream.run(options.stdio.stdout()), Effect.forkScoped);
 
-    const request = (method: string, payload?: unknown) =>
-      Effect.gen(function* () {
-        const requestId = yield* Ref.modify(
-          nextRequestId,
-          (current) => [current, current + 1] as const,
-        );
-        const deferred = yield* Deferred.make<unknown, CodexError.CodexAppServerError>();
-        yield* Ref.update(pending, (current) =>
-          new Map(current).set(String(requestId), { deferred, method }),
-        );
-        yield* offerOutgoing({
-          id: requestId,
-          method,
-          ...(payload !== undefined ? { params: payload } : {}),
-        }).pipe(Effect.tapError(() => removePending(String(requestId))));
-        return yield* Deferred.await(deferred).pipe(
-          Effect.onInterrupt(() => removePending(String(requestId))),
-        );
-      });
+    const request = Effect.fn("CodexAppServerProtocol.request")(function* (
+      method: string,
+      payload?: unknown,
+    ) {
+      const requestId = yield* Ref.modify(
+        nextRequestId,
+        (current) => [current, current + 1] as const,
+      );
+      const deferred = yield* Deferred.make<unknown, CodexError.CodexAppServerError>();
+      yield* Ref.update(pending, (current) =>
+        new Map(current).set(String(requestId), { deferred, method }),
+      );
+      yield* offerOutgoing({
+        id: requestId,
+        method,
+        ...(payload !== undefined ? { params: payload } : {}),
+      }).pipe(Effect.tapError(() => removePending(String(requestId))));
+      return yield* Deferred.await(deferred).pipe(
+        Effect.onInterrupt(() => removePending(String(requestId))),
+      );
+    });
 
     const notify = (method: string, payload?: unknown) =>
       offerOutgoing({

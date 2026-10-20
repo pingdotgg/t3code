@@ -25,36 +25,33 @@ export class ProviderLatestVersions extends Context.Service<
   }
 >()("@t3tools/provider-core/server/ProviderLatestVersions") {}
 
-export const make = (seed: Iterable<readonly [key: string, version: string | null]> = []) =>
-  Effect.gen(function* () {
-    const entries = yield* Ref.make(
-      new Map<string, Entry>(
-        Array.from(seed, ([key, version]) => [
-          key,
-          { version, expiresAt: Number.MAX_SAFE_INTEGER },
-        ]),
-      ),
-    );
-    return ProviderLatestVersions.of({
-      cached: (key, lookup, options) =>
-        Effect.gen(function* () {
-          const now = DateTime.toEpochMillis(yield* DateTime.now);
-          const existing = (yield* Ref.get(entries)).get(key);
-          if (!options?.fresh && existing && existing.expiresAt > now) return existing.version;
-          const version = yield* lookup;
-          const ttl = version === null ? MISSING_TTL : FOUND_TTL;
-          yield* Ref.update(entries, (current) =>
-            new Map(current).set(key, { version, expiresAt: now + Duration.toMillis(ttl) }),
-          );
-          return version;
-        }),
-      invalidate: (key) =>
-        Ref.update(entries, (current) => {
-          const next = new Map(current);
-          next.delete(key);
-          return next;
-        }),
-    });
+export const make = Effect.fn("ProviderLatestVersions.make")(function* (
+  seed: Iterable<readonly [key: string, version: string | null]> = [],
+) {
+  const entries = yield* Ref.make(
+    new Map<string, Entry>(
+      Array.from(seed, ([key, version]) => [key, { version, expiresAt: Number.MAX_SAFE_INTEGER }]),
+    ),
+  );
+  return ProviderLatestVersions.of({
+    cached: Effect.fn("ProviderLatestVersions.cached")(function* (key, lookup, options) {
+      const now = DateTime.toEpochMillis(yield* DateTime.now);
+      const existing = (yield* Ref.get(entries)).get(key);
+      if (!options?.fresh && existing && existing.expiresAt > now) return existing.version;
+      const version = yield* lookup;
+      const ttl = version === null ? MISSING_TTL : FOUND_TTL;
+      yield* Ref.update(entries, (current) =>
+        new Map(current).set(key, { version, expiresAt: now + Duration.toMillis(ttl) }),
+      );
+      return version;
+    }),
+    invalidate: (key) =>
+      Ref.update(entries, (current) => {
+        const next = new Map(current);
+        next.delete(key);
+        return next;
+      }),
   });
+});
 
 export const layer = Layer.effect(ProviderLatestVersions, make());
