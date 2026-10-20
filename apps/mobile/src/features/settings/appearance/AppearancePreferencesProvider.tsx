@@ -21,12 +21,12 @@ import { appAtomRegistry } from "../../../state/atom-registry";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../../state/preferences";
 import {
   normalizeFontSelections,
-  normalizeImportedFonts,
   resolveMobileFonts,
   type MobileFontRole,
   type MobileFontSelections,
+  type InstalledMobileFont,
 } from "../../../lib/mobileFonts";
-import { loadImportedFontFiles } from "../../../lib/mobileFontFiles";
+import { resolveInstalledFonts } from "../../../native/installed-fonts";
 import { normalizeBaseFontSize } from "../../../lib/appearancePreferences";
 import type { Preferences } from "../../../persistence/mobile-preferences";
 import {
@@ -56,7 +56,7 @@ import {
 interface AppearancePreferencesContextValue {
   readonly fonts: ReturnType<typeof resolveMobileFonts>;
   readonly fontSelections: MobileFontSelections;
-  readonly importedFonts: ReturnType<typeof normalizeImportedFonts>;
+  readonly installedFonts: ReadonlyMap<string, InstalledMobileFont>;
   readonly unavailableFonts: readonly string[];
   readonly replyFontSize: number;
   readonly composerFontSize: number;
@@ -246,38 +246,51 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
     () => normalizeFontSelections(storedPreferences?.fontSelections),
     [storedPreferences?.fontSelections],
   );
-  const importedFonts = useMemo(
-    () => normalizeImportedFonts(storedPreferences?.importedFonts),
-    [storedPreferences?.importedFonts],
+  const selectedFontNames = useMemo(
+    () => [
+      ...new Set(
+        Object.values(fontSelections)
+          .filter((selection) => selection.startsWith("installed:"))
+          .map((selection) => selection.slice(10)),
+      ),
+    ],
+    [fontSelections],
   );
-  const activeFontFiles = useMemo(() => {
-    const selected = new Set(Object.values(fontSelections));
-    return importedFonts.filter((face) => selected.has(`imported:${face.family}`));
-  }, [importedFonts, fontSelections]);
-  const libraryKey = activeFontFiles.map((face) => face.id).join(":");
-  const [loadedFontFiles, setLoadedFontFiles] = useState<{
-    key: string;
-    loaded: ReadonlySet<string>;
-    unavailable: readonly string[];
-  }>({ key: "", loaded: new Set(), unavailable: [] });
+  const [installedFonts, setInstalledFonts] = useState<ReadonlyMap<string, InstalledMobileFont>>(
+    new Map(),
+  );
+  const [unavailableFonts, setUnavailableFonts] = useState<readonly string[]>([]);
   useEffect(() => {
     let cancelled = false;
-    void loadImportedFontFiles(activeFontFiles).then((result) => {
-      if (!cancelled) setLoadedFontFiles({ key: libraryKey, ...result });
+    let generation = 0;
+    const refresh = () => {
+      generation = generation + 1;
+      const request = generation;
+      void resolveInstalledFonts(selectedFontNames)
+        .then((resolved) => {
+          if (cancelled || request !== generation) return;
+          const available = new Map(resolved.map((font) => [font.name, font]));
+          setInstalledFonts(available);
+          setUnavailableFonts(selectedFontNames.filter((name) => !available.has(name)));
+        })
+        .catch(() => {
+          if (cancelled || request !== generation) return;
+          setInstalledFonts(new Map());
+          setUnavailableFonts(selectedFontNames);
+        });
+    };
+    refresh();
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") refresh();
     });
     return () => {
       cancelled = true;
+      subscription.remove();
     };
-  }, [activeFontFiles, libraryKey]);
+  }, [selectedFontNames]);
   const fonts = useMemo(
-    () =>
-      resolveMobileFonts(
-        fontSelections,
-        importedFonts,
-        loadedFontFiles.key === libraryKey ? loadedFontFiles.loaded : new Set(),
-        Platform.OS,
-      ),
-    [fontSelections, importedFonts, libraryKey, loadedFontFiles],
+    () => resolveMobileFonts(fontSelections, installedFonts, Platform.OS),
+    [fontSelections, installedFonts],
   );
   const fontVariables = useMemo(
     () => ({
@@ -392,8 +405,8 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
       appearance,
       fonts,
       fontSelections,
-      importedFonts,
-      unavailableFonts: loadedFontFiles.unavailable,
+      installedFonts,
+      unavailableFonts,
       replyFontSize,
       composerFontSize,
       customReplyFontSize,
@@ -427,8 +440,8 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
       appearance,
       fonts,
       fontSelections,
-      importedFonts,
-      loadedFontFiles.unavailable,
+      installedFonts,
+      unavailableFonts,
       replyFontSize,
       composerFontSize,
       customReplyFontSize,

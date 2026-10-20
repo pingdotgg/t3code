@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { Alert, View } from "react-native";
 import { useAtomSet } from "@effect/atom-react";
-import * as DocumentPicker from "expo-document-picker";
 import { AppText as Text } from "../../../../components/ui/AppText";
 import { ListRowLayout } from "../../../../components/ui/ListRowLayout";
 import { Menu } from "../../../../components/ui/Menu";
@@ -11,17 +10,11 @@ import { SettingsSwitchRow } from "../../components/SettingsSwitchRow";
 import { FontSizeSliderRow } from "../components/FontSizeSliderRow";
 import { useAppearancePreferences } from "../AppearancePreferencesProvider";
 import { updateMobilePreferencesAtom } from "../../../../state/preferences";
-import { importFontFiles, deleteImportedFontFiles } from "../../../../lib/mobileFontFiles";
+import { canPickInstalledFont, pickInstalledFont } from "../../../../native/installed-fonts";
 import {
   BUILT_IN_FONT_OPTIONS,
   DEFAULT_FONT_SELECTIONS,
-  MOBILE_FONT_ROLES,
-  importedFontFamilies,
-  mergeImportedFonts,
-  normalizeFontSelections,
-  normalizeImportedFonts,
   type MobileFontRole,
-  type ImportedFontFace,
 } from "../../../../lib/mobileFonts";
 import { MIN_BASE_FONT_SIZE, MAX_BASE_FONT_SIZE } from "../../../../lib/appearancePreferences";
 
@@ -32,35 +25,11 @@ const ROLES: readonly { role: MobileFontRole; label: string }[] = [
   { role: "code", label: "Chat code font" },
 ];
 
-type SaveFontPreferences = (update: {
-  readonly transform: (current: Preferences) => Partial<Preferences>;
-}) => Promise<Preferences>;
-
-async function importSelectedFonts(
-  importedFonts: readonly ImportedFontFace[],
-  savePreferences: SaveFontPreferences,
-) {
-  const picked = await DocumentPicker.getDocumentAsync({
-    type: "*/*",
-    multiple: true,
-    copyToCacheDirectory: true,
-  });
-  if (picked.canceled) return;
-  await importFontFiles(picked.assets, importedFonts, async (copied) => {
-    const result = await savePreferences({
-      transform: (current) => ({
-        importedFonts: mergeImportedFonts(normalizeImportedFonts(current.importedFonts), copied),
-      }),
-    });
-    return normalizeImportedFonts(result.importedFonts);
-  });
-}
-
 export function FontAppearanceSection() {
   const {
     isReady,
     fontSelections,
-    importedFonts,
+    installedFonts,
     unavailableFonts,
     fonts,
     replyFontSize,
@@ -73,10 +42,12 @@ export function FontAppearanceSection() {
   } = useAppearancePreferences();
   const savePreferences = useAtomSet(updateMobilePreferencesAtom, { mode: "promise" });
   const [busy, setBusy] = useState(false);
-  const families = importedFontFamilies(importedFonts);
   const options = [
     ...BUILT_IN_FONT_OPTIONS,
-    ...families.map((family) => ({ id: `imported:${family}`, label: family })),
+    ...[...installedFonts.values()].map((font) => ({
+      id: `installed:${font.name}`,
+      label: font.label,
+    })),
   ];
   const report = (error: unknown) =>
     Alert.alert(
@@ -84,64 +55,15 @@ export function FontAppearanceSection() {
       error instanceof Error ? error.message : "Could not update fonts. Please try again.",
     );
 
-  const importFonts = async () => {
+  const chooseInstalledFont = (role: MobileFontRole) => {
     setBusy(true);
-    let copied: readonly ImportedFontFace[] = [];
-    let saved = false;
-    try {
-      const picked = await DocumentPicker.getDocumentAsync({
-        type: "*/*",
-        multiple: true,
-        copyToCacheDirectory: true,
-      });
-      if (picked.canceled) return;
-      copied = await copyImportedFonts(picked.assets);
-      const next = mergeImportedFonts(importedFonts, copied);
-      const loaded = await loadImportedFontFiles(next);
-      if (loaded.unavailable.length)
-        throw new Error(
-          `Could not load: ${loaded.unavailable.join(", ")}. Try another static TTF or OTF font.`,
-        );
-      const result = await savePreferences({
-        transform: (current) => ({
-          importedFonts: mergeImportedFonts(normalizeImportedFonts(current.importedFonts), copied),
-        }),
-      });
-      saved = true;
-      const retained = new Set(normalizeImportedFonts(result.importedFonts).map((face) => face.id));
-      deleteImportedFontFiles(
-        [...importedFonts, ...copied].filter((face) => !retained.has(face.id)),
-      );
-    } catch (error) {
-      if (!saved) deleteImportedFontFiles(copied);
-      report(error);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const removeFamily = async (family: string) => {
-    setBusy(true);
-    try {
-      await savePreferences({
-        transform: (current) => {
-          const selections = { ...normalizeFontSelections(current.fontSelections) };
-          for (const role of MOBILE_FONT_ROLES)
-            if (selections[role] === `imported:${family}`) selections[role] = "";
-          return {
-            fontSelections: selections,
-            importedFonts: normalizeImportedFonts(current.importedFonts).filter(
-              (face) => face.family !== family,
-            ),
-          };
-        },
-      });
-      deleteImportedFontFiles(importedFonts.filter((face) => face.family === family));
-    } catch (error) {
-      report(error);
-    } finally {
-      setBusy(false);
-    }
+    const selection = fontSelections[role];
+    void pickInstalledFont(selection.startsWith("installed:") ? selection.slice(10) : null)
+      .then((font) => {
+        if (font) setFontSelection(role, `installed:${font.name}`);
+      })
+      .catch(report)
+      .finally(() => setBusy(false));
   };
 
   return (
@@ -157,8 +79,8 @@ export function FontAppearanceSection() {
           A reply in your selected font.
         </Text>
         <Text className="text-xs text-foreground-muted">
-          Defaults follow the interface. Chat code uses a monospace default. These choices stay on
-          this device.
+          Defaults follow the interface. Choose an installed font to use its matching styles. These
+          choices stay on this device.
         </Text>
       </View>
       {ROLES.map(({ role, label }) => (
@@ -166,14 +88,27 @@ export function FontAppearanceSection() {
           key={role}
           accessibilityLabel={label}
           accessibilityRole="button"
-          actions={options.map((option) => ({
-            id: option.id || "default",
-            title: option.label,
-            state: fontSelections[role] === option.id ? "on" : "off",
-            attributes: { disabled: !isReady || busy },
-          }))}
+          actions={[
+            ...options.map((option) => ({
+              id: option.id || "default",
+              title: option.label,
+              state: fontSelections[role] === option.id ? ("on" as const) : ("off" as const),
+              attributes: { disabled: !isReady || busy },
+            })),
+            ...(canPickInstalledFont
+              ? [
+                  {
+                    id: "choose-installed",
+                    title: "Choose installed font…",
+                    attributes: { disabled: !isReady || busy },
+                  },
+                ]
+              : []),
+          ]}
           onPressAction={({ nativeEvent }) =>
-            setFontSelection(role, nativeEvent.event === "default" ? "" : nativeEvent.event)
+            nativeEvent.event === "choose-installed"
+              ? chooseInstalledFont(role)
+              : setFontSelection(role, nativeEvent.event === "default" ? "" : nativeEvent.event)
           }
         >
           <View>
@@ -225,41 +160,14 @@ export function FontAppearanceSection() {
           onChange={setComposerFontSize}
         />
       ) : null}
-      <SettingsActionRow
-        icon="plus"
-        label="Import fonts from Files"
-        description="Select static TTF or OTF files, including matching bold and italic faces. Fonts are copied into this app."
-        disabled={!isReady}
-        loading={busy}
-        onPress={() => void importFonts()}
-      />
       {unavailableFonts.length ? (
         <View className="px-4 py-2">
           <Text className="text-sm text-foreground-muted">
-            Unavailable fonts: {unavailableFonts.join(", ")}. Using defaults; remove or reimport
-            these fonts.
+            Unavailable fonts: {unavailableFonts.join(", ")}. Using defaults. Choose an installed
+            font again or select Default.
           </Text>
         </View>
       ) : null}
-      {families.map((family) => (
-        <SettingsActionRow
-          key={family}
-          icon="trash"
-          label={`Remove ${family}`}
-          tone="danger"
-          disabled={!isReady || busy}
-          onPress={() =>
-            Alert.alert(
-              "Remove font?",
-              `${family} will be removed from this device. Any settings using it will return to Default.`,
-              [
-                { text: "Cancel", style: "cancel" },
-                { text: "Remove", style: "destructive", onPress: () => void removeFamily(family) },
-              ],
-            )
-          }
-        />
-      ))}
       <SettingsActionRow
         icon="arrow.clockwise"
         label="Reset font choices and message sizes"

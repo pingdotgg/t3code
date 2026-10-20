@@ -14,6 +14,7 @@ public final class T3NativeControlsModule: Module {
   /// The last file preview that closed. Written on main, read synchronously from JS.
   private let filePreviewActivity = NSLock()
   private var finishedFilePreview: String?
+  private var fontPresentation: T3FontPickerPresentation?
 
   public func definition() -> ModuleDefinition {
     Events("videoPlaybackChange")
@@ -66,6 +67,25 @@ public final class T3NativeControlsModule: Module {
     AsyncFunction("signDpop") { (privateKey: Data, signingInput: Data) in
       try T3DpopKeys.sign(privateKey: privateKey, signingInput: signingInput)
     }
+
+    AsyncFunction("pickInstalledFont") { (selectedName: String?, promise: Promise) in
+      guard self.fontPresentation == nil,
+        let presenter = self.appContext?.utilities?.currentViewController()
+      else {
+        promise.reject("ERR_FONT_PICKER", "Cannot present the font picker right now.")
+        return
+      }
+      let presentation = T3FontPickerPresentation { [weak self] result in
+        self?.fontPresentation = nil
+        promise.resolve(result)
+      }
+      self.fontPresentation = presentation
+      presentation.present(from: presenter, selectedName: selectedName)
+    }.runOnQueue(.main)
+
+    AsyncFunction("resolveInstalledFonts") { (names: [String], promise: Promise) in
+      T3InstalledFonts.resolve(names) { promise.resolve($0) }
+    }.runOnQueue(.main)
 
     AsyncFunction("presentVideo") { (url: URL, title: String, sourceIdentifier: String, identifier: String, promise: Promise) in
       try self.presentVideo(
@@ -121,10 +141,12 @@ public final class T3NativeControlsModule: Module {
       let presentation = self.videoPresentation
       let file = self.filePresentation
       let images = self.imageViewer
+      let font = self.fontPresentation
       DispatchQueue.main.async {
         presentation?.dismiss()
         file?.dismiss()
         images?.dismiss()
+        font?.dismiss()
       }
     }
 
