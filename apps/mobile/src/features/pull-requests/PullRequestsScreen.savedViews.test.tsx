@@ -64,7 +64,10 @@ vi.mock("react-native-screens", () => ({ ScrollViewMarker: "ScrollViewMarker" })
 vi.mock("react-native-safe-area-context", () => ({
   useSafeAreaInsets: () => ({ top: 24, bottom: 0 }),
 }));
-vi.mock("../../components/ui/AppActivityIndicator", () => ({ AppActivityIndicator: "ActivityIndicator" }));
+vi.mock("../../components/ui/AppActivityIndicator", () => ({
+  AppActivityIndicator: "ActivityIndicator",
+}));
+vi.mock("../../components/ui/Button", () => ({ Button: "button" }));
 vi.mock("../../components/ui/AppText", () => ({ AppText: "Text" }));
 vi.mock("../../components/ui/EmptyState", () => ({ EmptyState: "EmptyState" }));
 vi.mock("../../native/v5-workspace-context", async () => ({
