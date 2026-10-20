@@ -239,7 +239,7 @@ jobs:
         if: runner.os != 'Windows' && inputs.platform == 'win' && steps.resource_monitor_cache.outputs.cache-hit != 'true'
         uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
         with:
-          tool: cargo-xwin
+          tool: cargo-xwin@0.23.1
 
       # Built here rather than inside the desktop build so the CLI archive,
       # which bundles the same binary, can be built and uploaded first.
@@ -743,27 +743,45 @@ jobs:
         run: node verify/smoke-cli-archive.mjs --archive release-cli/* --expect-version "${{ inputs.version }}"
 
       # cargo-xwin links this binary on Linux, and nothing else runs it before users do.
+      # Node rather than pwsh: PowerShell on Windows ARM crashes intermittently
+      # (https://github.com/dotnet/runtime/issues/131636), which is why this
+      # target stopped building on Windows.
       - name: Smoke-test resource monitor
-        shell: pwsh
+        shell: bash
+        env:
+          MONITOR: verify/${{ inputs.platform }}-${{ inputs.arch }}-unpacked/resources/resource-monitor/t3-resource-monitor.exe
+          EXPECTED_ARCH: ${{ inputs.arch == 'arm64' && 'aarch64' || 'x86_64' }}
         run: |
-          $startInfo = [System.Diagnostics.ProcessStartInfo]::new(
-            "verify\${{ inputs.platform }}-${{ inputs.arch }}-unpacked\resources\resource-monitor\t3-resource-monitor.exe")
-          $startInfo.UseShellExecute = $false
-          $startInfo.RedirectStandardInput = $true
-          $startInfo.RedirectStandardOutput = $true
-          $monitor = [System.Diagnostics.Process]::Start($startInfo)
-          $hello = $monitor.StandardOutput.ReadLine() | ConvertFrom-Json
-          if ($hello.type -ne "hello" -or $hello.arch -ne "${{ inputs.arch == 'arm64' && 'aarch64' || 'x86_64' }}") {
-            throw "Unexpected hello: $($hello | ConvertTo-Json -Compress)"
+          node --input-type=module <<'EOF'
+          import { spawn } from "node:child_process";
+          const monitor = spawn(process.env.MONITOR, { stdio: ["pipe", "pipe", "inherit"] });
+          monitor.stdout.setEncoding("utf8");
+          let output = "";
+          const exited = new Promise((resolve) => monitor.on("close", resolve));
+          const hello = await new Promise((resolve, reject) => {
+            monitor.on("error", reject);
+            monitor.on("close", () => reject(new Error(`Resource monitor exited before hello: ${output}`)));
+            monitor.stdout.on("data", (chunk) => {
+              output += chunk;
+              const end = output.indexOf("\n");
+              if (end !== -1) resolve(JSON.parse(output.slice(0, end)));
+            });
+          });
+          if (hello.type !== "hello" || hello.arch !== process.env.EXPECTED_ARCH) {
+            throw new Error(`Unexpected hello: ${JSON.stringify(hello)}`);
           }
-          $monitor.StandardInput.WriteLine((@{ version = $hello.version; type = "configure"; rootPid = $PID; sampleIntervalMs = 1000 } | ConvertTo-Json -Compress))
-          $monitor.StandardInput.WriteLine((@{ version = $hello.version; type = "sampleNow"; requestId = "verify" } | ConvertTo-Json -Compress))
-          $monitor.StandardInput.Close()
-          $output = $monitor.StandardOutput.ReadToEnd()
-          $monitor.WaitForExit()
-          $sample = $output -split "`n" | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json } |
-            Where-Object { $_.requestId -eq "verify" }
-          if ($monitor.ExitCode -ne 0 -or $sample.type -ne "snapshot" -or -not ($sample.processes | Where-Object { $_.pid -eq $PID })) {
-            throw "Resource monitor exited $($monitor.ExitCode) with: $output"
+          const send = (message) => monitor.stdin.write(`${JSON.stringify({ version: hello.version, ...message })}\n`);
+          send({ type: "configure", rootPid: process.pid, sampleIntervalMs: 1000 });
+          send({ type: "sampleNow", requestId: "verify" });
+          monitor.stdin.end();
+          const exitCode = await exited;
+          const sample = output
+            .split("\n")
+            .filter((line) => line.trim())
+            .map((line) => JSON.parse(line))
+            .find((message) => message.requestId === "verify");
+          if (exitCode !== 0 || sample?.type !== "snapshot" || !sample.processes.some((p) => p.pid === process.pid)) {
+            throw new Error(`Resource monitor exited ${exitCode} with: ${output}`);
           }
-          "Resource monitor sampled $($sample.scannedProcessCount) processes."
+          console.log(`Resource monitor sampled ${sample.scannedProcessCount} processes.`);
+          EOF
