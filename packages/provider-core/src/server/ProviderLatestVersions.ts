@@ -38,10 +38,15 @@ export const make = Effect.fn("ProviderLatestVersions.make")(function* (
       const now = DateTime.toEpochMillis(yield* DateTime.now);
       const existing = (yield* Ref.get(entries)).get(key);
       if (!options?.fresh && existing && existing.expiresAt > now) return existing.version;
+      // Replacing or invalidating this entry retires any lookup still in flight.
+      const pending = { version: null, expiresAt: 0 };
+      yield* Ref.update(entries, (current) => new Map(current).set(key, pending));
       const version = yield* lookup;
       const ttl = version === null ? MISSING_TTL : FOUND_TTL;
       yield* Ref.update(entries, (current) =>
-        new Map(current).set(key, { version, expiresAt: now + Duration.toMillis(ttl) }),
+        current.get(key) === pending
+          ? new Map(current).set(key, { version, expiresAt: now + Duration.toMillis(ttl) })
+          : current,
       );
       return version;
     }),
