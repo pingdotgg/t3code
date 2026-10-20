@@ -402,8 +402,9 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
 
   // A stand-in for the Grok CLI: `--version` and `models` print canned text,
   // and `agent stdio` execs the mock ACP agent so `initialize` returns model metadata.
+  // A list of `models` outputs is served in call order, repeating the last one.
   const writeFakeGrokCli = (input: {
-    readonly modelsOutput: string;
+    readonly modelsOutput: string | ReadonlyArray<string>;
     readonly acp: boolean;
     readonly updateLogPath?: string;
   }) =>
@@ -428,7 +429,12 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
           "  process.exit(0);",
           "}",
           'if (process.argv[2] === "models") {',
-          `  process.stdout.write(${JSON.stringify(input.modelsOutput)});`,
+          '  const fs = await import("node:fs");',
+          `  const callsPath = ${JSON.stringify(NodePath.join(dir, "models-calls"))};`,
+          '  const calls = fs.existsSync(callsPath) ? fs.readFileSync(callsPath, "utf8").length : 0;',
+          '  fs.appendFileSync(callsPath, ".");',
+          `  const outputs = ${JSON.stringify([input.modelsOutput].flat())};`,
+          "  process.stdout.write(outputs[Math.min(calls, outputs.length - 1)]);",
           "  process.exit(0);",
           "}",
           'if (process.argv[2] !== "agent") process.exit(1);',
@@ -495,6 +501,28 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
       expect(snapshot.auth.status).toBe("unauthenticated");
       expect(snapshot.message).toContain("grok login");
       expect(snapshot.models.map((model) => model.slug)).toEqual(["grok-4.6", "grok-mock-alt"]);
+    }),
+  );
+
+  // An expired access token prints the logged-out banner, then the CLI refreshes it in the
+  // same run, so the next `grok models` reports the login (#14285).
+  it.effect("reports authenticated when `grok models` logs in after refreshing a token", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const grokPath = yield* writeFakeGrokCli({
+            modelsOutput: [LOGGED_OUT_MODELS_OUTPUT, LOGGED_IN_MODELS_OUTPUT],
+            acp: true,
+          });
+          return yield* checkGrokProviderStatus(
+            decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+            { ...process.env, XAI_API_KEY: "" },
+          );
+        }),
+      );
+
+      expect(snapshot.status).toBe("ready");
+      expect(snapshot.auth.status).toBe("authenticated");
     }),
   );
 
