@@ -287,7 +287,9 @@ export const RelayMonitoring = Effect.fn("RelayMonitoring")(function* (traces: A
       const charts = relayDashboardCharts(dataset);
       return {
         name: relayResourceNameForStage("t3-code-relay-health", stage),
-        owner: "",
+        // Shared with the whole org. An empty owner only means that for API
+        // tokens; deploys with a personal token would make it private.
+        owner: "X-AXIOM-EVERYONE",
         description: `T3 Connect relay health. Alerts and runbook: ${RUNBOOK_URL}`,
         refreshTime: 60,
         schemaVersion: 2,
