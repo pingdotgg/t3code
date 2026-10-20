@@ -6,9 +6,8 @@ import * as NodeURL from "node:url";
 import { beforeAll, describe, expect, it } from "vite-plus/test";
 
 interface CompiledStyle {
-  native: boolean;
-  minWidth: number;
-  maxWidth: number;
+  platform: string | null;
+  responsive: boolean;
   active: boolean | null;
   focus: boolean | null;
   disabled: boolean | null;
@@ -101,7 +100,9 @@ describe("uniwind platform variants compile per platform", () => {
         `android has ${className}`,
       ).toBeUndefined();
       expect(output.platforms.ios?.styles[className], `ios lacks ${className}`).toBeDefined();
-      expect(output.platforms.ios?.styles[className]?.every((style) => style.native)).toBe(true);
+      expect(
+        output.platforms.ios?.styles[className]?.every((style) => style.platform === "ios"),
+      ).toBe(true);
     }
   });
 
@@ -112,9 +113,9 @@ describe("uniwind platform variants compile per platform", () => {
         output.platforms.android?.styles[className],
         `android lacks ${className}`,
       ).toBeDefined();
-      expect(output.platforms.android?.styles[className]?.every((style) => style.native)).toBe(
-        true,
-      );
+      expect(
+        output.platforms.android?.styles[className]?.every((style) => style.platform === "android"),
+      ).toBe(true);
     }
   });
 
@@ -123,13 +124,13 @@ describe("uniwind platform variants compile per platform", () => {
       for (const platform of ["ios", "android"]) {
         const styles = output.platforms[platform]?.styles[className];
         expect(styles, `${platform} lacks ${className}`).toBeDefined();
-        expect(styles?.every((style) => !style.native)).toBe(true);
+        expect(styles?.every((style) => style.platform === null)).toBe(true);
       }
     }
     for (const platform of ["ios", "android"]) {
       for (const className of RESPONSIVE_CLASSES) {
         const style = output.platforms[platform]?.styles[className]?.at(-1);
-        expect(style?.minWidth, `${className} lost its breakpoint`).toBeGreaterThan(0);
+        expect(style?.responsive, `${className} lost its breakpoint`).toBe(true);
       }
     }
   });
@@ -174,19 +175,19 @@ describe("uniwind keeps media rules nested inside class rules attached to the cl
     for (const platform of ["ios", "android"]) {
       const entries = nested.platforms[platform]?.styles["container-x"];
       expect(entries, `${platform} lacks container-x`).toBeDefined();
-      expect(entries?.some((style) => !style.native && style.minWidth === 0)).toBe(true);
-      expect(entries?.some((style) => !style.native && style.minWidth > 0)).toBe(true);
+      expect(entries?.some((style) => style.platform === null && !style.responsive)).toBe(true);
+      expect(entries?.some((style) => style.platform === null && style.responsive)).toBe(true);
     }
   });
 
   it("keeps @variant declarations inside @utility on their platform", () => {
     const iosEntries = nested.platforms.ios?.styles["foo-x"];
-    expect(iosEntries?.some((style) => !style.native)).toBe(true);
-    expect(iosEntries?.some((style) => style.native)).toBe(true);
+    expect(iosEntries?.some((style) => style.platform === null)).toBe(true);
+    expect(iosEntries?.some((style) => style.platform === "ios")).toBe(true);
 
     const androidEntries = nested.platforms.android?.styles["foo-x"];
-    expect(androidEntries?.some((style) => !style.native)).toBe(true);
-    expect(androidEntries?.some((style) => style.native)).toBe(false);
+    expect(androidEntries?.some((style) => style.platform === null)).toBe(true);
+    expect(androidEntries?.some((style) => style.platform !== null)).toBe(false);
   });
 });
 

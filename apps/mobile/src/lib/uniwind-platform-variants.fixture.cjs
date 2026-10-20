@@ -99,18 +99,27 @@ async function main() {
     const compiled = addMetaToStylesTemplate(processor, platform);
     const payload = compileNativeCSS(bundlerConfig, tailwindCSS);
     const styles = {};
+    // Compiled entries keep only their generated `matches` predicate; the
+    // conditions they were built from live on the processor's style metadata.
     for (const [className, entries] of Object.entries(compiled)) {
-      styles[className] = entries.map(
-        ({ native, minWidth, maxWidth, active, focus, disabled, dataAttributes }) => ({
-          native,
-          minWidth,
-          maxWidth,
-          active: active ?? null,
-          focus: focus ?? null,
-          disabled: disabled ?? null,
-          dataAttributes: dataAttributes ?? null,
-        }),
-      );
+      styles[className] = entries.map(({ index }) => {
+        const {
+          platform: guard,
+          conditions,
+          active,
+          focus,
+          disabled,
+          dataAttributes,
+        } = processor.stylesheets[className][index].meta;
+        return {
+          platform: guard,
+          responsive: conditions.some((condition) => condition.includes("rt.screen.width")),
+          active,
+          focus,
+          disabled,
+          dataAttributes,
+        };
+      });
     }
     platforms[platform] = {
       styles,
