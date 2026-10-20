@@ -7,6 +7,7 @@ import {
   restrictBelowSidebarLabel,
 } from "./Sidebar.drag";
 import {
+  planSidebarThreadDrop,
   resolveSidebarDropTarget,
   sidebarListItemId,
   sidebarMarkerId,
@@ -122,6 +123,63 @@ describe("sidebar collision detection", () => {
   it("selects the nearest supported target", () => {
     const detector = createSidebarCollisionDetection(() => true);
     expect(detector(collisionArgs())[0]?.id).toBe("blocked");
+  });
+
+  it("prepends a drop on the pinned toggle despite the clamped card overlapping the divider", () => {
+    const items = [pinnedHeader, thread("p2", "pinned"), divider, thread("source", "active")];
+    const { rects, activeIndex } = layout(items, "source", sidebarMarkerId("pinned-divider"));
+    const sourceRect = rects[activeIndex]!;
+    const collisionRect = { ...sourceRect, top: 124, bottom: 206 };
+    const headerNode = {
+      previousElementSibling: {
+        querySelector: () => ({
+          getBoundingClientRect: () => ({ top: 68, bottom: 100, left: 0, right: 260 }),
+        }),
+      },
+    } as unknown as HTMLElement;
+    const args = {
+      ...collisionArgs(),
+      active: {
+        id: "source",
+        data: { current: {} },
+        rect: { current: { initial: sourceRect, translated: collisionRect } },
+      },
+      collisionRect,
+      pointerCoordinates: { x: 130, y: 84 },
+      droppableRects: new Map(items.map((item, index) => [sidebarListItemId(item), rects[index]!])),
+      droppableContainers: items.map((item, index) => ({
+        id: sidebarListItemId(item),
+        key: sidebarListItemId(item),
+        disabled: false,
+        data: { current: {} },
+        node: { current: item === pinnedHeader ? headerNode : null },
+        rect: { current: rects[index]! },
+      })),
+    };
+    expect(closestCenter(args)[0]?.id).toBe(sidebarMarkerId("pinned-divider"));
+    const detector = createSidebarCollisionDetection(() => true, {
+      items,
+    });
+    const overId = String(detector(args)[0]?.id);
+    expect(overId).toBe(sidebarMarkerId("pinned-header"));
+    const plan = planSidebarThreadDrop({
+      activeKey: "source",
+      activeSection: "active",
+      target: resolveSidebarDropTarget(items, "source", overId, ["p1", "p2", "p3"])!,
+      pinnedOrder: ["p2"],
+      pinnedKeysById: new Map([
+        ["p1", "gg"],
+        ["p2", "nn"],
+        ["p3", "tt"],
+      ]),
+      reorderableKeys: new Set(["source"]),
+      activeOrder: ["source"],
+      activeKeysById: new Map(),
+    });
+    expect(plan.kind).toBe("pin");
+    if (plan.kind !== "pin") return;
+    expect(plan.orderKey! < "gg").toBe(true);
+    expect(plan.extraAssignments).toEqual([]);
   });
 
   it.each([

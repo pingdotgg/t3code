@@ -2,6 +2,7 @@ import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/mod
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import * as React from "react";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
   type AtomCommandResult,
@@ -167,9 +168,97 @@ function sectionAtSidebarSlot(items: readonly SidebarListItem[], index: number):
   return section;
 }
 
+export type SidebarOptimisticDrop = {
+  readonly key: string;
+  readonly sourceSection: SidebarSection;
+  readonly section: "pinned" | "active" | "settled";
+  readonly occurredAt: string;
+  readonly clearsSnooze: boolean;
+  readonly order: readonly string[] | null;
+  readonly keysAtDrop: ReadonlyMap<string, string | null>;
+  readonly assignedKeys: ReadonlyMap<string, string>;
+};
+
+export function isOptimisticDropReleased(input: {
+  readonly optimisticDrop: SidebarOptimisticDrop;
+  readonly threads: readonly SidebarThreadSummary[];
+  readonly pinnedKeys: readonly string[];
+  readonly activeKeys: readonly string[];
+  readonly now: string;
+}): boolean {
+  const { optimisticDrop, threads, pinnedKeys, activeKeys, now } = input;
+  const canonicalByKey = new Map(
+    threads.map((thread) => [
+      scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      thread,
+    ]),
+  );
+  const thread = canonicalByKey.get(optimisticDrop.key);
+  if (thread === undefined || thread.archivedAt !== null) {
+    return true;
+  }
+  const canonicalSection = effectiveSnoozed(thread, { now })
+    ? "snoozed"
+    : thread.settledOverride === "settled"
+      ? "settled"
+      : thread.pinnedAt != null
+        ? "pinned"
+        : "active";
+  if (
+    canonicalSection !== optimisticDrop.sourceSection &&
+    canonicalSection !== optimisticDrop.section
+  ) {
+    return true;
+  }
+  if (optimisticDrop.order === null) {
+    // Settle also emits unpin/unsnooze events. Wait for the entire move
+    // before releasing the projected fields and sort timestamps.
+    if (
+      canonicalSection === optimisticDrop.section &&
+      thread.pinnedAt == null &&
+      (!optimisticDrop.clearsSnooze || thread.snoozedUntil == null)
+    ) {
+      return true;
+    }
+    return false;
+  }
+  if (canonicalSection !== optimisticDrop.section) return false;
+  if (optimisticDrop.clearsSnooze && thread.snoozedUntil != null) return false;
+  const destinationKeys = optimisticDrop.section === "pinned" ? pinnedKeys : activeKeys;
+  const canonicalDestination = destinationKeys.flatMap((key) => {
+    const canonical = canonicalByKey.get(key);
+    return canonical === undefined ? [] : [canonical];
+  });
+  const keyByThread = new Map(
+    canonicalDestination.map((thread) => [
+      scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      (optimisticDrop.section === "pinned" ? thread.pinOrderKey : thread.activeOrderKey) ?? null,
+    ]),
+  );
+  const heldOrder = optimisticDrop.order;
+  const heldKeys = new Set(heldOrder);
+  const membershipChanged =
+    destinationKeys.length !== heldOrder.length ||
+    destinationKeys.some((key) => !heldKeys.has(key));
+  const foreignKeyLanded = destinationKeys.some((threadKey) => {
+    const currentKey = keyByThread.get(threadKey) ?? null;
+    if (currentKey === (optimisticDrop.keysAtDrop.get(threadKey) ?? null)) return false;
+    return currentKey !== optimisticDrop.assignedKeys.get(threadKey);
+  });
+  const allAssignmentsLanded = [...optimisticDrop.assignedKeys].every(([threadKey, orderKey]) => {
+    const canonical = canonicalByKey.get(threadKey);
+    return (
+      (optimisticDrop.section === "pinned" ? canonical?.pinOrderKey : canonical?.activeOrderKey) ===
+      orderKey
+    );
+  });
+  return membershipChanged || foreignKeyLanded || allAssignmentsLanded;
+}
+
 export type SidebarDropTarget = {
   readonly section: "pinned" | "active" | "settled";
   readonly pinnedOrder: readonly string[];
+  readonly pinnedKeyOrder?: readonly string[];
   readonly activeOrder: readonly string[];
 };
 
@@ -177,6 +266,7 @@ export function resolveSidebarDropTarget(
   items: readonly SidebarListItem[],
   activeKey: string,
   overId: string,
+  collapsedPinnedOrder?: readonly string[],
 ): SidebarDropTarget | null {
   const activeIndex = items.findIndex((item) => sidebarListItemId(item) === activeKey);
   const overIndex = items.findIndex((item) => sidebarListItemId(item) === overId);
@@ -200,7 +290,34 @@ export function resolveSidebarDropTarget(
     } else if (currentSection === "pinned") pinnedOrder.push(item.key);
     else activeOrder.push(item.key);
   }
-  return { section, pinnedOrder, activeOrder };
+  let pinnedKeyOrder: string[] | undefined;
+  if (section === "pinned" && collapsedPinnedOrder !== undefined && overId !== activeKey) {
+    const fullOrder = collapsedPinnedOrder.filter((key) => key !== activeKey);
+    const movedIndex = pinnedOrder.indexOf(activeKey);
+    const previousKey = pinnedOrder[movedIndex - 1];
+    const nextKey = pinnedOrder[movedIndex + 1];
+    const anchorKey = overId === nextKey ? nextKey : previousKey;
+    const anchorIndex = anchorKey === undefined ? -1 : fullOrder.indexOf(anchorKey);
+    const insertionIndex =
+      overId === sidebarMarkerId("pinned-header")
+        ? 0
+        : anchorIndex !== -1
+          ? anchorIndex + (anchorKey === previousKey ? 1 : 0)
+          : Math.max(0, collapsedPinnedOrder.indexOf(activeKey));
+    fullOrder.splice(insertionIndex, 0, activeKey);
+    if (
+      items[activeIndex]!.section !== "pinned" ||
+      fullOrder.some((key, index) => key !== collapsedPinnedOrder[index])
+    ) {
+      pinnedKeyOrder = fullOrder;
+    }
+  }
+  return {
+    section,
+    pinnedOrder,
+    activeOrder,
+    ...(pinnedKeyOrder === undefined ? {} : { pinnedKeyOrder }),
+  };
 }
 
 export type SidebarThreadDropPlan =
@@ -347,13 +464,15 @@ export function planSidebarThreadDrop(input: {
     case "pinned": {
       const order = target.pinnedOrder;
       if (
+        target.pinnedKeyOrder === undefined &&
         activeSection === "pinned" &&
         order.length === pinnedOrder.length &&
         order.every((key, index) => key === pinnedOrder[index])
       ) {
         return { kind: "none" };
       }
-      const assignments = arrange(order, pinnedKeysById, reorderableKeys);
+      // Assign against the full collapsed run so hidden keyless pins keep their positions.
+      const assignments = arrange(target.pinnedKeyOrder ?? order, pinnedKeysById, reorderableKeys);
       if (assignments === null) return { kind: "none" };
       if (activeSection === "pinned") {
         return assignments.length === 0

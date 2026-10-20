@@ -1,4 +1,5 @@
 import { presentThreadShell } from "@t3tools/client-runtime/state/models";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import * as DateTime from "effect/DateTime";
 import { deriveActiveWorkStartedAt } from "../session-logic.ts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -22,6 +23,7 @@ import {
   getSidebarThreadIdsToPrewarm,
   hasUnseenCompletion,
   isContextMenuPointerDown,
+  isOptimisticDropReleased,
   isSidebarSubagentThread,
   resolveSidebarRowThreadId,
   isSidebarThreadWorking,
@@ -48,6 +50,7 @@ import {
   sortLogicalProjectsForSidebar,
   sortInboxThreadsByReturn,
   resolveSidebarDropTarget,
+  sidebarMarkerId,
   planSidebarThreadDrop,
   sortPinnedThreadsForSidebar,
   sortProjectsForSidebar,
@@ -58,6 +61,7 @@ import {
   type SidebarListItem,
   type SidebarListMarker,
   type SidebarSection,
+  type SidebarOptimisticDrop,
   resolveSidebarDropVerb,
 } from "./Sidebar.logic";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
@@ -2368,6 +2372,186 @@ describe("Working shelf (beta)", () => {
             activeTimeOrdered: true,
           }),
         ).toEqual({ kind: "none" });
+      },
+    );
+
+    it.each([null, "p2"])(
+      "prepends a collapsed-header drop before every pin with routed pin %s",
+      (routedPin) => {
+        const visiblePins = routedPin === null ? [] : [routedPin];
+        const pinnedKeysById = new Map([
+          ["p1", "gg"],
+          ["p2", "nn"],
+          ["p3", "tt"],
+        ]);
+        const target = resolveSidebarDropTarget(
+          [
+            marker("pinned-header"),
+            ...visiblePins.map((key) => row(key, "pinned")),
+            marker("pinned-divider"),
+            row("a1", "active"),
+          ],
+          "a1",
+          sidebarMarkerId("pinned-header"),
+          ["p1", "p2", "p3"],
+        );
+        expect(target).not.toBeNull();
+        const plan = planSidebarThreadDrop({
+          activeKey: "a1",
+          activeSection: "active",
+          target: target!,
+          pinnedOrder: visiblePins,
+          pinnedKeysById,
+          reorderableKeys: new Set(["a1", ...visiblePins]),
+          activeOrder: ["a1"],
+          activeKeysById: new Map(),
+        });
+        expect(plan.kind).toBe("pin");
+        if (plan.kind !== "pin") return;
+        expect(plan.extraAssignments).toEqual([]);
+        expect(plan.order).toEqual(["a1", ...visiblePins]);
+        const persistedKeys = new Map(pinnedKeysById);
+        persistedKeys.set("a1", plan.orderKey!);
+        expect([...persistedKeys].toSorted((a, b) => a[1].localeCompare(b[1]))).toEqual([
+          ["a1", expect.any(String)],
+          ...pinnedKeysById,
+        ]);
+      },
+    );
+
+    it("preserves hidden keyless pins when dropping below the routed pin in a collapsed shelf", () => {
+      const pins = [
+        { id: "hidden-new", createdAt: "2026-03-09T12:00:00.000Z", pinOrderKey: null },
+        { id: "routed", createdAt: "2026-03-09T11:00:00.000Z", pinOrderKey: null },
+        { id: "hidden-old", createdAt: "2026-03-09T10:00:00.000Z", pinOrderKey: null },
+      ];
+      const dropped = {
+        id: "dropped",
+        createdAt: "2026-03-09T13:00:00.000Z",
+        pinOrderKey: null,
+      };
+      const target = resolveSidebarDropTarget(
+        [
+          marker("pinned-header"),
+          row("routed", "pinned"),
+          marker("pinned-divider"),
+          row("dropped", "active"),
+        ],
+        dropped.id,
+        sidebarMarkerId("pinned-divider"),
+        sortPinnedThreadsForSidebar(pins).map((thread) => thread.id),
+      );
+      expect(target).not.toBeNull();
+      const plan = planSidebarThreadDrop({
+        activeKey: dropped.id,
+        activeSection: "active",
+        target: target!,
+        pinnedOrder: ["routed"],
+        pinnedKeysById: new Map(pins.map((thread) => [thread.id, thread.pinOrderKey])),
+        reorderableKeys: new Set([...pins, dropped].map((thread) => thread.id)),
+        activeOrder: [dropped.id],
+        activeKeysById: new Map(),
+      });
+      expect(plan.kind).toBe("pin");
+      if (plan.kind !== "pin") return;
+      const assignedKeys = new Map([
+        [dropped.id, plan.orderKey!],
+        ...plan.extraAssignments.map(({ id, orderKey }) => [id, orderKey] as const),
+      ]);
+      const persisted = [...pins, dropped].map((thread) => ({
+        ...thread,
+        pinOrderKey: assignedKeys.get(thread.id) ?? thread.pinOrderKey,
+      }));
+      expect(sortPinnedThreadsForSidebar(persisted).map((thread) => thread.id)).toEqual([
+        "hidden-new",
+        "routed",
+        "dropped",
+        "hidden-old",
+      ]);
+    });
+
+    it.each(["x", "h1"])(
+      "waits for every collapsed-header key assignment with routed thread %s",
+      (routedId) => {
+        const now = "2026-03-09T12:00:00.000Z";
+        const threads = ["x", "h1", "h2"].map((id) =>
+          makeThreadFixture({
+            id: ThreadId.make(id),
+            environmentId: localEnvironmentId,
+            pinnedAt: id === "x" ? null : now,
+            pinOrderKey: null,
+          }),
+        );
+        const keys = threads.map((thread) =>
+          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+        );
+        const visiblePins = threads.flatMap((thread, index) =>
+          thread.pinnedAt !== null && thread.id === routedId ? [keys[index]!] : [],
+        );
+        const keysAtDrop = new Map(keys.map((key) => [key, null]));
+        const target = resolveSidebarDropTarget(
+          [
+            marker("pinned-header"),
+            ...visiblePins.map((key) => row(key, "pinned")),
+            marker("pinned-divider"),
+            row(keys[0]!, "active"),
+          ],
+          keys[0]!,
+          sidebarMarkerId("pinned-header"),
+          keys.slice(1),
+        );
+        expect(target).not.toBeNull();
+        const plan = planSidebarThreadDrop({
+          activeKey: keys[0]!,
+          activeSection: "active",
+          target: target!,
+          pinnedOrder: visiblePins,
+          pinnedKeysById: keysAtDrop,
+          reorderableKeys: new Set(keys),
+          activeOrder: [keys[0]!],
+          activeKeysById: new Map(),
+        });
+        expect(plan.kind).toBe("pin");
+        if (plan.kind !== "pin") return;
+        expect(plan.extraAssignments.map(({ id }) => id)).toEqual(keys.slice(1));
+        const assignedKeys = new Map([
+          [keys[0]!, plan.orderKey!],
+          ...plan.extraAssignments.map(({ id, orderKey }) => [id, orderKey] as const),
+        ]);
+        const optimisticDrop: SidebarOptimisticDrop = {
+          key: keys[0]!,
+          sourceSection: "active",
+          section: "pinned",
+          occurredAt: now,
+          clearsSnooze: true,
+          order: target!.pinnedKeyOrder!,
+          keysAtDrop,
+          assignedKeys,
+        };
+        const released = (canonicalThreads: readonly Thread[]) =>
+          isOptimisticDropReleased({
+            optimisticDrop,
+            threads: canonicalThreads,
+            pinnedKeys: canonicalThreads.flatMap((thread, index) =>
+              thread.pinnedAt !== null ? [keys[index]!] : [],
+            ),
+            activeKeys: [],
+            now,
+          });
+        expect(released(threads)).toBe(false);
+        const pinLanded = threads.map((thread, index) =>
+          index === 0 ? { ...thread, pinnedAt: now, pinOrderKey: plan.orderKey! } : thread,
+        );
+        expect(released(pinLanded)).toBe(false);
+        const partiallyLanded = pinLanded.map((thread, index) =>
+          index === 1 ? { ...thread, pinOrderKey: assignedKeys.get(keys[index]!)! } : thread,
+        );
+        expect(released(partiallyLanded)).toBe(false);
+        const allLanded = pinLanded.map((thread, index) => ({
+          ...thread,
+          pinOrderKey: assignedKeys.get(keys[index]!)!,
+        }));
+        expect(released(allLanded)).toBe(true);
       },
     );
 
