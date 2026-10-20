@@ -55,6 +55,7 @@ it.effect("keeps hosts independent when serials collide and another host fails",
       };
       return {
         id,
+        label: id,
         summary: Effect.succeed({
           id,
           label: id,

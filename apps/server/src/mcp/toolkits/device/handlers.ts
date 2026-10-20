@@ -15,6 +15,7 @@ import { ensureAgentDeviceShim } from "../../../device/AgentDeviceShim.ts";
 import { nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
 
 import * as DeviceService from "../../../device/DeviceService.ts";
+import { threadWorkspaceRoot } from "../../../project/threadWorkspaceRoot.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { DeviceScreenshotToolkit, DeviceStandardToolkit, DeviceToolkit } from "./tools.ts";
@@ -29,6 +30,7 @@ export function agentDeviceQuickStart(
   device: DeviceSummary,
   targetArgs = agentDeviceTargetArgs(device),
   command = "agent-device",
+  cloud = false,
 ): string {
   const executable = /^[a-zA-Z0-9_./:-]+$/.test(command)
     ? command
@@ -38,8 +40,9 @@ export function agentDeviceQuickStart(
       /^[a-zA-Z0-9_./:-]+$/.test(arg) ? arg : "'" + arg.replaceAll("'", "'\"'\"'") + "'",
     )
     .join(" ");
-  const platformNotes =
-    device.platform === "ios"
+  const platformNotes = cloud
+    ? "This is an EAS Simulator session in the cloud. It bills the Expo account per minute until it stops, so call device_close with shutdown: true when you are done. It starts with no apps installed: install-from-source <url> installs a build from a URL (iOS needs a .tar.gz containing a .app), and install uploads one from this machine."
+    : device.platform === "ios"
       ? "First use builds an XCTest runner and can take a couple of minutes; later commands are fast."
       : "The Android snapshot helper installs itself on first use.";
   return [
@@ -152,23 +155,38 @@ const handlers = {
       }
       const target = yield* pickDevice(state.devices, input);
       // Resolve consent and agent connectivity before booting or registering a session.
-      const agentArgs = yield* devices.agentTarget({
-        threadId: scope.thread.threadId,
-        hostId: target.hostId,
-        deviceId: target.id,
-      });
-      const session = yield* devices.open({
-        threadId: scope.thread.threadId,
-        hostId: target.hostId,
-        deviceId: target.id,
-        platform: target.platform,
-      });
+      if (!(yield* devices.agentReadinessIfSupported(target.hostId))) {
+        return yield* new DeviceToolUnavailableError({
+          reason:
+            "Agent device access requires enabled device support, agent access, and an available simulator platform on this host.",
+        });
+      }
+      const session = yield* devices.open(
+        {
+          threadId: scope.thread.threadId,
+          hostId: target.hostId,
+          deviceId: target.id,
+          platform: target.platform,
+        },
+        { workspaceRoot: yield* threadWorkspaceRoot(scope.thread.threadId) },
+      );
       const after = yield* devices.state;
       const device =
         after.devices.find(
           (candidate) => candidate.hostId === session.hostId && candidate.id === session.deviceId,
         ) ?? target;
-      const targetArgs = [...agentDeviceTargetArgs(device), ...agentArgs];
+      // Target the opened device: an EAS device and its agent-device daemon
+      // exist only once its session runs, and Android ids change on boot.
+      const agent = yield* devices.agentTarget({
+        threadId: scope.thread.threadId,
+        hostId: device.hostId,
+        deviceId: device.id,
+      });
+      const cloud = after.hosts.some((host) => host.id === device.hostId && host.kind === "eas");
+      const targetArgs = [
+        ...agentDeviceTargetArgs({ ...device, id: agent.agentDeviceId }),
+        ...agent.args,
+      ];
       const config = yield* ServerConfig.ServerConfig;
       const path = yield* Path.Path;
       const platform = yield* HostProcess.Platform;
@@ -194,7 +212,7 @@ const handlers = {
       return {
         device,
         agentDevice: { command, targetArgs },
-        quickStart: agentDeviceQuickStart(device, targetArgs, command),
+        quickStart: agentDeviceQuickStart(device, targetArgs, command, cloud),
       };
     }).pipe(Effect.mapError(toolError)),
   ),

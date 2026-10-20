@@ -94,7 +94,6 @@ if (process.env.AGENT_DEVICE_DAEMON_BASE_URL) process.exit(2);`,
         yield* writeAgentDeviceConfig(file, {
           baseUrl: `http://127.0.0.1:${1000 + index}`,
           token: `token-${index}`,
-          entryPath,
         });
       const invoke = (file: string) =>
         exec(
@@ -117,10 +116,14 @@ if (process.env.AGENT_DEVICE_DAEMON_BASE_URL) process.exit(2);`,
       yield* writeAgentDeviceConfig(files[0]!, {
         baseUrl: "http://127.0.0.1:2000",
         token: "new",
-        entryPath,
       });
       expect((yield* Effect.promise(() => invoke(files[0]!))).daemonAuthToken).toBe("new");
       expect(yield* fs.readFileString(files[1]!)).toBe(second);
+      // Hosts with a daemon per device get a file per device, apart from the host's own.
+      const perDevice = yield* Effect.forEach(["udid-1", "udid-2"], (device) =>
+        agentDeviceConfigPath(dir, "eas", path, device),
+      );
+      expect(new Set([...perDevice, yield* agentDeviceConfigPath(dir, "eas", path)]).size).toBe(3);
       expect(yield* agentDeviceSession("thread", "mini", "same-id")).not.toBe(
         yield* agentDeviceSession("thread", "android", "same-id"),
       );

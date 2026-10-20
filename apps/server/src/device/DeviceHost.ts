@@ -1,6 +1,7 @@
 import type {
   DeviceBootError,
   DeviceHostId,
+  DeviceHostUnavailableError,
   DeviceHostSummary,
   DeviceOperationError,
   DevicePlatform,
@@ -76,6 +77,20 @@ export interface AgentDeviceEndpoint {
 
 export type HostDevice = Omit<DeviceSummary, "hostId">;
 
+/** Where a device is being opened from, for hosts whose devices depend on the project. */
+export interface DeviceOpenContext {
+  readonly workspaceRoot?: string | undefined;
+}
+
+export type AgentDaemonEndpoint = Pick<AgentDeviceEndpoint, "baseUrl" | "token">;
+
+/** Where the proxy sends a device hub request, for hosts that serve several upstreams. */
+export interface HubUpstream {
+  readonly url: string;
+  readonly headers: Readonly<Record<string, string>>;
+  readonly protocols: ReadonlyArray<string>;
+}
+
 /** Discovery and lifecycle for the devices a ready host can run. */
 export interface DeviceOperations {
   readonly list: Effect.Effect<
@@ -93,7 +108,8 @@ export interface DeviceOperations {
    */
   readonly boot: (
     device: HostDevice,
-  ) => Effect.Effect<string, DeviceOperationError | DeviceBootError>;
+    context?: DeviceOpenContext,
+  ) => Effect.Effect<string, DeviceOperationError | DeviceBootError | DeviceHostUnavailableError>;
   /** Prepares the stream of a device that is already booted. */
   readonly attach: (device: HostDevice) => Effect.Effect<void, DeviceOperationError>;
   readonly shutdown: (device: {
@@ -101,6 +117,22 @@ export interface DeviceOperations {
     readonly platform: DevicePlatform;
   }) => Effect.Effect<void, DeviceOperationError>;
   readonly screenshot: (device: HostDevice) => Effect.Effect<Uint8Array, DeviceOperationError>;
+  /**
+   * For hosts that run one agent-device daemon per device instead of one per
+   * host. `agentDeviceId` is the id agent-device selects the device by, when
+   * it differs from the host's device id.
+   */
+  readonly agentEndpoint?: (
+    deviceId: string,
+  ) => Effect.Effect<
+    AgentDaemonEndpoint & { readonly agentDeviceId: string },
+    DeviceHostUnavailableError
+  >;
+  /**
+   * Set by hosts that end devices on their own (EAS stops sessions at their
+   * limits), so a session on a device the host stops listing is dropped.
+   */
+  readonly endsDevices?: boolean;
 }
 
 export interface DeviceHostReady {
@@ -116,16 +148,24 @@ export interface DeviceHostReady {
     readonly serveSimAxSettings: string | null;
     readonly serveSimCli: string | null;
   };
+  /** Routes proxied hub requests itself; otherwise they go to `hub.origin`. */
+  readonly upstream?: (
+    hubPath: string,
+    search: URLSearchParams,
+  ) => Effect.Effect<HubUpstream | null>;
 }
 
 export interface DeviceHostAgentReady extends DeviceHostReady {
-  readonly agentDevice: AgentDeviceEndpoint;
+  /** Null when each device has its own daemon; see `DeviceOperations.agentEndpoint`. */
+  readonly agentDevice: AgentDeviceEndpoint | null;
 }
 
 export class DeviceHost extends Context.Service<
   DeviceHost,
   {
     readonly id: DeviceHostId;
+    /** The name errors and the Device panel show for this host. */
+    readonly label: string;
     readonly summary: Effect.Effect<DeviceHostSummary>;
     readonly inspect?: Effect.Effect<DeviceHostSummary, DeviceHostError>;
     readonly platformAvailability: (

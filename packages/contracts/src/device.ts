@@ -11,6 +11,7 @@ export const DeviceHostId = TrimmedNonEmptyString.check(Schema.isMaxLength(128))
 export type DeviceHostId = typeof DeviceHostId.Type;
 
 export const LOCAL_DEVICE_HOST_ID = "local" as DeviceHostId;
+export const LOCAL_DEVICE_HOST_LABEL = "This machine";
 
 const ConfiguredDeviceHostId = DeviceHostId.check(
   Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/),
@@ -419,12 +420,14 @@ export class DeviceHostUnavailableError extends Schema.TaggedError<DeviceHostUna
   "DeviceHostUnavailableError",
   {
     hostId: DeviceHostId,
+    /** The host's name in Settings, which the message shows instead of its id. */
+    hostLabel: Schema.optional(Schema.String),
     reason: Schema.String,
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Device host ${this.hostId} is unavailable: ${this.reason}`;
+    return `${this.hostLabel ?? `Device host ${this.hostId}`} is unavailable: ${this.reason}`;
   }
 }
 

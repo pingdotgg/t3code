@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { HttpClient, HttpClientResponse, HttpRouter } from "effect/http";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import type * as DeviceHost from "./DeviceHost.ts";
 import * as DeviceService from "./DeviceService.ts";
 import * as DeviceHubProxy from "./DeviceHubProxy.ts";
 
@@ -22,6 +23,7 @@ const fixture = (
   scopes: ReadonlyArray<AuthEnvironmentScope>,
   fail = false,
   authError?: EnvironmentAuth.ServerAuthCredentialError | EnvironmentAuth.ServerAuthInternalError,
+  upstream?: DeviceHost.DeviceHostReady["upstream"],
 ) => {
   let finalized = 0;
   const requests: string[] = [];
@@ -34,7 +36,10 @@ const fixture = (
         finalized++;
       });
       if (fail) return yield* Effect.die(new Error("upstream failed"));
-      return HttpClientResponse.fromWeb(request, new Response("frame"));
+      return HttpClientResponse.fromWeb(
+        request,
+        new Response("frame", { headers: { "set-cookie": "upstream=1" } }),
+      );
     }),
   );
   const { handler, dispose } = HttpRouter.toWebHandler(
@@ -55,7 +60,11 @@ const fixture = (
       Layer.provideMerge(
         Layer.succeed(DeviceService.DeviceService, {
           currentReadiness: () =>
-            Effect.succeed({ hostId: LOCAL_DEVICE_HOST_ID, hub: { origin: "http://hub.test" } }),
+            Effect.succeed({
+              hostId: LOCAL_DEVICE_HOST_ID,
+              hub: { origin: "http://hub.test" },
+              ...(upstream ? { upstream } : {}),
+            }),
         } as DeviceService.DeviceService["Service"]),
       ),
       Layer.provideMerge(Layer.succeed(HttpClient.HttpClient, client)),
@@ -165,6 +174,39 @@ describe("device hub proxy", () => {
     await offer.text();
     expect(requests).toEqual(["http://hub.test/vendor/serve-sim/helper/udid-1/webrtc/offer"]);
     expect(headers[0]?.["content-type"]).toBe("application/json");
+  });
+
+  it("sends requests a host routes itself to its upstream with its credentials", async () => {
+    const { handler, requests, headers } = fixture(
+      [AuthOrchestrationReadScope],
+      false,
+      undefined,
+      (hubPath, search) =>
+        Effect.succeed(
+          hubPath === "/vendor/serve-sim/api"
+            ? {
+                url: `https://session.test${hubPath.slice("/vendor/serve-sim".length)}?${search}`,
+                headers: { authorization: "Bearer session-token" },
+                protocols: [],
+              }
+            : null,
+        ),
+    );
+    const routed = await handler(
+      new Request("http://t3.test/api/device-hub/vendor/serve-sim/api?device=udid-1&hostId=eas", {
+        headers: { authorization: "Bearer environment-token" },
+      }),
+    );
+    expect(routed.status).toBe(200);
+    expect(routed.headers.get("set-cookie")).toBeNull();
+    await routed.text();
+    expect(requests).toEqual(["https://session.test/api?device=udid-1"]);
+    expect(headers[0]?.authorization).toBe("Bearer session-token");
+    const unrouted = await handler(
+      new Request("http://t3.test/api/device-hub/vendor/serve-sim/helper/udid-2/stream.mjpeg"),
+    );
+    expect(unrouted.status).toBe(404);
+    expect(requests).toHaveLength(1);
   });
 
   it("never forwards the vendor shell endpoint", async () => {
