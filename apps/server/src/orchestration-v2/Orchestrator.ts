@@ -27,6 +27,7 @@ import {
   type ModelSelection,
   OrchestrationV2Command,
   type OrchestrationV2InternalCommand,
+  type OrchestrationV2LimitRecoveryUpdate,
   type OrchestrationV2ServerCommand,
   type ThreadPullRequestLink,
   type ThreadPullRequestWatch,
@@ -312,6 +313,11 @@ export interface OrchestratorV2Shape {
   readonly dispatch: (
     command: OrchestrationV2ServerCommand,
   ) => Effect.Effect<OrchestratorV2DispatchResult, OrchestratorV2Error>;
+  readonly autoArmLimitRecovery: (input: {
+    readonly commandId: CommandId;
+    readonly threadId: ThreadId;
+    readonly limitRecovery: OrchestrationV2LimitRecoveryUpdate;
+  }) => Effect.Effect<void, OrchestratorV2Error>;
   readonly searchThreadStream: (
     input: OrchestrationV2SearchThreadInput,
   ) => Stream.Stream<OrchestrationV2SearchThreadResult, OrchestratorV2Error>;
@@ -8978,7 +8984,49 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     readonly now: DateTime.Utc;
   }) {
     const emitEvent = emit(input.events, input.command);
-    const { thread, runs, subagents } = input.projection;
+    const { runs, subagents } = input.projection;
+    let { thread } = input.projection;
+    let recovery = thread.limitRecovery;
+    const latest = latestExecutedRun(runs);
+    if (latest?.status === "failed") {
+      const { turnItems } = yield* projectionStore
+        .getThreadRecords(thread.id, ["turnItems"], {
+          turnItemTypes: ["error"],
+          turnItemRunIds: [latest.id],
+        })
+        .pipe(mapDispatchError(input.command));
+      const failure = latestRootProviderFailure(latest, turnItems);
+      if (
+        failure?.class === "usage_limit" &&
+        failure.resetAt != null &&
+        Number.isFinite(Date.parse(failure.resetAt)) &&
+        (recovery?.runId !== latest.id || recovery.resetAt !== failure.resetAt)
+      ) {
+        recovery = {
+          runId: latest.id,
+          resetAt: failure.resetAt,
+          autoResume: false,
+          snooze: false,
+        };
+      }
+    }
+    if (recovery && (recovery !== thread.limitRecovery || recovery.autoResume)) {
+      thread = {
+        ...thread,
+        limitRecovery: {
+          ...recovery,
+          autoResume: false,
+          requestId: input.command.commandId,
+        },
+        updatedAt: input.now,
+      };
+      yield* emitEvent({
+        type: "thread.metadata-updated",
+        threadId: thread.id,
+        occurredAt: input.now,
+        payload: thread,
+      });
+    }
     const queuedRuns = runs.filter((run) => run.status === "queued");
     const queuedMessages =
       queuedRuns.length === 0
@@ -11760,6 +11808,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     awaitRestartContinuation: (run) =>
       effectOutbox.awaitSettled(`effect:restart-continuation:${run.id}`).pipe(Effect.ignore),
     dispatch: dispatchWithReceipt,
+    autoArmLimitRecovery: (input) =>
+      threadDispatch.withLock(
+        input.threadId,
+        Effect.gen(function* () {
+          const thread = yield* projectionStore
+            .getThread(input.threadId)
+            .pipe(
+              Effect.mapError(
+                (cause) => new OrchestratorProjectionError({ threadId: input.threadId, cause }),
+              ),
+            );
+          // Stop or an explicit recovery choice can commit after the sweep reads its candidate.
+          if (
+            thread.limitRecovery?.runId === input.limitRecovery.runId &&
+            thread.limitRecovery.resetAt === input.limitRecovery.resetAt
+          )
+            return;
+          yield* dispatchWithReceiptEffect({ type: "thread.metadata.update", ...input });
+        }),
+      ),
     searchThreadStream: (input) =>
       projectionStore
         .searchThreadStream(input)
@@ -11909,6 +11977,8 @@ const layerUnavailable: Layer.Layer<OrchestratorV2> = Layer.succeed(
     delegatedTaskResultPending: () => Effect.succeed(false),
     restartContinuationPending: () => Effect.succeed(false),
     awaitRestartContinuation: () => Effect.void,
+    autoArmLimitRecovery: (input) =>
+      Effect.fail(new OrchestratorProjectionError({ threadId: input.threadId })),
     dispatch: (command) =>
       Effect.fail(
         new OrchestratorDispatchError({

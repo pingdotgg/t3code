@@ -19,6 +19,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as UsageLimitRecoveryWorker from "../orchestration-v2/UsageLimitRecoveryWorker.ts";
@@ -89,6 +90,7 @@ it.effect.each(["on time", "after restart"])(
       const receipts = yield* Queue.unbounded<"task" | "retry">();
       const layerDependencies = Layer.mergeAll(
         NodeCrypto.layer,
+        Layer.mock(Orchestrator.OrchestratorV2)({}),
         Layer.mock(ThreadLaunchService.ThreadLaunchService)({
           launch: () =>
             Queue.offer(receipts, "task").pipe(
