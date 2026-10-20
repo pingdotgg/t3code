@@ -424,37 +424,6 @@ describe("shouldShowEnvironmentIndicator", () => {
 });
 
 describe("shouldShowComposerContextStrip", () => {
-  it("keeps a sole primary server update reachable in a non-Git draft", () => {
-    const environment = {
-      activeEnvironment: { isPrimary: true },
-      canPickEnvironment: false,
-      serverUpdateAvailable: true,
-    };
-    const showEnvironmentIndicator = shouldShowEnvironmentIndicator(environment);
-    expect(showEnvironmentIndicator).toBe(true);
-    expect(
-      shouldShowComposerContextStrip({
-        isDraftHeroState: true,
-        persistInActiveThreads: false,
-        hasActiveProject: true,
-        isGitRepo: false,
-        showEnvironmentIndicator,
-        hostsRestingComposerControls: false,
-      }),
-    ).toBe(true);
-    expect(
-      shouldShowComposerContextStrip({
-        isDraftHeroState: false,
-        persistInActiveThreads: false,
-        hasActiveProject: true,
-        isGitRepo: false,
-        showEnvironmentIndicator,
-        serverUpdateAvailable: true,
-        hostsRestingComposerControls: false,
-      }),
-    ).toBe(true);
-  });
-
   it.each([false, true])(
     "honors the active-thread preference with resting controls %s",
     (hostsRestingComposerControls) => {

@@ -1,19 +1,14 @@
-import { ComposerControl, ComposerSelectControl } from "./chat/ComposerControl";
+import { ComposerSelectControl } from "./chat/ComposerControl";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "./ui/tooltip";
 import { useAtomValue } from "@effect/atom-react";
 import { shortcutLabelForCommand } from "../keybindings";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { CircleArrowUpIcon, PlusIcon, ScaleIcon } from "lucide-react";
+import { PlusIcon, ScaleIcon } from "lucide-react";
 import { memo } from "react";
 
 import { ADD_TO_MACHINE_LABEL_CLASS, type EnvironmentOption } from "./BranchToolbar.logic";
-import {
-  ServerUpdateAction,
-  type PendingServerUpdate,
-  type ServerUpdateControl,
-} from "./ServerUpdateAction";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { useComposerMenuProps } from "./chat/composerEventScope";
 import {
@@ -33,29 +28,14 @@ interface BranchToolbarEnvironmentSelectorProps {
   availableEnvironments: readonly EnvironmentOption[];
   onEnvironmentChange?: (environmentId: EnvironmentId) => void;
   onAddToMachine?: (() => void) | undefined;
-  serverUpdate?: PendingServerUpdate | null;
 }
 
 // Action values cannot collide with server-minted environment IDs.
 const AUTO_VALUE = "action:auto";
-const UPDATE_VALUE = "action:update";
 const ADD_MACHINE_VALUE = "action:add-machine";
 const environmentValue = (id: EnvironmentId) => `env:${id}`;
 
-export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvironmentSelector(
-  props: BranchToolbarEnvironmentSelectorProps,
-) {
-  return props.serverUpdate ? (
-    <ServerUpdateAction
-      {...props.serverUpdate}
-      render={(updateControl) => <EnvironmentSelector {...props} updateControl={updateControl} />}
-    />
-  ) : (
-    <EnvironmentSelector {...props} updateControl={null} />
-  );
-});
-
-function EnvironmentSelector({
+export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvironmentSelector({
   autoEnvironmentLabel,
   onAutoEnvironment,
   envLocked,
@@ -63,11 +43,7 @@ function EnvironmentSelector({
   availableEnvironments,
   onEnvironmentChange,
   onAddToMachine,
-  serverUpdate,
-  updateControl,
-}: BranchToolbarEnvironmentSelectorProps & {
-  updateControl: ServerUpdateControl | null;
-}) {
+}: BranchToolbarEnvironmentSelectorProps) {
   const composerFloatingLayerProps = useComposerMenuProps();
   const shortcutLabel = shortcutLabelForCommand(
     useAtomValue(primaryServerKeybindingsAtom),
@@ -84,34 +60,8 @@ function EnvironmentSelector({
       value: environmentValue(env.environmentId),
       label: env.label,
     })),
-    ...(serverUpdate && updateControl
-      ? [{ value: UPDATE_VALUE, label: `${updateControl.label} ${serverUpdate.serverLabel}` }]
-      : []),
     ...(onAddToMachine ? [{ value: ADD_MACHINE_VALUE, label: "Add to another machine" }] : []),
   ];
-  const updateTooltip = serverUpdate
-    ? `${serverUpdate.serverLabel} ${serverUpdate.serverVersion} → ${serverUpdate.targetVersion}. ${
-        serverUpdate.selfUpdate === "desktop-managed" && !serverUpdate.desktopAppUpdate
-          ? "Update the desktop app on that machine."
-          : (updateControl?.label ?? "Update")
-      }`
-    : null;
-  const environmentIcon = serverUpdate ? (
-    <CircleArrowUpIcon aria-hidden="true" className="size-3 shrink-0" />
-  ) : (
-    <EnvironmentMachineIcon
-      kind={activeEnvironment?.machine ?? "server"}
-      className="size-3 shrink-0"
-    />
-  );
-  const chipBody = (
-    <>
-      {environmentIcon}
-      <ComposerContextLabel>
-        {activeEnvironment?.label ?? serverUpdate?.serverLabel ?? "Run on"}
-      </ComposerContextLabel>
-    </>
-  );
 
   // The static label carries the xs control's height (h-7 sm:h-6) as well as
   // its padding: the composer context strip has no min-height of its own, and
@@ -119,41 +69,22 @@ function EnvironmentSelector({
   // a shorter label would drag the seam out of line whenever this label is the
   // only thing in the strip.
   if (envLocked || (onEnvironmentChange === undefined && onAddToMachine === undefined)) {
-    const lockedRow = updateControl ? (
-      <ComposerControl
-        size="xs"
-        className="min-w-0 max-w-full"
-        aria-label={`${updateControl.label} ${serverUpdate?.serverLabel}`}
-        disabled={updateControl.disabled}
-        onClick={updateControl.onClick}
-        data-composer-context-control
-      >
-        {chipBody}
-      </ComposerControl>
-    ) : (
+    const lockedRow = (
       <span
         className="inline-flex h-7 min-w-0 max-w-full items-center gap-1 border border-transparent px-1.75 font-normal text-muted-foreground/70 text-xs sm:h-6"
         data-composer-context-control
       >
-        {chipBody}
+        <EnvironmentMachineIcon
+          kind={activeEnvironment?.machine ?? "server"}
+          className="size-3 shrink-0"
+        />
+        <ComposerContextLabel>{activeEnvironment?.label ?? "Run on"}</ComposerContextLabel>
       </span>
     );
     return (
       <Tooltip>
-        <TooltipTrigger
-          render={
-            updateControl?.disabled ? (
-              <span className="inline-flex min-w-0 max-w-full" data-composer-context-control>
-                {lockedRow}
-              </span>
-            ) : (
-              lockedRow
-            )
-          }
-        />
-        <TooltipPopup role={serverUpdate ? "tooltip" : undefined}>
-          {updateTooltip ?? activeEnvironment?.label ?? "Run on"}
-        </TooltipPopup>
+        <TooltipTrigger render={lockedRow} />
+        <TooltipPopup>{activeEnvironment?.label ?? "Run on"}</TooltipPopup>
       </Tooltip>
     );
   }
@@ -163,9 +94,7 @@ function EnvironmentSelector({
       modal={false}
       value={autoEnvironmentLabel ? AUTO_VALUE : environmentValue(environmentId)}
       onValueChange={(value) => {
-        if (value === UPDATE_VALUE) {
-          updateControl?.onClick();
-        } else if (value === ADD_MACHINE_VALUE) {
+        if (value === ADD_MACHINE_VALUE) {
           onAddToMachine?.();
         } else if (value === AUTO_VALUE) {
           onAutoEnvironment?.();
@@ -190,14 +119,17 @@ function EnvironmentSelector({
           {autoEnvironmentLabel ? (
             <ScaleIcon className="size-3 shrink-0" aria-hidden="true" />
           ) : (
-            environmentIcon
+            <EnvironmentMachineIcon
+              kind={activeEnvironment?.machine ?? "server"}
+              className="size-3 shrink-0"
+            />
           )}
           <ComposerContextLabel>
             <SelectValue />
           </ComposerContextLabel>
         </TooltipTrigger>
-        <TooltipPopup role={serverUpdate ? "tooltip" : undefined}>
-          {updateTooltip ?? autoEnvironmentLabel ?? activeEnvironment?.label ?? "Run on"}
+        <TooltipPopup>
+          {autoEnvironmentLabel ?? activeEnvironment?.label ?? "Run on"}
           {shortcutLabel ? ` · ${shortcutLabel}` : null}
         </TooltipPopup>
       </Tooltip>
@@ -224,11 +156,7 @@ function EnvironmentSelector({
               disabled={onEnvironmentChange === undefined && env.environmentId !== environmentId}
             >
               <span className="inline-flex items-center gap-1.5">
-                {serverUpdate?.environmentId === env.environmentId ? (
-                  <CircleArrowUpIcon aria-hidden="true" className="size-3" />
-                ) : (
-                  <EnvironmentMachineIcon kind={env.machine} className="size-3" />
-                )}
+                <EnvironmentMachineIcon kind={env.machine} className="size-3" />
                 {env.label}
               </span>
             </SelectItem>
@@ -242,18 +170,7 @@ function EnvironmentSelector({
             </SelectItem>
           ) : null}
         </SelectGroup>
-        {serverUpdate && updateControl ? (
-          <SelectGroup>
-            <SelectGroupLabel>Server update</SelectGroupLabel>
-            <SelectItem value={UPDATE_VALUE} disabled={updateControl.disabled}>
-              <span className="inline-flex items-center gap-1.5">
-                <CircleArrowUpIcon aria-hidden="true" className="size-3" />
-                {updateControl.label} {serverUpdate.serverLabel}
-              </span>
-            </SelectItem>
-          </SelectGroup>
-        ) : null}
       </SelectPopup>
     </Select>
   );
-}
+});
