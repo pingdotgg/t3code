@@ -66,7 +66,7 @@ function signTestJwt(payload: object, privateKey: string): string {
   return `${signingInput}.${NodeCrypto.sign(null, Buffer.from(signingInput), privateKey).toString("base64url")}`;
 }
 
-const freshRequest = Effect.gen(function* () {
+const signedRequest = Effect.fnUntraced(function* (notify?: boolean) {
   const now = yield* DateTime.now;
   const payload = {
     iss: "t3-env:env",
@@ -78,12 +78,15 @@ const freshRequest = Effect.gen(function* () {
     environmentId: state.environmentId,
     threadId: state.threadId,
     state,
+    ...(notify === undefined ? {} : { notify }),
   } satisfies RelayAgentActivityPublishProofPayload;
   return {
     state,
     proof: signTestJwt(payload, keyPair.privateKey),
+    ...(notify === undefined ? {} : { notify }),
   } satisfies RelayAgentActivityPublishRequest;
 });
+const freshRequest = signedRequest();
 
 function layer(replay?: Partial<DpopProofs.DpopProofReplay["Service"]>) {
   return EnvironmentPublishSignatures.layer.pipe(
@@ -161,6 +164,28 @@ describe("EnvironmentPublishSignatures", () => {
           });
         }
       }
+    }).pipe(Effect.provide(layer())),
+  );
+
+  it.effect("binds the notify flag to the signed proof, defaulting to notify when omitted", () =>
+    Effect.gen(function* () {
+      const signatures = yield* EnvironmentPublishSignatures.EnvironmentPublishSignatures;
+      const verify = (request: RelayAgentActivityPublishRequest) =>
+        Effect.result(
+          signatures.verify({
+            environmentId: state.environmentId,
+            environmentPublicKey: keyPair.publicKey,
+            threadId: state.threadId,
+            request,
+          }),
+        ).pipe(Effect.map(Result.isSuccess));
+      const quiet = yield* signedRequest(false);
+      const legacy = yield* signedRequest();
+
+      expect(yield* verify(quiet)).toBe(true);
+      expect(yield* verify({ ...legacy, notify: true })).toBe(true);
+      expect(yield* verify({ ...quiet, notify: true })).toBe(false);
+      expect(yield* verify({ ...legacy, notify: false })).toBe(false);
     }).pipe(Effect.provide(layer())),
   );
 

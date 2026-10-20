@@ -607,6 +607,53 @@ describe("delivery policy regressions", () => {
   });
 });
 
+describe("quiet jobs from an attended environment", () => {
+  it.effect("update the ongoing card silently and never alert for that state later", () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const d = yield* FcmDeliveries.FcmDeliveries;
+      yield* d.process(h.job);
+      h.current.state = { ...state, phase: "completed" };
+      yield* d.process({ ...h.job, state: h.current.state, notify: false });
+      yield* d.process({ ...h.job, state: h.current.state });
+      expect(h.sent.at(-2)).toMatchObject({ alert: false, data: { active: "false" } });
+      expect(h.sent.filter((x) => x.alert)).toHaveLength(0);
+    }).pipe(Effect.provide(h.layer));
+  });
+
+  it.effect("still alert for another environment finishing at the same time", () => {
+    const h = harness();
+    const other = {
+      ...state,
+      environmentId: EnvironmentId.make("other"),
+      threadId: ThreadId.make("other"),
+      threadTitle: "Other thread",
+    };
+    h.current.target.last_aggregate_json = encodeJson(aggregateFor([state, other]));
+    h.current.state = { ...state, phase: "completed" };
+    h.current.otherStates = [{ ...other, phase: "completed" }];
+    return Effect.gen(function* () {
+      const d = yield* FcmDeliveries.FcmDeliveries;
+      yield* d.process({ ...h.job, state: h.current.state, notify: false });
+      expect(h.sent[0]).toMatchObject({ alert: true, data: { alert_title: "Other thread" } });
+    }).pipe(Effect.provide(h.layer));
+  });
+
+  it.effect("do not alert with ongoing activity disabled", () => {
+    const h = harness();
+    h.current.state = { ...state, phase: "completed" };
+    h.current.target.preferences_json = encodeJson({
+      ...preferences,
+      liveActivitiesEnabled: false,
+    });
+    return Effect.gen(function* () {
+      const d = yield* FcmDeliveries.FcmDeliveries;
+      yield* d.process({ ...h.job, state: h.current.state, notify: false });
+      expect(h.sent.filter((x) => x.alert)).toHaveLength(0);
+    }).pipe(Effect.provide(h.layer));
+  });
+});
+
 describe("notification-only environments", () => {
   it.effect("alerts independently while another environment has a live card", () => {
     const h = harness();

@@ -1289,6 +1289,54 @@ describe("fast completion delivery", () => {
   });
 });
 
+describe("quiet environment delivery", () => {
+  const attendedRow = aggregate.activities[0]!;
+  const awayRow = {
+    ...attendedRow,
+    environmentId: "away-env" as RelayAgentActivityState["environmentId"],
+    threadId: "away-thread" as RelayAgentActivityState["threadId"],
+    threadTitle: "Away thread",
+  };
+  const running = { ...aggregate, activeCount: 2, activities: [attendedRow, awayRow] };
+  const device = { ...target, last_aggregate_json: JSON.stringify(running) };
+  const finish = (rows: ReadonlyArray<typeof attendedRow>) => ({
+    ...aggregate,
+    activeCount: 2 - rows.length,
+    activities: running.activities.map((row) =>
+      rows.includes(row) ? { ...row, phase: "completed" as const, status: "Done" } : row,
+    ),
+  });
+
+  it.effect("updates the card without alerting for the attended environment", () => {
+    const queuedJobs: SignedApnsDeliveryJob[] = [];
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      yield* deliveries.sendForTarget({
+        target: device,
+        aggregate: finish([attendedRow]),
+        nowMs: 0,
+        quietEnvironmentId: attendedRow.environmentId,
+      });
+      expect(queuedJobs).toHaveLength(1);
+      expect(queuedJobs[0]?.payload.alert).toBeUndefined();
+    }).pipe(Effect.provide(layerFor({ attempts: [], queuedJobs })));
+  });
+
+  it.effect("still alerts for another environment finishing in the same aggregate", () => {
+    const queuedJobs: SignedApnsDeliveryJob[] = [];
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      yield* deliveries.sendForTarget({
+        target: device,
+        aggregate: finish([attendedRow, awayRow]),
+        nowMs: 0,
+        quietEnvironmentId: attendedRow.environmentId,
+      });
+      expect(queuedJobs[0]?.payload.alert).toMatchObject({ title: awayRow.threadTitle });
+    }).pipe(Effect.provide(layerFor({ attempts: [], queuedJobs })));
+  });
+});
+
 describe("signed APNs registration metadata", () => {
   it.effect.each(
     (["live_activity_update", "push_notification"] as const).flatMap((kind) =>

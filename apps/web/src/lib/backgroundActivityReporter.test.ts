@@ -11,8 +11,34 @@ import { vi } from "vite-plus/test";
 import {
   layer,
   observeBackgroundActivitySubscription,
+  resolveUserIdleMs,
   retainedBackgroundScopes,
 } from "./backgroundActivityReporter.ts";
+
+describe("resolveUserIdleMs", () => {
+  const away = { visible: false, focused: false, pageIdleMs: 5_000 };
+
+  it("reports presence only when this client can tell the person about agent work", () => {
+    expect(
+      resolveUserIdleMs({ ...away, canNotify: false, systemIdleMs: undefined }),
+    ).toBeUndefined();
+    expect(resolveUserIdleMs({ ...away, canNotify: true, systemIdleMs: undefined })).toBe(5_000);
+    expect(
+      resolveUserIdleMs({
+        visible: true,
+        focused: true,
+        canNotify: false,
+        systemIdleMs: undefined,
+        pageIdleMs: 5_000,
+      }),
+    ).toBe(5_000);
+  });
+
+  it("prefers the desktop's system idle clock and treats a locked computer as away", () => {
+    expect(resolveUserIdleMs({ ...away, canNotify: true, systemIdleMs: 1_000 })).toBe(1_000);
+    expect(resolveUserIdleMs({ ...away, canNotify: true, systemIdleMs: null })).toBeUndefined();
+  });
+});
 
 describe("wasRecentlyInteracted", () => {
   it.effect("retains an observed subscription until its returned finalizer runs", () =>

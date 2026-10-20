@@ -26,6 +26,19 @@ type TransitionInput = {
   readonly preferences: RelayAgentAwarenessPreferences | null;
 };
 
+// Rows from an environment whose user is already at a computer still update
+// the card, but must not ring the phone. Other environments' rows still can.
+export function withoutQuietEnvironment(
+  aggregate: RelayAgentActivityAggregateState | null,
+  quietEnvironmentId: string | undefined,
+): RelayAgentActivityAggregateState | null {
+  if (aggregate === null || quietEnvironmentId === undefined) return aggregate;
+  return {
+    ...aggregate,
+    activities: aggregate.activities.filter((row) => row.environmentId !== quietEnvironmentId),
+  };
+}
+
 function rowKey(row: RelayAgentActivityAggregateRow): string {
   return JSON.stringify([row.environmentId, row.threadId]);
 }

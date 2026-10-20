@@ -15,6 +15,7 @@ import {
   TurnItemId,
 } from "@t3tools/contracts";
 import { RelayAgentActivityState } from "@t3tools/contracts/relay";
+import { decodeRelayJwt } from "@t3tools/shared/relayJwt";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -28,6 +29,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import {
   PUBLISH_AGENT_ACTIVITY_SECRET,
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
@@ -90,7 +92,11 @@ function shell(overrides: Partial<OrchestrationV2ThreadShell> = {}): Orchestrati
   };
 }
 
-const PublishPayload = Schema.Struct({ state: Schema.NullOr(RelayAgentActivityState) });
+const PublishPayload = Schema.Struct({
+  state: Schema.NullOr(RelayAgentActivityState),
+  proof: Schema.String,
+  notify: Schema.optional(Schema.Boolean),
+});
 const decodePublishPayload = Schema.decodeUnknownSync(Schema.fromJsonString(PublishPayload));
 const unused = () => Effect.die("Unexpected test dependency call");
 
@@ -142,6 +148,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     readonly linked?: boolean;
     readonly readShell?: (threadId: ThreadId) => Effect.Effect<OrchestrationV2ThreadShell | null>;
     readonly domainEvents?: Stream.Stream<OrchestrationV2DomainEvent>;
+    readonly attended?: Ref.Ref<boolean>;
   } = {},
 ) {
   const values = new Map<string, Uint8Array>(
@@ -226,6 +233,8 @@ const makeTestRelay = Effect.fnUntraced(function* (
     readonly url: string;
     readonly authorization: string | null;
     readonly state: RelayAgentActivityState | null;
+    readonly notify: boolean | undefined;
+    readonly signedNotify: unknown;
   }> = [];
   const fetch: typeof globalThis.fetch = Object.assign(
     (
@@ -243,6 +252,8 @@ const makeTestRelay = Effect.fnUntraced(function* (
         url: String(input),
         authorization: new Headers(init?.headers).get("authorization"),
         state: payload.state,
+        notify: payload.notify,
+        signedNotify: decodeRelayJwt(payload.proof).notify,
       });
       return Promise.resolve(
         options.respond?.(publications.length) ?? Response.json({ ok: true, deliveries: [] }),
@@ -280,6 +291,21 @@ const makeTestRelay = Effect.fnUntraced(function* (
           }),
         ),
     }),
+    Effect.provideService(
+      BackgroundPolicy.BackgroundPolicy,
+      BackgroundPolicy.BackgroundPolicy.of({
+        reportClientActivity: unused,
+        removeRpcClient: unused,
+        reportHostPowerState: unused,
+        snapshot: unused(),
+        streamChanges: Stream.empty,
+        subscribe: unused(),
+        hasDemand: unused,
+        shouldRunScopeWork: unused,
+        shouldRunOpportunisticWork: unused(),
+        hasAttendedClient: options.attended ? Ref.get(options.attended) : Effect.succeed(false),
+      }),
+    ),
     Effect.provideService(FetchHttpClient.Fetch, fetch),
     Effect.provide(NodeCrypto.layer),
   );
@@ -348,6 +374,24 @@ describe("AgentAwarenessRelay", () => {
       yield* relay.publishThread(THREAD_ID);
       assert.equal(publications.length, 2);
       assert.equal(publications[1]?.state?.threadTitle, "Renamed thread");
+    }),
+  );
+
+  it.effect("signs whether the phone should alert from computer presence at publish time", () =>
+    Effect.gen(function* () {
+      const attended = yield* Ref.make(true);
+      const { relay, currentShell, publications } = yield* makeTestRelay({ attended });
+      yield* relay.publishThread(THREAD_ID);
+      yield* Ref.set(attended, false);
+      yield* Ref.set(currentShell, shell({ title: "Renamed thread" }));
+      yield* relay.publishThread(THREAD_ID);
+      assert.deepStrictEqual(
+        publications.map(({ notify, signedNotify }) => ({ notify, signedNotify })),
+        [
+          { notify: false, signedNotify: false },
+          { notify: true, signedNotify: true },
+        ],
+      );
     }),
   );
 

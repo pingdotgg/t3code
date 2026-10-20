@@ -160,6 +160,7 @@ const make = Effect.gen(function* () {
         proof.threadId !== input.threadId ||
         proof.sub !== input.environmentId ||
         stableStringify(proof.state) !== stableStringify(input.request.state) ||
+        (proof.notify ?? true) !== (input.request.notify ?? true) ||
         (input.request.state !== null &&
           (input.request.state.environmentId !== input.environmentId ||
             input.request.state.threadId !== input.threadId))

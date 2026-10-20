@@ -71,6 +71,9 @@ export const ClientActivityReportInput = Schema.Struct({
   visible: Schema.Boolean,
   focused: Schema.Boolean,
   recentlyInteracted: Schema.Boolean,
+  // How long since the person last used this computer. Omitted when they are
+  // known to be away (screen locked, asleep) or the client cannot tell.
+  userIdleMs: Schema.optionalKey(Schema.Number.check(Schema.isGreaterThanOrEqualTo(0))),
   appState: Schema.optionalKey(Schema.Literals(["active", "inactive", "background", "unknown"])),
   lowPowerMode: Schema.optionalKey(BackgroundBooleanState),
   batteryState: Schema.optionalKey(Schema.Literals(["unknown", "unplugged", "charging", "full"])),
@@ -89,6 +92,7 @@ export const ClientActivityLease = Schema.Struct({
   visible: Schema.Boolean,
   focused: Schema.Boolean,
   recentlyInteracted: Schema.Boolean,
+  lastUserInputAt: Schema.optionalKey(Schema.DateTimeUtc),
   appState: Schema.optionalKey(Schema.Literals(["active", "inactive", "background", "unknown"])),
   lowPowerMode: Schema.optionalKey(BackgroundBooleanState),
   batteryState: Schema.optionalKey(Schema.Literals(["unknown", "unplugged", "charging", "full"])),

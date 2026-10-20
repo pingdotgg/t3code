@@ -19,6 +19,7 @@ import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
+import { canNotifyOutsideWindow } from "../threadNotifications";
 import { randomUUID } from "./utils";
 
 const CLIENT_ID_STORAGE_KEY = "t3.backgroundActivity.clientId";
@@ -82,10 +83,31 @@ function wasRecentlyInteracted(lastInteractionAtMs: number, observedAtMs: number
   );
 }
 
+// The server silences phone pushes while someone is at a computer, so only
+// report presence when this client can itself tell them about agent work.
+export function resolveUserIdleMs(input: {
+  readonly visible: boolean;
+  readonly focused: boolean;
+  readonly canNotify: boolean;
+  /** `undefined` without a desktop shell, `null` while the computer is locked or asleep. */
+  readonly systemIdleMs: number | null | undefined;
+  readonly pageIdleMs: number;
+}): number | undefined {
+  if (!(input.visible && input.focused) && !input.canNotify) return undefined;
+  if (input.systemIdleMs === null) return undefined;
+  return Math.max(0, input.systemIdleMs ?? input.pageIdleMs);
+}
+
+// Outside the desktop shell this is undefined, and only input in this window counts.
+const readSystemIdleMs = Effect.tryPromise(async () =>
+  window.desktopBridge?.getUserIdleMs?.(),
+).pipe(Effect.orElseSucceed(() => undefined));
+
 function createActivityReport(
   environmentId: EnvironmentId,
   lastInteractionAtMs: number,
   observedAtMs: number,
+  systemIdleMs: number | null | undefined,
 ): ClientActivityReportInput {
   const scopes = [...BASELINE_SCOPES];
   for (const entry of retainedScopes.values()) {
@@ -93,13 +115,23 @@ function createActivityReport(
       scopes.push(entry.scope);
     }
   }
+  const visible = document.visibilityState === "visible";
+  const focused = document.hasFocus();
+  const userIdleMs = resolveUserIdleMs({
+    visible,
+    focused,
+    canNotify: canNotifyOutsideWindow(),
+    systemIdleMs,
+    pageIdleMs: observedAtMs - lastInteractionAtMs,
+  });
   return {
     environmentId,
     clientId: getClientId(),
     clientKind: resolveClientKind(),
-    visible: document.visibilityState === "visible",
-    focused: document.hasFocus(),
+    visible,
+    focused,
     recentlyInteracted: wasRecentlyInteracted(lastInteractionAtMs, observedAtMs),
+    ...(userIdleMs !== undefined ? { userIdleMs } : {}),
     appState: document.visibilityState === "visible" ? "active" : "background",
     scopes,
     ttlMs: LEASE_TTL_MS,
@@ -193,6 +225,7 @@ export const layer = Layer.effectDiscard(
 
     const report = Effect.gen(function* () {
       const observedAtMs = yield* Clock.currentTimeMillis;
+      const systemIdleMs = yield* readSystemIdleMs;
       const entries = yield* SubscriptionRef.get(registry.entries);
       yield* Effect.forEach(
         entries.keys(),
@@ -202,7 +235,12 @@ export const layer = Layer.effectDiscard(
               environmentId,
               request(
                 WS_METHODS.serverReportClientActivity,
-                createActivityReport(environmentId, lastInteractionAtMs, observedAtMs),
+                createActivityReport(
+                  environmentId,
+                  lastInteractionAtMs,
+                  observedAtMs,
+                  systemIdleMs,
+                ),
               ),
             )
             // Not `ignore`: tearing down an environment mid-request interrupts its report,
@@ -212,6 +250,10 @@ export const layer = Layer.effectDiscard(
       );
     }).pipe(Effect.withSpan("web.backgroundActivity.report"));
 
+    yield* Effect.acquireRelease(
+      Effect.sync(() => window.desktopBridge?.onUserAwayChange?.(requestReport)),
+      (unsubscribe) => Effect.sync(() => unsubscribe?.()),
+    );
     yield* Effect.acquireRelease(
       Effect.sync(() => {
         retainedScopeListeners.add(requestReport);

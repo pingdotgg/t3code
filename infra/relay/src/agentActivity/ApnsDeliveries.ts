@@ -50,6 +50,7 @@ import {
   alertForTerminalAggregate,
   rowPhasesChanged,
   shouldAlertForActivity,
+  withoutQuietEnvironment,
 } from "./agentActivityAlerts.ts";
 export {
   alertForAttentionTransition,
@@ -202,15 +203,17 @@ function notificationForAggregate(input: {
   readonly target: LiveActivities.TargetRow;
   readonly aggregate: RelayAgentActivityAggregateState | null;
   readonly nowMs: number;
+  readonly quietEnvironmentId?: string | undefined;
 }): ApnsNotificationPayload | null {
-  if (!input.target.push_token || input.aggregate === null) {
+  const aggregate = withoutQuietEnvironment(input.aggregate, input.quietEnvironmentId);
+  if (!input.target.push_token || aggregate === null) {
     return null;
   }
   const preferences = parsePreferences(input.target.preferences_json);
   if (!preferences?.notificationsEnabled) {
     return null;
   }
-  const activity = input.aggregate.activities[0];
+  const activity = aggregate.activities[0];
   if (!activity) {
     return null;
   }
@@ -226,6 +229,7 @@ function chooseLiveActivityDelivery(input: {
   readonly aggregate: RelayAgentActivityAggregateState | null;
   readonly nowMs: number;
   readonly replay?: boolean;
+  readonly quietEnvironmentId?: string | undefined;
 }): ChosenLiveActivityDelivery | "suppressed" | null {
   const preferences = parsePreferences(input.target.preferences_json);
   if (preferences?.liveActivitiesEnabled === false) {
@@ -265,6 +269,8 @@ function chooseLiveActivityDelivery(input: {
   }
   const nextAggregate = input.aggregate;
   const previousAggregate = parseAggregate(input.target.last_aggregate_json);
+  const alertableAggregate =
+    withoutQuietEnvironment(nextAggregate, input.quietEnvironmentId) ?? nextAggregate;
   return shouldUpdateLiveActivity({
     previousAggregate,
     nextAggregate,
@@ -279,12 +285,12 @@ function chooseLiveActivityDelivery(input: {
           ? null
           : (alertForAttentionTransition({
               previousAggregate,
-              nextAggregate,
+              nextAggregate: alertableAggregate,
               preferences,
             }) ??
             alertForNewlyTerminal({
               previousAggregate,
-              nextAggregate,
+              nextAggregate: alertableAggregate,
               preferences,
               nowMs: input.nowMs,
               includeUnobserved: true,
@@ -298,6 +304,7 @@ function chooseDelivery(input: {
   readonly aggregate: RelayAgentActivityAggregateState | null;
   readonly nowMs: number;
   readonly replay?: boolean;
+  readonly quietEnvironmentId?: string | undefined;
 }): ChosenDelivery | null {
   const liveActivityDelivery = chooseLiveActivityDelivery(input);
   if (liveActivityDelivery === "suppressed") {
@@ -512,6 +519,7 @@ export class ApnsDeliveries extends Context.Service<
       readonly aggregate: RelayAgentActivityAggregateState | null;
       readonly nowMs: number;
       readonly replay?: boolean;
+      readonly quietEnvironmentId?: string | undefined;
     }) => Effect.Effect<RelayDeliveryResult | null, ApnsDeliveryError>;
     readonly sendPushNotificationForTarget: (input: {
       readonly target: LiveActivities.TargetRow;
@@ -1144,6 +1152,7 @@ export const make = Effect.gen(function* () {
         aggregate: input.aggregate,
         nowMs: input.nowMs,
         replay: input.replay ?? false,
+        quietEnvironmentId: input.quietEnvironmentId,
       });
       if (!delivery) {
         return null;
@@ -1165,6 +1174,7 @@ export const make = Effect.gen(function* () {
             target: input.target,
             aggregate: input.aggregate,
             nowMs: input.nowMs,
+            quietEnvironmentId: input.quietEnvironmentId,
           });
       // The end event doubles as the "task finished" moment. When a companion
       // push notification is about to ring the device (below), the activity end
@@ -1176,7 +1186,7 @@ export const make = Effect.gen(function* () {
           ? notification && input.target.push_token
             ? null
             : alertForTerminalAggregate({
-                aggregate: delivery.aggregate,
+                aggregate: withoutQuietEnvironment(delivery.aggregate, input.quietEnvironmentId),
                 preferences: parsePreferences(input.target.preferences_json),
               })
           : delivery.alert;

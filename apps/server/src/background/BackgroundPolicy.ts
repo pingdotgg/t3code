@@ -52,10 +52,14 @@ export class BackgroundPolicy extends Context.Service<
     readonly hasDemand: (scope: BackgroundScope) => Effect.Effect<boolean>;
     readonly shouldRunScopeWork: (scope: BackgroundScope) => Effect.Effect<boolean>;
     readonly shouldRunOpportunisticWork: Effect.Effect<boolean>;
+    readonly hasAttendedClient: Effect.Effect<boolean>;
   }
 >()("t3/background/BackgroundPolicy") {}
 
 const DEFAULT_LEASE_TTL_MS = 45_000;
+// Long enough to read a diff without touching the mouse, short enough that a
+// turn finishing after the person walks away still reaches their phone.
+const ATTENDED_USER_IDLE_MS = 2 * 60_000;
 const MAX_LEASE_TTL_MS = 120_000;
 export const MAX_CLIENT_ACTIVITY_LEASES_PER_RPC_CLIENT = 16;
 
@@ -127,6 +131,15 @@ function upsertClientActivityLease(
 
 function isForegroundLease(lease: ClientActivityLease, now: DateTime.Utc): boolean {
   return isLeaseActive(lease, now) && lease.visible && (lease.focused || lease.recentlyInteracted);
+}
+
+function isAttendedLease(lease: ClientActivityLease, now: DateTime.Utc): boolean {
+  return (
+    isLeaseActive(lease, now) &&
+    lease.lastUserInputAt !== undefined &&
+    DateTime.toEpochMillis(now) - DateTime.toEpochMillis(lease.lastUserInputAt) <
+      ATTENDED_USER_IDLE_MS
+  );
 }
 
 function leaseHasScope(lease: ClientActivityLease, scope: BackgroundScope): boolean {
@@ -257,6 +270,9 @@ export const make = Effect.fn("background.policy.make")(function* () {
           visible: input.visible,
           focused: input.focused,
           recentlyInteracted: input.recentlyInteracted,
+          ...(input.userIdleMs !== undefined
+            ? { lastUserInputAt: DateTime.subtract(now, { milliseconds: input.userIdleMs }) }
+            : {}),
           ...(input.appState !== undefined ? { appState: input.appState } : {}),
           ...(input.lowPowerMode !== undefined ? { lowPowerMode: input.lowPowerMode } : {}),
           ...(input.batteryState !== undefined ? { batteryState: input.batteryState } : {}),
@@ -306,6 +322,10 @@ export const make = Effect.fn("background.policy.make")(function* () {
     (current) => current.shouldRunOpportunisticWork,
   );
 
+  const hasAttendedClient = Effect.map(snapshot, (current) =>
+    current.leases.some((lease) => isAttendedLease(lease, current.updatedAt)),
+  );
+
   yield* Stream.runForEach(hostPowerMonitor.streamChanges, () => publishSnapshot).pipe(
     Effect.forkScoped,
   );
@@ -345,6 +365,7 @@ export const make = Effect.fn("background.policy.make")(function* () {
     hasDemand,
     shouldRunScopeWork,
     shouldRunOpportunisticWork,
+    hasAttendedClient,
   });
 });
 

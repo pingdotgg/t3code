@@ -38,6 +38,7 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import {
   isAgentActivityPublishingEnabledValue,
   PUBLISH_AGENT_ACTIVITY_SECRET,
@@ -251,6 +252,7 @@ const makePublishProof = Effect.fn("makePublishProof")(function* (input: {
   readonly environmentId: string;
   readonly threadId: ThreadId;
   readonly state: RelayAgentActivityState | null;
+  readonly notify: boolean;
   readonly jti: string;
 }) {
   const now = yield* DateTime.now;
@@ -265,6 +267,7 @@ const makePublishProof = Effect.fn("makePublishProof")(function* (input: {
     environmentId: input.environmentId as RelayAgentActivityPublishProofPayload["environmentId"],
     threadId: input.threadId,
     state: input.state,
+    notify: input.notify,
   } satisfies RelayAgentActivityPublishProofPayload;
   return yield* signRelayAgentActivityPublishProof({ privateKey: input.privateKey, payload });
 });
@@ -365,6 +368,7 @@ export const make = Effect.gen(function* () {
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const projects = yield* ProjectService.ProjectService;
+  const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
   const crypto = yield* Crypto.Crypto;
   const scope = yield* Effect.scope;
   const cloudLinkKeyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets);
@@ -472,12 +476,15 @@ export const make = Effect.gen(function* () {
         cachedRelayClient = yield* makeRelayClient(relayConfig);
       }
       const relayClient = cachedRelayClient;
+      // Someone at a computer already sees this there; the phone only needs its state.
+      const notify = !(yield* backgroundPolicy.hasAttendedClient);
       const proof = yield* makePublishProof({
         privateKey: cloudLinkKeyPair.privateKey,
         relayIssuer: relayConfig.issuer,
         environmentId,
         threadId,
         state: input.state,
+        notify,
         jti: yield* crypto.randomUUIDv4(),
       });
 
@@ -487,6 +494,7 @@ export const make = Effect.gen(function* () {
         projectId: input.projectId,
         statePhase: input.state?.phase ?? null,
         hasState: input.state !== null,
+        notify,
         reason: input.reason,
       });
 
@@ -499,6 +507,7 @@ export const make = Effect.gen(function* () {
           payload: {
             state: input.state,
             proof,
+            notify,
           },
         })
         .pipe(Effect.timeout("10 seconds"));

@@ -22,6 +22,7 @@ import {
   hasDesktopNotifications,
   hasNotificationSound,
   playNotificationSound,
+  setCoordinatorNotificationMode,
   setNotificationBadge,
   threadNotificationTag,
   unlockNotificationAudio,
@@ -54,6 +55,11 @@ export function ThreadNotificationCoordinator() {
     }
     if (count !== pending.current.size) setNotificationBadge(pending.current.size);
   }, [environmentIds]);
+
+  useEffect(() => {
+    setCoordinatorNotificationMode(mode);
+    return () => setCoordinatorNotificationMode("off");
+  }, [mode]);
 
   useEffect(() => {
     const clear = () => {

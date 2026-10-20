@@ -264,6 +264,7 @@ export const RelayAgentActivityPublishProofPayload = Schema.Struct({
   environmentId: EnvironmentId,
   threadId: ThreadId,
   state: Schema.NullOr(RelayAgentActivityState),
+  notify: Schema.optional(Schema.Boolean),
 });
 export type RelayAgentActivityPublishProofPayload =
   typeof RelayAgentActivityPublishProofPayload.Type;
@@ -275,6 +276,10 @@ export const RelayAgentActivityPublishRequest = Schema.Struct({
   }),
   proof: TrimmedNonEmptyString.annotate({
     description: "Environment-signed JWT covering this published activity state.",
+  }),
+  notify: Schema.optional(Schema.Boolean).annotate({
+    description:
+      "False when the user is already at a computer, so mobile state updates without alerting. Omitted means true.",
   }),
 }).annotate({ description: "Publishes a signed agent-awareness update from an environment." });
 export type RelayAgentActivityPublishRequest = typeof RelayAgentActivityPublishRequest.Type;
