@@ -7,7 +7,7 @@ import {
   EnvironmentId,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
 } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   createDesktopSecondaryBootstrapsReader,
@@ -55,7 +55,52 @@ describe("desktop local connection identity", () => {
 });
 
 describe("desktop local topology reads", () => {
-  it("reuses snapshots when polling returns fresh objects for the same topology", () => {
+  it("refreshes topology asynchronously, retaining identity through unchanged reads and failures", async () => {
+    const secondary: DesktopEnvironmentBootstrap = {
+      id: "wsl:default",
+      label: "WSL",
+      runningDistro: "Ubuntu",
+      httpBaseUrl: "http://127.0.0.1:4000",
+      wsBaseUrl: "ws://127.0.0.1:4000",
+      bootstrapToken: "bootstrap-1",
+    };
+    let entries = [secondary, { ...secondary, id: PRIMARY_LOCAL_ENVIRONMENT_ID }];
+    let cached = entries;
+    const getLocalEnvironmentBootstraps = vi.fn(() => cached);
+    const readLocalEnvironmentBootstraps = vi.fn(async () => {
+      cached = entries.map((entry) => ({ ...entry }));
+      return cached;
+    });
+    const reader = createDesktopSecondaryBootstrapsReader(() => ({
+      getLocalEnvironmentBootstraps,
+      readLocalEnvironmentBootstraps,
+    }));
+
+    const connected = await reader.refresh();
+    expect(connected).toEqual({ _tag: "Success", bootstraps: [secondary] });
+    expect(getLocalEnvironmentBootstraps).not.toHaveBeenCalled();
+    if (connected._tag !== "Success") throw new Error("expected connected topology");
+
+    const unchanged = await reader.refresh();
+    if (unchanged._tag !== "Success") throw new Error("expected unchanged topology");
+    expect(unchanged.bootstraps).toBe(connected.bootstraps);
+    expect(getLocalEnvironmentBootstraps).not.toHaveBeenCalled();
+    expect(reader.readSnapshot()).toBe(connected.bootstraps);
+
+    const cause = new Error("IPC unavailable");
+    readLocalEnvironmentBootstraps.mockRejectedValueOnce(cause);
+    expect(await reader.refresh()).toEqual({ _tag: "Failure", cause });
+    expect(reader.readSnapshot()).toBe(connected.bootstraps);
+
+    entries = [];
+    const removed = await reader.refresh();
+    expect(removed).toEqual({ _tag: "Success", bootstraps: [] });
+    if (removed._tag !== "Success") throw new Error("expected empty topology");
+    expect(reader.readSnapshot()).toBe(removed.bootstraps);
+    expect(removed.bootstraps).not.toBe(connected.bootstraps);
+  });
+
+  it("reuses snapshots when polling returns fresh objects for the same topology", async () => {
     const secondary: DesktopEnvironmentBootstrap = {
       id: "wsl:default",
       label: "WSL",
@@ -70,11 +115,16 @@ describe("desktop local topology reads", () => {
     }));
 
     const connected = reader.readSnapshot();
+    const refreshed = await reader.refresh();
+    expect(refreshed).toEqual({ _tag: "Success", bootstraps: [secondary] });
+    if (refreshed._tag !== "Success") throw new Error("expected legacy topology");
+    expect(refreshed.bootstraps).toBe(connected);
     expect(reader.readSnapshot()).toBe(connected);
     expect(reader.readResult()).toEqual({ _tag: "Success", bootstraps: connected });
     expect(reader.readSnapshot()).toBe(connected);
 
     entries = [];
+    expect(await reader.refresh()).toEqual({ _tag: "Success", bootstraps: [] });
     const empty = reader.readSnapshot();
     expect(empty).toEqual([]);
     expect(reader.readSnapshot()).toBe(empty);
