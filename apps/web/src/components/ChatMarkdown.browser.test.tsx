@@ -7,6 +7,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
+import "../index.css";
+
 import { filesystemEnvironment } from "../state/filesystem";
 import { useRightPanelStore } from "../rightPanelStore";
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
@@ -128,6 +130,64 @@ function fileOptions(container: HTMLElement) {
     .map((button) => button.getAttribute("aria-label"))
     .filter((label) => label?.startsWith("File options for "));
 }
+
+describe("ChatMarkdown table layout", () => {
+  it.each([
+    { width: 36, timeline: true, fits: true },
+    { width: 48, timeline: true, fits: true },
+    { width: 35, timeline: true, fits: false },
+    { width: 48, timeline: false, fits: false },
+  ])(
+    "wraps expanded cells with fit=$fits in a $width rem container (timeline=$timeline)",
+    async ({ width, timeline, fits }) => {
+      const { container } = await render(
+        <div style={{ width: `${width}rem` }}>
+          <div className={timeline ? "@container/chat-lane chat-content-lane overflow-x-clip" : ""}>
+            <ChatMarkdown
+              cwd={undefined}
+              text={[
+                "| Change summary | Reason details | Verification status | Release impact | Followup actions |",
+                "| --- | --- | --- | --- | --- |",
+                "| Keep the complete explanation readable when the table is expanded in the conversation. | Allow each column to wrap its prose within the available space in the current chat lane. | Collapse and expand the table again to check that the text still fits and remains readable. | Keep the existing layout for narrow chat lanes and file previews. | Check the table again after resizing the conversation lane. |",
+              ].join("\n")}
+            />
+          </div>
+        </div>,
+      );
+      const table = container.querySelector("table")!;
+      const viewport = table.closest<HTMLElement>('[data-slot="scroll-area-viewport"]')!;
+      const cell = table.tBodies[0]!.rows[0]!.cells[0]!;
+      const collapse = () => buttonsLabelled(container, "Collapse table cells")[0];
+      if (collapse()) await act(async () => collapse()!.click());
+
+      const collapsedWidth = table.getBoundingClientRect().width;
+      const collapsedHeight = cell.getBoundingClientRect().height;
+      expect(viewport.clientWidth).toBeGreaterThan(0);
+      expect(viewport.scrollWidth).toBeGreaterThan(viewport.clientWidth);
+      expect(cell.scrollWidth).toBeGreaterThan(cell.clientWidth);
+
+      await act(async () => buttonsLabelled(container, "Expand table cells")[0]!.click());
+      const expandedWidth = table.getBoundingClientRect().width;
+      const expandedHeight = cell.getBoundingClientRect().height;
+      if (fits) {
+        expect(viewport.scrollWidth).toBeLessThanOrEqual(viewport.clientWidth + 1);
+        expect(expandedWidth).toBeLessThanOrEqual(viewport.clientWidth + 1);
+      } else {
+        expect(viewport.scrollWidth).toBeGreaterThan(viewport.clientWidth);
+        viewport.scrollLeft = 100;
+        expect(viewport.scrollLeft).toBeGreaterThan(0);
+      }
+      expect(expandedHeight).toBeGreaterThan(collapsedHeight);
+
+      await act(async () => collapse()!.click());
+      expect(table.getBoundingClientRect().width).toBeCloseTo(collapsedWidth, 0);
+      expect(cell.getBoundingClientRect().height).toBeCloseTo(collapsedHeight, 0);
+      await act(async () => buttonsLabelled(container, "Expand table cells")[0]!.click());
+      expect(table.getBoundingClientRect().width).toBeCloseTo(expandedWidth, 0);
+      expect(cell.getBoundingClientRect().height).toBeCloseTo(expandedHeight, 0);
+    },
+  );
+});
 
 describe("ChatMarkdown bare anchor placeholders", () => {
   it.each(["<A>", "<a>", "<a >", "<a/>", "<A/>", "<a />"])(
