@@ -34,6 +34,7 @@ import {
 
 export type ComposerEditorProps = NativeComposerEditorProps & {
   readonly draftKey?: string | null;
+  readonly hidden?: boolean;
   readonly environmentId?: EnvironmentId;
   readonly onOpenMention?: (path: string) => void;
   readonly onOpenAttachment?: (attachment: ComposerDocumentAttachment) => void;
@@ -43,6 +44,7 @@ export type ComposerEditorProps = NativeComposerEditorProps & {
 
 export function ComposerEditor({
   draftKey,
+  hidden,
   environmentId,
   onOpenMention,
   onOpenAttachment,
@@ -155,7 +157,9 @@ export function ComposerEditor({
   );
   return (
     <>
+      {/* Reset revision history with the recreated iOS view without aborting context imports. */}
       <NativeComposerEditor
+        key={hidden ? "hidden" : "visible"}
         {...props}
         enterBehavior={props.enterBehavior ?? preferredEnterBehavior}
         onChangeText={changeText}
