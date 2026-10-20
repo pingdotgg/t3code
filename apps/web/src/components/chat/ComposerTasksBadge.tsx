@@ -9,6 +9,7 @@ export interface ComposerTasksProgress {
   readonly step: string;
   readonly completedSteps: number;
   readonly totalSteps: number;
+  readonly live: boolean;
 }
 
 export interface ComposerTaskStep {
@@ -205,7 +206,7 @@ export const ComposerTasksContent = memo(function ComposerTasksContent({
                   >
                     {step.durationMs !== undefined
                       ? formatDuration(step.durationMs)
-                      : step.status === "inProgress"
+                      : step.status === "inProgress" && progress.live
                         ? "now"
                         : null}
                   </span>

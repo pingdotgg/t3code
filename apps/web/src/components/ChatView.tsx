@@ -187,6 +187,7 @@ import {
   derivePhase,
   selectHandoffImageResources,
   deriveActivePlanState,
+  selectComposerTasksPlan,
   deriveActiveWorkStartedAt,
   deriveCanInterruptRunningThread,
   findLatestProposedPlan,
@@ -1827,27 +1828,29 @@ export default function ChatView(props: ChatViewProps) {
   }
   const latestRunSettled = isLatestRunSettled(activeLatestRun, activeRuntime);
   const activePlan = deriveActivePlanState(serverProjection, activeActivityRun?.runId);
-  // Tasks progress for the running turn's own plan only — deriveActivePlanState
-  // falls back to older runs' plans, which must not label fresh work.
+  const activeActivityRunSettled = isLatestRunSettled(activeActivityRun, activeRuntime);
+  const composerTasksPlan = selectComposerTasksPlan(
+    serverProjection,
+    activePlan,
+    activeActivityRun?.runId ?? null,
+    activeActivityRunSettled,
+  );
   const activeComposerTasksProgress = (() => {
-    if (
-      isLatestRunSettled(activeActivityRun, activeRuntime) ||
-      !activePlan ||
-      activePlan.runId !== (activeActivityRun?.runId ?? null)
-    ) {
-      return null;
-    }
-    const totalSteps = activePlan.steps.length;
+    if (!composerTasksPlan) return null;
+    const live = !activeActivityRunSettled && composerTasksPlan.runId === activeActivityRun?.runId;
+    const totalSteps = composerTasksPlan.steps.length;
     if (totalSteps === 0) return null;
-    const completedSteps = activePlan.steps.filter((step) => step.status === "completed").length;
+    const completedSteps = composerTasksPlan.steps.filter(
+      (step) => step.status === "completed",
+    ).length;
     const step =
-      activePlan.steps.find((candidate) => candidate.status === "inProgress")?.step ??
-      activePlan.steps.find((candidate) => candidate.status === "pending")?.step ??
-      activePlan.steps.at(-1)!.step;
-    return { step, completedSteps, totalSteps };
+      composerTasksPlan.steps.find((candidate) => candidate.status === "inProgress")?.step ??
+      composerTasksPlan.steps.find((candidate) => candidate.status === "pending")?.step ??
+      composerTasksPlan.steps.at(-1)!.step;
+    return { step, completedSteps, totalSteps, live };
   })();
   const activeComposerTaskSteps =
-    activeComposerTasksProgress && activePlan ? activePlan.steps : null;
+    activeComposerTasksProgress && composerTasksPlan ? composerTasksPlan.steps : null;
   const activeThreadEnvironmentId = activeThread?.environmentId;
   const activeThreadProjectId = activeThread?.projectId;
   const activeProjectRef =

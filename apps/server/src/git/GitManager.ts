@@ -2719,6 +2719,36 @@ export const make = Effect.gen(function* () {
     return { pullRequest };
   });
 
+  const ensureNoTrackedChanges = Effect.fn("ensureNoTrackedChanges")(function* (
+    cwd: string,
+    pullRequestNumber: number,
+  ) {
+    const trackedChanges = yield* gitCore.execute({
+      operation: "GitManager.preparePullRequestThread.trackedChanges",
+      cwd,
+      args: ["status", "--porcelain", "--untracked-files=no"],
+    });
+    if (trackedChanges.stdout.trim().length > 0) {
+      return yield* new GitManagerError({
+        operation: "preparePullRequestThread",
+        cwd,
+        detail: `This repository has uncommitted changes. Commit or stash them before checking out pull request #${pullRequestNumber} here, or check it out in its own folder.`,
+      });
+    }
+  });
+
+  // Some hosts only switch branches on checkout; use the existing lossless refresh to advance them.
+  const moveToPullRequestHead = (cwd: string, headSha: string | undefined) =>
+    headSha === undefined || !/^[0-9a-f]{7,64}$/i.test(headSha)
+      ? Effect.succeed(false)
+      : gitCore.resolveCommit({ cwd, revision: headSha }).pipe(
+          Effect.flatMap(({ commitSha }) =>
+            gitCore.refreshCheckedOutBranch({ cwd, targetCommit: commitSha }),
+          ),
+          Effect.map((refreshed) => refreshed.onTarget),
+          Effect.orElseSucceed(() => false),
+        );
+
   const preparePullRequestThread: GitManager["Service"]["preparePullRequestThread"] = Effect.fn(
     "preparePullRequestThread",
   )(function* (input) {
@@ -2752,25 +2782,26 @@ export const make = Effect.gen(function* () {
       const pullRequest = toResolvedPullRequest(pullRequestSummary);
 
       if (input.mode === "local") {
+        yield* ensureNoTrackedChanges(input.cwd, pullRequest.number);
         yield* (yield* sourceControlProvider(input.cwd)).checkoutChangeRequest({
           cwd: input.cwd,
           reference: normalizedReference,
-          force: true,
         });
         const details = yield* gitCore.statusDetails(input.cwd);
+        const branch = details.branch ?? pullRequest.headBranch;
         yield* configurePullRequestHeadUpstream(
           input.cwd,
           {
             ...pullRequest,
             ...toPullRequestHeadRemoteInfo(pullRequestSummary),
           },
-          details.branch ?? pullRequest.headBranch,
+          branch,
         );
         return {
           pullRequest,
-          branch: details.branch ?? pullRequest.headBranch,
+          branch,
           worktreePath: null,
-          isOnPullRequestHead: true,
+          isOnPullRequestHead: yield* moveToPullRequestHead(input.cwd, pullRequestSummary.headSha),
         };
       }
 
