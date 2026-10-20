@@ -59,9 +59,16 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.terminalClear,
       WS_METHODS.terminalRestart,
       WS_METHODS.terminalClose,
+      WS_METHODS.projectsRunScript,
     ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalOperateScope);
     }
+  });
+
+  it("reserves action ports only for clients that can run actions", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.projectsGetScriptPorts)).toBe(
+      AuthTerminalOperateScope,
+    );
   });
 
   it("rejects unknown RPC method names", () => {

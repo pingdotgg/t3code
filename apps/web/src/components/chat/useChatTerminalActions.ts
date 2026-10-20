@@ -2,7 +2,7 @@ import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
-import type { Dispatch } from "react";
+import type { Dispatch, RefObject } from "react";
 import type { ComposerHandleRef } from "../../composerHandleContext";
 import type { selectThreadTerminalUiState } from "../../terminalUiStateStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
@@ -16,7 +16,12 @@ import {
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
-import { projectScriptTerminalInput } from "@t3tools/shared/projectScripts";
+import {
+  projectScriptPreviewUrl,
+  projectScriptReservesPort,
+  projectScriptTerminalInput,
+} from "@t3tools/shared/projectScripts";
+import { projectEnvironment } from "../../state/projects";
 import { type SetStateAction } from "react";
 import {
   isAtomCommandInterrupted,
@@ -52,6 +57,8 @@ export interface TerminalLaunchContext {
 }
 
 interface ChatTerminalActionsInput {
+  readonly routeThreadKey: string;
+  readonly currentRouteThreadKeyRef: RefObject<string | null>;
   readonly environmentId: EnvironmentId;
   readonly composerRef: ComposerHandleRef;
   readonly terminalUiState: ReturnType<typeof selectThreadTerminalUiState>;
@@ -77,6 +84,8 @@ interface ChatTerminalActionsInput {
  */
 export function useChatTerminalActions(input: ChatTerminalActionsInput) {
   const {
+    routeThreadKey,
+    currentRouteThreadKeyRef,
     environmentId,
     composerRef,
     terminalUiState,
@@ -96,6 +105,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
     setThreadError,
   } = input;
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
+  const runScript = useAtomCommand(projectEnvironment.runScript, { reportFailure: false });
 
   const hasTerminalWriteAccess = () =>
     readEnvironmentScope(environmentId, AuthTerminalOperateScope);
@@ -207,81 +217,128 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
       });
     }
     const targetCwd = options?.cwd ?? gitCwd ?? activeProject.workspaceRoot;
-    const reusableTerminalId =
-      options?.preferNewTerminal ||
-      !canReuseTerminal ||
-      !readEnvironmentScope(environmentId, AuthTerminalReadScope)
-        ? null
-        : findReusableProjectScriptTerminal({
-            // Server sessions cover drawer terminals this client has not opened yet, such as a
-            // worktree setup shell; the helper drops the panel-owned ones.
-            drawerTerminalIds: [
-              ...new Set([...terminalUiState.terminalIds, ...activeServerOrderedTerminalIds]),
-            ],
-            activeTerminalId: terminalUiState.activeTerminalId,
-            panelTerminalIds,
-            runningTerminalIds,
-          });
     const targetWorktreePath = options?.worktreePath ?? activeThread.worktreePath ?? null;
-
-    setTerminalUiLaunchContext({
-      threadId: activeThreadId,
-      cwd: targetCwd,
-      worktreePath: targetWorktreePath,
-    });
-    if (!activeThreadRef) {
-      return;
-    }
-    setTerminalFocusRequestId((value) => value + 1);
-
-    const launched = terminalActions.launchTerminal({
-      // The drawer opens with the target already placed: opening it empty would claim
-      // DEFAULT_THREAD_TERMINAL_ID, which a right-panel terminal may already own.
-      place: (terminalId) =>
-        reusableTerminalId === null
-          ? storeNewTerminal(activeThreadRef, terminalId)
-          : storeEnsureTerminal(activeThreadRef, terminalId, { open: true }),
-      ...(reusableTerminalId === null
-        ? { size: { cols: SCRIPT_TERMINAL_COLS, rows: SCRIPT_TERMINAL_ROWS } }
-        : { terminalId: reusableTerminalId }),
-      location: { cwd: targetCwd, worktreePath: targetWorktreePath },
-      ...(options?.env ? { extraEnv: options.env } : {}),
-    });
-    if (!launched) return;
-    const targetTerminalId = launched.terminalId;
-    const openResult = await launched.result;
-    if (openResult._tag === "Failure") {
-      if (!isAtomCommandInterrupted(openResult)) {
-        const error = squashAtomCommandFailure(openResult);
-        setThreadError(
-          activeThreadId,
-          error instanceof Error ? error.message : `Failed to run script "${script.name}".`,
+    let previewPort: number | undefined;
+    if (projectScriptReservesPort(script)) {
+      const result = await runScript({
+        environmentId,
+        input: {
+          threadId: activeThreadId,
+          projectId: activeProject.id,
+          worktreePath: targetWorktreePath,
+          scriptId: script.id,
+        },
+      });
+      if (currentRouteThreadKeyRef.current !== routeThreadKey) return;
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          setThreadError(
+            activeThreadId,
+            error instanceof Error ? error.message : `Failed to run script "${script.name}".`,
+          );
+        }
+        return;
+      }
+      if (result.value.status === "no-script" || !activeThreadRef) return;
+      previewPort = result.value.port;
+      if (result.value.threadId === activeThreadId) {
+        setTerminalUiLaunchContext({
+          threadId: activeThreadId,
+          cwd: targetCwd,
+          worktreePath: targetWorktreePath,
+        });
+        setTerminalFocusRequestId((value) => value + 1);
+        storeEnsureTerminal(activeThreadRef, result.value.terminalId, { open: true, active: true });
+      } else {
+        toastManager.add(
+          stackedThreadToast({
+            type: "info",
+            title: "Already running",
+            description: `${script.name} is running in another thread for this checkout.`,
+          }),
         );
       }
-      return;
-    }
+    } else {
+      const reusableTerminalId =
+        options?.preferNewTerminal ||
+        !canReuseTerminal ||
+        !readEnvironmentScope(environmentId, AuthTerminalReadScope)
+          ? null
+          : findReusableProjectScriptTerminal({
+              // Server sessions cover drawer terminals this client has not opened yet, such as a
+              // worktree setup shell; the helper drops the panel-owned ones.
+              drawerTerminalIds: [
+                ...new Set([...terminalUiState.terminalIds, ...activeServerOrderedTerminalIds]),
+              ],
+              activeTerminalId: terminalUiState.activeTerminalId,
+              panelTerminalIds,
+              runningTerminalIds,
+            });
 
-    const writeResult = await terminalActions.writeToTerminal(
-      targetTerminalId,
-      options?.shellHistory === "preserve"
-        ? `${script.command}\r`
-        : projectScriptTerminalInput(script.command),
-    );
-    if (!writeResult) return;
-    if (writeResult._tag === "Failure") {
-      if (!isAtomCommandInterrupted(writeResult)) {
-        const error = squashAtomCommandFailure(writeResult);
-        setThreadError(
-          activeThreadId,
-          error instanceof Error ? error.message : `Failed to run script "${script.name}".`,
-        );
+      setTerminalUiLaunchContext({
+        threadId: activeThreadId,
+        cwd: targetCwd,
+        worktreePath: targetWorktreePath,
+      });
+      if (!activeThreadRef) {
+        return;
       }
-      return;
+      setTerminalFocusRequestId((value) => value + 1);
+
+      const launched = terminalActions.launchTerminal({
+        // The drawer opens with the target already placed: opening it empty would claim
+        // DEFAULT_THREAD_TERMINAL_ID, which a right-panel terminal may already own.
+        place: (terminalId) =>
+          reusableTerminalId === null
+            ? storeNewTerminal(activeThreadRef, terminalId)
+            : storeEnsureTerminal(activeThreadRef, terminalId, { open: true }),
+        ...(reusableTerminalId === null
+          ? { size: { cols: SCRIPT_TERMINAL_COLS, rows: SCRIPT_TERMINAL_ROWS } }
+          : { terminalId: reusableTerminalId }),
+        location: { cwd: targetCwd, worktreePath: targetWorktreePath },
+        ...(options?.env ? { extraEnv: options.env } : {}),
+      });
+      if (!launched) return;
+      const targetTerminalId = launched.terminalId;
+      const openResult = await launched.result;
+      if (currentRouteThreadKeyRef.current !== routeThreadKey) return;
+      if (openResult._tag === "Failure") {
+        if (!isAtomCommandInterrupted(openResult)) {
+          const error = squashAtomCommandFailure(openResult);
+          setThreadError(
+            activeThreadId,
+            error instanceof Error ? error.message : `Failed to run script "${script.name}".`,
+          );
+        }
+        return;
+      }
+
+      const writeResult = await terminalActions.writeToTerminal(
+        targetTerminalId,
+        options?.shellHistory === "preserve"
+          ? `${script.command}\r`
+          : projectScriptTerminalInput(script.command),
+      );
+      if (!writeResult) return;
+      if (writeResult._tag === "Failure") {
+        if (!isAtomCommandInterrupted(writeResult)) {
+          const error = squashAtomCommandFailure(writeResult);
+          setThreadError(
+            activeThreadId,
+            error instanceof Error ? error.message : `Failed to run script "${script.name}".`,
+          );
+        }
+        return;
+      }
     }
     if (script.autoOpenPreview && script.previewUrl && isPreviewSupportedInRuntime()) {
       const previewResult = await openUrlInPreview({
         threadRef: activeThreadRef,
-        url: resolveDiscoveredServerUrl(activeThreadRef.environmentId, script.previewUrl),
+        url: resolveDiscoveredServerUrl(
+          activeThreadRef.environmentId,
+          projectScriptPreviewUrl(script, previewPort) ?? script.previewUrl,
+        ),
         openPreview,
       });
       if (previewResult._tag === "Failure" && !isAtomCommandInterrupted(previewResult)) {

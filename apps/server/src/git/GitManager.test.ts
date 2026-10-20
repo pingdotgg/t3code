@@ -745,7 +745,10 @@ function makeManager(input?: {
   sourceControlProvider?: SourceControlProvider["Service"];
   textGeneration?: Partial<FakeGitTextGeneration>;
   serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
-  setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
+  setupScriptRunner?: Pick<
+    ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"],
+    "runForThread"
+  >;
   gitConfigReads?: string[];
   gitCommands?: string[];
   environment?: NodeJS.ProcessEnv;
@@ -854,8 +857,7 @@ function makeManager(input?: {
     Layer.mock(ProviderRegistry.ProviderRegistry)({
       getProviders: Effect.succeed([]),
     }),
-    Layer.succeed(
-      ProjectSetupScriptRunner.ProjectSetupScriptRunner,
+    Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)(
       input?.setupScriptRunner ?? {
         runForThread: () => Effect.succeed({ status: "no-script" as const }),
       },

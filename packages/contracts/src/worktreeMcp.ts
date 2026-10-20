@@ -96,6 +96,16 @@ export const WorktreeMcpStatusResult = Schema.Struct({
   defaultStartFromOrigin: Schema.Boolean.annotate({
     description: "Server default used by t3_worktree_handoff when startFromOrigin is omitted.",
   }),
+  scriptPreviews: Schema.Array(
+    Schema.Struct({
+      scriptId: TrimmedNonEmptyString,
+      name: TrimmedNonEmptyString,
+      port: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 })),
+      url: TrimmedNonEmptyString,
+    }),
+  ).annotate({
+    description: "Reserved preview ports and resolved URLs for this thread's project scripts.",
+  }),
 });
 export type WorktreeMcpStatusResult = typeof WorktreeMcpStatusResult.Type;
 

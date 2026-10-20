@@ -98,7 +98,12 @@ import {
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
 import { formatModelSlugName, resolveSelectableModel } from "@t3tools/shared/model";
-import { projectScriptCwd, resolveProjectScripts } from "@t3tools/shared/projectScripts";
+import {
+  projectScriptCwd,
+  projectScriptReservesPort,
+  resolveProjectScripts,
+} from "@t3tools/shared/projectScripts";
+import { projectEnvironment } from "../state/projects";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/shared/threadReference";
@@ -846,15 +851,15 @@ export default function ChatView(props: ChatViewProps) {
     environmentId: activeThread?.environmentId ?? null,
     threadId: activeThreadId,
   });
-  const activeThreadKnownSessionsRaw = useKnownTerminalSessions({
+  const knownEnvironmentTerminalSessions = useKnownTerminalSessions({
     environmentId: activeThread?.environmentId ?? null,
-    threadId: activeThreadId,
+    threadId: null,
   });
   const activeThreadKnownSessions = (() => {
-    if (activeThreadId === null || activeThreadKnownSessionsRaw === null) {
+    if (activeThreadId === null || knownEnvironmentTerminalSessions === null) {
       return [];
     }
-    return activeThreadKnownSessionsRaw.filter(
+    return knownEnvironmentTerminalSessions.filter(
       (session) => session.target.threadId === activeThreadId,
     );
   })();
@@ -947,7 +952,7 @@ export default function ChatView(props: ChatViewProps) {
       surface.kind === "terminal" ? surface.terminalIds : [],
     ),
   );
-  const canReuseTerminal = activeThreadKnownSessionsRaw !== null;
+  const canReuseTerminal = knownEnvironmentTerminalSessions !== null;
   const previewPanelOpen = activeRightPanelKind === "preview" && browserAvailable;
   const rightPanelOpen = rightPanelState.isOpen;
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
@@ -1101,7 +1106,24 @@ export default function ChatView(props: ChatViewProps) {
     });
   };
   const handleFilePendingChangeStable = useStableCallback(handleFilePendingChange);
-  const configuredPreviewUrls = getConfiguredPreviewUrls(activeProjectScripts);
+  const previewScriptIds = activeProjectScripts
+    .filter(projectScriptReservesPort)
+    .map((script) => script.id);
+  const scriptPorts = useEnvironmentQuery(
+    activeThreadRef && activeProject && previewScriptIds.length > 0
+      ? projectEnvironment.scriptPorts({
+          environmentId: activeThreadRef.environmentId,
+          input: {
+            cwd: activeThread?.worktreePath ?? activeProject.workspaceRoot,
+            scriptIds: previewScriptIds,
+          },
+        })
+      : null,
+  );
+  const configuredPreviewUrls = getConfiguredPreviewUrls(
+    activeProjectScripts,
+    scriptPorts.data?.ports,
+  );
 
   useEffect(() => {
     if (!activeThreadRef || !activeEnvironmentBootstrapComplete) return;
@@ -1855,6 +1877,8 @@ export default function ChatView(props: ChatViewProps) {
     toggleTerminalVisibilityStable,
     shortcuts: terminalShortcuts,
   } = useChatTerminalActions({
+    routeThreadKey,
+    currentRouteThreadKeyRef,
     environmentId,
     composerRef,
     terminalUiState,

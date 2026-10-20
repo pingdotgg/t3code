@@ -12,6 +12,7 @@ import {
   AuthPreviewOperateScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
+  AuthTerminalOperateScope,
   ThreadId,
   EnvironmentId,
   ScheduledTaskId,
@@ -83,6 +84,34 @@ describe("command permissions", () => {
         registry.set(sessions(other), AsyncResult.success(grant(false)));
         expect(registry.get(close.permissionAtom(other))).toBe(false);
         expect((yield* close.authorize(registry, other).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+      }),
+    ),
+  );
+
+  it.effect("ProjectRunScript-withoutDestinationTerminalGrant-rejectsExecution", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const runScript = createCommandPermissions(runtime, WS_METHODS.projectsRunScript);
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(runScript.permissionAtom(env))).toBe(false);
+        expect((yield* runScript.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+        registry.set(
+          sessions(env),
+          AsyncResult.success({
+            ...grant(false),
+            scopes: [AuthTerminalOperateScope],
+            permissions: [AuthTerminalOperateScope],
+          }),
+        );
+        expect(registry.get(runScript.permissionAtom(env))).toBe(true);
+        yield* runScript.authorize(registry, env);
+        registry.set(sessions(other), AsyncResult.success(grant(false)));
+        expect((yield* runScript.authorize(registry, other).pipe(Effect.flip))._tag).toBe(
           "EnvironmentAuthorizationError",
         );
       }),

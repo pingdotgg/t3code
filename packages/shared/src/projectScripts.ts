@@ -64,6 +64,23 @@ export function projectScriptRuntimeEnv(
   return env;
 }
 
+export function projectScriptPreviewUrl(script: ProjectScript, port?: number): string | undefined {
+  return script.reservePort && port !== undefined
+    ? script.previewUrl?.replaceAll("${T3CODE_PREVIEW_PORT}", String(port))
+    : script.previewUrl;
+}
+
+export function projectScriptReservesPort(script: {
+  readonly reservePort?: boolean | undefined;
+  readonly previewUrl?: string | null | undefined;
+}): boolean {
+  return script.reservePort === true && Boolean(script.previewUrl?.trim());
+}
+
+export function projectScriptTerminalId(port: number): string {
+  return `script-${port}`;
+}
+
 export function setupProjectScript(scripts: readonly ProjectScript[]): ProjectScript | null {
   return scripts.find((script) => script.runOnWorktreeCreate) ?? null;
 }

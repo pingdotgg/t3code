@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { settleProjectScript, setupProjectScript } from "@t3tools/shared/projectScripts";
 
 import {
+  buildProjectScript,
   commandForProjectScript,
   nextProjectScriptId,
   primaryProjectScript,
@@ -10,6 +11,56 @@ import {
 } from "./projectScripts";
 
 describe("projectScripts helpers", () => {
+  it.each([false, true])(
+    "buildProjectScript-withPreviewUrl-persistsPortOptIn (%s)",
+    (reservePort) => {
+      expect(
+        buildProjectScript("dev", {
+          name: "Dev server",
+          command: "pnpm dev",
+          icon: "debug",
+          runOnWorktreeCreate: false,
+          waitForSetup: false,
+          runOnSettle: false,
+          previewUrl: "http://localhost:${T3CODE_PREVIEW_PORT}",
+          reservePort,
+          autoOpenPreview: true,
+        }),
+      ).toEqual({
+        id: "dev",
+        name: "Dev server",
+        command: "pnpm dev",
+        icon: "debug",
+        runOnWorktreeCreate: false,
+        previewUrl: "http://localhost:${T3CODE_PREVIEW_PORT}",
+        ...(reservePort ? { reservePort: true } : {}),
+        autoOpenPreview: true,
+      });
+    },
+  );
+
+  it("buildProjectScript-withoutPreviewUrl-omitsReservation", () => {
+    expect(
+      buildProjectScript("test", {
+        name: "Test",
+        command: "pnpm test",
+        icon: "test",
+        runOnWorktreeCreate: false,
+        waitForSetup: false,
+        runOnSettle: false,
+        previewUrl: null,
+        reservePort: true,
+        autoOpenPreview: false,
+      }),
+    ).toEqual({
+      id: "test",
+      name: "Test",
+      command: "pnpm test",
+      icon: "test",
+      runOnWorktreeCreate: false,
+    });
+  });
+
   it.each(["install-javascript-dependencies", "A", "a.b", "a b", "-a", "", "a".repeat(25)])(
     "omits the shortcut for legacy script ID %j without crashing script menus",
     (id) => {
@@ -68,6 +119,7 @@ describe("projectScripts helpers", () => {
       icon: "play",
       waitForSetup: false,
       previewUrl: null,
+      reservePort: false,
       autoOpenPreview: false,
     } as const;
     const holder = {

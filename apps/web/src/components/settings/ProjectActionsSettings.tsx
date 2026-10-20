@@ -6,6 +6,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
+import { projectScriptReservesPort } from "@t3tools/shared/projectScripts";
 import { ChevronDownIcon, PlusIcon } from "lucide-react";
 import { useState } from "react";
 import { useT3ProjectFileState } from "../../hooks/useT3ProjectFileScripts";
@@ -102,6 +103,7 @@ export function ProjectActionsSettings() {
       runOnSettle: fileScript.runOnSettle ?? false,
       keybinding: null,
       previewUrl: fileScript.previewUrl ?? null,
+      reservePort: projectScriptReservesPort(fileScript),
       autoOpenPreview: fileScript.previewUrl ? (fileScript.autoOpenPreview ?? false) : false,
     };
     const result = await submit(null, payload);

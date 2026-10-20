@@ -1,7 +1,17 @@
-import { ProjectId, type ProjectScript } from "@t3tools/contracts";
+import {
+  ProjectId,
+  ThreadId,
+  type ProjectScript,
+  type ProjectRunScriptInput,
+  type ProjectRunScriptResult,
+} from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import {
   projectScriptRuntimeEnv,
+  projectScriptCwd,
+  projectScriptReservesPort,
+  projectScriptTerminalId,
   projectScriptTerminalInput,
   resolveProjectScripts,
   settleProjectScript,
@@ -20,6 +30,7 @@ import * as Schema from "effect/Schema";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as ProjectService from "./ProjectService.ts";
+import * as ProjectScriptPorts from "./ProjectScriptPorts.ts";
 
 export interface ProjectSetupScriptRunnerResultNoScript {
   readonly status: "no-script";
@@ -33,6 +44,8 @@ export interface ProjectSetupScriptRunnerResultStarted {
   readonly terminalId: string;
   readonly cwd: string;
   readonly async: boolean;
+  readonly threadId?: string;
+  readonly port?: number;
   /**
    * The exit code is null when the terminal exited or was closed before the sentinel arrived.
    */
@@ -56,9 +69,10 @@ export interface ProjectSetupScriptRunnerInput {
   readonly threadId: string;
   readonly projectId?: string;
   readonly projectCwd?: string;
-  readonly worktreePath: string;
+  readonly worktreePath: string | null;
   readonly preferredTerminalId?: string;
   readonly trigger?: "setup" | "settle";
+  readonly scriptId?: string;
   readonly project?: {
     readonly id: ProjectId;
     readonly workspaceRoot: string;
@@ -75,8 +89,14 @@ export class ProjectSetupScriptOperationError extends Schema.TaggedError<Project
     threadId: Schema.String,
     projectId: Schema.optional(Schema.String),
     projectCwd: Schema.optional(Schema.String),
-    worktreePath: Schema.String,
-    operation: Schema.Literals(["resolveProject", "readSettings", "openTerminal", "writeCommand"]),
+    worktreePath: Schema.NullOr(Schema.String),
+    operation: Schema.Literals([
+      "resolveProject",
+      "readSettings",
+      "reservePort",
+      "openTerminal",
+      "writeCommand",
+    ]),
     cause: Schema.Defect(),
   },
 ) {
@@ -91,7 +111,7 @@ export class ProjectSetupScriptProjectNotFoundError extends Schema.TaggedError<P
     threadId: Schema.String,
     projectId: Schema.optional(Schema.String),
     projectCwd: Schema.optional(Schema.String),
-    worktreePath: Schema.String,
+    worktreePath: Schema.NullOr(Schema.String),
   },
 ) {
   override get message(): string {
@@ -111,6 +131,9 @@ export class ProjectSetupScriptRunner extends Context.Service<
     readonly runForThread: (
       input: ProjectSetupScriptRunnerInput,
     ) => Effect.Effect<ProjectSetupScriptRunnerResult, ProjectSetupScriptRunnerError>;
+    readonly runScript: (
+      input: ProjectRunScriptInput,
+    ) => Effect.Effect<ProjectRunScriptResult, ProjectSetupScriptRunnerError>;
   }
 >()("t3/project/ProjectSetupScriptRunner") {}
 
@@ -162,7 +185,7 @@ function resolveCompletionShell(
  * The command runs inside a block and the block closes on its own line, so a trailing `# comment`
  * or a heredoc terminator in the command cannot swallow the sentinel. The shell reads the whole
  * block before running any of it, so a script that reads stdin cannot consume the sentinel line
- * either.
+ * either. Completion must also survive Ctrl+C, which skips trailing commands in interactive shells.
  */
 function wrapCommandForCompletion(
   command: string,
@@ -172,11 +195,13 @@ function wrapCommandForCompletion(
   const body = command.replace(/\r?\n/g, "\r");
   switch (shell) {
     case "powershell":
-      return `$global:LASTEXITCODE = $null; & {\r${body}\r}; if ($null -ne $LASTEXITCODE) { $__t3c = $LASTEXITCODE } elseif ($?) { $__t3c = 0 } else { $__t3c = 1 }; Write-Host "${sentinel}$__t3c"`;
-    case "fish":
-      return `begin\r${body}\rend; printf '\\n${sentinel}%s\\n' $status`;
+      return `$global:LASTEXITCODE = $null; $__t3c = 130; try { & {\r${body}\r}; if ($null -ne $LASTEXITCODE) { $__t3c = $LASTEXITCODE } elseif ($?) { $__t3c = 0 } else { $__t3c = 1 } } finally { Write-Host "${sentinel}$__t3c" }`;
+    case "fish": {
+      const completionFunction = sentinel.slice(0, -1);
+      return `begin\rfunction ${completionFunction} --on-event fish_postexec\rprintf '\\n${sentinel}%s\\n' 130\rfunctions -e ${completionFunction}\rend\rbegin\r${body}\rend\rset -l __t3c $status\rfunctions -e ${completionFunction}\rprintf '\\n${sentinel}%s\\n' $__t3c\rend`;
+    }
     case "posix":
-      return `( ${body}\r); printf '\\n${sentinel}%s\\n' "$?"`;
+      return `(\rtrap 'exit 130' INT\rtrap 'printf "\\n${sentinel}%s\\n" "$?"' EXIT\r( ${body}\r)\r)`;
   }
 }
 
@@ -185,7 +210,11 @@ export const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const terminalManager = yield* TerminalManager.TerminalManager;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const scriptPorts = yield* ProjectScriptPorts.ProjectScriptPorts;
   const crypto = yield* Crypto.Crypto;
+  const scope = yield* Effect.scope;
+  const launchLocks = yield* KeyedLock.make<number>();
+  const activeRuns = new Map<number, ProjectSetupScriptRunnerResultStarted>();
   const completionShell = resolveCompletionShell(
     yield* HostProcess.Platform,
     yield* HostProcess.Environment,
@@ -266,7 +295,13 @@ export const make = Effect.gen(function* () {
             ),
           );
         }
-        if (event.type === "exited" || event.type === "closed") {
+        if (
+          event.type === "exited" ||
+          event.type === "closed" ||
+          event.type === "error" ||
+          event.type === "started" ||
+          event.type === "restarted"
+        ) {
           return settle(null).pipe(Effect.andThen(Deferred.succeed(promptReturned, undefined)));
         }
         return Effect.void;
@@ -339,114 +374,192 @@ export const make = Effect.gen(function* () {
     );
     const trigger = input.trigger ?? "setup";
     const scripts = resolveProjectScripts(settings, project);
-    const script =
-      trigger === "settle" ? settleProjectScript(scripts) : setupProjectScript(scripts);
-    if (!script) {
+    const script = input.scriptId
+      ? scripts.find((candidate) => candidate.id === input.scriptId)
+      : trigger === "settle"
+        ? settleProjectScript(scripts)
+        : setupProjectScript(scripts);
+    if (!script || (input.scriptId !== undefined && !projectScriptReservesPort(script))) {
       return {
         status: "no-script",
       } as const;
     }
 
-    // A thread settles again after it is resumed, and an earlier settle shell
-    // may still be busy; typing into it would feed its foreground program.
-    const terminalId =
-      input.preferredTerminalId ??
-      (trigger === "settle"
-        ? `settle-${script.id}-${(yield* crypto.randomUUIDv4().pipe(Effect.orDie)).slice(0, 8)}`
-        : `setup-${script.id}`);
-    const cwd = input.worktreePath;
-    const env = {
-      ...projectScriptRuntimeEnv({
-        project: { cwd: project.workspaceRoot },
-        worktreePath: input.worktreePath,
-      }),
-      // Setup can run before a client attaches. Truecolor probes in tools such
-      // as Vite+ wait for terminal replies that nobody can send at that point.
-      COLORTERM: "",
-    };
-    const observe = input.observeCompletion;
-    const completionToken = observe
-      ? (yield* crypto.randomUUIDv4().pipe(Effect.orDie)).replaceAll("-", "")
-      : null;
-    const commandLine =
-      observe && completionToken
-        ? wrapCommandForCompletion(
-            script.command,
-            completionShell,
-            completionSentinel(completionToken),
-          )
-        : script.command;
+    const cwd = projectScriptCwd({
+      project: { cwd: project.workspaceRoot },
+      worktreePath: input.worktreePath,
+    });
+    const port = projectScriptReservesPort(script)
+      ? yield* scriptPorts.reserve({ cwd, scriptId: script.id }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProjectSetupScriptOperationError({
+                ...errorContext,
+                operation: "reservePort",
+                cause,
+              }),
+          ),
+        )
+      : undefined;
+    const launch = Effect.gen(function* () {
+      const active = port === undefined ? undefined : activeRuns.get(port);
+      if (active) {
+        return input.scriptId !== undefined || active.threadId === input.threadId
+          ? active
+          : ({ status: "no-script" } as const);
+      }
 
-    yield* terminalManager
-      .open({
-        threadId: input.threadId,
+      const terminalId =
+        port !== undefined
+          ? projectScriptTerminalId(port)
+          : (input.preferredTerminalId ??
+            (trigger === "settle"
+              ? `settle-${script.id}-${(yield* crypto.randomUUIDv4().pipe(Effect.orDie)).slice(0, 8)}`
+              : `setup-${script.id}`));
+      const result = {
+        status: "started",
+        scriptId: script.id,
+        scriptName: script.name,
+        scriptCommand: script.command,
         terminalId,
         cwd,
-        worktreePath: input.worktreePath,
-        env: { ...env, NO_COLOR: "1", FORCE_COLOR: "0" },
-      })
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProjectSetupScriptOperationError({
-              ...errorContext,
-              operation: "openTerminal",
-              cause,
-            }),
-        ),
-      );
-    // Subscribe before writing so the sentinel cannot race past the listener.
-    const observed =
-      observe && completionToken
-        ? yield* observeTerminalCompletion({
+        async: script.async !== false,
+      } as const;
+      const env = {
+        ...projectScriptRuntimeEnv({
+          project: { cwd: project.workspaceRoot },
+          worktreePath: input.worktreePath,
+          ...(port === undefined ? {} : { extraEnv: { T3CODE_PREVIEW_PORT: String(port) } }),
+        }),
+        // Setup can run before a client attaches. Truecolor probes in tools such
+        // as Vite+ wait for terminal replies that nobody can send at that point.
+        ...(input.scriptId === undefined ? { COLORTERM: "", NO_COLOR: "1", FORCE_COLOR: "0" } : {}),
+      };
+      const observe = input.observeCompletion ?? (port === undefined ? undefined : {});
+      const completionToken = observe
+        ? (yield* crypto.randomUUIDv4().pipe(Effect.orDie)).replaceAll("-", "")
+        : null;
+      const commandLine =
+        observe && completionToken
+          ? wrapCommandForCompletion(
+              script.command,
+              completionShell,
+              completionSentinel(completionToken),
+            )
+          : script.command;
+
+      const opened = yield* terminalManager
+        .open({
+          threadId: input.threadId,
+          terminalId,
+          cwd,
+          worktreePath: input.worktreePath,
+          env,
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProjectSetupScriptOperationError({
+                ...errorContext,
+                operation: "openTerminal",
+                cause,
+              }),
+          ),
+        );
+      const expectedPid = opened.pid;
+      if (expectedPid === null || opened.status !== "running") {
+        return yield* new ProjectSetupScriptOperationError({
+          ...errorContext,
+          operation: "openTerminal",
+          cause: new TerminalManager.TerminalNotRunningError({
             threadId: input.threadId,
             terminalId,
-            sentinel: completionSentinel(completionToken),
-            sentinelPattern: completionSentinelPattern(completionToken),
-            echoedWrapperLines: commandLine.split("\r").filter((line) => line.length > 0),
-            onOutputLine: observe.onOutputLine,
-          })
-        : undefined;
+          }),
+        });
+      }
+      // Once written, a reserved command must retain its owner even if the caller disconnects.
+      return yield* Effect.uninterruptible(
+        Effect.gen(function* () {
+          const observed =
+            observe && completionToken
+              ? yield* observeTerminalCompletion({
+                  threadId: input.threadId,
+                  terminalId,
+                  sentinel: completionSentinel(completionToken),
+                  sentinelPattern: completionSentinelPattern(completionToken),
+                  echoedWrapperLines: commandLine.split("\r").filter((line) => line.length > 0),
+                  onOutputLine: observe.onOutputLine,
+                })
+              : undefined;
 
-    yield* terminalManager
-      .write({
-        threadId: input.threadId,
-        terminalId,
-        data: projectScriptTerminalInput(commandLine),
-      })
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProjectSetupScriptOperationError({
-              ...errorContext,
-              operation: "writeCommand",
-              cause,
-            }),
-        ),
-        Effect.tapError(() => Effect.sync(() => observed?.unsubscribe())),
+          yield* terminalManager
+            .write({
+              threadId: input.threadId,
+              terminalId,
+              expectedPid,
+              data: projectScriptTerminalInput(commandLine),
+            })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectSetupScriptOperationError({
+                    ...errorContext,
+                    operation: "writeCommand",
+                    cause,
+                  }),
+              ),
+              Effect.onError(() => Effect.sync(() => observed?.unsubscribe())),
+            );
+
+          const completion = observed?.completion.pipe(
+            Effect.tap(({ exitCode }) =>
+              exitCode === 0 && input.observeCompletion !== undefined
+                ? terminalManager.closeIdle({ threadId: input.threadId, terminalId })
+                : Effect.void,
+            ),
+          );
+
+          if (port !== undefined && completion) {
+            const done = yield* Deferred.make<ProjectSetupScriptCompletion>();
+            const started = {
+              ...result,
+              threadId: input.threadId,
+              port,
+              completion: Deferred.await(done),
+            };
+            activeRuns.set(port, started);
+            yield* Deferred.complete(
+              done,
+              completion.pipe(Effect.ensuring(Effect.sync(() => activeRuns.delete(port)))),
+            ).pipe(Effect.interruptible, Effect.forkIn(scope, { startImmediately: true }));
+            return started;
+          }
+
+          return {
+            ...result,
+            ...(completion ? { completion } : {}),
+          } as const;
+        }),
       );
-
-    const completion = observed?.completion.pipe(
-      Effect.tap(({ exitCode }) =>
-        exitCode === 0
-          ? terminalManager.closeIdle({ threadId: input.threadId, terminalId })
-          : Effect.void,
-      ),
-    );
-
-    return {
-      status: "started",
-      scriptId: script.id,
-      scriptName: script.name,
-      scriptCommand: script.command,
-      terminalId,
-      cwd,
-      async: script.async !== false,
-      ...(completion ? { completion } : {}),
-    } as const;
+    });
+    return yield* port === undefined ? launch : launchLocks.withLock(port, launch);
   });
 
-  return ProjectSetupScriptRunner.of({ runForThread });
+  const runScript: ProjectSetupScriptRunner["Service"]["runScript"] = Effect.fn(
+    "ProjectSetupScriptRunner.runScript",
+  )(function* (input) {
+    const result = yield* runForThread(input);
+    return result.status === "started" && result.port !== undefined
+      ? {
+          status: "started" as const,
+          threadId: ThreadId.make(result.threadId ?? input.threadId),
+          terminalId: result.terminalId,
+          port: result.port,
+        }
+      : { status: "no-script" as const };
+  });
+
+  return ProjectSetupScriptRunner.of({ runForThread, runScript });
 });
 
 export const layer = Layer.effect(ProjectSetupScriptRunner, make);

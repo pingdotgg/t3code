@@ -39,6 +39,7 @@ export const ProjectScript = Schema.Struct({
   runOnSettle: Schema.optional(Schema.Boolean),
   async: Schema.optional(Schema.Boolean),
   previewUrl: Schema.optional(TrimmedNonEmptyString),
+  reservePort: Schema.optional(Schema.Boolean),
   autoOpenPreview: Schema.optional(Schema.Boolean),
 });
 export type ProjectScript = typeof ProjectScript.Type;
