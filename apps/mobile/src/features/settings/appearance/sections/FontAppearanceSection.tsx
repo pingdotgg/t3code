@@ -11,11 +11,7 @@ import { SettingsSwitchRow } from "../../components/SettingsSwitchRow";
 import { FontSizeSliderRow } from "../components/FontSizeSliderRow";
 import { useAppearancePreferences } from "../AppearancePreferencesProvider";
 import { updateMobilePreferencesAtom } from "../../../../state/preferences";
-import {
-  copyImportedFonts,
-  deleteImportedFontFiles,
-  loadImportedFontFiles,
-} from "../../../../lib/mobileFontFiles";
+import { importFontFiles, deleteImportedFontFiles } from "../../../../lib/mobileFontFiles";
 import {
   BUILT_IN_FONT_OPTIONS,
   DEFAULT_FONT_SELECTIONS,
@@ -35,6 +31,30 @@ const ROLES: readonly { role: MobileFontRole; label: string }[] = [
   { role: "composer", label: "Composer font" },
   { role: "code", label: "Chat code font" },
 ];
+
+type SaveFontPreferences = (update: {
+  readonly transform: (current: Preferences) => Partial<Preferences>;
+}) => Promise<Preferences>;
+
+async function importSelectedFonts(
+  importedFonts: readonly ImportedFontFace[],
+  savePreferences: SaveFontPreferences,
+) {
+  const picked = await DocumentPicker.getDocumentAsync({
+    type: "*/*",
+    multiple: true,
+    copyToCacheDirectory: true,
+  });
+  if (picked.canceled) return;
+  await importFontFiles(picked.assets, importedFonts, async (copied) => {
+    const result = await savePreferences({
+      transform: (current) => ({
+        importedFonts: mergeImportedFonts(normalizeImportedFonts(current.importedFonts), copied),
+      }),
+    });
+    return normalizeImportedFonts(result.importedFonts);
+  });
+}
 
 export function FontAppearanceSection() {
   const {

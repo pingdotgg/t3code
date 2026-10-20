@@ -46,7 +46,8 @@ vi.mock("expo-file-system", () => ({
   },
 }));
 
-import { copyImportedFonts, loadImportedFontFiles } from "./mobileFontFiles";
+import { copyImportedFonts, importFontFiles, loadImportedFontFiles } from "./mobileFontFiles";
+import { mergeImportedFonts } from "./mobileFonts";
 
 beforeEach(() => {
   mocks.files.clear();
@@ -56,6 +57,80 @@ beforeEach(() => {
 });
 
 describe("mobile font import files", () => {
+  it("imports a new family even when an unrelated stored family is missing", async () => {
+    mocks.files.set("cache://old.ttf", fontFixture({ family: "Missing" }));
+    const current = await copyImportedFonts([{ uri: "cache://old.ttf", name: "old.ttf" }]);
+    mocks.files.delete(`document://custom-fonts/${current[0]!.file}`);
+    mocks.files.set("cache://new.ttf", fontFixture({ family: "Readable" }));
+    mocks.load.mockImplementation(async (definitions) => {
+      if (
+        definitions[0].fontDefinitions.some((face: { path: string }) => !mocks.files.has(face.path))
+      )
+        throw new Error("File missing");
+    });
+    const save = vi.fn(async (copied) => mergeImportedFonts(current, copied));
+
+    const retained = await importFontFiles(
+      [{ uri: "cache://new.ttf", name: "new.ttf" }],
+      current,
+      save,
+    );
+
+    expect(save).toHaveBeenCalledOnce();
+    expect(retained.map((face) => face.family)).toEqual(["Missing", "Readable"]);
+    expect(mocks.files.has(`document://custom-fonts/${retained[1]!.file}`)).toBe(true);
+    expect(mocks.deleted).toEqual([]);
+  });
+  it("repairs a missing face with a replacement in the same family", async () => {
+    mocks.files.set("cache://old.ttf", fontFixture({ family: "Readable" }));
+    const current = await copyImportedFonts([{ uri: "cache://old.ttf", name: "old.ttf" }]);
+    mocks.files.delete(`document://custom-fonts/${current[0]!.file}`);
+    mocks.files.set("cache://replacement.ttf", fontFixture({ family: "Readable" }));
+    mocks.load.mockImplementation(async (definitions) => {
+      if (
+        definitions[0].fontDefinitions.some((face: { path: string }) => !mocks.files.has(face.path))
+      )
+        throw new Error("File missing");
+    });
+
+    const retained = await importFontFiles(
+      [{ uri: "cache://replacement.ttf", name: "replacement.ttf" }],
+      current,
+      async (copied) => mergeImportedFonts(current, copied),
+    );
+
+    expect(retained).toHaveLength(1);
+    expect(retained[0]!.id).not.toBe(current[0]!.id);
+    expect(mocks.files.has(`document://custom-fonts/${retained[0]!.file}`)).toBe(true);
+  });
+  it("rolls back a new family that fails to load without saving it", async () => {
+    mocks.files.set("cache://new.ttf", fontFixture({ family: "Broken" }));
+    mocks.load.mockRejectedValue(new Error("Font rejected"));
+    const save = vi.fn();
+
+    await expect(
+      importFontFiles([{ uri: "cache://new.ttf", name: "new.ttf" }], [], save),
+    ).rejects.toThrow("Could not load: Broken");
+
+    expect(save).not.toHaveBeenCalled();
+    expect([...mocks.files.keys()]).toEqual(["cache://new.ttf"]);
+    expect(mocks.deleted).toHaveLength(1);
+  });
+  it("keeps existing files when saving a replacement fails", async () => {
+    mocks.files.set("cache://old.ttf", fontFixture({ family: "Readable" }));
+    const current = await copyImportedFonts([{ uri: "cache://old.ttf", name: "old.ttf" }]);
+    mocks.files.set("cache://new.ttf", fontFixture({ family: "Readable" }));
+
+    await expect(
+      importFontFiles([{ uri: "cache://new.ttf", name: "new.ttf" }], current, async () => {
+        throw new Error("Storage failed");
+      }),
+    ).rejects.toThrow("Storage failed");
+
+    expect([...mocks.files.keys()].filter((key) => key.startsWith("document://"))).toEqual([
+      `document://custom-fonts/${current[0]!.file}`,
+    ]);
+  });
   it("copies selected fonts into private storage and reads the family from the file", async () => {
     mocks.files.set(
       "cache://misleading-name.ttf",
