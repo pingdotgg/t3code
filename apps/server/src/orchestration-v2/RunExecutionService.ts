@@ -27,11 +27,13 @@ import {
 import * as Context from "effect/Context";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -600,6 +602,7 @@ export const layer: Layer.Layer<
 > = Layer.effect(
   RunExecutionServiceV2,
   Effect.gen(function* () {
+    const scope = yield* Effect.scope;
     const checkpointService = yield* CheckpointService.CheckpointServiceV2;
     const eventSink = yield* EventSink.EventSinkV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -620,6 +623,7 @@ export const layer: Layer.Layer<
         readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
         readonly openRunOwnedSubagents?: OpenRunOwnedSubagentProjection;
         readonly terminal: ProviderTerminalEvent;
+        readonly completedAt?: DateTime.Utc;
         readonly failureItemPersisted: boolean;
         readonly refreshAfterTurn: Effect.Effect<void>;
         readonly writeIfRunCurrent?: {
@@ -627,7 +631,7 @@ export const layer: Layer.Layer<
           readonly expectedStatus: OrchestrationV2Run["status"];
         };
       }) {
-        const completedAt = yield* DateTime.now;
+        const completedAt = input.completedAt ?? (yield* DateTime.now);
         const finalizedAttempt: OrchestrationV2RunAttempt | null = {
           ...input.attempt,
           status: input.terminal.status,
@@ -1424,59 +1428,71 @@ export const layer: Layer.Layer<
           Effect.catchCauseIf(
             (cause) => !Cause.hasInterruptsOnly(cause),
             (cause) =>
-              Ref.get(rootRunFinalized).pipe(
-                Effect.flatMap((finalized) =>
-                  Effect.logWarning("orchestration V2 provider event ingestion failed", {
-                    runId: input.run.id,
-                    cause,
-                  }).pipe(
-                    Effect.andThen(
-                      finalized
-                        ? Effect.void
-                        : Ref.get(latestProviderThread).pipe(
-                            Effect.flatMap((providerThread) =>
-                              Ref.get(latestTurnItemOrdinal).pipe(
-                                Effect.flatMap((latestItemOrdinal) =>
-                                  Ref.get(openRunOwnedSubagents).pipe(
-                                    Effect.flatMap((openSubagents) =>
-                                      writeFinalRunEvents({
-                                        run: input.run,
-                                        rootNode: input.rootNode,
-                                        checkpointScope: input.checkpointScope,
-                                        providerThread,
-                                        attempt: input.attempt,
-                                        writeIfRunCurrent: {
-                                          activeAttemptId: input.attempt.id,
-                                          expectedStatus: "running",
-                                        },
-                                        openRunOwnedSubagents: openSubagents,
-                                        terminal: makeFailedTerminalEvent(
-                                          makeProviderFailure({
-                                            cause: Cause.squash(cause),
-                                            class: "unknown",
-                                          }),
-                                          latestItemOrdinal + 1,
-                                        ),
-                                        failureItemPersisted: false,
-                                        refreshAfterTurn,
-                                      }),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                    ),
-                    Effect.mapError(
-                      (writeCause) =>
-                        new RunExecutionIngestError({
-                          runId: input.run.id,
-                          cause: { ingest: cause, write: writeCause },
-                        }),
-                    ),
+              Effect.gen(function* () {
+                const completedAt = yield* DateTime.now;
+                yield* Effect.logWarning("orchestration V2 provider event ingestion failed", {
+                  runId: input.run.id,
+                  cause,
+                });
+                if (yield* Ref.get(rootRunFinalized)) return;
+                const providerThread = yield* Ref.get(latestProviderThread);
+                const latestItemOrdinal = yield* Ref.get(latestTurnItemOrdinal);
+                const openSubagents = yield* Ref.get(openRunOwnedSubagents);
+                let nextRetryWarningAt = completedAt;
+                yield* writeFinalRunEvents({
+                  run: input.run,
+                  rootNode: input.rootNode,
+                  checkpointScope: input.checkpointScope,
+                  providerThread,
+                  attempt: input.attempt,
+                  writeIfRunCurrent: {
+                    activeAttemptId: input.attempt.id,
+                    expectedStatus: "running",
+                  },
+                  openRunOwnedSubagents: openSubagents,
+                  completedAt,
+                  terminal: makeFailedTerminalEvent(
+                    makeProviderFailure({ cause: Cause.squash(cause), class: "unknown" }),
+                    latestItemOrdinal + 1,
                   ),
-                ),
-              ),
+                  failureItemPersisted: false,
+                  refreshAfterTurn,
+                }).pipe(
+                  // Storage failures can be defects; retry both failure channels.
+                  Effect.catchCause((writeCause) =>
+                    Effect.gen(function* () {
+                      if (Cause.hasInterruptsOnly(writeCause)) {
+                        return yield* Effect.failCause(writeCause);
+                      }
+                      const now = yield* DateTime.now;
+                      if (DateTime.isGreaterThanOrEqualTo(now, nextRetryWarningAt)) {
+                        yield* Effect.logWarning(
+                          "orchestration V2 run failure finalization retry",
+                          {
+                            runId: input.run.id,
+                            attemptId: input.attempt.id,
+                            cause: writeCause,
+                          },
+                        );
+                        // Persistent storage failures must not flood the same disk.
+                        nextRetryWarningAt = DateTime.add(now, { minutes: 10 });
+                      }
+                      return yield* Effect.fail(writeCause);
+                    }),
+                  ),
+                  Effect.retry({
+                    schedule: Schedule.exponential("1 second").pipe(
+                      Schedule.modifyDelay(({ duration }) =>
+                        Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+                      ),
+                    ),
+                  }),
+                  // Startup may cancel the consumer and fail its own terminal
+                  // write. Only service shutdown or the atomic gate ends recovery.
+                  Effect.forkIn(scope),
+                  Effect.flatMap(Fiber.join),
+                );
+              }),
           ),
           Effect.ensuring(eventSubscription.close),
           Effect.forkDetach,

@@ -26,6 +26,7 @@ const MAX_EVALUATION_BYTES = 64_000;
 const MAX_VISIBLE_TEXT_LENGTH = 20_000;
 const MAX_SCREENSHOT_WIDTH = 1280;
 const WAIT_POLL_MS = 100;
+const RESIZED_FRAME_MS = 2_000;
 export const DIAGNOSTIC_BUFFER_LIMIT = 200;
 
 export class ServerBrowserOperationError extends Error {
@@ -484,6 +485,36 @@ const renderingOf = async (input: SnapshotInput) => {
   };
 };
 
+// A desktop window reports a resize before its compositor draws a frame at the new size, so an
+// unclipped capture can still return the old frame. Bounded: a frame that never matches is kept.
+// Headless pages are sized by the server, which awaits each resize.
+const captureResized = async (
+  input: SnapshotInput,
+  options: {
+    readonly scale: number;
+    readonly viewport: Viewport;
+    readonly offset: { readonly x: number; readonly y: number } | undefined;
+    readonly renderScale: number;
+  },
+  deadline: number,
+) => {
+  if (input.renderScale !== "display")
+    return captureViewport(input.page, input.cdp, { format: "png", ...options });
+  const expected = {
+    width: options.viewport.width * options.renderScale * options.scale,
+    height: options.viewport.height * options.renderScale * options.scale,
+  };
+  const giveUpAt = Math.min(Date.now() + RESIZED_FRAME_MS, deadline - 2_000);
+  for (;;) {
+    const data = await captureViewport(input.page, input.cdp, { format: "png", ...options });
+    const size = pngSize(data);
+    const matches =
+      Math.abs(size.width - expected.width) <= 1 && Math.abs(size.height - expected.height) <= 1;
+    if (matches || Date.now() + WAIT_POLL_MS >= giveUpAt) return data;
+    await new Promise((resolve) => setTimeout(resolve, WAIT_POLL_MS));
+  }
+};
+
 const capture = async (
   input: SnapshotInput,
   deadline: number,
@@ -506,7 +537,7 @@ const capture = async (
         "url" | "title" | "loading" | "visibleText" | "interactiveElements"
       >
     >,
-    captureViewport(input.page, input.cdp, { format: "png", scale, viewport, offset }),
+    captureResized(input, { scale, viewport, offset, renderScale }, deadline),
   ]);
   void pageAndScreenshot.catch(constVoid);
   // Leaves time for the second read; a frame that never loads holds the tree until then.

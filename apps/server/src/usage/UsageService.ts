@@ -195,6 +195,11 @@ export const make = Effect.gen(function* () {
   const readerContext = yield* Effect.context<BuiltInUsageReadersEnv>();
 
   const fileCache: ScanCache = new Map();
+  // Reads from concurrent windows can still hold the original record after it is corrected.
+  const resolvedRecords = new WeakMap<UsageRecord, UsageRecord>();
+  const correctedRecord = (record: UsageRecord) => resolvedRecords.get(record) ?? record;
+  const correctedBatch = (records: readonly UsageRecord[]) =>
+    records.some((record) => resolvedRecords.has(record)) ? records.map(correctedRecord) : records;
   const sourceCache = new Map<string, typeof CachedSource.Type>();
   let cacheDirty = false;
   const isWithinDirectory = (filePath: string, dir: string) => {
@@ -498,6 +503,33 @@ export const make = Effect.gen(function* () {
         failed: true,
       };
 
+    if (parsed.resumed && cached !== undefined && cached.tailRecords.length > 0) {
+      // Completing a tentative line reparses it. Reuse its saved correction only when the
+      // same usage is emitted again, without putting inferred tiers in the parser state.
+      const reparsed = [...parsed.records, ...parsed.tailRecords];
+      const identity = (record: UsageRecord) =>
+        encodeUsageRecordKey([
+          record.provider,
+          record.sessionId,
+          record.timestampMs,
+          record.model,
+          record.rateModel,
+          record.totals,
+          record.reportedCostUsd,
+          record.dedupeKey,
+        ]);
+      for (const [index, previous] of cached.tailRecords.entries()) {
+        const record = reparsed[index];
+        const corrected = correctedRecord(previous);
+        if (
+          record?.unresolvedServiceTierTurnId !== undefined &&
+          corrected.unresolvedServiceTierTurnId === undefined &&
+          identity(record) === identity(corrected)
+        ) {
+          resolvedRecords.set(record, corrected);
+        }
+      }
+    }
     const base = parsed.resumed && cached !== undefined ? cached.records : [];
     const seen = new Set<string>();
     const records = dedupeWithinFile([...base, ...parsed.records], seen);
@@ -568,9 +600,13 @@ export const make = Effect.gen(function* () {
       if (
         current === update.replaces ||
         current === undefined ||
-        !isLaterRead(current, update.entry)
+        isLaterRead(update.entry, current)
       ) {
-        fileCache.set(path, update.entry);
+        fileCache.set(path, {
+          ...update.entry,
+          records: correctedBatch(update.entry.records),
+          tailRecords: correctedBatch(update.entry.tailRecords),
+        });
         cacheDirty = true;
       }
       return { path, records, malformedRecords };
@@ -735,6 +771,49 @@ export const make = Effect.gen(function* () {
       }
       return retainedFiles;
     });
+    const windowEndMs =
+      hourlyWindow?.untilTimeMs ??
+      Date.parse(`${input.untilDay}T00:00:00Z`) + 86400000 + MTIME_SLACK_MS;
+    let resolvedAny = false;
+    for (const { reader } of transcriptReaders) {
+      if (reader.resolveServiceTiers === undefined) continue;
+      const pending = new Set<UsageRecord>();
+      for (const [index, files] of filesByDir.entries()) {
+        if (scannedDirs[index]?.provider !== reader.provider) continue;
+        for (const file of files) {
+          for (const raw of file.records) {
+            const record = correctedRecord(raw);
+            if (
+              record.provider === reader.provider &&
+              record.unresolvedServiceTierTurnId !== undefined &&
+              record.timestampMs >= windowStartMs &&
+              record.timestampMs < windowEndMs
+            ) {
+              pending.add(record);
+            }
+          }
+        }
+      }
+      if (pending.size === 0) continue;
+      const resolved = yield* reader
+        .resolveServiceTiers([...pending])
+        .pipe(Effect.provideContext(readerContext));
+      for (const [record, speed] of resolved) {
+        const { unresolvedServiceTierTurnId: _turnId, ...rest } = record;
+        resolvedRecords.set(record, { ...rest, speed });
+        resolvedAny = true;
+      }
+    }
+    if (resolvedAny) {
+      for (const [filePath, entry] of fileCache) {
+        const records = correctedBatch(entry.records);
+        const tailRecords = correctedBatch(entry.tailRecords);
+        if (records === entry.records && tailRecords === entry.tailRecords) continue;
+        // Update the current entry by identity; a slow resolver cannot restore an older file.
+        fileCache.set(filePath, { ...entry, records, tailRecords });
+        cacheDirty = true;
+      }
+    }
     const crossFileSessions = sharedSessions(filesByDir.flat());
 
     for (const [
@@ -756,7 +835,8 @@ export const make = Effect.gen(function* () {
         }
         scannedFiles += 1;
         const eventOccurrences = new Map<string, number>();
-        for (const record of file.records) {
+        for (const rawRecord of file.records) {
+          const record = correctedRecord(rawRecord);
           let usageRecord = record;
           if (
             sharedSessionProviders.has(record.provider) &&

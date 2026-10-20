@@ -251,6 +251,75 @@ describe("parseCodexLine", () => {
     expect(speedAfter(settings({ model: "gpt-6-astra" }), 4)).toBe("standard");
   });
 
+  it("retains initial tier evidence only for the own OpenAI session and exact context until native settings arrive", () => {
+    const meta = (id: string, model_provider?: string) =>
+      JSON.stringify({ type: "session_meta", payload: { id, model_provider } });
+    const context = (turn_id?: string, model?: string) =>
+      JSON.stringify({ type: "turn_context", payload: { turn_id, model } });
+    for (const provider of ["openai", "t3", "custom", undefined]) {
+      const state = initialCodexScanState();
+      parseCodexLine(meta("own-session", provider), state);
+      parseCodexLine(meta("ancestor", provider === "openai" ? "custom" : "openai"), state);
+      parseCodexLine(context("first-turn", "gpt-6-astra"), state);
+      const first = parseCodexLine(tokenCount(100, 0, 1, 0), state);
+      expect(first).toMatchObject({
+        sessionId: "own-session",
+        model: "gpt-6-astra",
+        speed: "standard",
+      });
+      if (provider === "openai") {
+        expect(first).toHaveProperty("unresolvedServiceTierTurnId", "first-turn");
+      } else {
+        expect(first).not.toHaveProperty("unresolvedServiceTierTurnId");
+      }
+
+      parseCodexLine(context(undefined, "gpt-6-astra"), state);
+      expect(parseCodexLine(tokenCount(100, 0, 2, 0), state)).not.toHaveProperty(
+        "unresolvedServiceTierTurnId",
+      );
+      parseCodexLine(context("missing-model"), state);
+      expect(parseCodexLine(tokenCount(100, 0, 3, 0), state)).not.toHaveProperty(
+        "unresolvedServiceTierTurnId",
+      );
+      parseCodexLine(context("next-turn", "gpt-6-astra"), state);
+      const next = parseCodexLine(tokenCount(100, 0, 4, 0), state);
+      if (provider === "openai") {
+        expect(next).toHaveProperty("unresolvedServiceTierTurnId", "next-turn");
+      } else {
+        expect(next).not.toHaveProperty("unresolvedServiceTierTurnId");
+      }
+    }
+
+    for (const service_tier of ["standard", "", undefined, "priority", "ultrafast"]) {
+      const state = initialCodexScanState();
+      parseCodexLine(meta("own-session", "openai"), state);
+      parseCodexLine(context("first-turn", "gpt-6-astra"), state);
+      expect(parseCodexLine(tokenCount(100, 0, 1, 0), state)).toHaveProperty(
+        "unresolvedServiceTierTurnId",
+        "first-turn",
+      );
+      parseCodexLine(
+        JSON.stringify({
+          type: "event_msg",
+          payload: { type: "thread_settings_applied", thread_settings: { service_tier } },
+        }),
+        state,
+      );
+      for (const output of [2, 3]) {
+        parseCodexLine(context(`native-turn-${output}`, "gpt-6-astra"), state);
+        const record = parseCodexLine(tokenCount(100, 0, output, 0), state);
+        expect(record?.speed).toBe(
+          service_tier === "priority"
+            ? "fast"
+            : service_tier === "ultrafast"
+              ? "ultrafast"
+              : "standard",
+        );
+        expect(record).not.toHaveProperty("unresolvedServiceTierTurnId");
+      }
+    }
+  });
+
   // A forked/subagent rollout opens with the parent's history copied in and
   // every line re-stamped to the fork instant, then the ancestors' session
   // metas. Counting those again multiplied usage ~1.85x on real data (#5758).

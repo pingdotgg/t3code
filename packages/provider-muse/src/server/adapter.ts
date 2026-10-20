@@ -229,6 +229,7 @@ interface PendingRequest {
   node: OrchestrationV2ExecutionNode;
   item: OrchestrationV2TurnItem;
   response?: Pick<OrchestrationV2RuntimeRequest, "decision" | "answers">;
+  shown: boolean;
 }
 
 /**
@@ -1078,6 +1079,18 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           choiceId: choice.choiceId,
         }).pipe(Effect.tapError(() => Effect.sync(() => delete entry.response)));
       });
+      const showRequest = Effect.fnUntraced(function* (entry: PendingRequest) {
+        entry.shown = true;
+        yield* emit({
+          type: "runtime_request.updated",
+          driver: MUSE_PROVIDER,
+          threadId: entry.node.threadId,
+          runtimeRequest: entry.request,
+        });
+        yield* emit({ type: "node.updated", driver: MUSE_PROVIDER, node: entry.node });
+        yield* emit({ type: "turn_item.updated", driver: MUSE_PROVIDER, turnItem: entry.item });
+        yield* updateSession("waiting");
+      });
       /**
        * A workflow child's approval is runless: the turn that started the workflow
        * may end long before the child asks, and T3 keeps a runless request on the
@@ -1208,21 +1221,28 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                   required: true,
                 })),
               };
-        const entry: PendingRequest = { native, request: runtimeRequest, node, item };
+        // Muse does not propagate allowAll to workflow children; T3 answers for them.
+        const autoApprove = child && input.runtimePolicy.runtimeMode === "full-access";
+        const entry: PendingRequest = {
+          native,
+          request: runtimeRequest,
+          node,
+          item,
+          shown: !autoApprove || previous?.shown === true,
+        };
         pending.set(requestId, entry);
-        yield* emit({
-          type: "runtime_request.updated",
-          driver: MUSE_PROVIDER,
-          threadId,
-          runtimeRequest,
-        });
-        yield* emit({ type: "node.updated", driver: MUSE_PROVIDER, node });
-        yield* emit({ type: "turn_item.updated", driver: MUSE_PROVIDER, turnItem: item });
-        yield* updateSession("waiting");
-        // Muse does not give workflow children the session's allowAll mode, so in full
-        // access T3 approves for them. If Muse rejects that, the request waits for the user.
-        if (child && input.runtimePolicy.runtimeMode === "full-access")
-          yield* decideApproval(entry, "accept").pipe(Effect.ignore, Effect.forkIn(scope));
+        if (entry.shown) yield* showRequest(entry);
+        if (autoApprove)
+          yield* decideApproval(entry, "accept").pipe(
+            Effect.catch(() =>
+              Effect.gen(function* () {
+                // Native updates may settle or replace this entry while the RPC is in flight.
+                if (!closed && !broken && pending.get(requestId) === entry)
+                  yield* showRequest(entry);
+              }).pipe(eventPermit.withPermits(1)),
+            ),
+            Effect.forkIn(scope),
+          );
       });
       const handleRequestEvent = Effect.fnUntraced(function* (
         method: string,
@@ -1268,7 +1288,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               if (!entry.response && native) entry.response = { decision: native };
               yield* resolvePending(entry, "resolved");
             }
-            if (!pending.size) yield* updateSession(active ? "running" : "ready");
+            if (![...pending.values()].some((candidate) => candidate.shown))
+              yield* updateSession(active ? "running" : "ready");
           }
         }
       });
@@ -2097,7 +2118,9 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                 ]
               : [],
           ),
-          runtimeRequests: [...pending.values()].map((entry) => entry.request),
+          runtimeRequests: [...pending.values()]
+            .filter((entry) => entry.shown)
+            .map((entry) => entry.request),
           providerPayload: items,
         };
       });

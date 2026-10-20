@@ -97,6 +97,7 @@ export function ComposerEditor({
         retained.attachments.length,
         controller.signal,
         retained.context?.records.length ?? 0,
+        environmentId,
       );
       if (!result) {
         insertComposerDraftText(draftKey, clipboard.text, insertion);
@@ -109,10 +110,19 @@ export function ComposerEditor({
         );
         return;
       }
+      const warnings: string[] = [];
       if (result.failures.length > 0)
+        warnings.push(
+          "Some attachments could not be copied. Reconnect to the source environment and copy them again.",
+        );
+      if (result.skippedThreads.length > 0)
+        warnings.push(
+          `${result.skippedThreads.map((title) => `"${title}"`).join(", ")} ${result.skippedThreads.length === 1 ? "is" : "are"} on another machine.`,
+        );
+      if (warnings.length > 0)
         Dialog.alert(
-          "Some attachments could not be copied",
-          "Reconnect to the source environment and copy them again. References without their files are marked unavailable.",
+          "Some context is unavailable",
+          [...warnings, "Those references are marked unavailable."].join("\n\n"),
         );
     });
     setComposerContextImporting(draftKey, false);

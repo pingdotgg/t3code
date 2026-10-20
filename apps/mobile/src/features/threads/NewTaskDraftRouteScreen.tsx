@@ -12,6 +12,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useWorkspaceState } from "../../state/workspace";
 import { vcsEnvironment } from "../../state/vcs";
 import { checkoutNewTaskBranch } from "./checkout-new-task-branch";
+import { resolveNewTaskBranchWorktreePath } from "./new-task-context-presentation";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 
 import { NewTaskDraftScreen } from "./NewTaskDraftScreen";
@@ -37,6 +38,7 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
   const projects = useProjects();
   const { state: catalogState } = useWorkspaceState();
   const navigation = useNavigation();
+  const readRefs = useAtomCommand(vcsEnvironment.readRefs, { reportFailure: false });
   const switchRef = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
 
   const initialProjectRef = useMemo(
@@ -87,8 +89,6 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
         return;
       }
       const result = await checkoutNewTaskBranch({
-        // A thread's branch is historical; only switchRef can establish that
-        // the shared project checkout now matches it.
         branch: {
           name: branchName,
           current: false,
@@ -97,6 +97,7 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
         },
         project: environmentId && workspaceRoot ? { environmentId, workspaceRoot } : null,
         workspaceMode: "local",
+        readRefs,
         switchRef,
       });
       setPendingCheckouts((count) => count - 1);
@@ -110,6 +111,7 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
     workspaceRoot,
     initialProjectRef,
     needsPreparation,
+    readRefs,
     switchRef,
     waitingForProject,
   ]);
@@ -136,10 +138,18 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
 
   const preparedProjectRef = useMemo(
     () =>
-      result?._tag === "Success"
-        ? { ...initialProjectRef, branch: result.value.name }
+      result?._tag === "Success" && workspaceRoot
+        ? {
+            ...initialProjectRef,
+            branch: result.value.name,
+            worktreePath: resolveNewTaskBranchWorktreePath({
+              workspaceMode: "local",
+              projectCwd: workspaceRoot,
+              branchWorktreePath: result.value.worktreePath,
+            }),
+          }
         : initialProjectRef,
-    [initialProjectRef, result],
+    [initialProjectRef, result, workspaceRoot],
   );
   const preparingBranch = checkoutPending || (needsPreparation && result?._tag !== "Success");
 

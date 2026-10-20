@@ -1,7 +1,23 @@
 import { ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { fileChipMenu, fileChipShareSource, resolveFileChipTarget } from "./fileChipMenu";
+import {
+  fileChipClipboardPath,
+  fileChipMenu,
+  fileChipShareSource,
+  resolveFileChipTarget,
+} from "./fileChipMenu";
+
+it("copies native paths from a relative file chip in a Windows workspace", () => {
+  const target = resolveFileChipTarget("reports/Device Users.csv", "C:/repo");
+  if (!target) throw new Error("File-chip target unavailable");
+  expect(fileChipClipboardPath(target, "copy-full-path")).toBe(
+    String.raw`C:\repo\reports\Device Users.csv`,
+  );
+  expect(fileChipClipboardPath(target, "copy-relative-path")).toBe(
+    String.raw`reports\Device Users.csv`,
+  );
+});
 
 describe("resolveFileChipTarget", () => {
   it("resolves a workspace-relative link to both paths", () => {

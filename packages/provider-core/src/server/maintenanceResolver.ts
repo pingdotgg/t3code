@@ -589,8 +589,8 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
 
 /**
  * `brew upgrade` capabilities once the keg's prefix is confirmed by a `brew`
- * that reports it as its own, with `latestVersion` from `brew info`. Null when
- * no `brew` is found or it owns another prefix.
+ * that reports it as its own. Version checks defer `brew info` until needed.
+ * Null when no `brew` is found or it owns another prefix.
  */
 export const resolveHomebrewProviderMaintenance = Effect.fn("resolveHomebrewProviderMaintenance")(
   function* (
@@ -621,9 +621,7 @@ export const resolveHomebrewProviderMaintenance = Effect.fn("resolveHomebrewProv
     }
     const args =
       homebrew.kind === "cask" ? ["upgrade", "--cask", homebrew.name] : ["upgrade", homebrew.name];
-    // Homebrew lags npm by hours on every release, so compare against what
-    // `brew upgrade` can actually deliver.
-    const info = yield* runProbe(brewPath, ["info", "--json=v2", homebrew.name], context.env);
+    const services = yield* Effect.context<ProviderMaintenanceResolverServices>();
     return makeProviderMaintenanceCapabilities({
       provider: input.provider,
       packageName: input.packageName,
@@ -631,7 +629,16 @@ export const resolveHomebrewProviderMaintenance = Effect.fn("resolveHomebrewProv
       updateArgs: args,
       updateLockKey: "homebrew",
       updateCommand: ["brew", ...args].join(" "),
-      latestVersion: info ? parseHomebrewLatestVersion(info, homebrew) : null,
+      // Brew's release can lag npm; only its own channel can say what upgrade installs.
+      latestVersion: null,
+      lookupLatestVersion: runProbe(
+        brewPath,
+        ["info", "--json=v2", homebrew.name],
+        context.env,
+      ).pipe(
+        Effect.map((info) => (info ? parseHomebrewLatestVersion(info, homebrew) : null)),
+        Effect.provideContext(services),
+      ),
     });
   },
 );
@@ -865,8 +872,9 @@ const fetchNpmLatestVersion = Effect.fn("fetchNpmLatestVersion")(function* (pack
 
 /** The installer's own answer is cached apart from the npm registry entry. */
 function installerLatestVersionKey(capabilities: ProviderMaintenanceCapabilities) {
-  return capabilities.lookupLatestVersion && capabilities.update && capabilities.packageName
-    ? `${capabilities.update.lockKey}:${capabilities.packageName}`
+  const update = capabilities.update;
+  return capabilities.lookupLatestVersion && update
+    ? [update.lockKey, update.executable, ...update.args].join("\0")
     : null;
 }
 
@@ -881,14 +889,6 @@ export function latestProviderVersionCacheKeys(
 export const resolveLatestProviderVersion = Effect.fn("resolveLatestProviderVersion")(function* (
   maintenanceCapabilities: ProviderMaintenanceCapabilities,
 ) {
-  if (maintenanceCapabilities.latestVersion !== undefined) {
-    return maintenanceCapabilities.latestVersion;
-  }
-  const packageName = maintenanceCapabilities.packageName;
-  if (!packageName) {
-    return null;
-  }
-
   const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
   const installerKey = installerLatestVersionKey(maintenanceCapabilities);
   if (installerKey && maintenanceCapabilities.lookupLatestVersion) {
@@ -898,8 +898,27 @@ export const resolveLatestProviderVersion = Effect.fn("resolveLatestProviderVers
     );
     if (installable !== null) return installable;
   }
+  if (maintenanceCapabilities.latestVersion !== undefined) {
+    return maintenanceCapabilities.latestVersion;
+  }
+  const packageName = maintenanceCapabilities.packageName;
+  if (!packageName) {
+    return null;
+  }
+
   return yield* latestVersions.cached(packageName, fetchNpmLatestVersion(packageName));
 });
+
+export const invalidateLatestProviderVersion = Effect.fn("invalidateLatestProviderVersion")(
+  function* (maintenanceCapabilities: ProviderMaintenanceCapabilities) {
+    const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
+    yield* Effect.forEach(
+      latestProviderVersionCacheKeys(maintenanceCapabilities),
+      latestVersions.invalidate,
+      { discard: true },
+    );
+  },
+);
 
 export const enrichProviderSnapshotWithVersionAdvisory = Effect.fn(
   "enrichProviderSnapshotWithVersionAdvisory",

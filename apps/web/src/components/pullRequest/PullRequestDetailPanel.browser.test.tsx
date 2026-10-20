@@ -15,6 +15,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
+import { selectActiveRightPanelSurface, useRightPanelStore } from "~/rightPanelStore";
+import { RightPanelSurfaceContent } from "../chat/RightPanelSurfaceContent";
 
 import "~/index.css";
 
@@ -90,7 +92,14 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
 vi.mock(import("~/state/query"), async (original) => ({
   ...(await original()),
   useEnvironmentQuery: ((query: unknown) => ({
-    data: query === "detail" ? currentDetail : query === queries.diff ? diff : null,
+    data:
+      query === "detail"
+        ? (activityDetail ?? currentDetail)
+        : query === "activity"
+          ? activityDetail
+          : query === queries.diff
+            ? diff
+            : null,
     dataUpdatedAt: 0,
     failure: null,
     isPending: false,
@@ -109,33 +118,41 @@ vi.mock(import("~/state/usePullRequestStack"), async (original) => ({
     refresh,
   })) as never,
 }));
-// The summary stand-in exposes its panel actions and nested scrolling.
-vi.mock(import("./PullRequestSummaryTab"), async (original) => ({
-  ...(await original()),
-  PullRequestSummaryTab: (({
-    onFixFinding,
-    scrollerRef,
-  }: ComponentProps<typeof import("./PullRequestSummaryTab").PullRequestSummaryTab>) => (
-    <div ref={scrollerRef} data-testid="summary-scroller" className="h-full overflow-y-auto">
-      <button
-        type="button"
-        onClick={() =>
-          onFixFinding?.({
-            kind: "check",
-            check: { name: "Unit tests", status: "failure", description: "Test failed", url: null },
-          })
-        }
-      >
-        Fix check
-      </button>
-      <div data-testid="nested-scroller" className="h-40 overflow-y-auto">
-        <div className="h-[2000px]" />
-      </div>
-      <div className="h-[3000px]" />
-    </div>
-  )) as never,
-}));
-
+// Action and scroll tests use stand-ins; activity tests render the real Summary.
+vi.mock(import("./PullRequestSummaryTab"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    PullRequestSummaryTab: ((props: ComponentProps<typeof actual.PullRequestSummaryTab>) => {
+      if (activityDetail !== null) return <actual.PullRequestSummaryTab {...props} />;
+      const { onFixFinding, scrollerRef } = props;
+      return (
+        <div ref={scrollerRef} data-testid="summary-scroller" className="h-full overflow-y-auto">
+          <button
+            type="button"
+            onClick={() =>
+              onFixFinding?.({
+                kind: "check",
+                check: {
+                  name: "Unit tests",
+                  status: "failure",
+                  description: "Test failed",
+                  url: null,
+                },
+              })
+            }
+          >
+            Fix check
+          </button>
+          <div data-testid="nested-scroller" className="h-40 overflow-y-auto">
+            <div className="h-[2000px]" />
+          </div>
+          <div className="h-[3000px]" />
+        </div>
+      );
+    }) as never,
+  };
+});
 vi.mock(import("../ui/toast"), async (original) => {
   const actual = await original();
   return {
@@ -201,6 +218,7 @@ const detail: PullRequestDetailView = {
 };
 
 let currentDetail = detail;
+let activityDetail: PullRequestDetailView | null = null;
 
 // Enough lines to exercise the panel's title folding with the real virtualized Code tab.
 const diff = {
@@ -256,9 +274,11 @@ function render(props: Partial<ComponentProps<typeof PullRequestDetailPanel>> = 
 }
 
 beforeEach(() => {
+  activityDetail = null;
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   currentDetail = detail;
   useComposerDraftStore.setState({ draftsByThreadKey: {} });
+  useRightPanelStore.setState({ byThreadKey: {} });
   usePullRequestReviewStore.setState({ drafts: {}, summaries: {} });
   hostCommand.mockReset();
   newThread
@@ -542,6 +562,94 @@ it("folds the title only for the active tab's own scroller", async () => {
   await vi.waitFor(() => expect(titleFold()).toBe(true));
 });
 
+it("restores the selected PR tab when switching threads and remounting the right panel", async () => {
+  const otherThread = { ...threadRef, threadId: ThreadId.make("thread-2") };
+  useRightPanelStore.getState().openPullRequest(threadRef, surface);
+  useRightPanelStore.getState().openPullRequest(otherThread, surface);
+  const codeTab = () => page.getByRole("button", { name: "Expand all files", exact: true });
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  document.body.append(container);
+  const root = createRoot(container);
+  roots.push(root);
+  const show = (ref: ScopedThreadRef) => {
+    const selected = selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, ref);
+    return act(async () => {
+      root.render(
+        <RightPanelSurfaceContent
+          surface={selected}
+          activeSurfaceId={selected?.id ?? null}
+          threadRef={ref}
+          environmentId={ref.environmentId}
+          visible
+          composerDraftTarget={ref}
+          keybindings={[]}
+          configuredPreviewUrls={[]}
+          workspaceMutationId={null}
+          getShortcutContext={shortcutContext}
+          onSendAnnotation={() => {}}
+          onCloseSurface={() => {}}
+          terminal={{
+            launchContext: null,
+            focusRequestId: 0,
+            keybindings: [],
+            onAddTerminalContext: () => {},
+            onSplitTerminal: () => {},
+            onSplitTerminalVertical: () => {},
+            onNewTerminal: () => {},
+            onActiveTerminalChange: () => {},
+            onCloseTerminal: () => {},
+          }}
+          pullRequest={{
+            capabilityKnown: true,
+            supported: true,
+            projectId: detail.projectId,
+            pullRequests: [],
+            linkedPullRequest: null,
+            branchPullRequest: null,
+            onBack: undefined,
+          }}
+          files={{
+            projectName: null,
+            workspaceRoot: undefined,
+            availableEditors: [],
+            pendingSurfaceIds: new Set(),
+            onOpenFile: () => {},
+            onPendingChange: () => {},
+          }}
+        />,
+      );
+    });
+  };
+
+  await show(threadRef);
+  await expect.element(page.getByTestId("summary-scroller")).toBeVisible();
+  await tab("Code").click();
+  await expect.element(codeTab()).toBeVisible();
+  await show(otherThread);
+  await expect.element(page.getByTestId("summary-scroller")).toBeVisible();
+  await show(threadRef);
+  await expect.element(codeTab()).toBeVisible();
+
+  useRightPanelStore
+    .getState()
+    .openPullRequest(threadRef, { ...surface, projectId: "other-project" });
+  await show(threadRef);
+  await expect.element(page.getByTestId("summary-scroller")).toBeVisible();
+  useRightPanelStore.getState().openPullRequest(threadRef, surface);
+  await show(threadRef);
+  await expect.element(codeTab()).toBeVisible();
+
+  await act(async () => root.render(null));
+  useRightPanelStore.getState().openPullRequest(threadRef, { ...surface, url: detail.url });
+  await show(threadRef);
+  await expect.element(codeTab()).toBeVisible();
+  await tab("Summary").click();
+  await show(otherThread);
+  await show(threadRef);
+  await expect.element(page.getByTestId("summary-scroller")).toBeVisible();
+});
+
 it("stays collapsed at the bottom after native scroll clamping and reopens at the top", async () => {
   await render();
   const title = page.getByRole("heading", { level: 1, name: "Test pull request" });
@@ -606,4 +714,108 @@ it("shows the current checkout recovery detail on the first failure and on retry
     expect.stringContaining(first.detail),
     second.detail,
   ]);
+});
+
+it("keeps discussion counts and Timeline expansion in sync with activity refreshes", async () => {
+  activityDetail = {
+    ...detail,
+    provider: SourceControlProviderKind.make("gitlab"),
+    url: "https://gitlab.com/owner/repo/-/merge_requests/1",
+    comments: [],
+    commentCount: 0,
+    commentsTruncated: true,
+    reviewThreads: [
+      {
+        id: "discussion-1",
+        path: "src/index.ts",
+        line: 1,
+        side: "right",
+        isResolved: false,
+        isOutdated: false,
+        comments: [
+          {
+            id: "note-1",
+            author: detail.author,
+            body: "Discussion finding",
+            createdAt: "2026-09-01T00:01:00Z",
+            url: "https://gitlab.com/owner/repo/-/merge_requests/1#note_1",
+          },
+          {
+            id: "note-2",
+            author: detail.author,
+            body: "Discussion reply",
+            createdAt: "2026-09-01T00:02:00Z",
+            url: "https://gitlab.com/owner/repo/-/merge_requests/1#note_2",
+          },
+        ],
+      },
+    ],
+  };
+  await render({ reference: activityDetail });
+  await expect.element(page.getByText("Discussion finding", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Discussion reply", { exact: true })).toBeVisible();
+  expect
+    .soft(page.getByRole("button", { name: /^Comments \(/ }).element().textContent)
+    .toBe("Comments (2)");
+  const warning = page.getByText(/open it on the host to read the rest/).element().textContent;
+  expect.soft(warning).toMatch(/\b2\b/);
+  expect.soft(warning).not.toMatch(/most recent/i);
+
+  await tab("Timeline").click();
+  await expect.element(page.getByText("Discussion finding", { exact: true }).last()).toBeVisible();
+  await expect.element(page.getByText("Discussion reply", { exact: true }).last()).toBeVisible();
+  expect.soft(page.getByLabelText(/^[0-9]+ comments?$/).element().textContent).toBe("2");
+
+  const threadToggle = page.getByRole("button", { name: /^src\/index\.ts:1/ });
+  const expectThread = (expanded: boolean, status: string | null) => {
+    const toggle = threadToggle.element();
+    if (status) expect(toggle.textContent).toContain(status);
+    else expect(toggle.textContent).not.toMatch(/Resolved|Review dismissed/);
+    const visibleBody = (toggle.parentElement as HTMLElement).innerText;
+    expect({
+      expanded: toggle.getAttribute("aria-expanded"),
+      findingVisible: visibleBody.includes("Discussion finding"),
+      replyVisible: visibleBody.includes("Discussion reply"),
+    }).toEqual({
+      expanded: String(expanded),
+      findingVisible: expanded,
+      replyVisible: expanded,
+    });
+  };
+  const refreshActivity = async (isResolved: boolean, reviewState: string | null = null) => {
+    await tab("Code").click();
+    await expect
+      .element(page.getByRole("button", { name: "Expand all files", exact: true }))
+      .toBeVisible();
+    const current = activityDetail!;
+    activityDetail = {
+      ...current,
+      comments: current.reviewThreads.flatMap((thread) =>
+        thread.comments.map((comment) => ({
+          ...comment,
+          kind: "review-comment" as const,
+          path: thread.path,
+          reviewState,
+        })),
+      ),
+      reviewThreads: current.reviewThreads.map((thread) => ({ ...thread, isResolved })),
+    };
+    await tab("Timeline").click();
+  };
+
+  expectThread(true, null);
+  await refreshActivity(true);
+  expectThread(false, "Resolved");
+  await threadToggle.click();
+  expectThread(true, "Resolved");
+  await refreshActivity(true);
+  expectThread(true, "Resolved");
+  await threadToggle.click();
+  expectThread(false, "Resolved");
+  await refreshActivity(false);
+  expectThread(true, null);
+  await refreshActivity(false, "DISMISSED");
+  expectThread(false, "Review dismissed");
+  await refreshActivity(false);
+  expectThread(true, null);
 });

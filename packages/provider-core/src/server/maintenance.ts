@@ -12,7 +12,8 @@ export interface ProviderMaintenanceCapabilities {
    */
   readonly latestVersion?: string | null;
   /**
-   * Deferred until update checks are enabled; `null` falls back to npm.
+   * Deferred until update checks are enabled; `null` falls back to
+   * `latestVersion`, then npm.
    */
   readonly lookupLatestVersion?: Effect.Effect<string | null>;
   readonly compareVersions?: (current: string, latest: string) => number;

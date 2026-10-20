@@ -22,7 +22,30 @@ interface RecordedRegistration {
   readonly files: Array<{ readonly path: string; readonly content: string }>;
   readonly commands: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }>;
   readonly copies: Array<{ readonly source: string; readonly destination: string }>;
+  readonly binaryReads: string[];
+  readonly binaryWrites: Array<{
+    readonly path: string;
+    readonly bytes: Uint8Array;
+    readonly mode: number | undefined;
+  }>;
 }
+
+const iconSource = "/tmp/.mount_T3/resources/app.asar/apps/desktop/prod-resources/icon.png";
+const iconPath = "/home/alice/.local/share/icons/com.t3tools.T3Code.desktop.png";
+const iconBytes = new Uint8Array([0x89, 0x50, 0x00, 0xff, 0x80, 0x0a]);
+const currentDesktopEntry = DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
+  displayName: "T3 Code (Alpha)",
+  execTarget: "/home/alice/Applications/T3-Code.AppImage",
+  scheme: "t3code",
+  iconPath,
+});
+const registrationCommands = [
+  { command: "update-desktop-database", args: ["/home/alice/.local/share/applications"] },
+  {
+    command: "xdg-mime",
+    args: ["default", "com.t3tools.T3Code.desktop", "x-scheme-handler/t3code"],
+  },
+];
 
 const makeEnvironment = (path: Path.Path, overrides: Record<string, unknown> = {}) =>
   DesktopEnvironment.DesktopEnvironment.of({
@@ -64,7 +87,8 @@ const layerHandler = (
     readonly writeError?: PlatformError.PlatformError;
     readonly existingEntry?: string;
     readonly iconSource?: string;
-    readonly iconCopyError?: PlatformError.PlatformError;
+    readonly existingIcon?: Uint8Array;
+    readonly iconReadError?: PlatformError.PlatformError;
   } = {},
 ) =>
   DesktopLinuxUrlHandler.layer.pipe(
@@ -87,11 +111,34 @@ const layerHandler = (
         }),
         FileSystem.layerNoop({
           copyFile: (source, destination) =>
-            input.iconCopyError
-              ? Effect.fail(input.iconCopyError)
-              : Effect.sync(() => {
-                  recorded.copies.push({ source, destination });
-                }),
+            Effect.sync(() => {
+              recorded.copies.push({ source, destination });
+            }),
+          readFile: (path) =>
+            Effect.gen(function* () {
+              recorded.binaryReads.push(path);
+              if (path === input.iconSource) {
+                if (input.iconReadError) return yield* input.iconReadError;
+                return new Uint8Array(iconBytes);
+              }
+              if (path === iconPath && input.existingIcon !== undefined) {
+                return input.existingIcon;
+              }
+              return yield* PlatformError.systemError({
+                _tag: "NotFound",
+                module: "FileSystem",
+                method: "readFile",
+                pathOrDescriptor: path,
+              });
+            }),
+          writeFile: (path, bytes, options) =>
+            Effect.sync(() => {
+              recorded.binaryWrites.push({
+                path,
+                bytes: new Uint8Array(bytes),
+                mode: options?.mode,
+              });
+            }),
           readFileString: () => Effect.succeed(input.existingEntry ?? ""),
           makeDirectory: (path) =>
             Effect.sync(() => {
@@ -156,6 +203,8 @@ const emptyRecording = (): RecordedRegistration => ({
   files: [],
   commands: [],
   copies: [],
+  binaryReads: [],
+  binaryWrites: [],
 });
 
 describe("DesktopLinuxUrlHandler", () => {
@@ -306,42 +355,57 @@ describe("DesktopLinuxUrlHandler", () => {
 
   it.effect("installs a persistent icon even when the desktop entry is already current", () => {
     const recorded = emptyRecording();
-    const iconPath = "/home/alice/.local/share/icons/com.t3tools.T3Code.desktop.png";
     return Effect.gen(function* () {
       yield* runRegister(recorded, {
-        iconSource: "/tmp/.mount_T3/resources/icon.png",
-        existingEntry: DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
-          displayName: "T3 Code (Alpha)",
-          execTarget: "/home/alice/Applications/T3-Code.AppImage",
-          scheme: "t3code",
-          iconPath,
-        }),
+        iconSource,
+        existingEntry: currentDesktopEntry,
       });
       assert.deepEqual(recorded.files, []);
-      assert.deepEqual(recorded.copies, [
-        { source: "/tmp/.mount_T3/resources/icon.png", destination: iconPath },
-      ]);
-      assert.equal(recorded.commands.at(-1)?.command, "xdg-mime");
+      assert.deepEqual(recorded.copies, []);
+      assert.deepEqual(recorded.binaryReads, [iconSource, iconPath]);
+      assert.deepEqual(recorded.binaryWrites, [{ path: iconPath, bytes: iconBytes, mode: 0o600 }]);
+      assert.deepEqual(recorded.commands, registrationCommands);
     });
   });
 
-  it.effect("still registers the handler when copying its icon fails", () => {
+  it.effect("refreshes a stale icon and skips equal bytes on the next registration", () => {
     const recorded = emptyRecording();
     return Effect.gen(function* () {
       yield* runRegister(recorded, {
-        iconSource: "/tmp/.mount_T3/resources/icon.png",
-        iconCopyError: PlatformError.systemError({
+        iconSource,
+        existingEntry: currentDesktopEntry,
+        existingIcon: new Uint8Array([0x89, 0x50, 0x00, 0xfe, 0x80, 0x0a]),
+      });
+      assert.deepEqual(recorded.binaryWrites, [{ path: iconPath, bytes: iconBytes, mode: 0o600 }]);
+      yield* runRegister(recorded, {
+        iconSource,
+        existingEntry: currentDesktopEntry,
+        existingIcon: new Uint8Array(recorded.binaryWrites[0]!.bytes),
+      });
+      assert.equal(recorded.binaryWrites.length, 1);
+      assert.deepEqual(recorded.copies, []);
+      assert.deepEqual(recorded.files, []);
+      assert.deepEqual(recorded.commands, [...registrationCommands, ...registrationCommands]);
+    });
+  });
+
+  it.effect("still registers the handler when reading its icon fails", () => {
+    const recorded = emptyRecording();
+    return Effect.gen(function* () {
+      yield* runRegister(recorded, {
+        iconSource,
+        iconReadError: PlatformError.systemError({
           _tag: "PermissionDenied",
           module: "FileSystem",
-          method: "copyFile",
-          description: "read-only icon directory",
+          method: "readFile",
+          description: "unreadable bundled icon",
         }),
       });
+      assert.deepEqual(recorded.binaryReads, [iconSource]);
+      assert.deepEqual(recorded.binaryWrites, []);
+      assert.deepEqual(recorded.copies, []);
       assert.equal(recorded.files.length, 1);
-      assert.deepEqual(
-        recorded.commands.map(({ command }) => command),
-        ["update-desktop-database", "xdg-mime"],
-      );
+      assert.deepEqual(recorded.commands, registrationCommands);
     });
   });
 

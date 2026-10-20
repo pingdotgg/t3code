@@ -1,4 +1,5 @@
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
+import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
 import { readLocalApi } from "../localApi";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { ComposerContextLabel } from "./ComposerContextLabel";
@@ -118,13 +119,14 @@ function showWorkspaceContextMenu(event: ReactMouseEvent, workspacePath: string)
     })
     .then((action) => {
       if (action !== "copy-path") return;
-      void writeTextToClipboard(workspacePath, "workspace path").then(
+      const clipboardPath = formatFilePathForClipboard(workspacePath);
+      void writeTextToClipboard(clipboardPath, "workspace path").then(
         (didCopy) => {
           if (didCopy) {
             toastManager.add({
               type: "success",
               title: "Path copied",
-              description: workspacePath,
+              description: clipboardPath,
             });
           }
         },

@@ -1,3 +1,5 @@
+import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
+import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { ThreadFind, ThreadFindCanvas, type ThreadFindControls } from "./chat/ThreadFindProvider";
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
@@ -8,7 +10,6 @@ import {
   resolveDraftHeroState,
   shouldDockDraftHeroForSubmission,
 } from "./ChatView.logic";
-import * as DateTime from "effect/DateTime";
 import { restorePlanFollowUpComposer } from "./ChatView.logic";
 import { useQueuedRunEdit } from "./chat/useQueuedRunEdit";
 import {
@@ -65,6 +66,7 @@ import {
   type EnvironmentId,
   type MessageId,
   type ModelSelection,
+  type OrchestrationV2ProviderTurn,
   type ProjectScript,
   type PreviewAnnotationPayload,
   ProviderInstanceId,
@@ -72,6 +74,7 @@ import {
   type ScopedThreadRef,
   type ThreadId,
   type RunId,
+  type RunAttemptId,
   type RuntimeRequestId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ProviderInteractionMode,
@@ -186,9 +189,11 @@ import {
   derivePhase,
   selectHandoffImageResources,
   deriveActivePlanState,
+  selectComposerTasksPlan,
   deriveActiveWorkStartedAt,
   deriveCanInterruptRunningThread,
   findLatestProposedPlan,
+  findRevertCheckpoint,
   hasActionableProposedPlan,
   isLatestRunSettled,
 } from "../session-logic";
@@ -760,6 +765,7 @@ async function rewindToMessage(input: {
   readonly threadId: ThreadId;
   readonly turnCount: number;
   readonly restoreFiles: boolean;
+  readonly checkpoint: ReturnType<typeof findRevertCheckpoint>;
   readonly draftTarget: ScopedThreadRef | DraftId;
   readonly composerHasPendingAttachments: boolean;
   readonly createAssetUrl: Parameters<
@@ -767,7 +773,14 @@ async function rewindToMessage(input: {
   >[0]["createAssetUrl"];
   readonly revertThreadCheckpoint: (value: {
     environmentId: EnvironmentId;
-    input: { commandId: CommandId; threadId: ThreadId; turnCount: number; restoreFiles: boolean };
+    input: {
+      commandId: CommandId;
+      threadId: ThreadId;
+      turnCount: number;
+      restoreFiles: boolean;
+      checkpointId?: string;
+      scopeId?: string;
+    };
   }) => Promise<AtomCommandResult<unknown, unknown>>;
 }): Promise<
   | { readonly error: string; readonly prompt?: never }
@@ -795,24 +808,21 @@ async function rewindToMessage(input: {
       throw new Error("Make room for this message's attachments in the composer before rewinding.");
     }
     const commandId = CommandId.make(randomUUID());
-    await waitForRevertedMessage(
-      input.routeThreadRef,
-      message.id,
-      input.turnCount,
-      commandId,
-      async () => {
-        const result = await input.revertThreadCheckpoint({
-          environmentId,
-          input: {
-            commandId,
-            threadId: input.threadId,
-            turnCount: input.turnCount,
-            restoreFiles: input.restoreFiles,
-          },
-        });
-        if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-      },
-    );
+    await waitForRevertedMessage(input.routeThreadRef, input.turnCount, commandId, async () => {
+      const result = await input.revertThreadCheckpoint({
+        environmentId,
+        input: {
+          commandId,
+          threadId: input.threadId,
+          turnCount: input.turnCount,
+          restoreFiles: input.restoreFiles,
+          ...(input.checkpoint === undefined
+            ? {}
+            : { checkpointId: input.checkpoint.id, scopeId: input.checkpoint.scopeId }),
+        },
+      });
+      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+    });
     const currentPrompt = store.getComposerDraft(draftTarget)?.prompt ?? "";
     const restoredPrompt = recallableComposerPrompt(message.text);
     const nextPrompt =
@@ -1820,27 +1830,29 @@ export default function ChatView(props: ChatViewProps) {
   }
   const latestRunSettled = isLatestRunSettled(activeLatestRun, activeRuntime);
   const activePlan = deriveActivePlanState(serverProjection, activeActivityRun?.runId);
-  // Tasks progress for the running turn's own plan only — deriveActivePlanState
-  // falls back to older runs' plans, which must not label fresh work.
+  const activeActivityRunSettled = isLatestRunSettled(activeActivityRun, activeRuntime);
+  const composerTasksPlan = selectComposerTasksPlan(
+    serverProjection,
+    activePlan,
+    activeActivityRun?.runId ?? null,
+    activeActivityRunSettled,
+  );
   const activeComposerTasksProgress = (() => {
-    if (
-      isLatestRunSettled(activeActivityRun, activeRuntime) ||
-      !activePlan ||
-      activePlan.runId !== (activeActivityRun?.runId ?? null)
-    ) {
-      return null;
-    }
-    const totalSteps = activePlan.steps.length;
+    if (!composerTasksPlan) return null;
+    const live = !activeActivityRunSettled && composerTasksPlan.runId === activeActivityRun?.runId;
+    const totalSteps = composerTasksPlan.steps.length;
     if (totalSteps === 0) return null;
-    const completedSteps = activePlan.steps.filter((step) => step.status === "completed").length;
+    const completedSteps = composerTasksPlan.steps.filter(
+      (step) => step.status === "completed",
+    ).length;
     const step =
-      activePlan.steps.find((candidate) => candidate.status === "inProgress")?.step ??
-      activePlan.steps.find((candidate) => candidate.status === "pending")?.step ??
-      activePlan.steps.at(-1)!.step;
-    return { step, completedSteps, totalSteps };
+      composerTasksPlan.steps.find((candidate) => candidate.status === "inProgress")?.step ??
+      composerTasksPlan.steps.find((candidate) => candidate.status === "pending")?.step ??
+      composerTasksPlan.steps.at(-1)!.step;
+    return { step, completedSteps, totalSteps, live };
   })();
   const activeComposerTaskSteps =
-    activeComposerTasksProgress && activePlan ? activePlan.steps : null;
+    activeComposerTasksProgress && composerTasksPlan ? composerTasksPlan.steps : null;
   const activeThreadEnvironmentId = activeThread?.environmentId;
   const activeThreadProjectId = activeThread?.projectId;
   const activeProjectRef =
@@ -2929,6 +2941,48 @@ export default function ChatView(props: ChatViewProps) {
     panelAnimationDurationMs,
   );
   const turnDiffSummaries = useThreadCheckpointSummaries(routeThreadDetailRef);
+  const availableRevertTurnCounts = (() => {
+    const available = new Set<number>();
+    const providerThread = serverProjection?.providerThreads.find(
+      (candidate) => candidate.id === serverProjection.thread.activeProviderThreadId,
+    );
+    if (
+      !providerThread?.providerSessionId ||
+      providerThread.providerInstanceId !== serverProjection?.thread.modelSelection.instanceId
+    )
+      return available;
+    available.add(0);
+    const attemptsById = new Map(serverProjection.attempts.map((attempt) => [attempt.id, attempt]));
+    const providerTurnsById = new Map<
+      OrchestrationV2ProviderTurn["id"],
+      OrchestrationV2ProviderTurn
+    >();
+    const latestTurnByAttempt = new Map<RunAttemptId, OrchestrationV2ProviderTurn>();
+    for (const turn of serverProjection.providerTurns) {
+      providerTurnsById.set(turn.id, turn);
+      if (turn.runAttemptId === null) continue;
+      const latest = latestTurnByAttempt.get(turn.runAttemptId);
+      if (latest === undefined || turn.ordinal > latest.ordinal) {
+        latestTurnByAttempt.set(turn.runAttemptId, turn);
+      }
+    }
+    for (const run of serverProjection.runs) {
+      if (run.activeAttemptId === null) continue;
+      const attempt = attemptsById.get(run.activeAttemptId);
+      const providerTurn =
+        latestTurnByAttempt.get(run.activeAttemptId) ??
+        (attempt?.providerTurnId == null
+          ? undefined
+          : providerTurnsById.get(attempt.providerTurnId));
+      // A ready file checkpoint alone cannot restore the provider conversation.
+      if (providerTurn?.providerThreadId === providerThread.id) available.add(run.ordinal);
+    }
+    return available;
+  })();
+  // A paged history window cannot identify the first loaded run as the thread start.
+  const threadStartCheckpointReady =
+    !serverThreadHistory.hasMoreHistory &&
+    findRevertCheckpoint(serverProjection?.checkpoints ?? [], 0) !== undefined;
 
   /**
    * File tools are explicit; completed commands are included because a shell
@@ -3941,12 +3995,16 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
 
-    void navigator.clipboard.writeText(relativePath).then(
+    const clipboardPath = formatFilePathForClipboard(
+      relativePath,
+      resolvePathLinkTarget(relativePath, gitCwd ?? activeProjectCwd ?? ""),
+    );
+    void navigator.clipboard.writeText(clipboardPath).then(
       () => {
         toastManager.add({
           type: "success",
           title: "Path copied",
-          description: relativePath,
+          description: clipboardPath,
         });
       },
       (error) => {
@@ -5875,20 +5933,7 @@ export default function ChatView(props: ChatViewProps) {
       !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
     )
       return;
-    const sourceMessage = serverProjection?.messages.find((message) => message.id === messageId);
-    const message = sourceMessage
-      ? {
-          id: sourceMessage.id,
-          role: sourceMessage.role,
-          text: sourceMessage.text,
-          attachments: sourceMessage.attachments,
-          context: sourceMessage.context,
-          runId: sourceMessage.runId,
-          streaming: false,
-          createdAt: DateTime.formatIso(sourceMessage.createdAt),
-          updatedAt: DateTime.formatIso(sourceMessage.updatedAt),
-        }
-      : undefined;
+    const message = timelineMessages.find((message) => message.id === messageId);
     if (!message || message.role !== "user") return;
 
     if (!supportsConversationRollback) {
@@ -5925,6 +5970,8 @@ export default function ChatView(props: ChatViewProps) {
       threadId: activeThread.id,
       turnCount,
       restoreFiles,
+      // Keep the live checkpoint identity when command context refetches a bounded window.
+      checkpoint: findRevertCheckpoint(serverProjection?.checkpoints ?? [], turnCount),
       draftTarget: composerDraftTarget,
       composerHasPendingAttachments: composerRef.current?.hasPendingAttachments() === true,
       createAssetUrl: createAttachmentAssetUrl,
@@ -8204,6 +8251,8 @@ export default function ChatView(props: ChatViewProps) {
                 supportsConversationRollback={
                   !paintOnlyDisplayedTimeline && supportsConversationRollback
                 }
+                threadStartCheckpointReady={threadStartCheckpointReady}
+                availableRevertTurnCounts={availableRevertTurnCounts}
                 onRevertToTurnCount={
                   paintOnlyDisplayedTimeline ? noopHeldRevert : onRevertTimelineTurnStable
                 }

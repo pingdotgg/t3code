@@ -2310,6 +2310,35 @@ export function GeneralSettingsPanel() {
           }
         />
 
+        <SettingsRow
+          serverScoped
+          settingKeys={["compactIdleThreads"]}
+          {...searchableSetting("compact-idle-threads")}
+          description="Compact long idle Claude threads just before their prompt cache expires, so coming back costs less."
+          resetAction={
+            settings.compactIdleThreads !== DEFAULT_UNIFIED_SETTINGS.compactIdleThreads ? (
+              <SettingResetButton
+                label="compact idle Claude threads"
+                onClick={() =>
+                  updateSettings({
+                    compactIdleThreads: DEFAULT_UNIFIED_SETTINGS.compactIdleThreads,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <ScopedSwitch
+              settingKeys={["compactIdleThreads"]}
+              checked={settings.compactIdleThreads}
+              onCheckedChange={(checked) =>
+                updateSettings({ compactIdleThreads: Boolean(checked) })
+              }
+              aria-label="Compact idle Claude threads (beta)"
+            />
+          }
+        />
+
         {supportsAutoSettlement ? (
           <>
             <SettingsRow

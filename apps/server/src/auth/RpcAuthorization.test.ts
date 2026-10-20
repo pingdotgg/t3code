@@ -22,6 +22,7 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 import * as RpcTest from "effect/rpc/RpcTest";
 
 import {
@@ -386,6 +387,59 @@ it.effect("requires task permission before attaching a prepared worktree to a th
     expect(handled).toBe(false);
   }).pipe(Effect.scoped),
 );
+
+describe("thread context authorization", () => {
+  const group = WsRpcGroup.omit(
+    ...[...WsRpcGroup.requests.keys()].filter(
+      (
+        tag,
+      ): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, typeof WS_METHODS.gitRunStackedAction> =>
+        tag !== WS_METHODS.gitRunStackedAction,
+    ),
+  );
+
+  it.effect.each(["commit", "push", "commit_push", "create_pr", "commit_push_pr"] as const)(
+    "%s needs thread read permission only when generating a PR from a thread",
+    (action) =>
+      Effect.gen(function* () {
+        const handled: string[] = [];
+        const handler = group.toLayerHandler(WS_METHODS.gitRunStackedAction, ({ actionId }) =>
+          Stream.fromEffect(Effect.sync(() => handled.push(actionId))).pipe(Stream.drain),
+        );
+        const client = yield* RpcTest.makeClient(group).pipe(
+          Effect.provide(
+            Layer.merge(handler, RpcAuthorization.layer([AuthSourceControlWriteScope])),
+          ),
+        );
+        const input = { actionId: "without-thread", cwd: "/repo", action };
+        const withThread = { ...input, actionId: "with-thread", threadId: ThreadId.make("thread") };
+        yield* Stream.runDrain(client[WS_METHODS.gitRunStackedAction](input));
+        if (action === "create_pr" || action === "commit_push_pr") {
+          expect(
+            yield* Stream.runDrain(client[WS_METHODS.gitRunStackedAction](withThread)).pipe(
+              Effect.flip,
+            ),
+          ).toMatchObject({ requiredPermission: AuthOrchestrationReadScope });
+          expect(handled).toEqual(["without-thread"]);
+        } else {
+          yield* Stream.runDrain(client[WS_METHODS.gitRunStackedAction](withThread));
+          expect(handled).toEqual(["without-thread", "with-thread"]);
+        }
+        const reader = yield* RpcTest.makeClient(group).pipe(
+          Effect.provide(
+            Layer.merge(
+              handler,
+              RpcAuthorization.layer([AuthSourceControlWriteScope, AuthOrchestrationReadScope]),
+            ),
+          ),
+        );
+        yield* Stream.runDrain(
+          reader[WS_METHODS.gitRunStackedAction]({ ...withThread, actionId: "allowed" }),
+        );
+        expect(handled.at(-1)).toBe("allowed");
+      }).pipe(Effect.scoped),
+  );
+});
 
 it.effect("separates host file URLs from readable attachment URLs", () =>
   Effect.gen(function* () {

@@ -37,12 +37,15 @@ import {
   DEFAULT_SERVER_SETTINGS,
   EventId,
   GitCommandError,
+  MessageId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  RunId,
   SourceControlProviderError as SourceControlProviderFailure,
   TextGenerationError,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { decodeGitHubPullRequestListJson } from "@t3tools/source-control-github/server/gitHubPullRequests";
@@ -52,6 +55,10 @@ import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import {
+  fromRunner,
+  decodeJsonReply,
+} from "@t3tools/provider-core/server/textGenerationOperations";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -96,11 +103,14 @@ interface FakeGhScenario {
     isCrossRepository?: boolean;
     headRepositoryNameWithOwner?: string | null;
     headRepositoryOwnerLogin?: string | null;
+    headSha?: string;
   };
   repositoryCloneUrls?: Record<string, { url: string; sshUrl: string }>;
   failWith?: string;
   failCause?: unknown;
   failAfterCalls?: number;
+  /** Check out the pull request head the way gh does: fast-forward only unless forced. */
+  syncCheckoutWithPullHead?: boolean;
 }
 
 function fakeGhOutput(stdout: string): VcsProcess.VcsProcessOutput {
@@ -507,7 +517,29 @@ function createGitHubProviderWithFakeGh(scenario: FakeGhScenario = {}): {
       return Effect.try({
         try: () => {
           const headBranch = scenario.pullRequest?.headRefName;
-          if (headBranch) {
+          if (headBranch && scenario.syncCheckoutWithPullHead) {
+            runGitSyncForFakeGh(input.cwd, [
+              "fetch",
+              "origin",
+              `refs/pull/${scenario.pullRequest?.number}/head`,
+            ]);
+            const existingBranch = NodeChildProcess.spawnSync(
+              "git",
+              ["show-ref", "--verify", "--quiet", `refs/heads/${headBranch}`],
+              { cwd: input.cwd },
+            );
+            if (existingBranch.status === 0) {
+              runGitSyncForFakeGh(input.cwd, ["checkout", headBranch]);
+              runGitSyncForFakeGh(
+                input.cwd,
+                args.includes("--force")
+                  ? ["reset", "--hard", "FETCH_HEAD"]
+                  : ["merge", "--ff-only", "FETCH_HEAD"],
+              );
+            } else {
+              runGitSyncForFakeGh(input.cwd, ["checkout", "-b", headBranch, "FETCH_HEAD"]);
+            }
+          } else if (headBranch) {
             const existingBranch = NodeChildProcess.spawnSync(
               "git",
               ["show-ref", "--verify", "--quiet", `refs/heads/${headBranch}`],
@@ -5251,6 +5283,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       yield* runGit(repoDir, ["config", "branch.feature-create-pr.gh-merge-base", "main"]);
       let generatedPolicy: TextGeneration.PrContentGenerationInput["policy"] = undefined;
       let generatedChangeRequestTemplate: string | undefined;
+      let generatedThreadContext: string | undefined;
 
       const { manager, ghCalls } = yield* makeManager({
         serverSettings: {
@@ -5263,6 +5296,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           generatePrContent: (input) => {
             generatedPolicy = input.policy;
             generatedChangeRequestTemplate = input.changeRequestTemplate;
+            generatedThreadContext = input.threadContext;
             return Effect.succeed({
               title: "Add stacked git actions",
               body: "## What changed?\nAdded stacked git actions.",
@@ -5296,11 +5330,184 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         changeRequestInstructions: "Lead with user impact.",
       });
       expect(generatedChangeRequestTemplate).toBe("## What changed?\n\n## Verification");
+      expect(generatedThreadContext).toBeUndefined();
       expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(2);
       expect(
         ghCalls.some((call) => call.includes("pr create --base main --head feature-create-pr")),
       ).toBe(true);
       expect(ghCalls.some((call) => call.startsWith("pr view "))).toBe(false);
+    }),
+  );
+
+  it.effect("create_pr sends bounded checks to the model and omits rolled-back runs", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/thread-context"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "thread-context.txt"), "context\n");
+      yield* runGit(repoDir, ["add", "thread-context.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Thread context"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      const threadId = ThreadId.make("thread:pr-thread-context");
+      const providerInstanceId = ProviderInstanceId.make("codex");
+      const createdAt = DateTime.makeUnsafe("2026-09-27T00:00:00.000Z");
+      const run = (ordinal: number, status: "completed" | "rolled_back") => ({
+        id: RunId.make(`run:pr-thread-context:${ordinal}`),
+        threadId,
+        ordinal,
+        providerInstanceId,
+        modelSelection: { instanceId: providerInstanceId, model: "gpt-5" },
+        providerThreadId: null,
+        userMessageId: MessageId.make(`message:pr-thread-context:${ordinal}`),
+        rootNodeId: null,
+        activeAttemptId: null,
+        status,
+        requestedAt: createdAt,
+        startedAt: createdAt,
+        completedAt: createdAt,
+        checkpointId: null,
+        contextHandoffId: null,
+      });
+      const itemBase = (ordinal: number, runId: RunId) => ({
+        id: TurnItemId.make(`item:pr-thread-context:${ordinal}`),
+        threadId,
+        runId,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal,
+        status: "completed" as const,
+        title: null,
+        startedAt: createdAt,
+        completedAt: createdAt,
+        updatedAt: createdAt,
+      });
+      let generatedThreadContext: string | undefined;
+      let generatedPrompt = "";
+      const writer = fromRunner("test", (request) => {
+        generatedPrompt = request.prompt;
+        return decodeJsonReply(request, "test", '{"title":"Thread context","body":"Body"}');
+      });
+
+      const { manager } = yield* makeManager({
+        textGeneration: {
+          generatePrContent: (input) => {
+            generatedThreadContext = input.threadContext;
+            return writer.generatePrContent(input);
+          },
+        },
+        seed: Effect.gen(function* () {
+          const store = yield* ProjectionStore.ProjectionStoreV2;
+          const completedRun = run(1, "completed");
+          const abandonedRun = run(2, "rolled_back");
+          yield* store.apply({
+            id: EventId.make("event:pr-thread-context:thread"),
+            type: "thread.created",
+            threadId,
+            providerInstanceId,
+            occurredAt: createdAt,
+            payload: {
+              createdBy: "user",
+              creationSource: "web",
+              id: threadId,
+              projectId: ProjectId.make("project:pr-thread-context"),
+              title: "PR thread context",
+              providerInstanceId,
+              modelSelection: { instanceId: providerInstanceId, model: "gpt-5" },
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: repoDir,
+              activeProviderThreadId: null,
+              lineage: {
+                parentThreadId: null,
+                relationshipToParent: null,
+                rootThreadId: threadId,
+              },
+              forkedFrom: null,
+              createdAt,
+              updatedAt: createdAt,
+              archivedAt: null,
+              settledOverride: null,
+              settledAt: null,
+              lastVisitedAt: null,
+              deletedAt: null,
+            },
+          });
+          for (const payload of [completedRun, abandonedRun]) {
+            yield* store.apply({
+              id: EventId.make(`event:pr-thread-context:run:${payload.ordinal}`),
+              type: "run.updated",
+              threadId,
+              runId: payload.id,
+              occurredAt: createdAt,
+              payload,
+            });
+          }
+          const items = [
+            {
+              ...itemBase(1, completedRun.id),
+              type: "user_message" as const,
+              messageId: completedRun.userMessageId,
+              createdBy: "user" as const,
+              creationSource: "web" as const,
+              inputIntent: "turn_start" as const,
+              text: "Make the PR writer see the thread",
+              attachments: [],
+            },
+            {
+              ...itemBase(3, completedRun.id),
+              type: "command_execution" as const,
+              input: "vp test run",
+              output: `${"collecting tests\n".repeat(4_000)}Tests 12 passed`,
+              exitCode: 0,
+            },
+            {
+              ...itemBase(4, completedRun.id),
+              type: "command_execution" as const,
+              input: "vp lint",
+              output: "2 lint errors",
+              exitCode: 1,
+            },
+            {
+              ...itemBase(5, abandonedRun.id),
+              type: "command_execution" as const,
+              input: "vp run abandoned",
+              output: "abandoned output",
+              exitCode: 0,
+            },
+          ];
+          for (const payload of items) {
+            yield* store.apply({
+              id: EventId.make(`event:pr-thread-context:${payload.id}`),
+              type: "turn-item.updated",
+              threadId,
+              runId: payload.runId,
+              occurredAt: createdAt,
+              payload,
+            });
+          }
+        }),
+      });
+
+      yield* manager.runStackedAction({
+        actionId: "test-action-id",
+        cwd: repoDir,
+        action: "create_pr",
+        threadId,
+      });
+
+      expect(generatedPrompt).toContain("Command: vp test run\nExit code: 0");
+      expect(generatedPrompt).toContain("Tests 12 passed");
+      expect(generatedPrompt).toContain("Make the PR writer see the thread");
+      expect(generatedPrompt).toContain("Command: vp lint\nExit code: 1");
+      expect(generatedPrompt).toContain("2 lint errors");
+      expect(generatedPrompt).not.toContain("vp run abandoned");
+      expect(generatedPrompt).not.toContain("abandoned output");
+      expect(Buffer.byteLength(generatedThreadContext ?? "")).toBeLessThanOrEqual(16_000);
     }),
   );
 
@@ -6079,8 +6286,315 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       expect(result.worktreePath).toBeNull();
       const branch = (yield* runGit(repoDir, ["branch", "--show-current"])).stdout.trim();
       expect(branch).toBe("feature/pr-local");
-      expect(ghCalls).toContain("pr checkout 64 --force");
+      expect(ghCalls).toContain("pr checkout 64");
     }),
+  );
+
+  const setUpLocalCheckoutPullRequest = Effect.fnUntraced(function* (
+    reportedHead: (pullHead: string) => string | undefined = (pullHead) => pullHead,
+    syncCheckoutWithPullHead = true,
+    gitSpawnGate?: NonNullable<Parameters<typeof makeManager>[0]>["gitSpawnGate"],
+  ) {
+    const repoDir = yield* makeTempDir("t3code-git-manager-");
+    yield* initRepo(repoDir);
+    const remoteDir = yield* createBareRemote();
+    yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+    yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+    yield* runGit(repoDir, ["checkout", "-b", "feature/pr-safe"]);
+    NodeFS.writeFileSync(NodePath.join(repoDir, "pr.txt"), "first\n");
+    yield* runGit(repoDir, ["add", "pr.txt"]);
+    yield* runGit(repoDir, ["commit", "-m", "PR first"]);
+    const firstCommit = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+    NodeFS.writeFileSync(NodePath.join(repoDir, "pr.txt"), "second\n");
+    yield* runGit(repoDir, ["commit", "-am", "PR second"]);
+    const pullHead = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+    yield* runGit(repoDir, ["push", "origin", "HEAD:refs/pull/91/head"]);
+    yield* runGit(repoDir, ["reset", "--hard", firstCommit]);
+    const headSha = reportedHead(pullHead);
+    const { manager, ghCalls } = yield* makeManager({
+      ...(gitSpawnGate ? { gitSpawnGate } : {}),
+      ghScenario: {
+        pullRequest: {
+          number: 91,
+          title: "Safe checkout PR",
+          url: "https://github.com/pingdotgg/codething-mvp/pull/91",
+          baseRefName: "main",
+          headRefName: "feature/pr-safe",
+          state: "open",
+          ...(headSha === undefined ? {} : { headSha }),
+        },
+        syncCheckoutWithPullHead,
+      },
+    });
+    return { repoDir, manager, ghCalls, firstCommit, pullHead };
+  });
+
+  it.effect.each(["switch", "create-and-switch", "feature-branch"] as const)(
+    "local PR checkout excludes a concurrent %s from a nested project with an alternate root",
+    (operation) =>
+      Effect.gen(function* () {
+        const gate = {
+          matches: (args: ReadonlyArray<string>) =>
+            args[0] === "rev-parse" && args[1] === "--verify" && args[2] === "HEAD^{commit}",
+          reached: yield* Deferred.make<void>(),
+          release: yield* Deferred.make<void>(),
+        };
+        const { repoDir, manager, pullHead } = yield* setUpLocalCheckoutPullRequest(
+          (head) => head,
+          false,
+          gate,
+        );
+        const nestedCwd = NodePath.join(repoDir, "nested-project");
+        yield* makeDirectory(nestedCwd);
+        const mainCommit = (yield* runGit(repoDir, ["rev-parse", "main"])).stdout.trim();
+        yield* runGit(repoDir, ["checkout", "main"]);
+        const registry = yield* Layer.build(
+          VcsDriverRegistry.layer.pipe(
+            Layer.provide(VcsProjectConfig.layer),
+            Layer.provide(VcsProcess.layer),
+          ),
+        );
+        const handle = yield* Context.get(registry, VcsDriverRegistry.VcsDriverRegistry).resolve({
+          cwd: repoDir,
+        });
+        const resolvedHandle = {
+          ...handle,
+          repository: { ...handle.repository, rootPath: `${handle.repository.rootPath}/.` },
+        };
+        const fileSystem = yield* FileSystem.FileSystem;
+        const canonicalRoot = yield* fileSystem.realPath(resolvedHandle.repository.rootPath);
+        const git = yield* GitVcsDriver.GitVcsDriver;
+        const events: string[] = [];
+        const workflows = yield* Effect.forEach([0, 1], () =>
+          GitWorkflowService.make.pipe(
+            // Cache the real filesystem result so startImmediately reaches lease acquisition.
+            Effect.provideService(FileSystem.FileSystem, {
+              ...fileSystem,
+              realPath: (root) =>
+                root === resolvedHandle.repository.rootPath
+                  ? Effect.succeed(canonicalRoot)
+                  : fileSystem.realPath(root),
+            }),
+            Effect.provideService(GitManager.GitManager, {
+              ...manager,
+              runStackedAction: (input, options) =>
+                Effect.sync(() => {
+                  events.push("feature-branch");
+                  NodeFS.writeFileSync(
+                    NodePath.join(repoDir, "second-client.txt"),
+                    "second client\n",
+                  );
+                }).pipe(Effect.andThen(manager.runStackedAction(input, options))),
+            }),
+            Effect.provideService(VcsDriverRegistry.VcsDriverRegistry, {
+              ...Context.get(registry, VcsDriverRegistry.VcsDriverRegistry),
+              resolve: ({ cwd }) => Effect.succeed(cwd === repoDir ? handle : resolvedHandle),
+            }),
+            Effect.provideService(GitVcsDriver.GitVcsDriver, {
+              ...git,
+              switchRef: (input) =>
+                Effect.sync(() => events.push("switch")).pipe(Effect.andThen(git.switchRef(input))),
+              createRef: (input) =>
+                Effect.sync(() => events.push("create-and-switch")).pipe(
+                  Effect.andThen(git.createRef(input)),
+                ),
+            }),
+          ),
+        );
+        const preparing = yield* Effect.forkChild(
+          workflows[0]!.preparePullRequestThread({ cwd: repoDir, reference: "91", mode: "local" }),
+        );
+        yield* Deferred.await(gate.reached);
+        const switching = yield* Effect.forkChild(
+          operation === "switch"
+            ? workflows[1]!.switchRef({ cwd: nestedCwd, refName: "main" })
+            : operation === "create-and-switch"
+              ? workflows[1]!.createRef({
+                  cwd: nestedCwd,
+                  refName: "second-client",
+                  switchRef: true,
+                })
+              : workflows[1]!.runStackedAction({
+                  cwd: nestedCwd,
+                  actionId: "second-client-feature-branch",
+                  action: "commit",
+                  featureBranch: true,
+                  commitMessage: "Second client commit",
+                }),
+          { startImmediately: true },
+        );
+        // Both independent server workflows have started, but the second cannot touch Git yet.
+        expect(events).toEqual([]);
+        yield* Deferred.succeed(gate.release, undefined);
+        const prepared = yield* Fiber.join(preparing);
+        const switched = yield* Fiber.join(switching);
+        expect(events).toEqual([operation]);
+        expect(prepared).toMatchObject({ branch: "feature/pr-safe", isOnPullRequestHead: true });
+        expect((yield* runGit(repoDir, ["rev-parse", "main"])).stdout.trim()).toBe(mainCommit);
+        expect((yield* runGit(repoDir, ["rev-parse", "feature/pr-safe"])).stdout.trim()).toBe(
+          pullHead,
+        );
+        expect((yield* runGit(repoDir, ["branch", "--show-current"])).stdout.trim()).toBe(
+          operation === "switch"
+            ? "main"
+            : "branch" in switched
+              ? switched.branch.name
+              : "second-client",
+        );
+        if ("commit" in switched) {
+          expect(switched.commit.status).toBe("created");
+          expect((yield* runGit(repoDir, ["rev-parse", "HEAD^"])).stdout.trim()).toBe(pullHead);
+        }
+      }),
+  );
+
+  it.effect.each([false, true])(
+    "local PR checkout refuses and preserves tracked edits (staged: %s)",
+    (staged) =>
+      Effect.gen(function* () {
+        const { repoDir, manager, ghCalls, firstCommit } = yield* setUpLocalCheckoutPullRequest();
+        NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "my unsaved edit\n");
+        if (staged) {
+          yield* runGit(repoDir, ["add", "README.md"]);
+        }
+        const beforeStatus = (yield* runGit(repoDir, ["status", "--porcelain"])).stdout;
+
+        const error = yield* preparePullRequestThread(manager, {
+          cwd: repoDir,
+          reference: "91",
+          mode: "local",
+        }).pipe(Effect.flip);
+
+        expect(error.message).toContain("uncommitted changes");
+        expect(NodeFS.readFileSync(NodePath.join(repoDir, "README.md"), "utf8")).toBe(
+          "my unsaved edit\n",
+        );
+        expect((yield* runGit(repoDir, ["status", "--porcelain"])).stdout).toBe(beforeStatus);
+        expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(firstCommit);
+        expect(ghCalls.some((call) => call.startsWith("pr checkout"))).toBe(false);
+      }),
+  );
+
+  it.effect("local PR checkout refuses a diverged branch and keeps its extra commit", () =>
+    Effect.gen(function* () {
+      const { repoDir, manager, ghCalls } = yield* setUpLocalCheckoutPullRequest();
+      NodeFS.writeFileSync(NodePath.join(repoDir, "mine.txt"), "mine\n");
+      yield* runGit(repoDir, ["add", "mine.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "My unpublished commit"]);
+      const localCommit = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* runGit(repoDir, ["checkout", "main"]);
+
+      const error = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "91",
+        mode: "local",
+      }).pipe(Effect.flip);
+
+      // gh's fast-forward-only update fails rather than resetting the branch.
+      expect(error.message).toContain("GitHub request failed");
+      expect(ghCalls).toContain("pr checkout 91");
+      expect((yield* runGit(repoDir, ["rev-parse", "feature/pr-safe"])).stdout.trim()).toBe(
+        localCommit,
+      );
+      expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(localCommit);
+      expect(NodeFS.readFileSync(NodePath.join(repoDir, "mine.txt"), "utf8")).toBe("mine\n");
+    }),
+  );
+
+  it.effect.each([false, true])(
+    "local PR checkout lands cleanly (existing branch: %s)",
+    (existing) =>
+      Effect.gen(function* () {
+        const { repoDir, manager, pullHead } = yield* setUpLocalCheckoutPullRequest();
+        yield* runGit(repoDir, ["checkout", "main"]);
+        if (!existing) {
+          yield* runGit(repoDir, ["branch", "-D", "feature/pr-safe"]);
+        }
+        NodeFS.writeFileSync(NodePath.join(repoDir, "untracked.txt"), "keep me\n");
+
+        const result = yield* preparePullRequestThread(manager, {
+          cwd: repoDir,
+          reference: "91",
+          mode: "local",
+        });
+
+        expect(result).toMatchObject({
+          branch: "feature/pr-safe",
+          worktreePath: null,
+          isOnPullRequestHead: true,
+        });
+        expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(pullHead);
+        expect(NodeFS.readFileSync(NodePath.join(repoDir, "untracked.txt"), "utf8")).toBe(
+          "keep me\n",
+        );
+      }),
+  );
+
+  it.effect("local PR checkout fast-forwards a branch the host's checkout only switched to", () =>
+    Effect.gen(function* () {
+      // Like Bitbucket or Forgejo without `force`: the existing branch is checked out as it was.
+      const { repoDir, manager, firstCommit, pullHead } = yield* setUpLocalCheckoutPullRequest(
+        (head) => head.slice(0, 12),
+        false,
+      );
+      yield* runGit(repoDir, ["checkout", "main"]);
+      expect((yield* runGit(repoDir, ["rev-parse", "feature/pr-safe"])).stdout.trim()).toBe(
+        firstCommit,
+      );
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "91",
+        mode: "local",
+      });
+
+      expect(result).toMatchObject({ branch: "feature/pr-safe", isOnPullRequestHead: true });
+      expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(pullHead);
+    }),
+  );
+
+  it.effect(
+    "local PR checkout keeps a branch that is ahead and reports it is not on the head",
+    () =>
+      Effect.gen(function* () {
+        const { repoDir, manager, pullHead } = yield* setUpLocalCheckoutPullRequest();
+        yield* runGit(repoDir, ["reset", "--hard", pullHead]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "mine.txt"), "mine\n");
+        yield* runGit(repoDir, ["add", "mine.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "My unpublished commit"]);
+        const localCommit = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+        yield* runGit(repoDir, ["checkout", "main"]);
+
+        const result = yield* preparePullRequestThread(manager, {
+          cwd: repoDir,
+          reference: "91",
+          mode: "local",
+        });
+
+        expect(result).toMatchObject({ branch: "feature/pr-safe", isOnPullRequestHead: false });
+        expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(localCommit);
+        expect(NodeFS.readFileSync(NodePath.join(repoDir, "mine.txt"), "utf8")).toBe("mine\n");
+      }),
+  );
+
+  it.effect.each([undefined, "0".repeat(40)])(
+    "local PR checkout cannot confirm an unavailable provider head (%s)",
+    (reportedHead) =>
+      Effect.gen(function* () {
+        const { repoDir, manager, pullHead } = yield* setUpLocalCheckoutPullRequest(
+          () => reportedHead,
+        );
+        yield* runGit(repoDir, ["checkout", "main"]);
+
+        const result = yield* preparePullRequestThread(manager, {
+          cwd: repoDir,
+          reference: "91",
+          mode: "local",
+        });
+
+        expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(pullHead);
+        expect(result.isOnPullRequestHead).toBe(false);
+      }),
   );
 
   it.effect(

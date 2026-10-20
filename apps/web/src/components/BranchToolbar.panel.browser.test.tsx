@@ -132,6 +132,7 @@ it.each([
   ["local", null, "/tmp/project"],
   ["worktree", null, null],
   ["worktree", "/tmp/worktree", "/tmp/worktree"],
+  ["worktree", "C:/repo/worktree", String.raw`C:\repo\worktree`],
 ] as const)(
   "copies only an existing workspace path with mode %s and worktree %s",
   async (envMode, worktreePath, copiedPath) => {

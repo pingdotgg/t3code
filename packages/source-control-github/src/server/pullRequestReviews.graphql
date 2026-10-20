@@ -53,7 +53,13 @@ fragment ThreadComment on PullRequestReviewComment {
 #
 # `viewerCanUpdate` and `viewerDidAuthor` belong to the pull request this query is already
 # standing on, so what the reader may do with it arrives with the conversation.
-query ReviewThreads($owner: String!, $name: String!, $number: Int!, $after: String) {
+query ReviewThreads(
+  $owner: String!
+  $name: String!
+  $number: Int!
+  $after: String
+  $requestedReviewers: Int!
+) {
   viewer {
     login
   }
@@ -121,7 +127,7 @@ query ReviewThreads($owner: String!, $name: String!, $number: Int!, $after: Stri
           ...Reactions
         }
       }
-      reviewRequests(first: 50) {
+      reviewRequests(first: $requestedReviewers) {
         nodes {
           # Null for nobody. A team goes by its `org/slug`; a mannequin answers with neither and
           # names nobody to show. A team's name and avatar are aliased apart from a person's,
