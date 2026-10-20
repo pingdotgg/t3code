@@ -65,6 +65,7 @@ import {
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
 } from "../../components/desktopUpdate.logic";
+import { PromptSuggestionSettings } from "./PromptSuggestionSettings";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import {
@@ -3283,6 +3284,7 @@ export function GeneralSettingsPanel() {
             )
           }
         />
+        <PromptSuggestionSettings />
       </SettingsSection>
 
       <SettingsSection id="about" title="About">

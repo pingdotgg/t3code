@@ -180,6 +180,29 @@ export function resolveReviewGuideModelSelection(
   return resolveSourceControlWriterModelSelection(settings, providers, projectId);
 }
 
+export function resolvePromptSuggestionModelSelection(
+  settings: ServerSettings,
+  providers: ReadonlyArray<ServerProvider> | undefined,
+  projectId: ProjectId | null,
+): ModelSelection {
+  const selection = settings.promptSuggestionModelSelection;
+  if (
+    selection &&
+    resolveProjectProviderInstanceEnabled(settings, projectId, selection.instanceId)
+  ) {
+    const provider = providers?.find((candidate) => candidate.instanceId === selection.instanceId);
+    if (
+      providers === undefined ||
+      (provider?.enabled === true &&
+        isProviderAvailable(provider) &&
+        isProviderTextGenerationCapable(provider))
+    ) {
+      return selection;
+    }
+  }
+  return settings.textGenerationModelSelection;
+}
+
 export interface PersistedServerObservabilitySettings {
   readonly otlpTracesUrl: string | undefined;
   readonly otlpMetricsUrl: string | undefined;
@@ -587,6 +610,9 @@ export function applyServerSettingsPatch(
       : {}),
     ...(patch.reviewGuideModelSelection !== undefined
       ? { reviewGuideModelSelection: patch.reviewGuideModelSelection }
+      : {}),
+    ...(patch.promptSuggestionModelSelection !== undefined
+      ? { promptSuggestionModelSelection: patch.promptSuggestionModelSelection }
       : {}),
     ...(automaticGitFetchInterval !== undefined ? { automaticGitFetchInterval } : {}),
     ...(providerHealthRefreshInterval !== undefined ? { providerHealthRefreshInterval } : {}),

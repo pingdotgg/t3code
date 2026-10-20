@@ -43,6 +43,12 @@ describe("RPC authorization scopes", () => {
     );
   });
 
+  it("requires operate access to suggest a next prompt, which runs a model", () => {
+    expect(requiredScopeForRpcMethod(ORCHESTRATION_V2_WS_METHODS.suggestNextPrompt)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+  });
+
   it("authorizes background policy reporting and observation deliberately", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.serverReportClientActivity)).toBe(
       AuthOrchestrationReadScope,

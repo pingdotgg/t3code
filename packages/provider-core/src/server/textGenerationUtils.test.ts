@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { sanitizeCommitSubject } from "./textGenerationUtils.ts";
+import { sanitizeCommitSubject, sanitizePromptSuggestion } from "./textGenerationUtils.ts";
 
 describe("sanitizeCommitSubject", () => {
   it.each([
@@ -29,5 +29,19 @@ describe("sanitizeCommitSubject", () => {
     expect(sanitizeCommitSubject("a".repeat(80))).toBe("a".repeat(72));
     expect(sanitizeCommitSubject("  Fix tests...\nignored  ")).toBe("Fix tests");
     expect(sanitizeCommitSubject("...")).toBe("Update project files");
+  });
+});
+
+describe("sanitizePromptSuggestion", () => {
+  it("keeps the first line without wrapping quotes", () => {
+    expect(sanitizePromptSuggestion('  "Open a PR for this"\nExtra commentary')).toBe(
+      "Open a PR for this",
+    );
+  });
+
+  it("caps runaway suggestions", () => {
+    const suggestion = sanitizePromptSuggestion("a".repeat(500));
+    expect(suggestion).toHaveLength(200);
+    expect(suggestion.endsWith("…")).toBe(true);
   });
 });

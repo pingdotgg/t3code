@@ -145,6 +145,20 @@ the text is an unedited recalled prompt, with the caret on the first visual line
 the last visual line for `ArrowDown`, counting wrapped lines. Editing a recalled prompt turns it
 into a normal draft.
 
+## Next prompt suggestions
+
+Turn on **Settings > General > Next prompt suggestions** to have T3 Code guess
+the message you are most likely to send after the agent finishes, such as
+approving its plan or asking it to open a pull request. The guess appears in the
+empty composer; press **Tab** or **Right Arrow** to fill it in, edit it if you
+like, then send. **Esc** hides it until the agent replies again, and typing
+anything else ignores it.
+
+Suggestions use the text generation model unless you turn on **Prompt suggestion
+model** and pick another. A suggestion runs after every turn you watch finish, so
+a fast, inexpensive model works best. Threads you open after the agent already
+finished do not get one.
+
 ## Edit an earlier prompt
 
 On web and desktop, choose **Edit from here** beneath a sent message to rewind

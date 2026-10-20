@@ -525,6 +525,20 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["generated thread titles source control content default provider"],
   },
   {
+    id: "prompt-suggestions",
+    title: "Next prompt suggestions",
+    to: "/settings/general",
+    searchTerms: ["autocomplete suggested follow up next message prompt predict ghost tab"],
+  },
+  {
+    id: "prompt-suggestion-model",
+    title: "Prompt suggestion model",
+    to: "/settings/general",
+    // Hidden until suggestions are on, so a search lands on the switch that shows it.
+    targetId: "prompt-suggestions",
+    searchTerms: ["autocomplete suggested follow up next message prompt predict model"],
+  },
+  {
     id: "app-version",
     title: "Version",
     to: "/settings/general",

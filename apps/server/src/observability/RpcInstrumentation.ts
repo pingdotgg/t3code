@@ -18,6 +18,7 @@ const RPC_AGGREGATES = {
   [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: "orchestration",
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: "orchestration",
   [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: "orchestration",
+  [ORCHESTRATION_V2_WS_METHODS.suggestNextPrompt]: "orchestration",
   [ORCHESTRATION_V2_WS_METHODS.getTurnDiff]: "orchestration",
   [ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff]: "orchestration",
   [ORCHESTRATION_V2_WS_METHODS.searchThreads]: "orchestration",

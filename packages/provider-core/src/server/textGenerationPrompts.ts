@@ -463,3 +463,36 @@ export function buildThreadTitlePrompt(input: ThreadTitlePromptInput) {
 
   return { prompt, outputSchema };
 }
+
+export interface PromptSuggestionPromptInput {
+  /** Oldest first, so the model sees how the user tends to phrase requests. */
+  recentUserMessages: ReadonlyArray<string>;
+  lastAssistantMessage: string;
+}
+
+const PROMPT_SUGGESTION_PROMPT = `Predict the next message the user will send to their coding agent in T3 Code.
+
+Return a JSON object with key: suggestion.
+
+Rules:
+- Write it as the user, in their voice and phrasing style, addressed to the agent.
+- Pick the single most likely next step given where the agent left off: answering a question it asked, approving a proposed plan, asking for the obvious follow-up, or asking it to verify, commit, or open a PR.
+- One sentence, at most 120 characters. No quotes, no markdown, no preamble.
+- If the agent asked the user to choose between options, pick the one the user most likely wants.
+- Return an empty string if there is no clear next step.`;
+
+export function buildPromptSuggestionPrompt(input: PromptSuggestionPromptInput) {
+  const userMessages = input.recentUserMessages
+    .map((message) => limitTitleMessage(message.trim(), 1_500))
+    .filter(Boolean);
+  const prompt = [
+    PROMPT_SUGGESTION_PROMPT,
+    "",
+    "Recent user messages, oldest first:",
+    ...(userMessages.length > 0 ? userMessages.map((message) => `- ${message}`) : ["(none)"]),
+    "",
+    "The agent's latest reply:",
+    preserveMessageEnd(input.lastAssistantMessage.trim()),
+  ].join("\n");
+  return { prompt, outputSchema: Schema.Struct({ suggestion: Schema.String }) };
+}

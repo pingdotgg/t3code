@@ -118,3 +118,9 @@ export function normalizeCliError(
     cause: error,
   });
 }
+
+export function sanitizePromptSuggestion(raw: string): string {
+  const singleLine = raw.trim().split(/\r?\n/g)[0]?.trim() ?? "";
+  const unquoted = singleLine.replace(/^["'`]+|["'`]+$/g, "").trim();
+  return unquoted.length > 200 ? `${unquoted.slice(0, 199).trimEnd()}…` : unquoted;
+}

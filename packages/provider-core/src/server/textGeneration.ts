@@ -69,6 +69,18 @@ export interface ThreadTitleGenerationResult {
   needsRefinement?: boolean | undefined;
 }
 
+export interface PromptSuggestionGenerationInput {
+  cwd: string;
+  recentUserMessages: ReadonlyArray<string>;
+  lastAssistantMessage: string;
+  modelSelection: ModelSelection;
+}
+
+export interface PromptSuggestionGenerationResult {
+  /** Empty when the model saw no clear next step. */
+  suggestion: string;
+}
+
 export interface ReviewGuideStackLayer {
   readonly number: number;
   readonly title: string | null;
@@ -114,4 +126,8 @@ export interface ProviderTextGeneration {
   readonly generateReviewGuide: (
     input: ReviewGuideGenerationInput,
   ) => Effect.Effect<ReviewGuideGenerationResult, TextGenerationError>;
+
+  readonly generatePromptSuggestion: (
+    input: PromptSuggestionGenerationInput,
+  ) => Effect.Effect<PromptSuggestionGenerationResult, TextGenerationError>;
 }

@@ -18,6 +18,7 @@ import {
   resolveModelPreferences,
   isModelSelectionProviderEnabled,
   parsePersistedServerObservabilitySettings,
+  resolvePromptSuggestionModelSelection,
   resolveSourceControlWriterModelSelection,
   resolveProjectAgentBrowserAccess,
   resolveProjectAutoPull,
@@ -491,6 +492,38 @@ describe("serverSettings helpers", () => {
       settings.textGenerationModelSelection,
     );
     expect(settings.sourceControlWriterModelSelection).toBe(sourceControlWriterModelSelection);
+  });
+
+  it("suggests prompts with the text generation model unless a dedicated one is usable", () => {
+    const instanceId = ProviderInstanceId.make("suggester");
+    const promptSuggestionModelSelection = createModelSelection(instanceId, "fast-model");
+    const providerInstance = { driver: ProviderDriverKind.make("codex"), config: {} };
+
+    expect(resolvePromptSuggestionModelSelection(DEFAULT_SERVER_SETTINGS, undefined, null)).toBe(
+      DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
+    );
+    expect(
+      resolvePromptSuggestionModelSelection(
+        {
+          ...DEFAULT_SERVER_SETTINGS,
+          providerInstances: { [instanceId]: { ...providerInstance, enabled: true } },
+          promptSuggestionModelSelection,
+        },
+        undefined,
+        null,
+      ),
+    ).toBe(promptSuggestionModelSelection);
+    expect(
+      resolvePromptSuggestionModelSelection(
+        {
+          ...DEFAULT_SERVER_SETTINGS,
+          providerInstances: { [instanceId]: { ...providerInstance, enabled: false } },
+          promptSuggestionModelSelection,
+        },
+        undefined,
+        null,
+      ),
+    ).toBe(DEFAULT_SERVER_SETTINGS.textGenerationModelSelection);
   });
 
   it("falls back from an unavailable source control writer provider", () => {
