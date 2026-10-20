@@ -3597,11 +3597,11 @@ export function ArchivedThreadsPanel() {
           <p className="text-sm text-muted-foreground">
             {archivedThreadCount} archived thread{archivedThreadCount === 1 ? "" : "s"}
           </p>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-2">
             <Button
               type="button"
               variant="outline"
-              size="xs"
+              size="sm"
               disabled={isBulkActionPending || pendingThreadKeys.size > 0}
               onClick={() => {
                 void handleBulkArchivedThreadAction(
@@ -3611,13 +3611,13 @@ export function ArchivedThreadsPanel() {
                 );
               }}
             >
-              <ArchiveX className="size-3.5" />
+              <ArchiveX />
               <span>Unarchive all</span>
             </Button>
             <Button
               type="button"
               variant="destructive-outline"
-              size="xs"
+              size="sm"
               disabled={isBulkActionPending || pendingThreadKeys.size > 0}
               onClick={() => {
                 void handleBulkArchivedThreadAction(
@@ -3627,7 +3627,7 @@ export function ArchivedThreadsPanel() {
                 );
               }}
             >
-              <Trash2Icon className="size-3.5" />
+              <Trash2Icon />
               <span>Delete all</span>
             </Button>
           </div>
