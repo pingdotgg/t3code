@@ -3369,6 +3369,8 @@ export function ArchivedThreadsPanel() {
     useThreadActions();
   const [pendingThreadKeys, setPendingThreadKeys] = useState<ReadonlySet<string>>(() => new Set());
   const [isBulkActionPending, setIsBulkActionPending] = useState(false);
+  // A context menu can outlive the render that opened it, so guards must read live locks.
+  const pendingActionsRef = useRef({ bulk: false, threadKeys: new Set<string>() });
   const {
     snapshots: archivedSnapshots,
     error: archiveError,
@@ -3472,15 +3474,14 @@ export function ArchivedThreadsPanel() {
   // a second confirmation or command for the same thread.
   const withPendingThread = async (threadRef: ScopedThreadRef, action: () => Promise<void>) => {
     const threadKey = scopedThreadKey(threadRef);
-    if (pendingThreadKeys.has(threadKey)) return;
-    setPendingThreadKeys((current) => new Set(current).add(threadKey));
-    await action().finally(() =>
-      setPendingThreadKeys((current) => {
-        const next = new Set(current);
-        next.delete(threadKey);
-        return next;
-      }),
-    );
+    const pending = pendingActionsRef.current;
+    if (pending.bulk || pending.threadKeys.has(threadKey)) return;
+    pending.threadKeys.add(threadKey);
+    setPendingThreadKeys(new Set(pending.threadKeys));
+    await action().finally(() => {
+      pending.threadKeys.delete(threadKey);
+      setPendingThreadKeys(new Set(pending.threadKeys));
+    });
   };
 
   const handleUnarchiveThread = (threadRef: ScopedThreadRef) =>
@@ -3528,28 +3529,30 @@ export function ArchivedThreadsPanel() {
     threads: ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly id: ThreadId }>,
     scopeLabel: string,
   ) => {
-    if (threads.length === 0) return;
-    if (action === "delete") {
-      const api = readLocalApi();
-      if (!api) return;
-      // Always confirm: one click here can erase many threads at once.
-      const confirmed = await settlePromise(() =>
-        api.dialogs.confirm(
+    const pending = pendingActionsRef.current;
+    if (threads.length === 0 || pending.bulk || pending.threadKeys.size > 0) return;
+    pending.bulk = true;
+    setIsBulkActionPending(true);
+    const outcome = await settlePromise(async () => {
+      if (action === "delete") {
+        const api = readLocalApi();
+        if (!api) return null;
+        // Always confirm: one click here can erase many threads at once.
+        const confirmed = await api.dialogs.confirm(
           [
             `Delete ${threads.length} archived thread${threads.length === 1 ? "" : "s"}${scopeLabel}?`,
             "This permanently clears conversation history for these threads.",
           ].join("\n"),
           { variant: "destructive" },
-        ),
-      );
-      if (confirmed._tag === "Failure" || !confirmed.value) return;
-    }
-    setIsBulkActionPending(true);
-    const targets = threads.map((thread) => scopeThreadRef(thread.environmentId, thread.id));
-    const outcome = await settlePromise(() =>
-      action === "unarchive" ? unarchiveThreads(targets) : deleteArchivedThreads(targets),
-    );
-    setIsBulkActionPending(false);
+        );
+        if (!confirmed) return null;
+      }
+      const targets = threads.map((thread) => scopeThreadRef(thread.environmentId, thread.id));
+      return action === "unarchive" ? unarchiveThreads(targets) : deleteArchivedThreads(targets);
+    }).finally(() => {
+      pending.bulk = false;
+      setIsBulkActionPending(false);
+    });
     const failure = outcome._tag === "Failure" ? outcome : outcome.value;
     if (failure !== null) {
       const error = squashAtomCommandFailure(failure);
@@ -3569,6 +3572,8 @@ export function ArchivedThreadsPanel() {
     title: string,
     position: { x: number; y: number },
   ) => {
+    const pending = pendingActionsRef.current;
+    if (pending.bulk || pending.threadKeys.has(scopedThreadKey(threadRef))) return;
     const api = readLocalApi();
     if (!api) return;
     const clicked = await api.contextMenu.show(
