@@ -1,6 +1,7 @@
-import { act, createElement } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { createElement } from "react";
+import { describe, expect, it, vi } from "vite-plus/test";
+
+import { act, render } from "../test/render";
 
 import {
   areShortcutModifierStatesEqual,
@@ -17,33 +18,16 @@ const emptyState = (): ShortcutModifierState => ({
 });
 
 describe("useShortcutModifierState", () => {
-  let root: Root;
-  let container: HTMLDivElement;
-
-  beforeEach(() => {
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-    container = document.createElement("div");
-    document.body.append(container);
-    root = createRoot(container);
-  });
-
-  afterEach(async () => {
-    await act(async () => root.unmount());
-    container.remove();
-    vi.unstubAllGlobals();
-  });
-
   it.each(["keyup", "paste", "blur"] as const)(
     "does not render for unchanged modifiers after %s resets the state",
     async (reset) => {
-      const render = vi.fn();
+      const onRender = vi.fn();
       function Consumer() {
-        render(useShortcutModifierState());
+        onRender(useShortcutModifierState());
         return null;
       }
-      await act(async () => {
-        root.render(createElement(Consumer));
-      });
+      // The test counts the hook's renders, and the hook never reads a route.
+      await using _screen = await render(createElement(Consumer), { router: false });
       const press = async (type: "keydown" | "keyup", key: string, shiftKey = false) => {
         await act(async () => {
           window.dispatchEvent(new KeyboardEvent(type, { key, shiftKey }));
@@ -51,7 +35,7 @@ describe("useShortcutModifierState", () => {
       };
 
       await press("keydown", "Shift", true);
-      expect(render).toHaveBeenLastCalledWith({ ...emptyState(), shiftKey: true });
+      expect(onRender).toHaveBeenLastCalledWith({ ...emptyState(), shiftKey: true });
       if (reset === "keyup") {
         await press("keyup", "Shift");
       } else {
@@ -59,8 +43,8 @@ describe("useShortcutModifierState", () => {
           window.dispatchEvent(new Event(reset));
         });
       }
-      expect(render).toHaveBeenLastCalledWith(emptyState());
-      render.mockClear();
+      expect(onRender).toHaveBeenLastCalledWith(emptyState());
+      onRender.mockClear();
 
       for (const key of "typing") {
         await press("keydown", key);
@@ -70,9 +54,9 @@ describe("useShortcutModifierState", () => {
         window.dispatchEvent(new Event("paste"));
         window.dispatchEvent(new Event("blur"));
       });
-      expect(render).not.toHaveBeenCalled();
+      expect(onRender).not.toHaveBeenCalled();
       await press("keydown", "Shift", true);
-      expect(render).toHaveBeenCalledExactlyOnceWith({ ...emptyState(), shiftKey: true });
+      expect(onRender).toHaveBeenCalledExactlyOnceWith({ ...emptyState(), shiftKey: true });
     },
   );
 });

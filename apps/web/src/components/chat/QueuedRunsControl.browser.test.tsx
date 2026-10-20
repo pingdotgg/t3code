@@ -30,7 +30,7 @@ vi.mock(import("../../assets/assetUrls"), async (importOriginal) => ({
     resources.map((resource) => `https://assets.test/${resource.attachmentId}`)) as never,
 }));
 
-import { act, render as renderUi } from "../../../test/render";
+import { render as renderUi } from "../../../test/render";
 import { QueuedRunsControl } from "./QueuedRunsControl";
 
 function setup() {
@@ -204,9 +204,7 @@ it("previews assistant quotes as readable text and preserves the citation when e
     .element(page.getByText(`${quotedText} Why per worktree?`, { exact: true }))
     .toBeVisible();
 
-  await act(async () => {
-    await page.getByRole("button", { name: "Edit queued message", exact: true }).nth(1).click();
-  });
+  await page.getByRole("button", { name: "Edit queued message", exact: true }).nth(1).click();
   expect(onEditQueuedRun).toHaveBeenCalledExactlyOnceWith(
     expect.objectContaining({ text: quoteAndText }),
   );

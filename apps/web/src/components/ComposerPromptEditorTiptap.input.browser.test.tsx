@@ -484,7 +484,7 @@ describe("composer context undo lifetime", () => {
     const nextEditor = composer.editor();
     expect(nextEditor).not.toBe(previousEditor);
     expect(document.activeElement).toBe(nextEditor.view.dom);
-    await act(async () => userEvent.keyboard("x"));
+    await userEvent.keyboard("x");
     expect(composer.draft().value).toBe("xDraft B");
 
     const button = document.createElement("button");

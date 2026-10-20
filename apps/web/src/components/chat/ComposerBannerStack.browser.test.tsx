@@ -84,12 +84,12 @@ it("keeps only the usage limit attached while an active goal waits in the collap
     "Usage limit reached",
   );
 
-  await act(async () => page.getByRole("button", { name: "Show other notices" }).click());
+  await page.getByRole("button", { name: "Show other notices" }).click();
   await expect.element(goal).toBeVisible();
   await expect.element(limit).toBeVisible();
   await expect.poll(visibleBanners).toHaveLength(2);
 
-  await act(async () => userEvent.keyboard("{Escape}"));
+  await userEvent.keyboard("{Escape}");
   await expect.element(goal).not.toBeVisible();
   await expect.element(limit).toBeVisible();
   expect(visibleBanners()).toHaveLength(1);

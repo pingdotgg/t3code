@@ -122,7 +122,7 @@ const input = (selector: string) => {
   return found!;
 };
 async function type(selector: string, value: string) {
-  await act(async () => userEvent.fill(input(selector), value));
+  await userEvent.fill(input(selector), value);
   await act(async () => input(selector).blur());
 }
 const signInStep = () => document.querySelector('[aria-label="Sign-in step"]');

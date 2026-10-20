@@ -7,9 +7,10 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { act, createElement } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { createElement } from "react";
+import { describe, expect, it, vi } from "vite-plus/test";
+
+import { act, render } from "../../../test/render";
 
 // Only the transport is substituted. The hook, atom registry and preview
 // store run unchanged, including lazy evaluation and refresh notifications.
@@ -78,71 +79,70 @@ import { AppAtomRegistryProvider, appAtomRegistry } from "~/rpc/atomRegistry";
 import { previewEnvironment } from "~/state/preview";
 import { useDesktopHostedPreviewSessions, usePreviewSession } from "./usePreviewSession";
 
-let root: Root | null = null;
-let container: HTMLDivElement | null = null;
-let sequence = 0;
-let ref: ScopedThreadRef;
-
-function SessionSync() {
-  usePreviewSession(ref);
-  return null;
-}
-
-const listAtom = () => {
-  previewEnvironment.list({ environmentId: ref.environmentId, input: { threadId: ref.threadId } });
-  return harness.lists.get(ref.threadId)!.atom;
-};
-const result = (
-  revision: number,
-  tabIds: string[],
-  serverEpoch = "epoch-1",
-): PreviewListResult => ({
-  serverEpoch,
-  revision,
-  sessions: tabIds.map((tabId) => ({
-    threadId: ref.threadId,
-    tabId,
-    navStatus: { _tag: "Idle" },
-    canGoBack: false,
-    canGoForward: false,
-    updatedAt: "2026-10-02T00:00:00.000Z",
-  })),
-});
-
-function DesktopSessionSync() {
-  useDesktopHostedPreviewSessions(ref.environmentId);
-  return null;
-}
-
-async function mount(Component = SessionSync) {
-  container = document.body.appendChild(document.createElement("div"));
-  root = createRoot(container);
-  await act(async () => {
-    root!.render(createElement(AppAtomRegistryProvider, null, createElement(Component)));
-  });
-}
-
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  sequence += 1;
-  ref = {
-    environmentId: EnvironmentId.make(`preview-sync-${sequence}`),
-    threadId: ThreadId.make(`thread-sync-${sequence}`),
-  };
-});
-
-afterEach(async () => {
-  await act(async () => root?.unmount());
-  root = null;
-  container?.remove();
-  container = null;
+function setup() {
+  harness.lists.clear();
+  harness.events.clear();
   resetPreviewStateForTests();
-  vi.unstubAllGlobals();
-});
+  // The app atom registry outlives each test, so every test gets its own environment and thread.
+  const testName = expect.getState().currentTestName!;
+  const ref: ScopedThreadRef = {
+    environmentId: EnvironmentId.make(`preview-sync ${testName}`),
+    threadId: ThreadId.make(`thread-sync ${testName}`),
+  };
+
+  const listAtom = () => {
+    previewEnvironment.list({
+      environmentId: ref.environmentId,
+      input: { threadId: ref.threadId },
+    });
+    return harness.lists.get(ref.threadId)!.atom;
+  };
+  const result = (
+    revision: number,
+    tabIds: string[],
+    serverEpoch = "epoch-1",
+  ): PreviewListResult => ({
+    serverEpoch,
+    revision,
+    sessions: tabIds.map((tabId) => ({
+      threadId: ref.threadId,
+      tabId,
+      navStatus: { _tag: "Idle" },
+      canGoBack: false,
+      canGoForward: false,
+      updatedAt: "2026-10-02T00:00:00.000Z",
+    })),
+  });
+
+  function SessionSync() {
+    usePreviewSession(ref);
+    return null;
+  }
+  function DesktopSessionSync() {
+    useDesktopHostedPreviewSessions(ref.environmentId);
+    return null;
+  }
+  // The session hooks render nothing and never read or change the route.
+  const mount = (Component: () => null = SessionSync) =>
+    render(createElement(AppAtomRegistryProvider, null, createElement(Component)), {
+      router: false,
+    });
+
+  return {
+    ref,
+    listAtom,
+    result,
+    mount,
+    DesktopSessionSync,
+    [Symbol.dispose]: () => resetPreviewStateForTests(),
+  };
+}
 
 describe("native preview session synchronization", () => {
   it("discovers and closes a server tab in a background thread without mounting its chat", async () => {
-    await mount(DesktopSessionSync);
+    using sync = setup();
+    const { ref, listAtom, result } = sync;
+    await using _screen = await sync.mount(sync.DesktopSessionSync);
     expect(readThreadPreviewState(ref).sessions).toEqual({});
     previewEnvironment.events({ environmentId: ref.environmentId, input: {} });
     const events = harness.events.get(ref.environmentId)!;
@@ -183,18 +183,22 @@ describe("native preview session synchronization", () => {
   });
 
   it("evaluates the lazy list once and restores sessions that predate mounting", async () => {
+    using sync = setup();
+    const { ref, listAtom, result } = sync;
     const atom = listAtom();
-    await mount();
+    await using _screen = await sync.mount();
     expect(harness.lists.get(ref.threadId)?.box.requests).toBe(1);
     appAtomRegistry.set(atom, AsyncResult.success(result(1, ["restored"])));
     expect(readThreadPreviewState(ref).activeTabId).toBe("restored");
   });
 
   it("preserves a local tab while cached absence is waiting for a fresh response", async () => {
+    using sync = setup();
+    const { ref, listAtom, result } = sync;
     const atom = listAtom();
     appAtomRegistry.set(atom, AsyncResult.waiting(AsyncResult.success(result(1, []))));
     applyPreviewServerSnapshot(ref, result(1, ["local"]).sessions[0]!);
-    await mount();
+    await using _screen = await sync.mount();
     expect(readThreadPreviewState(ref).activeTabId).toBe("local");
     expect(harness.lists.get(ref.threadId)?.box.requests).toBe(0);
     appAtomRegistry.set(atom, AsyncResult.success(result(2, ["local"])));
@@ -204,6 +208,8 @@ describe("native preview session synchronization", () => {
   });
 
   it("refreshes a completed cache without treating its old absence as authoritative", async () => {
+    using sync = setup();
+    const { ref, listAtom, result } = sync;
     const atom = listAtom();
     appAtomRegistry.set(atom, AsyncResult.success(result(1, [])));
     reconcilePreviewServerSessions(ref, result(1, []));
@@ -221,7 +227,7 @@ describe("native preview session synchronization", () => {
       controller: "human",
       favicon: null,
     });
-    await mount();
+    await using _screen = await sync.mount();
     expect(harness.lists.get(ref.threadId)?.box.requests).toBe(1);
     expect(readThreadPreviewState(ref).activeTabId).toBe("local");
     expect(readThreadPreviewState(ref).desktopOverlay?.zoomFactor).toBe(1.5);
@@ -231,8 +237,10 @@ describe("native preview session synchronization", () => {
   });
 
   it("retains newer event state when an older list response completes, then retries the list", async () => {
+    using sync = setup();
+    const { ref, listAtom, result } = sync;
     const atom = listAtom();
-    await mount();
+    await using _screen = await sync.mount();
     const snapshot = result(2, ["opened"]).sessions[0]!;
     previewEnvironment.events({ environmentId: ref.environmentId, input: {} });
     appAtomRegistry.set(
@@ -261,9 +269,11 @@ describe("native preview session synchronization", () => {
   });
 
   it("keeps the local snapshot on a completed failure and reconciles a later success", async () => {
+    using sync = setup();
+    const { ref, listAtom, result } = sync;
     const atom = listAtom();
     applyPreviewServerSnapshot(ref, result(1, ["local"]).sessions[0]!);
-    await mount();
+    await using _screen = await sync.mount();
     appAtomRegistry.set(atom, AsyncResult.failure(Cause.die("offline")));
     expect(readThreadPreviewState(ref).activeTabId).toBe("local");
     appAtomRegistry.set(atom, AsyncResult.success(result(2, [])));

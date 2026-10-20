@@ -215,10 +215,8 @@ describe("MessagesTimeline work rows", () => {
     );
     const row = screen.container.querySelector<HTMLElement>('[data-v2-item-type="file_change"]')!;
     const press = async (target: HTMLElement) => {
-      await act(async () => {
-        target.focus();
-        await userEvent.keyboard(key);
-      });
+      target.focus();
+      await userEvent.keyboard(key);
     };
     expect(row.getAttribute("aria-expanded")).toBe("false");
     await press(row);

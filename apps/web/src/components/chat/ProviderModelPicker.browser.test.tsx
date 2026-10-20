@@ -12,7 +12,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 
-import { act, render as renderUi } from "../../../test/render";
+import { render as renderUi } from "../../../test/render";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import type { ModelEsque } from "./providerIconUtils";
@@ -85,7 +85,7 @@ function renderPicker(input: {
 }
 
 async function click(target: Parameters<typeof userEvent.click>[0]) {
-  await act(async () => userEvent.click(target));
+  await userEvent.click(target);
 }
 
 async function openLegacyPicker(activeModel: string) {

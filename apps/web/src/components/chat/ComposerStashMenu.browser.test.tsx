@@ -66,7 +66,7 @@ const editor = () => page.getByRole("textbox", { name: "Message" });
 const stash = () => page.getByRole("list", { name: "Stashed prompts" });
 const restore = (prompt: string) =>
   page.getByRole("button", { name: `Restore stashed prompt: ${prompt}` });
-const press = (keys: string) => act(async () => userEvent.keyboard(keys));
+const press = (keys: string) => userEvent.keyboard(keys);
 const focus = (element: Element) => act(async () => (element as HTMLElement).focus());
 
 it("leaves dialog, unrelated input and question button shortcuts alone while the stash is open", async () => {
@@ -128,7 +128,7 @@ it("navigates, deletes and restores stashed prompts from the composer and drawer
   await press("{Escape}");
   await expect.element(stash()).not.toBeInTheDocument();
 
-  await act(async () => userEvent.click(page.getByRole("button", { name: "Open stash" })));
+  await userEvent.click(page.getByRole("button", { name: "Open stash" }));
   await expect.element(restore("first prompt")).not.toBeInTheDocument();
   expect(stash().element().textContent).toContain("second prompt");
   await focus(editor().element());

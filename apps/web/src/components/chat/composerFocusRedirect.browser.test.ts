@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 
 import { shouldTypeToFocusComposer } from "./composerFocusRedirect";
 
@@ -15,14 +15,15 @@ function typeOn(target: Element, key: string): boolean {
   return redirected;
 }
 
-afterEach(() => {
-  document.body.replaceChildren();
-});
+function attach(element: Element): Disposable {
+  document.body.append(element);
+  return { [Symbol.dispose]: () => element.remove() };
+}
 
 describe("shouldTypeToFocusComposer", () => {
   it("sends letters typed on the chat to the composer", () => {
     const chat = document.createElement("div");
-    document.body.append(chat);
+    using _chat = attach(chat);
 
     expect(typeOn(chat, "a")).toBe(true);
   });
@@ -31,7 +32,7 @@ describe("shouldTypeToFocusComposer", () => {
     const deviceScreen = document.createElement("div");
     deviceScreen.setAttribute("role", "application");
     deviceScreen.tabIndex = 0;
-    document.body.append(deviceScreen);
+    using _deviceScreen = attach(deviceScreen);
 
     expect(typeOn(deviceScreen, "a")).toBe(false);
   });

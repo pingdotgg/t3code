@@ -59,7 +59,7 @@ function nextFrame() {
 async function enterFocusScope() {
   const toggle = document.querySelector<HTMLElement>('[aria-label="Toggle right panel"]')!;
   await act(async () => toggle.focus());
-  await act(() => userEvent.tab());
+  await userEvent.tab();
   await act(nextFrame);
 }
 

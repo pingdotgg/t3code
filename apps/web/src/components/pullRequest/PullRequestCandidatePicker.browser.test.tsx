@@ -1,4 +1,4 @@
-import { act, render } from "../../../test/render";
+import { render } from "../../../test/render";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
@@ -40,21 +40,19 @@ describe("disabled candidate picker", () => {
         'button[aria-label="Request reviewers"]',
       )!;
       if (input === "keyboard") {
-        await act(() => userEvent.tab());
+        await userEvent.tab();
         expect(document.activeElement).toBe(trigger);
       } else {
-        await act(() => userEvent.hover(trigger));
+        await userEvent.hover(trigger);
       }
       await expect
         .poll(() => document.querySelector('[data-slot="tooltip-popup"][data-open]')?.textContent)
         .toContain("Only collaborators can request reviewers.");
-      await act(async () => {
-        trigger.focus();
-        await userEvent.keyboard("{Enter}");
-        await userEvent.keyboard(" ");
-        // Playwright skips aria-disabled targets; the click must still land to prove it is inert.
-        await userEvent.click(trigger, { force: true });
-      });
+      trigger.focus();
+      await userEvent.keyboard("{Enter}");
+      await userEvent.keyboard(" ");
+      // Playwright skips aria-disabled targets; the click must still land to prove it is inert.
+      await userEvent.click(trigger, { force: true });
       expect(onOpenChange).not.toHaveBeenCalled();
       expect(onSelect).not.toHaveBeenCalled();
     },

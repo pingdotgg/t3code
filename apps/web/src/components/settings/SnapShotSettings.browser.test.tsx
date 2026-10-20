@@ -186,13 +186,14 @@ it.each(["direct", "gnome-extension", "kde"] as const)(
         "Record snapshot shortcut, currently Ctrl+Shift+2",
       );
     }
-    await act(async () => userEvent.click(recorder()));
-    await act(async () => userEvent.keyboard("{Control>}{Alt>}y{/Alt}{/Control}"));
+    await userEvent.click(recorder());
+    await userEvent.keyboard("{Control>}{Alt>}y{/Alt}{/Control}");
     expect(bridge.checkSnapShotShortcut).toHaveBeenCalledOnce();
-    expect(container.textContent).toContain("Ready to save.");
-    expect(recorder().getAttribute("aria-label")).toBe(
-      "Record snapshot shortcut, currently Ctrl+Alt+Y",
-    );
+    // The status and label update only after the awaited shortcut check resolves.
+    await expect.poll(() => container.textContent).toContain("Ready to save.");
+    await expect
+      .poll(() => recorder().getAttribute("aria-label"))
+      .toBe("Record snapshot shortcut, currently Ctrl+Alt+Y");
     await click("Save");
     expect(settingsStore.update).toHaveBeenCalledWith({
       snapShotShortcut: expect.objectContaining({ key: "y", modKey: true, altKey: true }),
@@ -233,9 +234,9 @@ it("keeps the approved desktop shortcut when recording is cancelled in setup", a
   expect(recorder().getAttribute("aria-label")).toBe(
     "Record snapshot shortcut, currently Ctrl+Alt+8",
   );
-  await act(async () => userEvent.click(recorder()));
+  await userEvent.click(recorder());
   expect(recorder().textContent).toBe("Press shortcut…");
-  await act(async () => userEvent.keyboard("{Escape}"));
+  await userEvent.keyboard("{Escape}");
   expect(dialog()).not.toBeNull();
   expect(recorder().getAttribute("aria-label")).toBe(
     "Record snapshot shortcut, currently Ctrl+Alt+8",
@@ -273,7 +274,7 @@ it("keeps older portal shortcuts editable without offering unsupported permissio
   const { button, recorder } = screen;
   expect(button("Shortcut permissions")).toBeNull();
   expect(bridge.setupSnapShot).not.toHaveBeenCalled();
-  await act(async () => userEvent.click(recorder()));
+  await userEvent.click(recorder());
   expect(recorder().textContent).toBe("Press shortcut…");
 });
 

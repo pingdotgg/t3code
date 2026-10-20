@@ -48,10 +48,10 @@ describe("FontFamilyPicker", () => {
 
     const input = document.querySelector<HTMLInputElement>('input[placeholder="Search fonts…"]');
     expect(input).not.toBeNull();
-    const press = (key: string) => act(() => userEvent.keyboard(`{${key}}`));
+    const press = (key: string) => userEvent.keyboard(`{${key}}`);
 
     // Both matches were already rendered further down the unfiltered list.
-    await act(() => userEvent.type(input!, "co"));
+    await userEvent.type(input!, "co");
     await expect.poll(highlightedOptions).toEqual(["Courier New"]);
 
     await press("ArrowDown");

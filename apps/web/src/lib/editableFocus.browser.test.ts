@@ -1,10 +1,6 @@
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 
 import { isEditableFocused } from "./editableFocus";
-
-afterEach(() => {
-  document.body.replaceChildren();
-});
 
 describe("isEditableFocused", () => {
   it("sees a text field focused inside an open shadow root", () => {
@@ -14,6 +10,7 @@ describe("isEditableFocused", () => {
     const input = document.createElement("input");
     host.attachShadow({ mode: "open" }).append(input);
     document.body.append(host);
+    using _host = { [Symbol.dispose]: () => host.remove() };
 
     expect(isEditableFocused(host)).toBe(false);
     input.focus();

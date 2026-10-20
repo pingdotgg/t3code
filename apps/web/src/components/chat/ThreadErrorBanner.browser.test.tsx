@@ -1,4 +1,4 @@
-import { act, render as renderUi } from "../../../test/render";
+import { render as renderUi } from "../../../test/render";
 import "../../index.css";
 
 import { expect, it } from "vite-plus/test";
@@ -15,13 +15,13 @@ it("expands even a short JSON error to its exact diagnostics and collapses back 
   await expect.element(page.getByText("Turn failed", { exact: true })).toBeVisible();
   expect(container.textContent).not.toContain("unsupported_value");
 
-  await act(async () => page.getByRole("button", { name: "Show full error" }).click());
+  await page.getByRole("button", { name: "Show full error" }).click();
 
   const diagnostics = page.getByText(error, { exact: true });
   await expect.element(diagnostics).toBeVisible();
   expect(diagnostics.element().textContent).toBe(error);
 
-  await act(async () => page.getByRole("button", { name: "Show less" }).click());
+  await page.getByRole("button", { name: "Show less" }).click();
 
   await expect.element(page.getByText("Turn failed", { exact: true })).toBeVisible();
   expect(container.textContent).not.toContain("unsupported_value");

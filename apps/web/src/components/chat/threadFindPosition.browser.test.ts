@@ -1,15 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { readThreadFindPosition } from "./threadFindPosition";
 
-afterEach(() => vi.restoreAllMocks());
-beforeEach(() => {
-  Object.defineProperty(Range.prototype, "getBoundingClientRect", {
-    configurable: true,
-    writable: true,
-    value: () => new DOMRect(),
-  });
-});
-
+// The container stays detached, so unmocked ranges measure as an empty rect.
 function viewport(text = "COD4 COD4") {
   const container = document.createElement("div");
   container.innerHTML = `<div data-timeline-row-id="above"><div data-thread-find-text>COD4</div></div>
@@ -27,7 +19,9 @@ function viewport(text = "COD4 COD4") {
 describe("reading position for find", () => {
   it("skips earlier rows and occurrences above the viewport within the current message", () => {
     const container = viewport();
-    vi.spyOn(Range.prototype, "getBoundingClientRect").mockImplementation(function (this: Range) {
+    using _ranges = vi.spyOn(Range.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: Range,
+    ) {
       return new DOMRect(0, this.startOffset === 0 ? 60 : 160, 40, 20);
     });
     expect(readThreadFindPosition(container, "COD4", (id) => id, 100)).toEqual({
@@ -38,7 +32,9 @@ describe("reading position for find", () => {
 
   it("starts after the current message when all its occurrences are above the viewport", () => {
     const container = viewport();
-    vi.spyOn(Range.prototype, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 60, 40, 20));
+    using _ranges = vi
+      .spyOn(Range.prototype, "getBoundingClientRect")
+      .mockReturnValue(new DOMRect(0, 60, 40, 20));
     expect(readThreadFindPosition(container, "COD4", (id) => id, 100)).toEqual({
       entryId: "reading",
       occurrence: 2,

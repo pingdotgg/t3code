@@ -188,7 +188,7 @@ export default defineConfig({
         rules: { "t3code/prefer-effect-fn": "off" },
       },
       {
-        files: ["apps/web/**/*.test.tsx"],
+        files: ["apps/web/**/*.test.{ts,tsx}"],
         rules: { "t3code/require-disposable-render": "error" },
       },
       {

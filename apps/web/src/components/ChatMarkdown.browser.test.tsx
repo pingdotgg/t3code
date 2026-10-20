@@ -1420,7 +1420,7 @@ describe("ChatMarkdown math", () => {
       });
       const [preview, after] = container.querySelectorAll("button");
       preview!.focus();
-      await act(() => userEvent.tab());
+      await userEvent.tab();
       expect(document.activeElement).toBe(after);
       if (formula.includes("notACommand")) {
         expect(page.getByRole("button", { name: /notACommand/ }).element()).toBe(preview);
@@ -1439,7 +1439,7 @@ describe("ChatMarkdown math", () => {
     );
     const { container } = screen;
     container.querySelector("button")!.focus();
-    await act(() => userEvent.tab());
+    await userEvent.tab();
     expect(document.activeElement).toBe(
       container.querySelector('[aria-label="Scroll inline equation"]'),
     );

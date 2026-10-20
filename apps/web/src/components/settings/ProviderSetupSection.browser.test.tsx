@@ -195,7 +195,7 @@ describe("Antigravity setup", () => {
     resetSetup();
     const callbackUrl = "http://127.0.0.1:5555/?state=test-only&code=test-only";
     await using screen = await renderSetup();
-    await act(async () => userEvent.fill(screen.callbackInput(), callbackUrl));
+    await userEvent.fill(screen.callbackInput(), callbackUrl);
     await screen.click("Continue");
 
     expect(setup.completeAuth).toHaveBeenCalledWith({
@@ -244,11 +244,9 @@ describe("Antigravity setup", () => {
     };
     setup.auth = authState({ interaction });
     await using screen = await renderSetup();
-    await act(async () =>
-      userEvent.fill(
-        screen.callbackInput(),
-        "http://127.0.0.1:5555/?state=old-flow&code=test-only",
-      ),
+    await userEvent.fill(
+      screen.callbackInput(),
+      "http://127.0.0.1:5555/?state=old-flow&code=test-only",
     );
     setup.auth = authState({ flowId: "flow-2", interaction });
     await publish();

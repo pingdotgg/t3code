@@ -85,8 +85,8 @@ async function renderConfig(desktop: "niri" | "hyprland" = "niri") {
       await act(async () => target!.click());
     },
     async recordKeys(keys: string) {
-      await act(async () => userEvent.click(recorder()));
-      await act(async () => userEvent.keyboard(keys));
+      await userEvent.click(recorder());
+      await userEvent.keyboard(keys);
     },
   });
 }
@@ -184,9 +184,9 @@ it.each(["Escape", "blur"])(
     using _env = setup();
     await using screen = await renderConfig();
     await screen.click("Review changes");
-    await act(async () => userEvent.click(screen.recorder()));
+    await userEvent.click(screen.recorder());
     expect(screen.button("Save shortcut")?.disabled).toBe(true);
-    if (cancel === "Escape") await act(async () => userEvent.keyboard("{Escape}"));
+    if (cancel === "Escape") await userEvent.keyboard("{Escape}");
     else await act(async () => screen.recorder().blur());
     expect(screen.button("Save shortcut")?.disabled).toBe(false);
     expect(bridge.previewSnapShotConfig).toHaveBeenCalledOnce();

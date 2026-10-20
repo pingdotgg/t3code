@@ -200,7 +200,7 @@ it("keeps a long PR hover list in the viewport and lets the last row be selected
       />
     </div>,
   );
-  await act(() => userEvent.hover(screen.container.querySelector("button")!));
+  await userEvent.hover(screen.container.querySelector("button")!);
   const popup = () => document.querySelector<HTMLElement>('[data-slot="tooltip-popup"]')!;
   await expect.poll(() => popup()?.querySelectorAll("a").length).toBe(40);
   await expect.poll(() => popup().getBoundingClientRect().top).toBeGreaterThanOrEqual(0);
@@ -212,13 +212,13 @@ it("keeps a long PR hover list in the viewport and lets the last row be selected
   expect(lastRow.getBoundingClientRect().top).toBeGreaterThan(
     popup().getBoundingClientRect().bottom,
   );
-  await act(() => userEvent.wheel(popup(), { delta: { y: 10_000 } }));
+  await userEvent.wheel(popup(), { delta: { y: 10_000 } });
   await expect
     .poll(() => lastRow.getBoundingClientRect().bottom)
     .toBeLessThanOrEqual(popup().getBoundingClientRect().bottom);
   expect(lastRow.getBoundingClientRect().top).toBeGreaterThanOrEqual(
     popup().getBoundingClientRect().top,
   );
-  await act(() => userEvent.click(lastRow));
+  await userEvent.click(lastRow);
   expect(onOpenPullRequest).toHaveBeenCalledExactlyOnceWith(expect.anything(), lastRow.href);
 });
