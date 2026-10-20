@@ -2081,6 +2081,53 @@ it.layer(
     }),
   );
 
+  it.effect.each([
+    {
+      label: "subagent",
+      threadId:
+        "thread:provider:claudeAgent:native-thread:provider-thread%3Aprovider%3AclaudeAgent%3Anative-thread%3Apending%253Arun%253Athread%253A9175fb53-52d7-4d4d-9be7-25a76cf84b91%253Aordinal%253A7%3Aad899ae84c7a131b0",
+    },
+    // Also too long for the legacy `<sanitized id>.log` lookup.
+    { label: "300-character", threadId: "x".repeat(300) },
+  ])("persists history for a $label thread id too long to encode into a filename", ({ threadId }) =>
+    Effect.gen(function* () {
+      const terminalId = "t".repeat(128);
+      const { manager, ptyAdapter, logsDir } = yield* createManager();
+      const fs = yield* FileSystem.FileSystem;
+      yield* manager.open(openInput({ threadId }));
+      yield* manager.open(openInput({ threadId, terminalId }));
+      ptyAdapter.processes[0]!.emitData("default\n");
+      ptyAdapter.processes[1]!.emitData("long\n");
+      yield* manager.close({ threadId });
+
+      expect((yield* manager.open(openInput({ threadId }))).history).toBe("default\n");
+      expect((yield* manager.open(openInput({ threadId, terminalId }))).history).toBe("long\n");
+
+      yield* manager.close({ threadId, deleteHistory: true });
+      expect(yield* fs.readDirectory(logsDir)).toEqual([]);
+    }),
+  );
+
+  it.effect("keeps reading and deleting history at an encoded path that already fit", () =>
+    Effect.gen(function* () {
+      const threadId = "x".repeat(120);
+      const { manager, logsDir } = yield* createManager();
+      const fs = yield* FileSystem.FileSystem;
+      const logPath = yield* historyLogPath(logsDir, threadId);
+      yield* fs.makeDirectory(logsDir, { recursive: true });
+      yield* fs.writeFileString(logPath, "before upgrade\n");
+
+      expect((yield* manager.open(openInput({ threadId }))).history).toBe("before upgrade\n");
+      // A long terminal id pushes only this terminal's name past the limit, so the thread's
+      // history is split across both forms and deleting the thread must remove both.
+      yield* manager.open(openInput({ threadId, terminalId: "t".repeat(128) }));
+
+      yield* manager.close({ threadId, deleteHistory: true });
+      expect(yield* fs.exists(logPath)).toBe(false);
+      expect(yield* fs.readDirectory(logsDir)).toEqual([]);
+    }),
+  );
+
   it.effect("closes all terminals for a thread when close omits terminalId", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter, logsDir } = yield* createManager();
