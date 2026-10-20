@@ -302,8 +302,63 @@ describe("rightPanelStore", () => {
     });
   });
 
-  it("allows automatic panels for a later turn after a manual choice", () => {
+  it.each([
+    {
+      surface: linkedPullRequest,
+      choose: () => useRightPanelStore.getState().openFile(refA, "notes.md"),
+    },
+    {
+      surface: { id: "pull-requests", kind: "pull-requests" } as const,
+      choose: () => useRightPanelStore.getState().openBrowser(refA, "tab-a"),
+    },
+  ])(
+    "preserves the selected tab and hidden panel when $surface.kind already exists",
+    ({ surface, choose }) => {
+      const store = useRightPanelStore.getState();
+      store.openProactive(refA, surface, store.getUserActionRevision(refA));
+      choose();
+      const chosen = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+
+      // Re-entry captures a fresh revision; the existing tab must still preserve the choice.
+      expect(store.openProactive(refA, surface, store.getUserActionRevision(refA))).toBe(false);
+      expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual(
+        chosen,
+      );
+
+      store.close(refA);
+      expect(store.openProactive(refA, surface, store.getUserActionRevision(refA))).toBe(false);
+      expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+        ...chosen,
+        isOpen: false,
+      });
+    },
+  );
+
+  it("retargets an existing PR tab but respects a later manual choice", () => {
     const store = useRightPanelStore.getState();
+    const relinkedPullRequest = pullRequestSurface({ ...linkedPullRequest, number: 43 });
+    store.openPullRequest(refA, relinkedPullRequest);
+    store.openPullRequest(refA, linkedPullRequest);
+    const revision = store.getUserActionRevision(refA);
+
+    expect(store.openProactive(refA, relinkedPullRequest, revision, true)).toBe(true);
+    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual(
+      relinkedPullRequest,
+    );
+
+    store.close(refA);
+    expect(store.openProactive(refA, linkedPullRequest, revision, true)).toBe(false);
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA),
+    ).toMatchObject({
+      activeSurfaceId: relinkedPullRequest.id,
+      isOpen: false,
+    });
+  });
+
+  it("refocuses an existing diff for a later turn after a manual choice", () => {
+    const store = useRightPanelStore.getState();
+    store.openProactive(refA, completedDiff, store.getUserActionRevision(refA));
     const firstTurnRevision = store.getUserActionRevision(refA);
     store.openFile(refA, "src/app.ts");
     expect(store.openProactive(refA, completedDiff, firstTurnRevision)).toBe(false);
