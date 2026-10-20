@@ -594,6 +594,7 @@ const capture = async (
     });
   return {
     ...page,
+    url: withoutDataPayload(page.url),
     // Text that holds a value would otherwise show where the tree masked it. Masked before
     // the cut, so a value crossing it can't leave its start showing.
     visibleText: mask(page.visibleText).slice(0, MAX_VISIBLE_TEXT_LENGTH),
