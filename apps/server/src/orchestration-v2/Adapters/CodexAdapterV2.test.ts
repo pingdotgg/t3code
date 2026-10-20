@@ -3322,6 +3322,143 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect.each(["failed", "interrupted", "Stop"] as const)(
+    "settles unfinished compaction on %s without changing completed compaction",
+    (outcome) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const nativeThreadId = "compact-thread";
+          const nativeTurnId = "compact-turn";
+          const error = {
+            message: "Remote compaction stream disconnected",
+            codexErrorInfo: "other",
+            additionalDetails: null,
+          };
+          const transcript = makeCodexReplayTranscript({
+            scenario: `automatic-compaction-${outcome}`,
+            entries: [
+              ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Continue." }),
+              ...(
+                [
+                  { method: "item/started", id: "completed-item", startedAtMs: 1782622441000 },
+                  { method: "item/completed", id: "completed-item", completedAtMs: 1782622442000 },
+                  { method: "item/started", id: "unfinished-item", startedAtMs: 1782622443000 },
+                ] as const
+              ).map(({ method, id, ...timestamps }) => ({
+                type: "emit_inbound" as const,
+                label: `${method}/${id}`,
+                frame: {
+                  method,
+                  params: {
+                    threadId: nativeThreadId,
+                    turnId: nativeTurnId,
+                    item: { type: "contextCompaction", id },
+                    ...timestamps,
+                  },
+                },
+              })),
+              ...(outcome === "Stop"
+                ? [
+                    {
+                      type: "expect_outbound" as const,
+                      label: "turn/interrupt",
+                      frame: {
+                        id: 4,
+                        method: "turn/interrupt",
+                        params: { threadId: nativeThreadId, turnId: nativeTurnId },
+                      },
+                    },
+                    {
+                      type: "emit_inbound" as const,
+                      label: "turn/interrupt/failed",
+                      frame: { id: 4, error: { code: -32_000, message: "Interrupt failed" } },
+                    },
+                  ]
+                : [
+                    {
+                      type: "emit_inbound" as const,
+                      label: "turn/completed",
+                      frame: {
+                        method: "turn/completed",
+                        params: {
+                          threadId: nativeThreadId,
+                          turn: {
+                            ...makeCodexReplayTurn({ id: nativeTurnId, status: outcome }),
+                            error: outcome === "failed" ? error : null,
+                          },
+                        },
+                      },
+                    },
+                  ]),
+            ],
+          });
+          const compactionStarted = yield* Deferred.make<ProviderTurnId>();
+          const harness = yield* makeCodexReplayHarness(transcript, (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === "unfinished-item" &&
+            event.turnItem.status === "running" &&
+            event.turnItem.providerTurnId !== null
+              ? Deferred.succeed(compactionStarted, event.turnItem.providerTurnId)
+              : Effect.void,
+          );
+          yield* TestClock.setTime(1782622445000);
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make(`compact-${outcome}-attempt`),
+              text: "Continue.",
+            }),
+          );
+          if (outcome === "Stop") {
+            const providerTurnId = yield* Deferred.await(compactionStarted);
+            const interrupt = yield* harness.runtime
+              .interruptTurn({ providerThread: harness.providerThread, providerTurnId })
+              .pipe(Effect.exit);
+            assert.equal(interrupt._tag, "Failure");
+          }
+          yield* harness.firstTerminal;
+          const items = harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "compaction"
+              ? [event.turnItem]
+              : [],
+          );
+          const completed = items.filter(
+            (item) => item.nativeItemRef?.nativeId === "completed-item",
+          );
+          const unfinished = items.filter(
+            (item) => item.nativeItemRef?.nativeId === "unfinished-item",
+          );
+          const status = outcome === "failed" ? "failed" : "interrupted";
+          assert.deepEqual(
+            unfinished.map((item) => item.status),
+            ["running", status],
+          );
+          assert.equal(unfinished[0]?.id, unfinished[1]?.id);
+          assert.deepEqual(unfinished[1]?.startedAt, DateTime.makeUnsafe(1782622443000));
+          assert.deepEqual(
+            unfinished[1]?.completedAt,
+            DateTime.makeUnsafe(outcome === "Stop" ? 1782622445000 : 1782622450000),
+          );
+          assert.deepEqual(
+            completed.map((item) => item.status),
+            ["running", "completed"],
+          );
+          assert.deepEqual(completed[1]?.startedAt, DateTime.makeUnsafe(1782622441000));
+          assert.deepEqual(completed[1]?.completedAt, DateTime.makeUnsafe(1782622442000));
+          assert.equal(harness.terminalEvents()[0]?.status, status);
+          if (outcome === "failed") {
+            assert.equal(harness.terminalEvents()[0]?.failure?.message, error.message);
+          }
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+      ),
+  );
+
   it.effect("resumes a provider thread without requesting or decoding its history", () =>
     Effect.scoped(
       Effect.gen(function* () {
