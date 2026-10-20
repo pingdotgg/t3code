@@ -20,18 +20,21 @@ function parseWebPreferences(input: string): Record<string, unknown> {
 describe("PREVIEW_WEBVIEW_PREFERENCES", () => {
   const parsed = parseWebPreferences(PREVIEW_WEBVIEW_PREFERENCES);
 
-  it("contains exactly the three security-critical keys", () => {
-    expect(Object.keys(parsed).toSorted()).toEqual(
-      ["contextIsolation", "nodeIntegration", "sandbox"].toSorted(),
-    );
+  it("preserves guest security preferences and disables unsupported FedCM", () => {
+    expect(parsed).toEqual({
+      contextIsolation: "false",
+      nodeIntegration: "false",
+      sandbox: "true",
+      disableBlinkFeatures: "FedCm",
+    });
   });
 
   it("uses canonical JS-boolean string literals (not yes/no, on/off, 1/0)", () => {
     // `value="no"` is a TRUTHY string when assigned to webPreferences.X — so
     // `contextIsolation="no"` would silently leave isolation ENABLED. Lock
     // the values to `"true"` / `"false"` so the parser does the right thing.
-    for (const value of Object.values(parsed)) {
-      expect(value).toMatch(/^(true|false)$/);
+    for (const key of ["contextIsolation", "nodeIntegration", "sandbox"]) {
+      expect(parsed[key]).toMatch(/^(true|false)$/);
     }
   });
 

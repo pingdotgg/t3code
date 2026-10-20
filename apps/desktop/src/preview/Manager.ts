@@ -1623,7 +1623,16 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.setWindowOpenHandler((details) => {
           const action = previewWindowOpenAction(details);
           if (action === "popup") {
-            return { action: "allow", overrideBrowserWindowOptions: POPUP_WINDOW_OPTIONS };
+            // Ownership keeps OAuth popups above T3 when the preview regains focus.
+            return {
+              action: "allow",
+              overrideBrowserWindowOptions: {
+                ...POPUP_WINDOW_OPTIONS,
+                ...(currentMainWindow && !currentMainWindow.isDestroyed()
+                  ? { parent: currentMainWindow }
+                  : {}),
+              },
+            };
           }
           if (action === "deny") return { action: "deny" };
           if (action === "new-tab") {
