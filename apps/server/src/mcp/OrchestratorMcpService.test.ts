@@ -5,6 +5,7 @@ import {
   EnvironmentId,
   MessageId,
   NodeId,
+  OrchestratorMcpTarget,
   type OrchestrationV2ThreadShell,
   type ScheduledTask,
   ScheduledTaskId,
@@ -21,6 +22,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
@@ -50,6 +52,8 @@ import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import { idleThreadProjection, liveThreadShell } from "./McpToolAccess.testkit.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+
+const decodeTarget = Schema.decodeUnknownEffect(OrchestratorMcpTarget);
 
 const layerOrchestratorService = OrchestratorMcpService.layer.pipe(
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
@@ -2448,6 +2452,192 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
     );
   });
+  it.effect(
+    "reports the child run's selection after a restart and the thread selection before launch",
+    () =>
+      Effect.gen(function* () {
+        const runSelection = {
+          instanceId: ProviderInstanceId.make("claudeAgent-personal"),
+          model: "claude-opus-4-6",
+          options: [
+            { id: "effort", value: "max" },
+            { id: "fastMode", value: true },
+          ],
+        } as const;
+        const threadSelection = {
+          instanceId: codexInstanceId,
+          model: "gpt-5.4",
+          options: [{ id: "reasoningEffort", value: "high" }],
+        } as const;
+        let hasRun = true;
+        const task = {
+          id: taskId,
+          threadId: parentThreadId,
+          origin: "app_owned",
+          childThreadId,
+          providerInstanceId: ProviderInstanceId.make("claudeAgent-work"),
+          model: "claude-sonnet-4-6",
+          status: "running",
+          result: null,
+        };
+        const dependencies = Layer.mergeAll(
+          NodeServices.layer,
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            getThreadRecords: (threadId) =>
+              Effect.succeed(
+                threadId === parentThreadId
+                  ? parentProjection([task])
+                  : ({
+                      ...childProjection,
+                      thread: { ...childProjection.thread, modelSelection: threadSelection },
+                      runs: hasRun
+                        ? [
+                            {
+                              id: RunId.make("run:mcp-restarted-child"),
+                              ordinal: 1,
+                              status: "running",
+                              modelSelection: runSelection,
+                            },
+                          ]
+                        : [],
+                    } as unknown as OrchestrationV2ThreadProjection),
+              ),
+          }),
+          ServerSettings.layerTest(),
+          providerRegistryLayer([]),
+          adapterRegistryLayer([]),
+          Layer.mock(ProjectService.ProjectService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        );
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          for (const selection of [runSelection, threadSelection]) {
+            const result = yield* service.taskStatus(scope, taskId);
+            assert.equal(result.providerInstanceId, selection.instanceId);
+            assert.equal(result.model, selection.model);
+            assert.deepEqual(result.options, selection.options);
+            hasRun = false;
+          }
+        }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
+      }),
+  );
+
+  it.effect(
+    "inherits delegated options, merges overrides, and resets on explicit clearing or a new target",
+    () =>
+      Effect.gen(function* () {
+        const peerId = ProviderInstanceId.make("codex-subscription-2");
+        const driver = ProviderDriverKind.make("codex");
+        const inherited = {
+          instanceId: codexInstanceId,
+          model: "gpt-5.4",
+          options: [
+            { id: "reasoningEffort", value: "high" },
+            { id: "serviceTier", value: "priority" },
+          ],
+        } as const;
+        const override = [{ id: "reasoningEffort", value: "max" }] as const;
+        const cases = [
+          {
+            name: "partial override",
+            target: { options: override },
+            expected: { ...inherited, options: [...override, inherited.options[1]] },
+          },
+          {
+            name: "clear with array",
+            target: { options: [] },
+            expected: { ...inherited, options: [] },
+          },
+          {
+            name: "clear with object",
+            target: { options: {} },
+            expected: { ...inherited, options: [] },
+          },
+          {
+            name: "change model",
+            target: { model: "other-model" },
+            expected: { instanceId: codexInstanceId, model: "other-model" },
+          },
+          {
+            name: "change provider with override",
+            target: { providerInstanceId: peerId, options: { reasoningEffort: "max" } },
+            expected: { instanceId: peerId, model: inherited.model, options: override },
+          },
+        ] as const;
+        for (const testCase of cases) {
+          const commands: Array<unknown> = [];
+          const task = {
+            id: taskId,
+            threadId: parentThreadId,
+            origin: "app_owned",
+            childThreadId,
+            providerInstanceId: testCase.expected.instanceId,
+            model: testCase.expected.model,
+            status: "running",
+            result: null,
+          };
+          const dependencies = Layer.mergeAll(
+            NodeServices.layer,
+            Layer.mock(ThreadManagementService.ThreadManagementService)({
+              hasReceipt: () => Effect.succeed(false),
+              assertProviderInstanceEnabled: () => Effect.void,
+              getThreadRecords: (threadId) =>
+                Effect.succeed(
+                  threadId === parentThreadId
+                    ? parentProjection(commands.length > 0 ? [task] : [], inherited)
+                    : childProjection,
+                ),
+              dispatch: (command) =>
+                Effect.sync(() => {
+                  commands.push(command);
+                  return {
+                    sequence: 1,
+                    storedEvents: [{ event: { type: "subagent.updated", payload: task } }],
+                  } as never;
+                }),
+            }),
+            ServerSettings.layerTest(),
+            providerRegistryLayer([
+              {
+                ...providerSnapshot({
+                  instanceId: codexInstanceId,
+                  driver,
+                  model: inherited.model,
+                }),
+                models: [inherited.model, "other-model"].map((model) => ({
+                  slug: model,
+                  name: model,
+                  isCustom: false,
+                  capabilities: null,
+                })),
+              },
+              providerSnapshot({ instanceId: peerId, driver, model: inherited.model }),
+            ]),
+            adapterRegistryLayer([codexInstanceId, peerId]),
+            Layer.mock(ProjectService.ProjectService)({}),
+            Layer.mock(SecretRequests.SecretRequests)({}),
+            Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+          );
+          yield* Effect.gen(function* () {
+            const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+            const capabilities = yield* service.capabilities(scope);
+            assert.deepEqual(capabilities.inheritedOptions, inherited.options);
+            yield* service.delegateTask(scope, {
+              task: "Review the change.",
+              target: yield* decodeTarget(testCase.target),
+              mode: "async",
+              clientRequestId: testCase.name,
+            });
+            assert.deepEqual(
+              (commands[0] as { modelSelection: unknown }).modelSelection,
+              testCase.expected,
+              testCase.name,
+            );
+          }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
+        }
+      }),
+  );
 
   describe("resolveRuntimeMode", () => {
     const muse = {
