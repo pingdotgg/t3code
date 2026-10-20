@@ -4842,12 +4842,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   : ((restarted ? null : previous?.startedAt) ??
                     (status === "running" ? now : null));
             const completedAt = settled
-              ? ((restarted ? null : previous?.completedAt) ?? now)
+              ? member.completedAt !== undefined
+                ? DateTime.makeUnsafe(member.completedAt)
+                : ((restarted ? null : previous?.completedAt) ?? now)
               : null;
             const changed =
               restarted ||
               previous?.status !== status ||
               !Equal.equals(previous?.startedAt, startedAt) ||
+              !Equal.equals(previous?.completedAt, completedAt) ||
               previous?.result !== member.result ||
               previous?.label !== member.label ||
               previous?.prompt !== prompt ||

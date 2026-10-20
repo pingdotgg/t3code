@@ -70,6 +70,13 @@ function parseAgent(entry: unknown): OrchestrationV2WorkflowAgent | null {
     ...optional("durationMs", count(field(entry, "durationMs"))),
     ...optional("queuedAt", timestamp(field(entry, "queuedAt"))),
     ...optional("startedAt", timestamp(field(entry, "startedAt"))),
+    // Execution duration excludes startup waits; terminal progress carries the end instant.
+    ...optional(
+      "completedAt",
+      state === "completed" || state === "failed"
+        ? timestamp(field(entry, "lastProgressAt"))
+        : undefined,
+    ),
     ...optional("prompt", preview(field(entry, "promptPreview"))),
     ...optional("result", preview(field(entry, "resultPreview"))),
   };

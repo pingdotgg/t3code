@@ -87,9 +87,11 @@ describe("projectedSubagentsToRuntime workflow expansion", () => {
     expect(rows[2]?.startedAt).toBeNull();
   });
 
-  it("derives a settled member's end from its reported duration", () => {
+  it("uses a settled member's wall-clock completion separately from its execution duration", () => {
     const [, settled] = projectedSubagentsToRuntime([
       subagent({
+        status: "completed",
+        completedAt: at("2026-08-01T10:00:09.000Z"),
         workflow: {
           phases: [],
           agents: [
@@ -97,6 +99,7 @@ describe("projectedSubagentsToRuntime workflow expansion", () => {
               state: "completed",
               startedAt: Date.UTC(2026, 7, 1, 10, 0, 0),
               durationMs: 1500,
+              completedAt: Date.UTC(2026, 7, 1, 10, 0, 4, 432),
               totalTokens: 71_141,
               toolCalls: 3,
               prompt: "Reply with exactly: A1",
@@ -107,7 +110,7 @@ describe("projectedSubagentsToRuntime workflow expansion", () => {
       }),
     ]);
     expect(settled?.status).toBe("completed");
-    expect(settled?.completedAt).toBe("2026-08-01T10:00:01.500Z");
+    expect(settled?.completedAt).toBe("2026-08-01T10:00:04.432Z");
     expect(settled?.result).toBe("A1");
     expect(settled?.progress).toBe("Reply with exactly: A1");
     expect(settled?.usage).toEqual({ totalTokens: 71_141, toolUses: 3, durationMs: 1500 });
@@ -125,7 +128,12 @@ describe("projectedSubagentsToRuntime workflow expansion", () => {
             agents: [
               member(),
               member({ index: 2, state: "queued" }),
-              member({ index: 3, state: "completed" }),
+              member({
+                index: 3,
+                state: "completed",
+                startedAt: Date.UTC(2026, 7, 1, 10, 0, 0),
+                durationMs: 1500,
+              }),
             ],
           },
         }),
@@ -133,7 +141,11 @@ describe("projectedSubagentsToRuntime workflow expansion", () => {
       expect(groups[0]?.workflow.status).toBe(status);
       const members = groups[0]?.phases.flatMap((phase) => phase.members);
       expect(members?.map((agent) => agent.status)).toEqual([status, status, "completed"]);
-      expect(members?.[0]?.completedAt).toBe("2026-08-01T10:00:09.000Z");
+      expect(members?.map((agent) => agent.completedAt)).toEqual([
+        "2026-08-01T10:00:09.000Z",
+        "2026-08-01T10:00:09.000Z",
+        "2026-08-01T10:00:01.500Z",
+      ]);
     },
   );
 
