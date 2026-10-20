@@ -6,12 +6,29 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { getMobileThemeRuntimeVariables } from "../lib/mobileThemeVariables";
+import { createWidgetTheme } from "./widgetTheme";
 import {
+  type SubscriptionUsageSnapshot,
   buildSubscriptionUsageSnapshot,
   createWidgetRefresher,
   WIDGET_REFRESH_INTERVAL,
   subscriptionUsageTimeline,
 } from "./subscriptionUsageSnapshot";
+
+function contrastRatio(first: string, second: string) {
+  const luminance = (color: string) => {
+    if (!/^#[0-9a-f]{6}(?:ff)?$/i.test(color)) throw new Error(`Expected opaque hex: ${color}`);
+    const linear = [1, 3, 5].map((offset) => {
+      const channel = Number.parseInt(color.slice(offset, offset + 2), 16) / 255;
+      return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * linear[0]! + 0.7152 * linear[1]! + 0.0722 * linear[2]!;
+  };
+  const a = luminance(first);
+  const b = luminance(second);
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+}
 
 const checkedAt = "2026-09-05T12:00:00.000Z";
 const now = Date.parse(checkedAt);
@@ -221,12 +238,40 @@ describe("subscription widget snapshots", () => {
     expect(snapshot.providers[0]?.expiresAt).toBe(now + 15 * 60_000);
     expect(snapshot.providers[0]?.windows[0]?.reset).toBe("Reset time unavailable");
   });
-  it("schedules a reset boundary without inventing a zero quota", () => {
-    const snapshot = buildSubscriptionUsageSnapshot(presentations(), deepLink);
+  it("preserves the saved appearance through a reset without inventing a zero quota", () => {
+    const light = getMobileThemeRuntimeVariables("t3-chat", "light", "ios");
+    const dark = getMobileThemeRuntimeVariables("t3-code", "dark", "ios");
+    const snapshot: SubscriptionUsageSnapshot = JSON.parse(
+      JSON.stringify({
+        ...buildSubscriptionUsageSnapshot(presentations(), deepLink),
+        theme: createWidgetTheme("dark", { light, dark }),
+      }),
+    );
     const timeline = subscriptionUsageTimeline(snapshot, now);
     expect(timeline.map((entry) => entry.date.getTime())).toEqual([now, now + 10 * 60_000]);
     expect(timeline[1]?.props.providers[0]?.windows).toEqual([]);
     expect(subscriptionUsageTimeline(snapshot, now + 60 * 60_000)).toHaveLength(1);
+    for (const entry of timeline) {
+      expect(JSON.parse(JSON.stringify(entry.props)).theme).toEqual({
+        mode: "dark",
+        light: expect.objectContaining({
+          background: light["--color-card"],
+          foreground: light["--color-foreground"],
+        }),
+        dark: expect.objectContaining({
+          background: dark["--color-card"],
+          foreground: dark["--color-foreground"],
+        }),
+      });
+    }
+  });
+  it("keeps the default Android unfilled track distinguishable from the card", () => {
+    const theme = createWidgetTheme("system", {
+      light: getMobileThemeRuntimeVariables("t3-code", "light", "android"),
+      dark: getMobileThemeRuntimeVariables("t3-code", "dark", "android"),
+    });
+    expect(contrastRatio(theme.dark.track, theme.dark.background)).toBeGreaterThanOrEqual(1.3);
+    expect(contrastRatio(theme.light.track, theme.light.background)).toBeGreaterThanOrEqual(1.3);
   });
   it("expires providers independently without inventing a refill", () => {
     const snapshot = buildSubscriptionUsageSnapshot(
