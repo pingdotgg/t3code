@@ -1,0 +1,26 @@
+diff --git a/out/NsisUpdater.js b/out/NsisUpdater.js
+--- a/out/NsisUpdater.js
++++ b/out/NsisUpdater.js
+@@ -30,7 +30,21 @@ class NsisUpdater extends BaseUpdater_1.BaseUpdater {
+     /*** @private */
+     doDownloadUpdate(downloadUpdateOptions) {
+         const provider = downloadUpdateOptions.updateInfoAndProvider.provider;
+-        const fileInfo = (0, Provider_1.findFile)(provider.resolveFiles(downloadUpdateOptions.updateInfoAndProvider.info), "exe");
++        let files = provider.resolveFiles(downloadUpdateOptions.updateInfoAndProvider.info);
++        const isArm64 = process.arch === "arm64" || this.app.app?.runningUnderARM64Translation === true || (process.env["PROCESSOR_ARCHITEW6432"] || "").toUpperCase() === "ARM64";
++        const hostArch = isArm64 ? "arm64" : process.arch;
++        const fileArch = (file) => {
++            const arch = path.posix.basename(file.url.pathname).match(/(?:^|[-_.])(arm64|aarch64|x64|x86_64|amd64|ia32)(?=[-_.]|$)/i)?.[1]?.toLowerCase();
++            if (arch === "aarch64") return "arm64";
++            if (arch === "x86_64" || arch === "amd64") return "x64";
++            return arch;
++        };
++        files = files.filter(file => file.url.pathname.toLowerCase().endsWith(".exe"));
++        // Keep legacy untagged installers, but never fall back to another architecture.
++        if (files.some(file => fileArch(file) !== undefined)) {
++            files = files.filter(file => fileArch(file) === hostArch);
++        }
++        const fileInfo = (0, Provider_1.findFile)(files, "exe");
+         return this.executeDownload({
+             fileExtension: "exe",
+             downloadUpdateOptions,

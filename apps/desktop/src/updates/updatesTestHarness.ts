@@ -40,6 +40,7 @@ export interface UpdatesHarnessOptions {
   readonly backendInstances?: ReadonlyArray<DesktopBackendPool.DesktopBackendInstance>;
   readonly env?: Record<string, string | undefined>;
   readonly platform?: NodeJS.Platform;
+  readonly processArch?: string;
   readonly packageType?: string | undefined;
   readonly installRecord?: string | undefined;
 }
@@ -174,7 +175,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     dirname: "/repo/apps/desktop/src",
     homeDirectory: `/tmp/t3-desktop-updates-home-${process.pid}`,
     platform: options.platform ?? "darwin",
-    processArch: "x64",
+    processArch: options.processArch ?? "x64",
     appVersion: "1.2.3",
     appPath: "/repo",
     isPackaged: true,
@@ -242,7 +243,8 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
         ? (installRecords.get(path) ?? previousInstallRecord)
         : undefined;
       if (installRecord !== undefined) return Effect.succeed(installRecord);
-      return path === "/missing/resources/package-type" && options.packageType !== undefined
+      return path.replaceAll("\\", "/") === "/missing/resources/package-type" &&
+        options.packageType !== undefined
         ? Effect.succeed(options.packageType)
         : path === `${PENDING_DOWNLOAD_DIRECTORY}/update-info.json` &&
             options.cachedDownloadSha512 !== undefined

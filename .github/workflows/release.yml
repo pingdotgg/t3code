@@ -800,14 +800,20 @@ jobs:
         if: needs.preflight.outputs.release_channel != 'preview'
         run: |
           shopt -s nullglob
-          for x64_manifest in release-assets/*-win-x64.yml; do
+          x64_manifests=(release-assets/*-win-x64.yml)
+          if (( ${#x64_manifests[@]} == 0 )); then
+            echo "Missing x64 Windows updater manifest in release-assets" >&2
+            exit 1
+          fi
+          for x64_manifest in "${x64_manifests[@]}"; do
             arm64_manifest="${x64_manifest%-x64.yml}-arm64.yml"
             merged_manifest="${x64_manifest%-win-x64.yml}.yml"
             if [[ -f "$arm64_manifest" ]]; then
-              node scripts/merge-update-manifests.ts --platform win "$x64_manifest" "$arm64_manifest" "$merged_manifest"
+              node scripts/merge-update-manifests.ts --platform win "$arm64_manifest" "$x64_manifest" "$merged_manifest"
               rm -f "$x64_manifest" "$arm64_manifest"
             else
-              mv "$x64_manifest" "$merged_manifest"
+              echo "Missing matching arm64 Windows manifest for $x64_manifest" >&2
+              exit 1
             fi
           done
 

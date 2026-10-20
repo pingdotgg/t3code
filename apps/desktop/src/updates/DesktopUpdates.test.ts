@@ -1204,6 +1204,51 @@ describe("DesktopUpdates", () => {
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
+
+  it.effect("offers native Windows updates under Prism and hides incompatible releases", () => {
+    let disableDifferentialCount = 0;
+    const harness = makeHarness({
+      platform: "win32",
+      processArch: "x64",
+      runningUnderArm64Translation: true,
+      setDisableDifferentialDownload: Effect.sync(() => {
+        disableDifferentialCount += 1;
+      }),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        const initialState = yield* updates.getState;
+        assert.equal(initialState.hostArch, "arm64");
+        assert.equal(initialState.appArch, "x64");
+        assert.isTrue(initialState.runningUnderArm64Translation);
+        assert.equal(disableDifferentialCount, 1);
+
+        harness.emit("update-available", {
+          version: "1.2.4",
+          files: [{ url: "T3-Code-1.2.4-x64.exe", sha512: "x64sha", size: 100 }],
+        });
+        yield* flushCallbacks;
+        assert.equal((yield* updates.getState).status, "up-to-date");
+        assert.isNull((yield* updates.getState).availableVersion);
+        assert.isFalse((yield* updates.download).accepted);
+
+        harness.emit("update-available", {
+          version: "1.2.4",
+          files: [
+            { url: "T3-Code-1.2.4-x64.exe", sha512: "x64sha", size: 100 },
+            { url: "T3-Code-1.2.4-arm64.exe", sha512: "arm64sha", size: 95 },
+          ],
+        });
+        yield* flushCallbacks;
+        assert.equal((yield* updates.getState).status, "available");
+        assert.equal((yield* updates.getState).availableVersion, "1.2.4");
+        assert.isTrue((yield* updates.download).accepted);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
 });
 
 describe("describeUpdateErrorCause", () => {

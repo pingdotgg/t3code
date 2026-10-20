@@ -64,6 +64,7 @@ type AppUpdateYmlConfig = typeof AppUpdateYmlConfig.Type;
 
 const UpdateInfo = Schema.Struct({
   version: Schema.String,
+  path: Schema.optional(Schema.String),
   // Left unvalidated on purpose: a malformed release-notes payload must never
   // fail the decode and block the update state transition. The shape is
   // validated defensively in normalizeDesktopUpdateReleaseNotes.
@@ -93,6 +94,9 @@ const decodeAppUpdateYmlConfig = Schema.decodeUnknownEffect(AppUpdateYmlConfig);
 const decodeUpdateInfo = Schema.decodeUnknownEffect(UpdateInfo);
 const decodeDownloadProgressInfo = Schema.decodeUnknownEffect(DownloadProgressInfo);
 const decodeReleaseFiles = Schema.decodeUnknownOption(ReleaseFiles);
+const decodeReleaseFileUrls = Schema.decodeUnknownOption(
+  Schema.Array(Schema.Struct({ url: Schema.String })),
+);
 const decodeCachedDownloadInfo = Schema.decodeUnknownEffect(CachedDownloadInfo);
 
 const currentIsoTimestamp = DateTime.now.pipe(Effect.map(DateTime.formatIso));
@@ -346,6 +350,31 @@ function isArm64HostRunningIntelBuild(runtimeInfo: DesktopRuntimeInfo): boolean 
   return runtimeInfo.hostArch === "arm64" && runtimeInfo.appArch === "x64";
 }
 
+function hasWindowsUpdateForHostArch(
+  info: typeof UpdateInfo.Type,
+  hostArch: DesktopRuntimeInfo["hostArch"],
+): boolean {
+  if (hostArch !== "arm64" && hostArch !== "x64") return true;
+
+  const releaseFiles = Option.getOrElse(decodeReleaseFileUrls(info.files), () => []);
+  const files = releaseFiles.length ? releaseFiles : info.path ? [{ url: info.path }] : [];
+  const architectures = files.map(({ url }) => {
+    const filename = url.split(/[?#]/, 1)[0]?.split(/[\\/]/).at(-1) ?? "";
+    return filename
+      .match(/(?:^|[-_.])(arm64|aarch64|x64|x86_64|amd64|ia32)(?=[-_.]|$)/i)?.[1]
+      ?.toLowerCase();
+  });
+  // Untagged legacy releases carry no architecture information.
+  return (
+    architectures.every((arch) => arch === undefined) ||
+    architectures.some((arch) =>
+      hostArch === "arm64"
+        ? arch === "arm64" || arch === "aarch64"
+        : arch === "x64" || arch === "x86_64" || arch === "amd64",
+    )
+  );
+}
+
 // Match electron-updater 6.8.9's MacUpdater.filterFilesForArch and Provider.findFile
 // for T3's package feeds. Matching any artifact can trigger a different download.
 function selectUpdateFile(
@@ -369,7 +398,9 @@ function selectUpdateFile(
           ? ".deb"
           : ".appimage";
   const packageFiles = candidates.filter((file) => file.url.toLowerCase().endsWith(extension));
-  return packageFiles.find((file) => file.url.includes(runtimeInfo.appArch)) ?? packageFiles[0];
+  // The patched NsisUpdater downloads the host's installer, not the running build's.
+  const arch = platform === "win32" ? runtimeInfo.hostArch : runtimeInfo.appArch;
+  return packageFiles.find((file) => file.url.includes(arch)) ?? packageFiles[0];
 }
 
 /** @public Service construction is part of the canonical Effect module API. */
@@ -955,6 +986,21 @@ export const make = Effect.gen(function* () {
             return;
           }
 
+          if (
+            environment.platform === "win32" &&
+            !hasWindowsUpdateForHostArch(info, environment.runtimeInfo.hostArch)
+          ) {
+            yield* logUpdaterInfo("ignoring update that has no package for host architecture", {
+              version: info.version,
+              hostArch: environment.runtimeInfo.hostArch,
+              appArch: environment.runtimeInfo.appArch,
+            });
+            const checkedAt = yield* currentIsoTimestamp;
+            yield* setState(reduceDesktopUpdateStateOnNoUpdate(state, checkedAt));
+            yield* Ref.set(lastLoggedDownloadMilestoneRef, -1);
+            return;
+          }
+
           const checkedAt = yield* currentIsoTimestamp;
           const { releaseNotes, omittedReleaseCount } = normalizeDesktopUpdateReleaseNotes(
             info.releaseNotes,
@@ -1159,7 +1205,7 @@ export const make = Effect.gen(function* () {
 
       if (isArm64HostRunningIntelBuild(environment.runtimeInfo)) {
         yield* logUpdaterInfo(
-          "Apple Silicon host detected while running Intel build; updates will switch to arm64 packages",
+          "arm64 host detected while running the x64 build; updates will switch to arm64 packages",
         );
       }
 
