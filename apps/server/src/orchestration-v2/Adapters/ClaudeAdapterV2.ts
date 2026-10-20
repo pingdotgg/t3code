@@ -3404,7 +3404,15 @@ export function claudeUserInputQuestions(
           if (label.length === 0) return [];
           const description =
             typeof optionRecord.description === "string" ? optionRecord.description.trim() : "";
-          return [{ label, description: description || label }];
+          return [
+            {
+              label,
+              description: description || label,
+              ...(typeof optionRecord.preview === "string"
+                ? { preview: optionRecord.preview }
+                : {}),
+            },
+          ];
         })
       : [];
     return [
