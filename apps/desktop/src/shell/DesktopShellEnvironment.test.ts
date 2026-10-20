@@ -530,6 +530,49 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
+  it.effect("drops earlier AppImage launches' mount dirs from the search paths on linux", () =>
+    Effect.gen(function* () {
+      const current = "/var/tmp/.mount_cur";
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        APPIMAGE: "/home/me/T3-Code.AppImage",
+        APPDIR: `${current}/`,
+        PATH: `${current}/usr/bin:/tmp/.mount_old/usr/bin:/usr/bin`,
+        LD_LIBRARY_PATH: `/tmp/.mount_old/usr/lib:${current}/usr/lib::/opt/lib`,
+        XDG_DATA_DIRS: "/tmp/.mount_old/usr/share:/var/tmp/.mount_cur2/usr/share",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "linux",
+        handler: () => envOutput({ PATH: "/tmp/.mount_older/usr/bin:/home/me/.local/bin" }),
+      });
+
+      assert.equal(env.PATH, `/home/me/.local/bin:${current}/usr/bin:/usr/bin`);
+      assert.equal(env.LD_LIBRARY_PATH, `${current}/usr/lib::/opt/lib`);
+      assert.equal(env.XDG_DATA_DIRS, undefined);
+    }),
+  );
+
+  it.effect("keeps AppImage-looking search paths outside an AppImage launch", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/tmp/.mount_old/usr/bin:/usr/bin",
+        LD_LIBRARY_PATH: "/tmp/.mount_old/usr/lib",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "linux",
+        handler: () => envOutput({ PATH: "/usr/bin" }),
+      });
+
+      assert.equal(env.PATH, "/usr/bin:/tmp/.mount_old/usr/bin");
+      assert.equal(env.LD_LIBRARY_PATH, "/tmp/.mount_old/usr/lib");
+    }),
+  );
+
   it.effect("prefers login-shell desktop session hints over inherited values on linux", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {
