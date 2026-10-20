@@ -18,6 +18,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
+import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
@@ -551,6 +552,53 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
         yield* expectPreviousRelease(installation);
       }
     }),
+  );
+
+  it.effect.each([
+    {
+      name: "IPv6 startup failure",
+      stderr:
+        "enforce_kernel_ipv6_support.cc:70] Check failed: AddressFamilySupported(AF_INET6, &loopback6_ok)",
+      message:
+        "Antigravity requires IPv6 socket support. Enable IPv6 in this environment. On WSL, remove ipv6.disable=1 from .wslconfig and run wsl --shutdown.",
+    },
+    {
+      name: "other startup failure",
+      stderr: "Private startup diagnostics: internal runtime failure",
+      message: "The downloaded Antigravity runtime could not start in this environment.",
+    },
+  ])(
+    "reports a fixed diagnostic for $name and preserves the previous release after SIGABRT",
+    (testCase) =>
+      Effect.gen(function* () {
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const { installation, stagingReleased } = yield* makeHarness({
+          previous: true,
+          useDefaultValidation: true,
+        }).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make((command) =>
+              spawner.spawn(
+                command._tag === "StandardCommand" && command.command.endsWith(executableName)
+                  ? ChildProcess.make(process.execPath, [
+                      "-e",
+                      `process.stderr.write(${encodeJsonString(testCase.stderr)}, () => process.kill(process.pid, 'SIGABRT'));`,
+                    ])
+                  : command,
+              ),
+            ),
+          ),
+        );
+        yield* installation.start;
+        expect(yield* terminalState(installation)).toMatchObject({
+          phase: "failed",
+          message: testCase.message,
+        });
+        yield* Deferred.await(stagingReleased);
+        yield* expectPreviousRelease(installation);
+      }),
+    { skip: hostPlatform === "win32" },
   );
 
   it.effect("accepts an encoded Content-Length when the body is compressed", () =>
