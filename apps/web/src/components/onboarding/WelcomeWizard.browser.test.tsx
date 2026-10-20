@@ -221,3 +221,29 @@ it("keeps setup open when saving completion fails and preserves the import warni
     }),
   );
 });
+
+it("requires explicit Close to complete local setup", async () => {
+  const onDone = vi.fn();
+  await act(async () => root.render(<WelcomeWizard localAvailable onDone={onDone} />));
+  await act(async () => {
+    document.activeElement?.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+    );
+    const backdrop = document.querySelector<HTMLElement>('[data-slot="dialog-backdrop"]')!;
+    backdrop.dispatchEvent(
+      new PointerEvent("pointerdown", { bubbles: true, pointerType: "mouse" }),
+    );
+    backdrop.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    backdrop.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    backdrop.click();
+  });
+  expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+  expect(mocks.complete).not.toHaveBeenCalled();
+  expect(onDone).not.toHaveBeenCalled();
+
+  const close = document.querySelector<HTMLButtonElement>('button[aria-label="Close"]');
+  expect(close).not.toBeNull();
+  await act(async () => close!.click());
+  expect(mocks.complete).toHaveBeenCalledOnce();
+  expect(onDone).toHaveBeenCalledWith(undefined);
+});
