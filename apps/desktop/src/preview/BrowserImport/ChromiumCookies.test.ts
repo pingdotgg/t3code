@@ -151,56 +151,57 @@ describe("readChromiumCookieDatabase", () => {
       }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  it.effect("reads plaintext, encrypted, and genuinely empty cookie values", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const directory = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3code-chromium-cookies-",
-      });
-      const filename = `${directory}/Cookies`;
-      const key = Buffer.from("0123456789abcdef");
+  it.effect.each([14, 24])(
+    "imports mixed TEXT and BLOB cookie values, including empty values, in schema %i",
+    (schemaVersion) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const directory = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3code-chromium-cookies-",
+        });
+        const filename = `${directory}/Cookies`;
+        const key = Buffer.from("0123456789abcdef");
+        const host = "secure.example";
+        const value = "stored encrypted";
+        const payload =
+          schemaVersion >= 24
+            ? Buffer.concat([
+                NodeCrypto.createHash("sha256").update(host).digest(),
+                Buffer.from(value),
+              ])
+            : Buffer.from(value);
+        const encrypted = encryptV10(payload, key);
 
-      yield* Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient;
-        yield* sql`create table meta (key text primary key, value text not null)`;
-        yield* sql`insert into meta values ('version', 23)`;
-        yield* sql`
-          create table cookies (
-            host_key text not null,
-            name text not null,
-            value text not null,
-            encrypted_value blob not null,
-            path text not null,
-            expires_utc integer not null,
-            is_secure integer not null,
-            is_httponly integer not null,
-            samesite integer not null,
-            top_frame_site_key text not null default ''
-          )
-        `;
-        yield* sql`
-          insert into cookies (host_key, name, value, encrypted_value, path, expires_utc, is_secure, is_httponly, samesite) values
-            ('plain.example', 'plain', 'stored plaintext', ${new Uint8Array()}, '/', 0, 0, 0, -1)
-        `;
-        yield* sql`
-          insert into cookies (host_key, name, value, encrypted_value, path, expires_utc, is_secure, is_httponly, samesite) values
-            ('secure.example', 'encrypted', '', ${encryptV10("stored encrypted", key)}, '/', 0, 1, 1, 2)
-        `;
-        yield* sql`
-          insert into cookies (host_key, name, value, encrypted_value, path, expires_utc, is_secure, is_httponly, samesite) values
-            ('empty.example', 'empty', '', ${new Uint8Array()}, '/', 0, 0, 0, 0)
-        `;
-      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename })));
+        yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`create table meta (key text primary key, value text not null)`;
+          yield* sql`insert into meta values ('version', ${schemaVersion})`;
+          yield* sql`create table cookies (
+            host_key text not null, name text not null, value text not null,
+            encrypted_value blob not null, path text not null, expires_utc integer not null,
+            is_secure integer not null, is_httponly integer not null, samesite integer not null
+          )`;
+          if (schemaVersion >= 15) {
+            yield* sql`alter table cookies add column top_frame_site_key text not null default ''`;
+          }
+          yield* sql`insert into cookies
+            (host_key, name, value, encrypted_value, path, expires_utc, is_secure, is_httponly, samesite) values
+            ('plain.example', 'plain', 'stored plaintext', '', '/', 0, 0, 0, -1),
+            (${host}, 'text-encrypted', '', cast(${encrypted} as text), '/', 0, 1, 1, 2),
+            (${host}, 'blob-encrypted', '', ${encrypted}, '/', 0, 1, 1, 2),
+            ('empty.example', 'empty', '', ${new Uint8Array()}, '/', 0, 0, 0, 0)`;
+        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename })));
 
-      const result = yield* readChromiumCookieDatabase(filename, { cbcV10: key }, "darwin");
+        const result = yield* readChromiumCookieDatabase(filename, { cbcV10: key }, "darwin");
 
-      expect(result.undecryptable).toBe(0);
-      expect(result.cookies.map(({ name, value }) => ({ name, value }))).toEqual([
-        { name: "plain", value: "stored plaintext" },
-        { name: "encrypted", value: "stored encrypted" },
-        { name: "empty", value: "" },
-      ]);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+        expect(result.undecryptable).toBe(0);
+        expect(result.cookies.map(({ name, value }) => ({ name, value }))).toEqual([
+          { name: "plain", value: "stored plaintext" },
+          { name: "text-encrypted", value },
+          { name: "blob-encrypted", value },
+          { name: "empty", value: "" },
+        ]);
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
   it.effect("enforces domain binding only for schema 24 and newer", () =>
