@@ -3439,15 +3439,13 @@ export function ArchivedThreadsPanel() {
     const threadKey = scopedThreadKey(threadRef);
     if (pendingThreadKeys.has(threadKey)) return;
     setPendingThreadKeys((current) => new Set(current).add(threadKey));
-    try {
-      await action();
-    } finally {
+    await action().finally(() =>
       setPendingThreadKeys((current) => {
         const next = new Set(current);
         next.delete(threadKey);
         return next;
-      });
-    }
+      }),
+    );
   };
 
   const handleUnarchiveThread = (threadRef: ScopedThreadRef) =>
