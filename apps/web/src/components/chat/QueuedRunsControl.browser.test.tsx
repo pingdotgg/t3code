@@ -1,6 +1,9 @@
+import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
+import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import { act, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { page } from "vite-plus/test/browser";
 
 const state = vi.hoisted(() => ({
   projection: null as unknown,
@@ -161,4 +164,52 @@ describe("QueuedRunsControl attachments and edit mode", () => {
 
     expect(view.textContent).toContain("Queued with a screenshot");
   });
+});
+
+it("previews assistant quotes as readable text and preserves the citation when editing", async () => {
+  const quotedText = "Cache the parsed config per worktree.";
+  const quote = serializeAssistantCitation({
+    version: 1,
+    environmentId: EnvironmentId.make("environment:test"),
+    threadId: ThreadId.make("thread:test"),
+    messageId: MessageId.make("message:assistant"),
+    text: quotedText,
+    start: 0,
+    end: quotedText.length,
+    prefix: "",
+    suffix: "",
+  });
+  const quoteAndText = `${quote}\n\nWhy per worktree?`;
+  state.projection = { projection: { messages: [] } };
+  state.workflow = {
+    activeRun: { id: "run:active" },
+    canPromoteToSteer: true,
+    canReorder: true,
+    queuedRuns: [
+      {
+        run: { id: "run:quote-only", userMessageId: "message:quote-only" },
+        text: quote,
+        attachments: [],
+      },
+      {
+        run: { id: "run:quote-and-text", userMessageId: "message:quote-and-text" },
+        text: quoteAndText,
+        attachments: [],
+      },
+    ],
+  };
+  const onEditQueuedRun = vi.fn();
+  await render({ onEditQueuedRun });
+
+  await expect.element(page.getByText(quotedText, { exact: true })).toBeVisible();
+  await expect
+    .element(page.getByText(`${quotedText} Why per worktree?`, { exact: true }))
+    .toBeVisible();
+
+  await act(async () => {
+    await page.getByRole("button", { name: "Edit queued message", exact: true }).nth(1).click();
+  });
+  expect(onEditQueuedRun).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({ text: quoteAndText }),
+  );
 });
