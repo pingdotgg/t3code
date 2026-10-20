@@ -1,7 +1,11 @@
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { getProviderSummary, getProviderVersionAdvisoryPresentation } from "./providerStatus";
+import {
+  getProviderSummary,
+  getProviderVersionAdvisoryPresentation,
+  getProviderStatusKey,
+} from "./providerStatus";
 
 const provider: ServerProvider = {
   instanceId: ProviderInstanceId.make("codex"),
@@ -67,6 +71,86 @@ describe("getProviderSummary", () => {
 
   it("treats a disabled provider status as disabled even before its enabled flag updates", () => {
     expect(getProviderSummary({ ...provider, status: "disabled" }).headline).toBe("Disabled");
+  });
+});
+
+describe("Antigravity with unchecked sign-in", () => {
+  const unchecked: ServerProvider = {
+    ...provider,
+    instanceId: ProviderInstanceId.make("antigravity"),
+    driver: ProviderDriverKind.make("antigravity"),
+    status: "warning",
+    auth: { status: "unknown" },
+    message: "Antigravity is installed. Google account access is not checked yet.",
+  };
+
+  it("presents an unchecked Google sign-in neutrally without claiming authentication is required", () => {
+    for (const auth of [unchecked.auth, { status: "unknown", type: "oauth-personal" }] as const) {
+      const candidate = { ...unchecked, auth };
+      expect.soft(getProviderSummary(candidate)).toEqual({
+        headline: "Installed · Sign-in not checked",
+        detail: unchecked.message,
+      });
+      expect(getProviderStatusKey(candidate)).toBe("neutral");
+    }
+  });
+
+  it("preserves actionable warnings, failures and disabled states outside unchecked Google sign-in", () => {
+    const cases = [
+      {
+        name: "confirmed sign-out",
+        change: { auth: { status: "unauthenticated" } },
+        headline: "Not authenticated",
+        status: "warning",
+      },
+      {
+        name: "warning despite known authentication",
+        change: { auth: { status: "authenticated" } },
+        headline: "Needs attention",
+        status: "warning",
+      },
+      {
+        name: "probe failure",
+        change: { status: "error" },
+        headline: "Unavailable",
+        status: "error",
+      },
+      {
+        name: "missing CLI",
+        change: { installed: false },
+        headline: "Not found",
+        status: "warning",
+      },
+      {
+        name: "API key authentication",
+        change: { auth: { status: "unknown", type: "gemini-api-key" } },
+        headline: "Needs attention",
+        status: "warning",
+      },
+      {
+        name: "Agent Platform authentication",
+        change: { auth: { status: "unknown", type: "agent-platform" } },
+        headline: "Needs attention",
+        status: "warning",
+      },
+      {
+        name: "another provider",
+        change: { driver: provider.driver },
+        headline: "Needs attention",
+        status: "warning",
+      },
+      {
+        name: "disabled provider",
+        change: { enabled: false },
+        headline: "Disabled",
+        status: "disabled",
+      },
+    ] as const;
+    for (const { name, change, headline, status } of cases) {
+      const candidate = { ...unchecked, ...change };
+      expect.soft(getProviderSummary(candidate).headline, name).toBe(headline);
+      expect.soft(getProviderStatusKey(candidate), name).toBe(status);
+    }
   });
 });
 
