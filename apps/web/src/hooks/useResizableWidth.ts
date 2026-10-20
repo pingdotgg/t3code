@@ -1,7 +1,11 @@
 import * as Schema from "effect/Schema";
 import { type PointerEvent as ReactPointerEvent, useLayoutEffect, useRef, useState } from "react";
 
-import { getLocalStorageItem, setLocalStorageItem } from "./useLocalStorage";
+import {
+  getLocalStorageItem,
+  removeLocalStorageItem,
+  setLocalStorageItem,
+} from "./useLocalStorage";
 import { useResizeDrag } from "./useResizeDrag";
 
 const WidthSchema = Schema.Finite;
@@ -20,6 +24,7 @@ export interface UseResizableWidthOptions {
 }
 
 export interface ResizableWidthHandlers {
+  readonly onDoubleClick: () => void;
   readonly onPointerDown: (event: ReactPointerEvent<HTMLElement>) => void;
   readonly onPointerMove: (event: ReactPointerEvent<HTMLElement>) => void;
   readonly onPointerUp: (event: ReactPointerEvent<HTMLElement>) => void;
@@ -98,5 +103,14 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
   // rewrites the committed width, so re-apply the live pointer position.
   useLayoutEffect(refresh, [clamp, clampedWidth, refresh]);
 
-  return { width: clampedWidth, handlers };
+  const onDoubleClick = () => {
+    setWidthState({ storageKey, width: clamp(defaultWidth) });
+    try {
+      removeLocalStorageItem(storageKey);
+    } catch (error) {
+      console.error("Could not reset persisted panel width.", error);
+    }
+  };
+
+  return { width: clampedWidth, handlers: { ...handlers, onDoubleClick } };
 }

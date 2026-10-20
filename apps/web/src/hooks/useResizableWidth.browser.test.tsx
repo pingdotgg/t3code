@@ -13,16 +13,18 @@ let setItem: ReturnType<typeof vi.spyOn<Storage, "setItem">>;
 
 function Panel({
   edge = "left",
+  defaultWidth = 400,
   maxWidth = 800,
   storageKey = "test-panel-width",
 }: {
   edge?: "left" | "right";
+  defaultWidth?: number;
   maxWidth?: number;
   storageKey?: string;
 }) {
   const { width, handlers } = useResizableWidth({
     storageKey,
-    defaultWidth: 400,
+    defaultWidth,
     minWidth: 200,
     maxWidth,
     edge,
@@ -60,6 +62,19 @@ function pointer(
   handle().dispatchEvent(
     new PointerEvent(type, { bubbles: true, cancelable: true, button: 0, pointerId: 1, clientX }),
   );
+}
+
+async function doubleClickHandle() {
+  for (let detail = 1; detail <= 2; detail++) {
+    await act(() => {
+      pointer("pointerdown");
+      pointer("pointerup");
+      handle().dispatchEvent(new MouseEvent("click", { bubbles: true, detail }));
+    });
+  }
+  await act(() => {
+    handle().dispatchEvent(new MouseEvent("dblclick", { bubbles: true, detail: 2 }));
+  });
 }
 
 async function render(element = <Panel />) {
@@ -201,6 +216,41 @@ describe("panel resize cleanup", () => {
 });
 
 describe("panel width storage changes", () => {
+  it("double-click resets only the current panel to its latest clamped default and leaves remounts adaptive", async () => {
+    await act(() => {
+      pointer("pointerdown");
+      pointer("pointerup", 50);
+    });
+    localStorage.setItem("thread-b", "300");
+    await render(<Panel storageKey="thread-b" defaultWidth={600} maxWidth={500} />);
+    expect(shownWidth()).toBe(300);
+
+    await doubleClickHandle();
+    expect(shownWidth()).toBe(500);
+    expect(localStorage.getItem("thread-b")).toBeNull();
+    expect(localStorage.getItem("test-panel-width")).toBe("450");
+
+    await act(() => root.unmount());
+    await mountFresh(<Panel storageKey="thread-b" defaultWidth={700} />);
+    expect(shownWidth()).toBe(700);
+  });
+
+  it("double-click resets the visible width even when removing the saved width fails", async () => {
+    await act(() => {
+      pointer("pointerdown");
+      pointer("pointerup", 0);
+    });
+    expect(shownWidth()).toBe(500);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => {
+      throw new Error("storage unavailable");
+    });
+
+    await doubleClickHandle();
+    expect(shownWidth()).toBe(400);
+    expect(localStorage.getItem("test-panel-width")).toBe("500");
+  });
+
   it("restores separate thread widths without remounting and retains them after reload", async () => {
     await act(() => {
       pointer("pointerdown");
