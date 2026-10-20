@@ -1,6 +1,7 @@
 import { removeAgentCredits } from "@t3tools/source-control-core/server/mergeMessage";
 import { KnownWorkflowRuns, makeChecksRevalidator } from "./gitHubConditionalChecks.ts";
 import { runGitHubStackAction, type GitHubStackActionError } from "./githubStackActions.ts";
+import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
@@ -874,6 +875,14 @@ const PullRequestGraphQLGroup = GraphQLGroup.merge(
 /** States in which `gh pr merge --auto` merges at once instead of arming auto-merge. */
 const IMMEDIATELY_MERGEABLE = new Set(["CLEAN", "HAS_HOOKS", "UNSTABLE"]);
 
+interface RestReadInput<A> {
+  readonly cwd: string;
+  readonly host: string;
+  readonly operation: string;
+  readonly path: string;
+  readonly decode: (raw: string) => Result.Result<A, unknown>;
+}
+
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const api = yield* GitHubRest.GitHubRest;
@@ -1133,13 +1142,7 @@ export const make = Effect.gen(function* () {
   };
 
   /** A REST read whose JSON answer is decoded the same way. */
-  const restRead = <A>(input: {
-    readonly cwd: string;
-    readonly host: string;
-    readonly operation: string;
-    readonly path: string;
-    readonly decode: (raw: string) => Result.Result<A, unknown>;
-  }): Effect.Effect<A, GitHubPullRequestApiError> =>
+  const restRead = <A>(input: RestReadInput<A>): Effect.Effect<A, GitHubPullRequestApiError> =>
     api
       .rest({ host: input.host, operation: input.operation, path: input.path })
       .pipe(
@@ -1147,6 +1150,49 @@ export const make = Effect.gen(function* () {
           decodeWith(input.cwd, input.operation, input.decode, response.body),
         ),
       );
+
+  // The last ETag and body of each polled REST read, so an unchanged answer comes back as a
+  // 304, which GitHub does not charge. Keyed by the credential the request is pinned to, so a
+  // validator never revalidates another account's body. A 304 writes the entry back, so one
+  // that is still polled outlives its time to live.
+  const validators = yield* Cache.make({
+    capacity: 512,
+    timeToLive: "1 hour",
+    lookup: (_key: string) =>
+      Effect.succeed(Option.none<{ readonly etag: string; readonly body: string }>()),
+  });
+  const revalidatedRestRead = Effect.fn("GitHubPullRequestApi.revalidatedRestRead")(function* <A>(
+    input: RestReadInput<A>,
+  ) {
+    const host = GitHubRequestPolicy.normalizeHost(input.host);
+    const { token, fingerprint } = yield* api.credential(host);
+    const key = `${fingerprint}\0${host}\0${input.path}`;
+    const previous = yield* Cache.get(validators, key);
+    const response = yield* api
+      .rest({
+        host,
+        operation: input.operation,
+        path: input.path,
+        ...(Option.isSome(previous) ? { ifNoneMatch: previous.value.etag } : {}),
+      })
+      .pipe(
+        Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, {
+          host,
+          token,
+          credentialFingerprint: fingerprint,
+        }),
+      );
+    if (response.status === 304 && Option.isSome(previous)) {
+      yield* Cache.set(validators, key, previous);
+      return yield* decodeWith(input.cwd, input.operation, input.decode, previous.value.body);
+    }
+    const decoded = yield* decodeWith(input.cwd, input.operation, input.decode, response.body);
+    const etag = response.headers["etag"]?.trim();
+    yield* etag
+      ? Cache.set(validators, key, Option.some({ etag, body: response.body }))
+      : Cache.invalidate(validators, key);
+    return decoded;
+  });
 
   const diffFilesPage = (input: {
     readonly cwd: string;
@@ -1915,7 +1961,8 @@ export const make = Effect.gen(function* () {
 
     getPullRequestStack: (input) => {
       const { owner, name } = parseRepositorySelector(input.repository);
-      return restRead({
+      // Polled by the pull request sync for every linked pull request, so revalidate it.
+      return revalidatedRestRead({
         cwd: input.cwd,
         host: input.host,
         operation: "getPullRequestStack",
