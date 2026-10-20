@@ -18,8 +18,11 @@ middleware because serve-sim loads private CoreSimulator frameworks through a
 native addon, and a crash there must not take the server down.
 
 Everything platform-specific sits behind
-[`DeviceHost`](../../apps/server/src/device/DeviceHost.ts). The service, the
-proxy, and the MCP tools only see a hub origin and an agent-device endpoint.
+[`DeviceHost`](../../apps/server/src/device/DeviceHost.ts). The service lists,
+boots, and shuts down devices through the host's device operations, and the
+proxy and the MCP tools only see a hub origin and an agent-device endpoint.
+Hosts that run expo-device-hub share one hub-backed implementation of those
+operations, so a host whose devices live elsewhere only replaces them.
 SSH hosts forward both endpoints to server loopback. Every proxied request
 also carries the host id; device ids alone are not unique across hosts.
 

@@ -33,6 +33,7 @@ import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as DeviceHost from "./DeviceHost.ts";
+import { makeDeviceHubOperations } from "./DeviceHubOperations.ts";
 import { NodeRuntimeUnavailableError } from "@t3tools/shared/nodeRuntime";
 
 import * as DeviceService from "./DeviceService.ts";
@@ -99,14 +100,75 @@ const fixture = Effect.fn("fixture")(function* (
   const encoderResult = yield* Ref.make({ code: 0, stdout: " V....D libx264", stderr: "" });
   let booted = false;
   let shutDown = false;
+  const http = HttpClient.make((request) =>
+    Effect.gen(function* () {
+      requests.push(request.url);
+      if (request.url.includes("/api/screenshot")) {
+        return HttpClientResponse.fromWeb(request, new Response(new Uint8Array([137, 80, 78, 71])));
+      }
+      if (request.url.endsWith("/shutdown")) {
+        shutDown = true;
+        booted = false;
+        return HttpClientResponse.fromWeb(request, Response.json({ ok: true }));
+      }
+      if (shutDown && failListAfterShutdown) {
+        return HttpClientResponse.fromWeb(request, new Response("Discovery busy", { status: 503 }));
+      }
+      if (request.url.endsWith("/boot")) {
+        yield* onBoot;
+        booted = true;
+        return HttpClientResponse.fromWeb(
+          request,
+          Response.json(
+            bootError
+              ? { ok: false, ...(typeof bootError === "string" ? { error: bootError } : bootError) }
+              : { ok: true, serial: "emulator-5554" },
+          ),
+        );
+      }
+      if (request.url.endsWith("/grid/api/start")) {
+        return HttpClientResponse.fromWeb(request, Response.json({ ok: true }));
+      }
+      return HttpClientResponse.fromWeb(
+        request,
+        Response.json({
+          errors: yield* Ref.get(discoveryErrors),
+          simulators: devices.filter((device) => device.platform === "ios"),
+          emulators: [
+            ...devices.filter((device) => device.platform === "android"),
+            ...(booted
+              ? [
+                  {
+                    id: "emulator-5554",
+                    name: "Pixel_API_35",
+                    platform: "android",
+                    version: "Android 15",
+                    booted: true,
+                    physical: false,
+                  },
+                ]
+              : []),
+          ],
+        }),
+      );
+    }),
+  );
+  const run = (command: string) =>
+    command === "emulator"
+      ? Effect.succeed({ code: 0, stdout: "Pixel_API_35\n", stderr: "" })
+      : Ref.get(encoderResult);
   const ready: DeviceHost.DeviceHostReady = {
     nodePath: process.execPath,
     hub: { origin: "http://device.test" },
+    devices: makeDeviceHubOperations({
+      hostId: LOCAL_DEVICE_HOST_ID,
+      origin: "http://device.test",
+      http,
+      run,
+      androidAvailable: Effect.succeed(true),
+    }),
     helpers: { serveSimAxSettings: null, serveSimCli: null },
-    run: (command) =>
-      command === "emulator"
-        ? Effect.succeed({ code: 0, stdout: "Pixel_API_35\n", stderr: "" })
-        : Ref.get(encoderResult),
+    run,
   };
   const host: DeviceHost.DeviceHost["Service"] = {
     ...(inspectError
@@ -187,71 +249,6 @@ const fixture = Effect.fn("fixture")(function* (
         streamChanges: Stream.empty,
         subscribeChanges: Effect.succeed(Stream.empty),
       }),
-    ),
-    Effect.provideService(
-      HttpClient.HttpClient,
-      HttpClient.make((request) =>
-        Effect.gen(function* () {
-          requests.push(request.url);
-          if (request.url.includes("/api/screenshot")) {
-            return HttpClientResponse.fromWeb(
-              request,
-              new Response(new Uint8Array([137, 80, 78, 71])),
-            );
-          }
-          if (request.url.endsWith("/shutdown")) {
-            shutDown = true;
-            booted = false;
-            return HttpClientResponse.fromWeb(request, Response.json({ ok: true }));
-          }
-          if (shutDown && failListAfterShutdown) {
-            return HttpClientResponse.fromWeb(
-              request,
-              new Response("Discovery busy", { status: 503 }),
-            );
-          }
-          if (request.url.endsWith("/boot")) {
-            yield* onBoot;
-            booted = true;
-            return HttpClientResponse.fromWeb(
-              request,
-              Response.json(
-                bootError
-                  ? {
-                      ok: false,
-                      ...(typeof bootError === "string" ? { error: bootError } : bootError),
-                    }
-                  : { ok: true, serial: "emulator-5554" },
-              ),
-            );
-          }
-          if (request.url.endsWith("/grid/api/start")) {
-            return HttpClientResponse.fromWeb(request, Response.json({ ok: true }));
-          }
-          return HttpClientResponse.fromWeb(
-            request,
-            Response.json({
-              errors: yield* Ref.get(discoveryErrors),
-              simulators: devices.filter((device) => device.platform === "ios"),
-              emulators: [
-                ...devices.filter((device) => device.platform === "android"),
-                ...(booted
-                  ? [
-                      {
-                        id: "emulator-5554",
-                        name: "Pixel_API_35",
-                        platform: "android",
-                        version: "Android 15",
-                        booted: true,
-                        physical: false,
-                      },
-                    ]
-                  : []),
-              ],
-            }),
-          );
-        }),
-      ),
     ),
   );
   return {
@@ -668,29 +665,6 @@ it.effect.each(["shutdown", "close"] as const)(
       let booted = true;
       let capture: number | null = null;
       let generation = 0;
-      const ready: DeviceHost.DeviceHostReady = {
-        nodePath: process.execPath,
-        hub: { origin: "http://device.test" },
-        helpers: { serveSimAxSettings: null, serveSimCli: null },
-        run: () => Effect.succeed({ code: 0, stdout: "", stderr: "" }),
-      };
-      const host: DeviceHost.DeviceHost["Service"] = {
-        id: LOCAL_DEVICE_HOST_ID,
-        summary: Effect.succeed({
-          id: LOCAL_DEVICE_HOST_ID,
-          kind: "local",
-          label: "Simulator host",
-          platforms: [{ platform: "ios", available: true }],
-          hubInstalled: true,
-          agentDeviceInstalled: false,
-        }),
-        platformAvailability: (platform) => Effect.succeed({ platform, available: true }),
-        ensureReady: () => Effect.succeed(ready),
-        ensureAgentReady: () => Effect.die("Agent access is not used in this test"),
-        current: Effect.succeed(ready),
-        stopAgent: Effect.void,
-        stop: Effect.void,
-      };
       const http = HttpClient.make((request) =>
         Effect.sync(() => {
           const path = new URL(request.url).pathname;
@@ -728,9 +702,39 @@ it.effect.each(["shutdown", "close"] as const)(
           return HttpClientResponse.fromWeb(request, Response.json({ ok: true, id: deviceId }));
         }),
       );
+      const run = () => Effect.succeed({ code: 0, stdout: "", stderr: "" });
+      const ready: DeviceHost.DeviceHostReady = {
+        nodePath: process.execPath,
+        hub: { origin: "http://device.test" },
+        devices: makeDeviceHubOperations({
+          hostId: LOCAL_DEVICE_HOST_ID,
+          origin: "http://device.test",
+          http,
+          run,
+          androidAvailable: Effect.succeed(true),
+        }),
+        helpers: { serveSimAxSettings: null, serveSimCli: null },
+        run,
+      };
+      const host: DeviceHost.DeviceHost["Service"] = {
+        id: LOCAL_DEVICE_HOST_ID,
+        summary: Effect.succeed({
+          id: LOCAL_DEVICE_HOST_ID,
+          kind: "local",
+          label: "Simulator host",
+          platforms: [{ platform: "ios", available: true }],
+          hubInstalled: true,
+          agentDeviceInstalled: false,
+        }),
+        platformAvailability: (platform) => Effect.succeed({ platform, available: true }),
+        ensureReady: () => Effect.succeed(ready),
+        ensureAgentReady: () => Effect.die("Agent access is not used in this test"),
+        current: Effect.succeed(ready),
+        stopAgent: Effect.void,
+        stop: Effect.void,
+      };
       const service = yield* DeviceService.makeWithHosts(new Map([[host.id, host]])).pipe(
         Effect.provide(NodeCrypto.layer),
-        Effect.provideService(HttpClient.HttpClient, http),
       );
       const input = { threadId, deviceId, platform: "ios" as const };
       yield* service.open(input);
@@ -756,29 +760,6 @@ it.effect.each([
       const deviceId = DeviceId.make("22222222-2222-2222-2222-222222222222");
       const paths: string[] = [];
       let listed: "booted" | "off" | "missing" = "booted";
-      const ready: DeviceHost.DeviceHostReady = {
-        nodePath: process.execPath,
-        hub: { origin: "http://device.test" },
-        helpers: { serveSimAxSettings: null, serveSimCli: null },
-        run: () => Effect.succeed({ code: 0, stdout: "", stderr: "" }),
-      };
-      const host: DeviceHost.DeviceHost["Service"] = {
-        id: LOCAL_DEVICE_HOST_ID,
-        summary: Effect.succeed({
-          id: LOCAL_DEVICE_HOST_ID,
-          kind: "local",
-          label: "Simulator host",
-          platforms: [{ platform: "ios", available: true }],
-          hubInstalled: true,
-          agentDeviceInstalled: false,
-        }),
-        platformAvailability: (platform) => Effect.succeed({ platform, available: true }),
-        ensureReady: () => Effect.succeed(ready),
-        ensureAgentReady: () => Effect.die("Agent access is not used in this test"),
-        current: Effect.succeed(ready),
-        stopAgent: Effect.void,
-        stop: Effect.void,
-      };
       const http = HttpClient.make((request) =>
         Effect.sync(() => {
           const path = new URL(request.url).pathname;
@@ -819,9 +800,39 @@ it.effect.each([
           throw new Error(`Unexpected hub path: ${path}`);
         }),
       );
+      const run = () => Effect.succeed({ code: 0, stdout: "", stderr: "" });
+      const ready: DeviceHost.DeviceHostReady = {
+        nodePath: process.execPath,
+        hub: { origin: "http://device.test" },
+        devices: makeDeviceHubOperations({
+          hostId: LOCAL_DEVICE_HOST_ID,
+          origin: "http://device.test",
+          http,
+          run,
+          androidAvailable: Effect.succeed(true),
+        }),
+        helpers: { serveSimAxSettings: null, serveSimCli: null },
+        run,
+      };
+      const host: DeviceHost.DeviceHost["Service"] = {
+        id: LOCAL_DEVICE_HOST_ID,
+        summary: Effect.succeed({
+          id: LOCAL_DEVICE_HOST_ID,
+          kind: "local",
+          label: "Simulator host",
+          platforms: [{ platform: "ios", available: true }],
+          hubInstalled: true,
+          agentDeviceInstalled: false,
+        }),
+        platformAvailability: (platform) => Effect.succeed({ platform, available: true }),
+        ensureReady: () => Effect.succeed(ready),
+        ensureAgentReady: () => Effect.die("Agent access is not used in this test"),
+        current: Effect.succeed(ready),
+        stopAgent: Effect.void,
+        stop: Effect.void,
+      };
       const service = yield* DeviceService.makeWithHosts(new Map([[host.id, host]])).pipe(
         Effect.provide(NodeCrypto.layer),
-        Effect.provideService(HttpClient.HttpClient, http),
       );
       yield* service.list;
       const exit = yield* Effect.exit(service.shutdown({ deviceId, platform: "ios" }));
@@ -847,11 +858,32 @@ it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
   (hostId) =>
     Effect.gen(function* () {
       let enumeration = { code: 1, stdout: "private stdout", stderr: "private stderr" };
+      const run = () => Effect.sync(() => enumeration);
+      const hubDevices = [
+        { id: "iphone", name: "iPhone", platform: "ios", physical: false },
+        { id: "phone", name: "Pixel", platform: "android", physical: true },
+        { id: "emulator-5554", name: "Running_AVD", platform: "android", physical: false },
+      ].map((device) => ({ ...device, booted: true, version: "test" }));
+      const http = HttpClient.make((request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            Response.json({ simulators: hubDevices.slice(0, 1), emulators: hubDevices.slice(1) }),
+          ),
+        ),
+      );
       const ready: DeviceHost.DeviceHostReady = {
         nodePath: process.execPath,
         hub: { origin: "http://device.test" },
+        devices: makeDeviceHubOperations({
+          hostId,
+          origin: "http://device.test",
+          http,
+          run,
+          androidAvailable: Effect.succeed(true),
+        }),
         helpers: { serveSimAxSettings: null, serveSimCli: null },
-        run: () => Effect.sync(() => enumeration),
+        run,
       };
       const host: DeviceHost.DeviceHost["Service"] = {
         id: hostId,
@@ -870,19 +902,6 @@ it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
         stop: Effect.void,
         stopAgent: Effect.void,
       };
-      const hubDevices = [
-        { id: "iphone", name: "iPhone", platform: "ios", physical: false },
-        { id: "phone", name: "Pixel", platform: "android", physical: true },
-        { id: "emulator-5554", name: "Running_AVD", platform: "android", physical: false },
-      ].map((device) => ({ ...device, booted: true, version: "test" }));
-      const http = HttpClient.make((request) =>
-        Effect.succeed(
-          HttpClientResponse.fromWeb(
-            request,
-            Response.json({ simulators: hubDevices.slice(0, 1), emulators: hubDevices.slice(1) }),
-          ),
-        ),
-      );
       const service = yield* DeviceService.makeWithHosts(new Map([[hostId, host]])).pipe(
         Effect.provide(NodeCrypto.layer),
         Effect.provideService(HttpClient.HttpClient, http),

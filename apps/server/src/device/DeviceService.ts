@@ -7,7 +7,6 @@ import {
   type DeviceError,
   type DeviceHostId,
   type DeviceId,
-  DeviceBootError,
   DeviceHostUnavailableError,
   DeviceNotFoundError,
   DeviceOperationError,
@@ -37,16 +36,13 @@ import {
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
-import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import * as ServerSettings from "../serverSettings.ts";
 import { isLocalSshDeviceHost, remoteSshDeviceHosts } from "./localSshDeviceHost.ts";
@@ -81,34 +77,6 @@ const sshProbeFailureMessage = (error: DeviceHost.DeviceHostError): string => {
 
   return `Connected over SSH, but the device host check failed (exit code ${cause.exitCode}).`;
 };
-
-const BOOT_TIMEOUT = Duration.minutes(3);
-const SCREENSHOT_TIMEOUT = Duration.seconds(20);
-
-const HubDevice = Schema.Struct({
-  id: Schema.String,
-  name: Schema.String,
-  version: Schema.String,
-  platform: Schema.Literals(["ios", "android"]),
-  booted: Schema.Boolean,
-  physical: Schema.Boolean,
-});
-const HubDeviceList = Schema.Struct({
-  simulators: Schema.Array(HubDevice),
-  emulators: Schema.Array(HubDevice),
-  errors: Schema.optional(
-    Schema.Array(Schema.Struct({ message: Schema.String, error: Schema.optional(Schema.String) })),
-  ),
-});
-const HubActionResult = Schema.Struct({
-  ok: Schema.Boolean,
-  id: Schema.optional(Schema.String),
-  serial: Schema.optional(Schema.String),
-  error: Schema.optional(Schema.String),
-  errors: Schema.optional(
-    Schema.Array(Schema.Struct({ message: Schema.String, error: Schema.optional(Schema.String) })),
-  ),
-});
 
 export interface DeviceScreenshot {
   readonly device: DeviceSummary;
@@ -169,9 +137,6 @@ interface ServiceState {
   readonly state: DeviceServiceState;
 }
 
-const vendorPrefix = (platform: DevicePlatform) =>
-  platform === "ios" ? "/vendor/serve-sim" : "/vendor/serve-emu";
-
 export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* (
   hosts: ReadonlyMap<DeviceHostId, DeviceHost.DeviceHost["Service"]>,
   testHost: DeviceService["Service"]["testHost"] = (host) =>
@@ -209,7 +174,6 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   );
   const initialSettings = yield* readDeviceSettings;
 
-  const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.withScope);
   const statePubSub = yield* PubSub.unbounded<DeviceServiceState>();
   const initialHosts = yield* Effect.forEach(hosts.values(), (host) => host.summary);
   let publishedHosts = new Map(hosts);
@@ -388,81 +352,13 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       Effect.orElseSucceed(() => null),
     );
 
-  const hubJson = <A, I>(
-    request: HttpClientRequest.HttpClientRequest,
-    schema: Schema.Codec<A, I>,
-    operation: string,
-    timeout: Duration.Input = Duration.seconds(15),
-  ) =>
-    httpClient.execute(request).pipe(
-      Effect.flatMap(HttpClientResponse.filterStatusOk),
-      Effect.flatMap(HttpClientResponse.schemaBodyJson(schema)),
-      Effect.scoped,
-      Effect.timeout(timeout),
-      Effect.mapError(
-        (cause) =>
-          new DeviceOperationError({
-            operation,
-            reason: "request_failed",
-            cause,
-          }),
-      ),
-    );
-
   const fetchDevices = Effect.fn("DeviceService.fetchDevices")(function* (ready: DeviceReadiness) {
-    const list = yield* hubJson(
-      HttpClientRequest.get(`${ready.hub.origin}/api/devices`),
-      HubDeviceList,
-      "list",
-    );
-    const toSummary = (device: typeof HubDevice.Type): DeviceSummary => ({
-      hostId: ready.hostId,
-      id: device.id,
-      platform: device.platform,
-      name: device.name,
-      version: device.version,
-      booted: device.booted,
-      physical: device.physical,
-    });
-    const devices = [...list.simulators, ...list.emulators].map(toSummary);
-    const warnings = list.errors?.filter(
-      (error) =>
-        // CoreSimulator can retain deleted devices; their optional usage timestamps are absent.
-        !(
-          error.message.startsWith("[apple-utils] Failed to read CoreSimulator plist at ") &&
-          /\/CoreSimulator\/Devices\/[^/]+\/device\.plist:$/.test(error.message) &&
-          /(?:^Error:\s*ENOENT:|\bcode:\s*['"]ENOENT['"])/.test(error.error ?? "")
-        ),
-    );
-    const details = warnings?.map((error) => error.message) ?? [];
-    let androidDiscoveryIncomplete = false;
-    const host = yield* resolveHost(ready.hostId);
-    if ((yield* host.platformAvailability("android")).available) {
-      const avds = yield* ready.run("emulator", ["-list-avds"]);
-      if (avds.code !== 0) {
-        androidDiscoveryIncomplete = true;
-        details.push(
-          `Could not list Android virtual devices (emulator -list-avds, exit code ${avds.code}). Discovered devices remain available.`,
-        );
-      }
-      for (const name of (avds.code === 0 ? avds.stdout : "")
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter(Boolean)) {
-        if (!devices.some((device) => device.platform === "android" && device.name === name)) {
-          devices.push({
-            hostId: ready.hostId,
-            id: name,
-            name,
-            platform: "android",
-            version: "Android",
-            booted: false,
-            physical: false,
-          });
-        }
-      }
-    }
-    return { devices, detail: details.join("\n") || undefined, androidDiscoveryIncomplete };
+    const { devices, detail, androidDiscoveryIncomplete } = yield* ready.devices.list;
+    return {
+      devices: devices.map((device): DeviceSummary => ({ ...device, hostId: ready.hostId })),
+      detail,
+      androidDiscoveryIncomplete,
+    };
   });
 
   const refresh = Effect.fn("DeviceService.refresh")(function* (ready: DeviceReadiness) {
@@ -640,68 +536,6 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     }
   });
 
-  /**
-   * Android AVDs change id when they boot (AVD name to emulator serial), so the
-   * returned id is authoritative.
-   */
-  const boot = Effect.fn("DeviceService.boot")(function* (
-    ready: DeviceReadiness,
-    device: DeviceSummary,
-  ) {
-    const result = yield* HttpClientRequest.post(`${ready.hub.origin}/api/devices/boot`).pipe(
-      HttpClientRequest.bodyJson({ platform: device.platform, id: device.id, name: device.name }),
-      Effect.mapError(
-        (cause) =>
-          new DeviceOperationError({ operation: "boot", reason: "invalid_payload", cause }),
-      ),
-      Effect.flatMap((request) => hubJson(request, HubActionResult, "boot", BOOT_TIMEOUT)),
-    );
-    if (!result.ok) {
-      // Keep the hub's launch command and nested failure available to agents for recovery.
-      const diagnostics = [
-        result.error,
-        ...(result.errors ?? []).flatMap((error) => [error.message, error.error]),
-      ]
-        .filter((text) => text?.trim())
-        .join("\n\n");
-      return yield* new DeviceBootError({
-        hostId: ready.hostId,
-        deviceId: device.id,
-        reason: /insufficient.*(?:disk|space)|not enough.*(?:disk|space)|no space left/i.test(
-          diagnostics,
-        )
-          ? "disk_space"
-          : /timed? out|timeout/i.test(diagnostics)
-            ? "timeout"
-            : "launch_failed",
-        ...(diagnostics
-          ? {
-              diagnostics:
-                diagnostics.length > 2_000 ? `${diagnostics.slice(0, 1_999)}…` : diagnostics,
-            }
-          : {}),
-        cause: result,
-      });
-    }
-    if (device.platform === "ios") {
-      // Booting alone does not attach a serve-sim helper; the grid start
-      // does both and is idempotent for a booted simulator.
-      yield* HttpClientRequest.post(
-        `${ready.hub.origin}${vendorPrefix("ios")}/grid/api/start`,
-      ).pipe(
-        HttpClientRequest.bodyJson({ udid: device.id }),
-        Effect.mapError(
-          (cause) =>
-            new DeviceOperationError({ operation: "boot", reason: "invalid_payload", cause }),
-        ),
-        Effect.flatMap((request) =>
-          hubJson(request, HubActionResult, "attach stream", BOOT_TIMEOUT),
-        ),
-      );
-    }
-    return result.serial ?? result.id ?? device.id;
-  });
-
   const open: DeviceService["Service"]["open"] = Effect.fn("DeviceService.open")(function* (input) {
     const host = yield* resolveHost(input.hostId);
     yield* ensurePlatform(host, input.platform);
@@ -749,7 +583,7 @@ process.exitCode = result.error ? 1 : (result.status ?? 1);`,
           booting,
         ],
       }));
-      const bootedId = yield* boot(ready, device).pipe(
+      const bootedId = yield* ready.devices.boot(device).pipe(
         Effect.ensuring(
           publish((current) => ({
             ...current,
@@ -764,19 +598,8 @@ process.exitCode = result.error ? 1 : (result.status ?? 1);`,
       if (!device) {
         return yield* new DeviceNotFoundError({ hostId: host.id, deviceId: bootedId });
       }
-    } else if (device.platform === "ios" && device.booted) {
-      yield* HttpClientRequest.post(
-        `${ready.hub.origin}${vendorPrefix("ios")}/grid/api/start`,
-      ).pipe(
-        HttpClientRequest.bodyJson({ udid: device.id }),
-        Effect.mapError(
-          (cause) =>
-            new DeviceOperationError({ operation: "open", reason: "invalid_payload", cause }),
-        ),
-        Effect.flatMap((request) =>
-          hubJson(request, HubActionResult, "attach stream", BOOT_TIMEOUT),
-        ),
-      );
+    } else if (device.booted) {
+      yield* ready.devices.attach(device);
     }
     if (hosts.get(host.id) !== host)
       return yield* new DeviceHostUnavailableError({
@@ -823,43 +646,7 @@ process.exitCode = result.error ? 1 : (result.status ?? 1);`,
     platform: DevicePlatform,
   ) {
     const ready = yield* readiness(hostId);
-    const postShutdown = (path: string, body: Record<string, string>) =>
-      HttpClientRequest.post(`${ready.hub.origin}${path}`).pipe(
-        HttpClientRequest.bodyJson(body),
-        Effect.mapError(
-          (cause) =>
-            new DeviceOperationError({ operation: "shutdown", reason: "invalid_payload", cause }),
-        ),
-        Effect.flatMap((request) => hubJson(request, HubActionResult, "shutdown")),
-        Effect.flatMap((result) =>
-          result.ok
-            ? Effect.void
-            : Effect.fail(
-                new DeviceOperationError({
-                  operation: "shutdown",
-                  reason: "hub_rejected",
-                  cause: result,
-                }),
-              ),
-        ),
-      );
-    // serve-sim's shutdown closes its in-process capture session before it runs
-    // `simctl shutdown`; the hub's generic shutdown can leave that session cached
-    // across a reboot. serve-sim runs simctl bare, though, so a simulator that is
-    // already off fails there.
-    yield* platform === "ios"
-      ? postShutdown(`${vendorPrefix("ios")}/grid/api/shutdown`, { udid: deviceId }).pipe(
-          Effect.catch((cause) =>
-            fetchDevices(ready).pipe(
-              Effect.flatMap(({ devices }) =>
-                devices.find((device) => device.id === deviceId)?.booted === false
-                  ? Effect.logInfo("iOS simulator was already shut down", { deviceId })
-                  : Effect.fail(cause),
-              ),
-            ),
-          ),
-        )
-      : postShutdown("/api/devices/shutdown", { platform, id: deviceId });
+    yield* ready.devices.shutdown({ id: deviceId, platform });
     yield* publish((state) => ({
       ...state,
       devices: state.devices.map((device) =>
@@ -920,23 +707,7 @@ process.exitCode = result.error ? 1 : (result.status ?? 1);`,
   const screenshot: DeviceService["Service"]["screenshot"] = Effect.fn("DeviceService.screenshot")(
     function* (input) {
       const { ready, device } = yield* resolveDevice(input.hostId, input.deviceId);
-      const url = `${ready.hub.origin}${vendorPrefix(device.platform)}/api/screenshot?device=${encodeURIComponent(device.id)}`;
-      const png = yield* httpClient.execute(HttpClientRequest.post(url)).pipe(
-        Effect.flatMap(HttpClientResponse.filterStatusOk),
-        Effect.flatMap((response) => response.arrayBuffer),
-        Effect.map((buffer) => new Uint8Array(buffer)),
-        Effect.scoped,
-        Effect.timeout(SCREENSHOT_TIMEOUT),
-        Effect.mapError(
-          (cause) =>
-            new DeviceOperationError({
-              operation: "screenshot",
-              reason: "request_failed",
-              cause,
-            }),
-        ),
-      );
-      return { device, png };
+      return { device, png: yield* ready.devices.screenshot(device) };
     },
   );
 

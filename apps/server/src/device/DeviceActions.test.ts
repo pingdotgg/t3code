@@ -15,9 +15,17 @@ const makeReady = (
   },
 ) => {
   const calls: Call[] = [];
+  const unused = Effect.die("Device actions run host commands, never device operations");
   const ready: DeviceHostReady = {
     nodePath: process.execPath,
     hub: { origin: "http://127.0.0.1:1" },
+    devices: {
+      list: unused,
+      boot: () => unused,
+      attach: () => unused,
+      shutdown: () => unused,
+      screenshot: () => unused,
+    },
     helpers,
     run: (command, args, options) => {
       const call = { command, args, ...(options?.stdin ? { stdin: options.stdin } : {}) };
