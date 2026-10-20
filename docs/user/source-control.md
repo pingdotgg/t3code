@@ -163,6 +163,14 @@ Use a thread's Git actions to commit, push, and create a pull request. T3 Code c
 messages, review titles, and descriptions from your changes. Descriptions also draw on the work in
 the thread, including the checks it ran.
 
+For stacked branches, T3 Code looks for the nearest published ancestor branch with an open
+review and generates the title and description from only the changes above it. The review
+still targets your usual base branch, such as `development`; its full diff on the hosting
+service is still measured against that target. If equally close branches have open reviews,
+choose the description comparison branch with
+`git config branch.<your-branch>.t3-description-base <parent-branch>`.
+This setting affects generated text only. Existing reviews keep their target and description.
+
 An existing fork PR can appear beside the branch even if you pushed without setting an upstream.
 If its badge is missing because several remotes hold that branch, set the branch's upstream to
 the intended remote with `git branch --set-upstream-to=<remote>/<branch>`.

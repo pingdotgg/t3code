@@ -2075,8 +2075,9 @@ export const make = Effect.gen(function* () {
       });
       const normalizedPullRequests = pullRequests.map(toPullRequestInfo);
 
-      const firstPullRequest = normalizedPullRequests.find((pullRequest) =>
-        matchesBranchHeadContext(pullRequest, headContext),
+      const firstPullRequest = normalizedPullRequests.find(
+        (pullRequest) =>
+          pullRequest.state === "open" && matchesBranchHeadContext(pullRequest, headContext),
       );
       if (firstPullRequest) {
         return {
@@ -2214,6 +2215,101 @@ export const make = Effect.gen(function* () {
       ...summary,
       cta,
     };
+  });
+
+  const resolveDescriptionBaseBranch = Effect.fn("resolveDescriptionBaseBranch")(function* (
+    cwd: string,
+    branch: string,
+    targetBranch: string,
+  ) {
+    const configured = yield* gitCore.readConfigValue(cwd, `branch.${branch}.t3-description-base`);
+    if (configured) {
+      const descriptionBranch = yield* gitCore.resolveBranchName(cwd, configured);
+      const comparisonRef = descriptionBranch
+        ? yield* resolveBaseRangeRef(cwd, descriptionBranch)
+        : null;
+      const ancestor = comparisonRef
+        ? yield* gitCore.execute({
+            operation: "GitManager.resolveDescriptionBaseBranch.ancestor",
+            cwd,
+            args: ["merge-base", "--is-ancestor", comparisonRef, `refs/heads/${branch}`],
+            allowNonZeroExit: true,
+          })
+        : null;
+      if (ancestor?.exitCode !== 0) {
+        return yield* new GitManagerError({
+          operation: "resolveDescriptionBaseBranch",
+          cwd,
+          detail: "The configured t3-description-base must name an ancestor branch.",
+        });
+      }
+      return descriptionBranch;
+    }
+    const remoteName = yield* gitCore.resolvePrimaryRemoteName(cwd);
+    if (!(yield* gitCore.remoteBranchExists({ cwd, remoteName, refName: targetBranch }))) {
+      return null;
+    }
+    const prefix = `refs/remotes/${remoteName}/`;
+    const refs = yield* gitCore.execute({
+      operation: "GitManager.resolveDescriptionBaseBranch.refs",
+      cwd,
+      args: [
+        "for-each-ref",
+        `--merged=refs/heads/${branch}`,
+        `--no-merged=${prefix}${targetBranch}`,
+        "--format=%(refname)%09%(objectname)%09%(symref)",
+        prefix,
+      ],
+    });
+    const branchesByCommit = new Map<string, string[]>();
+    for (const line of refs.stdout.trim().split("\n")) {
+      const [refName, commit, symbolicRef] = line.split("\t");
+      if (!refName?.startsWith(prefix) || !commit || symbolicRef) continue;
+      const candidate = refName.slice(prefix.length);
+      if (candidate === branch) continue;
+      const branches = branchesByCommit.get(commit) ?? [];
+      branches.push(candidate);
+      branchesByCommit.set(commit, branches);
+    }
+    // Only unmerged stack layers are candidates, keeping old merged branches out of host lookups.
+    const candidates = yield* Effect.forEach(
+      branchesByCommit,
+      Effect.fnUntraced(function* ([commit, branches]) {
+        const distance = yield* gitCore.execute({
+          operation: "GitManager.resolveDescriptionBaseBranch.distance",
+          cwd,
+          args: ["rev-list", "--count", `${commit}..refs/heads/${branch}`],
+        });
+        return { branches, distance: Number(distance.stdout.trim()) };
+      }),
+      { concurrency: 4 },
+    );
+    const repository = yield* resolveRemoteRepositoryContext(cwd, remoteName);
+    let match: { branch: string; distance: number } | null = null;
+    for (const candidate of candidates.sort((a, b) => a.distance - b.distance)) {
+      if (candidate.distance === 0) continue;
+      if (match && candidate.distance > match.distance) break;
+      for (const candidateBranch of candidate.branches) {
+        const pullRequest = yield* findOpenPr(cwd, {
+          headBranch: candidateBranch,
+          headSelectors: [candidateBranch],
+          headRepositoryNameWithOwner: repository.repositoryNameWithOwner,
+          headRepositoryOwnerLogin: repository.ownerLogin,
+          isCrossRepository: false,
+        });
+        if (!pullRequest || pullRequest.isCrossRepository === true) continue;
+        if (match) {
+          return yield* new GitManagerError({
+            operation: "resolveDescriptionBaseBranch",
+            cwd,
+            detail:
+              "Several ancestor branches have open change requests at the same distance. Set this branch's t3-description-base to choose the description comparison branch.",
+          });
+        }
+        match = { branch: candidateBranch, distance: candidate.distance };
+      }
+    }
+    return match?.branch ?? null;
   });
 
   const resolvePrBase = Effect.fn("resolvePrBase")(function* (
@@ -2708,24 +2804,36 @@ export const make = Effect.gen(function* () {
       phase: "pr",
       label: `Generating ${terms.shortLabel} content...`,
     });
+    const descriptionBaseBranch =
+      (yield* resolveDescriptionBaseBranch(cwd, branch, baseBranch)) ?? baseBranch;
     const baseRangeRef = yield* resolveBaseRangeRef(cwd, baseRef);
-    const rangeContext = yield* gitCore.readRangeContext(cwd, baseRangeRef);
+    const descriptionRangeRef =
+      descriptionBaseBranch === baseBranch
+        ? baseRangeRef
+        : yield* resolveBaseRangeRef(cwd, descriptionBaseBranch);
+    const rangeContext = yield* gitCore.readRangeContext(cwd, descriptionRangeRef);
     const stylePolicy = yield* resolveStylePolicy(cwd, settings);
     const repositoryChangeRequestInstructions = yield* readRepositoryInstructions(
       cwd,
       ".t3code/change-request.md",
     );
-    const policy = repositoryChangeRequestInstructions
-      ? {
-          ...stylePolicy,
-          changeRequestInstructions: [
-            stylePolicy.changeRequestInstructions,
-            repositoryChangeRequestInstructions,
-          ]
-            .filter((instructions): instructions is string => Boolean(instructions))
-            .join("\n\n"),
-        }
-      : stylePolicy;
+    const descriptionScopeInstructions =
+      descriptionBaseBranch !== baseBranch
+        ? `This change request targets ${baseBranch}. Describe only the supplied commits and diff above ${descriptionBaseBranch}; earlier changes belong to a separate review.`
+        : undefined;
+    const policy =
+      repositoryChangeRequestInstructions || descriptionScopeInstructions
+        ? {
+            ...stylePolicy,
+            changeRequestInstructions: [
+              stylePolicy.changeRequestInstructions,
+              repositoryChangeRequestInstructions,
+              descriptionScopeInstructions,
+            ]
+              .filter((instructions): instructions is string => Boolean(instructions))
+              .join("\n\n"),
+          }
+        : stylePolicy;
     const changeRequestTemplate =
       settings.style.followChangeRequestTemplates && provider.readChangeRequestTemplate
         ? Option.getOrUndefined(
