@@ -425,6 +425,7 @@ function ThreadRouteContent(
   const headerSubtitle = [
     selectedThreadProject?.title ?? null,
     selectedEnvironmentConnection?.environmentLabel ?? null,
+    selectedThread?.linkOrigin ? `From ${selectedThread.linkOrigin.label}` : null,
   ]
     .filter(Boolean)
     .join(" · ");
