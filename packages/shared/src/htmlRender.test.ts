@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  HTML_RENDER_MAX_HEIGHT,
+  HTML_RENDER_MAX_FIT_HEIGHT,
   htmlRenderFrameHeight,
   htmlRenderReferencesEqual,
   htmlRenderTheme,
@@ -267,16 +267,20 @@ describe("htmlRenderFrameHeight", () => {
     const fitted = { ...measured, height: 1403 };
     expect(htmlRenderFrameHeight(fitted, 728, 1415)).toBe(1415);
     expect(htmlRenderFrameHeight(fitted, 1400)).toBe(1660);
-    expect(htmlRenderFrameHeight(fitted, 728, 5000)).toBe(HTML_RENDER_MAX_HEIGHT);
+    expect(htmlRenderFrameHeight(fitted, 728, 5000)).toBe(5000);
+    expect(htmlRenderFrameHeight(fitted, 728, 99_999)).toBe(HTML_RENDER_MAX_FIT_HEIGHT);
   });
 
-  it("keeps the agent's height when it asked for a scrolling frame or the page is unmeasured", () => {
+  it("fits the client's measured content over a shorter agent height", () => {
     const scrolling = { ...measured, height: 600 };
-    expect(htmlRenderFrameHeight(scrolling, 728, 1415)).toBe(600);
-    expect(htmlRenderFrameHeight(scrolling, 1400)).toBe(600);
-    expect(htmlRenderFrameHeight(reference, 728)).toBe(reference.height);
-    expect(htmlRenderFrameHeight(reference, 728, 900)).toBe(reference.height);
+    expect(htmlRenderFrameHeight(scrolling, 728, 1415)).toBe(1415);
+    expect(htmlRenderFrameHeight(reference, 728, 900)).toBe(900);
     expect(htmlRenderFrameHeight(reference, 728, 300)).toBe(300);
+  });
+
+  it("keeps the agent's height without a client measurement", () => {
+    expect(htmlRenderFrameHeight({ ...measured, height: 600 }, 1400)).toBe(600);
+    expect(htmlRenderFrameHeight(reference, 728)).toBe(reference.height);
   });
 
   it("drops a malformed table and compares tables by value", () => {
