@@ -19,16 +19,14 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 import {
   type BackgroundActivityProfile,
   type DesktopUpdateChannel,
-  type EnvironmentId,
   ProviderDriverKind,
   type ProviderInstanceId,
-  type ScopedThreadRef,
   type SidebarProjectGroupingMode,
-  type ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { presentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
+  type AtomCommandResult,
   isAtomCommandInterrupted,
   settlePromise,
   squashAtomCommandFailure,
@@ -3363,14 +3361,20 @@ export function GeneralSettingsPanel() {
   );
 }
 
+const ARCHIVE_ACTIONS = [
+  { action: "unarchive", label: "Unarchive", Icon: ArchiveX },
+  { action: "delete", label: "Delete", Icon: Trash2Icon },
+] as const;
+
+type ArchiveAction = (typeof ARCHIVE_ACTIONS)[number]["action"];
+
 export function ArchivedThreadsPanel() {
   const { scope, groups: projectGroups, environments } = useSettingsScope();
   const { unarchiveThread, unarchiveThreads, confirmAndDeleteThread, deleteArchivedThreads } =
     useThreadActions();
-  const [pendingThreadKeys, setPendingThreadKeys] = useState<ReadonlySet<string>>(() => new Set());
-  const [isBulkActionPending, setIsBulkActionPending] = useState(false);
-  // A context menu can outlive the render that opened it, so guards must read live locks.
-  const pendingActionsRef = useRef({ bulk: false, threadKeys: new Set<string>() });
+  // null locks the whole archive; thread keys allow unrelated rows to run independently.
+  const pendingActionsRef = useRef(new Set<string | null>());
+  const [pendingKeys, setPendingKeys] = useState<ReadonlySet<string | null>>(() => new Set());
   const {
     snapshots: archivedSnapshots,
     error: archiveError,
@@ -3470,166 +3474,124 @@ export function ArchivedThreadsPanel() {
     return { groups: sortedGroups, hasMultipleEnvironments };
   })();
 
-  // A row stays locked until its action settles, so a repeated click can't queue
-  // a second confirmation or command for the same thread.
-  const withPendingThread = async (threadRef: ScopedThreadRef, action: () => Promise<void>) => {
-    const threadKey = scopedThreadKey(threadRef);
+  type ArchivedThread = (typeof archivedGroups)[number]["threads"][number];
+  const archivedThreads = archivedGroups.flatMap((group) => group.threads);
+
+  const reportFailure = (result: AtomCommandResult<unknown, unknown> | null, title: string) => {
+    if (result?._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
+    const error = squashAtomCommandFailure(result);
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title,
+        description: error instanceof Error ? error.message : "An error occurred.",
+      }),
+    );
+  };
+
+  const runAction = async (
+    key: string | null,
+    action: ArchiveAction,
+    run: () => Promise<AtomCommandResult<unknown, unknown> | null>,
+  ) => {
+    // Context menus can outlive their render, so checks and cleanup use the live set.
     const pending = pendingActionsRef.current;
-    if (pending.bulk || pending.threadKeys.has(threadKey)) return;
-    pending.threadKeys.add(threadKey);
-    setPendingThreadKeys(new Set(pending.threadKeys));
-    await action().finally(() => {
-      pending.threadKeys.delete(threadKey);
-      setPendingThreadKeys(new Set(pending.threadKeys));
+    if (pending.has(null) || pending.has(key) || (key === null && pending.size > 0)) return;
+    pending.add(key);
+    setPendingKeys(new Set(pending));
+    const result = await settlePromise(run).finally(() => {
+      pending.delete(key);
+      setPendingKeys(new Set(pending));
+    });
+    reportFailure(
+      result._tag === "Failure" ? result : result.value,
+      `Failed to ${action} thread${key === null ? "s" : ""}`,
+    );
+  };
+
+  const handleThreadAction = (action: ArchiveAction, thread: ArchivedThread) => {
+    const target = scopeThreadRef(thread.environmentId, thread.id);
+    return runAction(scopedThreadKey(target), action, async () => {
+      const result = await (action === "unarchive"
+        ? unarchiveThread(target)
+        : confirmAndDeleteThread(target, thread.title));
+      if (result._tag === "Success") refreshArchivedThreads();
+      return result;
     });
   };
 
-  const handleUnarchiveThread = (threadRef: ScopedThreadRef) =>
-    withPendingThread(threadRef, async () => {
-      const result = await unarchiveThread(threadRef);
-      if (result._tag === "Success") {
-        refreshArchivedThreads();
-      } else if (!isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Failed to unarchive thread",
-            description: error instanceof Error ? error.message : "An error occurred.",
-          }),
-        );
-      }
-    });
-
-  const handleDeleteThread = (threadRef: ScopedThreadRef, title: string) =>
-    withPendingThread(threadRef, async () => {
-      const result = await confirmAndDeleteThread(threadRef, title);
-      if (result._tag === "Success") {
-        refreshArchivedThreads();
-      } else if (!isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Failed to delete thread",
-            description: error instanceof Error ? error.message : "An error occurred.",
-          }),
-        );
-      }
-    });
-
-  const archivedThreadCount = archivedGroups.reduce(
-    (count, group) => count + group.threads.length,
-    0,
-  );
-
-  const handleBulkArchivedThreadAction = async (
-    action: "unarchive" | "delete",
-    threads: ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly id: ThreadId }>,
-    scopeLabel: string,
+  const handleBulkAction = (
+    action: ArchiveAction,
+    threads: readonly ArchivedThread[],
+    title = "",
   ) => {
-    const pending = pendingActionsRef.current;
-    if (threads.length === 0 || pending.bulk || pending.threadKeys.size > 0) return;
-    pending.bulk = true;
-    setIsBulkActionPending(true);
-    const outcome = await settlePromise(async () => {
+    if (threads.length === 0) return;
+    return runAction(null, action, async () => {
       if (action === "delete") {
         const api = readLocalApi();
-        if (!api) return null;
-        // Always confirm: one click here can erase many threads at once.
-        const confirmed = await api.dialogs.confirm(
-          [
-            `Delete ${threads.length} archived thread${threads.length === 1 ? "" : "s"}${scopeLabel}?`,
-            "This permanently clears conversation history for these threads.",
-          ].join("\n"),
-          { variant: "destructive" },
-        );
-        if (!confirmed) return null;
+        if (
+          !api ||
+          !(await api.dialogs.confirm(
+            `Delete ${threads.length} archived thread${threads.length === 1 ? "" : "s"}${title}?\nThis permanently clears conversation history for these threads.`,
+            { variant: "destructive" },
+          ))
+        )
+          return null;
       }
       const targets = threads.map((thread) => scopeThreadRef(thread.environmentId, thread.id));
       return action === "unarchive" ? unarchiveThreads(targets) : deleteArchivedThreads(targets);
-    }).finally(() => {
-      pending.bulk = false;
-      setIsBulkActionPending(false);
     });
-    const failure = outcome._tag === "Failure" ? outcome : outcome.value;
-    if (failure !== null) {
-      const error = squashAtomCommandFailure(failure);
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title:
-            action === "unarchive" ? "Failed to unarchive threads" : "Failed to delete threads",
-          description: error instanceof Error ? error.message : "An error occurred.",
-        }),
-      );
-    }
   };
 
-  const handleArchivedThreadContextMenu = async (
-    threadRef: ScopedThreadRef,
-    title: string,
-    position: { x: number; y: number },
-  ) => {
+  const handleContextMenu = async (thread: ArchivedThread, position: { x: number; y: number }) => {
     const pending = pendingActionsRef.current;
-    if (pending.bulk || pending.threadKeys.has(scopedThreadKey(threadRef))) return;
-    const api = readLocalApi();
-    if (!api) return;
-    const clicked = await api.contextMenu.show(
-      [
-        { id: "unarchive", label: "Unarchive" },
-        { id: "delete", label: "Delete", destructive: true },
-      ],
-      position,
-    );
-
-    if (clicked === "unarchive") {
-      await handleUnarchiveThread(threadRef);
-    } else if (clicked === "delete") {
-      await handleDeleteThread(threadRef, title);
-    }
+    if (
+      pending.has(null) ||
+      pending.has(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)))
+    )
+      return;
+    const result = await settlePromise(async () => {
+      const clicked = await readLocalApi()?.contextMenu.show(
+        ARCHIVE_ACTIONS.map(({ action, label }) => ({
+          id: action,
+          label,
+          destructive: action === "delete",
+        })),
+        position,
+      );
+      if (clicked === "unarchive" || clicked === "delete")
+        await handleThreadAction(clicked, thread);
+    });
+    reportFailure(result, "Archived thread action failed");
   };
 
   return (
     <SettingsPageContainer>
-      {archivedGroups.length > 0 ? (
+      {archivedThreads.length > 0 ? (
         <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-3 sm:px-4">
           <p className="text-sm text-muted-foreground">
-            {archivedThreadCount} archived thread{archivedThreadCount === 1 ? "" : "s"}
+            {archivedThreads.length} archived thread{archivedThreads.length === 1 ? "" : "s"}
           </p>
           <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={isBulkActionPending || pendingThreadKeys.size > 0}
-              onClick={() => {
-                void handleBulkArchivedThreadAction(
-                  "unarchive",
-                  archivedGroups.flatMap((group) => group.threads),
-                  "",
-                );
-              }}
-            >
-              <ArchiveX />
-              <span>Unarchive all</span>
-            </Button>
-            <Button
-              type="button"
-              variant="destructive-outline"
-              size="sm"
-              disabled={isBulkActionPending || pendingThreadKeys.size > 0}
-              onClick={() => {
-                void handleBulkArchivedThreadAction(
-                  "delete",
-                  archivedGroups.flatMap((group) => group.threads),
-                  archivedGroups.length === 1 ? ` in ${archivedGroups[0]!.title}` : "",
-                );
-              }}
-            >
-              <Trash2Icon />
-              <span>Delete all</span>
-            </Button>
+            {ARCHIVE_ACTIONS.map(({ action, label, Icon }) => (
+              <Button
+                key={action}
+                type="button"
+                variant={action === "delete" ? "destructive-outline" : "outline"}
+                size="sm"
+                disabled={pendingKeys.size > 0}
+                onClick={() =>
+                  void handleBulkAction(
+                    action,
+                    archivedThreads,
+                    archivedGroups.length === 1 ? ` in ${archivedGroups[0]!.title}` : "",
+                  )
+                }
+              >
+                <Icon />
+                <span>{label} all</span>
+              </Button>
+            ))}
           </div>
         </div>
       ) : null}
@@ -3675,7 +3637,7 @@ export function ArchivedThreadsPanel() {
                       type="button"
                       variant="ghost-muted"
                       size="icon-xs"
-                      disabled={isBulkActionPending || pendingThreadKeys.size > 0}
+                      disabled={pendingKeys.size > 0}
                       aria-label={`Archived thread actions for ${title}`}
                     />
                   }
@@ -3683,124 +3645,64 @@ export function ArchivedThreadsPanel() {
                   <EllipsisIcon className="size-3.5" />
                 </MenuTrigger>
                 <MenuPopup align="end">
-                  <MenuItem
-                    onClick={() => {
-                      void handleBulkArchivedThreadAction("unarchive", projectThreads, "");
-                    }}
-                  >
-                    <ArchiveX />
-                    Unarchive all in project
-                  </MenuItem>
-                  <MenuItem
-                    variant="destructive"
-                    onClick={() => {
-                      void handleBulkArchivedThreadAction("delete", projectThreads, ` in ${title}`);
-                    }}
-                  >
-                    <Trash2Icon />
-                    Delete all in project
-                  </MenuItem>
+                  {ARCHIVE_ACTIONS.map(({ action, label, Icon }) => (
+                    <MenuItem
+                      key={action}
+                      variant={action === "delete" ? "destructive" : "default"}
+                      onClick={() => void handleBulkAction(action, projectThreads, ` in ${title}`)}
+                    >
+                      <Icon />
+                      {label} all in project
+                    </MenuItem>
+                  ))}
                 </MenuPopup>
               </Menu>
             }
           >
-            {projectThreads.map((thread) => (
-              <SettingsRow
-                key={`${thread.environmentId}:${thread.id}`}
-                onContextMenu={(event) => {
-                  event.preventDefault();
-                  void (async () => {
-                    const result = await settlePromise(() =>
-                      handleArchivedThreadContextMenu(
-                        scopeThreadRef(thread.environmentId, thread.id),
-                        thread.title,
-                        {
-                          x: event.clientX,
-                          y: event.clientY,
-                        },
-                      ),
-                    );
-                    if (result._tag === "Failure") {
-                      const error = squashAtomCommandFailure(result);
-                      toastManager.add(
-                        stackedThreadToast({
-                          type: "error",
-                          title: "Archived thread action failed",
-                          description:
-                            error instanceof Error ? error.message : "An error occurred.",
-                        }),
-                      );
-                    }
-                  })();
-                }}
-                title={thread.title}
-                description={
-                  <span className={hasMultipleEnvironments ? "block truncate" : undefined}>
-                    {hasMultipleEnvironments ? `${thread.environmentLabel} · ` : null}
-                    Archived <RelativeTime timestamp={thread.archivedAt ?? thread.createdAt} />
-                    {" \u00b7 Created "}
-                    <RelativeTime timestamp={thread.createdAt} />
-                  </span>
-                }
-                control={
-                  <div className="flex shrink-0 items-center gap-2">
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="icon-sm"
-                            aria-label={`Unarchive ${thread.title}`}
-                            disabled={
-                              isBulkActionPending ||
-                              pendingThreadKeys.has(
-                                scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-                              )
+            {projectThreads.map((thread) => {
+              const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+              return (
+                <SettingsRow
+                  key={`${thread.environmentId}:${thread.id}`}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    void handleContextMenu(thread, { x: event.clientX, y: event.clientY });
+                  }}
+                  title={thread.title}
+                  description={
+                    <span className={hasMultipleEnvironments ? "block truncate" : undefined}>
+                      {hasMultipleEnvironments ? `${thread.environmentLabel} · ` : null}
+                      Archived <RelativeTime timestamp={thread.archivedAt ?? thread.createdAt} />
+                      {" \u00b7 Created "}
+                      <RelativeTime timestamp={thread.createdAt} />
+                    </span>
+                  }
+                  control={
+                    <div className="flex shrink-0 items-center gap-2">
+                      {ARCHIVE_ACTIONS.map(({ action, label, Icon }) => (
+                        <Tooltip key={action}>
+                          <TooltipTrigger
+                            render={
+                              <Button
+                                type="button"
+                                variant={action === "delete" ? "destructive-outline" : "outline"}
+                                size="icon-sm"
+                                aria-label={`${label} ${thread.title}`}
+                                disabled={pendingKeys.has(null) || pendingKeys.has(threadKey)}
+                                onClick={() => void handleThreadAction(action, thread)}
+                              />
                             }
-                            onClick={() => {
-                              void handleUnarchiveThread(
-                                scopeThreadRef(thread.environmentId, thread.id),
-                              );
-                            }}
                           >
-                            <ArchiveX className="size-3.5" />
-                          </Button>
-                        }
-                      />
-                      <TooltipPopup>Unarchive</TooltipPopup>
-                    </Tooltip>
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <Button
-                            type="button"
-                            variant="destructive-outline"
-                            size="icon-sm"
-                            aria-label={`Delete ${thread.title}`}
-                            disabled={
-                              isBulkActionPending ||
-                              pendingThreadKeys.has(
-                                scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-                              )
-                            }
-                            onClick={() => {
-                              void handleDeleteThread(
-                                scopeThreadRef(thread.environmentId, thread.id),
-                                thread.title,
-                              );
-                            }}
-                          >
-                            <Trash2Icon className="size-3.5" />
-                          </Button>
-                        }
-                      />
-                      <TooltipPopup>Delete</TooltipPopup>
-                    </Tooltip>
-                  </div>
-                }
-              />
-            ))}
+                            <Icon className="size-3.5" />
+                          </TooltipTrigger>
+                          <TooltipPopup>{label}</TooltipPopup>
+                        </Tooltip>
+                      ))}
+                    </div>
+                  }
+                />
+              );
+            })}
           </SettingsSection>
         ))
       )}

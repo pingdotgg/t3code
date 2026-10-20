@@ -1,4 +1,5 @@
 import { EnvironmentId, OrchestrationV2ArchivedShellSnapshot } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
@@ -107,9 +108,6 @@ const snapshot = Schema.decodeUnknownSync(OrchestrationV2ArchivedShellSnapshot)(
     itemCount: 0,
     visibleItemCount: 0,
     archivedAt: DateTime.makeUnsafe(now),
-    settledOverride: null,
-    settledAt: null,
-    deletedAt: null,
   })),
 });
 
@@ -241,4 +239,39 @@ it("releases the lock and reports a failed bulk action", async () => {
   );
   await act(async () => openContextMenu());
   expect(state.unarchiveThread).toHaveBeenCalledOnce();
+});
+
+it.each([
+  ["Unarchive Thread 1", "unarchiveThread"],
+  ["Delete Thread 1", "confirmAndDeleteThread"],
+] as const)("keeps %s locked independently and recovers after failure", async (label, method) => {
+  const pending = deferred<ReturnType<typeof AsyncResult.failure>>();
+  state[method].mockReturnValueOnce(pending.promise);
+  const button = container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
+
+  await act(async () => button.click());
+  await act(async () => {
+    button.click();
+    button
+      .closest('[data-slot="settings-row"]')!
+      .dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+    container
+      .querySelector<HTMLButtonElement>('button[aria-label="Archived thread actions for Project"]')!
+      .click();
+  });
+  expect(state[method]).toHaveBeenCalledOnce();
+  expect(state.showContextMenu).not.toHaveBeenCalled();
+  expect(document.querySelector('[role="menu"]')).toBeNull();
+
+  await act(async () => openContextMenu());
+  expect(state.showContextMenu).toHaveBeenCalledOnce();
+  const calls = state[method].mock.calls.length;
+  await act(async () =>
+    pending.resolve(AsyncResult.failure(Cause.fail(new Error("Disconnected")))),
+  );
+  expect(state.toast).toHaveBeenCalledWith(
+    expect.objectContaining({ description: "Disconnected" }),
+  );
+  await act(async () => button.click());
+  expect(state[method]).toHaveBeenCalledTimes(calls + 1);
 });
