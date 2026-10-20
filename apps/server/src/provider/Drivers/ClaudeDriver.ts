@@ -238,8 +238,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       {
         capacity: 1,
         timeToLive: (exit) =>
-          // Only a fresh probe earns the TTL; a failure or its fallback retries on the next check.
-          Exit.isSuccess(exit) && exit.value._tag === "fresh"
+          // Only fresh usage earns the TTL; failures, fallbacks and usage-less probes retry.
+          Exit.isSuccess(exit) &&
+          exit.value._tag === "fresh" &&
+          exit.value.capabilities.usage !== undefined
             ? CAPABILITIES_PROBE_TTL
             : Duration.zero,
       },
@@ -271,6 +273,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
                   Effect.provideService(Path.Path, path),
                 ),
             ),
+          ),
+          Effect.tap((provider) =>
+            provider.auth.status === "unauthenticated"
+              ? Cache.invalidateAll(capabilitiesProbeCache)
+              : Effect.void,
           ),
           Effect.map(stampIdentity),
         ),
