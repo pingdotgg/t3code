@@ -58,6 +58,7 @@ describe("extractTerminalLinks", () => {
     ['"my file.ts":12:7', "my file.ts:12:7", 17],
     ["'my file.ts:12:7'", "my file.ts:12:7", 16],
     ["`my file.ts`", "my file.ts", 11],
+    ['"mój plik.ts":12', "mój plik.ts:12", 16],
   ])("finds a quoted basename in %s", (line, text, end) => {
     expect(extractTerminalLinks(line)).toEqual([{ kind: "path", text, start: 1, end }]);
   });
@@ -125,6 +126,18 @@ describe("extractTerminalLinks", () => {
         start: 28,
         end: 44,
       },
+    ]);
+  });
+
+  it.each([
+    "src/żółć.ts:12:7",
+    "żółć/main.ts:12",
+    String.raw`żółć\main.ts:12`,
+    "src/cafe\u0301.ts:12",
+    "src/𐐀.ts:12",
+  ])("keeps the complete Unicode relative path %s", (text) => {
+    expect(extractTerminalLinks(`see ${text} for details`)).toEqual([
+      { kind: "path", text, start: 4, end: 4 + text.length },
     ]);
   });
 
