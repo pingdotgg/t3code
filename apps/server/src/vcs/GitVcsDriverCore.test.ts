@@ -3221,6 +3221,34 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect(
+      "counts many untracked files exactly while collapsing their directory in status",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          yield* initRepoWithCommit(cwd);
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          yield* git(cwd, ["branch", "-M", "main"]);
+          yield* git(cwd, ["checkout", "-b", "feature/many-untracked"]);
+          yield* Effect.forEach(
+            Array.from({ length: 1_001 }, (_, index) => `bulk/${index}.txt`),
+            (file) => writeTextFile(cwd, file, "one\ntwo\n"),
+            { concurrency: 32, discard: true },
+          );
+
+          const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
+          assert.deepStrictEqual(status.branchChanges, {
+            baseRef: "main",
+            insertions: 2_002,
+            deletions: 0,
+          });
+          assert.deepStrictEqual(
+            status.workingTree.files.map((file) => file.path),
+            ["bulk/"],
+          );
+        }),
+    );
+
     it.effect("reports non-repository directories without failing", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
