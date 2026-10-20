@@ -3581,37 +3581,53 @@ export function ArchivedThreadsPanel() {
                 }
                 control={
                   <div className="flex shrink-0 items-center gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={pendingThreadKeys.has(
-                        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-                      )}
-                      onClick={() => {
-                        void handleUnarchiveThread(scopeThreadRef(thread.environmentId, thread.id));
-                      }}
-                    >
-                      <ArchiveX className="size-3.5" />
-                      <span>Unarchive</span>
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="destructive-outline"
-                      size="sm"
-                      disabled={pendingThreadKeys.has(
-                        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-                      )}
-                      onClick={() => {
-                        void handleDeleteThread(
-                          scopeThreadRef(thread.environmentId, thread.id),
-                          thread.title,
-                        );
-                      }}
-                    >
-                      <Trash2Icon className="size-3.5" />
-                      <span>Delete</span>
-                    </Button>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon-sm"
+                            aria-label="Unarchive"
+                            disabled={pendingThreadKeys.has(
+                              scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+                            )}
+                            onClick={() => {
+                              void handleUnarchiveThread(
+                                scopeThreadRef(thread.environmentId, thread.id),
+                              );
+                            }}
+                          >
+                            <ArchiveX className="size-3.5" />
+                          </Button>
+                        }
+                      />
+                      <TooltipPopup>Unarchive</TooltipPopup>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <Button
+                            type="button"
+                            variant="destructive-outline"
+                            size="icon-sm"
+                            aria-label="Delete"
+                            disabled={pendingThreadKeys.has(
+                              scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+                            )}
+                            onClick={() => {
+                              void handleDeleteThread(
+                                scopeThreadRef(thread.environmentId, thread.id),
+                                thread.title,
+                              );
+                            }}
+                          >
+                            <Trash2Icon className="size-3.5" />
+                          </Button>
+                        }
+                      />
+                      <TooltipPopup>Delete</TooltipPopup>
+                    </Tooltip>
                   </div>
                 }
               />
