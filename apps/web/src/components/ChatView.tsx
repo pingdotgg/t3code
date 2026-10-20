@@ -5406,7 +5406,6 @@ export default function ChatView(props: ChatViewProps) {
         />
       ),
       title: presentation.title,
-      descriptionPlacement: "below",
       description:
         presentation.items.length === 1 && presentation.items[0]?.childThreadId === undefined
           ? undefined
@@ -5422,7 +5421,7 @@ export default function ChatView(props: ChatViewProps) {
                       {separator}
                     </>
                   ) : (
-                    <span>
+                    <span className="whitespace-nowrap">
                       <InlineButton
                         tone="muted"
                         aria-label={`${presentation.items.length === 1 ? "Show" : "Open"} subagent ${item.label}`}
