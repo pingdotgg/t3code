@@ -662,6 +662,86 @@ describe("PullRequestSyncReactor", () => {
     ),
   );
 
+  it.effect.each([
+    {
+      change: "ghe.com token rotation",
+      host: "avatars.example.ghe.com",
+      nextPath: "/u/1?token=new&v=4&s=40&format=png",
+      expectedSyncs: 1,
+    },
+    {
+      change: "avatar version",
+      host: "avatars.example.ghe.com",
+      nextPath: "/u/1?token=old&v=5&s=40&format=png",
+      expectedSyncs: 2,
+    },
+    {
+      change: "avatar size",
+      host: "avatars.example.ghe.com",
+      nextPath: "/u/1?token=old&v=4&s=80&format=png",
+      expectedSyncs: 2,
+    },
+    {
+      change: "another avatar query parameter",
+      host: "avatars.example.ghe.com",
+      nextPath: "/u/1?token=old&v=4&s=40&format=webp",
+      expectedSyncs: 2,
+    },
+    {
+      change: "avatar path",
+      host: "avatars.example.ghe.com",
+      nextPath: "/u/2?token=old&v=4&s=40&format=png",
+      expectedSyncs: 2,
+    },
+    {
+      change: "token outside ghe.com",
+      host: "avatars.example.com",
+      nextPath: "/u/1?token=new&v=4&s=40&format=png",
+      expectedSyncs: 2,
+    },
+  ])("syncs avatar changes selectively: $change", ({ host, nextPath, expectedSyncs }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const avatarUrl = yield* Ref.make(`https://${host}/u/1?token=old&v=4&s=40&format=png`);
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([makeThread("one", { pullRequests: [makeLink(42)] })]),
+          summary: (input) =>
+            Ref.get(avatarUrl).pipe(
+              Effect.map((avatarUrl) =>
+                makeSummary(input, {
+                  updatedAt: NOW,
+                  author: { login: "octocat", name: null, avatarUrl },
+                }),
+              ),
+            ),
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* startAndSweep(fixture);
+          const firstSweep = yield* Ref.get(fixture.syncCommands);
+          assert.strictEqual(firstSweep.length, 1);
+          assert.strictEqual(firstSweep[0]?.snapshot.author?.avatarUrl, yield* Ref.get(avatarUrl));
+          yield* Ref.update(fixture.snapshots, (snapshot) => applySync(snapshot, firstSweep));
+
+          yield* Ref.set(avatarUrl, `https://${host}${nextPath}`);
+          yield* sweepAgain(fixture, reactor);
+
+          assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 2);
+          assert.strictEqual((yield* Ref.get(fixture.stackCalls)).length, expectedSyncs);
+          const commands = yield* Ref.get(fixture.syncCommands);
+          assert.strictEqual(commands.length, expectedSyncs);
+          if (expectedSyncs === 2) {
+            assert.strictEqual(
+              commands.at(-1)?.snapshot.author?.avatarUrl,
+              yield* Ref.get(avatarUrl),
+            );
+          }
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("refreshes closed links through each project after reopening elsewhere", () =>
     Effect.scoped(
       Effect.gen(function* () {

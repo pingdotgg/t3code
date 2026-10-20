@@ -73,6 +73,17 @@ function snapshotFieldsOf(summary: PullRequestSummary): SnapshotFields {
   };
 }
 
+// Rotating ghe.com avatar tokens should not make otherwise identical snapshots differ.
+function avatarIdentity(avatarUrl: string | null | undefined): string | null {
+  if (avatarUrl === null || avatarUrl === undefined) return null;
+  const url = URL.parse(avatarUrl);
+  if (url === null || (url.hostname !== "ghe.com" && !url.hostname.endsWith(".ghe.com"))) {
+    return avatarUrl;
+  }
+  url.searchParams.delete("token");
+  return url.href;
+}
+
 function snapshotFieldsEqual(left: SnapshotFields, right: SnapshotFields): boolean {
   return (
     left.state === right.state &&
@@ -84,7 +95,7 @@ function snapshotFieldsEqual(left: SnapshotFields, right: SnapshotFields): boole
     (left.closedAt ?? null) === (right.closedAt ?? null) &&
     (left.mergedAt ?? null) === (right.mergedAt ?? null) &&
     (left.author?.login ?? null) === (right.author?.login ?? null) &&
-    (left.author?.avatarUrl ?? null) === (right.author?.avatarUrl ?? null) &&
+    avatarIdentity(left.author?.avatarUrl) === avatarIdentity(right.author?.avatarUrl) &&
     left.additions === right.additions &&
     left.deletions === right.deletions &&
     left.changedFiles === right.changedFiles &&
