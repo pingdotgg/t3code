@@ -248,17 +248,35 @@ function tabAudioState(overlay: DesktopPreviewOverlay | null): TabAudioState {
 type SurfaceShortcutEvent = Pick<
   KeyboardEvent,
   "altKey" | "ctrlKey" | "defaultPrevented" | "isComposing" | "key" | "metaKey"
->;
+> &
+  Partial<Pick<KeyboardEvent, "code" | "getModifierState">>;
 
 export function surfaceShortcutActionForKey<
   const Action extends { available: boolean; shortcut: string },
 >(actions: readonly Action[], event: SurfaceShortcutEvent): Action | null {
   if (event.defaultPrevented || event.isComposing) return null;
   if (event.metaKey || event.ctrlKey || event.altKey) return null;
+  // Linux and Windows report AltGr as AltGraph without Ctrl or Alt, which the
+  // check above misses, while macOS Option always sets altKey. As in
+  // keybindings.ts, AltGr text other than a plain letter or digit, like the
+  // micro sign on German AltGr+M, is not a launcher letter.
+  if (event.getModifierState?.("AltGraph") && !/^[a-z0-9]$/i.test(event.key)) return null;
+  const typed = event.key.toLowerCase();
+  // A layout that types non-Latin letters or combining marks matches by
+  // physical key, like the modified shortcuts in keybindings.ts. One key can
+  // type several, such as the Arabic lam alef ligature. Any other key, such as
+  // an accented Latin letter, punctuation or a dead key, matches only what it
+  // types.
+  const physical =
+    /^[\p{L}\p{M}]+$/u.test(typed) && !/\p{Script=Latin}/u.test(typed)
+      ? event.code?.match(/^Key([A-Z])$/)?.[1]?.toLowerCase()
+      : undefined;
   return (
-    actions.find(
-      (action) => action.available && action.shortcut.toLowerCase() === event.key.toLowerCase(),
-    ) ?? null
+    actions.find((action) => {
+      if (!action.available) return false;
+      const shortcut = action.shortcut.toLowerCase();
+      return shortcut === typed || shortcut === physical;
+    }) ?? null
   );
 }
 
