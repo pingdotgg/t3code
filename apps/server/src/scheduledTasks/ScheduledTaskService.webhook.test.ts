@@ -953,3 +953,207 @@ it.effect("counts each handled request by what happened to it", () =>
     }),
   ),
 );
+
+it.effect("checks filters after the signature and max age, and runs only matching deliveries", () =>
+  withService(({ service, launches }) =>
+    Effect.gen(function* () {
+      const { task } = yield* service.upsert(
+        yield* webhookTaskInput({
+          schedule: {
+            type: "webhook",
+            signature: {
+              header: "x-hub-signature-256",
+              encoding: "hex",
+              prefix: "sha256=",
+              secret: "s3cret",
+            },
+            maxDeliveryAgeMinutes: 30,
+            filters: [
+              { path: "headers.x-github-event", op: "equals", value: "pull_request" },
+              { path: "body.action", op: "in", value: ["opened", "reopened"] },
+            ],
+          },
+        }),
+      );
+      const delivery = (
+        event: string,
+        action: string,
+        options: { readonly signed?: boolean; readonly receivedAt?: string } = {},
+      ) => {
+        const body = new TextEncoder().encode(
+          JSON.stringify({ action, pull_request: { url: "https://github.com/org/repo/pull/45" } }),
+        );
+        const signature = `sha256=${NodeCrypto.createHmac("sha256", "s3cret").update(body).digest("hex")}`;
+        return requestFor(task, {
+          headers: {
+            "content-type": "application/json",
+            "x-github-event": event,
+            ...(options.signed === false ? {} : { "x-hub-signature-256": signature }),
+          },
+          body,
+          bodyText: new TextDecoder().decode(body),
+          ...(options.receivedAt === undefined
+            ? {}
+            : { relayDeliveryId: "old", receivedAt: options.receivedAt }),
+        });
+      };
+      const now = yield* DateTime.now;
+      const old = DateTime.formatIso(DateTime.subtract(now, { minutes: 31 }));
+
+      // A request failing a filter is still refused first for its signature or age.
+      const unsigned = yield* service.triggerWebhook(delivery("push", "opened", { signed: false }));
+      assert.equal(unsigned._tag, "rejected_signature");
+      const tooOld = yield* service.triggerWebhook(delivery("push", "opened", { receivedAt: old }));
+      assert.equal(tooOld._tag, "expired");
+
+      const wrongEvent = yield* service.triggerWebhook(delivery("push", "opened"));
+      const wrongAction = yield* service.triggerWebhook(delivery("pull_request", "closed"));
+      assert.deepInclude(wrongEvent, { _tag: "accepted", outcome: "filtered" });
+      assert.deepInclude(wrongAction, { _tag: "accepted", outcome: "filtered" });
+      assert.equal(yield* Queue.size(launches), 0);
+      const [listed] = (yield* service.list()).tasks;
+      assert.equal(listed?.runCount, 0);
+      assert.equal(listed?.lastRunStatus, "never");
+
+      const matched = yield* service.triggerWebhook(delivery("pull_request", "opened"));
+      assert.deepInclude(matched, { _tag: "accepted", outcome: "accepted" });
+      assert.include((yield* Queue.take(launches)).initialMessage?.text ?? "", "pull/45");
+
+      const deliveries = (yield* service.listWebhookDeliveries({
+        id: task.id,
+        acceptAnyOutcome: true,
+      })).deliveries;
+      const filtered = deliveries
+        .filter((entry) => entry.outcome === "filtered")
+        .map((entry) => [entry.signatureVerified, entry.error]);
+      assert.sameDeepMembers(filtered, [
+        [true, "Filter 1 (headers.x-github-event) did not match."],
+        [true, "Filter 2 (body.action) did not match."],
+      ]);
+    }),
+  ),
+);
+
+const pullRequestFilterInput = () =>
+  webhookTaskInput({
+    schedule: {
+      type: "webhook",
+      filters: [{ path: "headers.x-github-event", op: "equals", value: "pull_request" }],
+    },
+  });
+const githubEvent = (event: string) => ({
+  headers: { "content-type": "application/json", "x-github-event": event },
+});
+
+it.effect("filtered deliveries take no run slot and log at most 10 rows a minute", () =>
+  withService(({ service, launches }) =>
+    Effect.gen(function* () {
+      const { task } = yield* service.upsert(yield* pullRequestFilterInput());
+      const ignored = yield* Effect.forEach(Array.from({ length: 70 }), () =>
+        service.triggerWebhook(requestFor(task, githubEvent("push"))),
+      );
+      assert.isTrue(
+        ignored.every((result) => result._tag === "accepted" && result.outcome === "filtered"),
+      );
+      const matched = yield* service.triggerWebhook(requestFor(task, githubEvent("pull_request")));
+      assert.deepInclude(matched, { _tag: "accepted", outcome: "accepted" });
+      yield* Queue.take(launches);
+      yield* Effect.forEach(Array.from({ length: 5 }), () =>
+        service.triggerWebhook(requestFor(task, githubEvent("push"))),
+      );
+
+      const outcomes = (yield* service.listWebhookDeliveries({
+        id: task.id,
+        acceptAnyOutcome: true,
+      })).deliveries.map((delivery) => delivery.outcome);
+      // 75 filtered requests in one window: only the first 10 are written.
+      assert.equal(outcomes.filter((outcome) => outcome === "filtered").length, 10);
+      assert.equal(outcomes.filter((outcome) => outcome === "accepted").length, 1);
+
+      // Later windows log again, and retention keeps the filtered rows at 20.
+      for (const _ of [1, 2]) {
+        yield* TestClock.adjust("61 seconds");
+        yield* Effect.forEach(Array.from({ length: 15 }), () =>
+          service.triggerWebhook(requestFor(task, githubEvent("push"))),
+        );
+      }
+      const later = (yield* service.listWebhookDeliveries({ id: task.id, acceptAnyOutcome: true }))
+        .deliveries;
+      assert.equal(later.filter((delivery) => delivery.outcome === "filtered").length, 20);
+      assert.equal(later.filter((delivery) => delivery.outcome === "accepted").length, 1);
+    }),
+  ),
+);
+
+it.effect("a filtered relay delivery releases its claim, so a redelivery is evaluated again", () =>
+  withService(({ service, launches }) =>
+    Effect.gen(function* () {
+      const { task } = yield* service.upsert(yield* pullRequestFilterInput());
+      const held = { relayDeliveryId: "relay-filtered" };
+      const first = yield* service.triggerWebhook(
+        requestFor(task, { ...held, ...githubEvent("push") }),
+      );
+      const again = yield* service.triggerWebhook(
+        requestFor(task, { ...held, ...githubEvent("push") }),
+      );
+      assert.deepInclude(first, { _tag: "accepted", outcome: "filtered" });
+      assert.deepInclude(again, { _tag: "accepted", outcome: "filtered" });
+      const ran = yield* service.triggerWebhook(
+        requestFor(task, { ...held, ...githubEvent("pull_request") }),
+      );
+      assert.deepInclude(ran, { _tag: "accepted", outcome: "accepted" });
+      yield* Queue.take(launches);
+      const replayed = yield* service.triggerWebhook(
+        requestFor(task, { ...held, ...githubEvent("pull_request") }),
+      );
+      assert.deepInclude(replayed, { _tag: "accepted", outcome: "duplicate" });
+    }),
+  ),
+);
+
+it.effect("a save without filters keeps the stored ones and an empty list clears them", () =>
+  withService(({ service }) =>
+    Effect.gen(function* () {
+      const { task } = yield* service.upsert(yield* pullRequestFilterInput());
+      const filters = task.schedule.type === "webhook" ? task.schedule.filters : undefined;
+      assert.lengthOf(filters ?? [], 1);
+
+      const kept = yield* service.upsert(
+        yield* webhookTaskInput({ title: "Renamed", schedule: { type: "webhook" } }),
+      );
+      assert.deepEqual(
+        kept.task.schedule.type === "webhook" && kept.task.schedule.filters,
+        filters,
+      );
+
+      const cleared = yield* service.upsert(
+        yield* webhookTaskInput({ schedule: { type: "webhook", filters: [] } }),
+      );
+      assert.notProperty(cleared.task.schedule, "filters");
+    }),
+  ),
+);
+
+it.effect("leaves filtered rows out of the list for clients that only decode older outcomes", () =>
+  withService(({ service, launches }) =>
+    Effect.gen(function* () {
+      const { task } = yield* service.upsert(yield* pullRequestFilterInput());
+      yield* service.triggerWebhook(requestFor(task, githubEvent("push")));
+      yield* service.triggerWebhook(requestFor(task, githubEvent("pull_request")));
+      yield* Queue.take(launches);
+      const legacy = (yield* service.listWebhookDeliveries({ id: task.id })).deliveries;
+      assert.deepEqual(
+        legacy.map((delivery) => delivery.outcome),
+        ["accepted"],
+      );
+      const current = (yield* service.listWebhookDeliveries({
+        id: task.id,
+        acceptAnyOutcome: true,
+      })).deliveries;
+      assert.sameMembers(
+        current.map((delivery) => delivery.outcome),
+        ["accepted", "filtered"],
+      );
+    }),
+  ),
+);

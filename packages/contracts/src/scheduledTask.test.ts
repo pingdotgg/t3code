@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 
 import {
   MIN_SCHEDULED_TASK_INTERVAL_MS,
+  ScheduledTaskListWebhookDeliveriesResult,
   ScheduledTaskSchedule,
   ScheduledTaskUpsertSchedule,
 } from "./scheduledTask.ts";
@@ -48,5 +49,74 @@ describe("ScheduledTaskUpsertSchedule", () => {
         everyMs: MIN_SCHEDULED_TASK_INTERVAL_MS - 1,
       }),
     ).toThrow();
+  });
+});
+
+describe("webhook filters", () => {
+  const accepts = (filters: unknown) => {
+    try {
+      decodeUpsertSchedule({ type: "webhook", filters });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  it("keeps valid filters", () => {
+    const filters = [
+      { path: "headers.x-github-event", op: "equals", value: "pull_request" },
+      { path: "body.action", op: "in", value: ["opened", "labeled"] },
+      { path: "body.label.name", op: "startsWith", value: "agent:" },
+      { path: "query.source", op: "exists" },
+    ];
+    expect(decodeUpsertSchedule({ type: "webhook", filters })).toEqual({
+      type: "webhook",
+      filters,
+    });
+    expect(decodeSchedule({ type: "webhook", signature: null, filters })).toMatchObject({
+      filters,
+    });
+  });
+
+  it("rejects empty or unknown paths, unknown ops, and values that do not fit the op", () => {
+    expect(accepts([{ path: "", op: "exists" }])).toBe(false);
+    expect(accepts([{ path: "  ", op: "exists" }])).toBe(false);
+    expect(accepts([{ path: "request", op: "exists" }])).toBe(false);
+    expect(accepts([{ path: "header.x-github-event", op: "exists" }])).toBe(false);
+    expect(accepts([{ path: "body.action", op: "in", value: "opened" }])).toBe(false);
+    expect(accepts([{ path: "body.action", op: "in", value: [] }])).toBe(false);
+    for (const value of ["", " opened", "opened ", "a,b"]) {
+      expect(accepts([{ path: "body.action", op: "in", value: [value] }])).toBe(false);
+    }
+    expect(accepts([{ path: "body.label.name", op: "in", value: ["needs review"] }])).toBe(true);
+    expect(accepts([{ path: "body.action", op: "equals" }])).toBe(false);
+    expect(accepts([{ path: "body.action", op: "matches", value: "^opened$" }])).toBe(false);
+  });
+
+  it("allows at most 16 filters", () => {
+    const sixteen = Array.from({ length: 16 }, () => ({ path: "body.action", op: "exists" }));
+    expect(accepts(sixteen)).toBe(true);
+    expect(accepts([...sixteen, { path: "body.action", op: "exists" }])).toBe(false);
+  });
+});
+
+describe("ScheduledTaskWebhookDeliverySummary", () => {
+  it("decodes an outcome this client does not know yet", () => {
+    const summary = {
+      id: "delivery:1",
+      taskId: "scheduled-task:1",
+      receivedAt: "2026-10-20T00:00:00.000Z",
+      method: "POST",
+      contentType: null,
+      bodyBytes: 0,
+      outcome: "some_future_outcome",
+      signatureVerified: false,
+      missingFields: [],
+      error: null,
+    };
+    expect(
+      Schema.decodeUnknownSync(ScheduledTaskListWebhookDeliveriesResult)({ deliveries: [summary] })
+        .deliveries[0]?.outcome,
+    ).toBe("some_future_outcome");
   });
 });

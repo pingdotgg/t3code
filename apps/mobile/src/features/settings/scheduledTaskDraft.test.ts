@@ -65,6 +65,23 @@ describe("scheduleDraftForTask", () => {
     expect(saved).toEqual({ type: "webhook", signature, maxDeliveryAgeMinutes: null });
     expect(saved?.type === "webhook" && saved.signature && "secret" in saved.signature).toBe(false);
   });
+
+  it("round-trips webhook filters and refuses an invalid one", () => {
+    const filters = [
+      { path: "headers.x-github-event", op: "equals", value: "pull_request" },
+      { path: "body.label.name", op: "in", value: ["needs review", "agent:fix"] },
+    ] as const;
+    const draft = scheduleDraftForTask({ schedule: { type: "webhook", signature: null, filters } });
+    // Untouched rows are left out, so the server keeps whatever is stored now.
+    expect(scheduleFromDraft(draft)).not.toHaveProperty("filters");
+    expect(scheduleFromDraft({ ...draft, filters: [] })).toMatchObject({ filters: [] });
+    expect(scheduleFromDraft({ ...draft, filters: draft.filters.slice(1) })).toMatchObject({
+      filters: filters.slice(1),
+    });
+    expect(
+      scheduleFromDraft({ ...draft, filters: [{ id: "f1", path: "", op: "exists", value: "" }] }),
+    ).toBeNull();
+  });
 });
 
 describe("hasScheduledTaskDraftChanges", () => {
