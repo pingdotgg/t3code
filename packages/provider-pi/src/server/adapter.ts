@@ -1237,13 +1237,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               ...baseItemFields(turn, nativeItemId, emittedAt, emittedAt),
               status: "completed",
               completedAt: emittedAt,
-              title: "notify",
-              type: "dynamic_tool",
-              toolName: "notify",
-              input: {
-                message,
-                notifyType: recordString(event, "notifyType") ?? "info",
-              },
+              title: message,
+              type: "system_notice",
+              message,
             },
           });
           return;

@@ -1098,7 +1098,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
             <WorkLogLabel
               tone={isUsageLimit ? "warning" : iconIsDestructive ? "danger" : "default"}
             >
-              {isSystemNotice ? row.summary : displayText}
+              {displayText}
               {answerPreview ? (
                 <Text
                   className={
