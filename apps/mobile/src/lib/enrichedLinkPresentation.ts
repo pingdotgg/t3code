@@ -1,31 +1,38 @@
 import type { ComposerContextRecord } from "@t3tools/contracts";
-import { contextChipPresentation } from "./composerChipPresentation";
-import type { MarkdownFileIcon } from "./markdownLinks";
+import {
+  composerChipSizeSuffix,
+  contextChipPresentation,
+  type ContextChipIcon,
+  UNAVAILABLE_CONTEXT_CHIP_PRESENTATION,
+} from "./composerChipPresentation";
+import { resolveMarkdownFileIcon, type MarkdownFileIcon } from "./markdownLinks";
 import type { SelectableMarkdownSkill } from "../native/SelectableMarkdownText.types";
 import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
 
-const CONTEXT_ICONS: Readonly<Record<string, MarkdownFileIcon>> = {
-  photo: "image",
-  "play.rectangle": "video",
-  terminal: "bash",
-  "cursorarrow.click": "react",
-  "text.bubble": "markdown",
-  "git-pull-request": "git",
-  cube: "mcp",
-  doc: "default",
-};
+export type EnrichedChipIcon =
+  | { readonly kind: "chip"; readonly name: ContextChipIcon }
+  | { readonly kind: "file"; readonly name: MarkdownFileIcon };
 
 export function enrichedContextLinkPresentation(
   href: string,
   records?: ReadonlyArray<ComposerContextRecord>,
-) {
+): { accent?: string; icon: EnrichedChipIcon; label?: string } | undefined {
   const reference = parseComposerContextHref(href);
   if (!reference) return undefined;
   const record = records?.find((candidate) => candidate.contextId === reference.contextId);
-  const presentation = contextChipPresentation(reference.kind, record);
+  const presentation =
+    records && !record
+      ? UNAVAILABLE_CONTEXT_CHIP_PRESENTATION
+      : contextChipPresentation(reference.kind, record);
+  const size = composerChipSizeSuffix(record);
+  const fileName =
+    record && "path" in record ? record.path : record && "name" in record ? record.name : "";
   return {
-    color: presentation.accent,
-    icon: CONTEXT_ICONS[presentation.symbol] ?? "default",
+    ...(presentation.accent ? { accent: presentation.accent } : {}),
+    icon: presentation.icon
+      ? { kind: "chip", name: presentation.icon }
+      : { kind: "file", name: resolveMarkdownFileIcon(fileName) },
+    ...(record && size ? { label: `${record.label} · ${size}` } : {}),
   };
 }
 

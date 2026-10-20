@@ -57,7 +57,6 @@ export function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
       codeBackgroundColor: codeBackground,
       codeBlockBackgroundColor: codeBackground,
       fileTextColor: codeText,
-      skillTextColor: codeText,
       quoteMarkerColor: blockquoteBorder,
       dividerColor: horizontalRule,
       fontSize: nativeMarkdownTypography.fontSize,

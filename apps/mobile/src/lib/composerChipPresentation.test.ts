@@ -21,24 +21,24 @@ describe("contextChipPresentation image detection", () => {
     const { contextChipPresentation } = await import("./composerChipPresentation");
     expect(
       contextChipPresentation("file", { kind: "file", name: "IMG_4997.PNG", mimeType: "" }),
-    ).toEqual({ accent: "#d55665", symbol: "photo" });
+    ).toEqual({ accent: "#d55665", symbol: "photo", icon: "image" });
     expect(
       contextChipPresentation("file", {
         kind: "file",
         name: "shot",
         mimeType: "image/jpeg",
       }),
-    ).toEqual({ accent: "#d55665", symbol: "photo" });
+    ).toEqual({ accent: "#d55665", symbol: "photo", icon: "image" });
   });
 
   it("leaves genuine documents and videos alone", async () => {
     const { contextChipPresentation } = await import("./composerChipPresentation");
     expect(
       contextChipPresentation("file", { kind: "file", name: "notes.txt", mimeType: "text/plain" }),
-    ).toEqual({ accent: "#0090cd", symbol: "doc" });
+    ).toEqual({ accent: "#0090cd", symbol: "doc", icon: null });
     expect(
       contextChipPresentation("file", { kind: "file", name: "clip.mp4", mimeType: "video/mp4" }),
-    ).toEqual({ accent: "#d06217", symbol: "play.rectangle" });
+    ).toEqual({ accent: "#d06217", symbol: "play.rectangle", icon: "film" });
   });
 });
 
@@ -59,13 +59,20 @@ describe("pull request chip status", () => {
     expect((await chip("closed")).accent).toBe("#d55665");
   });
 
-  it("keeps one glyph across every state, so only colour carries the status", async () => {
+  it("keeps one composer glyph across every state, so only colour carries the status", async () => {
     const symbols = await Promise.all(
       [chip("open"), chip("open", true), chip("merged"), chip("closed")].map(
         async (pending) => (await pending).symbol,
       ),
     );
     expect(new Set(symbols)).toEqual(new Set(["git-pull-request"]));
+  });
+
+  it("gives message chips web's per-state pull request glyphs", async () => {
+    expect((await chip("open")).icon).toBe("git-pull-request-arrow");
+    expect((await chip("open", true)).icon).toBe("git-pull-request-draft");
+    expect((await chip("merged")).icon).toBe("git-merge");
+    expect((await chip("closed")).icon).toBe("git-pull-request-closed");
   });
 
   it("falls back to the generic pull request chip when the state is unknown", async () => {
@@ -76,5 +83,22 @@ describe("pull request chip status", () => {
         sectionId: "pull-request:1",
       }).accent,
     ).toBe("#7079e4");
+  });
+});
+
+describe("context chip kinds", () => {
+  it("gives thread context its own teal chip instead of the file style", async () => {
+    const { contextChipPresentation } = await import("./composerChipPresentation");
+    expect(contextChipPresentation("thread")).toMatchObject({
+      accent: "#009c96",
+      icon: "messages-square",
+    });
+  });
+
+  it("shows unknown kinds as a neutral chip rather than a file", async () => {
+    const { contextChipPresentation } = await import("./composerChipPresentation");
+    const presentation = contextChipPresentation("future-kind");
+    expect(presentation.accent).toBeUndefined();
+    expect(presentation.icon).toBe("circle-dashed");
   });
 });
