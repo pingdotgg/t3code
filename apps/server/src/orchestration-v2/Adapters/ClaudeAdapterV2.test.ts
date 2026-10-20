@@ -482,7 +482,7 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
 
     assert.deepEqual(queryPolicy, {
       permissionMode: "auto",
-      installPermissionCallback: false,
+      installPermissionCallback: true,
     });
   });
 
@@ -1147,6 +1147,166 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
         ),
       ),
     ),
+  );
+});
+
+describe("ClaudeAdapterV2 escalated permissions", () => {
+  const requestPermission = Effect.fn("requestPermission")(function* (
+    runtimeMode: "auto" | "approval-required",
+    toolName: string,
+    callbackOptions: { title?: string; decisionReason?: string } = {},
+  ) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const idAllocator = yield* IdAllocator.IdAllocatorV2;
+    const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: "t3-claude-permission-callback-",
+    });
+    let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
+    const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+      instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+      settings: DEFAULT_CLAUDE_SETTINGS,
+      environment: {},
+      attachmentsDir,
+      fileSystem,
+      path: yield* Path.Path,
+      crypto: yield* Crypto.Crypto,
+      idAllocator,
+      queryRunner: {
+        allocateSessionId: Effect.succeed(`native-thread-claude-${runtimeMode}`),
+        open: (input) =>
+          Effect.sync(() => {
+            openedOptions = input.options;
+            return {
+              messages: Stream.never,
+              offer: () => Effect.void,
+              setModel: () => Effect.void,
+              setPermissionMode: () => Effect.void,
+              applyFlagSettings: () => Effect.void,
+              backgroundTasks: () => Effect.succeed(false),
+              stopTask: () => Effect.void,
+              interrupt: Effect.void,
+              close: Effect.void,
+            };
+          }),
+        forkSession: () => Effect.die("unused"),
+        subagentLaunchToolUseId: () => Effect.succeed(null),
+        assertComplete: Effect.void,
+      },
+    });
+    const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+      runtimeMode,
+      interactionMode: "default",
+      cwd: "/workspace",
+    });
+    const threadId = ThreadId.make(`thread-claude-${runtimeMode}`);
+    const runtime = yield* adapter.openSession({
+      threadId,
+      providerSessionId: ProviderSessionId.make(`provider-session-claude-${runtimeMode}`),
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      runtimePolicy,
+    });
+    const providerThread = yield* runtime.ensureThread({
+      threadId,
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      runtimePolicy,
+    });
+    const now = yield* DateTime.now;
+    yield* runtime.startTurn(
+      makeClaudeTestTurnInput({
+        threadId,
+        providerThread,
+        now,
+        attemptId: RunAttemptId.make(`attempt-claude-${runtimeMode}`),
+        text: "Run the command.",
+        attachments: [],
+        runtimePolicy,
+      }),
+    );
+    const canUseTool = openedOptions?.canUseTool;
+    assert.isFunction(canUseTool);
+
+    const request = yield* runtime.events.pipe(
+      Stream.filter(
+        (event) => event.type === "turn_item.updated" && event.turnItem.type === "approval_request",
+      ),
+      Stream.runHead,
+      Effect.forkScoped,
+    );
+    const decision = yield* Effect.promise(() =>
+      canUseTool!(
+        toolName,
+        { command: "git push" },
+        {
+          signal: new AbortController().signal,
+          toolUseID: "escalated-command",
+          requestId: "escalated-command",
+          ...callbackOptions,
+        },
+      ),
+    ).pipe(Effect.forkScoped);
+    const first = yield* Effect.raceFirst(
+      Fiber.join(request).pipe(Effect.map((item) => ({ type: "request", item }) as const)),
+      Fiber.join(decision).pipe(Effect.map((result) => ({ type: "decision", result }) as const)),
+    );
+    if (first.type !== "request") assert.fail("the escalated command ran without asking");
+    const event = Option.getOrThrow(first.item);
+    if (event.type !== "turn_item.updated" || event.turnItem.type !== "approval_request") {
+      assert.fail("expected an approval request");
+    }
+    return { runtime, decision, request: event.turnItem };
+  });
+
+  it.effect.each([
+    { response: "accept", expected: "allow" },
+    { response: "decline", expected: "deny" },
+  ] as const)(
+    "honors $response for an Auto escalation and shows its reason",
+    ({ response, expected }) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { runtime, request, decision } = yield* requestPermission("auto", "Bash", {
+            title: "Claude wants to run git push",
+            decisionReason: "\u001b[33mPushing needs confirmation\u001b[0m",
+          });
+          assert.equal(request.requestKind, "command");
+          assert.equal(request.prompt, "Claude wants to run git push\nPushing needs confirmation");
+          yield* runtime.respondToRuntimeRequest({
+            requestId: request.requestId,
+            decision: response,
+          });
+          assert.equal((yield* Fiber.join(decision))?.behavior, expected);
+        }),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
+
+  it.effect.each(["Bash", "Monitor"])(
+    "does not grant session-wide %s access without SDK suggestions",
+    (toolName) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { runtime, request, decision } = yield* requestPermission(
+            "approval-required",
+            toolName,
+          );
+          yield* runtime.respondToRuntimeRequest({
+            requestId: request.requestId,
+            decision: "acceptForSession",
+          });
+          const result = yield* Fiber.join(decision);
+          assert.equal(result?.behavior, "allow");
+          if (result?.behavior !== "allow") return;
+          assert.deepEqual(result.updatedInput, { command: "git push" });
+          assert.deepEqual(result.updatedPermissions ?? [], []);
+        }),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
   );
 });
 
