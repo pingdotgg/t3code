@@ -25,7 +25,7 @@ import {
   type AddProjectRemoteSourceReadiness,
 } from "@t3tools/client-runtime/operations/projects";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { connectionStatusText, connectionStatusTitle } from "@t3tools/client-runtime/connection";
+import { connectionStatusText } from "@t3tools/client-runtime/connection";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/shared/threadReference";
 import {
@@ -887,20 +887,6 @@ function OpenCommandPaletteDialog(props: {
     groups: projectGroups,
     preferredProjectRef: contextualProjectRef,
   });
-  const isEnvironmentReachable = (environmentId: EnvironmentId) =>
-    environments.some(
-      (environment) =>
-        environment.environmentId === environmentId && environment.connection.phase === "connected",
-    );
-  const threadPickerProjects = buildSidebarProjectPickerEntries({
-    groups: projectGroups,
-    preferredProjectRef: contextualProjectRef,
-    expandCheckouts: true,
-    isEnvironmentReachable,
-  }).map(({ group, targetProject }) => ({
-    ...targetProject,
-    displayName: group.displayName,
-  }));
   const pickerProjects = projectPickerEntries.map(({ group, targetProject }) => ({
     ...targetProject,
     displayName: group.displayName,
@@ -1177,16 +1163,18 @@ function OpenCommandPaletteDialog(props: {
       isScratchProject(project, scratchWorkspaceRootFor(project.environmentId));
     const projectItems = enumerateCommandPaletteItems(
       buildProjectActionItems({
-        projects: threadPickerProjects.filter((project) => !isScratch(project)),
+        projects: pickerProjects.filter((project) => !isScratch(project)),
         valuePrefix: "new-thread-in",
-        disabled: (project) => !isEnvironmentReachable(project.environmentId),
-        searchTerms: (project) => [
-          projectEnvironmentLocationById.get(project.environmentId)?.label ?? "Remote",
-        ],
+        searchTerms: (project) => {
+          const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
+          const location = projectEnvironmentLocationById.get(project.environmentId);
+          return [
+            ...(group?.memberProjects.flatMap((member) => [member.title, member.workspaceRoot]) ??
+              []),
+            ...(location ? [location.label] : []),
+          ];
+        },
         renderDescription: (project) => {
-          const environment = environments.find(
-            (candidate) => candidate.environmentId === project.environmentId,
-          );
           const location = projectEnvironmentLocationById.get(project.environmentId) ?? {
             kind: "remote",
             label: "Remote",
@@ -1206,29 +1194,30 @@ function OpenCommandPaletteDialog(props: {
               </span>
               <CommandPaletteMetaDot />
               <span className="truncate">{project.workspaceRoot}</span>
-              {isEnvironmentReachable(project.environmentId) ? null : (
-                <>
-                  <CommandPaletteMetaDot />
-                  <span className="shrink-0">
-                    {environment ? connectionStatusTitle(environment.connection) : "Unavailable"}
-                  </span>
-                </>
-              )}
             </span>
           );
         },
         icon: projectFaviconIcon,
         runProject: async (project) => {
-          await handleNewThread(scopeProjectRef(project.environmentId, project.id), {
-            environmentSelection: "manual",
-          });
+          const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
+          const contextualRefBelongsToGroup =
+            contextualProjectRef !== null &&
+            group?.memberProjectRefs.some(
+              (projectRef) =>
+                projectRef.environmentId === contextualProjectRef.environmentId &&
+                projectRef.projectId === contextualProjectRef.projectId,
+            );
+          await handleNewThread(
+            contextualRefBelongsToGroup
+              ? contextualProjectRef
+              : scopeProjectRef(project.environmentId, project.id),
+          );
         },
       }),
     );
     if (scratchTargetEnvironmentId === null) return projectItems;
 
-    const noProjectIndex =
-      threadPickerProjects[0] !== undefined && isScratch(threadPickerProjects[0]) ? 0 : 1;
+    const noProjectIndex = pickerProjects[0] !== undefined && isScratch(pickerProjects[0]) ? 0 : 1;
     return [
       ...projectItems.slice(0, noProjectIndex),
       {
@@ -1631,7 +1620,7 @@ function OpenCommandPaletteDialog(props: {
       title: "New thread in...",
       icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
-      groups: [{ value: "new-thread-in", label: "Projects", items: projectThreadItems }],
+      groups: [{ value: "projects", label: "Projects", items: projectThreadItems }],
     });
   }
 
@@ -1978,7 +1967,7 @@ function OpenCommandPaletteDialog(props: {
       case "new-thread-in":
         pushPaletteView({
           addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
-          groups: [{ value: "new-thread-in", label: "Projects", items: projectThreadItems }],
+          groups: [{ value: "projects", label: "Projects", items: projectThreadItems }],
         });
         return;
       case "change-theme":
@@ -2125,9 +2114,7 @@ function OpenCommandPaletteDialog(props: {
         ? changeThemeItem.groups
         : currentView?.groups[0]?.value === "appearance"
           ? changeAppearanceItem.groups
-          : currentView?.groups[0]?.value === "new-thread-in"
-            ? [{ value: "new-thread-in", label: "Projects", items: projectThreadItems }]
-            : (currentView?.groups ?? rootGroups);
+          : (currentView?.groups ?? rootGroups);
 
   const filteredGroups = filterCommandPaletteGroups({
     activeGroups,

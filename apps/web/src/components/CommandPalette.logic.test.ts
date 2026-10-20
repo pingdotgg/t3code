@@ -348,31 +348,6 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
 }
 
 describe("buildProjectActionItems", () => {
-  it("shows offline checkout rows but excludes them from keyboard selection", () => {
-    const local = makeProject();
-    const remote = makeProject({
-      id: local.id,
-      environmentId: EnvironmentId.make("offline"),
-    });
-    const items = buildProjectActionItems({
-      projects: [remote, local].map((project) => ({ ...project, displayName: "shared-repo" })),
-      valuePrefix: "new-thread-in",
-      icon: () => null,
-      runProject: async () => undefined,
-      disabled: (project) => project.environmentId === remote.environmentId,
-    });
-    const groups = [{ value: "projects", label: "Projects", items }];
-    const { rows, itemValues } = buildCommandPaletteRows(groups);
-
-    expect(rows.filter((row) => row.kind === "item").map((row) => row.item.value)).toEqual([
-      `new-thread-in:${remote.environmentId}:${remote.id}`,
-      `new-thread-in:${local.environmentId}:${local.id}`,
-    ]);
-    expect(itemValues).toEqual([`new-thread-in:${local.environmentId}:${local.id}`]);
-    expect(findHighlightedCommandPaletteItem(groups, items[0]!.value)).toBeNull();
-    expect(findHighlightedCommandPaletteItem(groups, items[1]!.value)).toBe(items[1]);
-  });
-
   it("shows the grouped display name but keeps the real title for icons", () => {
     const project = makeProject({ title: "fleet", workspaceRoot: "/Users/theo/Code/p/fleet" });
     const iconTitles: string[] = [];
