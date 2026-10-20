@@ -1049,6 +1049,12 @@ export interface DesktopBridge {
   getLocalEnvironmentBootstraps: () => readonly DesktopEnvironmentBootstrap[];
   getLocalEnvironmentEnabled?: () => boolean;
   setLocalEnvironmentEnabled?: (enabled: boolean) => Promise<void>;
+  /**
+   * The environment ID stored in this app's T3 home. Whichever server owns the
+   * home writes it: the app's own backend, or with Local environment off, a
+   * background service on this machine.
+   */
+  getHomeEnvironmentId?: () => string | null;
   getLocalEnvironmentBearerToken: () => Promise<string>;
   getClientSettings: () => Promise<ClientSettings | null>;
   setClientSettings: (settings: ClientSettings) => Promise<void>;

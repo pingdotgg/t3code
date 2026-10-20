@@ -26,7 +26,7 @@ import { isConnectedWithConfig } from "../components/settings/scopedSettings";
 import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { environmentAtomList } from "./environmentAtomList";
-import { primaryEnvironmentIdAtom } from "./primaryEnvironment";
+import { localMachineEnvironmentIdAtom, primaryEnvironmentIdAtom } from "./primaryEnvironment";
 import { environmentSession } from "./session";
 import { reuseProvidersIgnoringCheckedAt } from "./serverProviders.logic";
 
@@ -166,10 +166,14 @@ export const primaryServerKeybindingsAtom = createShortcutKeybindingsAtom({
   environmentsAtom: environmentConnectionsAtom,
 }).pipe(Atom.withLabel("web-primary-server-keybindings"));
 
-export const primaryServerAvailableEditorsAtom = Atom.make(
-  (get): ReadonlyArray<EditorId> =>
-    get(primaryServerConfigAtom)?.availableEditors ?? EMPTY_AVAILABLE_EDITORS,
-).pipe(Atom.withLabel("web-primary-server-available-editors"));
+export const localMachineAvailableEditorsAtom = Atom.make((get): ReadonlyArray<EditorId> => {
+  const environmentId = get(localMachineEnvironmentIdAtom);
+  if (environmentId === null) return EMPTY_AVAILABLE_EDITORS;
+  return (
+    get(serverEnvironment.configValueAtom(environmentId))?.availableEditors ??
+    EMPTY_AVAILABLE_EDITORS
+  );
+}).pipe(Atom.withLabel("web-local-machine-available-editors"));
 
 const EMPTY_ENVIRONMENT_THEMES: ReadonlyArray<EnvironmentTheme> = [];
 

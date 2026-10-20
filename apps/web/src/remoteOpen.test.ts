@@ -32,6 +32,7 @@ describe("resolveRemoteOpenState", () => {
         sshTarget: null,
         isDesktopRenderer: false,
         remoteOpenTargets: TAILSCALE_TARGETS,
+        desktopHomeEnvironmentId: null,
       }),
     ).toEqual({ mode: "local-exec" });
   });
@@ -43,6 +44,7 @@ describe("resolveRemoteOpenState", () => {
         sshTarget: null,
         isDesktopRenderer: false,
         remoteOpenTargets: TAILSCALE_TARGETS,
+        desktopHomeEnvironmentId: null,
       }),
     ).toEqual({
       mode: "remote-links",
@@ -59,6 +61,7 @@ describe("resolveRemoteOpenState", () => {
         sshTarget: null,
         isDesktopRenderer: true,
         remoteOpenTargets: TAILSCALE_TARGETS,
+        desktopHomeEnvironmentId: null,
       }),
     ).toEqual({ mode: "local-exec" });
   });
@@ -74,8 +77,38 @@ describe("resolveRemoteOpenState", () => {
         sshTarget: null,
         isDesktopRenderer: false,
         remoteOpenTargets: TAILSCALE_TARGETS,
+        desktopHomeEnvironmentId: null,
       }),
     ).toEqual({ mode: "local-exec" });
+  });
+
+  it("keeps exec behavior for the environment that owns the desktop's T3 home", () => {
+    // With Local environment off, a background service on this machine can own the
+    // desktop's home and still be reached through T3 Connect.
+    expect(
+      resolveRemoteOpenState({
+        target: new RelayConnectionTarget({ environmentId, label: "sol" }),
+        sshTarget: null,
+        isDesktopRenderer: true,
+        remoteOpenTargets: TAILSCALE_TARGETS,
+        desktopHomeEnvironmentId: environmentId,
+      }),
+    ).toEqual({ mode: "local-exec" });
+  });
+
+  it("uses deep links for other environments when the desktop home has its own", () => {
+    expect(
+      resolveRemoteOpenState({
+        target: new RelayConnectionTarget({ environmentId, label: "sol" }),
+        sshTarget: null,
+        isDesktopRenderer: true,
+        remoteOpenTargets: TAILSCALE_TARGETS,
+        desktopHomeEnvironmentId: EnvironmentId.make("environment-desktop-home"),
+      }),
+    ).toEqual({
+      mode: "remote-links",
+      host: { kind: "tailscale", host: "sol.tail1234.ts.net" },
+    });
   });
 
   it("leaves a bare desktop SSH alias for the editor to resolve through SSH config", () => {
@@ -86,6 +119,7 @@ describe("resolveRemoteOpenState", () => {
       remoteOpenTargets: [
         { kind: "tailscale", host: "sol.tail1234.ts.net", username: "server-user" },
       ],
+      desktopHomeEnvironmentId: null,
     });
     expect(state).toEqual({ mode: "remote-links", host: { kind: "ssh-alias", host: "sol" } });
     if (state.mode !== "remote-links") throw new Error("Expected a remote link");
@@ -114,6 +148,7 @@ describe("resolveRemoteOpenState", () => {
       sshTarget,
       isDesktopRenderer: true,
       remoteOpenTargets: TAILSCALE_TARGETS,
+      desktopHomeEnvironmentId: null,
     });
     expect(state.mode).toBe("remote-links");
     if (state.mode !== "remote-links") throw new Error("Expected a remote link");
@@ -138,6 +173,7 @@ describe("resolveRemoteOpenState", () => {
       remoteOpenTargets: [
         { kind: "tailscale", host: "server.tail1234.ts.net", username: "admin-user" },
       ],
+      desktopHomeEnvironmentId: null,
     });
     expect(state.mode).toBe("remote-links");
     if (state.mode !== "remote-links") throw new Error("Expected a remote link");
@@ -154,6 +190,7 @@ describe("resolveRemoteOpenState", () => {
           sshTarget: null,
           isDesktopRenderer: false,
           remoteOpenTargets,
+          desktopHomeEnvironmentId: null,
         }),
       ).toEqual({ mode: "remote-unavailable" });
     }
@@ -166,6 +203,7 @@ describe("resolveRemoteOpenState", () => {
         sshTarget: null,
         isDesktopRenderer: false,
         remoteOpenTargets: undefined,
+        desktopHomeEnvironmentId: null,
       }),
     ).toEqual({ mode: "local-exec" });
   });

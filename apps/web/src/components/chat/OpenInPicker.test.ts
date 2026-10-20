@@ -7,14 +7,14 @@ import { describe, expect, it } from "vite-plus/test";
 import { shouldShowOpenInPicker } from "./OpenInPicker.logic";
 
 describe("shouldShowOpenInPicker", () => {
-  const primaryEnvironmentId = EnvironmentId.make("environment-primary");
+  const localMachineEnvironmentId = EnvironmentId.make("environment-primary");
 
-  it("shows the picker for projects in the primary environment", () => {
+  it("shows the picker for projects in the environment on this machine", () => {
     expect(
       shouldShowOpenInPicker({
         activeProjectName: "codething-mvp",
-        activeThreadEnvironmentId: primaryEnvironmentId,
-        primaryEnvironmentId,
+        activeThreadEnvironmentId: localMachineEnvironmentId,
+        localMachineEnvironmentId,
         remoteOpenMode: "local-exec",
       }),
     ).toBe(true);
@@ -25,7 +25,7 @@ describe("shouldShowOpenInPicker", () => {
       shouldShowOpenInPicker({
         activeProjectName: "codething-mvp",
         activeThreadEnvironmentId: EnvironmentId.make("environment-remote"),
-        primaryEnvironmentId,
+        localMachineEnvironmentId,
         remoteOpenMode: "remote-links",
       }),
     ).toBe(true);
@@ -36,7 +36,7 @@ describe("shouldShowOpenInPicker", () => {
       shouldShowOpenInPicker({
         activeProjectName: "codething-mvp",
         activeThreadEnvironmentId: EnvironmentId.make("environment-remote"),
-        primaryEnvironmentId: null,
+        localMachineEnvironmentId: null,
         remoteOpenMode: "remote-unavailable",
       }),
     ).toBe(true);
@@ -47,7 +47,7 @@ describe("shouldShowOpenInPicker", () => {
       shouldShowOpenInPicker({
         activeProjectName: "codething-mvp",
         activeThreadEnvironmentId: EnvironmentId.make("environment-remote"),
-        primaryEnvironmentId,
+        localMachineEnvironmentId,
         remoteOpenMode: "local-exec",
       }),
     ).toBe(false);
@@ -57,8 +57,8 @@ describe("shouldShowOpenInPicker", () => {
     expect(
       shouldShowOpenInPicker({
         activeProjectName: undefined,
-        activeThreadEnvironmentId: primaryEnvironmentId,
-        primaryEnvironmentId,
+        activeThreadEnvironmentId: localMachineEnvironmentId,
+        localMachineEnvironmentId,
         remoteOpenMode: "remote-links",
       }),
     ).toBe(false);
