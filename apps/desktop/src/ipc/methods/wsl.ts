@@ -22,9 +22,9 @@ const readWslState: Effect.Effect<
   const wslBackend = yield* DesktopWslBackend.DesktopWslBackend;
   const settings = yield* appSettings.get;
   const available = settings.localEnvironmentEnabled && (yield* wslEnvironment.isAvailable);
-  // Only enumerate distros when WSL is actually available — listDistros on a
-  // non-WSL host would spawn wsl.exe and hit the timeout for nothing.
-  const distros = available ? yield* wslEnvironment.listDistros : [];
+  // Windows ships a wsl.exe stub that can prompt to install WSL when invoked.
+  // Keep disabled state reads from launching it to enumerate distros.
+  const distros = available && settings.wslBackendEnabled ? yield* wslEnvironment.listDistros : [];
   const preflightError = yield* wslBackend.lastPreflightError;
   return {
     enabled: settings.wslBackendEnabled,
