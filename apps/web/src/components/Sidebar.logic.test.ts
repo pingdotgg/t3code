@@ -34,7 +34,6 @@ import {
   resolveSidebarSweepKeys,
   resolveSidebarStageBadgeLabel,
   resolveSidebarThreadSection,
-  resolveSidebarRowAccessibility,
   resolveSidebarThreadStatus,
   resolveSidebarV2TopStatus,
   resolveThreadLastVisitedAt,
@@ -72,35 +71,6 @@ import {
 import { makeThreadFixture, type ThreadFixtureOverrides } from "../test-fixtures";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
-
-describe("resolveSidebarRowAccessibility", () => {
-  it.each([
-    {
-      title: "Can you audit the UI?",
-      statusLabel: "Working",
-      projectDisplayName: "T3 Code",
-      isActive: true,
-      expected: { label: "Can you audit the UI?, Working, T3 Code", current: "page" },
-    },
-    {
-      title: "The audit is done",
-      statusLabel: null,
-      projectDisplayName: "T3 Code",
-      isActive: false,
-      expected: { label: "The audit is done, T3 Code", current: undefined },
-    },
-    {
-      title: "Untitled task",
-      statusLabel: null,
-      projectDisplayName: null,
-      isActive: false,
-      expected: { label: "Untitled task", current: undefined },
-    },
-  ])("leads with the title without folding row actions into its name: %j", (input) => {
-    const { expected, ...state } = input;
-    expect(resolveSidebarRowAccessibility(state)).toEqual(expected);
-  });
-});
 
 describe("animateSidebarLayoutChanges", () => {
   const baseArgs: Parameters<AnimateLayoutChanges>[0] = {

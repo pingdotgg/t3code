@@ -1,8 +1,27 @@
 import type { SensorProps } from "@dnd-kit/core";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  RouterProvider,
+} from "@tanstack/react-router";
 import { act, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { page, userEvent } from "vite-plus/test/browser";
+
+import { DraftId, useComposerDraftStore } from "../composerDraftStore";
+import { dismissContextMenu } from "../contextMenuFallback";
+import { AppAtomRegistryProvider } from "../rpc/atomRegistry";
+import { makeThreadFixture } from "../test-fixtures";
+import type { Project } from "../types";
+import Sidebar from "./Sidebar";
 import { SidebarDragLifecycle, SidebarPointerSensor } from "./Sidebar.pointer";
+import { SidebarProvider } from "./ui/sidebar";
+import "../index.css";
 
 const sensors: SidebarPointerSensor[] = [];
 let hidden = false;
@@ -42,23 +61,23 @@ function gesture(
   return { sensor, onFinish, ...callbacks };
 }
 
-beforeEach(() => {
-  vi.useFakeTimers();
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  hidden = false;
-  vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden);
-});
-afterEach(() => {
-  for (const sensor of sensors.splice(0)) sensor.cancel();
-  // Cancelled sensors keep suppressing clicks on the shared document until the next press.
-  document.dispatchEvent(pointer("pointerdown"));
-  vi.runAllTimers();
-  vi.useRealTimers();
-  vi.restoreAllMocks();
-  vi.unstubAllGlobals();
-});
-
 describe("sidebar pointer lifecycle", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    hidden = false;
+    vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden);
+  });
+  afterEach(() => {
+    for (const sensor of sensors.splice(0)) sensor.cancel();
+    // Cancelled sensors keep suppressing clicks on the shared document until the next press.
+    document.dispatchEvent(pointer("pointerdown"));
+    vi.runAllTimers();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
   it("keeps a click idle and starts only after the drag threshold", () => {
     const click = gesture();
     document.dispatchEvent(pointer("pointermove", { clientY: 16 }));
@@ -281,5 +300,170 @@ describe("sidebar pointer lifecycle", () => {
     expect(previous.onCancel).toHaveBeenCalledOnce();
     expect(previous.onEnd).not.toHaveBeenCalled();
     expect(next.onEnd).toHaveBeenCalledOnce();
+  });
+});
+
+const environmentId = EnvironmentId.make("sidebar-test");
+const projects: Project[] = ["Alpha", "Beta"].map((title) => ({
+  environmentId,
+  id: ProjectId.make(title),
+  title,
+  workspaceRoot: `/test/${title}`,
+  repositoryIdentity: null,
+  defaultModelSelection: null,
+  createdAt: "2026-03-09T10:00:00.000Z",
+  updatedAt: "2026-03-09T10:00:00.000Z",
+  scripts: [],
+}));
+
+const threads = [
+  makeThreadFixture({
+    environmentId,
+    projectId: ProjectId.make("Alpha"),
+    title: "Existing thread",
+  }),
+];
+
+vi.mock(import("../state/entities"), async (original) => ({
+  ...(await original()),
+  useProjects: () => projects,
+  useThreadShells: () => threads,
+}));
+vi.mock("./sidebar/SidebarChrome", () => ({
+  SidebarChromeHeader: () => null,
+  SidebarChromeFooter: () => null,
+}));
+
+describe("sidebar row controls", () => {
+  let root: ReturnType<typeof createRoot>;
+  let container: HTMLDivElement;
+
+  beforeEach(async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    await page.viewport(1280, 800);
+    container = document.createElement("div");
+    container.style.cssText = "width: 320px; padding: 80px 40px;";
+    document.body.append(container);
+    root = createRoot(container);
+    for (const project of projects) {
+      const draftId = DraftId.make(project.title);
+      const store = useComposerDraftStore.getState();
+      store.setProjectDraftThreadId(scopeProjectRef(environmentId, project.id), draftId);
+      store.setPrompt(draftId, "Fix tests");
+    }
+  });
+
+  afterEach(async () => {
+    dismissContextMenu();
+    await act(() => root.unmount());
+    container.remove();
+    for (const project of projects) {
+      useComposerDraftStore.getState().clearDraftThread(DraftId.make(project.title));
+    }
+    vi.unstubAllGlobals();
+  });
+
+  async function renderSidebar() {
+    const route = createRootRoute({
+      component: () => (
+        <AppAtomRegistryProvider>
+          <SidebarProvider>
+            <div className="flex w-full flex-col">
+              <Sidebar />
+            </div>
+          </SidebarProvider>
+        </AppAtomRegistryProvider>
+      ),
+    });
+    const router = createRouter({
+      routeTree: route.addChildren([
+        createRoute({ getParentRoute: () => route, path: "/" }),
+        createRoute({ getParentRoute: () => route, path: "/draft/$draftId" }),
+        createRoute({ getParentRoute: () => route, path: "/$environmentId/$threadId" }),
+      ]),
+      history: createMemoryHistory(),
+    });
+    await act(async () => {
+      await router.load();
+      root.render(<RouterProvider router={router} />);
+    });
+    return router;
+  }
+
+  it("navigates named rows by keyboard and pointer with independently reachable draft actions", async () => {
+    const router = await renderSidebar();
+    const primary = page.getByRole("button", {
+      name: "Fix tests, Unsent draft, Alpha",
+      exact: true,
+    });
+    const other = page.getByRole("button", { name: "Fix tests, Unsent draft, Beta", exact: true });
+    await act(() => (primary.element() as HTMLElement).focus());
+    await act(() => userEvent.keyboard("{Enter}"));
+    expect(router.state.location.pathname).toBe("/draft/Alpha");
+    await act(() => (other.element() as HTMLElement).focus());
+    await act(() => userEvent.keyboard(" "));
+    expect(router.state.location.pathname).toBe("/draft/Beta");
+
+    await act(() => userEvent.tab());
+    const discard = document.activeElement!;
+    expect(discard).toHaveAccessibleName("Discard draft");
+    expect(discard.parentElement?.closest('button, [role="button"]')).toBeNull();
+    expect(primary.element()).toBeInstanceOf(HTMLButtonElement);
+    expect(other.element()).toBeInstanceOf(HTMLButtonElement);
+    await act(() => userEvent.keyboard(" "));
+    expect(useComposerDraftStore.getState().getDraftSession(DraftId.make("Beta"))).toBeNull();
+    expect(useComposerDraftStore.getState().getDraftSession(DraftId.make("Alpha"))).not.toBeNull();
+    expect(router.state.location.pathname).toBe("/draft/Beta");
+
+    const row = primary.element().closest('[data-testid="sidebar-draft-row"]')!;
+    await act(() => page.elementLocator(row).getByText("Fix tests", { exact: true }).click());
+    expect(router.state.location.pathname).toBe("/draft/Alpha");
+    expect(document.activeElement).toBe(primary.element());
+
+    const thread = page.getByRole("button", { name: /^Existing thread,.*Alpha$/ });
+    expect(thread.element()).toBeInstanceOf(HTMLButtonElement);
+    await act(() => (thread.element() as HTMLElement).focus());
+    await act(() => userEvent.keyboard(" "));
+    expect(router.state.location.pathname).toBe("/sidebar-test/thread-test");
+  });
+
+  it("opens a draft context menu at the row with keyboard and pointer input", async () => {
+    await renderSidebar();
+    const primary = page.getByRole("button", {
+      name: "Fix tests, Unsent draft, Alpha",
+      exact: true,
+    });
+    const row = primary.element().closest('[data-testid="sidebar-draft-row"]')!;
+    const rect = row.getBoundingClientRect();
+    expect(rect.width).toBeGreaterThan(0);
+    for (const openMenu of [
+      () => userEvent.keyboard("{Shift>}{F10}{/Shift}"),
+      () => userEvent.keyboard("{ContextMenu}"),
+      () => {
+        primary
+          .element()
+          .dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+      },
+    ]) {
+      await act(() => (primary.element() as HTMLElement).focus());
+      await act(openMenu);
+      const menu = document.querySelector<HTMLElement>('[data-level="0"]')!;
+      expect(menu).not.toBeNull();
+      expect(menu.getBoundingClientRect().left).toBeGreaterThanOrEqual(rect.left);
+      expect(menu.getBoundingClientRect().top).toBeGreaterThanOrEqual(rect.top);
+      expect(menu.getBoundingClientRect().top).toBeLessThanOrEqual(rect.bottom);
+      await act(() => userEvent.keyboard("{Escape}"));
+      expect(menu.isConnected).toBe(false);
+    }
+    await act(() => page.elementLocator(row).click({ button: "right" }));
+    const pointerMenu = document.querySelector<HTMLElement>('[data-level="0"]')!;
+    expect(pointerMenu).not.toBeNull();
+    await act(() =>
+      page
+        .elementLocator(pointerMenu)
+        .getByRole("button", { name: "Discard draft", exact: true })
+        .click(),
+    );
+    expect(useComposerDraftStore.getState().getDraftSession(DraftId.make("Alpha"))).toBeNull();
   });
 });
