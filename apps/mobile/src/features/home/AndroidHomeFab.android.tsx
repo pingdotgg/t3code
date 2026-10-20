@@ -36,10 +36,12 @@ export function AndroidHomeFabLayout(props: ComponentProps<typeof SharedAndroidH
   }, []);
 
   // Remount only the FAB when its font or pane changes to clear the cached expanded width.
+  // The split-view sidebar has no FAB: the navigation rail carries New thread. On phones it
+  // keeps Material's 16dp corner margin; the bottom bar already consumes the gesture inset.
   return (
     <View className="flex-1" onLayout={(event) => setLayoutWidth(event.nativeEvent.layout.width)}>
       <FabScrollContext value={onScroll}>{props.children}</FabScrollContext>
-      {!props.disabled && state.hasConnections && layoutWidth !== null ? (
+      {!props.disabled && !props.sidebar && state.hasConnections && layoutWidth !== null ? (
         <NewThreadButton
           key={`${appearance.baseFontSize}:${fontScale}:${layoutWidth}`}
           extended

@@ -1,10 +1,54 @@
-import type { ReactNode } from "react";
+import type { NavigationState } from "@react-navigation/native";
+import {
+  createContext,
+  use,
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  type ReactNode,
+} from "react";
 import { Platform } from "react-native";
+import { androidWorkspaceSettingsOpen } from "./android-workspace-tabs";
 import { WorkspaceTabsProvider } from "./WorkspaceTabsContext";
 
-export function AndroidWorkspaceTabsProvider(props: { readonly children: ReactNode }) {
+interface AndroidWorkspaceRoot {
+  /**
+   * The root stack's key and state. The rail renders in the root navigator's layout, where
+   * `useNavigation()` resolves to the container ref: its dispatch goes to the focused
+   * navigator and hands that navigator's state to a callback. A tab press from inside nested
+   * Settings must reset the root stack, so the rail reads the root state here and targets
+   * the root key.
+   */
+  readonly key: string;
+  readonly getState: () => NavigationState;
+  /** Settings is derived from navigation rather than kept in the tab reducer. */
+  readonly settingsOpen: boolean;
+}
+
+const AndroidWorkspaceRootContext = createContext<AndroidWorkspaceRoot | null>(null);
+
+export function useAndroidWorkspaceRoot() {
+  return use(AndroidWorkspaceRootContext);
+}
+
+/** Android keeps one tab controller above the root navigator and split sidebar. */
+export function AndroidWorkspaceTabsProvider(props: {
+  readonly state: NavigationState;
+  readonly children: ReactNode;
+}) {
+  const stateRef = useRef(props.state);
+  useLayoutEffect(() => {
+    stateRef.current = props.state;
+  }, [props.state]);
+  const getState = useCallback(() => stateRef.current, []);
+  const key = props.state.key;
+  const settingsOpen = Platform.OS === "android" && androidWorkspaceSettingsOpen(props.state);
+  const root = useMemo(() => ({ key, getState, settingsOpen }), [key, getState, settingsOpen]);
   return Platform.OS === "android" ? (
-    <WorkspaceTabsProvider>{props.children}</WorkspaceTabsProvider>
+    <WorkspaceTabsProvider>
+      <AndroidWorkspaceRootContext value={root}>{props.children}</AndroidWorkspaceRootContext>
+    </WorkspaceTabsProvider>
   ) : (
     props.children
   );

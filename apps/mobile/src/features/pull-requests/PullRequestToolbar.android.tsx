@@ -1,29 +1,24 @@
 import { useNavigation, useNavigationState } from "@react-navigation/native";
 import { useCallback, useEffect, useRef } from "react";
 import { BackHandler, Keyboard, View, type TextInputInstance } from "react-native";
-import {
-  AndroidHeaderIconButton,
-  AndroidScreenHeader,
-} from "../../components/ui/AndroidScreenHeader";
-import { CompactBrandTitle } from "../../components/CompactBrandTitle";
+import { AndroidHeaderIconButton } from "../../components/ui/AndroidScreenHeader";
+import { AndroidAnchoredMenu } from "../../components/ui/AndroidAnchoredMenu";
 import { SearchField } from "../../components/ui/SearchField";
-import { WorkspaceConnectionTitle } from "../home/WorkspaceConnectionTitle";
+import { useToolbarLayout } from "../../components/ui/useToolbarLayout";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
+import { WorkspaceListToolbarRow } from "../workspace/WorkspaceListToolbarRow";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
-import { useWorkspaceListNavigation } from "../workspace/useAndroidWorkspaceNavigation";
+import { usePullRequestFilterMenu } from "./PullRequestFilterMenuContext";
 
-/** PR search shares the thread list's native Android header placement. */
-export function PullRequestToolbar(props: {
-  readonly sidebar?: boolean;
-  readonly onRequestVisibility?: () => void;
-}) {
+/** PR search shares the thread list's Android header row. */
+export function PullRequestToolbar(props: { readonly onRequestVisibility?: () => void }) {
   const navigation = useNavigation();
+  const filters = usePullRequestFilterMenu();
   const workspace = useWorkspaceTabs()!;
   const { dispatch, getScrollOffset, recordScrollOffset, isTabActive } = workspace;
   const homeFocused = useNavigationState((state) => state.routes[state.index]?.name === "Home");
   const listFocused = homeFocused && workspace.state.selectedTab === "pullRequests";
   const { onRequestVisibility } = props;
-  const showThreads = useWorkspaceListNavigation("threads");
   const tab = workspace.state.tabs.pullRequests;
   const input = useRef<TextInputInstance>(null);
   const searching = tab.searchMode !== "resting";
@@ -57,11 +52,12 @@ export function PullRequestToolbar(props: {
     });
     return () => subscription.remove();
   }, [searching, closeSearch, listFocused, navigation, isTabActive]);
+  const { paddingTop, paddingBottom } = useToolbarLayout();
   return (
-    <AndroidScreenHeader
-      title="Pull requests"
-      titleContent={
-        searching ? (
+    <View className="bg-header px-2" style={{ paddingTop, paddingBottom }}>
+      <WorkspaceListToolbarRow
+        searching={searching}
+        searchField={
           <SearchField
             inputRef={input}
             accessibilityLabel="Search pull requests"
@@ -70,65 +66,38 @@ export function PullRequestToolbar(props: {
             value={tab.query}
             onChangeText={(query) => dispatch({ type: "query", tab: "pullRequests", query })}
           />
-        ) : (
-          <View className="min-w-0 flex-1 pl-3">
-            <WorkspaceConnectionTitle
-              grow
-              brand={
-                <CompactBrandTitle
-                  allowFontScaling={false}
-                  accessibilityLabel="T3 Code, Pull requests"
-                  fit
+        }
+        onCloseSearch={closeSearch}
+        onOpenSearch={openSearch}
+        searchAccessibilityLabel="Search pull requests"
+        titleAccessibilityLabel="T3 Code, Pull requests"
+        onOpenEnvironments={() =>
+          navigation.navigate("SettingsSheet", {
+            screen: "SettingsContent",
+            params: { screen: "SettingsEnvironments" },
+          })
+        }
+        filter={
+          filters ? (
+            <AndroidAnchoredMenu
+              actions={filters.actions}
+              onPressAction={({ nativeEvent }) => filters.onSelect(nativeEvent.event)}
+            >
+              {(open) => (
+                <AndroidHeaderIconButton
+                  accessibilityLabel="Filter pull requests"
+                  icon={
+                    filters.customized
+                      ? "line.3.horizontal.decrease.circle.fill"
+                      : "line.3.horizontal.decrease.circle"
+                  }
+                  onPress={open}
                 />
-              }
-              onPress={() =>
-                navigation.navigate("SettingsSheet", {
-                  screen: "SettingsContent",
-                  params: { screen: "SettingsEnvironments" },
-                })
-              }
-            />
-          </View>
-        )
-      }
-      leading={
-        searching ? (
-          <AndroidHeaderIconButton
-            accessibilityLabel="Close search"
-            icon="arrow.left"
-            onPress={closeSearch}
-          />
-        ) : undefined
-      }
-      actions={
-        searching
-          ? []
-          : [
-              ...(props.sidebar
-                ? [
-                    {
-                      accessibilityLabel: "Show threads",
-                      icon: "text.bubble",
-                      onPress: showThreads,
-                    } as const,
-                  ]
-                : []),
-              {
-                accessibilityLabel: "Search pull requests",
-                icon: "magnifyingglass",
-                onPress: openSearch,
-              },
-              {
-                accessibilityLabel: "Open settings",
-                icon: "gearshape",
-                onPress: () =>
-                  navigation.navigate("SettingsSheet", {
-                    screen: "SettingsContent",
-                    params: { screen: "Settings" },
-                  }),
-              },
-            ]
-      }
-    />
+              )}
+            </AndroidAnchoredMenu>
+          ) : null
+        }
+      />
+    </View>
   );
 }
