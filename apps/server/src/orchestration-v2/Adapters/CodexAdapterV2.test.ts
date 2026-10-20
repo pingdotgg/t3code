@@ -645,6 +645,21 @@ describe("CodexAdapterV2 runtime policy", () => {
           omitServiceTier: true,
         });
         assert.equal(managed.serviceTier, undefined);
+
+        for (const tier of [undefined, "default"]) {
+          const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
+            nativeThreadId: "native-model-options",
+            codexInput: [{ type: "text", text: "test" }],
+            runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: null },
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5.4",
+              options: tier === undefined ? [] : [{ id: "serviceTier", value: tier }],
+            },
+          });
+          if (tier === undefined) assert.notProperty(params, "serviceTier");
+          else assert.equal(params.serviceTier, "default");
+        }
       }),
   );
 
