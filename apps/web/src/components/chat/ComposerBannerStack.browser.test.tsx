@@ -5,6 +5,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
+import { Button } from "../ui/button";
+
 import { ComposerBannerStack } from "./ComposerBannerStack";
 
 let root: Root;
@@ -141,3 +143,47 @@ it("reveals the full running command only while its title is clipped", async () 
   await expect.element(details).not.toBeInTheDocument();
   await expect.element(popup).not.toBeInTheDocument();
 });
+
+// Narrow viewports use larger touch-sized buttons, so check both breakpoints.
+it.each([480, 1000])(
+  "lines up the details buttons of stacked notices whose actions differ in width at %ipx",
+  async (viewportWidth) => {
+    await page.viewport(viewportWidth, 600);
+    container.style.width = `${viewportWidth - 32}px`;
+    const long = "Stress test the build pipeline end to end and report every failure ".repeat(3);
+    await act(async () =>
+      root.render(
+        <ComposerBannerStack
+          items={[
+            {
+              id: "goal",
+              variant: "default",
+              priority: "activity",
+              icon: null,
+              title: "Goal set",
+              description: long,
+              actions: <Button size="xs">Clear</Button>,
+            },
+            {
+              id: "background-work",
+              variant: "default",
+              priority: "activity",
+              icon: null,
+              title: `Waiting on subagent ${long}`,
+              actions: <Button size="xs">Stop</Button>,
+            },
+          ]}
+        />,
+      ),
+    );
+    // The pointer left over from the previous case may already have expanded the stack.
+    await act(async () =>
+      container.querySelector<HTMLElement>('[data-slot="composer-banner-peek"]')?.click(),
+    );
+    await nextFrame();
+
+    const left = (label: string) =>
+      page.getByRole("button", { name: label }).element().getBoundingClientRect().left;
+    expect(left("Show title details")).toBe(left("Show notice details"));
+  },
+);
