@@ -14,7 +14,7 @@ import {
 import { type EnvironmentId, type SidebarProjectGroupingMode } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useFocusEffect } from "@react-navigation/native";
-import { use, useEffect, useRef, useState, type ComponentProps } from "react";
+import { use, useEffect, useRef, useState, useSyncExternalStore, type ComponentProps } from "react";
 import {
   Platform,
   ScrollView,
@@ -497,6 +497,7 @@ export function HomeScreen(props: HomeScreenProps) {
       ...(workingShelfEnabled ? [] : sectionAvailability("active")),
     ]);
   })();
+  useSyncExternalStore(threadListInboxReturns.subscribe, threadListInboxReturns.getSnapshot);
   const threadListV2Layout = (() => {
     threadListInboxReturns.observe(workingShelfEnabled ? props.threads : null);
     return buildThreadListV2Items({
@@ -514,6 +515,7 @@ export function HomeScreen(props: HomeScreenProps) {
       workingShelfEnabled,
       workingShelfExpanded,
       inboxReturnAt: threadListInboxReturns.returnedAt,
+      isWorking: threadListInboxReturns.isWorking,
       snoozedShelfExpanded,
       settledShelfExpanded,
       selectedThreadKey,
