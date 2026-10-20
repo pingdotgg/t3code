@@ -899,7 +899,8 @@ const make = Effect.gen(function* () {
           : page.goto(snapshot.navStatus.url, options)
       ).then(constVoid);
 
-      void tab.initialNavigation.catch(constVoid);
+      if (tab.control.agentId !== null) tab.control.track(tab.initialNavigation);
+      else void tab.initialNavigation.catch(constVoid);
     }
     return tab;
   };
@@ -1704,7 +1705,10 @@ const make = Effect.gen(function* () {
     }
   };
 
-  const runOperation = async (request: PreviewAutomationRequest): Promise<unknown> => {
+  const runOperation = async (
+    request: PreviewAutomationRequest,
+    deadlineMs: number,
+  ): Promise<unknown> => {
     const input = request.input;
     switch (request.operation) {
       case "status":
@@ -1790,34 +1794,38 @@ const make = Effect.gen(function* () {
             "A browser dialog is pending. Read preview_status and use preview_dialog first.",
             "dialogPending",
           );
-        return tab.control.agent(request.agentSessionId, async () => {
-          if (tab.dialog)
-            throw new BrowserControlInterrupted(
-              "A browser dialog is pending. Read preview_status and use preview_dialog first.",
-              "dialogPending",
-            );
-          if (existing) {
-            if (url) await navigate(tab, url, "load", navigationTimeout);
-          } else {
-            await tab.initialNavigation;
-          }
-          const reveal = open.open ?? open.show;
-          if (reveal !== false) {
-            await Effect.runPromise(
-              manager.requestReveal({
-                threadId: tab.threadId,
-                tabId: tab.tabId,
-                force: reveal === true,
-              }),
-            );
-          }
-          if (!existing && url) {
-            await tab.page
-              .waitForLoadState("load", { timeout: navigationTimeout })
-              .catch(constVoid);
-          }
-          return statusWithTitle(tab, request.agentSessionId);
-        });
+        return tab.control.agent(
+          request.agentSessionId,
+          async () => {
+            if (tab.dialog)
+              throw new BrowserControlInterrupted(
+                "A browser dialog is pending. Read preview_status and use preview_dialog first.",
+                "dialogPending",
+              );
+            if (existing) {
+              if (url) await navigate(tab, url, "load", navigationTimeout);
+            } else {
+              await tab.initialNavigation;
+            }
+            const reveal = open.open ?? open.show;
+            if (reveal !== false) {
+              await Effect.runPromise(
+                manager.requestReveal({
+                  threadId: tab.threadId,
+                  tabId: tab.tabId,
+                  force: reveal === true,
+                }),
+              );
+            }
+            if (!existing && url) {
+              await tab.page
+                .waitForLoadState("load", { timeout: navigationTimeout })
+                .catch(constVoid);
+            }
+            return statusWithTitle(tab, request.agentSessionId);
+          },
+          deadlineMs,
+        );
       }
       case "recordingStop": {
         if (
@@ -1849,6 +1857,8 @@ const make = Effect.gen(function* () {
             "No recording is active for this thread.",
           );
         }
+        // A stop cannot act twice (a retry finds no recording);
+        // dropping a late one would leave capture running.
         return tab.control.agent(request.agentSessionId ?? "", () => stopRecording(tab));
       }
     }
@@ -1891,23 +1901,27 @@ const make = Effect.gen(function* () {
         return executeTabOperation(tab, request);
       });
     }
-    return tab.control.agent(agentSessionId, async () => {
-      if (tab.dialog)
-        throw new BrowserControlInterrupted(
-          "A browser dialog is pending. Read preview_status and use preview_dialog first.",
-          "dialogPending",
-        );
-      const generation = tab.control.generation;
-      tab.agentOperating = !READ_OPERATIONS.has(request.operation);
-      updateFileChooserInterception(tab);
-      try {
-        return await executeTabOperation(tab, request);
-      } finally {
-        tab.agentOperating = false;
+    return tab.control.agent(
+      agentSessionId,
+      async () => {
+        if (tab.dialog)
+          throw new BrowserControlInterrupted(
+            "A browser dialog is pending. Read preview_status and use preview_dialog first.",
+            "dialogPending",
+          );
+        const generation = tab.control.generation;
+        tab.agentOperating = !READ_OPERATIONS.has(request.operation);
         updateFileChooserInterception(tab);
-        if (generation !== tab.control.generation) ServerBrowserPage.invalidateRefs(tab.page);
-      }
-    });
+        try {
+          return await executeTabOperation(tab, request);
+        } finally {
+          tab.agentOperating = false;
+          updateFileChooserInterception(tab);
+          if (generation !== tab.control.generation) ServerBrowserPage.invalidateRefs(tab.page);
+        }
+      },
+      deadlineMs,
+    );
   };
 
   const executeTabOperation = async (tab: ServerTab, request: PreviewAutomationRequest) => {
@@ -2002,7 +2016,10 @@ const make = Effect.gen(function* () {
 
   const handleRequest = (connectionId: string, request: PreviewAutomationRequest) =>
     Effect.tryPromise({
-      try: () => runOperation(request).finally(() => markUsed(request)),
+      try: () =>
+        runOperation(request, performance.now() + request.timeoutMs).finally(() =>
+          markUsed(request),
+        ),
       catch: ServerBrowserPage.toOperationError,
     }).pipe(
       Effect.match({
