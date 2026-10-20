@@ -2,14 +2,49 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
 import {
+  isWebhookDedupeTemplate,
   MIN_SCHEDULED_TASK_INTERVAL_MS,
   ScheduledTaskListWebhookDeliveriesResult,
   ScheduledTaskSchedule,
   ScheduledTaskUpsertSchedule,
+  ScheduledTaskWebhookDeliverySummary,
 } from "./scheduledTask.ts";
 
 const decodeSchedule = Schema.decodeUnknownSync(ScheduledTaskSchedule);
 const decodeUpsertSchedule = Schema.decodeUnknownSync(ScheduledTaskUpsertSchedule);
+const decodeDeliverySummary = Schema.decodeSync(ScheduledTaskWebhookDeliverySummary);
+const decodeDeliveryList = Schema.decodeUnknownSync(ScheduledTaskListWebhookDeliveriesResult);
+
+it("rejects a long unterminated dotted dedupe key without excessive backtracking", () => {
+  const template = "{{body." + "a.".repeat(5000) + "x";
+  const startedAt = performance.now();
+  const valid = isWebhookDedupeTemplate(template);
+  const elapsedMs = performance.now() - startedAt;
+  expect(valid).toBe(false);
+  expect(elapsedMs).toBeLessThan(50);
+  for (const field of ["replayKey", "coalesceKey"]) {
+    expect(() =>
+      decodeUpsertSchedule({ type: "webhook", dedupe: { [field]: template } }),
+    ).toThrow();
+  }
+});
+
+it.each(["duplicate", "coalesced", "future_outcome"])("decodes delivery outcome %s", (outcome) => {
+  expect(
+    decodeDeliverySummary({
+      id: "delivery:test",
+      taskId: "scheduled-task:test",
+      receivedAt: "2026-10-20T00:00:00.000Z",
+      method: "POST",
+      contentType: null,
+      bodyBytes: 0,
+      outcome,
+      signatureVerified: false,
+      missingFields: [],
+      error: null,
+    }).outcome,
+  ).toBe(outcome);
+});
 
 describe("ScheduledTaskSchedule", () => {
   it("keeps legacy sub-minute persisted schedules readable", () => {
@@ -52,6 +87,15 @@ describe("ScheduledTaskUpsertSchedule", () => {
   });
 });
 
+it.each(["literal", " ", "\t\n", "{{body.bad", "{{unknown.field}}"])(
+  "rejects invalid dedupe template %s",
+  (replayKey) => {
+    expect(() => decodeUpsertSchedule({ type: "webhook", dedupe: { replayKey } })).toThrow();
+    expect(() =>
+      decodeUpsertSchedule({ type: "webhook", dedupe: { coalesceKey: replayKey } }),
+    ).toThrow();
+  },
+);
 describe("webhook filters", () => {
   const accepts = (filters: unknown) => {
     try {
@@ -114,9 +158,8 @@ describe("ScheduledTaskWebhookDeliverySummary", () => {
       missingFields: [],
       error: null,
     };
-    expect(
-      Schema.decodeUnknownSync(ScheduledTaskListWebhookDeliveriesResult)({ deliveries: [summary] })
-        .deliveries[0]?.outcome,
-    ).toBe("some_future_outcome");
+    expect(decodeDeliveryList({ deliveries: [summary] }).deliveries[0]?.outcome).toBe(
+      "some_future_outcome",
+    );
   });
 });

@@ -236,6 +236,7 @@ describe("webhook route", () => {
         const response = await handler(post("/api/hooks/id/tok", "{}"));
         expect(response.status).toBe(status);
         expect(response.headers.get("x-t3-hook-outcome")).toBe(outcome);
+        if (status === 429) expect(await response.json()).toEqual({ error: outcome });
       } finally {
         await dispose();
       }

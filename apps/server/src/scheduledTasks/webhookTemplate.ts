@@ -150,6 +150,7 @@ export function renderWebhookPrompt(
   template: string,
   request: WebhookRequest,
   frameId: string,
+  raw = false,
 ): RenderedWebhookPrompt {
   const missing: string[] = [];
   const resolve = webhookExpressionResolver(request);
@@ -160,12 +161,13 @@ export function renderWebhookPrompt(
     const expression = rawExpression.trim();
     const value = resolve(expression);
     const text = value === undefined || value === null ? undefined : stringify(value);
-    if (text === undefined) {
+    if (text === undefined || (raw && text === "")) {
       if (!missing.includes(expression)) missing.push(expression);
       return "";
     }
     // An empty value carries no request data, so it needs no frame or note.
     if (text === "") return "";
+    if (raw) return text;
     framed = true;
     return `<${tag}>${text.replace(MENTION, "$&\u2060")}</${tag}>`;
   });
