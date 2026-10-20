@@ -825,6 +825,28 @@ it.effect("reads worktrees from git that rejects worktree list -z", () =>
   ).pipe(Effect.provide(layerServerConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
 
+it.effect("does not report a separate git dir as the worktree of its branch", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const cwd = yield* makeTmpDir();
+      const gitDir = yield* makeTmpDir();
+      yield* git(cwd, ["init", `--separate-git-dir=${gitDir}`]);
+      yield* git(cwd, ["config", "user.email", "test@test.com"]);
+      yield* git(cwd, ["config", "user.name", "Test"]);
+      yield* git(cwd, ["commit", "--allow-empty", "-m", "init"]);
+
+      const refs = yield* driver.listRefs({ cwd, refresh: true });
+      const worktreePath = refs.refs.find((ref) => ref.current)?.worktreePath;
+
+      assert.equal(
+        worktreePath && NodeFS.realpathSync.native(worktreePath),
+        NodeFS.realpathSync.native(cwd),
+      );
+    }),
+  ).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("refreshes the current branch after an external checkout", () =>
   Effect.scoped(
     Effect.gen(function* () {
