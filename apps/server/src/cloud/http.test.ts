@@ -13,6 +13,7 @@ import {
 } from "@t3tools/contracts/relay";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpServer } from "effect/http";
 import * as Etag from "effect/http/Etag";
@@ -34,6 +35,7 @@ import * as AgentAwarenessRelay from "../relay/AgentAwarenessRelay.ts";
 import * as CliTokenManager from "./CliTokenManager.ts";
 import * as CloudLink from "./CloudLink.ts";
 import * as ConnectHttp from "./http.ts";
+import * as ConnectReachability from "./ConnectReachability.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 
 const DESKTOP_BOOTSTRAP_TOKEN = "test-desktop-bootstrap-token";
@@ -75,6 +77,9 @@ const layerLinkProofRoutes = HttpApiBuilder.layer(LinkProofTestApi).pipe(
   Layer.provide([AuthHttp.layer, ConnectHttp.layer]),
   Layer.provide(AuthHttp.layerAuthenticatedAuth),
   Layer.provide(CloudLink.layer),
+  Layer.provide(
+    Layer.mock(ConnectReachability.ConnectReachability)({ latest: Effect.succeed(Option.none()) }),
+  ),
   Layer.provide(EnvironmentAuth.layer),
   Layer.provide([
     SqlitePersistence.layerMemory,
@@ -285,6 +290,7 @@ const answerHealthWith = async (failure: HealthFailure) => {
         answerHealthRequest: () => Effect.fail(failure),
       }),
     ),
+    Layer.provide(Layer.mock(ConnectReachability.ConnectReachability)({})),
     Layer.provide(AuthHttp.layerAuthenticatedAuth),
     Layer.provide(Layer.mock(EnvironmentAuth.EnvironmentAuth)({})),
     Layer.provideMerge(

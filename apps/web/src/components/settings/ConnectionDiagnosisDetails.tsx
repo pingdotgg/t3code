@@ -166,6 +166,16 @@ export function ConnectionDiagnosisPanel({
             <li key={step}>{step}</li>
           ))}
         </ol>
+        {diagnosis.moreInfoUrl ? (
+          <a
+            href={diagnosis.moreInfoUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="text-muted-foreground underline underline-offset-2 hover:text-foreground"
+          >
+            More info
+          </a>
+        ) : null}
       </div>
       <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 font-mono text-muted-foreground">
         {diagnosis.facts.map(([label, value]) => (

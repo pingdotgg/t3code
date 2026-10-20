@@ -15,6 +15,7 @@ import {
 import {
   AVAILABLE_CONNECTION_STATE,
   type ConnectionAttemptError,
+  ConnectionBlockedError,
   type SupervisorConnectionState,
 } from "./model.ts";
 import { ManagedRelayRequestFailedError } from "../relay/managedRelay.ts";
@@ -69,6 +70,24 @@ describe("presentConnectionDiagnosis", () => {
     expect(diagnosis?.steps.join(" ")).toContain("Tailscale exit node on Mac mini");
     expect(diagnosis?.facts).toContainEqual(["HTTP status", "530"]);
     expect(diagnosis?.facts).toContainEqual(["Trace ID", "trace-1"]);
+    expect(diagnosis?.moreInfoUrl).toMatch(
+      /t3-connect-troubleshooting\.md#the-hosts-tunnel-is-offline$/,
+    );
+  });
+
+  it("links a host that rejects this device to the sign-in section", () => {
+    const failure = new ConnectionBlockedError({
+      reason: "authentication",
+      detail: "rejected",
+      hop: "server",
+      via: "relay",
+    });
+    expect(diagnose(backoff(failure))?.moreInfoUrl).toMatch(/#sign-in-account-or-link-problems$/);
+  });
+
+  it("links the guide only for T3 Connect routes", () => {
+    const failure = credentialMissingError("direct-1");
+    expect(diagnose(backoff(failure), "direct")?.moreInfoUrl).toBeNull();
   });
 
   it("tells a working tunnel apart from T3 Code not answering", () => {
