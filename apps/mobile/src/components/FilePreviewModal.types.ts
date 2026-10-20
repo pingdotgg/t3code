@@ -4,6 +4,7 @@ import type { FileBackedComposerAttachment } from "../lib/composerImages";
 import type { MediaActionsSource } from "../lib/mediaActionsSource";
 
 interface FilePreviewMetadata {
+  readonly fallbackUri?: string;
   readonly kind: "image" | "pdf" | "document";
   readonly mimeType?: string;
   readonly name?: string;

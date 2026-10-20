@@ -168,6 +168,35 @@ const threadRef = {
   threadId: ThreadId.make("media-thread"),
 };
 
+it("retries a public Bitbucket video when the server does not support signing it", async () => {
+  mint.mockRejectedValue(new Error("Unsupported asset resource: bitbucket-media"));
+  const src = "https://bitbucket.org/acme/web/downloads/demo.mp4#t=2";
+  const { container, render } = createTestRoot();
+  await render(
+    <ChatMarkdown cwd="/repo" threadRef={threadRef} pullRequestMedia text={`![Demo](${src})`} />,
+  );
+
+  const video = container.querySelector("video");
+  expect(video).not.toBeNull();
+  expect(video!.getAttribute("src")).toBe(src);
+  expect(mint).toHaveBeenCalledTimes(1);
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+
+  await act(async () => video!.dispatchEvent(new Event("error")));
+  expect(container.querySelector('[role="alert"]')?.textContent).toContain("Video unavailable");
+  const retry = Array.from(container.querySelectorAll("button")).find(
+    (button) => button.textContent === "Retry video",
+  );
+  expect(retry).toBeDefined();
+  await act(async () => retry!.click());
+
+  const retriedVideo = container.querySelector("video");
+  expect(retriedVideo).not.toBeNull();
+  expect(retriedVideo).not.toBe(video);
+  expect(retriedVideo!.getAttribute("src")).toBe(src);
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+});
+
 it.each([
   {
     name: "a remote lookup whose host resolves while it is pending",

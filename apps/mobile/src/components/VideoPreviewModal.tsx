@@ -38,8 +38,15 @@ function useMediaPlayback(source: MediaVideoPreviewSource): PlaybackState {
   const resource = "resource" in source ? source.resource : null;
   const connection = usePreparedConnection(environmentId);
   const asset = useAssetUrlState(environmentId, resource);
-  const refreshAssetUrl = useRefreshAssetUrl(environmentId, resource);
-  const uri = mediaVideoPreviewUri(source, asset._tag === "Success" ? asset.url : null);
+  const refreshAssetUrl = useRefreshAssetUrl(environmentId, resource, source.fallbackUri);
+  const uri = mediaVideoPreviewUri(
+    source,
+    asset._tag === "Success"
+      ? asset.url
+      : asset._tag === "Failure"
+        ? (source.fallbackUri ?? null)
+        : null,
+  );
   return {
     uri,
     ...(resource !== null

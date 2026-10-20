@@ -325,6 +325,11 @@ export class BitbucketApi extends Context.Service<
   {
     readonly probeAuth: Effect.Effect<SourceControlProviderAuth, never>;
 
+    /** Authorize only the configured API origin, so download redirects never carry its token. */
+    readonly authorize: (
+      request: HttpClientRequest.HttpClientRequest,
+    ) => Effect.Effect<HttpClientRequest.HttpClientRequest>;
+
     readonly request: (input: {
       readonly method: "GET" | "POST" | "PUT" | "DELETE";
       readonly url: string;
@@ -949,6 +954,8 @@ export const make = Effect.gen(function* () {
 
   return BitbucketApi.of({
     request,
+    authorize: (request) =>
+      originOf(request.url) === apiOrigin ? withAuth(request) : Effect.succeed(request),
     probeAuth: executeJson(
       "probeAuth",
       HttpClientRequest.get(apiUrl("/user")),

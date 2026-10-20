@@ -59,7 +59,7 @@ import {
   type ThreadPullRequestKey,
 } from "@t3tools/contracts";
 import { faviconUrlForOrigin } from "@t3tools/shared/favicon";
-import { githubMediaFetchUrl } from "@t3tools/shared/githubMedia";
+import { pullRequestMediaResource } from "@t3tools/shared/pullRequestMedia";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -262,9 +262,8 @@ interface ChatMarkdownProps {
   onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
   extraRemarkPlugins?: NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
   renderContextReference?: ((reference: ChatMarkdownContextReference) => ReactNode) | undefined;
-  /** Loads GitHub-hosted media through `cwd`'s GitHub credential, which a private repository's
-      uploads need; without it those images and videos load unauthenticated and 404. */
-  githubMedia?: boolean | undefined;
+  /** Loads private pull request media with the environment's source control credential. */
+  pullRequestMedia?: boolean | undefined;
   headingLevelOffset?: number | undefined;
 }
 
@@ -1446,6 +1445,7 @@ function ChatMarkdownImage(props: {
     if (image.complete && image.naturalWidth > 0) setLoadedSrc(image.currentSrc || image.src);
     markdownImageItems.set(image, {
       src,
+      srcFragment: markdownImageSourceFragment(src ?? ""),
       name: props.alt.trim() || "image",
       actionsSource: props.actionsSource,
       ...(props.originalUrl ? { originalUrl: props.originalUrl } : {}),
@@ -1583,6 +1583,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
         | "workspace-file"
         | "media-file"
         | "github-media"
+        | "bitbucket-media"
         | "tool-output-image";
     }
   >;
@@ -1701,7 +1702,11 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
         originalUrl={props.originalUrl}
         style={props.style}
         mediaIdentity={JSON.stringify([props.environmentId, props.resource, props.srcFragment])}
-        onRetry={refreshAssetUrl}
+        onRetry={
+          resource._tag === "bitbucket-media" && fallbackSrc !== undefined
+            ? undefined
+            : refreshAssetUrl
+        }
         actionsSource={actionsSource}
       />
     );
@@ -2381,7 +2386,7 @@ function useChatMarkdownState({
   onImageExpand,
   renderContextReference,
   headingLevelOffset = 0,
-  githubMedia = false,
+  pullRequestMedia = false,
 }: ChatMarkdownProps) {
   const resolvedTheme = useRenderedAppearance();
   const markdownRef = useRef<HTMLElement>(null);
@@ -2402,9 +2407,32 @@ function useChatMarkdownState({
   } | null>(null);
   const localMediaPreview = localMedia?.scope === mediaScopeKey ? localMedia.preview : null;
   const closeLocalMediaPreview = () => setLocalMedia(null);
-  const expandMedia =
-    onImageExpand ??
-    ((preview: ExpandedImagePreview) => setLocalMedia({ scope: mediaScopeKey, preview }));
+  const expandMedia = (preview: ExpandedImagePreview) => {
+    const images =
+      pullRequestMedia && cwd !== undefined && environmentId !== null
+        ? preview.images.map((item) => {
+            const resource = pullRequestMediaResource(
+              resolveProtocolRelativeMediaUrl(item.originalUrl ?? item.src ?? ""),
+              cwd,
+            );
+            return resource?._tag !== "bitbucket-media"
+              ? item
+              : {
+                  ...item,
+                  actionsSource: {
+                    kind: item.type === "video" ? ("video" as const) : ("image" as const),
+                    name: item.name,
+                    src: item.src,
+                    ...item.actionsSource,
+                    asset: { environmentId, resource },
+                  },
+                };
+          })
+        : preview.images;
+    const resolvedPreview = { ...preview, images };
+    if (onImageExpand) onImageExpand(resolvedPreview);
+    else setLocalMedia({ scope: mediaScopeKey, preview: resolvedPreview });
+  };
   const [mediaScope, setMediaScope] = useState(mediaScopeKey);
   if (mediaScope !== mediaScopeKey) {
     setMediaScope(mediaScopeKey);
@@ -2452,6 +2480,8 @@ function useChatMarkdownState({
       resolvedFilePath,
       cwd,
       threadRef,
+      environmentId: environmentId ?? undefined,
+      pullRequestMedia,
       // Read at click time: a reconnect replaces the prepared connection, and
       // subscribing would hand every rendered markdown element a new context.
       httpBaseUrl:
@@ -2818,7 +2848,7 @@ function useChatMarkdownState({
     environmentId,
     expandMedia,
     fileLinkChip,
-    githubMedia,
+    pullRequestMedia,
     renderContextReference,
     headingLevelOffset,
     imageBaseDir,
@@ -3279,7 +3309,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       expandMedia,
       cwd,
       environmentId,
-      githubMedia,
+      pullRequestMedia,
       imageBaseDir,
       threadRef,
       workspaceMutationId,
@@ -3311,19 +3341,15 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const imageSource = classifyMarkdownImageSource(classifiedSrc, imageBaseDir ?? cwd);
     const kind = mediaKindFromPath(classifiedSrc) ?? "image";
     const directUri = imageSource._tag === "Direct" ? imageSource.uri : null;
-    const githubMediaUrl =
-      directUri === null ? null : githubMediaFetchUrl(resolveProtocolRelativeMediaUrl(directUri));
-    if (
-      githubMedia &&
-      cwd !== undefined &&
-      environmentId !== null &&
-      directUri !== null &&
-      githubMediaUrl !== null
-    ) {
+    const mediaResource =
+      pullRequestMedia && cwd !== undefined && directUri !== null
+        ? pullRequestMediaResource(resolveProtocolRelativeMediaUrl(directUri), cwd)
+        : null;
+    if (environmentId !== null && directUri !== null && mediaResource !== null) {
       return (
         <ChatMarkdownAssetImage
           environmentId={environmentId}
-          resource={{ _tag: "github-media", cwd, url: githubMediaUrl }}
+          resource={mediaResource}
           alt={altText}
           kind={kind}
           copyMarkdown={copyMarkdown}
@@ -3334,7 +3360,11 @@ const CHAT_MARKDOWN_COMPONENTS = {
           srcFragment={markdownImageSourceFragment(classifiedSrc)}
           originalUrl={resolveProtocolRelativeMediaUrl(directUri)}
           framed={false}
-          fallbackSrc={githubMediaUrl}
+          fallbackSrc={
+            mediaResource._tag === "bitbucket-media"
+              ? resolveProtocolRelativeMediaUrl(directUri).replace(/#.*$/u, "")
+              : mediaResource.url
+          }
           onImageExpand={imageExpand}
         />
       );

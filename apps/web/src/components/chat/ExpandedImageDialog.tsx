@@ -44,23 +44,31 @@ function ExpandedVideo({ item }: { readonly item: ExpandedImageItem }) {
   const asset = item.actionsSource?.asset;
   const assetUrl = useAssetUrlState(asset?.environmentId ?? null, asset?.resource ?? null);
   const refreshAssetUrl = useAssetUrlRefresh(asset?.environmentId ?? null, asset?.resource ?? null);
-  const src = asset
-    ? assetUrl._tag === "Success"
-      ? assetUrl.url + (item.srcFragment ?? "")
-      : null
-    : item.src;
+  const src =
+    asset && assetUrl._tag === "Success" ? assetUrl.url + (item.srcFragment ?? "") : item.src;
   return (
     <MediaVideoPlayer
       src={src}
       label={item.name}
-      sourceFailed={assetUrl._tag === "Failure"}
+      sourceFailed={src === null && assetUrl._tag === "Failure"}
       originalUrl={item.originalUrl}
       preload="metadata"
       autoPlay={item.autoPlay ?? true}
       className="block max-h-[var(--media-height)] max-w-[var(--media-width)] text-center"
       videoClassName="aspect-auto max-h-[var(--media-height)] w-auto max-w-[var(--media-width)] rounded-lg border border-border/70 shadow-2xl"
       stateClassName={EXPANDED_MEDIA_STATE_CLASS_NAME}
-      onRetry={asset ? refreshAssetUrl : undefined}
+      onRetry={
+        asset
+          ? async () => {
+              try {
+                return (await refreshAssetUrl()) ?? item.src;
+              } catch (error) {
+                if (item.src !== null) return item.src;
+                throw error;
+              }
+            }
+          : undefined
+      }
     />
   );
 }
@@ -82,11 +90,29 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
   const index =
     imageCount > 0 ? (((preview.index + imageOffset) % imageCount) + imageCount) % imageCount : 0;
   const item = preview.images[index];
-  const source: MediaActionSource = item?.actionsSource ?? {
+  const asset = item?.actionsSource?.asset;
+  const mediaAsset =
+    asset?.resource._tag === "github-media" || asset?.resource._tag === "bitbucket-media"
+      ? asset
+      : undefined;
+  const mediaAssetUrl = useAssetUrlState(
+    mediaAsset?.environmentId ?? null,
+    mediaAsset?.resource ?? null,
+  );
+  const imageSrc =
+    mediaAsset && mediaAssetUrl._tag === "Success"
+      ? mediaAssetUrl.url + (item?.srcFragment ?? "")
+      : (item?.src ?? null);
+  const originalSource: MediaActionSource = item?.actionsSource ?? {
     kind: item?.type === "video" ? "video" : "image",
     name: item?.name ?? "Media",
     src: item?.src ?? null,
   };
+  const { asset: sourceAsset, ...directSource } = originalSource;
+  const source =
+    sourceAsset?.resource._tag === "bitbucket-media" && mediaAssetUrl._tag === "Failure"
+      ? { ...directSource, src: imageSrc }
+      : originalSource;
   const openFile = source.onOpenFile;
   const actionsSource: MediaActionSource = openFile
     ? {
@@ -218,7 +244,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
                   className="h-[min(var(--media-height),40rem)] w-[min(var(--media-width),42rem)] transition-opacity duration-140 ease-out starting:opacity-0 rounded-lg border border-border/70 bg-background p-4 text-xs leading-5 shadow-2xl motion-reduce:transition-none"
                 />
               ) : null
-            ) : item.src === null || failedImageSrc === item.src ? (
+            ) : imageSrc === null || failedImageSrc === imageSrc ? (
               <ExpandedMediaFailure>
                 <p>
                   {openOriginalLink
@@ -230,11 +256,11 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
             ) : (
               <ZoomableImage
                 ref={zoomableImageRef}
-                key={`${index}:${item.src}`}
-                src={item.src}
+                key={`${index}:${imageSrc}`}
+                src={imageSrc}
                 name={item.name}
                 mimeType={item.mimeType}
-                onError={() => setFailedImageSrc(item.src)}
+                onError={() => setFailedImageSrc(imageSrc)}
               />
             )}
             <div className="mt-2 flex max-w-[var(--media-width)] items-center justify-center gap-1.5 text-xs text-white/80 max-sm:px-10">

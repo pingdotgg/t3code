@@ -3,6 +3,7 @@ import { assert, it, vi } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -10,10 +11,17 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
+import {
+  HttpClient,
+  HttpClientError,
+  HttpClientRequest,
+  HttpClientResponse,
+  HttpServerResponse,
+} from "effect/http";
 
 import { GitCommandError } from "@t3tools/contracts";
 import * as BitbucketApi from "@t3tools/source-control-bitbucket/server/BitbucketApi";
+import { bitbucketMediaResponse } from "../assets/PullRequestMediaFetch.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -1049,6 +1057,65 @@ it.effect("does not follow a redirect off the configured Bitbucket", () =>
       }).layer,
     ),
   ),
+);
+
+it.effect("streams private Bitbucket media without sending credentials to object storage", () => {
+  const apiUrl = "https://api.test.local/2.0/repositories/acme/web/downloads/shot.png";
+  const objectUrl = "https://bbuseruploads.s3.amazonaws.com/shot.png?Signature=private";
+  const { execute, layer } = makeLayer({
+    response: (request) =>
+      request.url === apiUrl
+        ? new Response(null, { status: 302, headers: { location: objectUrl } })
+        : new Response("image bytes", { headers: { "content-type": "application/octet-stream" } }),
+  });
+
+  return Effect.gen(function* () {
+    const response = yield* bitbucketMediaResponse(
+      { url: apiUrl, expiresAt: Number.MAX_SAFE_INTEGER },
+      {},
+    );
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.headers["content-type"], "image/png");
+    assert.strictEqual(
+      yield* Effect.promise(() => HttpServerResponse.toWeb(response).text()),
+      "image bytes",
+    );
+    assert.deepStrictEqual(
+      execute.mock.calls.map(([request]) => ({
+        url: request.url,
+        authorization: request.headers.authorization,
+      })),
+      [
+        { url: apiUrl, authorization: `Basic ${btoa("user@example.com:token")}` },
+        { url: objectUrl, authorization: undefined },
+      ],
+    );
+  }).pipe(
+    Effect.provide(layer),
+    Effect.provideService(HttpClient.HttpClient, HttpClient.make(execute)),
+    Effect.scoped,
+  );
+});
+
+it.effect("bounds media response header acquisition", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const client = HttpClient.make(() =>
+      Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)),
+    );
+    const fiber = yield* Effect.forkChild(
+      bitbucketMediaResponse(
+        {
+          url: "https://api.test.local/2.0/repositories/acme/web/downloads/demo.mp4",
+          expiresAt: Number.MAX_SAFE_INTEGER,
+        },
+        {},
+      ).pipe(Effect.provideService(HttpClient.HttpClient, client), Effect.flip, Effect.scoped),
+    );
+    yield* Deferred.await(started);
+    yield* TestClock.adjust("31 seconds");
+    assert.strictEqual((yield* Fiber.join(fiber))._tag, "TimeoutError");
+  }).pipe(Effect.provide(makeLayer({ response: () => new Response(null) }).layer)),
 );
 
 it.effect("follows a redirect that stays on the configured Bitbucket", () =>

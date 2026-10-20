@@ -31,7 +31,7 @@ import { OtlpTracer, OtlpSerialization } from "effect/observability";
 
 import * as ServerConfig from "./config.ts";
 import { ASSET_ROUTE_PREFIX, readMcpAppHtml, resolveAsset } from "./assets/AssetAccess.ts";
-import { githubMediaResponse } from "./assets/GitHubMediaFetch.ts";
+import { pullRequestMediaResponse } from "./assets/PullRequestMediaFetch.ts";
 import { statMediaFile, streamMediaFile, type OpenMediaFile } from "./assets/MediaFile.ts";
 import {
   ATTACHMENT_UPLOAD_ROUTE_PREFIX,
@@ -432,10 +432,14 @@ export const layerAssetRoute = HttpRouter.add(
         headers: { "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff" },
       });
     }
-    if (asset.kind === "github-media") {
-      return yield* githubMediaResponse(asset, request.headers).pipe(
-        Effect.tapError((cause) =>
-          Effect.logWarning("Failed to fetch GitHub media.", { url: asset.url, cause }),
+    if (asset.kind === "github-media" || asset.kind === "bitbucket-media") {
+      return yield* pullRequestMediaResponse(asset, request.headers).pipe(
+        // Only the reason: a failed hop's message names its URL, and a redirect's is a signed one.
+        Effect.tapError((error) =>
+          Effect.logWarning("Failed to fetch pull request media.", {
+            kind: asset.kind,
+            reason: error._tag === "TimeoutError" ? error._tag : error.reason._tag,
+          }),
         ),
         Effect.orElseSucceed(() =>
           HttpServerResponse.empty({

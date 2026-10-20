@@ -1,7 +1,10 @@
 import { ExternalLinkIcon, PaperclipIcon } from "lucide-react";
 import { markdownImageSourceFragment } from "@t3tools/client-runtime/markdown-images";
-import { githubMediaFetchUrl } from "@t3tools/shared/githubMedia";
-import type { AssetResource, EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import {
+  pullRequestMediaResource,
+  type PullRequestMediaResource,
+} from "@t3tools/shared/pullRequestMedia";
+import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { createContext, useContext } from "react";
 import type { Options as ReactMarkdownOptions } from "react-markdown";
 
@@ -18,22 +21,25 @@ export const PullRequestMarkdownContext = createContext<{
   threadRef: ScopedThreadRef | null;
 } | null>(null);
 
-function PullRequestGitHubVideo({
+function PullRequestAssetVideo({
   environmentId,
-  cwd,
+  resource,
   url,
-  fetchUrl,
 }: {
   environmentId: EnvironmentId;
-  cwd: string;
+  resource: PullRequestMediaResource;
   url: string;
-  fetchUrl: string;
 }) {
-  const resource: AssetResource = { _tag: "github-media", cwd, url: fetchUrl };
   const assetUrl = useAssetUrlState(environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(environmentId, resource);
   const src =
-    assetUrl._tag === "Success" ? assetUrl.url : assetUrl._tag === "Failure" ? fetchUrl : null;
+    assetUrl._tag === "Success"
+      ? assetUrl.url
+      : assetUrl._tag === "Failure"
+        ? resource._tag === "bitbucket-media"
+          ? (url.split("#", 1)[0] ?? url)
+          : resource.url
+        : null;
   return (
     <MediaVideoPlayer
       src={src === null ? null : src + markdownImageSourceFragment(url)}
@@ -41,7 +47,11 @@ function PullRequestGitHubVideo({
       label="Pull request video"
       className="w-full"
       videoClassName="rounded-lg border border-border/60"
-      onRetry={refreshAssetUrl}
+      onRetry={
+        resource._tag === "bitbucket-media" && assetUrl._tag === "Failure"
+          ? undefined
+          : refreshAssetUrl
+      }
     />
   );
 }
@@ -85,19 +95,19 @@ export function PullRequestMarkdown({
               pullRequestPanelRef={resolvedThreadRef ?? PULL_REQUESTS_PANEL_REF}
               environmentId={environmentId}
               extraRemarkPlugins={extraRemarkPlugins}
-              githubMedia
+              pullRequestMedia
             />
           );
         }
-        const githubMediaUrl = segment.media === "video" ? githubMediaFetchUrl(segment.url) : null;
-        if (githubMediaUrl !== null) {
+        const mediaResource =
+          segment.media === "video" ? pullRequestMediaResource(segment.url, cwd) : null;
+        if (mediaResource !== null) {
           return (
-            <PullRequestGitHubVideo
+            <PullRequestAssetVideo
               key={`${segment.id}:${segment.url}`}
               environmentId={environmentId}
-              cwd={cwd}
+              resource={mediaResource}
               url={segment.url}
-              fetchUrl={githubMediaUrl}
             />
           );
         }

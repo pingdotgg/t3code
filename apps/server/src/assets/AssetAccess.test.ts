@@ -37,7 +37,7 @@ import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import { openMediaFile } from "./MediaFile.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHubCredentials";
-import { githubMediaResponse } from "./GitHubMediaFetch.ts";
+import { githubMediaResponse } from "./PullRequestMediaFetch.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -48,6 +48,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 const layerConfig = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-asset-access-test-",
 });
+const encodeAssetAccessError = Schema.encodeEffect(Schema.fromJsonString(AssetAccessError));
 const screenshotPng = new Uint8Array(24);
 screenshotPng.set([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52,
@@ -1587,7 +1588,43 @@ describe("AssetAccess", () => {
       ]) {
         const error = yield* issue(url).pipe(Effect.flip);
         expect(error._tag).toBe("AssetGitHubMediaUrlValidationError");
-        const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(AssetAccessError))(error);
+        const encoded = yield* encodeAssetAccessError(error);
+        expect(encoded).not.toContain(url);
+      }
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("serves Bitbucket repository downloads through the API download endpoint", () =>
+    Effect.gen(function* () {
+      const resolve = (relativeUrl: string) => {
+        const suffix = relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const separator = suffix.indexOf("/");
+        return resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1));
+      };
+      const issue = (url: string) => issueAssetUrl({ resource: { _tag: "bitbucket-media", url } });
+      const apiUrl = "https://api.bitbucket.org/2.0/repositories/acme/web/downloads/shot.png";
+
+      // The web host answers 401 even to a token; only the API download honours it.
+      const web = yield* issue("https://bitbucket.org/acme/web/downloads/shot.png?raw=1");
+      expect(web.relativeUrl.endsWith("/shot.png")).toBe(true);
+      expect(yield* resolve(web.relativeUrl)).toEqual({
+        kind: "bitbucket-media",
+        url: apiUrl,
+        expiresAt: web.expiresAt,
+      });
+      const api = yield* issue(apiUrl);
+      expect(yield* resolve(api.relativeUrl)).toMatchObject({ url: apiUrl });
+
+      for (const url of [
+        "http://bitbucket.org/acme/web/downloads/shot.png",
+        "https://bitbucket.org/acme/web/src/main/shot.png",
+        "https://bitbucket.org/acme/web/downloads/",
+        "https://bbuseruploads.s3.amazonaws.com/shot.png?Signature=private",
+        "https://github.com/user-attachments/assets/1a1842fb",
+      ]) {
+        const error = yield* issue(url).pipe(Effect.flip);
+        expect(error._tag).toBe("AssetBitbucketMediaUrlValidationError");
+        const encoded = yield* encodeAssetAccessError(error);
         expect(encoded).not.toContain(url);
       }
     }).pipe(Effect.provide(layerTest)),

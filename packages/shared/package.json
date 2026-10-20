@@ -51,9 +51,17 @@
       "types": "./src/git.ts",
       "import": "./src/git.ts"
     },
+    "./bitbucketMedia": {
+      "types": "./src/bitbucketMedia.ts",
+      "import": "./src/bitbucketMedia.ts"
+    },
     "./githubMedia": {
       "types": "./src/githubMedia.ts",
       "import": "./src/githubMedia.ts"
+    },
+    "./pullRequestMedia": {
+      "types": "./src/pullRequestMedia.ts",
+      "import": "./src/pullRequestMedia.ts"
     },
     "./sourceControl": {
       "types": "./src/sourceControl.ts",

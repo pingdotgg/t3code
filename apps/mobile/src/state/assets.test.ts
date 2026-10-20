@@ -46,6 +46,8 @@ vi.mock("@t3tools/client-runtime/state/assets", async (importOriginal) => ({
 vi.mock("./use-atom-query-runner", () => ({ useAtomQueryRunner: () => state.mint }));
 
 import { useRefreshAssetUrl, useAssetUrlState } from "./assets";
+import { mediaVideoPreviewUri } from "../lib/videoPreviewSource";
+import { pullRequestMediaSource } from "../features/pull-requests/pullRequestMediaSource";
 
 const environmentId = EnvironmentId.make("asset-environment");
 const threadId = ThreadId.make("asset-thread");
@@ -110,4 +112,34 @@ it("lets the server authorize an explicit refresh before the client grant loads"
   });
   state.mint.mockResolvedValue(AsyncResult.failure(Cause.fail(denied)));
   await expect(useRefreshAssetUrl(environmentId, resource)()).resolves.toBeNull();
+});
+
+it("preserves the authored Bitbucket fragment through resolution, renewal, and fallback", async () => {
+  const url = "https://bitbucket.org/acme/web/downloads/demo.mp4?download=1#t=2";
+  const source = {
+    type: "media" as const,
+    name: "demo.mp4",
+    mimeType: "video/mp4",
+    ...pullRequestMediaSource(url, { environmentId, cwd: "/repo" }),
+  };
+  if (!("resource" in source)) throw new Error("Expected a renewable media resource");
+  const refresh = useRefreshAssetUrl(environmentId, source.resource, source.fallbackUri);
+  const asset = useAssetUrlState(environmentId, source.resource);
+  expect(mediaVideoPreviewUri(source, asset._tag === "Success" ? asset.url : null)).toBe(
+    "https://host.test/api/assets/image.png#t=2",
+  );
+  const unsupported = new Error("Unsupported asset resource: bitbucket-media");
+  state.mint.mockResolvedValue(AsyncResult.failure(Cause.fail(unsupported)));
+  expect(mediaVideoPreviewUri(source, await refresh())).toBe(url);
+
+  state.mint.mockRejectedValue(unsupported);
+  expect(mediaVideoPreviewUri(source, await refresh())).toBe(url);
+  await expect(useRefreshAssetUrl(environmentId, resource)()).rejects.toBe(unsupported);
+
+  state.mint.mockResolvedValue(
+    AsyncResult.success({ relativeUrl: "/api/assets/renewed.mp4", expiresAt: 2 }),
+  );
+  expect(mediaVideoPreviewUri(source, await refresh())).toBe(
+    "https://host.test/api/assets/renewed.mp4#t=2",
+  );
 });

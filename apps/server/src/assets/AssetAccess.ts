@@ -1,6 +1,7 @@
 import type { AssetResource } from "@t3tools/contracts";
 import {
   AssetAttachmentNotFoundError,
+  AssetBitbucketMediaUrlValidationError,
   AssetGitHubMediaUrlValidationError,
   AssetPreviewTypeValidationError,
   AssetProjectFaviconInspectionError,
@@ -30,7 +31,9 @@ import {
   readImageDimensions,
   type ImageDimensions,
 } from "@t3tools/shared/imageDimensions";
-import { githubMediaFetchUrl, githubMediaFileName } from "@t3tools/shared/githubMedia";
+import { bitbucketMediaFetchUrl } from "@t3tools/shared/bitbucketMedia";
+import { githubMediaFetchUrl } from "@t3tools/shared/githubMedia";
+import { pullRequestMediaFileName } from "@t3tools/shared/pullRequestMedia";
 import { MCP_APP_MAX_HTML_BYTES } from "@t3tools/shared/mcpApp";
 import {
   isProjectFaviconPath,
@@ -164,6 +167,13 @@ const AssetClaimsSchema = Schema.Union([
     cwd: Schema.String,
     expiresAt: Schema.Number,
   }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    kind: Schema.Literal("bitbucket-media"),
+    /** Already narrowed to a Bitbucket API download at mint time; the signature keeps it there. */
+    url: Schema.String,
+    expiresAt: Schema.Number,
+  }),
 ]);
 type AssetClaims = typeof AssetClaimsSchema.Type;
 
@@ -190,6 +200,11 @@ export type ResolvedAsset =
       readonly kind: "github-media";
       readonly url: string;
       readonly cwd: string;
+      readonly expiresAt: number;
+    }
+  | {
+      readonly kind: "bitbucket-media";
+      readonly url: string;
       readonly expiresAt: number;
     };
 
@@ -786,7 +801,16 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         cwd: input.resource.cwd,
         expiresAt,
       };
-      fileName = githubMediaFileName(fetchUrl);
+      fileName = pullRequestMediaFileName(fetchUrl);
+      break;
+    }
+    case "bitbucket-media": {
+      const fetchUrl = bitbucketMediaFetchUrl(input.resource.url);
+      if (fetchUrl === null) {
+        return yield* new AssetBitbucketMediaUrlValidationError({});
+      }
+      claims = { version: 1, kind: "bitbucket-media", url: fetchUrl, expiresAt };
+      fileName = pullRequestMediaFileName(fetchUrl);
       break;
     }
   }
@@ -901,6 +925,14 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       kind: "github-media",
       url: claims.url,
       cwd: claims.cwd,
+      expiresAt: claims.expiresAt,
+    } satisfies ResolvedAsset;
+  }
+
+  if (claims.kind === "bitbucket-media") {
+    return {
+      kind: "bitbucket-media",
+      url: claims.url,
       expiresAt: claims.expiresAt,
     } satisfies ResolvedAsset;
   }

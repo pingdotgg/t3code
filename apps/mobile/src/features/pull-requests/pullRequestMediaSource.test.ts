@@ -30,6 +30,20 @@ describe("PR media previews", () => {
     expect(gallery.every((item) => "resource" in item)).toBe(true);
   });
 
+  it("resolves private Bitbucket downloads through the environment", () => {
+    expect(
+      pullRequestMediaSource("https://bitbucket.org/acme/web/downloads/demo.mp4#t=2", location),
+    ).toEqual({
+      environmentId: location.environmentId,
+      fallbackUri: "https://bitbucket.org/acme/web/downloads/demo.mp4#t=2",
+      srcFragment: "#t=2",
+      resource: {
+        _tag: "bitbucket-media",
+        url: "https://api.bitbucket.org/2.0/repositories/acme/web/downloads/demo.mp4",
+      },
+    });
+  });
+
   it("leaves custom-domain media as direct URLs", () => {
     const external = "https://drop.example/file.mp4";
     expect(pullRequestMediaSource(external, location)).toEqual({ uri: external });
