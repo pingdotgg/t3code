@@ -17,6 +17,9 @@ import {
   type DeviceSession,
   type DeviceShutdownInput,
   type DeviceSummary,
+  type DeviceEasAccount,
+  DeviceEasAccountError,
+  type DeviceEasAccountInput,
   type DeviceHostConfig,
   type EasDeviceHostConfig,
   type SshDeviceHostConfig,
@@ -46,6 +49,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
+import * as HttpClient from "effect/http/HttpClient";
 
 import * as ServerSettings from "../serverSettings.ts";
 import { isLocalSshDeviceHost, remoteSshDeviceHosts } from "./localSshDeviceHost.ts";
@@ -55,6 +59,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import * as SshDeviceHost from "./SshDeviceHost.ts";
 import * as EasDeviceHost from "./EasDeviceHost.ts";
+import { makeExpoApi, resolveExpoCredential } from "./ExpoApi.ts";
 import * as Exit from "effect/Exit";
 import * as LocalDeviceHost from "./LocalDeviceHost.ts";
 
@@ -103,6 +108,10 @@ export class DeviceService extends Context.Service<
     readonly testHost: (
       config: SshDeviceHostConfig,
     ) => Effect.Effect<DeviceHostSummary, DeviceError>;
+    /** Who an Expo credential signs in as and which EAS projects it can run sessions under. */
+    readonly easAccount: (
+      input: DeviceEasAccountInput,
+    ) => Effect.Effect<DeviceEasAccount, DeviceEasAccountError>;
     /**
      * The agent-device flags that reach the device: its config and session,
      * and the id agent-device selects it by, which can differ from its id here.
@@ -199,6 +208,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       supportsHostRetry: true,
       supportsToolUpdate: installTool !== undefined,
       supportsToolInspection: true,
+      supportsEasHosts: true,
       hosts: initialHosts,
       hostStatus: initialSettings.enabled ? "idle" : "disabled",
       hostStatuses: {},
@@ -810,6 +820,12 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         ),
       retryHost,
       inspect,
+      easAccount: () =>
+        Effect.fail(
+          new DeviceEasAccountError({
+            reason: "EAS accounts are unavailable in this device service.",
+          }),
+        ),
       agentCli: Effect.fail(
         new DeviceHostUnavailableError({
           hostId: LOCAL_DEVICE_HOST_ID,
@@ -1083,8 +1099,38 @@ export const make = Effect.gen(function* () {
       concurrency: 4,
     }),
   );
+  const easAccount: DeviceService["Service"]["easAccount"] = Effect.fn("DeviceService.easAccount")(
+    function* (input) {
+      const saved =
+        input.hostId === undefined
+          ? ""
+          : ((yield* settings.getSettings).easDeviceHosts.find((host) => host.id === input.hostId)
+              ?.accessToken ?? "");
+      const credential = yield* resolveExpoCredential(input.accessToken ?? saved);
+      const viewer = yield* makeExpoApi(yield* HttpClient.HttpClient, credential).viewer;
+      return { signedInAs: viewer.name, credentialSource: credential.source, apps: viewer.apps };
+    },
+    Effect.provide(easContext),
+    // Only bounded text reaches the browser: the credential errors' own
+    // guidance, or a category for what Expo answered, never Expo's text.
+    Effect.mapError(
+      (cause) =>
+        new DeviceEasAccountError({
+          reason:
+            cause._tag === "ExpoApiError"
+              ? cause.status === 401 || cause.status === 403
+                ? `Expo rejected the credential (HTTP ${cause.status}).`
+                : cause.rejected
+                  ? "Expo refused the account check."
+                  : "Could not complete the Expo account check."
+              : cause.message,
+        }),
+    ),
+  );
+
   return {
     ...service,
+    easAccount,
     agentCli: resolveNodeExecutable("Device automation").pipe(
       Effect.andThen(ensureAgentDevice(config.baseDir)),
       Effect.provideService(FileSystem.FileSystem, fs),

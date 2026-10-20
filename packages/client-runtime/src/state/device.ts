@@ -50,6 +50,10 @@ export function createDeviceEnvironmentAtoms<R, E>(
       label: "environment-data:device:test-host",
       tag: WS_METHODS.deviceTestHost,
     }),
+    easAccount: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:device:eas-account",
+      tag: WS_METHODS.deviceEasAccount,
+    }),
     list: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:device:list",
       tag: WS_METHODS.deviceList,

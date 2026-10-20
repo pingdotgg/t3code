@@ -85,6 +85,31 @@ export const SshDeviceHostConfigs = Schema.Array(SshDeviceHostConfig).check(uniq
  */
 export const EasDeviceHostConfigs = Schema.Array(EasDeviceHostConfig).check(uniqueHostIds);
 
+export const DeviceEasAccountInput = Schema.Struct({
+  /** A saved EAS host whose stored token is checked when no new token is given. */
+  hostId: Schema.optional(DeviceHostId),
+  accessToken: Schema.optional(TrimmedString),
+});
+export type DeviceEasAccountInput = typeof DeviceEasAccountInput.Type;
+
+export const DeviceEasAccount = Schema.Struct({
+  signedInAs: Schema.String,
+  credentialSource: Schema.Literals(["settings", "env", "eas-login"]),
+  apps: Schema.Array(Schema.Struct({ id: Schema.String, fullName: Schema.String })),
+});
+export type DeviceEasAccount = typeof DeviceEasAccount.Type;
+
+/** Checking an Expo credential failed; no device host is involved yet. */
+export class DeviceEasAccountError extends Schema.TaggedError<DeviceEasAccountError>()(
+  "DeviceEasAccountError",
+  // No cause: this error reaches the browser, and the reason already says what Expo answered.
+  { reason: Schema.String },
+) {
+  override get message(): string {
+    return this.reason;
+  }
+}
+
 export const DeviceId = TrimmedNonEmptyString.check(Schema.isMaxLength(256));
 export type DeviceId = typeof DeviceId.Type;
 
@@ -171,6 +196,8 @@ const deviceServiceStateFields = {
   supportsHostRetry: Schema.optional(Schema.Boolean),
   supportsToolUpdate: Schema.optional(Schema.Boolean),
   supportsToolInspection: Schema.optional(Schema.Boolean),
+  /** Servers from before EAS hosts ignore `easDeviceHosts`, so clients offer them only when set. */
+  supportsEasHosts: Schema.optional(Schema.Boolean),
   hostStatus: DeviceHostStatus,
   hostStatusDetail: Schema.optional(Schema.String),
   hostStatuses: DeviceHostStatuses,
