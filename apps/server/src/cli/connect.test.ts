@@ -1,3 +1,5 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { assert, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
@@ -7,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as References from "effect/References";
 import * as Terminal from "effect/Terminal";
 
@@ -15,8 +18,9 @@ import {
   acquireRelayClientForLink,
   headlessSessionConfig,
   reportCloudDisconnectResults,
+  reportServiceOnboarding,
 } from "./connect.ts";
-import { recoverServiceOnboardingOffer } from "./service.ts";
+import { offerServiceDuringOnboarding, recoverServiceOnboardingOffer } from "./service.ts";
 
 const readHeadlessSessionConfig = (env: Record<string, string>) =>
   headlessSessionConfig.pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))));
@@ -40,7 +44,7 @@ it.effect("detects headless operation from individual SSH config values", () =>
 it.effect("treats cancelling optional background setup as a successful skip", () =>
   Effect.gen(function* () {
     const result = yield* recoverServiceOnboardingOffer(Effect.fail(new Terminal.QuitError({})));
-    assert.isFalse(result);
+    assert.equal(result, "skipped");
   }),
 );
 
@@ -49,8 +53,72 @@ it.effect("keeps a successful connection when a remote service update is pending
     const result = yield* recoverServiceOnboardingOffer(
       Effect.fail(new BootService.BootServiceUpdatePendingError()),
     );
-    assert.isFalse(result);
+    assert.equal(result, "skipped");
   }),
+);
+
+it.effect("reports pending onboarding until the handed-off service is ready", () =>
+  Effect.gen(function* () {
+    const input = yield* Queue.make<Terminal.UserInput>();
+    yield* Queue.offer(input, {
+      input: Option.some("\r"),
+      key: { name: "return", ctrl: false, meta: false, shift: false },
+    });
+    const terminal = Terminal.make({
+      columns: Effect.succeed(80),
+      rows: Effect.succeed(24),
+      readInput: Effect.succeed(Queue.asDequeue(input)),
+      readLine: Effect.die("unexpected line input"),
+      display: () => Effect.void,
+    });
+    const plan = {
+      program: ["/test/t3", "__service-launcher"],
+      baseDir: "/test",
+      unitPath: "/test/t3code.service",
+      logPath: "/test/boot-service.log",
+      handedOff: true,
+    };
+    let current = false;
+    const service = BootService.BootService.of({
+      status: Effect.sync(() => ({
+        supported: true,
+        installed: true,
+        current,
+        unitPath: plan.unitPath,
+        logPath: plan.logPath,
+      })),
+      install: () => Effect.succeed(plan),
+      restart: Effect.die("unexpected restart"),
+      uninstall: Effect.die("unexpected uninstall"),
+      withStopped: () => Effect.die("unexpected maintenance"),
+    });
+    const lines: string[] = [];
+    const onboard = recoverServiceOnboardingOffer(offerServiceDuringOnboarding).pipe(
+      Effect.flatMap(reportServiceOnboarding),
+      Effect.provideService(BootService.BootService, service),
+      Effect.provideService(Terminal.Terminal, terminal),
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.provideService(Console.Console, {
+        ...globalThis.console,
+        log: (...args) => {
+          lines.push(args.map(String).join(" "));
+        },
+      }),
+    );
+
+    yield* onboard;
+    const output = lines.join("\n");
+    assert.notInclude(output, "Background service ready");
+    assert.notInclude(output, "Start the server");
+    assert.include(output, "Background service restarting");
+    assert.include(output, plan.logPath);
+
+    current = true;
+    lines.length = 0;
+    yield* onboard;
+    assert.include(lines.join("\n"), "Background service ready");
+    assert.notInclude(lines.join("\n"), "restarting");
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect("does not install the relay client when the user declines the managed download", () =>
