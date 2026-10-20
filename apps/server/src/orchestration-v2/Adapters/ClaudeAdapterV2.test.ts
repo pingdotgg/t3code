@@ -17500,6 +17500,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           const FINISHED_TOOL_USE_ID = "toolu-steer-finished";
           const calls: Array<string> = [];
           let beforeAnswer: Effect.Effect<void> = Effect.void;
+          const lateAnswer = yield* Deferred.make<void>();
           const harness = yield* makeWakeHarnessWithOptions({
             backgroundTasks: (toolUseId) =>
               Effect.sync(() => calls.push(toolUseId)).pipe(
@@ -17517,7 +17518,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                       : backgrounding === "never answers"
                         ? Effect.never
                         : backgrounding === "answers after the steer went out"
-                          ? Effect.sleep("6 seconds").pipe(Effect.as(true))
+                          ? Deferred.await(lateAnswer).pipe(Effect.as(true))
                           : Effect.succeed(true),
                 ),
               ),
@@ -17670,16 +17671,29 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 ),
               );
           }
+          // The steer arms its 5-second backgrounding timeout after the request
+          // starts on another fiber, so one TestClock.adjust can land before that
+          // timer exists and leave the steer waiting forever. Tick until it ends.
+          const awaitSteerTimeout = <A, E>(fiber: Fiber.Fiber<A, E>) =>
+            Effect.gen(function* () {
+              for (let tick = 0; tick < 100 && fiber.pollUnsafe() === undefined; tick++) {
+                yield* TestClock.adjust("1 second");
+                yield* Effect.yieldNow;
+              }
+              if (fiber.pollUnsafe() === undefined) {
+                return yield* Effect.die("Timed out waiting for the steer.");
+              }
+              return yield* Fiber.await(fiber);
+            });
           const steering = yield* Effect.forkScoped(steer);
-          if (
+          const timesOut =
             backgrounding === "never answers" ||
-            backgrounding === "answers after the steer went out"
-          ) {
+            backgrounding === "answers after the steer went out";
+          if (timesOut) {
             yield* awaitUntil(() => calls.length === 1, "background request");
             assert.equal(harness.offeredMessages.length, offered);
-            yield* TestClock.adjust("5 seconds");
           }
-          const steered = yield* Fiber.await(steering);
+          const steered = yield* timesOut ? awaitSteerTimeout(steering) : Fiber.await(steering);
 
           assert.deepEqual(calls, [FOREGROUND_TOOL_USE_ID]);
           if (backgrounding === "answers after the turn ended") {
@@ -17693,17 +17707,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           if (backgrounding === "never answers") {
             for (let repeat = 1; repeat <= 2; repeat++) {
               const again = yield* Effect.forkScoped(steer);
-              for (let tick = 0; tick < 100 && again.pollUnsafe() === undefined; tick++) {
-                yield* TestClock.adjust("1 second");
-                yield* Effect.yieldNow;
-              }
-              assert.isTrue(Exit.isSuccess(yield* Fiber.await(again)));
+              assert.isTrue(Exit.isSuccess(yield* awaitSteerTimeout(again)));
               assert.equal(harness.offeredMessages.length, offered + 1 + repeat);
             }
             assert.deepEqual(calls, [FOREGROUND_TOOL_USE_ID]);
           }
           if (backgrounding === "answers after the steer went out") {
-            yield* TestClock.adjust("1 second");
+            yield* Deferred.succeed(lateAnswer, undefined);
           } else if (
             backgrounding !== "succeeds" &&
             backgrounding !== "answers after the subagent ran again"
