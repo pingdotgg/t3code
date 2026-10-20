@@ -5,16 +5,25 @@ import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Atom from "effect/reactivity/Atom";
 import { useContext, useEffect, useRef, useState } from "react";
 import { useStableCallback } from "~/hooks/useStableCallback";
-import { getRenderablePatch, resolveFileDiffPath, type RenderablePatch } from "~/lib/diffRendering";
+import {
+  getRenderablePatch,
+  resolveFileDiffPath,
+  retainedReviewFile,
+  retainLoadedReviewFiles,
+  type RenderablePatch,
+} from "~/lib/diffRendering";
 import { reviewEnvironment } from "~/state/review";
+
+const EMPTY_RETAINED_FILES: ReadonlyMap<string, FileDiffMetadata> = new Map();
 
 const filePathCollator = new Intl.Collator(undefined, {
   numeric: true,
   sensitivity: "base",
 });
-const DEFAULT_INDICES = [0, 1, 2, 3];
+const PAGE_SIZE = 4;
 
 export function useReviewFilePatches({
+  reviewKey,
   environmentId,
   cwd,
   source,
@@ -24,6 +33,7 @@ export function useReviewFilePatches({
   revision,
   preview,
 }: {
+  reviewKey: string | null;
   environmentId: EnvironmentId | undefined;
   cwd: string | undefined;
   source: ReviewDiffPreviewSource | null;
@@ -34,15 +44,41 @@ export function useReviewFilePatches({
   preview: RenderablePatch | null;
 }) {
   const registry = useContext(RegistryContext);
-  const scope = JSON.stringify([
+  const family = JSON.stringify([
+    reviewKey,
     environmentId,
     cwd,
+    source?.id,
     source?.kind,
-    source?.diffHash,
+    source?.baseRef,
     baseRef,
+    source?.headRef,
     ignoreWhitespace,
   ]);
-  const [requested, setRequested] = useState(() => ({ scope, indices: DEFAULT_INDICES }));
+  const scope = JSON.stringify([family, source?.diffHash]);
+  const lazy = source?.truncated === true && source.files !== undefined;
+  const files = lazy ? sortedReviewFiles(source) : [];
+  const [requested, setRequested] = useState<{ family: string; paths: readonly string[] }>({
+    family,
+    paths: [],
+  });
+  const [retained, setRetained] = useState(() => ({
+    family,
+    source,
+    byPath:
+      !lazy && preview?.kind === "files"
+        ? retainLoadedReviewFiles(EMPTY_RETAINED_FILES, preview.files)
+        : EMPTY_RETAINED_FILES,
+  }));
+  const previousByPath = retained.family === family ? retained.byPath : EMPTY_RETAINED_FILES;
+  const requestedPaths = new Set([
+    ...files.slice(0, PAGE_SIZE).map((file) => file.path),
+    ...(requested.family === family ? requested.paths : []),
+    ...previousByPath.keys(),
+  ]);
+  if (requested.family !== family || requested.paths.length !== requestedPaths.size) {
+    setRequested({ family, paths: [...requestedPaths] });
+  }
   const queries = reviewFileQueries({
     environmentId,
     cwd,
@@ -50,7 +86,8 @@ export function useReviewFilePatches({
     baseRef,
     ignoreWhitespace,
     scope,
-    requested,
+    files,
+    requestedPaths,
   });
   const queriedPatchesAtom = reviewPatchesAtom(
     JSON.stringify([theme, queries.map(({ index, target }) => [index, target])]),
@@ -67,59 +104,86 @@ export function useReviewFilePatches({
         !registry.get(query).waiting;
       if (changed || cached) registry.refresh(query);
     }
-  }, [scope, revision, queries, registry]);
+  }, [scope, revision, queries, registry, previousPreview]);
   const patches = useAtomValue(queriedPatchesAtom);
   const retry = useStableCallback((path: string) => {
-    const files = sortedReviewFiles(source);
     const query = queries.find(({ index }) => files[index]?.path === path)?.query;
     if (query) registry.refresh(query);
   });
-  const files = sortedReviewFiles(source);
-  const pendingIndex = files.findIndex((_, index) => {
-    const patch = patches.get(index);
-    return !patch || patch._tag === "Initial";
-  });
-  const settledFileCount = source
-    ? pendingIndex < 0
-      ? files.length
-      : pendingIndex
-    : preview?.kind === "files"
-      ? preview.files.length
-      : 0;
   const requestFiles = (indices: number[]) =>
     setRequested((current) => {
-      const previous = current.scope === scope ? current.indices : [0, 1, 2, 3];
-      const added = indices.filter((index) => !previous.includes(index));
-      return added.length === 0 ? current : { scope, indices: [...previous, ...added] };
+      const paths = new Set(current.family === family ? current.paths : []);
+      for (const index of indices) {
+        const file = files[index];
+        if (file) paths.add(file.path);
+      }
+      return current.family === family && paths.size === current.paths.length
+        ? current
+        : { family, paths: [...paths] };
     });
-  const loadNextFiles = () =>
-    requestFiles(Array.from({ length: 4 }, (_, index) => settledFileCount + index));
-  const requestFile = (index: number) => requestFiles([index]);
-  const renderableFiles = source
+  const renderableFiles = lazy
     ? files.map((file, index): FileDiffMetadata => {
         const result = patches.get(index);
-        if (result?._tag === "Success" && result.value.patch?.kind === "files") {
-          const loaded = result.value.patch.files.find(
-            (candidate) => resolveFileDiffPath(candidate) === file.path,
-          );
-          if (loaded) return loaded;
-        }
-        return {
-          name: file.path,
-          ...(file.previousPath ? { prevName: file.previousPath } : {}),
-          type: file.previousPath ? "rename-changed" : "change",
-          hunks: [],
-          additionLines: [],
-          deletionLines: [],
-          splitLineCount: 0,
-          unifiedLineCount: 0,
-          isPartial: true,
-          cacheKey: `${scope}:${file.path}:pending`,
-        };
+        const loaded =
+          result?._tag === "Success" && result.value.patch?.kind === "files"
+            ? (result.value.patch.files.find(
+                (candidate) => resolveFileDiffPath(candidate) === file.path,
+              ) ?? null)
+            : null;
+        return retainedReviewFile({
+          loaded,
+          previous: previousByPath.get(file.path),
+          sameFamily: true,
+          pending:
+            result === undefined ||
+            result._tag === "Initial" ||
+            (result._tag === "Success" && result.waiting),
+          placeholder: {
+            name: file.path,
+            ...(file.previousPath ? { prevName: file.previousPath } : {}),
+            type: file.previousPath ? "rename-changed" : "change",
+            hunks: [],
+            additionLines: [],
+            deletionLines: [],
+            splitLineCount: 0,
+            unifiedLineCount: 0,
+            isPartial: true,
+            cacheKey: `${scope}:${file.path}:pending`,
+          },
+        });
       })
     : (preview?.kind === "files" ? preview.files : []).toSorted((a, b) =>
         filePathCollator.compare(resolveFileDiffPath(a), resolveFileDiffPath(b)),
       );
+  const nextRetained = !source
+    ? EMPTY_RETAINED_FILES
+    : !lazy && retained.family === family && retained.source === source
+      ? previousByPath
+      : retainLoadedReviewFiles(previousByPath, renderableFiles);
+  if (
+    retained.family !== family ||
+    retained.source !== source ||
+    retained.byPath !== nextRetained
+  ) {
+    setRetained({ family, source, byPath: nextRetained });
+  }
+  const readyFilePaths = new Set(
+    files
+      .filter((_, index) => {
+        const result = patches.get(index);
+        return (
+          (result !== undefined && result._tag !== "Initial") ||
+          !renderableFiles[index]?.cacheKey?.endsWith(":pending")
+        );
+      })
+      .map((file) => file.path),
+  );
+  const pendingIndex = files.findIndex((file) => !readyFilePaths.has(file.path));
+  const settledFileCount = lazy
+    ? pendingIndex < 0
+      ? files.length
+      : pendingIndex
+    : renderableFiles.length;
   const fileStates = new Map(
     files.map((file, index) => {
       const patch = patches.get(index);
@@ -129,6 +193,7 @@ export function useReviewFilePatches({
           error:
             patch?._tag === "Failure" ||
             (patch?._tag === "Success" &&
+              !patch.waiting &&
               (patch.value.patch?.kind !== "files" ||
                 !patch.value.patch.files.some(
                   (candidate) => resolveFileDiffPath(candidate) === file.path,
@@ -138,24 +203,18 @@ export function useReviewFilePatches({
       ] as const;
     }),
   );
-  const readyFilePaths = new Set(
-    files
-      .filter((_, index) => {
-        const patch = patches.get(index);
-        return patch && patch._tag !== "Initial";
-      })
-      .map((file) => file.path),
-  );
   return {
     scope,
+    family,
     fileStates,
     isPending: [...patches.values()].some((patch) => patch._tag === "Initial" || patch.waiting),
     retry,
-    requestFile,
+    requestFile: (index: number) => requestFiles([index]),
     readyFilePaths,
     renderableFiles,
     settledFileCount,
-    loadNextFiles,
+    loadNextFiles: () =>
+      requestFiles(Array.from({ length: PAGE_SIZE }, (_, index) => settledFileCount + index)),
   };
 }
 
@@ -167,7 +226,8 @@ function reviewFileQueries({
   baseRef,
   ignoreWhitespace,
   scope,
-  requested,
+  files,
+  requestedPaths,
 }: {
   environmentId: EnvironmentId | undefined;
   cwd: string | undefined;
@@ -175,17 +235,16 @@ function reviewFileQueries({
   baseRef: string | null;
   ignoreWhitespace: boolean;
   scope: string;
-  requested: { scope: string; indices: number[] };
+  files: ReturnType<typeof sortedReviewFiles>;
+  requestedPaths: ReadonlySet<string>;
 }) {
-  const indices = requested.scope === scope ? requested.indices : DEFAULT_INDICES;
-  const files = sortedReviewFiles(source);
   const queries =
     !environmentId || !cwd || !source
       ? []
-      : indices
-          .filter((index) => index < files.length)
-          .map((index) => {
-            const file = files[index]!;
+      : files
+          .map((file, index) => ({ file, index }))
+          .filter(({ file }) => requestedPaths.has(file.path))
+          .map(({ file, index }) => {
             const target: ReviewPatchTarget = {
               environmentId,
               input: {

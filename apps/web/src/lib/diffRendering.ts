@@ -226,6 +226,40 @@ export function buildFileDiffRenderKey(fileDiff: FileDiffMetadata): string {
   return cacheKey.endsWith(":hydrated") ? cacheKey.slice(0, -":hydrated".length) : cacheKey;
 }
 
+export function retainedReviewFile(input: {
+  readonly loaded: FileDiffMetadata | null;
+  readonly previous: FileDiffMetadata | undefined;
+  readonly placeholder: FileDiffMetadata;
+  readonly sameFamily: boolean;
+  readonly pending: boolean;
+}): FileDiffMetadata {
+  if (input.loaded) return input.loaded;
+  if (
+    input.pending &&
+    input.sameFamily &&
+    input.previous &&
+    !input.previous.cacheKey?.endsWith(":pending")
+  ) {
+    return input.previous;
+  }
+  return input.placeholder;
+}
+
+export function retainLoadedReviewFiles(
+  previous: ReadonlyMap<string, FileDiffMetadata>,
+  files: readonly FileDiffMetadata[],
+): ReadonlyMap<string, FileDiffMetadata> {
+  const next = new Map(
+    files
+      .filter((file) => !file.cacheKey?.endsWith(":pending"))
+      .map((file) => [resolveFileDiffPath(file), file]),
+  );
+  return next.size === previous.size &&
+    [...next].every(([path, file]) => previous.get(path) === file)
+    ? previous
+    : next;
+}
+
 function hashFileDiffPart(hash: number, value: string | number | boolean | undefined): number {
   const serialized = value === undefined ? "undefined" : String(value);
   const withLength = fnv1a32(`${typeof value}:${serialized.length}:`, hash);

@@ -9,6 +9,8 @@ import {
   resolveBackgroundDraftWorkspaceOptions,
   resolveDraftHeroState,
   shouldDockDraftHeroForSubmission,
+  type DiffPanelOpenContext,
+  shouldResetDiffSelectionToChanges,
 } from "./ChatView.logic";
 import { restorePlanFollowUpComposer } from "./ChatView.logic";
 import { useQueuedRunEdit } from "./chat/useQueuedRunEdit";
@@ -1712,13 +1714,25 @@ export default function ChatView(props: ChatViewProps) {
   );
   const diffOpen = activeRightPanelKind === "diff";
   const explicitDiffOpenRef = useRef<ScopedThreadRef | null>(null);
+  const diffPanelOpenContextRef = useRef<DiffPanelOpenContext | null>(null);
   useLayoutEffect(() => {
     const explicitThreadRef = explicitDiffOpenRef.current;
     explicitDiffOpenRef.current = null;
-    if (diffOpen && activeThreadRef && explicitThreadRef !== activeThreadRef) {
+    const previous = diffPanelOpenContextRef.current;
+    diffPanelOpenContextRef.current = { threadKey: activeThreadKey, diffOpen };
+    if (
+      activeThreadRef &&
+      shouldResetDiffSelectionToChanges({
+        diffOpen,
+        activeThreadRef,
+        explicitThreadRef,
+        previous,
+        threadKey: activeThreadKey,
+      })
+    ) {
       useDiffPanelStore.getState().selectGitScope(activeThreadRef, "branch");
     }
-  }, [activeThreadRef, diffOpen]);
+  }, [activeThreadKey, activeThreadRef, diffOpen]);
   const rightPanelState = useRightPanelStore((state) =>
     selectThreadRightPanelState(state.byThreadKey, activeThreadRef),
   );
