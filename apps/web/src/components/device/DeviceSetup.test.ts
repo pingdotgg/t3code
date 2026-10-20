@@ -1,7 +1,7 @@
 import type { DeviceServiceState } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { deviceHubReadiness, platformSetupStatus } from "./DeviceSetup";
+import { deviceHostDiagnostics, deviceHubReadiness, platformSetupStatus } from "./DeviceSetup";
 
 const deviceState = (overrides: Partial<DeviceServiceState> = {}): DeviceServiceState => ({
   hosts: [
@@ -105,5 +105,42 @@ describe("device setup guidance", () => {
       message: "Xcode and iOS Simulator are available on Mac Mini.",
     });
     expect(platformSetupStatus(state, "android").ready).toBe(false);
+  });
+
+  it("labels ready host warnings in host order and drops them once cleared", () => {
+    const hosts = [
+      { id: "local", label: "This machine" },
+      { id: "macmini", label: "Mac Mini" },
+    ];
+    const state = deviceState({
+      hostStatuses: {
+        macmini: { status: "ready", detail: "adb is not on PATH." },
+        local: { status: "ready", detail: "Xcode license not accepted." },
+      },
+    });
+    expect(deviceHostDiagnostics(hosts, state.hostStatuses)).toEqual([
+      { hostId: "local", label: "This machine", detail: "Xcode license not accepted." },
+      { hostId: "macmini", label: "Mac Mini", detail: "adb is not on PATH." },
+    ]);
+    expect(
+      deviceHostDiagnostics(hosts, {
+        ...state.hostStatuses,
+        local: { status: "ready" },
+      }),
+    ).toEqual([{ hostId: "macmini", label: "Mac Mini", detail: "adb is not on PATH." }]);
+  });
+
+  it("omits details from hosts that are not ready or not listed", () => {
+    const hosts = [
+      { id: "local", label: "This machine" },
+      { id: "macmini", label: "Mac Mini" },
+    ];
+    expect(
+      deviceHostDiagnostics(hosts, {
+        local: { status: "failed", detail: "Device hub crashed." },
+        macmini: { status: "starting", detail: "Connecting over SSH." },
+        unknown: { status: "ready", detail: "Stale host warning." },
+      }),
+    ).toEqual([]);
   });
 });

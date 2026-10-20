@@ -43,6 +43,37 @@ export function deviceHubReadiness(state: DeviceServiceState) {
   return { ready, busy };
 }
 
+/** A ready host keeps its devices usable but may still carry a discovery warning. */
+export function deviceHostDiagnostics(
+  hosts: ReadonlyArray<Pick<DeviceServiceState["hosts"][number], "id" | "label">>,
+  hostStatuses: DeviceServiceState["hostStatuses"],
+) {
+  return hosts.flatMap((host) => {
+    const status = hostStatuses[host.id];
+    return status?.status === "ready" && status.detail
+      ? [{ hostId: host.id, label: host.label, detail: status.detail }]
+      : [];
+  });
+}
+
+export function DeviceHostDiagnostics(props: {
+  readonly hosts: ReadonlyArray<Pick<DeviceServiceState["hosts"][number], "id" | "label">>;
+  readonly hostStatuses: DeviceServiceState["hostStatuses"];
+  readonly className?: string;
+}) {
+  const diagnostics = deviceHostDiagnostics(props.hosts, props.hostStatuses);
+  if (diagnostics.length === 0) return null;
+  return (
+    <div role="status" className={cn("space-y-1 text-xs text-muted-foreground", props.className)}>
+      {diagnostics.map(({ hostId, label, detail }) => (
+        <p key={hostId} className="whitespace-pre-line break-words">
+          {label}: {detail}
+        </p>
+      ))}
+    </div>
+  );
+}
+
 export function platformSetupStatus(state: DeviceServiceState, platform: DevicePlatform) {
   const hasDevices = state.devices.some((device) => device.platform === platform);
   if (platform === "android" && !hasDevices && isAndroidDiscoveryUncertain(state)) {
@@ -277,6 +308,7 @@ function DevicePlatformSetup(props: {
     <div className="space-y-3">
       <PlatformStatus platform="iOS" status={platformSetupStatus(props.state, "ios")} />
       <PlatformStatus platform="Android" status={platformSetupStatus(props.state, "android")} />
+      <DeviceHostDiagnostics hosts={props.state.hosts} hostStatuses={props.state.hostStatuses} />
       <p className="text-xs text-muted-foreground">
         You can use either platform. Fixing a missing platform does not block the other one.
       </p>

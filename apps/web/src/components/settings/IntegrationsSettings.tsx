@@ -61,6 +61,7 @@ import {
   platformSetupStatus,
   deviceHubDescription,
   agentDeviceDescription,
+  DeviceHostDiagnostics,
 } from "~/components/device/DeviceSetup";
 import { isElectron } from "../../env";
 
@@ -991,12 +992,23 @@ export function DeviceIntegrationControls({
                 : undefined
             }
             status={
-              <div className="flex flex-wrap gap-x-5 gap-y-2">
-                <PlatformStatus compact platform="iOS" status={platformSetupStatus(state, "ios")} />
-                <PlatformStatus
-                  compact
-                  platform="Android"
-                  status={platformSetupStatus(state, "android")}
+              <div className="space-y-2">
+                <div className="flex flex-wrap gap-x-5 gap-y-2">
+                  <PlatformStatus
+                    compact
+                    platform="iOS"
+                    status={platformSetupStatus(state, "ios")}
+                  />
+                  <PlatformStatus
+                    compact
+                    platform="Android"
+                    status={platformSetupStatus(state, "android")}
+                  />
+                </div>
+                {/* Remote hosts report their own warnings in the device host list below. */}
+                <DeviceHostDiagnostics
+                  hosts={state.hosts.filter((host) => host.kind === "local")}
+                  hostStatuses={state.hostStatuses}
                 />
               </div>
             }

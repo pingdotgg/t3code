@@ -41,6 +41,7 @@ import { DeviceHostEditor } from "./DeviceHostEditor";
 import { useHostConnectionChecks } from "./useHostConnectionChecks";
 import { deviceHostConnectionKey } from "./deviceHostConnectionChecks";
 import { settingsScopeEnvironmentLabel, settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
+import { DeviceHostDiagnostics } from "../device/DeviceSetup";
 
 export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null }) {
   const { scope, environments, connectedEnvironments } = useSettingsScope();
@@ -471,6 +472,12 @@ function DeviceHostList({
                               {result.error}
                             </p>
                           ) : null}
+                          {result.state ? (
+                            <DeviceHostDiagnostics
+                              hosts={[result.host]}
+                              hostStatuses={result.state.hostStatuses}
+                            />
+                          ) : null}
                           {result.versions}
                           {result.check?.status === "local" ? (
                             <p className="text-xs text-muted-foreground">
@@ -504,6 +511,18 @@ function DeviceHostList({
                   </details>
                 </div>
               ) : null}
+              {!compact
+                ? results.map((result) =>
+                    result.state ? (
+                      <DeviceHostDiagnostics
+                        key={result.environmentId}
+                        className="mt-1"
+                        hosts={[result.host]}
+                        hostStatuses={result.state.hostStatuses}
+                      />
+                    ) : null,
+                  )
+                : null}
             </div>
             {!compact && progress ? (
               <span
