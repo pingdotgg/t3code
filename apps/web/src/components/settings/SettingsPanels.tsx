@@ -4,7 +4,14 @@ import { useScopedSettingsWriteAllowed } from "./useScopedSettings";
 import { Spinner } from "~/components/ui/spinner";
 import { NotificationSettings } from "./NotificationSettings";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
-import { ArchiveIcon, ArchiveX, CheckIcon, ChevronRightIcon, SettingsIcon } from "lucide-react";
+import {
+  ArchiveIcon,
+  ArchiveX,
+  CheckIcon,
+  ChevronRightIcon,
+  SettingsIcon,
+  Trash2Icon,
+} from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
@@ -3425,8 +3432,41 @@ export function ArchivedThreadsPanel() {
     return { groups: sortedGroups, hasMultipleEnvironments };
   })();
 
+  const handleUnarchiveThread = async (threadRef: ScopedThreadRef) => {
+    const result = await unarchiveThread(threadRef);
+    if (result._tag === "Success") {
+      refreshArchivedThreads();
+    } else if (!isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to unarchive thread",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    }
+  };
+
+  const handleDeleteThread = async (threadRef: ScopedThreadRef, title: string) => {
+    const result = await confirmAndDeleteThread(threadRef, title);
+    if (result._tag === "Success") {
+      refreshArchivedThreads();
+    } else if (!isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to delete thread",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    }
+  };
+
   const handleArchivedThreadContextMenu = async (
     threadRef: ScopedThreadRef,
+    title: string,
     position: { x: number; y: number },
   ) => {
     const api = readLocalApi();
@@ -3440,36 +3480,9 @@ export function ArchivedThreadsPanel() {
     );
 
     if (clicked === "unarchive") {
-      const result = await unarchiveThread(threadRef);
-      if (result._tag === "Success") {
-        refreshArchivedThreads();
-      } else if (!isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Failed to unarchive thread",
-            description: error instanceof Error ? error.message : "An error occurred.",
-          }),
-        );
-      }
-      return;
-    }
-
-    if (clicked === "delete") {
-      const result = await confirmAndDeleteThread(threadRef);
-      if (result._tag === "Success") {
-        refreshArchivedThreads();
-      } else if (!isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Failed to delete thread",
-            description: error instanceof Error ? error.message : "An error occurred.",
-          }),
-        );
-      }
+      await handleUnarchiveThread(threadRef);
+    } else if (clicked === "delete") {
+      await handleDeleteThread(threadRef, title);
     }
   };
 
@@ -3519,6 +3532,7 @@ export function ArchivedThreadsPanel() {
                     const result = await settlePromise(() =>
                       handleArchivedThreadContextMenu(
                         scopeThreadRef(thread.environmentId, thread.id),
+                        thread.title,
                         {
                           x: event.clientX,
                           y: event.clientY,
@@ -3548,37 +3562,33 @@ export function ArchivedThreadsPanel() {
                   </span>
                 }
                 control={
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="shrink-0"
-                    onClick={() => {
-                      void (async () => {
-                        const result = await unarchiveThread(
+                  <div className="flex shrink-0 items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        void handleUnarchiveThread(scopeThreadRef(thread.environmentId, thread.id));
+                      }}
+                    >
+                      <ArchiveX className="size-3.5" />
+                      <span>Unarchive</span>
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="destructive-outline"
+                      size="sm"
+                      onClick={() => {
+                        void handleDeleteThread(
                           scopeThreadRef(thread.environmentId, thread.id),
+                          thread.title,
                         );
-                        if (result._tag === "Success") {
-                          refreshArchivedThreads();
-                          return;
-                        }
-                        if (!isAtomCommandInterrupted(result)) {
-                          const error = squashAtomCommandFailure(result);
-                          toastManager.add(
-                            stackedThreadToast({
-                              type: "error",
-                              title: "Failed to unarchive thread",
-                              description:
-                                error instanceof Error ? error.message : "An error occurred.",
-                            }),
-                          );
-                        }
-                      })();
-                    }}
-                  >
-                    <ArchiveX className="size-3.5" />
-                    <span>Unarchive</span>
-                  </Button>
+                      }}
+                    >
+                      <Trash2Icon className="size-3.5" />
+                      <span>Delete</span>
+                    </Button>
+                  </div>
                 }
               />
             ))}
