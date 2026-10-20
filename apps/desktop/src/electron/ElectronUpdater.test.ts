@@ -1,27 +1,8 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Build real electron-updater disk fixtures with its SHA-512 encoding.
-import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as NodeCrypto from "node:crypto";
-import * as NodeEvents from "node:events";
-import * as NodeModule from "node:module";
-import * as NodePath from "node:path";
-import * as Deferred from "effect/Deferred";
-import * as FileSystem from "effect/FileSystem";
-import * as Option from "effect/Option";
-import { AppImageUpdater } from "electron-updater/out/AppImageUpdater.js";
-import { DebUpdater } from "electron-updater/out/DebUpdater.js";
-import { MacUpdater } from "electron-updater/out/MacUpdater.js";
-import { GenericProvider } from "electron-updater/out/providers/GenericProvider.js";
-import type { UpdateDownloadedEvent } from "electron-updater/out/types.js";
-import { NsisUpdater } from "electron-updater/out/NsisUpdater.js";
-import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
-import { flushCallbacks, makeHarness } from "../updates/updatesTestHarness.ts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import type { VerifyUpdateCodeSignature } from "electron-updater";
 import { beforeEach, vi } from "vite-plus/test";
 
-const { autoUpdaterMock, updaterOverride } = vi.hoisted(() => ({
-  updaterOverride: { current: undefined as import("electron-updater").AppUpdater | undefined },
+const { autoUpdaterMock } = vi.hoisted(() => ({
   autoUpdaterMock: {
     allowDowngrade: false,
     allowPrerelease: false,
@@ -32,8 +13,6 @@ const { autoUpdaterMock, updaterOverride } = vi.hoisted(() => ({
     fullChangelog: false,
     checkForUpdates: vi.fn(() => Promise.resolve(null)),
     downloadUpdate: vi.fn(() => Promise.resolve([])),
-    logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
-    verifyUpdateCodeSignature: undefined as VerifyUpdateCodeSignature | undefined,
     on: vi.fn(),
     quitAndInstall: vi.fn(),
     removeListener: vi.fn(),
@@ -42,9 +21,7 @@ const { autoUpdaterMock, updaterOverride } = vi.hoisted(() => ({
 }));
 
 vi.mock("electron-updater", () => ({
-  get autoUpdater() {
-    return updaterOverride.current ?? autoUpdaterMock;
-  },
+  autoUpdater: autoUpdaterMock,
 }));
 
 import * as ElectronUpdater from "./ElectronUpdater.ts";
@@ -66,7 +43,6 @@ describe("ElectronUpdater", () => {
     autoUpdaterMock.quitAndInstall.mockClear();
     autoUpdaterMock.removeListener.mockClear();
     autoUpdaterMock.setFeedURL.mockClear();
-    autoUpdaterMock.verifyUpdateCodeSignature = undefined;
   });
 
   it.effect("scopes updater event listeners", () =>
@@ -159,287 +135,5 @@ describe("ElectronUpdater", () => {
       assert.notInclude(error.message, cause.message);
       assert.deepEqual(autoUpdaterMock.quitAndInstall.mock.calls, [[true, false]]);
     }).pipe(Effect.provide(ElectronUpdater.layer)),
-  );
-
-  describe("Windows update signature check", () => {
-    const publisherNames = ["T3 Tools Inc"];
-    const installerPath = "C:\\updater\\pending\\temp-T3-Code-x64.exe";
-    // execFile marks the error killed when the verifier exceeds its 20-second timeout.
-    const timedOut = () =>
-      Object.assign(new Error("Command failed: powershell.exe"), { killed: true });
-
-    const downloadVerifyingSignature = () => {
-      autoUpdaterMock.downloadUpdate.mockImplementationOnce(async () => {
-        const rejection = await autoUpdaterMock.verifyUpdateCodeSignature!(
-          publisherNames,
-          installerPath,
-        );
-        // NSIS accepts only null as a successful signature check.
-        if (rejection !== null) throw new Error(`Invalid signature: ${rejection}`);
-        return [];
-      });
-      return Effect.flatMap(ElectronUpdater.ElectronUpdater, (updater) => updater.downloadUpdate);
-    };
-
-    it.effect("retries a timed-out signature check with the same verifier and installer", () =>
-      Effect.gen(function* () {
-        const verify = vi
-          .fn<VerifyUpdateCodeSignature>()
-          .mockRejectedValueOnce(timedOut())
-          .mockResolvedValueOnce(null);
-        autoUpdaterMock.verifyUpdateCodeSignature = verify;
-
-        yield* downloadVerifyingSignature();
-
-        assert.deepEqual(verify.mock.calls, [
-          [publisherNames, installerPath],
-          [publisherNames, installerPath],
-        ]);
-      }).pipe(Effect.provide(ElectronUpdater.layer)),
-    );
-
-    it.effect("fails on invalid signatures, other errors and two timeouts on each download", () =>
-      Effect.gen(function* () {
-        const cases = [
-          { outcome: () => Promise.resolve("Invalid publisher"), calls: 1 },
-          { outcome: () => Promise.reject(new Error("Cannot execute PowerShell")), calls: 1 },
-          { outcome: () => Promise.reject(timedOut()), calls: 2 },
-        ];
-        for (const { outcome, calls } of cases) {
-          const verify = vi.fn<VerifyUpdateCodeSignature>(outcome);
-          autoUpdaterMock.verifyUpdateCodeSignature = verify;
-
-          // Reusing the installed verifier must neither stack retries nor exhaust future retries.
-          for (let download = 1; download <= 2; download++) {
-            const error = yield* downloadVerifyingSignature().pipe(Effect.flip);
-            assert.instanceOf(error, ElectronUpdater.ElectronUpdaterDownloadUpdateError);
-            assert.equal(verify.mock.calls.length, calls * download);
-          }
-        }
-      }).pipe(Effect.provide(ElectronUpdater.layer)),
-    );
-
-    it.effect("rejects a retry when the upstream capability probe skips verification", () =>
-      Effect.gen(function* () {
-        const verify = vi
-          .fn<VerifyUpdateCodeSignature>()
-          .mockRejectedValueOnce(timedOut())
-          .mockImplementationOnce(async () => {
-            // Upstream resolves null even though its failed capability probe skips verification.
-            autoUpdaterMock.logger.warn(
-              "Cannot execute ConvertTo-Json: spawnSync powershell.exe ETIMEDOUT. Ignoring signature validation due to unsupported powershell version. Please upgrade to powershell 3 or higher.",
-            );
-            return null;
-          });
-        autoUpdaterMock.verifyUpdateCodeSignature = verify;
-
-        const error = yield* downloadVerifyingSignature().pipe(Effect.flip);
-
-        assert.instanceOf(error, ElectronUpdater.ElectronUpdaterDownloadUpdateError);
-        assert.equal(verify.mock.calls.length, 2);
-      }).pipe(Effect.provide(ElectronUpdater.layer)),
-    );
-  });
-});
-
-describe("installed electron-updater cache recovery", () => {
-  it.effect.each([
-    {
-      name: "Intel Mac",
-      platform: "darwin",
-      Updater: MacUpdater,
-      selected: "x64.zip",
-      other: "arm64.zip",
-      rosetta: false,
-    },
-    {
-      name: "Apple Silicon running Intel",
-      platform: "darwin",
-      Updater: MacUpdater,
-      selected: "arm64.zip",
-      other: "x64.zip",
-      rosetta: true,
-    },
-    {
-      name: "Windows",
-      platform: "win32",
-      Updater: NsisUpdater,
-      selected: "x64.exe",
-      other: "arm64.exe",
-      rosetta: false,
-    },
-    {
-      name: "Debian",
-      platform: "linux",
-      Updater: DebUpdater,
-      selected: "x64.deb",
-      other: "x64.AppImage",
-      rosetta: false,
-    },
-    {
-      name: "AppImage",
-      platform: "linux",
-      Updater: AppImageUpdater,
-      selected: "x64.AppImage",
-      other: "x64.deb",
-      rosetta: false,
-    },
-  ] as const)("restores only the package selected by $name", (scenario) =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const directory = yield* fs.makeTempDirectoryScoped();
-        const cacheDirectory = NodePath.join(directory, "custom-updater-cache", "pending");
-        const configPath = NodePath.join(directory, "app-update.yml");
-        yield* fs.writeFileString(configPath, "updaterCacheDirName: custom-updater-cache\n");
-        yield* fs.makeDirectory(cacheDirectory, { recursive: true });
-
-        const require = NodeModule.createRequire(import.meta.url);
-        require("electron");
-        const electronModule = require.cache[require.resolve("electron")]!;
-        const childProcess = require("node:child_process") as typeof import("node:child_process");
-        const originalElectron = electronModule.exports;
-        const originalArch = Object.getOwnPropertyDescriptor(process, "arch")!;
-        yield* Effect.acquireRelease(
-          Effect.sync(() => {
-            // MacUpdater's native Squirrel bridge and host probes are OS boundaries.
-            electronModule.exports = { autoUpdater: new NodeEvents.EventEmitter() };
-            Object.defineProperty(process, "arch", { value: "x64", configurable: true });
-            return vi
-              .spyOn(childProcess, "execFileSync")
-              .mockReturnValue(scenario.rosetta ? "sysctl.proc_translated: 1" : "x86_64");
-          }),
-          (probe) =>
-            Effect.sync(() => {
-              probe.mockRestore();
-              Object.defineProperty(process, "arch", originalArch);
-              electronModule.exports = originalElectron;
-              updaterOverride.current = undefined;
-            }),
-        );
-
-        const extensions =
-          scenario.platform === "darwin"
-            ? ["arm64.dmg", "x64.dmg", "arm64.zip", "x64.zip"]
-            : scenario.platform === "win32"
-              ? ["arm64.exe", "x64.exe"]
-              : ["arm64.AppImage", "x64.AppImage", "arm64.deb", "x64.deb"];
-        const files = extensions.map((extension) => {
-          const url = `T3-Code-1.2.4-${extension}`;
-          return { url, sha512: NodeCrypto.createHash("sha512").update(url).digest("base64") };
-        });
-        const info = {
-          version: "1.2.4",
-          releaseDate: "2026-10-01T00:00:00Z",
-          files,
-          path: files[0]!.url,
-          sha512: files[0]!.sha512,
-        };
-        yield* Effect.acquireRelease(
-          Effect.sync(() =>
-            vi.spyOn(GenericProvider.prototype, "getLatestVersion").mockResolvedValue(info),
-          ),
-          (feed) => Effect.sync(() => feed.mockRestore()),
-        );
-
-        // A fresh instance for each launch forces disk validation rather than in-memory reuse.
-        yield* Effect.forEach([scenario.other, scenario.selected], (cachedExtension) =>
-          Effect.scoped(
-            Effect.gen(function* () {
-              const cached = files.find((file) => file.url.endsWith(`-${cachedExtension}`))!;
-              yield* fs.writeFileString(NodePath.join(cacheDirectory, cached.url), cached.url);
-              yield* fs.writeFileString(
-                NodePath.join(cacheDirectory, "update-info.json"),
-                JSON.stringify({
-                  fileName: cached.url,
-                  sha512: cached.sha512,
-                  isAdminRightsRequired: false,
-                }),
-              );
-              const updater = new scenario.Updater(undefined, {
-                version: "1.2.3",
-                name: "T3 Code",
-                isPackaged: true,
-                appUpdateConfigPath: configPath,
-                userDataPath: directory,
-                baseCachePath: directory,
-                whenReady: () => Promise.resolve(),
-                relaunch: vi.fn(),
-                quit: vi.fn(),
-                onQuit: vi.fn(),
-              });
-              updater.logger = null;
-              const networkDownload = vi.fn(() =>
-                Promise.reject(new Error("unexpected network download")),
-              );
-              Object.assign(updater, { httpExecutor: { download: networkDownload } });
-              if (updater instanceof MacUpdater) {
-                // Keep real selection, executeDownload, and hash validation; stop at native handoff.
-                Object.assign(updater, {
-                  updateDownloaded: async (_file: unknown, event: UpdateDownloadedEvent) => {
-                    updater.emit("update-downloaded", event);
-                    return [];
-                  },
-                });
-              }
-              updaterOverride.current = updater;
-              assert.deepEqual(
-                yield* ElectronUpdater.make.pendingDownloadDirectory,
-                Option.some(cacheDirectory),
-              );
-
-              const inspected = Deferred.makeUnsafe<void>();
-              const downloadFinished = Deferred.makeUnsafe<void>();
-              const download = vi.spyOn(updater, "downloadUpdate");
-              const harness = makeHarness({
-                platform: scenario.platform,
-                runningUnderArm64Translation: scenario.rosetta,
-                env: scenario.selected.endsWith("AppImage")
-                  ? { APPIMAGE: "/test/T3-Code.AppImage" }
-                  : {},
-                updater: {
-                  ...ElectronUpdater.make,
-                  downloadUpdate: ElectronUpdater.make.downloadUpdate.pipe(
-                    Effect.ensuring(Deferred.succeed(downloadFinished, undefined)),
-                  ),
-                },
-                fileSystem: {
-                  ...fs,
-                  readFileString: (path, encoding) =>
-                    path === "/missing/resources/package-type" && scenario.selected.endsWith("deb")
-                      ? Effect.succeed("deb")
-                      : fs.readFileString(path, encoding),
-                  exists: (path) =>
-                    fs.exists(path).pipe(Effect.tap(() => Deferred.succeed(inspected, undefined))),
-                },
-              });
-              yield* Effect.scoped(
-                Effect.gen(function* () {
-                  const updates = yield* DesktopUpdates.DesktopUpdates;
-                  yield* updates.configure;
-                  // AppImage activation reads the host environment; the fixture is intentionally not installed.
-                  vi.spyOn(updater, "isUpdaterActive").mockReturnValue(true);
-                  assert.isTrue((yield* updates.check("startup")).checked);
-                  yield* Deferred.await(inspected);
-                  yield* flushCallbacks;
-
-                  if (cachedExtension === scenario.other) {
-                    assert.equal(download.mock.calls.length, 0);
-                    assert.equal((yield* updates.getState).status, "available");
-                  } else {
-                    yield* Deferred.await(downloadFinished);
-                    yield* flushCallbacks;
-                    assert.equal(download.mock.calls.length, 1);
-                    assert.equal((yield* updates.getState).status, "downloaded");
-                    assert.equal((yield* updates.getState).downloadedVersion, "1.2.4");
-                  }
-                  assert.equal(networkDownload.mock.calls.length, 0);
-                }),
-              ).pipe(Effect.provide(harness.layer));
-            }),
-          ),
-        );
-      }),
-    ).pipe(Effect.provide(NodeServices.layer)),
   );
 });

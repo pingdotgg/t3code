@@ -3307,16 +3307,9 @@ export function ConnectionsSettings() {
                   Off
                 </SelectItem>
                 {desktopWslState.distros.length === 0 ? (
-                  <>
-                    <SelectItem hideIndicator value={BACKEND_VALUE_DEFAULT_WSL}>
-                      Default distro
-                    </SelectItem>
-                    {desktopWslState.distro !== null ? (
-                      <SelectItem hideIndicator value={desktopWslState.distro}>
-                        {desktopWslState.distro}
-                      </SelectItem>
-                    ) : null}
-                  </>
+                  <SelectItem hideIndicator value={BACKEND_VALUE_DEFAULT_WSL}>
+                    Default distro
+                  </SelectItem>
                 ) : (
                   desktopWslState.distros.map((distro) => (
                     <SelectItem hideIndicator key={distro.name} value={distro.name}>

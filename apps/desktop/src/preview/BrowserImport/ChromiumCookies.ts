@@ -200,14 +200,12 @@ export const readChromiumCookieDatabase = Effect.fn("ChromiumCookies.readChromiu
         Effect.flatMap(decodeSchemaVersion),
         Effect.map(([row]) => row.value),
       );
-      // SQLite's BLOB affinity still permits TEXT. Cast before Node decodes
-      // those bytes as UTF-8, which can corrupt an encrypted payload.
       const raw =
         schemaVersion >= 15
-          ? yield* sql`select host_key, name, value, cast(encrypted_value as blob) as encrypted_value, path,
+          ? yield* sql`select host_key, name, value, encrypted_value, path,
                 expires_utc / 1000000 as expires_seconds, is_secure, is_httponly,
                 samesite, top_frame_site_key from cookies`
-          : yield* sql`select host_key, name, value, cast(encrypted_value as blob) as encrypted_value, path,
+          : yield* sql`select host_key, name, value, encrypted_value, path,
                 expires_utc / 1000000 as expires_seconds, is_secure, is_httponly,
                 samesite, '' as top_frame_site_key from cookies`;
       return { rows: yield* decodeCookieRows(raw), schemaVersion };

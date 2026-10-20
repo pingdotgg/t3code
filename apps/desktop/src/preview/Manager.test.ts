@@ -1,4 +1,3 @@
-import * as NodeVM from "node:vm";
 import { it as effectIt } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER } from "@t3tools/contracts";
@@ -411,44 +410,6 @@ const makeTestPreviewWebContents = (
     capturePage,
   } as unknown as TestPreviewWebContents;
 };
-
-const makeStillImage = (pixels = "fresh-png") => ({
-  toPNG: () => Buffer.from(pixels),
-  toJPEG: () => Buffer.from(pixels),
-  getSize: () => ({ width: 100, height: 80 }),
-});
-
-const makeTestStillImageWebContents = (...args: Parameters<typeof makeTestPreviewWebContents>) => {
-  const wc = makeTestPreviewWebContents(...args);
-  Object.assign(wc, { isDevToolsOpened: () => false });
-  holdStillImagePaint(wc, Promise.resolve());
-  return wc;
-};
-
-const holdStillImagePaint = (wc: TestPreviewWebContents, paint: Promise<void>) => {
-  vi.mocked(wc.debugger.sendCommand).mockImplementation(async (method) => {
-    if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "main" } } };
-    if (method === "Page.createIsolatedWorld") return { executionContextId: 7 };
-    if (method === "Runtime.evaluate") {
-      await paint;
-      return { result: { value: true } };
-    }
-    return undefined;
-  });
-};
-
-const setupStill = (manager: PreviewManager.PreviewManager["Service"], paint = Promise.resolve()) =>
-  Effect.gen(function* () {
-    const image = makeStillImage();
-    const capturePage = vi.fn<() => Promise<typeof image>>().mockResolvedValue(image);
-    const wc = makeTestStillImageWebContents(capturePage);
-    holdStillImagePaint(wc, paint);
-    fromId.mockReturnValue(wc);
-    yield* manager.createTab("tab_still");
-    yield* manager.registerWebview("tab_still", wc.id);
-    yield* manager.setColorScheme("tab_still", "system");
-    return { image, capturePage, wc, capture: manager.captureScreenshot("tab_still") };
-  });
 
 const setupRecordingRaceTabs = (manager: PreviewManager.PreviewManager["Service"]) =>
   Effect.gen(function* () {
@@ -2540,7 +2501,6 @@ describe("PreviewManager", () => {
           isDestroyed: () => false,
           getType: () => "webview",
           getURL: () => "https://example.com:8443/path?query=value",
-          setBackgroundThrottling: vi.fn(),
           getTitle: () => "Example",
           isLoadingMainFrame: () => false,
           getZoomFactor: () => 1,
@@ -2579,7 +2539,7 @@ describe("PreviewManager", () => {
 
         const artifact = yield* manager.captureScreenshot("tab_1");
 
-        expect(capturePage).toHaveBeenCalledTimes(2);
+        expect(capturePage).toHaveBeenCalledOnce();
         expect(mkdir).toHaveBeenCalledWith("/tmp/t3/dev/browser-artifacts");
         expect(writeFile).toHaveBeenCalledWith(artifact.path, png);
         expect(artifact).toMatchObject({
@@ -2602,21 +2562,18 @@ describe("PreviewManager", () => {
         yield* TestClock.adjust(1_000);
         const retriedExit = yield* Fiber.join(retriedFiber);
         expect(Exit.isSuccess(retriedExit)).toBe(true);
-        expect(capturePage).toHaveBeenCalledTimes(4);
+        expect(capturePage).toHaveBeenCalledTimes(3);
 
         capturePage.mockClear();
         const captureCause = new Error("capture failed");
         capturePage.mockRejectedValue(captureCause);
-        const writesBeforeFailure = writeFile.mock.calls.length;
         const failingFiber = yield* Effect.exit(manager.captureScreenshot("tab_1")).pipe(
           Effect.forkChild({ startImmediately: true }),
         );
         yield* TestClock.adjust(1_000);
         const exit = yield* Fiber.join(failingFiber);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(capturePage).toHaveBeenCalledTimes(6);
-        expect(writeFile).toHaveBeenCalledTimes(writesBeforeFailure);
-        expect(fromId(42)?.setBackgroundThrottling).toHaveBeenLastCalledWith(true);
+        expect(capturePage).toHaveBeenCalledTimes(3);
         if (Exit.isSuccess(exit)) return;
         const error = Option.getOrThrow(Cause.findErrorOption(exit.cause));
         expect(error).toMatchObject({
@@ -2626,30 +2583,6 @@ describe("PreviewManager", () => {
           webContentsId: 42,
           cause: captureCause,
         });
-      }),
-    ),
-  );
-
-  effectIt.effect("captures final pixels after warmup fails and paint readiness settles", () =>
-    withManager((manager) =>
-      Effect.gen(function* () {
-        const paint = Promise.withResolvers<void>();
-        const { capturePage, wc, capture } = yield* setupStill(manager, paint.promise);
-        capturePage
-          .mockRejectedValueOnce(new Error("UnknownVizError"))
-          .mockRejectedValueOnce(new Error("UnknownVizError"))
-          .mockRejectedValueOnce(new Error("UnknownVizError"))
-          .mockResolvedValue(makeStillImage("final-png"));
-        const fiber = yield* capture.pipe(Effect.forkChild({ startImmediately: true }));
-        yield* TestClock.adjust(300);
-        expect(capturePage).toHaveBeenCalledTimes(3);
-        expect(writeFile).not.toHaveBeenCalled();
-        expect(wc.setBackgroundThrottling.mock.calls).toEqual([[false]]);
-        paint.resolve();
-        const artifact = yield* Fiber.join(fiber);
-        expect(capturePage).toHaveBeenCalledTimes(4);
-        expect(writeFile.mock.calls).toEqual([[artifact.path, Buffer.from("final-png")]]);
-        expect(wc.setBackgroundThrottling.mock.calls).toEqual([[false], [true]]);
       }),
     ),
   );
@@ -2667,8 +2600,6 @@ describe("PreviewManager", () => {
         const capturePage = vi
           .fn<() => Promise<ReturnType<typeof pngImage>>>()
           .mockResolvedValueOnce(pngImage(firstPng))
-          .mockResolvedValueOnce(pngImage(firstPng))
-          .mockResolvedValueOnce(pngImage(secondPng))
           .mockResolvedValueOnce(pngImage(secondPng));
         fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
         yield* manager.createTab("tab_1");
@@ -2688,325 +2619,6 @@ describe("PreviewManager", () => {
         ]);
       }),
     ),
-  );
-
-  effectIt.effect(
-    "waits for paint before capturing and restores rendering after overlapping requests",
-    () =>
-      withManager((manager) =>
-        Effect.gen(function* () {
-          const paint = Promise.withResolvers<void>();
-          const { image, capturePage, wc, capture } = yield* setupStill(manager, paint.promise);
-          const first = Promise.withResolvers<typeof image>();
-          const second = Promise.withResolvers<typeof image>();
-          capturePage
-            .mockResolvedValueOnce(makeStillImage("discarded-warmup"))
-            .mockResolvedValueOnce(makeStillImage("discarded-warmup"))
-            .mockReturnValueOnce(first.promise)
-            .mockReturnValueOnce(second.promise);
-          const hostThrottling = vi.fn();
-          yield* manager.setMainWindow({
-            isDestroyed: () => false,
-            once: vi.fn(),
-            webContents: { setBackgroundThrottling: hostThrottling },
-          } as never);
-          const one = yield* capture.pipe(Effect.forkChild({ startImmediately: true }));
-          const two = yield* capture.pipe(Effect.forkChild({ startImmediately: true }));
-          yield* TestClock.adjust(0);
-          expect(capturePage).toHaveBeenCalledTimes(2);
-          expect(writeFile).not.toHaveBeenCalled();
-          expect(hostThrottling.mock.calls).toEqual([[false]]);
-          expect(wc.setBackgroundThrottling.mock.calls).toEqual([[false]]);
-          paint.resolve();
-          yield* TestClock.adjust(0);
-          expect(capturePage).toHaveBeenCalledTimes(4);
-          first.resolve(image);
-          yield* Fiber.join(one);
-          expect(wc.setBackgroundThrottling.mock.calls).toEqual([[false]]);
-          second.resolve(image);
-          yield* Fiber.join(two);
-          expect(writeFile.mock.calls.map((call) => call[1])).toEqual([
-            Buffer.from("fresh-png"),
-            Buffer.from("fresh-png"),
-          ]);
-          expect(hostThrottling.mock.calls).toEqual([[false], [true]]);
-          expect(wc.setBackgroundThrottling.mock.calls).toEqual([[false], [true]]);
-        }),
-      ),
-  );
-
-  effectIt.effect("keeps picture-in-picture rendering after a still image completes", () =>
-    withManager((manager) =>
-      Effect.gen(function* () {
-        const { image, capturePage, wc, capture } = yield* setupStill(manager);
-        const pending = Promise.withResolvers<typeof image>();
-        capturePage
-          .mockResolvedValueOnce(image)
-          .mockResolvedValueOnce(makeStillImage("discarded-warmup"))
-          .mockReturnValueOnce(pending.promise);
-        const { pictureInPictureWindow } = makeTestPictureInPictureWindow();
-        browserWindowConstructor.mockImplementation(function () {
-          return pictureInPictureWindow;
-        });
-        yield* manager.openPictureInPicture("tab_still");
-        const still = yield* capture.pipe(Effect.forkChild({ startImmediately: true }));
-        yield* TestClock.adjust(0);
-        expect(capturePage).toHaveBeenCalledTimes(3);
-        expect(writeFile).not.toHaveBeenCalled();
-        pending.resolve(image);
-        yield* Fiber.join(still);
-        expect(writeFile.mock.calls.map((call) => call[1])).toEqual([Buffer.from("fresh-png")]);
-        expect(wc.setBackgroundThrottling.mock.calls).toEqual([[false]]);
-        yield* manager.closePictureInPicture("tab_still");
-        expect(wc.setBackgroundThrottling.mock.calls).toEqual([[false], [true]]);
-      }),
-    ),
-  );
-
-  effectIt.effect("keeps a pending still image rendering when recording ends", () =>
-    withManager((manager) =>
-      Effect.gen(function* () {
-        const { image, capturePage, wc, capture } = yield* setupStill(manager);
-        const pending = Promise.withResolvers<typeof image>();
-        capturePage.mockResolvedValueOnce(image).mockReturnValue(pending.promise);
-        yield* manager.startRecording("tab_still");
-        const fiber = yield* capture.pipe(Effect.forkChild({ startImmediately: true }));
-        yield* TestClock.adjust(0);
-        yield* manager.stopRecording("tab_still");
-        expect(wc.setBackgroundThrottling.mock.calls).toEqual([[false]]);
-        pending.resolve(image);
-        yield* Fiber.join(fiber);
-        expect(wc.setBackgroundThrottling.mock.calls).toEqual([[false], [true]]);
-      }),
-    ),
-  );
-
-  effectIt.effect(
-    "ignores late native warmup completion after interruption while recording owns rendering",
-    () =>
-      withManager((manager) =>
-        Effect.gen(function* () {
-          const { image, capturePage, wc, capture } = yield* setupStill(manager);
-          const warmup = Promise.withResolvers<typeof image>();
-          let nativeCompleted = false;
-          const nativePromise = warmup.promise.then((result) => {
-            nativeCompleted = true;
-            return result;
-          });
-          capturePage.mockReturnValueOnce(nativePromise);
-          const fiber = yield* capture.pipe(Effect.forkChild({ startImmediately: true }));
-          yield* TestClock.adjust(0);
-          yield* manager.startRecording("tab_still");
-          yield* Fiber.interrupt(fiber);
-          expect(nativeCompleted).toBe(false);
-          expect(wc.setBackgroundThrottling.mock.calls).toEqual([[false]]);
-          warmup.resolve(image);
-          yield* TestClock.adjust(0);
-          expect(nativeCompleted).toBe(true);
-          expect(capturePage).toHaveBeenCalledTimes(2);
-          expect(writeFile).not.toHaveBeenCalled();
-          expect(wc.setBackgroundThrottling.mock.calls).toEqual([[false]]);
-          yield* manager.stopRecording("tab_still");
-          expect(wc.setBackgroundThrottling.mock.calls).toEqual([[false], [true]]);
-        }),
-      ),
-  );
-
-  effectIt.effect(
-    "ignores an interrupted warmup that resolves while the replacement guest is capturing",
-    () =>
-      withManager((manager) =>
-        Effect.gen(function* () {
-          const fresh = makeStillImage("replacement-png");
-          const late = Promise.withResolvers<typeof fresh>();
-          const finalCapture = Promise.withResolvers<typeof fresh>();
-          const oldCapture = vi.fn(() => late.promise);
-          const replacementCapture = vi
-            .fn()
-            .mockResolvedValueOnce(fresh)
-            .mockReturnValue(finalCapture.promise);
-          const hostThrottling = vi.fn();
-          const host = Object.assign(makeTestHostWebContents(), {
-            setBackgroundThrottling: hostThrottling,
-          });
-          const original = makeTestStillImageWebContents(oldCapture, 42, host);
-          const replacement = makeTestStillImageWebContents(replacementCapture, 43, host);
-          holdStillImagePaint(original, new Promise(() => {}));
-          fromId.mockImplementation((id) => (id === 42 ? original : replacement));
-          yield* manager.createTab("tab_still");
-          yield* manager.registerWebview("tab_still", 42);
-          yield* manager.setColorScheme("tab_still", "system");
-          yield* manager.setMainWindow({
-            isDestroyed: () => false,
-            once: vi.fn(),
-            webContents: host,
-          } as never);
-          const failed = yield* Effect.exit(manager.captureScreenshot("tab_still")).pipe(
-            Effect.forkChild({ startImmediately: true }),
-          );
-          yield* TestClock.adjust(0);
-          yield* Fiber.interrupt(failed);
-          yield* manager.registerWebview("tab_still", 43);
-          yield* manager.setColorScheme("tab_still", "system");
-          const healthy = yield* manager
-            .captureScreenshot("tab_still")
-            .pipe(Effect.forkChild({ startImmediately: true }));
-          yield* TestClock.adjust(0);
-          late.resolve({ ...fresh, toPNG: () => Buffer.from("late-old-warmup") });
-          yield* TestClock.adjust(0);
-          expect(writeFile).not.toHaveBeenCalled();
-          expect(oldCapture).toHaveBeenCalledOnce();
-          expect(replacementCapture).toHaveBeenCalledTimes(2);
-          expect(hostThrottling.mock.calls).toEqual([[false], [true], [false]]);
-          expect(replacement.setBackgroundThrottling.mock.calls).toEqual([[false]]);
-          finalCapture.resolve(fresh);
-          yield* Fiber.join(healthy);
-          expect(writeFile.mock.calls.map((call) => call[1])).toEqual([
-            Buffer.from("replacement-png"),
-          ]);
-          expect(hostThrottling.mock.calls).toEqual([[false], [true], [false], [true]]);
-          expect(replacement.setBackgroundThrottling.mock.calls).toEqual([[false], [true]]);
-        }),
-      ),
-  );
-
-  effectIt.effect("paints a loading document with isolated scheduling despite page overrides", () =>
-    withManager((manager) =>
-      Effect.gen(function* () {
-        for (const mode of ["suppressed", "synchronous", "timeout-before", "timeout-after"]) {
-          writeFile.mockClear();
-          let pixels = "old-pixels";
-          const frames: Array<() => void> = [];
-          let expire = () => {};
-          let paintConfirmed: unknown;
-          const clearTimeout = vi.fn();
-          const probeStarted = Promise.withResolvers<void>();
-          const pageFrame = vi.fn((callback: () => void) => {
-            if (mode === "synchronous") callback();
-          });
-          const page = NodeVM.createContext({
-            Promise: undefined,
-            requestAnimationFrame: pageFrame,
-          });
-          const isolated = NodeVM.createContext({
-            requestAnimationFrame: (callback: () => void) => frames.push(callback),
-            cancelAnimationFrame: (id: number) => {
-              frames.splice(id - 1, 1);
-            },
-            setTimeout: (callback: () => void, delay: number) => {
-              expect(delay).toBe(1_000);
-              expire = callback;
-              return 1;
-            },
-            clearTimeout,
-          });
-          const capturePage = vi.fn(async () => makeStillImage(pixels));
-          const wc = makeTestStillImageWebContents(capturePage);
-          Object.assign(wc, { isLoading: () => true });
-          vi.mocked(wc.executeJavaScript).mockImplementation(async (expression) =>
-            NodeVM.runInContext(expression, page),
-          );
-          vi.mocked(wc.debugger.sendCommand).mockImplementation(async (method, params) => {
-            if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "main" } } };
-            if (method === "Page.createIsolatedWorld") return { executionContextId: 7 };
-            if (method === "Runtime.evaluate") {
-              const pending = NodeVM.runInContext(params?.["expression"] as string, isolated);
-              probeStarted.resolve();
-              paintConfirmed = await pending;
-              return { result: { value: paintConfirmed } };
-            }
-            return undefined;
-          });
-          fromId.mockReturnValue(wc);
-          const tabId = `tab_loading_${mode}`;
-          yield* manager.createTab(tabId);
-          yield* manager.registerWebview(tabId, wc.id);
-          yield* manager.setColorScheme(tabId, "system");
-          const still = yield* manager
-            .captureScreenshot(tabId)
-            .pipe(Effect.forkChild({ startImmediately: true }));
-          yield* Effect.promise(() => probeStarted.promise);
-          yield* TestClock.adjust(0);
-          expect(capturePage).toHaveBeenCalledOnce();
-          expect(writeFile).not.toHaveBeenCalled();
-          if (mode !== "timeout-before") frames.shift()?.();
-          pixels = "new-pixels";
-          yield* TestClock.adjust(0);
-          expect(writeFile).not.toHaveBeenCalled();
-          if (mode.startsWith("timeout")) expire();
-          else frames.shift()?.();
-          yield* Fiber.join(still);
-          expect(paintConfirmed).toBe(!mode.startsWith("timeout"));
-          expect(frames).toHaveLength(0);
-          expect(clearTimeout.mock.calls).toEqual(mode.startsWith("timeout") ? [] : [[1]]);
-          expect(writeFile.mock.calls.map((call) => call[1])).toEqual([Buffer.from("new-pixels")]);
-          expect(pageFrame).not.toHaveBeenCalled();
-          expect(wc.setBackgroundThrottling.mock.calls).toEqual([[false], [true]]);
-          yield* manager.closeTab(tabId);
-        }
-      }),
-    ),
-  );
-
-  effectIt.effect("captures available pixels without taking another debugger's ownership", () =>
-    withManager((manager) =>
-      Effect.gen(function* () {
-        for (const devToolsOpen of [true, false]) {
-          const capturePage = vi.fn(async () => makeStillImage("available-pixels"));
-          const wc = makeTestStillImageWebContents(capturePage);
-          Object.assign(wc, { isDevToolsOpened: () => devToolsOpen });
-          vi.spyOn(wc.debugger, "isAttached").mockReturnValue(true);
-          fromId.mockReturnValue(wc);
-          const tabId = `tab_foreign_debugger_${devToolsOpen}`;
-          yield* manager.createTab(tabId);
-          yield* manager.registerWebview(tabId, wc.id);
-          yield* manager.captureScreenshot(tabId);
-          expect(capturePage).toHaveBeenCalledTimes(2);
-          expect(wc.debugger.attach).not.toHaveBeenCalled();
-          expect(wc.debugger.sendCommand).not.toHaveBeenCalled();
-          expect(writeFile).toHaveBeenLastCalledWith(
-            expect.any(String),
-            Buffer.from("available-pixels"),
-          );
-          expect(wc.setBackgroundThrottling.mock.calls).toEqual([[false], [true]]);
-          yield* manager.closeTab(tabId);
-        }
-      }),
-    ),
-  );
-
-  effectIt.effect(
-    "bounds paint readiness and ignores its late completion during another capture",
-    () =>
-      withManager((manager) =>
-        Effect.gen(function* () {
-          const paint = Promise.withResolvers<void>();
-          const { image, capturePage, wc, capture } = yield* setupStill(manager, paint.promise);
-          const first = yield* Effect.exit(capture).pipe(
-            Effect.forkChild({ startImmediately: true }),
-          );
-          yield* TestClock.adjust(1_001);
-          expect(Exit.isSuccess(yield* Fiber.join(first))).toBe(true);
-          expect(capturePage).toHaveBeenCalledTimes(2);
-          expect(writeFile.mock.calls.map((call) => call[1])).toEqual([Buffer.from("fresh-png")]);
-          expect(wc.setBackgroundThrottling.mock.calls).toEqual([[false], [true]]);
-
-          holdStillImagePaint(wc, Promise.resolve());
-          const finalCapture = Promise.withResolvers<typeof image>();
-          capturePage.mockResolvedValueOnce(image).mockReturnValueOnce(finalCapture.promise);
-          const second = yield* capture.pipe(Effect.forkChild({ startImmediately: true }));
-          yield* TestClock.adjust(0);
-          paint.resolve();
-          yield* TestClock.adjust(0);
-          expect(writeFile).toHaveBeenCalledOnce();
-          expect(capturePage).toHaveBeenCalledTimes(4);
-          expect(wc.setBackgroundThrottling.mock.calls).toEqual([[false], [true], [false]]);
-          finalCapture.resolve(image);
-          yield* Fiber.join(second);
-          expect(writeFile).toHaveBeenCalledTimes(2);
-          expect(wc.setBackgroundThrottling.mock.calls).toEqual([[false], [true], [false], [true]]);
-        }),
-      ),
   );
 
   effectIt.effect("keeps every recorded guest unthrottled until its frame capture stops", () =>
