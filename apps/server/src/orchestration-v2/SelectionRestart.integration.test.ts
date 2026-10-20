@@ -1314,6 +1314,8 @@ it.live.each(["exclusive", "shared"] as const)(
             ["interrupted", "running"],
           );
           assert.isFalse(continuing.runs.some((run) => run.queueHeld));
+          assert.equal(continuing.runs[1]?.delegatedTaskId, continuing.runs[0]?.delegatedTaskId);
+          assert.equal(continuing.runs[1]?.restartContinuationOfRunId, continuing.runs[0]?.id);
           const beforeFinish = yield* sink.latestSequence();
           yield* Deferred.succeed(finishContinuation, undefined);
           yield* sink.stream({ afterSequence: beforeFinish, threadId: parentId }).pipe(
