@@ -311,30 +311,29 @@ export function createManagedRelayQueryManager(
 ) {
   const staleTime = options?.staleTimeMs ?? DEFAULT_STALE_TIME_MS;
   const idleTtl = options?.idleTtlMs ?? DEFAULT_IDLE_TTL_MS;
-  const observe = <A, E, R>(
+  const observe = Effect.fn("managedRelayState.observe")(function* <A, E, R>(
     input: Omit<ManagedRelayQueryEvent, "phase" | "message" | "traceId">,
     effect: Effect.Effect<A, E, R>,
-  ): Effect.Effect<A, E, R> =>
-    Effect.gen(function* () {
-      options?.onQueryEvent?.({ ...input, phase: "start" });
-      return yield* effect.pipe(
-        Effect.onExit((exit) =>
-          Effect.sync(() => {
-            if (exit._tag === "Success") {
-              options?.onQueryEvent?.({ ...input, phase: "success" });
-              return;
-            }
-            const error = Cause.squash(exit.cause);
-            options?.onQueryEvent?.({
-              ...input,
-              phase: "failure",
-              message: error instanceof Error ? error.message : String(error),
-              traceId: findErrorTraceId(error),
-            });
-          }),
-        ),
-      );
-    });
+  ): Effect.fn.Return<A, E, R> {
+    options?.onQueryEvent?.({ ...input, phase: "start" });
+    return yield* effect.pipe(
+      Effect.onExit((exit) =>
+        Effect.sync(() => {
+          if (exit._tag === "Success") {
+            options?.onQueryEvent?.({ ...input, phase: "success" });
+            return;
+          }
+          const error = Cause.squash(exit.cause);
+          options?.onQueryEvent?.({
+            ...input,
+            phase: "failure",
+            message: error instanceof Error ? error.message : String(error),
+            traceId: findErrorTraceId(error),
+          });
+        }),
+      ),
+    );
+  });
 
   const environmentsAtom = Atom.family((accountId: string) =>
     runtime

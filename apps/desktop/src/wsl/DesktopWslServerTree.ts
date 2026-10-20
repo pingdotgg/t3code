@@ -48,22 +48,25 @@ export class DesktopWslServerTree extends Context.Service<
   }
 >()("@t3tools/desktop/wsl/DesktopWslServerTree") {}
 
-export const forEachBoundedTree = <Node, E, R>(
+export const forEachBoundedTree = Effect.fn("DesktopWslServerTree.forEachBoundedTree")(function* <
+  Node,
+  E,
+  R,
+>(
   roots: ReadonlyArray<Node>,
   visit: (node: Node) => Effect.Effect<ReadonlyArray<Node>, E, R>,
-): Effect.Effect<void, E, R> =>
-  Effect.gen(function* () {
-    const pending = [...roots];
-    while (pending.length > 0) {
-      const batch = pending.splice(-COPY_CONCURRENCY);
-      const children = yield* Effect.forEach(batch, visit, {
-        concurrency: COPY_CONCURRENCY,
-      });
-      for (const entries of children) {
-        pending.push(...entries);
-      }
+): Effect.fn.Return<void, E, R> {
+  const pending = [...roots];
+  while (pending.length > 0) {
+    const batch = pending.splice(-COPY_CONCURRENCY);
+    const children = yield* Effect.forEach(batch, visit, {
+      concurrency: COPY_CONCURRENCY,
+    });
+    for (const entries of children) {
+      pending.push(...entries);
     }
-  });
+  }
+});
 
 interface CopyTreeEntry {
   readonly sourcePath: string;

@@ -83,15 +83,17 @@ export const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => false),
     );
 
-  const isOurLink = (link: string) =>
-    Effect.gen(function* () {
+  const isOurLink = Effect.fn("DesktopCliCommand.isOurLink")(
+    function* (link: string) {
       yield* fs.readLink(link);
       // The launcher is a few KB; never read a large binary another `t3` links to.
       const info = yield* fs.stat(link);
       if (info.type !== "File" || Number(info.size) > 16_384) return false;
       const content = yield* fs.readFileString(link);
       return content.includes(DesktopCliShim.MARKER);
-    }).pipe(Effect.orElseSucceed(() => false));
+    },
+    Effect.orElseSucceed(() => false),
+  );
 
   const powershell = (env: Record<string, string>) =>
     Effect.scoped(
