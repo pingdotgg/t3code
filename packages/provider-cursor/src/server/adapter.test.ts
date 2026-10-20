@@ -830,11 +830,7 @@ describe("CursorAdapterV2", () => {
           name: "weather",
           kind: "integration",
         });
-        assert.deepEqual(item.input, {
-          providerIdentifier: "weather",
-          toolName: "get_weather",
-          args: { city: "Berlin" },
-        });
+        assert.deepEqual(item.input, { city: "Berlin" });
       }
       const fileSearchItems = events.flatMap((event) =>
         event.type === "turn_item.updated" &&

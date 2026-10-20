@@ -22,10 +22,12 @@ import {
   ProviderThreadId,
   ThreadId,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2TurnItem,
   type ProviderOptionDescriptor,
 } from "@t3tools/contracts";
 import { GrokSettings } from "@t3tools/provider-grok/settings";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { deriveBlockedOnThreadWait } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -911,6 +913,139 @@ describe("AcpAdapterV2", () => {
         "the native model was left on B, so the turn on A must set it back first",
       );
     }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect.each(["agent_message_chunk", "agent_thought_chunk"] as const)(
+    "keeps named ACP %s open while deriving thread wait execution state",
+    (sessionUpdate) =>
+      Effect.gen(function* () {
+        type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+        let handler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+        const instanceId = ProviderInstanceId.make("acp-named-stream-wait");
+        const path = yield* Path.Path;
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+              mockAgentPath: yield* path.fromFileUrl(
+                new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+              ),
+              wrapRuntime: (runtime) => ({
+                ...runtime,
+                handleSessionUpdate: (next) =>
+                  Effect.sync(() => {
+                    handler = next;
+                  }).pipe(Effect.andThen(runtime.handleSessionUpdate(next))),
+                prompt: () =>
+                  Effect.gen(function* () {
+                    assert.isDefined(handler);
+                    const updates = [
+                      {
+                        sessionUpdate,
+                        messageId: "named-stream",
+                        content: { type: "text", text: "Waiting for the child result" },
+                      },
+                      {
+                        sessionUpdate: "tool_call",
+                        toolCallId: "wait",
+                        title: "Wait for the child",
+                        status: "in_progress",
+                        rawInput: {
+                          server: "t3-code",
+                          tool: "t3_thread_wait",
+                          arguments: { threadId: "child" },
+                        },
+                        _meta: { is_mcp_tool_call: true },
+                      },
+                      {
+                        sessionUpdate: "tool_call",
+                        toolCallId: "command",
+                        kind: "execute",
+                        title: "Run command",
+                        status: "in_progress",
+                        rawInput: { command: "pwd" },
+                      },
+                      {
+                        sessionUpdate: "tool_call_update",
+                        toolCallId: "command",
+                        status: "completed",
+                      },
+                      {
+                        sessionUpdate: "tool_call_update",
+                        toolCallId: "wait",
+                        status: "completed",
+                      },
+                    ] satisfies Array<EffectAcpSchema.SessionUpdate>;
+                    for (const update of updates)
+                      yield* handler!({ sessionId: "mock-session-1", update });
+                    return { stopReason: "end_turn" as const };
+                  }),
+              }),
+            }),
+          },
+        });
+        const threadId = ThreadId.make("thread-acp-named-stream-wait");
+        const modelSelection = { instanceId, model: "default" };
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("session-acp-named-stream-wait"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const input = makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        });
+        yield* runtime.startTurn(input);
+        const events = yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        );
+        const retained = new Map<string, OrchestrationV2TurnItem>();
+        const states: Array<boolean> = [];
+        for (const event of events) {
+          if (event.type !== "turn_item.updated") continue;
+          const item = event.turnItem;
+          retained.set(item.id, item);
+          if (item.type !== "dynamic_tool" && item.type !== "command_execution") continue;
+          const streams = [...retained.values()].filter(
+            (entry) => entry.type === "assistant_message" || entry.type === "reasoning",
+          );
+          assert.deepEqual(
+            streams.map((entry) => [entry.type, entry.status]),
+            [
+              [
+                sessionUpdate === "agent_message_chunk" ? "assistant_message" : "reasoning",
+                "running",
+              ],
+            ],
+          );
+          states.push(
+            deriveBlockedOnThreadWait({
+              activeRun: { id: input.runId, status: "running" },
+              turnItems: [...retained.values()],
+            }),
+          );
+        }
+        assert.deepEqual(states, [true, false, true, false]);
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.effect("starts a new replay message after ACP v2 plan boundaries", () =>

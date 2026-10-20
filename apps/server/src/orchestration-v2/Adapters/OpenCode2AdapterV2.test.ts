@@ -3333,6 +3333,50 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("keeps thread-scoped T3 waits as dynamic tools through their lifecycle", () =>
+    Effect.gen(function* () {
+      const tool = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: "call-wait" };
+      const name = "t3-code-web_delegate_task";
+      const input = { task: "Review", mode: "wait" };
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.tool.input.started", { ...tool, name }),
+        event("session.tool.called", { ...tool, name, input, executed: true }),
+        event("session.tool.success", {
+          ...tool,
+          content: [{ type: "text", text: "Reviewed" }],
+          metadata: {},
+          executed: true,
+        }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      const items = (yield* Fiber.join(events)).flatMap((event) =>
+        event.type === "turn_item.updated" &&
+        event.turnItem.nativeItemRef?.nativeId?.endsWith(tool.id)
+          ? [event.turnItem]
+          : [],
+      );
+      assert.deepEqual(
+        items.map((item) => item.type),
+        ["dynamic_tool", "dynamic_tool", "dynamic_tool"],
+      );
+      assert.deepEqual(
+        items.map((item) => item.status),
+        ["running", "running", "completed"],
+      );
+      const last = items.at(-1);
+      assert.equal(last?.type === "dynamic_tool" ? last.toolName : null, name);
+      assert.deepEqual(last?.type === "dynamic_tool" ? last.input : null, input);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect(
     "registers T3's MCP server for the thread alone and removes it when the thread unloads",
     () =>
