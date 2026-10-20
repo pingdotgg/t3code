@@ -2,6 +2,8 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   DEFAULT_FONT_SELECTIONS,
   normalizeFontSelections,
+  normalizeReplyEmphasisWeights,
+  resolveReplyEmphasis,
   resolveMobileFonts,
 } from "./mobileFonts";
 
@@ -11,6 +13,11 @@ const serif = {
   regular: "ExampleSerif-Regular",
   medium: "ExampleSerif-Medium",
   bold: "ExampleSerif-Bold",
+  emphasisFaces: {
+    "500": "ExampleSerif-Medium",
+    "600": "ExampleSerif-Semibold",
+    "700": "ExampleSerif-Bold",
+  },
 };
 
 describe("installed mobile fonts", () => {
@@ -73,5 +80,41 @@ describe("installed mobile fonts", () => {
     expect(fonts.reply.regular).toBe("serif");
     expect(fonts.composer.regular).toBe("monospace");
     expect(fonts.code.regular).toBe("monospace");
+  });
+});
+
+describe("reply emphasis", () => {
+  it("preserves the default bold face and only changes emphasis for a selected weight", () => {
+    const standard = resolveMobileFonts(DEFAULT_FONT_SELECTIONS, new Map(), "ios");
+    expect(resolveReplyEmphasis(standard.reply)).toBe("DMSans-Bold");
+    expect(resolveReplyEmphasis(standard.reply, "500")).toBe("DMSans-Medium");
+  });
+
+  it("selects a real installed semibold face and falls back when that weight is unavailable", () => {
+    expect(resolveReplyEmphasis(serif, "600")).toBe("ExampleSerif-Semibold");
+    expect(
+      resolveReplyEmphasis(
+        {
+          regular: "Example-Regular",
+          medium: "Example-Regular",
+          bold: "Example-Bold",
+          emphasisFaces: { "700": "Example-Bold" },
+        },
+        "600",
+      ),
+    ).toBe("Example-Bold");
+  });
+
+  it("remembers different weights per font and drops invalid saved values", () => {
+    const saved = normalizeReplyEmphasisWeights({
+      "FirstSerif-Regular": "700",
+      "SecondSerif-Regular": "600",
+      invalid: 600,
+      bad: "900",
+      "": "500",
+    });
+    expect(saved).toEqual({ "FirstSerif-Regular": "700", "SecondSerif-Regular": "600" });
+    expect(normalizeReplyEmphasisWeights(null)).toEqual({});
+    expect(resolveReplyEmphasis(serif, saved["SecondSerif-Regular"])).toBe("ExampleSerif-Semibold");
   });
 });
