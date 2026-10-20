@@ -864,14 +864,15 @@ export function useThreadActions() {
     return result;
   };
 
-  const confirmAndDeleteThread = async (target: ScopedThreadRef) => {
+  // Archived threads are not in the live store, so callers that list them pass the title.
+  const confirmAndDeleteThread = async (target: ScopedThreadRef, knownTitle?: string) => {
     const permissionFailure = threadOperationFailure(target);
     if (permissionFailure) return permissionFailure;
     const localApi = readLocalApi();
     const resolved = resolveThreadTarget(target);
 
     if (confirmThreadDelete && localApi) {
-      const title = resolved?.thread.title ?? "this thread";
+      const title = resolved?.thread.title ?? knownTitle ?? "this thread";
       const confirmationResult = await settlePromise(() =>
         localApi.dialogs.confirm(
           [
