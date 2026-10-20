@@ -244,13 +244,12 @@ omits it for a provider that offers all of them. When the target lists
 `runtimeModes`, an explicit `runtimeMode` outside that list is refused, and an
 inherited mode steps down to the broadest mode the target offers.
 
-Each delegated review round uses a new `delegate_task` call with the original brief,
+Each independent delegated review round uses a new `delegate_task` call with the original brief,
 prior findings, responses, and unresolved objections. Track each round by its own `taskId` and use
 a distinct `clientRequestId` per round, stable across retries of that round.
-`childThreadId` is backing storage, not a target for another review round through
-`t3_thread_send`. Ordinary thread messaging remains available for user-requested
-conversations; it does not reopen a completed task. There is no task-level follow-up
-API for preserving the same reviewer session.
+For a follow-up that needs the same child's conversation, use `t3_thread_send` on
+its `childThreadId`. After the original task completes, its published result stays
+unchanged and later turns are tracked as separate tasks.
 
 Delegation requires an active parent run owned by the MCP credential's
 provider session. The request becomes the V2 command

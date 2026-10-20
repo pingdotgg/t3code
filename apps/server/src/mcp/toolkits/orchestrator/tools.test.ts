@@ -19,7 +19,8 @@ describe("orchestrator MCP tool guidance", () => {
     assert.include(DelegateTaskTool.description ?? "", "does not cancel the child");
     assert.include(DelegateTaskTool.description ?? "", "keep that taskId");
     assert.include(DelegateTaskTool.description ?? "", "call delegate_task again");
-    assert.include(DelegateTaskTool.description ?? "", "childThreadId is backing storage");
+    assert.include(DelegateTaskTool.description ?? "", "use t3_thread_send on its childThreadId");
+    assert.notInclude(DelegateTaskTool.description ?? "", "not the target for starting another");
     assert.include(
       OrchestratorToolkit.tools.t3_thread_send.description ?? "",
       "a requested follow-up creates a fresh task",
