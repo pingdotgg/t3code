@@ -26,6 +26,18 @@ export interface SidebarProjectSnapshot extends Project {
   remoteEnvironmentLabels: readonly string[];
 }
 
+export function countSidebarProjectChoices(groups: ReadonlyArray<SidebarProjectSnapshot>): number {
+  let checkoutCount = 0;
+  let hasScratch = false;
+  for (const group of groups) {
+    for (const project of group.memberProjects) {
+      if (project.isScratch) hasScratch = true;
+      else checkoutCount += 1;
+    }
+  }
+  return checkoutCount + Number(hasScratch);
+}
+
 export function projectGroupsSpanEnvironments(
   groups: ReadonlyArray<Pick<SidebarProjectSnapshot, "memberProjects">>,
 ): boolean {
@@ -173,8 +185,33 @@ export function buildSidebarProjectSnapshots(input: {
 export function buildSidebarProjectPickerEntries(input: {
   groups: ReadonlyArray<SidebarProjectSnapshot>;
   preferredProjectRef: ScopedProjectRef | null;
+  expandCheckouts?: boolean;
+  isEnvironmentReachable?: (environmentId: EnvironmentId) => boolean;
 }) {
   const preferredProjectRef = input.preferredProjectRef;
+  if (input.expandCheckouts) {
+    // memberProjects already deduplicates physical checkouts. Keep distinct
+    // worktrees on the same environment as separate choices.
+    return input.groups
+      .flatMap((group) =>
+        group.memberProjects.map((targetProject): SidebarProjectPickerEntry => ({
+          group,
+          targetProject,
+          isPreferred:
+            preferredProjectRef !== null &&
+            targetProject.environmentId === preferredProjectRef.environmentId &&
+            targetProject.id === preferredProjectRef.projectId,
+        })),
+      )
+      .toSorted((left, right) => {
+        const reachability = input.isEnvironmentReachable;
+        const reachableDelta = reachability
+          ? Number(reachability(right.targetProject.environmentId)) -
+            Number(reachability(left.targetProject.environmentId))
+          : 0;
+        return reachableDelta || Number(right.isPreferred) - Number(left.isPreferred);
+      });
+  }
   const entries = input.groups.flatMap((group): SidebarProjectPickerEntry[] => {
     const isPreferred = preferredProjectRef
       ? group.memberProjectRefs.some(
