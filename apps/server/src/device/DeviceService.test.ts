@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
+  DeviceBootError,
   DeviceId,
   DeviceOperationError,
   LOCAL_DEVICE_HOST_ID,
@@ -37,6 +38,8 @@ import { NodeRuntimeUnavailableError } from "@t3tools/shared/nodeRuntime";
 import * as DeviceService from "./DeviceService.ts";
 
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+const decodeBootError = Schema.decodeUnknownSync(Schema.fromJsonString(DeviceBootError));
+const encodeBootError = Schema.encodeSync(Schema.fromJsonString(DeviceBootError));
 
 const baseState: DeviceServiceState = {
   hosts: [],
@@ -77,7 +80,7 @@ describe("DeviceService.stateStream", () => {
 
 const fixture = Effect.fn("fixture")(function* (
   onBoot: Effect.Effect<void> = Effect.void,
-  bootError?: string,
+  bootError?: string | { error?: string; errors?: Array<{ message: string; error?: string }> },
   failListAfterShutdown = false,
   runtimeFailure?:
     | NodeRuntimeUnavailableError
@@ -92,6 +95,7 @@ const fixture = Effect.fn("fixture")(function* (
   const agentStops: string[] = [];
   const requests: string[] = [];
   const devices: Array<Omit<DeviceSummary, "hostId">> = [];
+  const discoveryErrors = yield* Ref.make<Array<{ message: string; error?: string }>>([]);
   const encoderResult = yield* Ref.make({ code: 0, stdout: " V....D libx264", stderr: "" });
   let booted = false;
   let shutDown = false;
@@ -212,7 +216,12 @@ const fixture = Effect.fn("fixture")(function* (
             return HttpClientResponse.fromWeb(
               request,
               Response.json(
-                bootError ? { ok: false, error: bootError } : { ok: true, serial: "emulator-5554" },
+                bootError
+                  ? {
+                      ok: false,
+                      ...(typeof bootError === "string" ? { error: bootError } : bootError),
+                    }
+                  : { ok: true, serial: "emulator-5554" },
               ),
             );
           }
@@ -222,6 +231,7 @@ const fixture = Effect.fn("fixture")(function* (
           return HttpClientResponse.fromWeb(
             request,
             Response.json({
+              errors: yield* Ref.get(discoveryErrors),
               simulators: devices.filter((device) => device.platform === "ios"),
               emulators: [
                 ...devices.filter((device) => device.platform === "android"),
@@ -244,7 +254,17 @@ const fixture = Effect.fn("fixture")(function* (
       ),
     ),
   );
-  return { service, starts, agentStarts, agentStops, requests, settings, devices, encoderResult };
+  return {
+    service,
+    starts,
+    agentStarts,
+    agentStops,
+    requests,
+    settings,
+    devices,
+    encoderResult,
+    discoveryErrors,
+  };
 });
 
 describe("device setup consent", () => {
@@ -506,6 +526,60 @@ describe("device discovery after server restart", () => {
   );
 });
 
+const missingPlistMessage =
+  "[apple-utils] Failed to read CoreSimulator plist at /Users/test/Library/Developer/CoreSimulator/Devices/deleted-simulator/device.plist:";
+
+it.effect.each([
+  {
+    message: missingPlistMessage,
+    error: "Error: ENOENT: no such file or directory, open 'device.plist'",
+    ignored: true,
+  },
+  {
+    message: missingPlistMessage,
+    error: "Error: EACCES: permission denied, open 'device.plist'",
+    ignored: false,
+  },
+  { message: missingPlistMessage, error: undefined, ignored: false },
+  {
+    message: "[apple-utils] Failed to parse CoreSimulator device.plist:",
+    error: "Invalid XML",
+    ignored: false,
+  },
+  {
+    message: "[apple-utils] Failed to list devices:",
+    error: "Error: ENOENT: simctl missing",
+    ignored: false,
+  },
+])("handles discovery diagnostic: $error", ({ message, error, ignored }) =>
+  Effect.gen(function* () {
+    const { service, discoveryErrors } = yield* fixture();
+    yield* Ref.set(discoveryErrors, [{ message, ...(error ? { error } : {}) }]);
+    const state = yield* service.configure({ enabled: true });
+    expect(state.hostStatus).toBe("ready");
+    expect(state.devices.map((device) => device.id)).toEqual(["Pixel_API_35"]);
+    expect(state.hostStatusDetail).toBe(ignored ? undefined : message);
+    expect(state.hostStatuses.local?.detail).toBe(ignored ? undefined : message);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("keeps other discovery warnings and clears them when only a deleted plist remains", () =>
+  Effect.gen(function* () {
+    const { service, discoveryErrors } = yield* fixture();
+    const missing = {
+      message: missingPlistMessage,
+      error: "Error: ENOENT: no such file or directory",
+    };
+    yield* Ref.set(discoveryErrors, [missing, { message: "Android discovery failed." }]);
+    const initial = yield* service.configure({ enabled: true });
+    expect(initial.hostStatusDetail).toBe("Android discovery failed.");
+    yield* Ref.set(discoveryErrors, [missing]);
+    const refreshed = yield* service.list;
+    expect(refreshed.hostStatusDetail).toBeUndefined();
+    expect(refreshed.hostStatuses.local?.detail).toBeUndefined();
+  }).pipe(Effect.scoped),
+);
+
 it.effect.each([
   {
     diagnostic: "Insufficient disk space at /private/user/path",
@@ -518,7 +592,8 @@ it.effect.each([
     message: "did not become ready in time",
   },
   {
-    diagnostic: "Unexpected failure: secret-token",
+    diagnostic:
+      "The emulator process exited with code 1.\nTry manually: emulator -avd Pixel_API_35",
     reason: "launch_failed",
     message: "could not start",
   },
@@ -535,7 +610,34 @@ it.effect.each([
       .pipe(Effect.flip);
     expect(error._tag).toBe("DeviceBootError");
     expect(error.message).toContain(message);
-    expect(error.message).not.toContain(diagnostic);
+    expect(error.message).toContain(diagnostic);
+    expect((yield* service.state).bootingDevices).toEqual([]);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("includes nested hub boot diagnostics and bounds them to 2,000 characters", () =>
+  Effect.gen(function* () {
+    const diagnostic = "Error: emulator binary missing\n" + "diagnostic output\n".repeat(200);
+    const { service } = yield* fixture(Effect.void, {
+      error: "Failed to spawn emulator",
+      errors: [{ message: "Failed to launch emulator binary", error: diagnostic }],
+    });
+    yield* service.configure({ enabled: true });
+    const error = yield* service
+      .open({
+        threadId: ThreadId.make("nested-boot-failure"),
+        deviceId: "Pixel_API_35",
+        platform: "android",
+      })
+      .pipe(Effect.flip);
+    expect(error._tag).toBe("DeviceBootError");
+    if (error._tag !== "DeviceBootError") return;
+    const expected = `Failed to spawn emulator\n\nFailed to launch emulator binary\n\n${diagnostic}`;
+    expect(error.diagnostics).toBe(`${expected.slice(0, 1_999)}…`);
+    expect(error.diagnostics).toHaveLength(2_000);
+    expect(error.message).toContain(error.diagnostics);
+    const roundTrip = decodeBootError(encodeBootError(error));
+    expect(roundTrip.message).toBe(error.message);
     expect((yield* service.state).bootingDevices).toEqual([]);
   }).pipe(Effect.scoped),
 );

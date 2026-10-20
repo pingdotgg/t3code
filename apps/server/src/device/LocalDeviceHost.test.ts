@@ -458,7 +458,73 @@ it.effect(
           Effect.provideService(FileSystem.FileSystem, FileSystem.makeNoop({})),
         );
       expect(missing.XDG_RUNTIME_DIR).toBeUndefined();
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.provideMerge(ProcessRunner.layer, NodeServices.layer)),
+    ),
+);
+
+it.effect.each([
+  {
+    name: "old SDK",
+    front: "emulated webcam<N> none",
+    back: "emulated virtualscene none",
+    code: 0,
+    extra: undefined,
+    expected: "-camera-front emulated -camera-back emulated",
+  },
+  {
+    name: "imagefile-capable SDK",
+    front: "emulated imagefile:<path> none",
+    back: "emulated imagefile:<path> none",
+    code: 0,
+    extra: undefined,
+    expected: undefined,
+  },
+  {
+    name: "user overrides",
+    front: "emulated none",
+    back: "emulated none",
+    code: 0,
+    extra: "-memory 4096 -camera-front none",
+    expected: "-camera-front emulated -camera-back emulated -memory 4096 -camera-front none",
+  },
+  {
+    name: "different camera capabilities",
+    front: "emulated none",
+    back: "emulated imagefile:<path> none",
+    code: 0,
+    extra: undefined,
+    expected: "-camera-front emulated",
+  },
+  {
+    name: "failed help probe",
+    front: "emulated none",
+    back: "emulated none",
+    code: 1,
+    extra: undefined,
+    expected: undefined,
+  },
+])("configures supported emulator cameras for $name", ({ front, back, code, extra, expected }) =>
+  Effect.gen(function* () {
+    const result = yield* LocalDeviceHost.__testing
+      .hubEnvironment({ ANDROID_HOME: "/sdk", EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS: extra })
+      .pipe(
+        Effect.provideService(HostProcess.Platform, "darwin"),
+        Effect.provideService(HostProcess.UserId, 1000),
+        Effect.provideService(ProcessRunner.ProcessRunner, {
+          run: (input) => {
+            expect(input.command).toBe("/sdk/emulator/emulator");
+            expect(input.args[0]).toMatch(/^-help-camera-(front|back)$/);
+            return Effect.succeed(
+              processOutput(code, input.args[0] === "-help-camera-front" ? front : back),
+            );
+          },
+        }),
+        Effect.provide(NodeServices.layer),
+      );
+    expect(result.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS).toBe(expected);
+  }),
 );
 
 it.live("limits hub discovery to Android unless the host is a Mac", () =>

@@ -354,6 +354,7 @@ export class DeviceBootError extends Schema.TaggedError<DeviceBootError>()("Devi
   hostId: DeviceHostId,
   deviceId: DeviceId,
   reason: Schema.Literals(["disk_space", "timeout", "launch_failed"]),
+  diagnostics: Schema.optional(Schema.String.check(Schema.isMaxLength(2_000))),
   cause: Schema.Defect(),
 }) {
   override get message(): string {
@@ -363,7 +364,8 @@ export class DeviceBootError extends Schema.TaggedError<DeviceBootError>()("Devi
       launch_failed:
         "The simulator or emulator could not start. Check its configuration on the environment server.",
     }[this.reason];
-    return `Device ${this.deviceId} failed to boot: ${explanation}`;
+    const summary = `Device ${this.deviceId} failed to boot: ${explanation}`;
+    return this.diagnostics ? `${summary}\n\n${this.diagnostics}` : summary;
   }
 }
 
