@@ -453,13 +453,17 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     canReadFiles && selectedProject !== null && selectedProject.workspaceRoot !== ""
       ? projectEnvironment.readFile({
           environmentId: selectedProject.environmentId,
-          input: { cwd: selectedProject.workspaceRoot, relativePath: T3_PROJECT_FILE_NAME },
+          input: {
+            cwd: selectedProject.workspaceRoot,
+            relativePath: T3_PROJECT_FILE_NAME,
+            allowMissing: true,
+          },
         })
       : null,
   );
   const t3ProjectFileData = t3ProjectFileQuery.data as ProjectReadFileResult | null;
   const t3ProjectFile =
-    t3ProjectFileData === null || t3ProjectFileData.truncated
+    t3ProjectFileData === null || t3ProjectFileData.exists === false || t3ProjectFileData.truncated
       ? null
       : parseT3ProjectFile(t3ProjectFileData.contents);
   const projectSettings = resolveProjectSettings(

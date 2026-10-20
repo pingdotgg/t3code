@@ -418,6 +418,8 @@ export const ProjectReadFileInput = Schema.Struct({
   // Workspace-relative, or an absolute host path for a file outside the
   // workspace. Only workspace-relative paths can be written back.
   relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_READ_FILE_PATH_MAX_LENGTH)),
+  // Optional files can be absent without failing the read.
+  allowMissing: Schema.optional(Schema.Boolean),
 });
 export type ProjectReadFileInput = typeof ProjectReadFileInput.Type;
 
@@ -426,6 +428,8 @@ export const ProjectReadFileResult = Schema.Struct({
   contents: Schema.String,
   byteLength: NonNegativeInt,
   truncated: Schema.Boolean,
+  // Omitted by older servers; false only for an absent optional file.
+  exists: Schema.optional(Schema.Boolean),
 });
 export type ProjectReadFileResult = typeof ProjectReadFileResult.Type;
 

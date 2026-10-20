@@ -143,7 +143,10 @@ export function createProjectEnvironmentAtoms<R, E>(
       execute: (input) =>
         fileMetadata.seedAfterRead(
           request(WS_METHODS.projectsReadFile, input),
-          (result, isCurrent) => fileMetadata.rememberFile(input.cwd, result, isCurrent),
+          (result, isCurrent) =>
+            result.exists === false
+              ? Effect.void
+              : fileMetadata.rememberFile(input.cwd, result, isCurrent),
         ),
     }),
     optimisticFile: (target: OptimisticProjectFileTarget) =>

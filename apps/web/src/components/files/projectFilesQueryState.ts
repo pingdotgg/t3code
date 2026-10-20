@@ -4,6 +4,7 @@ import {
   type ProjectListEntriesResult,
   ProjectReadFileError,
   type ProjectReadFileResult,
+  T3_PROJECT_FILE_NAME,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
@@ -71,7 +72,11 @@ export function getProjectFileQueryAtom(
 ) {
   return projectEnvironment.readFile({
     environmentId,
-    input: { cwd, relativePath: relativePath ?? EMPTY_PROJECT_FILE_PATH },
+    input: {
+      cwd,
+      relativePath: relativePath ?? EMPTY_PROJECT_FILE_PATH,
+      ...(relativePath === T3_PROJECT_FILE_NAME ? { allowMissing: true } : {}),
+    },
   });
 }
 
@@ -112,7 +117,8 @@ export function getProjectFileContents(
   const optimistic = getOptimisticProjectFileQueryData(environmentId, cwd, relativePath);
   if (optimistic) return optimistic.contents;
   const result = appAtomRegistry.get(getProjectFileQueryAtom(environmentId, cwd, relativePath));
-  return Option.getOrUndefined(AsyncResult.value(result))?.contents;
+  const data = Option.getOrUndefined(AsyncResult.value(result));
+  return data?.exists === false ? undefined : data?.contents;
 }
 
 export function getUnsavedProjectFileQueryData(
@@ -259,15 +265,15 @@ export function useProjectFileQuery(
   const result = useAtomValue(atom);
   const refreshAtom = useAtomRefresh(atom);
   const refresh = () => refreshAtom();
+  const readData = Option.getOrNull(AsyncResult.value(result));
+  const isMissing = readData?.exists === false;
   const optimisticResult = useAtomValue(
     optimisticFileAtom(environmentId, cwd, relativePath ?? EMPTY_PROJECT_FILE_PATH),
   );
   const optimisticFile = relativePath === null ? null : optimisticResult;
   const cause = failureCause(result);
   const readError = isProjectReadFileError(cause) ? cause : null;
-  const data = canReadFiles
-    ? (optimisticFile?.data ?? Option.getOrNull(AsyncResult.value(result)))
-    : null;
+  const data = canReadFiles ? (optimisticFile?.data ?? (isMissing ? null : readData)) : null;
   const isNotFile = readError?.failure === "path_not_file";
 
   return {
@@ -276,7 +282,9 @@ export function useProjectFileQuery(
       !isQueryEnabled || fileAccess.isPending
         ? null
         : canReadFiles
-          ? errorMessage(cause)
+          ? isMissing && !optimisticFile
+            ? `'${relativePath}' does not exist.`
+            : errorMessage(cause)
           : (fileAccess.error ?? "This connection cannot read host files."),
     isPending: isQueryEnabled && (fileAccess.isPending || result.waiting),
     readError,
