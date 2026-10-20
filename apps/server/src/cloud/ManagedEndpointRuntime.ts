@@ -185,8 +185,9 @@ export const make = Effect.gen(function* () {
     yield* stopConnector(active);
   });
 
-  const superviseConnector = (connector: ActiveConnector) =>
-    Effect.gen(function* () {
+  // Lives until connector exit and starts replacements; avoid nested lifetime spans.
+  const superviseConnector = Effect.fnUntraced(
+    function* (connector: ActiveConnector) {
       const result = yield* Effect.result(connector.child.exitCode);
       const activeAtExit = yield* Ref.get(activeRef);
       if (
@@ -253,9 +254,9 @@ export const make = Effect.gen(function* () {
           yield* reconcileConfig(desiredConfig);
         }),
       );
-    }).pipe(
-      Effect.catchCause((cause) => Effect.logWarning("Relay client supervisor failed", { cause })),
-    );
+    },
+    Effect.catchCause((cause) => Effect.logWarning("Relay client supervisor failed", { cause })),
+  );
 
   // The new connector starts next to the old one on the same tunnel, and the
   // old one stops only once the new one registers, so clients never see the
@@ -370,8 +371,9 @@ export const make = Effect.gen(function* () {
     yield* Effect.forkIn(retryPinnedRelayClientInstall, runtimeScope);
   });
 
-  const watchConnectorRegistration = (connector: ActiveConnector) =>
-    Effect.gen(function* () {
+  // Registration retries can last for the connector lifetime; keep this loop untraced.
+  const watchConnectorRegistration = Effect.fnUntraced(
+    function* (connector: ActiveConnector) {
       yield* Effect.sleep(CONNECTOR_REGISTRATION_TIMEOUT);
       if (yield* Deferred.isDone(connector.registered)) return true;
       yield* Effect.logWarning(
@@ -384,46 +386,48 @@ export const make = Effect.gen(function* () {
       );
       yield* Queue.offer(recoveryRequests, connector.config);
       return false;
-    }).pipe(Effect.repeat({ until: (connected) => connected }));
+    },
+    Effect.repeat({ until: (connected) => connected }),
+  );
 
   // Only an explicit 503 counts: a failed request says nothing about the
-  const watchConnectorReadiness = (connector: ActiveConnector) =>
-    Effect.gen(function* () {
-      const readyUrl = `http://${yield* Deferred.await(connector.metricsAddress)}/ready`;
-      let notReadyChecks = 0;
-      while (true) {
-        yield* Effect.sleep(CONNECTOR_READINESS_INTERVAL);
-        const status = yield* httpClient.get(readyUrl).pipe(
-          Effect.map((response) => response.status),
-          Effect.scoped,
-          Effect.withTracerEnabled(false),
-          Effect.timeoutOption(CONNECTOR_READINESS_REQUEST_TIMEOUT),
-          Effect.orElseSucceed(() => Option.none<number>()),
-        );
-        if (Option.isNone(status)) continue;
-        if (status.value === 200) {
-          notReadyChecks = 0;
-          yield* Ref.set(notReadyChecksBeforeRestartRef, CONNECTOR_NOT_READY_CHECKS_BEFORE_RESTART);
-          continue;
-        }
-        if (status.value !== 503) continue;
-        notReadyChecks += 1;
-        const threshold = yield* Ref.get(notReadyChecksBeforeRestartRef);
-        if (notReadyChecks < threshold) continue;
+  // Readiness polling runs for the connector lifetime; keep this loop untraced.
+  const watchConnectorReadiness = Effect.fnUntraced(function* (connector: ActiveConnector) {
+    const readyUrl = `http://${yield* Deferred.await(connector.metricsAddress)}/ready`;
+    let notReadyChecks = 0;
+    while (true) {
+      yield* Effect.sleep(CONNECTOR_READINESS_INTERVAL);
+      const status = yield* httpClient.get(readyUrl).pipe(
+        Effect.map((response) => response.status),
+        Effect.scoped,
+        Effect.withTracerEnabled(false),
+        Effect.timeoutOption(CONNECTOR_READINESS_REQUEST_TIMEOUT),
+        Effect.orElseSucceed(() => Option.none<number>()),
+      );
+      if (Option.isNone(status)) continue;
+      if (status.value === 200) {
         notReadyChecks = 0;
-        yield* Ref.set(
-          notReadyChecksBeforeRestartRef,
-          Math.min(threshold * 2, CONNECTOR_NOT_READY_CHECKS_MAX),
-        );
-        yield* Effect.logWarning("Relay client has no tunnel connection; restarting it", {
-          pid: Number(connector.child.pid),
-          notReadyChecks: threshold,
-          tunnelId: connector.config.tunnelId,
-          tunnelName: connector.config.tunnelName,
-        });
-        yield* connector.child.kill().pipe(Effect.ignore);
+        yield* Ref.set(notReadyChecksBeforeRestartRef, CONNECTOR_NOT_READY_CHECKS_BEFORE_RESTART);
+        continue;
       }
-    });
+      if (status.value !== 503) continue;
+      notReadyChecks += 1;
+      const threshold = yield* Ref.get(notReadyChecksBeforeRestartRef);
+      if (notReadyChecks < threshold) continue;
+      notReadyChecks = 0;
+      yield* Ref.set(
+        notReadyChecksBeforeRestartRef,
+        Math.min(threshold * 2, CONNECTOR_NOT_READY_CHECKS_MAX),
+      );
+      yield* Effect.logWarning("Relay client has no tunnel connection; restarting it", {
+        pid: Number(connector.child.pid),
+        notReadyChecks: threshold,
+        tunnelId: connector.config.tunnelId,
+        tunnelName: connector.config.tunnelName,
+      });
+      yield* connector.child.kill().pipe(Effect.ignore);
+    }
+  });
 
   const observeConnectorOutput = (connector: ActiveConnector) => {
     let rejectedRegistrations = 0;

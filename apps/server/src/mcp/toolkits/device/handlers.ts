@@ -69,46 +69,45 @@ const requireDeviceAccess = McpInvocationContext.requireThreadMcpCapability("dev
   ),
 );
 
-const pickDevice = (
+const pickDevice = Effect.fn("handlers.pickDevice")(function* (
   devices: ReadonlyArray<DeviceSummary>,
   input: {
     readonly deviceId?: DeviceId | undefined;
     readonly platform?: DevicePlatform | undefined;
     readonly hostId?: DeviceHostId | undefined;
   },
-): Effect.Effect<DeviceSummary, DeviceToolUnavailableError> =>
-  Effect.gen(function* () {
-    const hostId = input.hostId ?? LOCAL_DEVICE_HOST_ID;
-    if (input.deviceId !== undefined) {
-      const match = devices.find(
-        (device) => device.hostId === hostId && device.id === input.deviceId,
-      );
-      if (match) return match;
-      return yield* new DeviceToolUnavailableError({
-        reason: `No device ${input.deviceId} on host ${hostId}. Call device_list for current ids.`,
-      });
-    }
-    const candidates = devices.filter(
-      (device) =>
-        device.hostId === hostId &&
-        (input.platform === undefined || device.platform === input.platform),
+): Effect.fn.Return<DeviceSummary, DeviceToolUnavailableError> {
+  const hostId = input.hostId ?? LOCAL_DEVICE_HOST_ID;
+  if (input.deviceId !== undefined) {
+    const match = devices.find(
+      (device) => device.hostId === hostId && device.id === input.deviceId,
     );
-    if (candidates.length === 0) {
-      return yield* new DeviceToolUnavailableError({
-        reason:
-          input.platform === undefined
-            ? "No simulators or emulators were found. Call device_list to see why."
-            : `No ${input.platform} devices were found on host ${hostId}. Call device_list to see why.`,
-      });
-    }
-    const platforms = new Set(candidates.map((device) => device.platform));
-    if (input.platform === undefined && platforms.size > 1) {
-      return yield* new DeviceToolUnavailableError({
-        reason: "Both iOS and Android devices are available; pass platform or deviceId.",
-      });
-    }
-    return candidates.find((device) => device.booted) ?? candidates[0]!;
-  });
+    if (match) return match;
+    return yield* new DeviceToolUnavailableError({
+      reason: `No device ${input.deviceId} on host ${hostId}. Call device_list for current ids.`,
+    });
+  }
+  const candidates = devices.filter(
+    (device) =>
+      device.hostId === hostId &&
+      (input.platform === undefined || device.platform === input.platform),
+  );
+  if (candidates.length === 0) {
+    return yield* new DeviceToolUnavailableError({
+      reason:
+        input.platform === undefined
+          ? "No simulators or emulators were found. Call device_list to see why."
+          : `No ${input.platform} devices were found on host ${hostId}. Call device_list to see why.`,
+    });
+  }
+  const platforms = new Set(candidates.map((device) => device.platform));
+  if (input.platform === undefined && platforms.size > 1) {
+    return yield* new DeviceToolUnavailableError({
+      reason: "Both iOS and Android devices are available; pass platform or deviceId.",
+    });
+  }
+  return candidates.find((device) => device.booted) ?? candidates[0]!;
+});
 
 const toolError = (error: DeviceError | DeviceToolUnavailableError) => error;
 

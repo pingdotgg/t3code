@@ -634,7 +634,11 @@ const imageToolFailure =
  * `McpServer.toolkit` serializes every result as JSON text, which is the wrong
  * shape for a screenshot: the model needs image content.
  */
-const registerImageTool = <T extends Tool.Any, E, R>(
+const registerImageTool = Effect.fn("McpHttpServer.registerImageTool")(function* <
+  T extends Tool.Any,
+  E,
+  R,
+>(
   tool: T,
   handle: (payload: Tool.Parameters<T>) => Effect.Effect<{ readonly encodedResult: unknown }, E, R>,
   provide: (
@@ -646,73 +650,72 @@ const registerImageTool = <T extends Tool.Any, E, R>(
   >,
   operation: string,
   failureText: string | ((error: E) => string),
-) =>
-  Effect.gen(function* () {
-    const server = yield* McpServer.McpServer;
-    yield* server.addTool({
-      tool: new McpSchema.Tool({
-        name: tool.name,
-        description: Tool.getDescription(tool),
-        inputSchema: Tool.getJsonSchema(tool),
-        annotations: {
-          ...Context.getOption(tool.annotations, Tool.Title).pipe(
-            Option.map((title) => ({ title })),
-            Option.getOrUndefined,
-          ),
-          readOnlyHint: Context.get(tool.annotations, Tool.Readonly),
-          destructiveHint: Context.get(tool.annotations, Tool.Destructive),
-          idempotentHint: Context.get(tool.annotations, Tool.Idempotent),
-          openWorldHint: Context.get(tool.annotations, Tool.OpenWorld),
-        },
+) {
+  const server = yield* McpServer.McpServer;
+  yield* server.addTool({
+    tool: new McpSchema.Tool({
+      name: tool.name,
+      description: Tool.getDescription(tool),
+      inputSchema: Tool.getJsonSchema(tool),
+      annotations: {
+        ...Context.getOption(tool.annotations, Tool.Title).pipe(
+          Option.map((title) => ({ title })),
+          Option.getOrUndefined,
+        ),
+        readOnlyHint: Context.get(tool.annotations, Tool.Readonly),
+        destructiveHint: Context.get(tool.annotations, Tool.Destructive),
+        idempotentHint: Context.get(tool.annotations, Tool.Idempotent),
+        openWorldHint: Context.get(tool.annotations, Tool.OpenWorld),
+      },
+    }),
+    annotations: tool.annotations,
+    handle: (payload) =>
+      Effect.withFiber((fiber) => {
+        const invocation = Context.getUnsafe(
+          fiber.context,
+          McpInvocationContext.McpInvocationContext,
+        );
+        return provide(handle(payload as Tool.Parameters<T>)).pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.matchCauseEffect({
+            onFailure: imageToolFailure(tool.name, operation, failureText),
+            onSuccess: ({ encodedResult }) => {
+              const { screenshot, ...rest } = encodedResult as ImageToolResult;
+              const includeImage =
+                (payload as { readonly includeImage?: boolean } | undefined)?.includeImage !==
+                false;
+              const metadata = {
+                ...rest,
+                screenshot: {
+                  mimeType: screenshot.mimeType,
+                  width: screenshot.width,
+                  height: screenshot.height,
+                },
+              };
+              return Effect.succeed(
+                new McpSchema.CallToolResult({
+                  isError: false,
+                  structuredContent: metadata,
+                  content: [
+                    { type: "text", text: JSON.stringify(metadata) },
+                    ...(includeImage
+                      ? [
+                          {
+                            type: "image" as const,
+                            data: new Uint8Array(Buffer.from(screenshot.data, "base64")),
+                            mimeType: screenshot.mimeType,
+                          },
+                        ]
+                      : []),
+                  ],
+                }),
+              );
+            },
+          }),
+        );
       }),
-      annotations: tool.annotations,
-      handle: (payload) =>
-        Effect.withFiber((fiber) => {
-          const invocation = Context.getUnsafe(
-            fiber.context,
-            McpInvocationContext.McpInvocationContext,
-          );
-          return provide(handle(payload as Tool.Parameters<T>)).pipe(
-            Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
-            Effect.matchCauseEffect({
-              onFailure: imageToolFailure(tool.name, operation, failureText),
-              onSuccess: ({ encodedResult }) => {
-                const { screenshot, ...rest } = encodedResult as ImageToolResult;
-                const includeImage =
-                  (payload as { readonly includeImage?: boolean } | undefined)?.includeImage !==
-                  false;
-                const metadata = {
-                  ...rest,
-                  screenshot: {
-                    mimeType: screenshot.mimeType,
-                    width: screenshot.width,
-                    height: screenshot.height,
-                  },
-                };
-                return Effect.succeed(
-                  new McpSchema.CallToolResult({
-                    isError: false,
-                    structuredContent: metadata,
-                    content: [
-                      { type: "text", text: JSON.stringify(metadata) },
-                      ...(includeImage
-                        ? [
-                            {
-                              type: "image" as const,
-                              data: new Uint8Array(Buffer.from(screenshot.data, "base64")),
-                              mimeType: screenshot.mimeType,
-                            },
-                          ]
-                        : []),
-                    ],
-                  }),
-                );
-              },
-            }),
-          );
-        }),
-    });
   });
+});
 
 const registerDeviceScreenshot = Effect.fn("McpHttpServer.registerDeviceScreenshot")(function* () {
   const devices = yield* DeviceService.DeviceService;
@@ -820,8 +823,9 @@ const handoffTargetIds = (
  * agent chose, and the provider, model, and modes of each thread that received
  * the work. Ids, prompts, and free text are never recorded.
  */
-const withToolAnalytics = <A, E, R>(registration: Effect.Effect<A, E, R>) =>
-  Effect.gen(function* () {
+const withToolAnalytics =
+  /* Request instrumentation already owns the span; keep this helper in that context. */
+  Effect.fnUntraced(function* <A, E, R>(registration: Effect.Effect<A, E, R>) {
     const server = yield* McpServer.McpServer;
     const analytics = yield* Effect.serviceOption(AnalyticsService.AnalyticsService);
     if (Option.isNone(analytics)) return yield* registration;
@@ -834,8 +838,9 @@ const withToolAnalytics = <A, E, R>(registration: Effect.Effect<A, E, R>) =>
             .getThreadShell(ThreadId.make(threadId))
             .pipe(Effect.orElseSucceed(() => null));
     // Delegation depth: parents walked from the caller, capped.
-    const depthOf = (thread: AgentThread) =>
-      Effect.gen(function* () {
+    const depthOf =
+      /* Request instrumentation already owns the span; keep this helper in that context. */
+      Effect.fnUntraced(function* (thread: AgentThread) {
         let depth = 0;
         let parentId =
           thread.lineage.relationshipToParent === "subagent" ? thread.lineage.parentThreadId : null;
@@ -868,59 +873,69 @@ const withToolAnalytics = <A, E, R>(registration: Effect.Effect<A, E, R>) =>
               }),
               Effect.orElseSucceed(() => false),
             );
-    const record = (
-      tool: string,
-      args: unknown,
-      result: McpSchema.CallToolResult | undefined,
-      durationMs: number,
-    ) =>
-      Effect.gen(function* () {
-        // Client credentials (no calling thread) report an unknown caller.
-        const invocation = Option.getOrUndefined(
-          yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext),
-        )?.thread;
-        const providers = Option.isSome(registry) ? yield* registry.value.getProviders : [];
-        // Only handoff tools pay for thread lookups; the rest report the
-        // caller's provider from the credential.
-        const handoff = HANDOFF_TOOLS.has(tool);
-        const caller =
-          handoff && invocation !== undefined
-            ? ((yield* shellOf(invocation.threadId)) ?? undefined)
-            : undefined;
-        const targetIds = handoff
-          ? [...new Set(handoffTargetIds(tool, args, result))].filter(
-              (threadId) => threadId !== invocation?.threadId,
-            )
-          : [];
-        const targets = yield* Effect.forEach(targetIds, shellOf);
-        for (const properties of agentToolProperties({
-          tool,
-          providers,
-          caller,
-          ...(invocation === undefined
-            ? {}
-            : { callerProviderInstanceId: invocation.providerInstanceId }),
-          ...(caller === undefined || invocation === undefined
-            ? {}
-            : {
-                callerDepth: yield* depthOf(caller),
-                callerScheduledRun: yield* scheduledRunOf(invocation.threadId, caller.activeRunId),
-              }),
-          targets: targets.filter((thread) => thread !== null),
-          outcome: toolOutcome(result),
-          ...(handoff ? { settings: handoffSettings(tool, args, result?.structuredContent) } : {}),
-          durationMs,
-        })) {
-          yield* analytics.value.record("mcp.tool.invoked", properties);
-        }
-      }).pipe(Effect.ignoreCause);
+    const record =
+      /* Request instrumentation already owns the span; keep this helper in that context. */
+      Effect.fnUntraced(
+        function* (
+          tool: string,
+          args: unknown,
+          result: McpSchema.CallToolResult | undefined,
+          durationMs: number,
+        ) {
+          // Client credentials (no calling thread) report an unknown caller.
+          const invocation = Option.getOrUndefined(
+            yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext),
+          )?.thread;
+          const providers = Option.isSome(registry) ? yield* registry.value.getProviders : [];
+          // Only handoff tools pay for thread lookups; the rest report the
+          // caller's provider from the credential.
+          const handoff = HANDOFF_TOOLS.has(tool);
+          const caller =
+            handoff && invocation !== undefined
+              ? ((yield* shellOf(invocation.threadId)) ?? undefined)
+              : undefined;
+          const targetIds = handoff
+            ? [...new Set(handoffTargetIds(tool, args, result))].filter(
+                (threadId) => threadId !== invocation?.threadId,
+              )
+            : [];
+          const targets = yield* Effect.forEach(targetIds, shellOf);
+          for (const properties of agentToolProperties({
+            tool,
+            providers,
+            caller,
+            ...(invocation === undefined
+              ? {}
+              : { callerProviderInstanceId: invocation.providerInstanceId }),
+            ...(caller === undefined || invocation === undefined
+              ? {}
+              : {
+                  callerDepth: yield* depthOf(caller),
+                  callerScheduledRun: yield* scheduledRunOf(
+                    invocation.threadId,
+                    caller.activeRunId,
+                  ),
+                }),
+            targets: targets.filter((thread) => thread !== null),
+            outcome: toolOutcome(result),
+            ...(handoff
+              ? { settings: handoffSettings(tool, args, result?.structuredContent) }
+              : {}),
+            durationMs,
+          })) {
+            yield* analytics.value.record("mcp.tool.invoked", properties);
+          }
+        },
+        (effect, _tool, _args, _result, _durationMs) => effect.pipe(Effect.ignoreCause),
+      );
     const recordingServer = McpServer.McpServer.of({
       ...server,
       addTool: (options) =>
         server.addTool({
           ...options,
-          handle: (payload) =>
-            Effect.gen(function* () {
+          handle:
+            /* Request instrumentation already owns the span; keep this helper in that context. */
+            Effect.fnUntraced(function* (payload) {
               const startedAt = yield* Clock.currentTimeMillis;
               return yield* options.handle(payload).pipe(
                 Effect.onExit((exit) => {
