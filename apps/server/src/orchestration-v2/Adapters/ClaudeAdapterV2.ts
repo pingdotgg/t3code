@@ -9181,15 +9181,29 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 // the next within a millisecond; that next turn is still running
                 // and owns this run, so the empty turn's result must not settle it.
                 const lastResultIndex = drained.findLastIndex((entry) => entry.type === "result");
-                const lastResult = drained[lastResultIndex];
+                const tailResult = drained[lastResultIndex];
                 const emptyTurnBeforeNextTurn =
-                  lastResult?.type === "result" &&
-                  lastResult.num_turns === 0 &&
-                  !lastResult.is_error &&
-                  terminalStatusFromResult(lastResult) === "completed" &&
+                  tailResult?.type === "result" &&
+                  tailResult.num_turns === 0 &&
+                  !tailResult.is_error &&
+                  terminalStatusFromResult(tailResult) === "completed" &&
                   drained
                     .slice(lastResultIndex + 1)
                     .some((entry) => isClaudeTurnStartMessage(entry));
+                // The CLI can append empty task successes after a failure. Filter
+                // those for replay without changing the raw-tail successor guard.
+                const isEmptyTaskNotificationSuccess = (entry: SDKMessage) =>
+                  isClaudeTaskNotificationOriginResult(entry) &&
+                  entry.subtype === "success" &&
+                  !entry.is_error &&
+                  entry.num_turns === 0 &&
+                  entry.result.length === 0 &&
+                  terminalStatusFromResult(entry) === "completed";
+                const replayResultIndex = drained.findLastIndex(
+                  (entry) => entry.type === "result" && !isEmptyTaskNotificationSuccess(entry),
+                );
+                const lastResult =
+                  drained[replayResultIndex === -1 ? lastResultIndex : replayResultIndex];
                 const opaqueReplayTombstones = taskIdSetForNativeThread(
                   yield* Ref.get(opaqueBackgroundTaskReplayTombstonesByNativeThread),
                   nativeThreadId,
