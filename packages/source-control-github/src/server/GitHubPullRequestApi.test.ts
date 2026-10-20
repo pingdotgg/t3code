@@ -88,6 +88,7 @@ const coreResponse = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
 type ApiCall =
   | {
       readonly kind: "graphql";
+      readonly authorization: string | undefined;
       readonly partial?: boolean;
       /** The generated operation's name, which the routes below match on. */
       readonly operationName?: string;
@@ -137,6 +138,7 @@ const mockHttp = Layer.succeed(
           : { query: "", operationName: "", variables: {} };
       const call: ApiCall = {
         kind: "graphql",
+        authorization: request.headers["authorization"],
         host,
         operation: "batch",
         operationName: sent.operationName,
@@ -3739,6 +3741,139 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(login).toBe("enterprise-user");
       expect(mockedCredential).toHaveBeenCalledWith("github.acme.com");
       expect(callAt(0)).toMatchObject({ kind: "rest", host: "github.acme.com", path: "user" });
+    }),
+  );
+
+  it.effect("verifies a REST-forbidden account through GraphQL with the pinned credential", () =>
+    Effect.gen(function* () {
+      const input = { cwd: "/w", host: "github.identity-fallback.test" };
+      const original = {
+        token: Redacted.make("original-token"),
+        fingerprint: `${input.host}:original`,
+      };
+      mockedCredential.mockReturnValue(Effect.succeed(original));
+      mockedExecute.mockImplementation((call) =>
+        Effect.gen(function* () {
+          expect(yield* SourceControlRateLimit.CredentialScope).toBe(original.fingerprint);
+          if (call.kind === "rest") {
+            expect(call.path).toBe("user");
+            expect(yield* GitHubRequestPolicy.PinnedGitHubCredential).toMatchObject({
+              host: input.host,
+              credentialFingerprint: original.fingerprint,
+            });
+            mockedCredential.mockReturnValue(
+              Effect.succeed({
+                token: Redacted.make("replacement-token"),
+                fingerprint: `${input.host}:replacement`,
+              }),
+            );
+            return yield* new GitHubRequestPolicy.GitHubApiResponseError({
+              host: input.host,
+              operation: "getRoutingIdentity",
+              status: 403,
+              githubErrors: ["Resource not accessible by integration"],
+            });
+          }
+          expect(call.host).toBe(input.host);
+          expect(call.authorization).toBe("Bearer original-token");
+          expect(call.query).toMatch(/viewer\s*\{/);
+          expect(call.query).toContain("databaseId");
+          expect(call.query).toContain("login");
+          return output(
+            '{"data":{"viewer":{"databaseId":789,"login":"acme-app[bot]"}}}',
+            false,
+            false,
+            graphqlQuota(0),
+          );
+        }),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const quota = yield* GitHubQuota.GitHubQuota;
+      yield* quota
+        .observe(input.host, graphqlQuota(1))
+        .pipe(Effect.provideService(SourceControlRateLimit.CredentialScope, original.fingerprint));
+      const identity = { accountId: "789", viewer: "acme-app[bot]" };
+      expect(yield* cli.getRoutingIdentity(input)).toEqual(identity);
+
+      mockedCredential.mockReturnValue(Effect.succeed(original));
+      expect(yield* cli.getRoutingIdentity(input)).toEqual(identity);
+      expect(mockedExecute).toHaveBeenCalledTimes(2);
+
+      const exhausted = yield* quota
+        .admit(input.host, "graphql")
+        .pipe(
+          Effect.provideService(SourceControlRateLimit.CredentialScope, original.fingerprint),
+          Effect.flip,
+        );
+      expect(exhausted._tag).toBe("SourceControlRateLimitPausedError");
+      yield* quota
+        .admit(input.host, "graphql")
+        .pipe(
+          Effect.provideService(
+            SourceControlRateLimit.CredentialScope,
+            `${input.host}:replacement`,
+          ),
+        );
+    }),
+  );
+
+  it.effect("rejects a null GraphQL account id without caching it", () =>
+    Effect.gen(function* () {
+      const input = { cwd: "/w", host: "github.identity-null.test" };
+      const forbidden = new GitHubRequestPolicy.GitHubApiResponseError({
+        host: input.host,
+        operation: "getRoutingIdentity",
+        status: 403,
+      });
+      mockedExecute
+        .mockReturnValueOnce(Effect.fail(forbidden))
+        .mockReturnValueOnce(
+          Effect.succeed(output('{"data":{"viewer":{"databaseId":null,"login":"acme-app[bot]"}}}')),
+        )
+        .mockReturnValueOnce(Effect.fail(forbidden))
+        .mockReturnValueOnce(
+          Effect.succeed(output('{"data":{"viewer":{"databaseId":789,"login":"acme-app[bot]"}}}')),
+        );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const error = yield* cli.getRoutingIdentity(input).pipe(Effect.flip);
+      expect(error._tag).toBe("GitHubViewerLoginUnavailableError");
+      expect(yield* cli.getRoutingIdentity(input)).toEqual({
+        accountId: "789",
+        viewer: "acme-app[bot]",
+      });
+      expect(mockedExecute).toHaveBeenCalledTimes(4);
+    }),
+  );
+
+  it.effect.each([
+    new GitHubRequestPolicy.GitHubApiAuthenticationError({
+      host: "github.identity-auth-error.test",
+      operation: "getRoutingIdentity",
+    }),
+    new GitHubRequestPolicy.GitHubApiRateLimitError({
+      host: "github.identity-rate-error.test",
+      operation: "getRoutingIdentity",
+      retryAt: 123_456,
+    }),
+    new GitHubRequestPolicy.GitHubApiRequestError({
+      host: "github.identity-network-error.test",
+      operation: "getRoutingIdentity",
+      cause: new Error("connection refused"),
+    }),
+    new GitHubRequestPolicy.GitHubApiResponseError({
+      host: "github.identity-server-error.test",
+      operation: "getRoutingIdentity",
+      status: 500,
+    }),
+  ])("preserves $_tag from REST identity verification without trying GraphQL", (error) =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(Effect.fail(error));
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      expect(yield* cli.getRoutingIdentity({ cwd: "/w", host: error.host }).pipe(Effect.flip)).toBe(
+        error,
+      );
+      expect(mockedExecute).toHaveBeenCalledTimes(1);
+      expect(callAt(0)).toMatchObject({ kind: "rest", path: "user" });
     }),
   );
 

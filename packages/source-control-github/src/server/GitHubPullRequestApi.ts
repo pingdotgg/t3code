@@ -907,6 +907,9 @@ export const make = Effect.gen(function* () {
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
   const fileSystem = yield* FileSystem.FileSystem;
   const revalidateChecks = yield* makeChecksRevalidator;
+  const client = yield* GraphQLClient.make(PullRequestGraphQLGroup).pipe(
+    Effect.provide(GitHubGraphQlClient.layer),
+  );
   const routingIdentities = new Map<
     string,
     {
@@ -915,14 +918,12 @@ export const make = Effect.gen(function* () {
     }
   >();
   const identityLocks = new Map<string, { gate: Semaphore.Semaphore; users: number }>();
-  const decodeRoutingIdentity = Schema.decodeUnknownEffect(
-    Schema.fromJsonString(
-      Schema.Struct({
-        id: PositiveInt,
-        login: TrimmedNonEmptyString,
-      }),
-    ),
-  );
+  const RoutingIdentity = Schema.Struct({
+    id: PositiveInt,
+    login: TrimmedNonEmptyString,
+  });
+  const decodeRoutingIdentity = Schema.decodeUnknownEffect(Schema.fromJsonString(RoutingIdentity));
+  const decodeViewerIdentity = Schema.decodeUnknownEffect(RoutingIdentity);
   const captureVerifiedCredential = Effect.fn("GitHubPullRequestApi.captureVerifiedCredential")(
     function* (input: { readonly cwd: string; readonly host: string }) {
       const unavailable = () => new GitHubViewerLoginUnavailableError({ cwd: input.cwd });
@@ -943,16 +944,36 @@ export const make = Effect.gen(function* () {
               const cached = routingIdentities.get(key);
               if (cached !== undefined && now - cached.at < 10 * 60_000)
                 return { ...credential, ...cached.value };
-              // Pin this read so an auth switch cannot poison its cache entry.
-              const response = yield* api
+              // Pin verification so an auth switch cannot poison its cache entry.
+              const identity = yield* api
                 .rest({ host, operation: "getRoutingIdentity", path: "user", allowReserve: true })
                 .pipe(
+                  Effect.flatMap((response) =>
+                    decodeRoutingIdentity(response.body).pipe(Effect.mapError(unavailable)),
+                  ),
+                  Effect.catchTags({
+                    GitHubApiResponseError: (error) =>
+                      Effect.gen(function* () {
+                        if (error.status !== 403) return yield* error;
+                        const { viewer } = yield* client.RoutingIdentityViewer({}).pipe(
+                          GitHubGraphQlClient.call({
+                            host,
+                            operation: "getRoutingIdentity",
+                            allowReserve: true,
+                          }),
+                          Effect.catchTags({
+                            GraphQLClientError: () => Effect.fail(unavailable()),
+                          }),
+                        );
+                        return yield* decodeViewerIdentity({
+                          id: viewer.databaseId,
+                          login: viewer.login,
+                        }).pipe(Effect.mapError(unavailable));
+                      }),
+                  }),
                   Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, credential),
                   Effect.provideService(SourceControlRateLimit.CredentialScope, key),
                 );
-              const identity = yield* decodeRoutingIdentity(response.body).pipe(
-                Effect.mapError(unavailable),
-              );
               const value = { accountId: String(identity.id), viewer: identity.login };
               if (routingIdentities.size >= 128)
                 routingIdentities.delete(routingIdentities.keys().next().value!);
@@ -988,10 +1009,6 @@ export const make = Effect.gen(function* () {
     captureVerifiedCredential(input).pipe(
       Effect.map(({ accountId, viewer }) => ({ accountId, viewer })),
     );
-
-  const client = yield* GraphQLClient.make(PullRequestGraphQLGroup).pipe(
-    Effect.provide(GitHubGraphQlClient.layer),
-  );
 
   const readError = (cwd: string, operation: string, cause: unknown) =>
     new GitHubPullRequestReadError({ cwd, operation, cause });

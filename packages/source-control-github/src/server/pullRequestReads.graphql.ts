@@ -83,6 +83,34 @@ export const CheckContext = Schema.Union([
 export type CheckContext = typeof CheckContext.Type
 
 /** A user is an individual's account on GitHub that owns repositories and can make new content. */
+export const ViewerUser = Schema.Struct({
+  /** Identifies the primary key from the database. */
+  databaseId: Schema.NullOr(Shared.Int),
+  /** The username used to login. */
+  login: Schema.String
+})
+export interface ViewerUser extends Schema.Struct.Type<typeof ViewerUser.fields> {}
+
+/** `query RoutingIdentityViewer` */
+export const RoutingIdentityViewer = GraphQL.query("RoutingIdentityViewer", {
+  document: {
+    variables: [],
+    selections: [
+      { name: "viewer", body: ["{databaseId login}"] }
+    ],
+    fragments: []
+  },
+  result: Schema.Struct({
+    /** The currently authenticated user. */
+    viewer: ViewerUser
+  })
+})
+export declare namespace RoutingIdentityViewer {
+  export type Variables = typeof RoutingIdentityViewer.variables.Type
+  export type Result = typeof RoutingIdentityViewer.result.Type
+}
+
+/** A user is an individual's account on GitHub that owns repositories and can make new content. */
 export const ActorAvatarsNodesUser = Schema.Struct({
   __typename: Schema.Literal("User"),
   /** The username used to login. */
@@ -1495,4 +1523,4 @@ export declare namespace PullRequestSourceBranch {
 }
 
 /** Every operation in pullRequestReads.graphql. */
-export const PullRequestReadsGraphQLGroup = GraphQLGroup.make(ActorAvatars, PullRequestCore, PullRequestCheckContexts, PullRequestPreview, PullRequestActivity, PullRequestHeads, PullRequestNodeId, PullRequestSubject, ViewerPermissions, ReviewerCandidates, LabelCandidates, PullRequestFilesViewed, PullRequestMergeMessage, PullRequestActionState, PullRequestBranchToDelete, PullRequestSourceBranch)
+export const PullRequestReadsGraphQLGroup = GraphQLGroup.make(RoutingIdentityViewer, ActorAvatars, PullRequestCore, PullRequestCheckContexts, PullRequestPreview, PullRequestActivity, PullRequestHeads, PullRequestNodeId, PullRequestSubject, ViewerPermissions, ReviewerCandidates, LabelCandidates, PullRequestFilesViewed, PullRequestMergeMessage, PullRequestActionState, PullRequestBranchToDelete, PullRequestSourceBranch)
