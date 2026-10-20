@@ -18,6 +18,7 @@ describe("ProviderSettingsForm helpers", () => {
       "homePath",
       "shadowHomePath",
       "launchArgs",
+      "voice",
     ]);
   });
 

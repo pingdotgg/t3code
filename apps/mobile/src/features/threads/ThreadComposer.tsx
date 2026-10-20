@@ -113,6 +113,9 @@ import {
 } from "../voice-input/ComposerDictationControl";
 import { useVoiceInputController } from "../voice-input/useVoiceInputController";
 import { resolveVoiceComposerPresentation } from "../voice-input/voiceInputPresentation";
+import { ComposerVoiceModeButton, ComposerVoiceStrip } from "../voice-mode/ComposerVoiceMode";
+import { useVoiceModePhase, useVoiceModeThreadLifecycle } from "../voice-mode/useVoiceMode";
+import { voiceMode, voiceModeSupported } from "../voice-mode/voiceMode";
 import {
   rememberModelOptions,
   withRememberedModelOptions,
@@ -480,15 +483,42 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     onUsageLimits:
       usageLimitsOffered && draftAttachments.length === 0 ? openUsageLimits : undefined,
   });
+  const voiceTarget = { environmentId: props.environmentId, threadId: props.selectedThread.id };
+  const voicePhase = useVoiceModePhase(voiceTarget);
+  useVoiceModeThreadLifecycle(voiceTarget);
+  // Dictation and a voice conversation both need the microphone.
+  const voiceConversationLive = voicePhase !== "idle";
   const voiceInput = useVoiceInputController({
     ownerKey: composerDraftKey,
     label: props.selectedThread.title || "Untitled thread",
     readDraftMessage: () => getComposerDraftSnapshot(composerDraftKey).text,
     subscribeToDraftChanges: (onChange) => appAtomRegistry.subscribe(composerDraftsAtom, onChange),
     selection: composerMenu.selection,
+    disabled: voiceConversationLive,
     onChangeDraftMessage: (text) => setComposerDraftText(composerDraftKey, text),
     onChangeSelection: composerMenu.onSelectionChange,
   });
+  const offersVoiceConversation =
+    voiceModeSupported &&
+    props.serverConfig?.providers.find(
+      (provider) => provider.instanceId === props.selectedThread.providerInstanceId,
+    )?.supportsVoice === true;
+  // The server attaches voice to the thread's provider thread, which the first
+  // run creates. An optimistic pending thread already has a message timestamp.
+  const canToggleVoiceConversation =
+    voiceConversationLive ||
+    (props.connectionState === "connected" &&
+      props.canOperateThread &&
+      props.selectedThread.activeProviderThreadId !== null &&
+      !voiceInput.isGloballyBusy);
+  const toggleVoiceConversation = () => voiceMode.toggle(voiceTarget);
+  const voiceModeButton = offersVoiceConversation ? (
+    <ComposerVoiceModeButton
+      phase={voicePhase}
+      disabled={!canToggleVoiceConversation}
+      onPress={toggleVoiceConversation}
+    />
+  ) : null;
   const voicePresentation = resolveVoiceComposerPresentation(
     voiceInput.state,
     voiceInput.elapsedSeconds,
@@ -736,6 +766,9 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
             {selectedProviderStatus.compatibilityAdvisory.message}
           </Text>
         ) : null}
+
+        {voiceConversationLive ? <ComposerVoiceStrip /> : null}
+
         {modelUnavailable ? (
           <Button
             label="Model unavailable. Open model settings."
@@ -977,9 +1010,11 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
             ) : null}
             {!isExpanded ? (
               <View className="flex-row items-center">
+                {voiceModeButton}
                 <ComposerDictationStartAction
                   state={voiceInput.state}
                   isAvailable={voiceInput.isAvailable}
+                  disabled={voiceConversationLive}
                   onStart={voiceInput.start}
                   onCancel={voiceInput.cancel}
                 />
@@ -1077,10 +1112,12 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   </View>
                 )}
                 <View className="shrink-0 flex-row items-center">
+                  {isVoiceInputPresented ? null : voiceModeButton}
                   <ComposerDictationPrimaryAction
                     state={voiceInput.state}
                     presentation={voicePresentation}
                     isAvailable={voiceInput.isAvailable}
+                    disabled={voiceConversationLive}
                     onStart={voiceInput.start}
                     onConfirm={voiceInput.stop}
                     onCancel={voiceInput.cancel}

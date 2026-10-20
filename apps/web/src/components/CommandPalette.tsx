@@ -58,6 +58,7 @@ import {
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
   ArrowLeftIcon,
+  AudioLinesIcon,
   ChartNoAxesColumnIcon,
   CheckIcon,
   ChevronRightIcon,
@@ -69,6 +70,8 @@ import {
   MessageSquareDashedIcon,
   LinkIcon,
   MessageSquareIcon,
+  MicIcon,
+  MicOffIcon,
   MonitorIcon,
   MoonIcon,
   PaletteIcon,
@@ -167,6 +170,8 @@ import {
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { buildThreadRouteParams } from "../threadRoutes";
 import { useAvailableSettingsSearchItems } from "./settings/useAvailableSettingsSearchItems";
+import { resolveThreadVoiceAvailability } from "../voice/voiceAvailability";
+import { toggleThreadVoice, useVoiceModeState, voiceMode } from "../voice/voiceMode";
 import {
   applyWslEnvironmentConfiguration,
   parseWslUncPath,
@@ -785,6 +790,7 @@ function OpenCommandPaletteDialog(props: {
   const activeThreadServerConfig = useServerConfigs().get(
     activeThread?.environmentId ?? ("" as EnvironmentId),
   );
+  const voiceState = useVoiceModeState();
   const activeThreadReferenceCopyTarget =
     referenceThreadRef === null || (pathname === "/pull-requests" && !openPanelPullRequestUrl)
       ? null
@@ -1778,6 +1784,66 @@ function OpenCommandPaletteDialog(props: {
         if (refreshed._tag === "Failure") throw squashAtomCommandFailure(refreshed);
       },
     });
+  }
+
+  const voiceEngaged = voiceState.phase !== "idle";
+  const voiceTarget = activeThread
+    ? scopeThreadRef(activeThread.environmentId, activeThread.id)
+    : null;
+  const voiceOnActiveThread = voiceTarget !== null && voiceMode.isActiveFor(voiceTarget);
+  if (activeThread !== null && voiceTarget !== null && !voiceOnActiveThread) {
+    const voiceAvailability = resolveThreadVoiceAvailability(
+      activeThread,
+      providersByEnvironment.get(activeThread.environmentId) ?? [],
+    );
+    if (voiceAvailability.kind !== "unsupported") {
+      actionItems.push({
+        kind: "action",
+        value: "action:voice-start",
+        searchTerms: ["voice", "talk", "speak", "conversation", "microphone", "realtime"],
+        title: "Start voice conversation",
+        description:
+          voiceAvailability.kind === "unavailable" ? voiceAvailability.reason : undefined,
+        disabled: voiceAvailability.kind === "unavailable",
+        icon: <AudioLinesIcon className={ITEM_ICON_CLASS} />,
+        shortcutCommand: "voice.toggle",
+        run: async () => {
+          toggleThreadVoice(voiceTarget, voiceAvailability);
+        },
+      });
+    }
+  }
+  // Stop and mute act on the one conversation, wherever it runs.
+  if (voiceEngaged) {
+    actionItems.push(
+      {
+        kind: "action",
+        value: "action:voice-stop",
+        searchTerms: ["voice", "stop", "end", "conversation", "hang up"],
+        title: "Stop voice conversation",
+        icon: <AudioLinesIcon className={ITEM_ICON_CLASS} />,
+        // F8 toggles the current thread, so it only stops a conversation held here.
+        ...(voiceOnActiveThread ? { shortcutCommand: "voice.toggle" as const } : {}),
+        run: async () => {
+          voiceMode.stop();
+        },
+      },
+      {
+        kind: "action",
+        value: "action:voice-mute",
+        searchTerms: ["voice", "mute", "unmute", "microphone"],
+        title: voiceState.muted ? "Unmute voice" : "Mute voice",
+        icon: voiceState.muted ? (
+          <MicIcon className={ITEM_ICON_CLASS} />
+        ) : (
+          <MicOffIcon className={ITEM_ICON_CLASS} />
+        ),
+        shortcutCommand: "voice.toggleMute",
+        run: async () => {
+          voiceMode.toggleMuted();
+        },
+      },
+    );
   }
 
   actionItems.push({
@@ -2873,7 +2939,7 @@ function OpenCommandPaletteDialog(props: {
         command === "chat.newLocal" ||
         command === "chat.newWithoutProject");
     const matchingItem =
-      isJump || isNewThread
+      isJump || isNewThread || command === "voice.toggle" || command === "voice.toggleMute"
         ? displayedGroups
             .flatMap((group) => group.items)
             .find((item) => item.shortcutCommand === command)

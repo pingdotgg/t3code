@@ -187,32 +187,48 @@ export const layer = Layer.effectDiscard(
             ordinal: projection.messages.length + 1,
           }));
         const commandId = CommandId.make(`provider-continuation:${messageId}`);
-        const dispatch = threads.dispatch({
-          type: "message.dispatch",
-          commandId,
-          threadId: request.threadId,
-          messageId,
-          text: request.detail ?? CONTINUATION_MESSAGE_TEXT,
-          notification: request.notification ?? {
-            source: { kind: "background_task" },
-            outcome: "updated",
-            summary: "Background activity updated",
-          },
-          attachments: [],
-          dispatchMode: { type: "queue_after_active" },
-          createdBy: "agent",
-          // "provider" marks an adapter-buffered wake, which ClaudeAdapterV2
-          // detects to attach the buffered CLI output and drop this text. A
-          // message_text wake has no buffered output, so it must not carry that
-          // marker or the turn settles immediately having prompted nothing.
-          creationSource: request.delivery === "message_text" ? "server" : "provider",
-        });
-        // This catch sits outside dispatchIfCurrent so an adapter that clears
-        // its own sticky offer flag on dispatch failure (inside
-        // dispatchIfCurrent) observes the raw failure first. Not every adapter
-        // self-clears that way, so the explicit callback is called here too;
-        // clearIfCurrent implementations are idempotent, so a source that
-        // already cleared is unaffected.
+        const dispatch = threads.dispatch(
+          request.origin === "voice"
+            ? {
+                type: "message.dispatch",
+                commandId,
+                threadId: request.threadId,
+                messageId,
+                text: request.detail ?? "",
+                attachments: [],
+                dispatchMode: { type: "queue_after_active" },
+                createdBy: "user",
+                creationSource: "server",
+              }
+            : {
+                type: "message.dispatch",
+                commandId,
+                threadId: request.threadId,
+                messageId,
+                text: request.detail ?? CONTINUATION_MESSAGE_TEXT,
+                notification: request.notification ?? {
+                  source: { kind: "background_task" },
+                  outcome: "updated",
+                  summary: "Background activity updated",
+                },
+                attachments: [],
+                dispatchMode: { type: "queue_after_active" },
+                createdBy: "agent",
+                // "provider" marks an adapter-buffered wake, which ClaudeAdapterV2
+                // detects to attach the buffered CLI output and drop this text. A
+                // message_text wake has no buffered output, so it must not carry that
+                // marker or the turn settles immediately having prompted nothing.
+                creationSource: request.delivery === "message_text" ? "server" : "provider",
+              },
+        );
+        // The adapter's buffered wake has nowhere else to go once the
+        // instance is off: drop it rather than warn, since nothing here
+        // retries it either way. This catch sits outside dispatchIfCurrent so
+        // an adapter that clears its own sticky offer flag on dispatch
+        // failure (inside dispatchIfCurrent) observes the raw failure first.
+        // Not every adapter self-clears that way, so the explicit callback is
+        // called here too; clearIfCurrent implementations are idempotent, so
+        // a source that already cleared is unaffected.
         const logInstanceDisabled = (
           error: ThreadManagementService.ThreadManagementProviderInstanceDisabledError,
         ) =>

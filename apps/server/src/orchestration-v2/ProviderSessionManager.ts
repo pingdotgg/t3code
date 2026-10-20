@@ -9,6 +9,8 @@ import {
   type OrchestrationV2ProviderThread,
   OrchestrationV2RuntimeRequest,
   ProviderInstanceId,
+  ProviderVoiceSessionError,
+  type ProviderVoiceSessionEvent,
   ProviderSessionId,
   ThreadId,
   type ProviderThreadId,
@@ -143,6 +145,10 @@ export const ProviderSessionManagerV2Error = Schema.Union([
 export type ProviderSessionManagerV2Error = typeof ProviderSessionManagerV2Error.Type;
 
 export interface ProviderSessionManagerV2Shape {
+  readonly startVoiceSession: (input: {
+    readonly threadId: ThreadId;
+    readonly offerSdp: string;
+  }) => Stream.Stream<ProviderVoiceSessionEvent, ProviderVoiceSessionError>;
   readonly shutdown: Effect.Effect<void>;
   readonly open: (input: {
     readonly threadId: ThreadId;
@@ -2098,7 +2104,56 @@ export const layerWithOptions = (
         ),
       );
 
+      let nextVoiceOrdinal = -1;
       return ProviderSessionManagerV2.of({
+        startVoiceSession: (input) =>
+          Stream.unwrap(
+            Effect.gen(function* () {
+              const projection = yield* projectionStore.getThreadRecords(input.threadId, [
+                "providerThreads",
+              ]);
+              const providerThread = projection.providerThreads.find(
+                (thread) => thread.id === projection.thread.activeProviderThreadId,
+              );
+              const runtime = providerThread?.providerSessionId
+                ? (yield* Ref.get(sessions)).get(sessionKey(providerThread.providerSessionId))
+                    ?.exposedRuntime
+                : undefined;
+              if (!providerThread || !runtime)
+                return yield* new ProviderVoiceSessionError({
+                  threadId: input.threadId,
+                  detail: "The provider session is no longer running. Send a message first.",
+                });
+              if (!runtime.startVoiceSession)
+                return yield* new ProviderVoiceSessionError({
+                  threadId: input.threadId,
+                  detail: `Provider '${runtime.driver}' does not support voice conversations.`,
+                });
+              const providerSessionId = runtime.providerSessionId;
+              const voiceOrdinal = nextVoiceOrdinal--;
+              yield* holdThreadLoaded({
+                providerSessionId,
+                threadId: input.threadId,
+                providerThread,
+              });
+              yield* Effect.acquireRelease(
+                markBusy(providerSessionId, busyTurnKey(providerThread.id, voiceOrdinal)),
+                () =>
+                  markIdle(providerSessionId, providerThread.id, voiceOrdinal).pipe(Effect.ignore),
+              );
+              return runtime.startVoiceSession({ providerThread, offerSdp: input.offerSdp });
+            }),
+          ).pipe(
+            Stream.mapError((cause) =>
+              cause._tag === "ProviderVoiceSessionError"
+                ? cause
+                : new ProviderVoiceSessionError({
+                    threadId: input.threadId,
+                    detail: cause.message,
+                    cause,
+                  }),
+            ),
+          ),
         shutdown,
         open: (input) =>
           sessionOpen.withLock(

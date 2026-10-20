@@ -30,6 +30,11 @@ export interface ProviderContinuationRequest {
    */
   readonly delivery?: "adapter_buffered" | "message_text";
   readonly messageId?: MessageId;
+  /**
+   * `voice` resubmits a request the user spoke in a voice conversation, so the
+   * run reads as theirs: user-authored, with no background notification.
+   */
+  readonly origin?: "voice";
   readonly dispatchIfCurrent?: <A, E, R>(
     effect: Effect.Effect<A, E, R>,
   ) => Effect.Effect<Option.Option<A>, E, R>;
