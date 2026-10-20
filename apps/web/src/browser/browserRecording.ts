@@ -259,10 +259,13 @@ export function findActiveBrowserRecordingRuntimeTabId(
   );
 }
 
+// Chromium's avc1 muxing writes the codec description once and omits updated SPS/PPS from
+// samples, so a capture whose dimensions change mid-recording (viewport resize) decodes to
+// corrupt frames. Chromium's MediaRecorder recommends avc3 when dimensions change.
 const preferredMimeTypes = [
-  "video/mp4;codecs=avc1",
-  "video/mp4;codecs=avc1.640028",
-  "video/mp4;codecs=avc1.42e01e",
+  "video/mp4;codecs=avc3",
+  "video/mp4;codecs=avc3.640028",
+  "video/mp4;codecs=avc3.42e01e",
   "video/webm;codecs=vp9",
   "video/webm;codecs=vp8",
   "video/webm",
