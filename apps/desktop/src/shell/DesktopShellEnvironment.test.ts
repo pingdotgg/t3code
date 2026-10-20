@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- The process fixture runs real shell commands with isolated config files.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Clock from "effect/Clock";
 import { assert, describe, it } from "@effect/vitest";
@@ -12,8 +13,11 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
 import * as TestClock from "effect/testing/TestClock";
 import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { vi } from "vite-plus/test";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -130,6 +134,77 @@ function runShellEnvironment(input: {
 }
 
 describe("DesktopShellEnvironment", () => {
+  // Explicit opt-in keeps real shell coverage independent of globally installed tools.
+  it.effect.runIf(process.env.T3_TEST_NU_PATH !== undefined)(
+    "hydrates the desktop through a renamed Nushell symlink with native export conversions",
+    () =>
+      Effect.gen(function* () {
+        const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-desktop-nu-"));
+        try {
+          const toolPath = NodePath.join(home, "nu tools", "bin");
+          const extraToolPath = NodePath.join(home, "extra-tools", "bin");
+          const convertedToolPath = NodePath.join(home, "converted-tools", "bin");
+          NodeFS.mkdirSync(toolPath, { recursive: true });
+          NodeFS.mkdirSync(extraToolPath, { recursive: true });
+          NodeFS.mkdirSync(convertedToolPath, { recursive: true });
+          const shell = NodePath.join(toolPath, "nushell");
+          NodeFS.symlinkSync(process.env.T3_TEST_NU_PATH!, shell);
+          const config = NodePath.join(home, "config.nu");
+          const envConfig = NodePath.join(home, "env.nu");
+          NodeFS.writeFileSync(envConfig, "");
+          NodeFS.writeFileSync(
+            config,
+            [
+              `$env.PATH = [${JSON.stringify(toolPath)}, ${JSON.stringify(extraToolPath)}]`,
+              '$env.SSH_AUTH_SOCK = "/tmp/nu-agent.sock"',
+              '$env.__MISE_DIFF = "  first\\nsecond  "',
+              '$env.HOMEBREW_PREFIX = ""',
+              "$env.ENV_CONVERSIONS = {",
+              "  PATH: {",
+              "    from_string: {|value| $value | split row (char esep) },",
+              '    to_string: {|value| $value | str join (char esep) | str replace "nu tools" "converted-tools" }',
+              "  },",
+              "  __MISE_DIFF: { from_string: {|value| $value }, to_string: { str upcase } }",
+              "}",
+              'print "startup noise"',
+            ].join("\n"),
+          );
+          const env: NodeJS.ProcessEnv = { SHELL: shell, PATH: `/inherited/bin:${extraToolPath}` };
+          yield* runShellEnvironment({
+            env,
+            platform: "linux",
+            handler: (command) => {
+              if (command._tag !== "StandardCommand" || command.command !== shell) return "";
+              const result = NodeChildProcess.spawnSync(
+                command.command,
+                ["--no-history", "--config", config, "--env-config", envConfig, ...command.args],
+                {
+                  encoding: "utf8",
+                  timeout: 5000,
+                  env: { HOME: home, XDG_CONFIG_HOME: home, PATH: toolPath },
+                },
+              );
+              if (result.error) throw result.error;
+              return { output: result.stdout, exitCode: result.status ?? 1 };
+            },
+          });
+
+          assert.deepEqual(
+            { PATH: env.PATH, __MISE_DIFF: env.__MISE_DIFF },
+            {
+              PATH: `${convertedToolPath}:${extraToolPath}:/inherited/bin`,
+              __MISE_DIFF: "  FIRST\nSECOND  ",
+            },
+          );
+          assert.equal(env.SSH_AUTH_SOCK, "/tmp/nu-agent.sock");
+          assert.isUndefined(env.DISPLAY);
+          assert.isUndefined(env.HOMEBREW_PREFIX);
+        } finally {
+          NodeFS.rmSync(home, { recursive: true, force: true });
+        }
+      }),
+  );
+
   it.effect("rejects PATH output from a failed shell and tries the next candidate", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = { SHELL: "/bin/failing", PATH: "/usr/bin" };
