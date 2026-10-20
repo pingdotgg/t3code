@@ -12,6 +12,7 @@ import {
   deregisterManagedRelayEnvironmentCommand,
   useManagedRelayEnvironments,
 } from "../../cloud/managedRelayState";
+import { relayEnvironmentDiscovery } from "../../state/relay";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
@@ -115,6 +116,9 @@ export function T3ConnectUserProfilePage() {
   const deregisterEnvironment = useAtomCommand(deregisterManagedRelayEnvironmentCommand, {
     reportFailure: false,
   });
+  const refreshRelayEnvironments = useAtomCommand(relayEnvironmentDiscovery.refreshAfterMutation, {
+    reportFailure: false,
+  });
   const [deregisteringEnvironmentId, setDeregisteringEnvironmentId] =
     useState<EnvironmentId | null>(null);
   const [confirmingEnvironmentId, setConfirmingEnvironmentId] = useState<EnvironmentId | null>(
@@ -147,6 +151,7 @@ export function T3ConnectUserProfilePage() {
         return { accountId, linkedAtById };
       });
       environmentsState.refresh();
+      void refreshRelayEnvironments();
       toastManager.add({
         type: "success",
         title: "Server deregistered",

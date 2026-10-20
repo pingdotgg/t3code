@@ -34,6 +34,12 @@ export interface RelayDiscoveredEnvironment {
 
 export interface RelayEnvironmentDiscoveryState {
   readonly environments: ReadonlyMap<string, RelayDiscoveredEnvironment>;
+  /**
+   * The relay's list for the current account has loaded, so an environment
+   * missing from `environments` is no longer registered rather than not yet
+   * listed. Signed-out, failed, and reset states are not listed.
+   */
+  readonly listed: boolean;
   readonly refreshing: boolean;
   readonly offline: boolean;
   readonly error: Option.Option<ConnectionAttemptError>;
@@ -49,10 +55,21 @@ export class RelayEnvironmentDiscovery extends Context.Service<
 
 export const EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE: RelayEnvironmentDiscoveryState = {
   environments: new Map(),
+  listed: false,
   refreshing: false,
   offline: false,
   error: Option.none(),
 };
+
+export type RelayEnvironmentRegistration = "registered" | "unregistered" | "unknown";
+
+export function relayEnvironmentRegistration(
+  state: RelayEnvironmentDiscoveryState,
+  environmentId: string,
+): RelayEnvironmentRegistration {
+  if (state.environments.has(environmentId)) return "registered";
+  return state.listed ? "unregistered" : "unknown";
+}
 
 function validateStatus(
   environment: RelayClientEnvironmentRecord,
@@ -218,6 +235,7 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
       yield* Ref.set(refreshGeneration, generation);
       yield* SubscriptionRef.set(state, {
         environments: new Map(),
+        listed: false,
         refreshing: true,
         offline: false,
         error: Option.none(),
@@ -276,6 +294,7 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
       yield* SubscriptionRef.update(state, (current) => ({
         ...current,
         environments: next,
+        listed: true,
       }));
 
       yield* Effect.forEach(

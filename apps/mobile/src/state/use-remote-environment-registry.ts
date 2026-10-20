@@ -1,6 +1,7 @@
 import * as Dialog from "../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
+import { Discovery } from "@t3tools/client-runtime/relay";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -16,6 +17,15 @@ import { environmentSession } from "./session";
 import { environmentCatalog } from "../connection/catalog";
 import { createRemoteEnvironmentProjectionAtoms } from "./remote-environment-projections";
 import { serverEnvironment } from "./server";
+import { relayEnvironmentDiscovery } from "./relay";
+
+const RELAY_REMOVAL_ACCOUNT_NOTE: Record<Discovery.RelayEnvironmentRegistration, string> = {
+  registered:
+    "It stays on your T3 Connect account and keeps its host space. Deregister it under T3 Account → T3 Connect to free it.",
+  unregistered: "It's no longer on your T3 Connect account.",
+  unknown:
+    "This doesn't change your T3 Connect account. To deregister it there, use T3 Account → T3 Connect.",
+};
 
 const connectionPairingUrlAtom = Atom.make("").pipe(
   Atom.keepAlive,
@@ -169,17 +179,20 @@ export function useRemoteConnections() {
         },
       } as const;
       if (environment.isRelayManaged) {
+        const registration = Discovery.relayEnvironmentRegistration(
+          appAtomRegistry.get(relayEnvironmentDiscovery.stateValueAtom),
+          environmentId,
+        );
+        const openAccount = {
+          text: "Open T3 Account",
+          onPress: () => navigation.navigate("SettingsSheet", { screen: "SettingsAuth" }),
+        };
         Dialog.alert(
           "Remove from this device?",
-          `Forget ${environment.environmentLabel} and its cached threads on this device.\n\nIt stays on your T3 Connect account and keeps its host space. Deregister it under T3 Account → T3 Connect to free it.`,
-          [
-            { text: "Cancel", style: "cancel" },
-            {
-              text: "Open T3 Account",
-              onPress: () => navigation.navigate("SettingsSheet", { screen: "SettingsAuth" }),
-            },
-            remove,
-          ],
+          `Forget ${environment.environmentLabel} and its cached threads on this device.\n\n${RELAY_REMOVAL_ACCOUNT_NOTE[registration]}`,
+          registration === "unregistered"
+            ? [{ text: "Cancel", style: "cancel" }, remove]
+            : [{ text: "Cancel", style: "cancel" }, openAccount, remove],
         );
         return;
       }

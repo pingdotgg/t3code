@@ -54,6 +54,7 @@ import {
   connectionStatusText,
   environmentMcpUrl,
 } from "@t3tools/client-runtime/connection";
+import { Discovery } from "@t3tools/client-runtime/relay";
 import {
   isAtomCommandInterrupted,
   settlePromise,
@@ -4015,6 +4016,14 @@ export function ConnectionsSettings() {
       {hasCloudPublicConfig() ? (
         <RemoveT3ConnectEnvironmentDialog
           environmentLabel={pendingT3ConnectRemoval?.label ?? null}
+          registration={
+            pendingT3ConnectRemoval
+              ? Discovery.relayEnvironmentRegistration(
+                  relayDiscoveryState,
+                  pendingT3ConnectRemoval.environmentId,
+                )
+              : "unknown"
+          }
           onCancel={() => setPendingT3ConnectRemoval(null)}
           onConfirm={() => {
             if (!pendingT3ConnectRemoval) return;
