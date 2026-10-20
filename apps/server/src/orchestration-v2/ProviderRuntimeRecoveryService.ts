@@ -696,62 +696,61 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  const reconcile = (trigger: "startup" | "shutdown") =>
-    Effect.gen(function* () {
-      const continueAfterRestart = yield* settings.getSettings.pipe(
-        Effect.orElseSucceed(() => null),
-      );
-      const threadIds = yield* projections
-        .getRecoveryThreadIds("runtime")
-        .pipe(
-          Effect.mapError(
-            (cause) => new ProviderRuntimeRecoveryError({ operation: "read-projections", cause }),
-          ),
-        );
-      let terminalizedRuns = 0;
-      let stoppedSessions = 0;
-      let closedRequests = 0;
-      let retiredEffects = 0;
-      const stoppedThisPass = new Map<string, RecoverySession>();
-      for (const threadId of threadIds) {
-        const projection = yield* projections.getRuntimeRecoveryProjection(threadId).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProviderRuntimeRecoveryError({
-                operation: "read-projections",
-                threadId,
-                cause,
-              }),
-          ),
-        );
-        const enabled =
-          continueAfterRestart !== null &&
-          resolveProjectSettings(continueAfterRestart, projection.thread.projectId).settings
-            .continueThreadsAfterServerUpdate;
-        const result = yield* reconcileProjection(projection, trigger, enabled, stoppedThisPass);
-        for (const session of projection.providerSessions) {
-          if (session.status !== "stopped" && session.status !== "error") {
-            stoppedThisPass.set(session.id, session);
-          }
-        }
-        terminalizedRuns += result.terminalizedRuns;
-        stoppedSessions += result.stoppedSessions;
-        closedRequests += result.closedRequests;
-        retiredEffects += result.retiredEffects;
-      }
-      const outboxReconciliation = yield* outbox.reconcileAfterProcessLoss.pipe(
+  const reconcile = Effect.fn("ProviderRuntimeRecoveryService.reconcile")(function* (
+    trigger: "startup" | "shutdown",
+  ) {
+    const continueAfterRestart = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
+    const threadIds = yield* projections
+      .getRecoveryThreadIds("runtime")
+      .pipe(
         Effect.mapError(
-          (cause) => new ProviderRuntimeRecoveryError({ operation: "drain-outbox", cause }),
+          (cause) => new ProviderRuntimeRecoveryError({ operation: "read-projections", cause }),
         ),
       );
-      return {
-        terminalizedRuns,
-        stoppedSessions,
-        closedRequests,
-        retiredEffects: retiredEffects + outboxReconciliation.cancelled,
-        requeuedEffects: outboxReconciliation.requeued,
-      } satisfies ProviderRuntimeReconciliationSummary;
-    });
+    let terminalizedRuns = 0;
+    let stoppedSessions = 0;
+    let closedRequests = 0;
+    let retiredEffects = 0;
+    const stoppedThisPass = new Map<string, RecoverySession>();
+    for (const threadId of threadIds) {
+      const projection = yield* projections.getRuntimeRecoveryProjection(threadId).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderRuntimeRecoveryError({
+              operation: "read-projections",
+              threadId,
+              cause,
+            }),
+        ),
+      );
+      const enabled =
+        continueAfterRestart !== null &&
+        resolveProjectSettings(continueAfterRestart, projection.thread.projectId).settings
+          .continueThreadsAfterServerUpdate;
+      const result = yield* reconcileProjection(projection, trigger, enabled, stoppedThisPass);
+      for (const session of projection.providerSessions) {
+        if (session.status !== "stopped" && session.status !== "error") {
+          stoppedThisPass.set(session.id, session);
+        }
+      }
+      terminalizedRuns += result.terminalizedRuns;
+      stoppedSessions += result.stoppedSessions;
+      closedRequests += result.closedRequests;
+      retiredEffects += result.retiredEffects;
+    }
+    const outboxReconciliation = yield* outbox.reconcileAfterProcessLoss.pipe(
+      Effect.mapError(
+        (cause) => new ProviderRuntimeRecoveryError({ operation: "drain-outbox", cause }),
+      ),
+    );
+    return {
+      terminalizedRuns,
+      stoppedSessions,
+      closedRequests,
+      retiredEffects: retiredEffects + outboxReconciliation.cancelled,
+      requeuedEffects: outboxReconciliation.requeued,
+    } satisfies ProviderRuntimeReconciliationSummary;
+  });
 
   const prepareForShutdown = Effect.gen(function* () {
     const enabled = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));

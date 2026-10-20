@@ -98,8 +98,8 @@ export const layerObserver = Layer.effect(
     const pullRequests = yield* PullRequestService.PullRequestService;
     return {
       refreshAfterTurn: pullRequests.refreshAfterTurn,
-      refresh: ({ cwd, threadId, runId }) =>
-        Effect.gen(function* () {
+      refresh: Effect.fn("RunFinalizationService.refresh")(
+        function* ({ cwd, threadId, runId }) {
           const [, local] = yield* Effect.all(
             [workspaceEntries.refresh(cwd), vcsStatus.refreshLocalStatus(cwd)],
             { concurrency: "unbounded" },
@@ -117,7 +117,10 @@ export const layerObserver = Layer.effect(
               }),
             ),
           );
-        }).pipe(Effect.mapError((cause) => new RunFinalizationRefreshError({ cwd, cause }))),
+        },
+        (effect, { cwd }) =>
+          effect.pipe(Effect.mapError((cause) => new RunFinalizationRefreshError({ cwd, cause }))),
+      ),
     };
   }),
 );

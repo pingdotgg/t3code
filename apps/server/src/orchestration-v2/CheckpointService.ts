@@ -184,7 +184,7 @@ function checkpointIdForScopeOrdinal(
   });
 }
 
-function makeRootRunScope(input: {
+const makeRootRunScope = Effect.fn("CheckpointService.makeRootRunScope")(function* (input: {
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly threadId: ThreadId;
   readonly runId: RunId;
@@ -193,26 +193,24 @@ function makeRootRunScope(input: {
   readonly cwd: string;
   readonly createdAt: DateTime.Utc;
 }) {
-  return Effect.gen(function* () {
-    const scopeId = yield* input.idAllocator.allocate.checkpointScope({
-      threadId: input.threadId,
-      name: ROOT_CHECKPOINT_SCOPE_NAME,
-    });
-    return {
-      id: scopeId,
-      threadId: input.threadId,
-      runId: input.runId,
-      nodeId: input.rootNodeId,
-      parentScopeId: null,
-      providerThreadId: input.providerThreadId,
-      kind: "root_run",
-      ordinalWithinParent: 0,
-      advancesAppRunCount: true,
-      cwd: input.cwd,
-      createdAt: input.createdAt,
-    } satisfies OrchestrationV2CheckpointScope;
+  const scopeId = yield* input.idAllocator.allocate.checkpointScope({
+    threadId: input.threadId,
+    name: ROOT_CHECKPOINT_SCOPE_NAME,
   });
-}
+  return {
+    id: scopeId,
+    threadId: input.threadId,
+    runId: input.runId,
+    nodeId: input.rootNodeId,
+    parentScopeId: null,
+    providerThreadId: input.providerThreadId,
+    kind: "root_run",
+    ordinalWithinParent: 0,
+    advancesAppRunCount: true,
+    cwd: input.cwd,
+    createdAt: input.createdAt,
+  } satisfies OrchestrationV2CheckpointScope;
+});
 
 function makeCheckpoint(input: {
   readonly id: CheckpointId;

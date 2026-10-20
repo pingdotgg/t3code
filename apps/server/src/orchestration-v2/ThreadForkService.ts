@@ -72,68 +72,67 @@ export class ThreadForkServiceV2 extends Context.Service<
 export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
   ThreadForkServiceV2,
   ThreadForkServiceV2.of({
-    plan: (input) =>
-      Effect.gen(function* () {
-        if (!isForkableSourceRunStatus(input.sourceRun.status)) {
-          return yield* new ThreadForkPlanError({
-            sourceThreadId: input.sourceProjection.thread.id,
-            targetThreadId: input.targetThreadId,
-            cause: forkableSourceRunStatusError(input.sourceRun),
-          });
-        }
-        const targetThread: OrchestrationV2AppThread = {
-          ...input.sourceProjection.thread,
-          // PR context follows the conversation; watching remains the source thread's responsibility.
-          pullRequests: input.sourceProjection.thread.pullRequests?.map(
-            ({ watch: _watch, ...link }) => link,
-          ),
-          createdBy: input.createdBy,
-          creationSource: input.creationSource,
-          id: input.targetThreadId,
-          title: input.title ?? `${input.sourceProjection.thread.title} fork`,
-          activeProviderThreadId: null,
-          lineage: {
-            parentThreadId: input.sourceProjection.thread.id,
-            relationshipToParent: "fork",
-            rootThreadId: input.sourceProjection.thread.lineage.rootThreadId,
-          },
-          forkedFrom: {
-            type: "run",
-            threadId: input.sourceProjection.thread.id,
-            runId: input.sourceRun.id,
-          },
-          createdAt: input.createdAt,
-          updatedAt: input.createdAt,
-          archivedAt: null,
-          settledOverride: null,
-          settledAt: null,
-          snoozedUntil: null,
-          snoozedAt: null,
-          lastVisitedAt: null,
-          deletedAt: null,
-        };
-        const transfer: OrchestrationV2ContextTransfer = {
-          id: input.transferId,
-          type: "fork",
+    plan: Effect.fn("ThreadForkService.plan")(function* (input) {
+      if (!isForkableSourceRunStatus(input.sourceRun.status)) {
+        return yield* new ThreadForkPlanError({
           sourceThreadId: input.sourceProjection.thread.id,
           targetThreadId: input.targetThreadId,
-          sourcePoint: input.canonicalSourcePoint,
-          basePoint: null,
-          sourceProviderInstanceId: input.sourceRun.providerInstanceId,
-          targetProviderInstanceId: null,
-          targetRunId: null,
-          status: "pending",
-          resolution: null,
-          createdBy: input.createdBy,
-          error:
-            input.sourceProviderThread?.nativeThreadRef?.strength === "strong"
-              ? null
-              : "Source provider thread does not expose a strong native thread ref.",
-          createdAt: input.createdAt,
-          updatedAt: input.createdAt,
-          consumedAt: null,
-        };
-        return { targetThread, transfer };
-      }),
+          cause: forkableSourceRunStatusError(input.sourceRun),
+        });
+      }
+      const targetThread: OrchestrationV2AppThread = {
+        ...input.sourceProjection.thread,
+        // PR context follows the conversation; watching remains the source thread's responsibility.
+        pullRequests: input.sourceProjection.thread.pullRequests?.map(
+          ({ watch: _watch, ...link }) => link,
+        ),
+        createdBy: input.createdBy,
+        creationSource: input.creationSource,
+        id: input.targetThreadId,
+        title: input.title ?? `${input.sourceProjection.thread.title} fork`,
+        activeProviderThreadId: null,
+        lineage: {
+          parentThreadId: input.sourceProjection.thread.id,
+          relationshipToParent: "fork",
+          rootThreadId: input.sourceProjection.thread.lineage.rootThreadId,
+        },
+        forkedFrom: {
+          type: "run",
+          threadId: input.sourceProjection.thread.id,
+          runId: input.sourceRun.id,
+        },
+        createdAt: input.createdAt,
+        updatedAt: input.createdAt,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        snoozedUntil: null,
+        snoozedAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      };
+      const transfer: OrchestrationV2ContextTransfer = {
+        id: input.transferId,
+        type: "fork",
+        sourceThreadId: input.sourceProjection.thread.id,
+        targetThreadId: input.targetThreadId,
+        sourcePoint: input.canonicalSourcePoint,
+        basePoint: null,
+        sourceProviderInstanceId: input.sourceRun.providerInstanceId,
+        targetProviderInstanceId: null,
+        targetRunId: null,
+        status: "pending",
+        resolution: null,
+        createdBy: input.createdBy,
+        error:
+          input.sourceProviderThread?.nativeThreadRef?.strength === "strong"
+            ? null
+            : "Source provider thread does not expose a strong native thread ref.",
+        createdAt: input.createdAt,
+        updatedAt: input.createdAt,
+        consumedAt: null,
+      };
+      return { targetThread, transfer };
+    }),
   }),
 );

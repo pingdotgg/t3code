@@ -355,26 +355,30 @@ export const layer: Layer.Layer<
     });
 
     return CheckpointRollbackServiceV2.of({
-      execute: (input) =>
-        Effect.gen(function* () {
+      // The inner execute owns the rollback span; this wrapper selects the workspace lease.
+      execute: Effect.fnUntraced(
+        function* (input) {
           // Storage cleanup removes worktrees under the same lease.
           const thread = yield* projections.getThread(input.threadId);
           yield* thread.worktreePath === null
             ? execute(input)
             : withWorkspaceLease(path.resolve(thread.worktreePath), execute(input));
-        }).pipe(
-          Effect.mapError((cause) =>
-            isCheckpointRollbackExecutionError(cause)
-              ? cause
-              : new CheckpointRollbackExecutionError({
-                  reason: "unexpected-failure",
-                  threadId: input.threadId,
-                  providerThreadId: input.providerThreadId,
-                  checkpointId: input.checkpointId,
-                  cause,
-                }),
+        },
+        (effect, input) =>
+          effect.pipe(
+            Effect.mapError((cause) =>
+              isCheckpointRollbackExecutionError(cause)
+                ? cause
+                : new CheckpointRollbackExecutionError({
+                    reason: "unexpected-failure",
+                    threadId: input.threadId,
+                    providerThreadId: input.providerThreadId,
+                    checkpointId: input.checkpointId,
+                    cause,
+                  }),
+            ),
           ),
-        ),
+      ),
     });
   }),
 );
