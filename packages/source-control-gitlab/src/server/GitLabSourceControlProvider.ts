@@ -12,11 +12,15 @@ import * as SourceControlProvider from "@t3tools/source-control-core/server/Sour
 import {
   combinedAuthOutput,
   firstSafeAuthLine,
+  isMissingExecutable,
   matchFirst,
   parseCliHost,
+  probeSourceControlProvider,
   providerAuth,
+  refineUnknownRemoteProvider,
   type SourceControlAuthProbeInput,
   type SourceControlCliDiscoverySpec,
+  type SourceControlManagedCliDiscoverySpec,
   type SourceControlUnknownRemoteRefinementInput,
 } from "@t3tools/source-control-core/server/discovery";
 import { findAuthenticatedGitLabHost, parseGitLabAuthStatusHosts } from "./gitLabAuthStatus.ts";
@@ -84,14 +88,25 @@ function parseGitLabAuth(input: SourceControlAuthProbeInput) {
   });
 }
 
+function normalizeGitLabHost(value: string) {
+  const candidate = value.trim();
+  if (!/^(?:https?:\/\/)?[^/?#@\\\s]+\/?$/iu.test(candidate)) return null;
+
+  try {
+    return new URL(candidate.includes("://") ? candidate : `https://${candidate}`).host;
+  } catch {
+    return null;
+  }
+}
+
 const GITLAB_HOST_NOT_LOGGED_IN_PATTERN =
   /\bnot (?:been )?authenticated with glab\b|\bno gitlab instances? ha(?:s|ve) been authenticated\b/iu;
 
 function refineUnknownGitLabRemote(input: SourceControlUnknownRemoteRefinementInput) {
-  const host = input.context.provider.name.toLowerCase();
+  const host = normalizeGitLabHost(input.context.provider.name);
   const output = combinedAuthOutput(input.auth);
   const authenticated = parseGitLabAuthStatusHosts(output).some(
-    (entry) => entry.account !== null && entry.host === host,
+    (entry) => entry.account !== null && host !== null && normalizeGitLabHost(entry.host) === host,
   );
 
   if (!authenticated) {
@@ -103,6 +118,20 @@ function refineUnknownGitLabRemote(input: SourceControlUnknownRemoteRefinementIn
     name: "GitLab Self-Hosted",
     baseUrl: input.context.provider.baseUrl,
   } as const;
+}
+
+function gitLabRemoteHost({
+  provider,
+  remoteUrl,
+}: SourceControlProvider.SourceControlProviderContext) {
+  // glab matches its configured hosts by exact name, so ask with the remote's own spelling.
+  const authority = /^[a-z][a-z0-9+.-]*:\/\/([^/]+)/iu.exec(remoteUrl.trim())?.[1];
+  const remoteHost = authority
+    ? authority.slice(authority.lastIndexOf("@") + 1)
+    : remoteUrl.trim().replace(/^[^@:/]+@/u, "");
+  return remoteHost.toLowerCase().startsWith(provider.name.toLowerCase())
+    ? remoteHost.slice(0, provider.name.length)
+    : provider.name;
 }
 
 function unknownRemoteProvider(remoteUrl: string) {
@@ -145,22 +174,68 @@ export const discovery = {
   executable: "glab",
   versionArgs: ["--version"],
   authArgs: ["auth", "status"],
-  // glab matches its configured hosts by exact name, so ask with the remote's own spelling.
-  remoteRefinementArgs: ({ provider, remoteUrl }) => {
-    const authority = /^[a-z][a-z0-9+.-]*:\/\/([^/]+)/iu.exec(remoteUrl.trim())?.[1];
-    const remoteHost = authority
-      ? authority.slice(authority.lastIndexOf("@") + 1)
-      : remoteUrl.trim().replace(/^[^@:/]+@/u, "");
-    const host = remoteHost.toLowerCase().startsWith(provider.name.toLowerCase())
-      ? remoteHost.slice(0, provider.name.length)
-      : provider.name;
-    return ["auth", "status", "--hostname", host];
-  },
+  remoteRefinementArgs: (context) => ["auth", "status", "--hostname", gitLabRemoteHost(context)],
   parseAuth: parseGitLabAuth,
   refineUnknownRemote: refineUnknownGitLabRemote,
   installHint:
     "Install the GitLab command-line tool (`glab`) from https://gitlab.com/gitlab-org/cli or your package manager (for example `brew install glab`).",
 } satisfies SourceControlCliDiscoverySpec;
+
+export const makeDiscovery = Effect.gen(function* () {
+  const { process } = yield* SourceControlHost.SourceControlHost;
+
+  return {
+    type: "managed-cli",
+    kind: discovery.kind,
+    label: discovery.label,
+    installHint: discovery.installHint,
+    probe: (cwd) => probeSourceControlProvider({ cwd, process, spec: discovery }),
+    refineUnknownRemote: Effect.fn("GitLabSourceControlProvider.refineUnknownRemote")(function* ({
+      cwd,
+      context,
+    }) {
+      const config = yield* process
+        .run({
+          operation: "source-control.discovery.refine-unknown-remote",
+          command: discovery.executable,
+          args: ["config", "get", "api_host", "--host", gitLabRemoteHost(context)],
+          cwd,
+          allowNonZeroExit: true,
+          timeoutMs: 5_000,
+          maxOutputBytes: 8_000,
+          appendTruncationMarker: true,
+        })
+        .pipe(Effect.catchIf(isMissingExecutable, () => Effect.void));
+      if (config === undefined) return null;
+      if (config.exitCode === 0) {
+        const host = normalizeGitLabHost(context.provider.name);
+        if (host !== null && normalizeGitLabHost(config.stdout) === host) {
+          return {
+            kind: discovery.kind,
+            name: "GitLab Self-Hosted",
+            baseUrl: context.provider.baseUrl,
+          };
+        }
+
+        // Token-only logins can omit api_host, and separate API hosts need auth-status discovery.
+        const verdict = yield* refineUnknownRemoteProvider({
+          specs: [discovery],
+          process,
+          cwd,
+          context,
+        });
+        if (verdict.settled) return verdict.provider;
+      }
+
+      return yield* new SourceControlProviderError({
+        provider: discovery.kind,
+        operation: "refineUnknownRemote",
+        cwd,
+        detail: "GitLab CLI could not identify the remote host.",
+      });
+    }),
+  } satisfies SourceControlManagedCliDiscoverySpec;
+});
 
 export const make = Effect.gen(function* () {
   const gitlab = yield* GitLabCli.GitLabCli;

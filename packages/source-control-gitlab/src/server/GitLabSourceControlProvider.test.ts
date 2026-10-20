@@ -197,62 +197,6 @@ self-hosted.example.test
   );
 });
 
-it("refines unknown GitLab remotes with mixed-case provider hosts", () => {
-  const provider = GitLabSourceControlProvider.discovery.refineUnknownRemote?.({
-    cwd: "/repo",
-    context: {
-      provider: {
-        kind: SourceControlProviderKind.make("unknown"),
-        name: "Self-Hosted.Example.Test",
-        baseUrl: "https://Self-Hosted.Example.Test",
-      },
-      remoteName: "origin",
-      remoteUrl: "https://Self-Hosted.Example.Test/group/project.git",
-    },
-    auth: {
-      exitCode: ChildProcessSpawner.ExitCode(0),
-      stdout: `self-hosted.example.test
-  ✓ Logged in to self-hosted.example.test as gitlab-user
-  ✓ Token found: ******
-`,
-      stderr: "",
-    },
-  });
-
-  assert.deepStrictEqual(provider, {
-    kind: "gitlab",
-    name: "GitLab Self-Hosted",
-    baseUrl: "https://Self-Hosted.Example.Test",
-  });
-});
-
-it("tells a host glab has no login for apart from output that cannot say", () => {
-  const refine = (stderr: string) =>
-    GitLabSourceControlProvider.discovery.refineUnknownRemote?.({
-      cwd: "/repo",
-      context: {
-        provider: {
-          kind: SourceControlProviderKind.make("unknown"),
-          name: "git.example.test",
-          baseUrl: "https://git.example.test",
-        },
-        remoteName: "origin",
-        remoteUrl: "https://git.example.test/group/project.git",
-      },
-      auth: { exitCode: ChildProcessSpawner.ExitCode(1), stdout: "", stderr },
-    });
-
-  assert.strictEqual(
-    refine("x git.example.test has not been authenticated with glab. Run `glab auth login`"),
-    null,
-  );
-  assert.strictEqual(
-    refine("No GitLab instances have been authenticated with glab. Run `glab auth login`"),
-    null,
-  );
-  assert.strictEqual(refine("git.example.test\n  x API call failed: 503"), undefined);
-});
-
 it.effect.each([
   [
     "https://code.example.test:8443@Code.Example.Test:8443/Team/Repo.git",

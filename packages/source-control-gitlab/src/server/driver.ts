@@ -9,7 +9,7 @@ export const driver = defineSourceControlDriver({
   kind: SourceControlProviderKind.make("gitlab"),
   make: Effect.all({
     sourceControl: GitLabSourceControlProvider.make,
-    discovery: Effect.succeed(GitLabSourceControlProvider.discovery),
+    discovery: GitLabSourceControlProvider.makeDiscovery,
     pullRequests: GitLabPullRequestProvider.make,
   }),
 });
