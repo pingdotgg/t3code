@@ -158,7 +158,7 @@ export const resolveTailscaleLocalTarget = (
       ? { localPort }
       : { localPort, localHost: devUrl.hostname };
   }
-  if (state.host !== undefined && !isWildcardHost(state.host) && !isLoopbackHost(state.host)) {
+  if (state.host !== undefined && !isWildcardHost(state.host)) {
     return { localPort: state.port, localHost: formatHostForUrl(state.host) };
   }
   return { localPort: state.port };

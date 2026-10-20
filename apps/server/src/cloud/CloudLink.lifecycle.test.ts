@@ -240,6 +240,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
     readonly requests: Array<HttpClientRequest.HttpClientRequest>;
     readonly onRequest?: (request: HttpClientRequest.HttpClientRequest) => Effect.Effect<void>;
     readonly respond?: () => Response;
+    readonly address?: HttpServer.HttpServer["Service"]["address"];
     readonly respondEffect?: Effect.Effect<Response>;
   }
 
@@ -274,7 +275,10 @@ describe("releaseManagedTunnelOnShutdown", () => {
     <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       effect.pipe(
         Effect.provide(CloudLink.layer),
-        Effect.provideService(HttpServer.HttpServer, idleHttpServer),
+        Effect.provideService(HttpServer.HttpServer, {
+          ...idleHttpServer,
+          address: harness.address ?? idleHttpServer.address,
+        }),
         Effect.provideService(ServerSecretStore.ServerSecretStore, harness.store),
         Effect.provideService(AgentAwarenessRelay.AgentAwarenessRelay, idleAwarenessRelay),
         Effect.provideService(
@@ -663,6 +667,48 @@ describe("releaseManagedTunnelOnShutdown", () => {
         store,
         applyConfigCalls,
         requests,
+        respond: () => Response.json({ status: "ready" }),
+      }),
+    );
+  });
+
+  it.effect("registers and starts a managed tunnel at the bound IPv6 loopback address", () => {
+    const { store } = makeMemorySecretStore();
+    const config = {
+      providerKind: "cloudflare_tunnel" as const,
+      connectorToken: "existing-token",
+      tunnelId: "existing-tunnel",
+    };
+    const applyConfigCalls: Array<unknown> = [];
+    const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+
+    return Effect.gen(function* () {
+      const link = yield* CloudLink.CloudLink;
+      expect(
+        yield* link.applyRelayConfig({
+          relayUrl: "https://relay.example.test",
+          cloudUserId: "user-123",
+          environmentCredential: "environment-credential",
+          cloudMintPublicKey:
+            "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAqZ2u2LjMoAyG2QTHXmITJ9w6RzZtVUAv394XCcPV0zE=\n-----END PUBLIC KEY-----",
+          endpointRuntime: config,
+        }),
+      ).toMatchObject({ ok: true, endpointRuntimeStatus: { status: "running" } });
+      expect(requests).toHaveLength(1);
+      const body = requests[0]!.body;
+      if (body._tag !== "Uint8Array") throw new Error("Expected a JSON recovery request");
+      expect(
+        yield* decodeManagedTunnelRecoveryRegistration(new TextDecoder().decode(body.body)),
+      ).toMatchObject({
+        origin: { localHttpHost: "[::1]", localHttpPort: 4884 },
+      });
+      expect(applyConfigCalls).toEqual([null, config]);
+    }).pipe(
+      provideReleaseHarness({
+        store,
+        applyConfigCalls,
+        requests,
+        address: NetAddress.inetAddressFromIpStringUnsafe("::1", 4884),
         respond: () => Response.json({ status: "ready" }),
       }),
     );

@@ -180,6 +180,7 @@ import * as EventStoreV2 from "./orchestration-v2/EventStore.ts";
 import * as ProjectionMaintenance from "./orchestration-v2/ProjectionMaintenance.ts";
 import * as ProjectionStoreV2 from "./orchestration-v2/ProjectionStore.ts";
 import { makePersistedServerRuntimeState } from "./serverRuntimeState.ts";
+import { loopbackUrlHostForAddress } from "./startupAccess.ts";
 import * as OrchestrationHttp from "./orchestration-v2/http.ts";
 import * as ProjectHttp from "./project/http.ts";
 import * as NetService from "@t3tools/shared/Net";
@@ -783,7 +784,7 @@ const layerMakeServer = Layer.unwrap(
               return yield* ensureTailscaleServe({
                 localPort,
                 servePort: config.tailscaleServePort,
-                localHost: "127.0.0.1",
+                localHost: loopbackUrlHostForAddress(address),
               }).pipe(
                 Effect.as({ localPort, servePort: config.tailscaleServePort }),
                 Effect.tap(() =>
@@ -853,7 +854,7 @@ const layerMakeServer = Layer.unwrap(
             const server = yield* HttpServer.HttpServer;
             const address = server.address;
             if (typeof address === "string" || !("port" in address)) return;
-            const localOrigin = `http://127.0.0.1:${address.port}`;
+            const localOrigin = `http://${loopbackUrlHostForAddress(address)}:${address.port}`;
             const endpointRuntime = yield* CloudManagedEndpointRuntime.CloudManagedEndpointRuntime;
             const runManagedTunnelRecovery = yield* makeManagedTunnelRecovery({
               recover: (config: RelayManagedEndpointRuntimeConfig) =>
