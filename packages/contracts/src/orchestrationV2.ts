@@ -163,6 +163,19 @@ export const OrchestrationV2ContextTransferResolution = Schema.Union([
 export type OrchestrationV2ContextTransferResolution =
   typeof OrchestrationV2ContextTransferResolution.Type;
 
+export const OrchestrationV2ProviderTurnTokenUsage = Schema.Struct({
+  usedTokens: NonNegativeInt,
+  maxTokens: Schema.optional(Schema.NullOr(NonNegativeInt)),
+  inputTokens: Schema.optional(NonNegativeInt),
+  cachedInputTokens: Schema.optional(NonNegativeInt),
+  outputTokens: Schema.optional(NonNegativeInt),
+  reasoningOutputTokens: Schema.optional(NonNegativeInt),
+  promptCacheTtlMs: Schema.optional(PositiveInt),
+  updatedAt: Schema.String,
+});
+export type OrchestrationV2ProviderTurnTokenUsage =
+  typeof OrchestrationV2ProviderTurnTokenUsage.Type;
+
 export const OrchestrationV2ContextTransfer = Schema.Struct({
   id: ContextTransferId,
   type: OrchestrationV2ContextTransferType,
@@ -171,6 +184,7 @@ export const OrchestrationV2ContextTransfer = Schema.Struct({
   sourcePoint: OrchestrationV2ContextSourcePoint,
   basePoint: Schema.NullOr(OrchestrationV2ContextSourcePoint),
   sourceProviderInstanceId: Schema.NullOr(ProviderInstanceId),
+  sourceTokenUsage: Schema.optional(OrchestrationV2ProviderTurnTokenUsage),
   targetProviderInstanceId: Schema.NullOr(ProviderInstanceId),
   targetRunId: Schema.NullOr(RunId),
   status: Schema.Literals([
@@ -949,19 +963,6 @@ export const OrchestrationV2ContextHandoff = Schema.Struct({
   updatedAt: Schema.DateTimeUtc,
 });
 export type OrchestrationV2ContextHandoff = typeof OrchestrationV2ContextHandoff.Type;
-
-export const OrchestrationV2ProviderTurnTokenUsage = Schema.Struct({
-  usedTokens: NonNegativeInt,
-  maxTokens: Schema.optional(Schema.NullOr(NonNegativeInt)),
-  inputTokens: Schema.optional(NonNegativeInt),
-  cachedInputTokens: Schema.optional(NonNegativeInt),
-  outputTokens: Schema.optional(NonNegativeInt),
-  reasoningOutputTokens: Schema.optional(NonNegativeInt),
-  promptCacheTtlMs: Schema.optional(PositiveInt),
-  updatedAt: Schema.String,
-});
-export type OrchestrationV2ProviderTurnTokenUsage =
-  typeof OrchestrationV2ProviderTurnTokenUsage.Type;
 
 export const OrchestrationV2ProviderTurn = Schema.Struct({
   id: ProviderTurnId,

@@ -284,6 +284,8 @@ describe("orchestration V2 thread fork", () => {
         assert.lengthOf(transfers, 1);
         assert.equal(transfers[0]?.status, "consumed");
         assert.equal(transfers[0]?.resolution?.strategy, "native_fork");
+        assert.isUndefined(sourceProjection.providerTurns[0]?.tokenUsage);
+        assert.isUndefined(transfers[0]?.sourceTokenUsage);
         assert.equal(transfers[0]?.targetRunId, targetProjection.runs[0]?.id);
 
         const transferCreatedIndex = result.domainEvents.findIndex(
@@ -452,6 +454,9 @@ describe("orchestration V2 thread fork", () => {
         assert.lengthOf(transfers, 1);
         assert.equal(transfers[0]?.status, "consumed");
         assert.equal(transfers[0]?.resolution?.strategy, "native_fork");
+        const sourceUsage = sourceProjection.providerTurns[0]?.tokenUsage;
+        assert.isDefined(sourceUsage);
+        assert.deepEqual(transfers[0]?.sourceTokenUsage, sourceUsage);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
@@ -780,6 +785,11 @@ describe("orchestration V2 thread fork", () => {
         "forking from the first source run must not preserve later source turns in native Claude context",
       );
       assert.equal(targetProjection.contextTransfers[0]?.resolution?.strategy, "native_fork");
+      const sourceProjection = result.projections.get(materialized.sourceThreadId);
+      const sourceUsage = sourceProjection?.providerTurns[0]?.tokenUsage;
+      assert.isDefined(sourceUsage);
+      assert.notDeepEqual(sourceUsage, sourceProjection?.providerTurns[1]?.tokenUsage);
+      assert.deepEqual(targetProjection.contextTransfers[0]?.sourceTokenUsage, sourceUsage);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

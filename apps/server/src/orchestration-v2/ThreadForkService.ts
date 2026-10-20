@@ -6,6 +6,7 @@ import {
   OrchestrationV2ContextTransfer,
   OrchestrationV2CreationSource,
   OrchestrationV2ProviderThread,
+  OrchestrationV2ProviderTurnTokenUsage,
   OrchestrationV2Run,
   OrchestrationV2ThreadProjection,
   ThreadId,
@@ -54,6 +55,7 @@ export interface ThreadForkServiceV2Shape {
     readonly sourceProjection: Pick<OrchestrationV2ThreadProjection, "thread">;
     readonly sourceRun: OrchestrationV2Run;
     readonly sourceProviderThread: OrchestrationV2ProviderThread | undefined;
+    readonly sourceTokenUsage?: OrchestrationV2ProviderTurnTokenUsage | undefined;
     readonly canonicalSourcePoint: OrchestrationV2ContextSourcePoint;
     readonly transferId: ContextTransferId;
     readonly targetThreadId: ThreadId;
@@ -119,6 +121,12 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
         sourcePoint: input.canonicalSourcePoint,
         basePoint: null,
         sourceProviderInstanceId: input.sourceRun.providerInstanceId,
+        // Only native forks retain this context; portable handoffs rebuild it.
+        sourceTokenUsage:
+          (input.sourceRun.status === "completed" || input.sourceRun.status === "waiting") &&
+          input.sourceProviderThread?.nativeThreadRef?.strength === "strong"
+            ? input.sourceTokenUsage
+            : undefined,
         targetProviderInstanceId: null,
         targetRunId: null,
         status: "pending",

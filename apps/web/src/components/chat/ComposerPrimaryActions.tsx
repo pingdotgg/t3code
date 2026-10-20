@@ -387,9 +387,12 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           <span>{compactTokens}</span>
         </TooltipTrigger>
         <TooltipPopup>
-          {keepFullHistory
-            ? `Next send keeps all ${compactTokens} tokens. Click to compact first`
-            : `Next send compacts ${compactTokens} tokens first. Click to keep full history`}
+          <div>
+            {keepFullHistory
+              ? `Next send keeps all ${compactTokens} tokens.`
+              : `Next send compacts ${compactTokens} tokens first.`}
+          </div>
+          <div>{keepFullHistory ? "Click to compact first" : "Click to keep full history"}</div>
         </TooltipPopup>
       </Tooltip>
       {submit}
