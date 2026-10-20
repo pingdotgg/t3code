@@ -138,13 +138,13 @@ import {
   MousePointerClickIcon,
   PaintbrushIcon,
   MinusIcon,
+  PencilIcon,
   Redo2Icon,
   Minimize2Icon,
   SearchIcon,
   SmartphoneIcon,
   SquarePenIcon,
   TerminalIcon,
-  Undo2Icon,
   HammerIcon,
   WrenchIcon,
   Code2Icon,
@@ -2577,7 +2577,7 @@ function RevertUserMessageButton({
           />
         }
       >
-        <Undo2Icon className="size-3" />
+        <PencilIcon className="size-3" />
       </TooltipTrigger>
       <TooltipPopup side="top">Edit from here</TooltipPopup>
     </Tooltip>
