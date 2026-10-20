@@ -511,8 +511,9 @@ const PathDirectoryListings = Context.Reference<
   Cache.Cache<string, PathDirectoryListing, never, FileSystem.FileSystem> | undefined
 >("@t3tools/shared/shell/PathDirectoryListings", { defaultValue: () => undefined });
 
-export const withPathDirectoryListings = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  Effect.gen(function* () {
+export const withPathDirectoryListings =
+  /* Directory reads are cached inside one shell operation; a span for each lookup adds noise. */
+  Effect.fnUntraced(function* <A, E, R>(effect: Effect.Effect<A, E, R>) {
     const listings = yield* Cache.make({
       capacity: 1024,
       lookup: listPathDirectory,

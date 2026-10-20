@@ -277,11 +277,12 @@ it.effect("surfaces an unreadable link instead of writing over it", () =>
       pathOrDescriptor: "/home/settings.json",
     });
 
-    const result = yield* Effect.exit(
-      writeFileStringAtomically({ filePath: "/home/settings.json", contents: "after" }),
-    );
+    const failure = yield* writeFileStringAtomically({
+      filePath: "/home/settings.json",
+      contents: "after",
+    }).pipe(Effect.flip);
 
-    assert.deepStrictEqual(result, Exit.fail(readLinkFailure));
+    assert.deepStrictEqual(failure, readLinkFailure);
   }).pipe(
     Effect.provide(
       Layer.mergeAll(

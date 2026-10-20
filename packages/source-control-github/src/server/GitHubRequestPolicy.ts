@@ -260,96 +260,92 @@ export const make = Effect.gen(function* () {
     return { token: held.token, fingerprint: held.fingerprint };
   });
 
-  const request: GitHubRequestPolicy["Service"]["request"] = <A, E, R>(
+  // The REST/GraphQL transport span owns request and quota metadata.
+  const request: GitHubRequestPolicy["Service"]["request"] = Effect.fnUntraced(function* <A, E, R>(
     input: GitHubRequest,
     send: (headers: Readonly<Record<string, string>>) => Effect.Effect<GitHubAnswer<A>, E, R>,
-  ) =>
-    Effect.gen(function* () {
-      const host = normalizeHost(input.host);
-      const context = { host, operation: input.operation };
-      yield* Effect.annotateCurrentSpan({
-        "github.host": host,
-        "github.operation": input.operation,
-      });
-      const { token, fingerprint } = yield* credential(host);
-      const scope = yield* SourceControlRateLimit.CredentialScope;
-      // A refusal pauses the whole host, whichever quota it spent: the key PullRequestService
-      // records its own backoff under.
-      const key = { provider: SourceControlProviderKind.make("github"), host };
-
-      const settle = (lease: number, answer: GitHubAnswer<A>) =>
-        Effect.gen(function* () {
-          yield* quota.observe(host, answer.headers);
-          yield* Effect.annotateCurrentSpan({
-            ...(answer.status === undefined ? {} : { "http.response.status_code": answer.status }),
-            ...rateLimitAttributes(answer.headers),
-          });
-          switch (answer._tag) {
-            case "Ok":
-              yield* limits.recordSuccess({ ...key, lease });
-              return answer.value;
-            case "RateLimited": {
-              const retryAt = retryAtFrom(answer.headers, yield* Clock.currentTimeMillis);
-              yield* limits.recordRateLimit({ ...key, lease, retryAt });
-              yield* Effect.annotateCurrentSpan({
-                "github.rate_limited": true,
-                ...(retryAt === undefined ? {} : { "github.retry_at": retryAt }),
-              });
-              return yield* new GitHubApiRateLimitError({
-                ...context,
-                ...(retryAt === undefined ? {} : { retryAt }),
-              });
-            }
-            case "Unauthorized":
-              // The source may hold a newer token than the one that was refused.
-              yield* credentials.invalidate(host);
-              return yield* new GitHubApiAuthenticationError(context);
-            case "NotFound":
-              return yield* new GitHubApiNotFoundError(context);
-            case "Failed":
-              return yield* new GitHubApiResponseError({
-                ...context,
-                status: answer.status ?? 200,
-                ...(answer.messages === undefined ? {} : { githubErrors: answer.messages }),
-              });
-          }
-        });
-
-      const run = Effect.gen(function* () {
-        const lease = yield* quota
-          .admit(host, input.resource, { allowReserve: input.allowReserve })
-          .pipe(
-            Effect.andThen(
-              limits.check(key, input.allowReserve ? { allowPaused: true } : undefined),
-            ),
-            Effect.tapError((paused) =>
-              Effect.annotateCurrentSpan({
-                "github.paused": true,
-                "github.retry_at": paused.retryAt,
-              }),
-            ),
-          );
-        // One deadline covers the headers and the body: a host that answers headers and then
-        // stalls must not hold a shared slot for undici's own five-minute body timeout.
-        const answer = yield* send({
-          ...REQUEST_HEADERS,
-          authorization: `Bearer ${Redacted.value(token)}`,
-        }).pipe(
-          Effect.timeoutOrElse({
-            duration: input.timeout ?? DEFAULT_TIMEOUT,
-            orElse: () =>
-              Effect.fail(
-                new GitHubApiRequestError({ ...context, cause: new Cause.TimeoutError() }),
-              ),
-          }),
-        );
-        return yield* settle(lease, answer);
-      });
-      // The rate-limit scope follows the credential, so a pause on one account never blocks another.
-      return yield* slots
-        .withPermit(run)
-        .pipe(Effect.provideService(SourceControlRateLimit.CredentialScope, scope || fingerprint));
+  ) {
+    const host = normalizeHost(input.host);
+    const context = { host, operation: input.operation };
+    yield* Effect.annotateCurrentSpan({
+      "github.host": host,
+      "github.operation": input.operation,
     });
+    const { token, fingerprint } = yield* credential(host);
+    const scope = yield* SourceControlRateLimit.CredentialScope;
+    // A refusal pauses the whole host, whichever quota it spent: the key PullRequestService
+    // records its own backoff under.
+    const key = { provider: SourceControlProviderKind.make("github"), host };
+
+    // Settlement annotates the request span with status and rate-limit attributes.
+    const settle = Effect.fnUntraced(function* (lease: number, answer: GitHubAnswer<A>) {
+      yield* quota.observe(host, answer.headers);
+      yield* Effect.annotateCurrentSpan({
+        ...(answer.status === undefined ? {} : { "http.response.status_code": answer.status }),
+        ...rateLimitAttributes(answer.headers),
+      });
+      switch (answer._tag) {
+        case "Ok":
+          yield* limits.recordSuccess({ ...key, lease });
+          return answer.value;
+        case "RateLimited": {
+          const retryAt = retryAtFrom(answer.headers, yield* Clock.currentTimeMillis);
+          yield* limits.recordRateLimit({ ...key, lease, retryAt });
+          yield* Effect.annotateCurrentSpan({
+            "github.rate_limited": true,
+            ...(retryAt === undefined ? {} : { "github.retry_at": retryAt }),
+          });
+          return yield* new GitHubApiRateLimitError({
+            ...context,
+            ...(retryAt === undefined ? {} : { retryAt }),
+          });
+        }
+        case "Unauthorized":
+          // The source may hold a newer token than the one that was refused.
+          yield* credentials.invalidate(host);
+          return yield* new GitHubApiAuthenticationError(context);
+        case "NotFound":
+          return yield* new GitHubApiNotFoundError(context);
+        case "Failed":
+          return yield* new GitHubApiResponseError({
+            ...context,
+            status: answer.status ?? 200,
+            ...(answer.messages === undefined ? {} : { githubErrors: answer.messages }),
+          });
+      }
+    });
+
+    const run = Effect.gen(function* () {
+      const lease = yield* quota
+        .admit(host, input.resource, { allowReserve: input.allowReserve })
+        .pipe(
+          Effect.andThen(limits.check(key, input.allowReserve ? { allowPaused: true } : undefined)),
+          Effect.tapError((paused) =>
+            Effect.annotateCurrentSpan({
+              "github.paused": true,
+              "github.retry_at": paused.retryAt,
+            }),
+          ),
+        );
+      // One deadline covers the headers and the body: a host that answers headers and then
+      // stalls must not hold a shared slot for undici's own five-minute body timeout.
+      const answer = yield* send({
+        ...REQUEST_HEADERS,
+        authorization: `Bearer ${Redacted.value(token)}`,
+      }).pipe(
+        Effect.timeoutOrElse({
+          duration: input.timeout ?? DEFAULT_TIMEOUT,
+          orElse: () =>
+            Effect.fail(new GitHubApiRequestError({ ...context, cause: new Cause.TimeoutError() })),
+        }),
+      );
+      return yield* settle(lease, answer);
+    });
+    // The rate-limit scope follows the credential, so a pause on one account never blocks another.
+    return yield* slots
+      .withPermit(run)
+      .pipe(Effect.provideService(SourceControlRateLimit.CredentialScope, scope || fingerprint));
+  });
 
   return GitHubRequestPolicy.of({ request, credential });
 });

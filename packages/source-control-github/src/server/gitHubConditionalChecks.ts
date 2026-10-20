@@ -85,54 +85,56 @@ export const makeChecksRevalidator = Effect.gen(function* () {
               operation: "revalidateChecks",
               status,
             });
-          const get = (endpoint: string, head = false) =>
-            Effect.gen(function* () {
-              const previous = entry.validators.get(endpoint);
-              const response = yield* api
-                .rest({
-                  host: input.host,
-                  operation: "revalidateChecks",
-                  path: endpoint,
-                  ...(previous?.etag ? { ifNoneMatch: previous.etag } : {}),
-                })
-                .pipe(
-                  Effect.catchTags({
-                    GitHubApiNotFoundError: () =>
-                      Effect.sync(() => {
-                        entry.supported = false;
-                        return null;
-                      }),
-                    GitHubApiResponseError: (error) =>
-                      Effect.sync(() => {
-                        entry.supported = !UNSUPPORTED_STATUSES.has(error.status);
-                        return null;
-                      }),
-                  }),
-                );
-              if (response === null) {
-                entry.value = null;
-                return null;
-              }
-              if (response.status === 304 && previous) return previous.next;
-              if (response.status !== 200 || response.truncated) {
-                return yield* fail(response.status);
-              }
+          const get = Effect.fn("gitHubConditionalChecks.get")(function* (
+            endpoint: string,
+            head = false,
+          ) {
+            const previous = entry.validators.get(endpoint);
+            const response = yield* api
+              .rest({
+                host: input.host,
+                operation: "revalidateChecks",
+                path: endpoint,
+                ...(previous?.etag ? { ifNoneMatch: previous.etag } : {}),
+              })
+              .pipe(
+                Effect.catchTags({
+                  GitHubApiNotFoundError: () =>
+                    Effect.sync(() => {
+                      entry.supported = false;
+                      return null;
+                    }),
+                  GitHubApiResponseError: (error) =>
+                    Effect.sync(() => {
+                      entry.supported = !UNSUPPORTED_STATUSES.has(error.status);
+                      return null;
+                    }),
+                }),
+              );
+            if (response === null) {
               entry.value = null;
-              if (head) {
-                const decoded = yield* decodeHead(response.body).pipe(
-                  Effect.mapError(() => fail(response.status)),
-                );
-                if (entry.head?.head.sha !== decoded.head.sha) entry.validators.clear();
-                entry.head = decoded;
-              }
-              const validator = {
-                etag: response.headers["etag"]?.trim(),
-                next: /rel="next"/.test(response.headers["link"] ?? ""),
-                body: response.body,
-              };
-              entry.validators.set(endpoint, validator);
-              return validator.next;
-            });
+              return null;
+            }
+            if (response.status === 304 && previous) return previous.next;
+            if (response.status !== 200 || response.truncated) {
+              return yield* fail(response.status);
+            }
+            entry.value = null;
+            if (head) {
+              const decoded = yield* decodeHead(response.body).pipe(
+                Effect.mapError(() => fail(response.status)),
+              );
+              if (entry.head?.head.sha !== decoded.head.sha) entry.validators.clear();
+              entry.head = decoded;
+            }
+            const validator = {
+              etag: response.headers["etag"]?.trim(),
+              next: /rel="next"/.test(response.headers["link"] ?? ""),
+              body: response.body,
+            };
+            entry.validators.set(endpoint, validator);
+            return validator.next;
+          });
           const root = `repos/${input.repository}`;
           if ((yield* get(`${root}/pulls/${input.number}`, true)) === null) return yield* read;
           const head = entry.head;
