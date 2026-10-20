@@ -60,9 +60,12 @@ a provider thread to native task projections or advertise subagent thread IDs. A
 read-only: send messages from the parent thread.
 
 Runtime modes map to the controls the local SDK exposes: full access disables its sandbox, while
-restricted modes and explicit non-full-access sandbox policies enable it. Explicit approval policy
-overrides also control Cursor Auto-review. Auto-review is not represented as an interactive T3 Code
-approval flow.
+restricted modes normally enable it. On Windows, Auto and Supervised run without filesystem
+isolation when Cursor Auto-review is enabled, because the SDK does not support a filesystem sandbox
+there. Restricted modes without Auto-review, including the default Auto-accept edits mode, still
+request the sandbox and cannot start on Windows. Explicit sandbox policies remain authoritative,
+including restrictive policies that the Windows SDK rejects. Explicit approval policy overrides
+control Auto-review, which is not represented as an interactive T3 Code approval flow.
 
 The existing Cursor binary path and API endpoint settings belong to the CLI/ACP integration. Cursor
 V2 execution does not launch that binary, and the SDK does not expose an API endpoint override.
