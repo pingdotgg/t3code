@@ -138,6 +138,11 @@ const CLAUDE_TEST_MODEL_SELECTION = {
   model: "claude-sonnet-4-6",
   options: [{ id: "effort", value: "ultrathink" }],
 } satisfies ModelSelection;
+const CLAUDE_TEST_CUSTOM_MODEL_SELECTION = {
+  instanceId: ProviderInstanceId.make(ClaudeAdapterV2.CLAUDE_PROVIDER),
+  model: "local-model-without-catalog-entry",
+  options: [],
+} satisfies ModelSelection;
 const CLAUDE_TEST_RESTART_MODEL_SELECTION = {
   ...CLAUDE_TEST_MODEL_SELECTION,
   model: "claude-haiku-4-5-20251001",
@@ -2429,6 +2434,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly uuid: string;
     readonly result: string;
     readonly numTurns?: number;
+    readonly modelUsage?: SDKResultMessage["modelUsage"];
     readonly origin?: { readonly kind: "task-notification" };
     readonly subtype?: string;
     readonly isError?: boolean;
@@ -2459,7 +2465,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         cache_creation_input_tokens: 0,
         cache_read_input_tokens: 0,
       },
-      modelUsage: {},
+      modelUsage: input.modelUsage ?? {},
       permission_denials: [],
       uuid: input.uuid,
       session_id: WAKE_NATIVE_SESSION,
@@ -5031,6 +5037,186 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
       ),
     ),
+  );
+
+  const reportedModelUsage = {
+    inputTokens: 900_000,
+    outputTokens: 9_000,
+    cacheReadInputTokens: 0,
+    cacheCreationInputTokens: 0,
+    webSearchRequests: 0,
+    costUSD: 0,
+    contextWindow: 524_288,
+    maxOutputTokens: 32_768,
+  };
+
+  it.effect(
+    "backfills a custom model's latest streamed usage and reuses its window next turn",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({
+          settings: { ...DEFAULT_CLAUDE_SETTINGS, autoCompactWindow: "650000" },
+        });
+        const contextWindowOf = harness.runtime.getModelContextWindow;
+        assert.isDefined(contextWindowOf);
+        if (contextWindowOf === undefined) return;
+        assert.isUndefined(contextWindowOf(CLAUDE_TEST_CUSTOM_MODEL_SELECTION));
+        const now = yield* DateTime.now;
+        const startTurn = (attempt: string) =>
+          harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make(attempt),
+              text: "Continue.",
+              attachments: [],
+              modelSelection: CLAUDE_TEST_CUSTOM_MODEL_SELECTION,
+            }),
+          );
+        const usageEvents = () =>
+          harness.events.flatMap((event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.tokenUsage
+              ? [event.providerTurn.tokenUsage]
+              : [],
+          );
+        yield* startTurn("attempt-learn-window");
+        const startUsage = { ...zeroUsage, input_tokens: 1_000, output_tokens: 1 };
+        const frames = [
+          usageStreamFrame({
+            type: "message_start",
+            message: { id: "msg_learn_window", usage: startUsage },
+          }),
+          usageStreamFrame({
+            type: "message_delta",
+            delta: { stop_reason: "end_turn", stop_sequence: null },
+            usage: { input_tokens: null, output_tokens: 75 },
+          }),
+          usageSnapshotFrame("msg_learn_window", "window-stale-snapshot", startUsage),
+          makeResultFrame({
+            uuid: "window-result",
+            result: "Done.",
+            modelUsage: {
+              [CLAUDE_TEST_CUSTOM_MODEL_SELECTION.model]: reportedModelUsage,
+              [CLAUDE_TEST_MODEL_SELECTION.model]: reportedModelUsage,
+            },
+          }),
+        ];
+        for (const frame of frames) yield* Queue.offer(harness.sdkMessages, frame);
+        assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+        const firstTurnUsage = usageEvents();
+        assert.isNull(firstTurnUsage[0]?.maxTokens);
+        assert.equal(firstTurnUsage[0]?.autoCompactThreshold, 650_000);
+        assert.equal(firstTurnUsage.at(-1)?.maxTokens, 524_288);
+        assert.isUndefined(firstTurnUsage.at(-1)?.autoCompactThreshold);
+        assert.equal(firstTurnUsage.at(-1)?.usedTokens, 1_075);
+        assert.equal(firstTurnUsage.at(-1)?.outputTokens, 75);
+        assert.equal(contextWindowOf(CLAUDE_TEST_CUSTOM_MODEL_SELECTION), 524_288);
+        assert.equal(contextWindowOf(CLAUDE_TEST_MODEL_SELECTION), 200_000);
+        assert.isUndefined(
+          contextWindowOf({ ...CLAUDE_TEST_CUSTOM_MODEL_SELECTION, model: "another-custom-model" }),
+        );
+
+        yield* startTurn("attempt-reuse-window");
+        const nextFrames = [
+          usageSnapshotFrame("msg_next_turn", "window-next-snapshot", startUsage),
+          claudeSdkFrame({
+            type: "system",
+            subtype: "compact_boundary",
+            compact_metadata: { trigger: "auto", pre_tokens: 1_001, post_tokens: 400 },
+            uuid: "window-next-compaction",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          makeResultFrame({ uuid: "window-next-result", result: "Done." }),
+        ];
+        for (const frame of nextFrames) yield* Queue.offer(harness.sdkMessages, frame);
+        assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+        assert.deepEqual(
+          usageEvents()
+            .slice(firstTurnUsage.length)
+            .map(({ usedTokens, maxTokens }) => ({
+              usedTokens,
+              maxTokens,
+            })),
+          [
+            { usedTokens: 1_001, maxTokens: 524_288 },
+            { usedTokens: 400, maxTokens: 524_288 },
+          ],
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
+
+  it.effect.each([false, true])(
+    "backfills the latest compaction watermark when earlier streamed usage is %s",
+    (hasEarlierUsage) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-compact-before-window"),
+            text: "Continue.",
+            attachments: [],
+            modelSelection: CLAUDE_TEST_CUSTOM_MODEL_SELECTION,
+          }),
+        );
+        if (hasEarlierUsage) {
+          yield* Queue.offer(
+            harness.sdkMessages,
+            usageStreamFrame({
+              type: "message_start",
+              message: {
+                id: "msg_before_window_compaction",
+                usage: { ...zeroUsage, input_tokens: 1_000, output_tokens: 75 },
+              },
+            }),
+          );
+        }
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "compact_boundary",
+            compact_metadata: { trigger: "auto", pre_tokens: 1_075, post_tokens: 400 },
+            uuid: "window-first-compaction",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "window-compacted-result",
+            result: "Done.",
+            modelUsage: { [CLAUDE_TEST_CUSTOM_MODEL_SELECTION.model]: reportedModelUsage },
+          }),
+        );
+        assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+        const usage = harness.events.flatMap((event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.tokenUsage
+            ? [event.providerTurn.tokenUsage]
+            : [],
+        );
+        assert.deepEqual(
+          usage.map(({ usedTokens, maxTokens }) => ({ usedTokens, maxTokens })),
+          [
+            ...(hasEarlierUsage ? [{ usedTokens: 1_075, maxTokens: null }] : []),
+            { usedTokens: 400, maxTokens: null },
+            { usedTokens: 400, maxTokens: 524_288 },
+          ],
+        );
+        assert.isUndefined(usage.at(-1)?.inputTokens);
+        assert.isUndefined(usage.at(-1)?.outputTokens);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
   );
 
   it.effect(
