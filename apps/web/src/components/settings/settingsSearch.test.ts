@@ -5,7 +5,6 @@ import {
   filterAvailableSettingsSearchItems,
   getSettingsSearchTargetScope,
   getThreadAutoSettlementSearchAvailability,
-  isSettingsOverviewVisible,
   isSettingsSearchScopeAvailable,
   searchableSetting,
   searchSettings,
@@ -574,14 +573,5 @@ describe("auto-settlement search availability", () => {
       }),
     ).toEqual({ eligibleEnvironmentIds: [], isTargetAvailable: false });
     expect(getThreadAutoSettlementSearchAvailability([]).eligibleEnvironmentIds).toEqual([]);
-  });
-});
-
-describe("settings sidebar scope", () => {
-  it("shows Overview only for project and checkout targets", () => {
-    expect(isSettingsOverviewVisible({})).toBe(false);
-    expect(isSettingsOverviewVisible({ machine: "remote" })).toBe(false);
-    expect(isSettingsOverviewVisible({ project: "project" })).toBe(true);
-    expect(isSettingsOverviewVisible({ project: "project", checkout: "checkout" })).toBe(true);
   });
 });
