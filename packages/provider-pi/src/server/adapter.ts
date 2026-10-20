@@ -582,11 +582,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       const emit = (event: ProviderAdapter.ProviderAdapterV2Event) =>
         Queue.offer(events, event).pipe(Effect.asVoid);
 
-      const updateProviderSession = (
-        status: OrchestrationV2ProviderSession["status"],
-        lastError: string | null = sessionEntity.lastError,
-      ) =>
-        Effect.gen(function* () {
+      const updateProviderSession =
+        /* Provider events include streaming deltas; avoid a span for each update. */
+        Effect.fnUntraced(function* (
+          status: OrchestrationV2ProviderSession["status"],
+          lastError: string | null = sessionEntity.lastError,
+        ) {
           const updatedAt = yield* DateTime.now;
           sessionEntity = { ...sessionEntity, status, lastError, updatedAt };
           yield* emit({
@@ -596,12 +597,13 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           });
         });
 
-      const updateProviderThread = (
-        state: PiThreadState,
-        patch: Partial<OrchestrationV2ProviderThread>,
-        retainedNativeTurnIds?: ReadonlyArray<string>,
-      ) =>
-        Effect.gen(function* () {
+      const updateProviderThread =
+        /* Provider events include streaming deltas; avoid a span for each update. */
+        Effect.fnUntraced(function* (
+          state: PiThreadState,
+          patch: Partial<OrchestrationV2ProviderThread>,
+          retainedNativeTurnIds?: ReadonlyArray<string>,
+        ) {
           const updatedAt = yield* DateTime.now;
           state.providerThread = { ...state.providerThread, ...patch, updatedAt };
           yield* emit({
@@ -692,8 +694,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       /**
        * Pi attaches the current message's cumulative usage to every streaming update (0.84.2+).
        */
-      const reportLiveUsage = (turn: ActivePiTurn, usage: unknown) =>
-        Effect.gen(function* () {
+      const reportLiveUsage =
+        /* Provider events include streaming deltas; avoid a span for each update. */
+        Effect.fnUntraced(function* (turn: ActivePiTurn, usage: unknown) {
           const usedTokens = nonNegativeInteger(usage, "totalTokens");
           if (
             usedTokens === undefined ||
@@ -849,8 +852,13 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         });
       });
 
-      const emitStreamItem = (turn: ActivePiTurn, item: PiStreamItemState, streaming: boolean) =>
-        Effect.gen(function* () {
+      const emitStreamItem =
+        /* Provider events include streaming deltas; avoid a span for each update. */
+        Effect.fnUntraced(function* (
+          turn: ActivePiTurn,
+          item: PiStreamItemState,
+          streaming: boolean,
+        ) {
           const emittedAt = yield* DateTime.now;
           const base = baseItemFields(turn, item.nativeItemId, item.startedAt, emittedAt);
           yield* emitItemNode(
@@ -918,8 +926,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           });
         });
 
-      const scheduleStreamFlush = (turn: ActivePiTurn, item: PiStreamItemState) =>
-        Effect.gen(function* () {
+      const scheduleStreamFlush =
+        /* Provider events include streaming deltas; avoid a span for each update. */
+        Effect.fnUntraced(function* (turn: ActivePiTurn, item: PiStreamItemState) {
           if (item.flushScheduled || item.completed) return;
           item.flushScheduled = true;
           yield* Effect.sleep(Duration.millis(STREAM_FLUSH_MS)).pipe(
@@ -1159,52 +1168,55 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         }
       });
 
-      const cancelPrompt = (pending: PendingPiPrompt, resolvedAt: DateTime.Utc) =>
-        Effect.gen(function* () {
-          if (pending.expirationFiber !== null) yield* Fiber.interrupt(pending.expirationFiber);
-          yield* connection
-            .send({
-              type: "extension_ui_response",
-              id: pending.nativeRequestId,
-              cancelled: true,
-            })
-            .pipe(Effect.ignore);
-          pending.runtimeRequest = {
-            ...pending.runtimeRequest,
+      const cancelPrompt = Effect.fn("PiAdapter.cancelPrompt")(function* (
+        pending: PendingPiPrompt,
+        resolvedAt: DateTime.Utc,
+      ) {
+        if (pending.expirationFiber !== null) yield* Fiber.interrupt(pending.expirationFiber);
+        yield* connection
+          .send({
+            type: "extension_ui_response",
+            id: pending.nativeRequestId,
+            cancelled: true,
+          })
+          .pipe(Effect.ignore);
+        pending.runtimeRequest = {
+          ...pending.runtimeRequest,
+          status: "cancelled",
+          resolvedAt,
+        };
+        yield* emit({
+          type: "runtime_request.updated",
+          driver: PI_PROVIDER,
+          threadId: pending.node.threadId,
+          runtimeRequest: pending.runtimeRequest,
+        });
+        yield* emit({
+          type: "node.updated",
+          driver: PI_PROVIDER,
+          node: { ...pending.node, status: "cancelled", completedAt: resolvedAt },
+        });
+        yield* emit({
+          type: "turn_item.updated",
+          driver: PI_PROVIDER,
+          turnItem: {
+            ...pending.turnItem,
             status: "cancelled",
-            resolvedAt,
-          };
-          yield* emit({
-            type: "runtime_request.updated",
-            driver: PI_PROVIDER,
-            threadId: pending.node.threadId,
-            runtimeRequest: pending.runtimeRequest,
-          });
-          yield* emit({
-            type: "node.updated",
-            driver: PI_PROVIDER,
-            node: { ...pending.node, status: "cancelled", completedAt: resolvedAt },
-          });
-          yield* emit({
-            type: "turn_item.updated",
-            driver: PI_PROVIDER,
-            turnItem: {
-              ...pending.turnItem,
-              status: "cancelled",
-              completedAt: resolvedAt,
-              updatedAt: resolvedAt,
-            },
-          });
+            completedAt: resolvedAt,
+            updatedAt: resolvedAt,
+          },
         });
+      });
 
-      const cancelPendingPrompts = (resolvedAt: DateTime.Utc) =>
-        Effect.gen(function* () {
-          const pending = Array.from(pendingPrompts.values());
-          pendingPrompts.clear();
-          yield* Effect.forEach(pending, (prompt) => cancelPrompt(prompt, resolvedAt), {
-            discard: true,
-          });
+      const cancelPendingPrompts = Effect.fn("PiAdapter.cancelPendingPrompts")(function* (
+        resolvedAt: DateTime.Utc,
+      ) {
+        const pending = Array.from(pendingPrompts.values());
+        pendingPrompts.clear();
+        yield* Effect.forEach(pending, (prompt) => cancelPrompt(prompt, resolvedAt), {
+          discard: true,
         });
+      });
 
       const handleExtensionUiRequest = Effect.fnUntraced(function* (event: PiRpcRecord) {
         const method = recordString(event, "method");
@@ -2409,8 +2421,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             ...turnInput,
             message: { ...turnInput.message, text: "/compact" },
           }),
-        startTurn: (turnInput) =>
-          Effect.gen(function* () {
+        startTurn: Effect.fn("PiAdapter.startTurn")(
+          function* (turnInput) {
             if (rollbackBarrier !== null)
               return yield* protocolError("Cannot start a Pi turn during rollback");
             const state = threadState;
@@ -2585,20 +2597,23 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             // and extension commands may block on user dialogs indefinitely.
             // Rejections therefore return later as id-less response records
             // handled by the event pump.
-          }).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProviderAdapter.ProviderAdapterTurnStartError({
-                  driver: PI_PROVIDER,
-                  threadId: turnInput.threadId,
-                  providerThreadId: turnInput.providerThread.id,
-                  runId: turnInput.runId,
-                  cause,
-                }),
+          },
+          (effect, turnInput) =>
+            effect.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterTurnStartError({
+                    driver: PI_PROVIDER,
+                    threadId: turnInput.threadId,
+                    providerThreadId: turnInput.providerThread.id,
+                    runId: turnInput.runId,
+                    cause,
+                  }),
+              ),
             ),
-          ),
-        steerTurn: (steerInput: ProviderAdapter.ProviderAdapterV2SteerInput) =>
-          Effect.gen(function* () {
+        ),
+        steerTurn: Effect.fn("PiAdapter.steerTurn")(
+          function* (steerInput: ProviderAdapter.ProviderAdapterV2SteerInput) {
             const turn = threadState?.activeTurn ?? null;
             if (turn === null || turn.providerTurn.id !== steerInput.providerTurnId) {
               return yield* protocolError(`Pi turn ${steerInput.providerTurnId} is not active`);
@@ -2645,19 +2660,22 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 turn.settleProbeGeneration += 1;
               }),
             );
-          }).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProviderAdapter.ProviderAdapterSteerRunError({
-                  driver: PI_PROVIDER,
-                  providerThreadId: steerInput.providerThread.id,
-                  providerTurnId: steerInput.providerTurnId,
-                  cause,
-                }),
+          },
+          (effect, steerInput) =>
+            effect.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterSteerRunError({
+                    driver: PI_PROVIDER,
+                    providerThreadId: steerInput.providerThread.id,
+                    providerTurnId: steerInput.providerTurnId,
+                    cause,
+                  }),
+              ),
             ),
-          ),
-        interruptTurn: (interruptInput) =>
-          Effect.gen(function* () {
+        ),
+        interruptTurn: Effect.fn("PiAdapter.interruptTurn")(
+          function* (interruptInput) {
             const turn = threadState?.activeTurn ?? null;
             if (turn === null && interruptInput.requestRuntimeRestart === true) {
               if (pendingWake !== null)
@@ -2697,19 +2715,22 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             yield* request({ type: "abort" }).pipe(
               Effect.tapError(() => Effect.sync(() => (turn.interrupted = false))),
             );
-          }).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProviderAdapter.ProviderAdapterInterruptError({
-                  driver: PI_PROVIDER,
-                  providerThreadId: interruptInput.providerThread.id,
-                  providerTurnId: interruptInput.providerTurnId,
-                  cause,
-                }),
+          },
+          (effect, interruptInput) =>
+            effect.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterInterruptError({
+                    driver: PI_PROVIDER,
+                    providerThreadId: interruptInput.providerThread.id,
+                    providerTurnId: interruptInput.providerTurnId,
+                    cause,
+                  }),
+              ),
             ),
-          ),
-        respondToRuntimeRequest: (requestInput) =>
-          Effect.gen(function* () {
+        ),
+        respondToRuntimeRequest: Effect.fn("PiAdapter.respondToRuntimeRequest")(
+          function* (requestInput) {
             const pending = pendingPrompts.get(String(requestInput.requestId));
             if (pending === undefined) {
               return yield* protocolError(
@@ -2765,19 +2786,22 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 updatedAt: resolvedAt,
               },
             });
-          }).pipe(
-            sessionEventPermit.withPermits(1),
-            Effect.mapError(
-              (cause) =>
-                new ProviderAdapter.ProviderAdapterRuntimeRequestResponseError({
-                  driver: PI_PROVIDER,
-                  requestId: requestInput.requestId,
-                  cause,
-                }),
+          },
+          (effect, requestInput) =>
+            effect.pipe(
+              sessionEventPermit.withPermits(1),
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterRuntimeRequestResponseError({
+                    driver: PI_PROVIDER,
+                    requestId: requestInput.requestId,
+                    cause,
+                  }),
+              ),
             ),
-          ),
-        readThreadSnapshot: (snapshotInput) =>
-          Effect.gen(function* () {
+        ),
+        readThreadSnapshot: Effect.fn("PiAdapter.readThreadSnapshot")(
+          function* (snapshotInput) {
             const state = threadState;
             const boundNativeId = state?.providerThread.nativeThreadRef?.nativeId;
             const wantedNativeId = snapshotInput.providerThread.nativeThreadRef?.nativeId;
@@ -2830,18 +2854,21 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               messages,
               runtimeRequests: [],
             };
-          }).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProviderAdapter.ProviderAdapterReadThreadSnapshotError({
-                  driver: PI_PROVIDER,
-                  providerThreadId: snapshotInput.providerThread.id,
-                  cause,
-                }),
+          },
+          (effect, snapshotInput) =>
+            effect.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterReadThreadSnapshotError({
+                    driver: PI_PROVIDER,
+                    providerThreadId: snapshotInput.providerThread.id,
+                    cause,
+                  }),
+              ),
             ),
-          ),
-        rollbackThread: (rollbackInput) =>
-          Effect.gen(function* () {
+        ),
+        rollbackThread: Effect.fn("PiAdapter.rollbackThread")(
+          function* (rollbackInput) {
             const state = threadState;
             if (state === null) {
               return yield* protocolError("Pi session has no registered thread");
@@ -2952,19 +2979,22 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   if (rollbackBarrier === barrier) rollbackBarrier = null;
                 }),
             );
-          }).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProviderAdapter.ProviderAdapterRollbackThreadError({
-                  driver: PI_PROVIDER,
-                  providerThreadId: rollbackInput.providerThread.id,
-                  checkpointId: rollbackInput.target.checkpointId,
-                  cause,
-                }),
+          },
+          (effect, rollbackInput) =>
+            effect.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterRollbackThreadError({
+                    driver: PI_PROVIDER,
+                    providerThreadId: rollbackInput.providerThread.id,
+                    checkpointId: rollbackInput.target.checkpointId,
+                    cause,
+                  }),
+              ),
             ),
-          ),
-        forkThread: (forkInput) =>
-          Effect.gen(function* () {
+        ),
+        forkThread: Effect.fn("PiAdapter.forkThread")(
+          function* (forkInput) {
             if (threadState?.activeTurn != null) {
               return yield* protocolError("Cannot fork while a Pi turn is active");
             }
@@ -3063,16 +3093,19 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               },
               false,
             );
-          }).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProviderAdapter.ProviderAdapterForkThreadError({
-                  driver: PI_PROVIDER,
-                  providerThreadId: forkInput.sourceProviderThread.id,
-                  cause,
-                }),
+          },
+          (effect, forkInput) =>
+            effect.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterForkThreadError({
+                    driver: PI_PROVIDER,
+                    providerThreadId: forkInput.sourceProviderThread.id,
+                    cause,
+                  }),
+              ),
             ),
-          ),
+        ),
       };
       return runtime;
     }),

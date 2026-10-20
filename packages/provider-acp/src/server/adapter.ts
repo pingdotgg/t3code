@@ -1568,12 +1568,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               return Option.some(yield* effect);
             }),
           );
-        const registerNativeResponseAcknowledgement = (
-          generation: number,
-          transportRequestId: string,
-          acknowledgement: Deferred.Deferred<void, EffectAcpErrors.AcpError>,
-        ) =>
-          Effect.gen(function* () {
+        const registerNativeResponseAcknowledgement =
+          /* Provider events include streaming deltas; avoid a span for each update. */
+          Effect.fnUntraced(function* (
+            generation: number,
+            transportRequestId: string,
+            acknowledgement: Deferred.Deferred<void, EffectAcpErrors.AcpError>,
+          ) {
             yield* Ref.update(nativeResponseAcknowledgements, (current) => {
               const updated = new Map(current);
               updated.set(transportRequestId, { acknowledgement, generation });
@@ -1813,8 +1814,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const endedBackgroundTaskIds = yield* Ref.make<ReadonlySet<string>>(new Set());
         const endedBackgroundTaskIdLimit = 128;
 
-        const setBackgroundTaskRunning = (taskId: string, running: boolean) =>
-          Effect.gen(function* () {
+        const setBackgroundTaskRunning =
+          /* Provider events include streaming deltas; avoid a span for each update. */
+          Effect.fnUntraced(function* (taskId: string, running: boolean) {
             if (running && (yield* Ref.get(endedBackgroundTaskIds)).has(taskId)) {
               return;
             }
@@ -1849,10 +1851,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             ? setBackgroundTaskRunning(mutation.taskId, true)
             : markBackgroundTaskEnded(mutation.taskId);
 
-        const trackRunningBackgroundTools = (
-          notification: EffectAcpSchema.SessionNotification,
-        ): Effect.Effect<void> =>
-          Effect.gen(function* () {
+        const trackRunningBackgroundTools =
+          /* Provider events include streaming deltas; avoid a span for each update. */
+          Effect.fnUntraced(function* (
+            notification: EffectAcpSchema.SessionNotification,
+          ): Effect.fn.Return<void> {
             if (flavor.extractBackgroundTaskId === undefined) return;
             for (const event of parseSessionUpdateEvent(notification).events) {
               if (event._tag !== "ToolCallUpdated") continue;
@@ -2836,8 +2839,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           return false;
         };
 
-        const rearmDeferredFinalize = (context: ActiveAcpTurn) =>
-          Effect.gen(function* () {
+        const rearmDeferredFinalize =
+          /* Provider events include streaming deltas; avoid a span for each update. */
+          Effect.fnUntraced(function* (context: ActiveAcpTurn) {
             if (!flavor.deferFinalizeForBackgroundWork) return;
             if (!context.promptSettled || context.finalized) return;
             if (hasDeferredBackgroundWork(context)) return;
@@ -2851,8 +2855,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           projectedStatus?: ProjectedToolStatus,
         ) => Effect.Effect<void> = () => Effect.void;
 
-        const markAwaitingBackgroundHydration = (context: ActiveAcpTurn, taskId: string) =>
-          Effect.gen(function* () {
+        const markAwaitingBackgroundHydration =
+          /* Provider events include streaming deltas; avoid a span for each update. */
+          Effect.fnUntraced(function* (context: ActiveAcpTurn, taskId: string) {
             if (context.awaitingBackgroundHydration.has(taskId)) return;
             context.awaitingBackgroundHydration.add(taskId);
             yield* Effect.gen(function* () {
@@ -2871,8 +2876,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }).pipe(Effect.forkIn(sessionScope), Effect.asVoid);
           });
 
-        const markPendingInjectedReport = (context: ActiveAcpTurn, taskId: string) =>
-          Effect.gen(function* () {
+        const markPendingInjectedReport =
+          /* Provider events include streaming deltas; avoid a span for each update. */
+          Effect.fnUntraced(function* (context: ActiveAcpTurn, taskId: string) {
             if (!context.promptSettled) return;
             if (context.pendingInjectedReport.has(taskId)) return;
             context.pendingInjectedReport.add(taskId);
@@ -3421,13 +3427,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           });
         });
 
-        const appendLoadedHistory = (
-          notification: EffectAcpSchema.SessionNotification,
-          role: "user" | "assistant" | "thought",
-          text: string,
-          replace = false,
-        ) =>
-          Effect.gen(function* () {
+        const appendLoadedHistory =
+          /* Provider events include streaming deltas; avoid a span for each update. */
+          Effect.fnUntraced(function* (
+            notification: EffectAcpSchema.SessionNotification,
+            role: "user" | "assistant" | "thought",
+            text: string,
+            replace = false,
+          ) {
             if (text.length === 0 && !replace) return;
             const now = yield* DateTime.now;
             yield* Ref.update(snapshot, (current) => {
@@ -5088,47 +5095,47 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
         });
 
-        const projectAcpRuntimeSessionUpdateEffect = (
-          rawNotification: EffectAcpSchema.SessionNotification,
-        ) =>
-          Effect.gen(function* () {
-            if (clientTerminals !== undefined) {
-              const embedded = embeddedTerminalIdsFromSessionUpdate(rawNotification);
-              if (embedded !== undefined) {
-                rememberEmbeddedTerminals({
-                  ...embedded,
-                  sessionId: rawNotification.sessionId,
-                });
+        const projectAcpRuntimeSessionUpdateEffect =
+          /* Provider events include streaming deltas; avoid a span for each update. */
+          Effect.fnUntraced(
+            function* (rawNotification: EffectAcpSchema.SessionNotification) {
+              if (clientTerminals !== undefined) {
+                const embedded = embeddedTerminalIdsFromSessionUpdate(rawNotification);
+                if (embedded !== undefined) {
+                  rememberEmbeddedTerminals({
+                    ...embedded,
+                    sessionId: rawNotification.sessionId,
+                  });
+                }
               }
-            }
-            const notification =
-              clientTerminals === undefined
-                ? rawNotification
-                : resolveEmbeddedTerminalContent(
-                    rawNotification,
-                    clientTerminals.readOutputSnapshot,
-                  );
-            if (notification.update.sessionUpdate === "available_commands_update") {
-              yield* (
-                flavor.onAvailableCommandsUpdate?.(notification.update.availableCommands) ??
-                  Effect.void
+              const notification =
+                clientTerminals === undefined
+                  ? rawNotification
+                  : resolveEmbeddedTerminalContent(
+                      rawNotification,
+                      clientTerminals.readOutputSnapshot,
+                    );
+              if (notification.update.sessionUpdate === "available_commands_update") {
+                yield* (
+                  flavor.onAvailableCommandsUpdate?.(notification.update.availableCommands) ??
+                    Effect.void
+                );
+              }
+              if (
+                notification.update.sessionUpdate === "config_option_update" ||
+                notification.update.sessionUpdate === "current_mode_update"
+              ) {
+                yield* (
+                  flavor.onSessionConfigurationUpdate?.(
+                    yield* runtime.getConfigOptions,
+                    yield* runtime.getModeState,
+                  ) ?? Effect.void
+                );
+              }
+              yield* handleSessionUpdate(
+                flavor.normalizeSessionUpdate?.(notification) ?? notification,
               );
-            }
-            if (
-              notification.update.sessionUpdate === "config_option_update" ||
-              notification.update.sessionUpdate === "current_mode_update"
-            ) {
-              yield* (
-                flavor.onSessionConfigurationUpdate?.(
-                  yield* runtime.getConfigOptions,
-                  yield* runtime.getModeState,
-                ) ?? Effect.void
-              );
-            }
-            yield* handleSessionUpdate(
-              flavor.normalizeSessionUpdate?.(notification) ?? notification,
-            );
-          }).pipe(
+            },
             Effect.mapError(
               (cause) =>
                 new EffectAcpErrors.AcpTransportError({

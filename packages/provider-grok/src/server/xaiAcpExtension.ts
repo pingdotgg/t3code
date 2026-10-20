@@ -1536,58 +1536,57 @@ export const makeXAiPromptCompletionRuntime = Effect.fn("makeXAiPromptCompletion
               );
             })
           : runtime.handleExtNotification(method, payload, handler),
-      prompt: (payload, promptOptions?) =>
-        Effect.gen(function* () {
-          const started = yield* runtime.start();
-          const promptId = yield* allocatePromptFallbackId;
-          const fallback = yield* registerXAiPromptCompletionFallback(
-            pendingXAiPromptCompletionsRef,
-            started.sessionId,
-            promptId,
-          );
-          const cancelledResponse = promptResponseFromXAi({
-            sessionId: started.sessionId,
-            promptId: fallback.promptId,
-            stopReason: "cancelled",
-            agentResult: null,
-          });
-          const promptRpcFiber = yield* runtime
-            .prompt(
-              {
-                ...payload,
-                _meta: {
-                  ...payload._meta,
-                  promptId: fallback.promptId,
-                  requestId: fallback.promptId,
-                },
+      prompt: Effect.fn("xaiAcpExtension.prompt")(function* (payload, promptOptions?) {
+        const started = yield* runtime.start();
+        const promptId = yield* allocatePromptFallbackId;
+        const fallback = yield* registerXAiPromptCompletionFallback(
+          pendingXAiPromptCompletionsRef,
+          started.sessionId,
+          promptId,
+        );
+        const cancelledResponse = promptResponseFromXAi({
+          sessionId: started.sessionId,
+          promptId: fallback.promptId,
+          stopReason: "cancelled",
+          agentResult: null,
+        });
+        const promptRpcFiber = yield* runtime
+          .prompt(
+            {
+              ...payload,
+              _meta: {
+                ...payload._meta,
+                promptId: fallback.promptId,
+                requestId: fallback.promptId,
               },
-              promptOptions,
-            )
-            .pipe(Effect.forkChild);
-          return yield* Effect.raceFirst(
-            Fiber.join(promptRpcFiber).pipe(
-              Effect.catchCause((cause) =>
-                Cause.hasInterruptsOnly(cause)
-                  ? Effect.succeed(cancelledResponse)
-                  : Effect.failCause(cause),
-              ),
+            },
+            promptOptions,
+          )
+          .pipe(Effect.forkChild);
+        return yield* Effect.raceFirst(
+          Fiber.join(promptRpcFiber).pipe(
+            Effect.catchCause((cause) =>
+              Cause.hasInterruptsOnly(cause)
+                ? Effect.succeed(cancelledResponse)
+                : Effect.failCause(cause),
             ),
-            Deferred.await(fallback.deferred),
-          ).pipe(
-            Effect.tap((response) =>
-              rememberCompletedXAiPromptId(completedXAiPromptIdsRef, response, fallback.promptId),
-            ),
-            Effect.ensuring(
-              Effect.gen(function* () {
-                yield* Fiber.interrupt(promptRpcFiber).pipe(Effect.ignore);
-                yield* unregisterXAiPromptCompletionFallback(
-                  pendingXAiPromptCompletionsRef,
-                  fallback.deferred,
-                );
-              }),
-            ),
-          );
-        }),
+          ),
+          Deferred.await(fallback.deferred),
+        ).pipe(
+          Effect.tap((response) =>
+            rememberCompletedXAiPromptId(completedXAiPromptIdsRef, response, fallback.promptId),
+          ),
+          Effect.ensuring(
+            Effect.gen(function* () {
+              yield* Fiber.interrupt(promptRpcFiber).pipe(Effect.ignore);
+              yield* unregisterXAiPromptCompletionFallback(
+                pendingXAiPromptCompletionsRef,
+                fallback.deferred,
+              );
+            }),
+          ),
+        );
+      }),
       cancel: Effect.gen(function* () {
         // Do not call start here: cancellation must be able to reach the
         // underlying runtime when startup is stalled.

@@ -167,14 +167,16 @@ function parsePiRecord(line: string): PiRpcRecord | undefined {
  * gone its pid/pgid can be recycled by the OS, so escalating blindly could
  * deliver SIGKILL to an unrelated process.
  */
-const terminatePiProcess = (kill: (signal: NodeJS.Signals) => boolean, hasExited: () => boolean) =>
-  Effect.gen(function* () {
-    if (hasExited()) return;
-    if (!kill("SIGTERM")) return;
-    yield* Effect.sleep(TERMINATION_GRACE);
-    if (hasExited()) return;
-    kill("SIGKILL");
-  });
+const terminatePiProcess = Effect.fn("PiRpc.terminatePiProcess")(function* (
+  kill: (signal: NodeJS.Signals) => boolean,
+  hasExited: () => boolean,
+) {
+  if (hasExited()) return;
+  if (!kill("SIGTERM")) return;
+  yield* Effect.sleep(TERMINATION_GRACE);
+  if (hasExited()) return;
+  kill("SIGKILL");
+});
 
 export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSpawnOptions) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -251,20 +253,20 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
   const exitDeferred = yield* Deferred.make<number, PiRpcError>();
   let nextRequestId = 0;
 
-  const failTransport = (error: PiRpcError) =>
-    Effect.gen(function* () {
-      const claimed = yield* Deferred.fail(transportDown, error);
-      if (!claimed) return;
-      for (const [key, pending] of pendingRequests) {
-        pendingRequests.delete(key);
-        yield* Deferred.fail(pending.deferred, error);
-      }
-      yield* Queue.fail(outgoing, error);
-      yield* Queue.fail(events, error);
-    });
+  const failTransport = Effect.fn("PiRpc.failTransport")(function* (error: PiRpcError) {
+    const claimed = yield* Deferred.fail(transportDown, error);
+    if (!claimed) return;
+    for (const [key, pending] of pendingRequests) {
+      pendingRequests.delete(key);
+      yield* Deferred.fail(pending.deferred, error);
+    }
+    yield* Queue.fail(outgoing, error);
+    yield* Queue.fail(events, error);
+  });
 
-  const routeRecord = (record: PiRpcRecord) =>
-    Effect.gen(function* () {
+  const routeRecord =
+    /* Protocol records and writes include streaming deltas; avoid a span per record. */
+    Effect.fnUntraced(function* (record: PiRpcRecord) {
       if (record["type"] === "response" && typeof record["id"] === "string") {
         const pending = pendingRequests.get(record["id"]);
         if (pending !== undefined) {
@@ -386,8 +388,9 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
     Effect.forkIn(scope),
   );
 
-  const send = (record: PiRpcRecord): Effect.Effect<void, PiRpcError> =>
-    Effect.gen(function* () {
+  const send =
+    /* Protocol records and writes include streaming deltas; avoid a span per record. */
+    Effect.fnUntraced(function* (record: PiRpcRecord): Effect.fn.Return<void, PiRpcError> {
       const accepted = yield* Queue.offer(
         outgoing,
         new TextEncoder().encode(`${encodeJsonLine(record)}\n`),
@@ -397,32 +400,31 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
       }
     });
 
-  const request = (
+  const request = Effect.fn("PiRpc.request")(function* (
     record: PiRpcRecord,
     timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
-  ): Effect.Effect<unknown, PiRpcError | PiRpcTimeoutError> =>
-    Effect.gen(function* () {
-      const id = `t3-${nextRequestId++}`;
-      const deferred = yield* Deferred.make<unknown, PiRpcError>();
-      pendingRequests.set(id, { deferred });
-      yield* send({ ...record, id }).pipe(
-        Effect.tapError(() => Effect.sync(() => pendingRequests.delete(id))),
-      );
-      return yield* Effect.raceFirst(Deferred.await(deferred), Deferred.await(transportDown)).pipe(
-        Effect.timeoutOrElse({
-          duration: Duration.millis(timeoutMs),
-          orElse: () =>
-            Effect.fail(
-              new PiRpcTimeoutError({
-                operation: String(record["type"] ?? "request"),
-                timeoutMs,
-              }),
-            ),
-        }),
-        Effect.onInterrupt(() => Effect.sync(() => pendingRequests.delete(id))),
-        Effect.onError(() => Effect.sync(() => pendingRequests.delete(id))),
-      );
-    });
+  ): Effect.fn.Return<unknown, PiRpcError | PiRpcTimeoutError> {
+    const id = `t3-${nextRequestId++}`;
+    const deferred = yield* Deferred.make<unknown, PiRpcError>();
+    pendingRequests.set(id, { deferred });
+    yield* send({ ...record, id }).pipe(
+      Effect.tapError(() => Effect.sync(() => pendingRequests.delete(id))),
+    );
+    return yield* Effect.raceFirst(Deferred.await(deferred), Deferred.await(transportDown)).pipe(
+      Effect.timeoutOrElse({
+        duration: Duration.millis(timeoutMs),
+        orElse: () =>
+          Effect.fail(
+            new PiRpcTimeoutError({
+              operation: String(record["type"] ?? "request"),
+              timeoutMs,
+            }),
+          ),
+      }),
+      Effect.onInterrupt(() => Effect.sync(() => pendingRequests.delete(id))),
+      Effect.onError(() => Effect.sync(() => pendingRequests.delete(id))),
+    );
+  });
 
   return {
     send,

@@ -58,136 +58,140 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
   metadata: { displayName: "Muse Code", supportsMultipleInstances: true },
   configSchema: MuseSettings,
   defaultConfig: () => decodeMuseSettings({}),
-  create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
-    Effect.gen(function* () {
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const httpClient = yield* HttpClient.HttpClient;
-      const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
-      const host = yield* ProviderHost.ProviderHost;
-      const eventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
-      const { cwd } = host.paths;
-      const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-      const hostEnvironment = yield* HostProcess.Environment;
-      // Drop an inherited META_API_KEY so Muse uses its login; an instance value still wins.
-      const processEnvironment = yield* mergeProviderInstanceEnvironment(
-        environment,
-        makeMuseEnvironment(hostEnvironment),
-      );
-      const effectiveConfig = {
-        ...config,
-        enabled,
-        binaryPath: expandHomePath(config.binaryPath, yield* HostProcess.HomeDirectory),
-      } satisfies MuseSettings;
-      const continuationIdentity = defaultProviderContinuationIdentity({
-        driverKind: DRIVER_KIND,
-        instanceId,
-      });
-      const stampIdentity = withInstanceIdentity({
-        instanceId,
-        driverKind: DRIVER_KIND,
-        displayName,
-        accentColor,
-        continuationGroupKey: continuationIdentity.continuationKey,
-      });
-      const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
-      const resolveInstallation = yield* makeCachedProviderMaintenanceResolution(
-        resolveProviderMaintenanceCapabilitiesEffect(museMaintenance, {
-          binaryPath: effectiveConfig.binaryPath,
-          env: processEnvironment,
-        }).pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-          Effect.provideService(FileSystem.FileSystem, fileSystem),
-          Effect.provideService(Path.Path, path),
-        ),
-      );
-      const resolveMaintenance = (options?: { readonly fresh?: boolean }) =>
-        Effect.gen(function* () {
-          const capabilities = yield* resolveInstallation(options);
-          // The maintenance runner requests fresh capabilities around an explicit update
-          // and needs the native target version to verify that the command actually upgraded.
-          const latestVersion = options?.fresh
-            ? yield* latestMuseVersion(processEnvironment, { fresh: true }).pipe(
-                Effect.provideService(HttpClient.HttpClient, httpClient),
-                Effect.provideService(
-                  ProviderLatestVersions.ProviderLatestVersions,
-                  latestVersions,
-                ),
-              )
-            : undefined;
-          return latestVersion !== undefined ? { ...capabilities, latestVersion } : capabilities;
-        });
-      const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<MuseSettings>>({
-        // Status refresh respects update checks; explicit updates use the resolver below.
-        resolveMaintenance: (options) =>
-          host.settings.get.pipe(
-            Effect.orDie,
-            Effect.flatMap((settings) =>
-              settings.enableProviderUpdateChecks
-                ? resolveMaintenance(options)
-                : resolveInstallation(options),
-            ),
-          ),
-        getSettings: snapshotSettings.getSettings,
-        streamSettings: snapshotSettings.streamSettings,
-        haveSettingsChanged: haveProviderSnapshotSettingsChanged,
-        initialSnapshot: (settings) =>
-          makePendingMuseProvider(settings.provider).pipe(Effect.map(stampIdentity)),
-        checkProvider: checkMuseProviderStatus(effectiveConfig, processEnvironment, cwd).pipe(
-          Effect.map(stampIdentity),
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-          Effect.provideService(FileSystem.FileSystem, fileSystem),
-          Effect.provideService(Path.Path, path),
-        ),
-        enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
-          resolveMaintenance().pipe(
-            Effect.flatMap((maintenanceCapabilities) =>
-              enrichMuseSnapshot({
-                snapshot: currentSnapshot,
-                maintenanceCapabilities,
-                enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
-                environment: processEnvironment,
-              }),
-            ),
+  create: Effect.fn("MuseDriver.create")(function* ({
+    instanceId,
+    displayName,
+    accentColor,
+    environment,
+    enabled,
+    config,
+  }) {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const httpClient = yield* HttpClient.HttpClient;
+    const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
+    const host = yield* ProviderHost.ProviderHost;
+    const eventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
+    const { cwd } = host.paths;
+    const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+    const hostEnvironment = yield* HostProcess.Environment;
+    // Drop an inherited META_API_KEY so Muse uses its login; an instance value still wins.
+    const processEnvironment = yield* mergeProviderInstanceEnvironment(
+      environment,
+      makeMuseEnvironment(hostEnvironment),
+    );
+    const effectiveConfig = {
+      ...config,
+      enabled,
+      binaryPath: expandHomePath(config.binaryPath, yield* HostProcess.HomeDirectory),
+    } satisfies MuseSettings;
+    const continuationIdentity = defaultProviderContinuationIdentity({
+      driverKind: DRIVER_KIND,
+      instanceId,
+    });
+    const stampIdentity = withInstanceIdentity({
+      instanceId,
+      driverKind: DRIVER_KIND,
+      displayName,
+      accentColor,
+      continuationGroupKey: continuationIdentity.continuationKey,
+    });
+    const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
+    const resolveInstallation = yield* makeCachedProviderMaintenanceResolution(
+      resolveProviderMaintenanceCapabilitiesEffect(museMaintenance, {
+        binaryPath: effectiveConfig.binaryPath,
+        env: processEnvironment,
+      }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      ),
+    );
+    const resolveMaintenance = Effect.fn("MuseDriver.resolveMaintenance")(function* (options?: {
+      readonly fresh?: boolean;
+    }) {
+      const capabilities = yield* resolveInstallation(options);
+      // The maintenance runner requests fresh capabilities around an explicit update
+      // and needs the native target version to verify that the command actually upgraded.
+      const latestVersion = options?.fresh
+        ? yield* latestMuseVersion(processEnvironment, { fresh: true }).pipe(
             Effect.provideService(HttpClient.HttpClient, httpClient),
             Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
-            Effect.flatMap(publishSnapshot),
+          )
+        : undefined;
+      return latestVersion !== undefined ? { ...capabilities, latestVersion } : capabilities;
+    });
+    const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<MuseSettings>>({
+      // Status refresh respects update checks; explicit updates use the resolver below.
+      resolveMaintenance: (options) =>
+        host.settings.get.pipe(
+          Effect.orDie,
+          Effect.flatMap((settings) =>
+            settings.enableProviderUpdateChecks
+              ? resolveMaintenance(options)
+              : resolveInstallation(options),
           ),
-      }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProviderDriverError({
-              driver: DRIVER_KIND,
-              instanceId,
-              detail: "Failed to build Muse Code snapshot.",
-              cause,
-            }),
         ),
-      );
-      const modelCatalog = snapshot.getSnapshot.pipe(Effect.map((current) => current.models));
-      const orchestrationAdapter = yield* makeMuseAdapterV2({
-        instanceId,
-        settings: effectiveConfig,
-        environment: processEnvironment,
-        modelCatalog,
-        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
-        continuationRequests,
-      });
-      const textGeneration = yield* makeMuseTextGeneration(effectiveConfig, {
-        environment: processEnvironment,
-        modelCatalog,
-      });
-      return {
-        instanceId,
-        driverKind: DRIVER_KIND,
-        continuationIdentity,
-        displayName,
-        accentColor,
-        enabled,
-        snapshot: { ...snapshot, resolveMaintenance },
-        orchestrationAdapter,
-        textGeneration,
-      } satisfies ProviderInstance;
-    }),
+      getSettings: snapshotSettings.getSettings,
+      streamSettings: snapshotSettings.streamSettings,
+      haveSettingsChanged: haveProviderSnapshotSettingsChanged,
+      initialSnapshot: (settings) =>
+        makePendingMuseProvider(settings.provider).pipe(Effect.map(stampIdentity)),
+      checkProvider: checkMuseProviderStatus(effectiveConfig, processEnvironment, cwd).pipe(
+        Effect.map(stampIdentity),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      ),
+      enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
+        resolveMaintenance().pipe(
+          Effect.flatMap((maintenanceCapabilities) =>
+            enrichMuseSnapshot({
+              snapshot: currentSnapshot,
+              maintenanceCapabilities,
+              enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
+              environment: processEnvironment,
+            }),
+          ),
+          Effect.provideService(HttpClient.HttpClient, httpClient),
+          Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
+          Effect.flatMap(publishSnapshot),
+        ),
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProviderDriverError({
+            driver: DRIVER_KIND,
+            instanceId,
+            detail: "Failed to build Muse Code snapshot.",
+            cause,
+          }),
+      ),
+    );
+    const modelCatalog = snapshot.getSnapshot.pipe(Effect.map((current) => current.models));
+    const orchestrationAdapter = yield* makeMuseAdapterV2({
+      instanceId,
+      settings: effectiveConfig,
+      environment: processEnvironment,
+      modelCatalog,
+      ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
+      continuationRequests,
+    });
+    const textGeneration = yield* makeMuseTextGeneration(effectiveConfig, {
+      environment: processEnvironment,
+      modelCatalog,
+    });
+    return {
+      instanceId,
+      driverKind: DRIVER_KIND,
+      continuationIdentity,
+      displayName,
+      accentColor,
+      enabled,
+      snapshot: { ...snapshot, resolveMaintenance },
+      orchestrationAdapter,
+      textGeneration,
+    } satisfies ProviderInstance;
+  }),
 };

@@ -34,44 +34,42 @@ const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
 
 const CURSOR_SDK_CATALOG_TIMEOUT_MS = 15_000;
 
-export function buildInitialCursorProviderSnapshot(
-  cursorSettings: CursorSettings,
-): Effect.Effect<ServerProviderDraft> {
-  return Effect.gen(function* () {
-    const checkedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
-    const models = getCursorFallbackModels(cursorSettings);
+export const buildInitialCursorProviderSnapshot = Effect.fn(
+  "CursorProviderStatus.buildInitialCursorProviderSnapshot",
+)(function* (cursorSettings: CursorSettings): Effect.fn.Return<ServerProviderDraft> {
+  const checkedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
+  const models = getCursorFallbackModels(cursorSettings);
 
-    if (!cursorSettings.enabled) {
-      return buildServerProvider({
-        presentation: CURSOR_PRESENTATION,
-        enabled: false,
-        checkedAt,
-        models,
-        probe: {
-          installed: false,
-          version: null,
-          status: "warning",
-          auth: { status: "unknown" },
-          message: "Cursor is disabled in T3 Code settings.",
-        },
-      });
-    }
-
+  if (!cursorSettings.enabled) {
     return buildServerProvider({
       presentation: CURSOR_PRESENTATION,
-      enabled: true,
+      enabled: false,
       checkedAt,
       models,
       probe: {
-        installed: true,
+        installed: false,
         version: null,
         status: "warning",
         auth: { status: "unknown" },
-        message: "Checking Cursor SDK availability...",
+        message: "Cursor is disabled in T3 Code settings.",
       },
     });
+  }
+
+  return buildServerProvider({
+    presentation: CURSOR_PRESENTATION,
+    enabled: true,
+    checkedAt,
+    models,
+    probe: {
+      installed: true,
+      version: null,
+      status: "warning",
+      auth: { status: "unknown" },
+      message: "Checking Cursor SDK availability...",
+    },
   });
-}
+});
 
 function getCursorFallbackModels(
   cursorSettings: Pick<CursorSettings, "customModels">,

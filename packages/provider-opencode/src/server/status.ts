@@ -328,39 +328,20 @@ export function openCodeCommandsToServerProviderSlashCommands(
   return commands;
 }
 
-export const makePendingOpenCodeProvider = (
-  openCodeSettings: OpenCodeSettings,
-): Effect.Effect<ServerProviderDraft> =>
-  Effect.gen(function* () {
-    const checkedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
-    const models = providerModelsFromSettings(
-      [],
-      openCodeSettings.customModels,
-      DEFAULT_OPENCODE_MODEL_CAPABILITIES,
-    );
+export const makePendingOpenCodeProvider = Effect.fn(
+  "OpencodeProviderStatus.makePendingOpenCodeProvider",
+)(function* (openCodeSettings: OpenCodeSettings): Effect.fn.Return<ServerProviderDraft> {
+  const checkedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
+  const models = providerModelsFromSettings(
+    [],
+    openCodeSettings.customModels,
+    DEFAULT_OPENCODE_MODEL_CAPABILITIES,
+  );
 
-    if (!openCodeSettings.enabled) {
-      return buildServerProvider({
-        presentation: OPENCODE_PRESENTATION,
-        enabled: false,
-        checkedAt,
-        models,
-        probe: {
-          installed: false,
-          version: null,
-          status: "warning",
-          auth: { status: "unknown" },
-          message:
-            openCodeSettings.serverUrl.trim().length > 0
-              ? "OpenCode is disabled in T3 Code settings. A server URL is configured."
-              : "OpenCode is disabled in T3 Code settings.",
-        },
-      });
-    }
-
+  if (!openCodeSettings.enabled) {
     return buildServerProvider({
       presentation: OPENCODE_PRESENTATION,
-      enabled: true,
+      enabled: false,
       checkedAt,
       models,
       probe: {
@@ -368,10 +349,28 @@ export const makePendingOpenCodeProvider = (
         version: null,
         status: "warning",
         auth: { status: "unknown" },
-        message: "OpenCode provider status has not been checked in this session yet.",
+        message:
+          openCodeSettings.serverUrl.trim().length > 0
+            ? "OpenCode is disabled in T3 Code settings. A server URL is configured."
+            : "OpenCode is disabled in T3 Code settings.",
       },
     });
+  }
+
+  return buildServerProvider({
+    presentation: OPENCODE_PRESENTATION,
+    enabled: true,
+    checkedAt,
+    models,
+    probe: {
+      installed: false,
+      version: null,
+      status: "warning",
+      auth: { status: "unknown" },
+      message: "OpenCode provider status has not been checked in this session yet.",
+    },
   });
+});
 
 export interface OpenCode2Model {
   readonly providerID: string;
@@ -461,16 +460,14 @@ export interface OpenCode2Workspace {
  * for the directory end the scan. `scanned` must be listening before `read` runs, since
  * the read is what starts the scan.
  */
-export const loadOpenCode2Workspace = <E>(
-  read: Effect.Effect<OpenCode2Workspace, E>,
-  scanned: Effect.Effect<void>,
-) =>
-  Effect.gen(function* () {
+export const loadOpenCode2Workspace = Effect.fn("OpencodeProviderStatus.loadOpenCode2Workspace")(
+  function* <E>(read: Effect.Effect<OpenCode2Workspace, E>, scanned: Effect.Effect<void>) {
     const first = yield* read;
     if (first.commands.length > 0) return first;
     yield* scanned.pipe(Effect.timeoutOption("10 seconds"));
     return yield* read;
-  });
+  },
+);
 
 export function openCode2SkillsToServerProviderSkills(
   skills: OpenCode2Workspace["skills"],

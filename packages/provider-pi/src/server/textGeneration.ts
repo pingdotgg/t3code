@@ -21,9 +21,10 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
-  const runPiJson: TextGenerationOperations.Runner = (request) => {
-    const { operation, cwd, prompt, modelSelection } = request;
-    return Effect.gen(function* () {
+  const runPiJson: TextGenerationOperations.Runner = Effect.fn("PiTextGeneration.runPiJson")(
+    function* (request) {
+      const { operation, cwd, prompt, modelSelection } = request;
+
       const resolvedLaunchArgs = resolvePiLaunchArgs(piSettings.launchArgs);
       if (!resolvedLaunchArgs.ok) {
         return yield* new TextGenerationError({
@@ -87,27 +88,31 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
         });
       }
       return yield* TextGenerationOperations.decodeJsonReply(request, "Pi", text);
-    }).pipe(
-      Effect.timeoutOption(PI_TIMEOUT_MS),
-      Effect.flatMap(
-        Option.match({
-          onNone: () =>
-            Effect.fail(new TextGenerationError({ operation, detail: "Pi request timed out." })),
-          onSome: (value) => Effect.succeed(value),
-        }),
-      ),
-      Effect.mapError((cause) =>
-        isTextGenerationError(cause)
-          ? cause
-          : new TextGenerationError({
-              operation,
-              detail: "Pi text generation failed.",
-              cause,
-            }),
-      ),
-      Effect.scoped,
-    );
-  };
+    },
+    (effect, request) => {
+      const { operation } = request;
+      return effect.pipe(
+        Effect.timeoutOption(PI_TIMEOUT_MS),
+        Effect.flatMap(
+          Option.match({
+            onNone: () =>
+              Effect.fail(new TextGenerationError({ operation, detail: "Pi request timed out." })),
+            onSome: (value) => Effect.succeed(value),
+          }),
+        ),
+        Effect.mapError((cause) =>
+          isTextGenerationError(cause)
+            ? cause
+            : new TextGenerationError({
+                operation,
+                detail: "Pi text generation failed.",
+                cause,
+              }),
+        ),
+        Effect.scoped,
+      );
+    },
+  );
 
   return TextGenerationOperations.fromRunner(
     "PiTextGeneration",
