@@ -252,6 +252,7 @@ jobs:
 
   # The web suite is the largest outside the server. In the shared Test job it
   # started last and ran alone for about 40s after everything else finished.
+  # release.yml mirrors this test, test_web, and test_server split.
   test_web:
     name: Test Web
     needs: changes
