@@ -140,6 +140,35 @@ describe("resolveComposerTimelineInset", () => {
       resolveComposerTimelineInset({ currentInset: 0, overlayHeight: 60, isResting: true }),
     ).toBe(60 + COMPOSER_RESTING_EXPANSION_MIN_PX);
   });
+
+  it("keeps the timeline reservation stable through notice expansion and collapse", () => {
+    const collapsed = resolveComposerTimelineInset({
+      currentInset: 0,
+      overlayHeight: 172,
+      isResting: false,
+    });
+    const expanded = resolveComposerTimelineInset({
+      currentInset: collapsed,
+      overlayHeight: 532,
+      isResting: false,
+      expandedNoticesHeight: 360,
+    });
+    expect(expanded).toBe(collapsed);
+    const resting = resolveComposerTimelineInset({
+      currentInset: expanded,
+      overlayHeight: 470,
+      isResting: true,
+      expandedNoticesHeight: 360,
+    });
+    expect(resting).toBe(collapsed);
+    expect(
+      resolveComposerTimelineInset({
+        currentInset: resting,
+        overlayHeight: 110,
+        isResting: true,
+      }),
+    ).toBe(collapsed);
+  });
 });
 
 describe("shouldUseRestingComposerLayout", () => {

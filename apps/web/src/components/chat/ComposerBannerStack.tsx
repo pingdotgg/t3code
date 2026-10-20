@@ -121,6 +121,7 @@ export function ComposerBannerStack({ className, items, attachedAbove }: Compose
       {hasStack ? (
         <div
           ref={noticesRef}
+          data-composer-banner-stack="true"
           data-chat-composer-collapsed-controls="true"
           className={cn("relative z-20 min-h-3", stackExpanded && "z-50")}
           onPointerEnter={(event) => {
