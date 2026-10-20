@@ -2019,6 +2019,58 @@ it.live("drives the desktop's own page for a tab the desktop renders", () =>
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("a system tab clears the light Playwright forces on attach, without redoing it", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const manager = yield* Manager.PreviewManager;
+      yield* Effect.yieldNow;
+      desktopRendersNext = true;
+      const opened = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
+      yield* browser.attachViewer(viewerInput(opened.tabId, true));
+      const page = desktopConnections[0]!.context.page;
+      expect(page.emulateMedia.mock.calls).toEqual([[{ colorScheme: null }]]);
+      const dark = Promise.withResolvers<void>();
+      page.emulateMedia.mockImplementation(async () => dark.resolve());
+      const target = { threadId: scope.thread.threadId, tabId: opened.tabId };
+      yield* manager.adjust({ ...target, zoomFactor: 1.25 });
+      yield* manager.adjust({ ...target, colorScheme: "dark" });
+      yield* Effect.promise(() => dark.promise);
+      expect(page.emulateMedia.mock.calls).toEqual([
+        [{ colorScheme: null }],
+        [{ colorScheme: "dark" }],
+      ]);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("a tab opens at its requested appearance and its popups keep it", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const manager = yield* Manager.PreviewManager;
+      yield* Effect.yieldNow;
+      const opened = yield* manager.open({
+        threadId: scope.thread.threadId,
+        runtime: "server",
+        colorScheme: "dark",
+      });
+      yield* browser.attachViewer(viewerInput(opened.tabId, true));
+      expect(contexts[0]!.page.emulateMedia).toHaveBeenCalledWith({ colorScheme: "dark" });
+      const popup = makeContext();
+      const applied = Promise.withResolvers<void>();
+      popup.page.emulateMedia.mockImplementation(async () => applied.resolve());
+      contexts[0]!.page.emit("popup", popup.page);
+      yield* Effect.promise(() => applied.promise);
+      expect(popup.page.emulateMedia.mock.calls).toEqual([[{ colorScheme: "dark" }]]);
+      const sessions = (yield* manager.list({ threadId: scope.thread.threadId })).sessions;
+      expect(sessions.find((session) => session.tabId !== opened.tabId)).toMatchObject({
+        colorScheme: "dark",
+      });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("desktop file pickers stay native outside agent actions and remote control", () =>
   Effect.scoped(
     Effect.gen(function* () {
