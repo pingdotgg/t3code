@@ -95,7 +95,11 @@ const boxThreads = (seen: Ref.Ref<Seen>) => {
             {
               sequence: 1,
               commandId: command.commandId,
-              event: { type: "run.updated", runId: boxRun },
+              event: {
+                type: "turn-item.updated",
+                runId: boxRun,
+                payload: { type: "run_interrupt_request", providerTurnId: "turn:box" },
+              },
             },
           ],
         } as never),

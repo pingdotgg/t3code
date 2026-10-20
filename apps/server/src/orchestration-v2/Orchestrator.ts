@@ -384,6 +384,12 @@ export interface OrchestratorV2Shape {
   readonly getThreadEventSequence: (
     threadId: ThreadId,
   ) => Effect.Effect<number, OrchestratorV2Error>;
+  /** Committed history at a fixed sequence, without subscribing to live events. */
+  readonly readStoredEvents: (input: {
+    readonly threadId: ThreadId;
+    readonly throughSequence: number;
+    readonly eventType: OrchestrationV2DomainEvent["type"];
+  }) => Stream.Stream<OrchestrationV2StoredEvent, OrchestratorV2Error>;
   readonly streamStoredEvents: Stream.Stream<OrchestrationV2StoredEvent, OrchestratorV2Error>;
   readonly streamStoredEventsFrom: (input?: {
     readonly threadId?: ThreadId;
@@ -9841,7 +9847,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   });
 
   const dispatchThreadStop = Effect.fn("Orchestrator.dispatchThreadStop")(function* (
-    command: Extract<OrchestrationV2ServerCommand, { readonly type: "thread.stop" }>,
+    command: Extract<OrchestrationV2InternalCommand, { readonly type: "thread.stop" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
@@ -9976,6 +9982,41 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }).length > 0
         ? latestRun
         : undefined);
+    const executed = latestExecutedRun(projection.runs);
+    const reachedRun = target ?? executed;
+    if (command.throughSequence !== undefined && reachedRun !== null) {
+      // A child Stop may have failed before committing its receipt. Retrying
+      // it must not reach a run that started after the parent's original Stop.
+      // The bound checks the run this Stop reaches rather than the newest one,
+      // which can be a queued run cancelled since that never started.
+      const hadStarted = yield* eventSink
+        .read({
+          threadId: command.threadId,
+          throughSequence: command.throughSequence,
+          eventType: "run.created",
+        })
+        .pipe(
+          Stream.concat(
+            eventSink.read({
+              threadId: command.threadId,
+              throughSequence: command.throughSequence,
+              eventType: "run.updated",
+            }),
+          ),
+          Stream.runFold(
+            () => false,
+            (found, stored) =>
+              found ||
+              ((stored.event.type === "run.created" || stored.event.type === "run.updated") &&
+                stored.event.runId === reachedRun.id &&
+                stored.event.payload.status !== "queued"),
+          ),
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+          ),
+        );
+      if (!hadStarted) return undefined;
+    }
     if (target !== undefined) {
       const interruptEvents = yield* Ref.make<Array<OrchestrationV2DomainEvent>>([]);
       const interruptEffects = yield* Ref.make<Array<PendingOrchestrationEffectV2>>([]);
@@ -10011,7 +10052,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const now = yield* DateTime.now;
     // Record that Stop reached the turn it could not interrupt and the thread's last executed
     // run, so a late tool call from their agent starts nothing.
-    const executed = latestExecutedRun(projection.runs);
     const reached = new Map<RunId, OrchestrationV2Run>();
     if (target !== undefined) reached.set(target.id, target);
     if (executed !== null && !hasLiveRun({ runs: [executed] })) reached.set(executed.id, executed);
@@ -11972,6 +12012,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       eventSink
         .latestSequence({ threadId })
         .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause }))),
+    readStoredEvents: (input) =>
+      eventSink
+        .read(input)
+        .pipe(Stream.mapError((cause) => new OrchestratorDomainEventStreamError({ cause }))),
     streamStoredEvents: eventSink.stream().pipe(
       Stream.mapError(
         (cause) =>
@@ -12128,6 +12172,12 @@ const layerUnavailable: Layer.Layer<OrchestratorV2> = Layer.succeed(
         cause: "Orchestration V2 live runtime is not configured.",
       }),
     ),
+    readStoredEvents: () =>
+      Stream.fail(
+        new OrchestratorDomainEventStreamError({
+          cause: "Orchestration V2 live runtime is not configured.",
+        }),
+      ),
     streamStoredEventsFrom: () =>
       Stream.fail(
         new OrchestratorDomainEventStreamError({

@@ -43,6 +43,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -1096,37 +1097,82 @@ const make = Effect.gen(function* () {
     (effect, input) => effect.pipe((effect) => threadDispatch.withLock(input.threadId, effect)),
   );
 
+  const stopDelegatedTasksThrough = Effect.fn("ThreadManagementService.stopDelegatedTasksThrough")(
+    function* (
+      input: Parameters<ThreadManagementServiceShape["stopDelegatedTasks"]>[0],
+      throughSequence: number | undefined,
+    ): Effect.fn.Return<
+      void,
+      Orchestrator.OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
+    > {
+      // A retry must not stop tasks delegated after the original Stop, including
+      // when an earlier walk stopped some children and failed on another.
+      // Follow-up tasks reuse a child thread, so the set walks its subtree once.
+      const childThreadIds = new Set(
+        throughSequence === undefined
+          ? (yield* orchestrator.getThreadRecords(input.threadId, ["subagents"])).subagents.flatMap(
+              (task) =>
+                task.origin === "app_owned" && task.childThreadId !== null
+                  ? [task.childThreadId]
+                  : [],
+            )
+          : yield* orchestrator
+              .readStoredEvents({
+                threadId: input.threadId,
+                throughSequence,
+                eventType: "subagent.updated",
+              })
+              .pipe(
+                Stream.filterMap((stored) =>
+                  stored.event.type === "subagent.updated" &&
+                  stored.event.payload.origin === "app_owned" &&
+                  stored.event.payload.childThreadId !== null
+                    ? Result.succeed(stored.event.payload.childThreadId)
+                    : Result.failVoid,
+                ),
+                Stream.runCollect,
+              ),
+      );
+      const failures: Array<
+        Orchestrator.OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
+      > = [];
+      for (const threadId of childThreadIds) {
+        yield* dispatch({
+          type: "thread.stop",
+          commandId: CommandId.make(`${input.commandId}:stop:${threadId}`),
+          threadId,
+          ...(throughSequence === undefined ? {} : { throughSequence }),
+          ...(input.reason === undefined ? {} : { reason: input.reason }),
+        }).pipe(
+          Effect.andThen(stopDelegatedTasksThrough({ ...input, threadId }, throughSequence)),
+          Effect.catch((error) =>
+            Effect.logWarning("Unable to stop a delegated task", {
+              parentThreadId: input.threadId,
+              threadId,
+              error,
+            }).pipe(Effect.andThen(Effect.sync(() => failures.push(error)))),
+          ),
+        );
+      }
+      if (failures[0] !== undefined) return yield* Effect.fail(failures[0]);
+    },
+  );
+
   const stopDelegatedTasks: ThreadManagementServiceShape["stopDelegatedTasks"] = Effect.fn(
     "ThreadManagementService.stopDelegatedTasks",
   )(function* (input) {
-    const { subagents } = yield* orchestrator.getThreadRecords(input.threadId, ["subagents"]);
-    const failures: Array<
-      Orchestrator.OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
-    > = [];
-    const stoppedChildThreadIds = new Set<ThreadId>();
-    for (const task of subagents) {
-      if (task.origin !== "app_owned" || task.childThreadId === null) continue;
-      const threadId = task.childThreadId;
-      // Follow-up tasks reuse a child thread; walk its subtree only once.
-      if (stoppedChildThreadIds.has(threadId)) continue;
-      stoppedChildThreadIds.add(threadId);
-      yield* dispatch({
-        type: "thread.stop",
-        commandId: CommandId.make(`${input.commandId}:stop:${threadId}`),
-        threadId,
-        ...(input.reason === undefined ? {} : { reason: input.reason }),
-      }).pipe(
-        Effect.andThen(stopDelegatedTasks({ ...input, threadId })),
-        Effect.catch((error) =>
-          Effect.logWarning("Unable to stop a delegated task", {
-            parentThreadId: input.threadId,
-            threadId,
-            error,
-          }).pipe(Effect.andThen(Effect.sync(() => failures.push(error)))),
+    const receipt = yield* receipts
+      .getByCommandId(input.commandId)
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new Orchestrator.OrchestratorProjectionError({ threadId: input.threadId, cause }),
         ),
       );
-    }
-    if (failures[0] !== undefined) return yield* Effect.fail(failures[0]);
+    return yield* stopDelegatedTasksThrough(
+      input,
+      Option.isSome(receipt) ? receipt.value.resultSequence : undefined,
+    );
   });
 
   return ThreadManagementService.of({

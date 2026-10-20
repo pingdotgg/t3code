@@ -198,6 +198,11 @@ export interface EventSinkV2Shape {
   readonly latestSequence: (input?: {
     readonly threadId?: ThreadId;
   }) => Effect.Effect<number, EventSinkV2Error>;
+  readonly read: (input: {
+    readonly threadId: ThreadId;
+    readonly throughSequence: number;
+    readonly eventType: OrchestrationV2DomainEvent["type"];
+  }) => Stream.Stream<OrchestrationV2StoredEvent, EventSinkStreamError>;
   readonly readByCommandId: (input: {
     readonly commandId: CommandId;
   }) => Stream.Stream<OrchestrationV2StoredEvent, EventSinkV2Error>;
@@ -957,6 +962,14 @@ const layerBase: Layer.Layer<
               }),
           ),
         ),
+      read: (input) =>
+        eventStore
+          .read(input)
+          .pipe(
+            Stream.mapError(
+              (cause) => new EventSinkStreamError({ threadId: input.threadId, cause }),
+            ),
+          ),
       readByCommandId: (input) =>
         eventStore.readByCommandId(input).pipe(
           Stream.mapError(
