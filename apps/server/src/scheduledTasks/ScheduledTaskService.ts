@@ -206,6 +206,8 @@ export class ScheduledTaskService extends Context.Service<
     readonly delete: (
       input: ScheduledTaskDeleteInput,
     ) => Effect.Effect<ScheduledTaskDeleteResult, ScheduledTaskError>;
+    /** Deletes only tasks that still target this thread, including their webhook deliveries. */
+    readonly deleteForThread: (threadId: ThreadId) => Effect.Effect<void, ScheduledTaskError>;
     readonly runNow: (
       input: ScheduledTaskRunNowInput,
     ) => Effect.Effect<ScheduledTaskRunNowResult, ScheduledTaskError>;
@@ -1087,25 +1089,57 @@ export const layer = Layer.effect(
       };
     });
 
+    const forgetWebhookTask = (id: ScheduledTaskId) =>
+      Effect.all(
+        [
+          Ref.update(webhookRateWindows, (windows) => {
+            const next = new Map(windows);
+            next.delete(id);
+            return next;
+          }),
+          Ref.update(webhookPermits, (permits) => {
+            const next = new Map(permits);
+            next.delete(id);
+            return next;
+          }),
+        ],
+        { discard: true },
+      );
+
     const deleteTask: ScheduledTaskService["Service"]["delete"] = (input) =>
       deleteRow(input.id).pipe(
-        Effect.andThen(
-          Effect.all([
-            Ref.update(webhookRateWindows, (windows) => {
-              const next = new Map(windows);
-              next.delete(input.id);
-              return next;
-            }),
-            Ref.update(webhookPermits, (permits) => {
-              const next = new Map(permits);
-              next.delete(input.id);
-              return next;
-            }),
-          ]),
-        ),
+        Effect.andThen(forgetWebhookTask(input.id)),
         Effect.andThen(notifyChanged),
         Effect.as({ id: input.id }),
       );
+
+    const deleteForThread = Effect.fn("ScheduledTaskService.deleteForThread")(function* (
+      threadId: ThreadId,
+    ) {
+      // Check the current binding in the transaction: an automation may have
+      // been unbound or moved since thread deletion queued this cleanup.
+      const removed = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* sql`
+            DELETE FROM scheduled_task_webhook_deliveries
+            WHERE task_id IN (SELECT task_id FROM scheduled_tasks WHERE thread_id = ${threadId})
+          `;
+            return yield* sql<{ task_id: ScheduledTaskId }>`
+            DELETE FROM scheduled_tasks WHERE thread_id = ${threadId} RETURNING task_id
+          `;
+          }),
+        )
+        .pipe(
+          Effect.mapError((cause) =>
+            taskError("Could not delete thread's schedule tasks.", { cause }),
+          ),
+        );
+      yield* Effect.forEach(removed, ({ task_id }) => forgetWebhookTask(task_id), {
+        discard: true,
+      });
+      if (removed.length > 0) yield* notifyChanged;
+    });
 
     const runNow: ScheduledTaskService["Service"]["runNow"] = Effect.fn(
       "ScheduledTaskService.runNow",
@@ -1613,6 +1647,7 @@ export const layer = Layer.effect(
       upsert,
       setEnabled,
       delete: deleteTask,
+      deleteForThread,
       runNow,
       rotateWebhookToken,
       listWebhookDeliveries,

@@ -3,13 +3,21 @@ import * as NodeUtil from "node:util";
 
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
-import { ScheduledTaskError } from "@t3tools/contracts";
+import {
+  ProjectId,
+  ProviderInstanceId,
+  ScheduledTaskError,
+  ScheduledTaskId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import * as Fiber from "effect/Fiber";
+import * as Stream from "effect/Stream";
 import * as Deferred from "effect/Deferred";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -329,4 +337,71 @@ it.effect(
         }),
       );
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("thread cleanup notifies subscribers and a finishing run cannot recreate the task", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const subscribed = yield* Deferred.make<void>();
+    const running = yield* Deferred.make<void>();
+    const removed = yield* Deferred.make<void>();
+    const layer = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            sendToThread: () =>
+              Deferred.succeed(started, undefined).pipe(
+                Effect.andThen(Deferred.await(release)),
+                Effect.andThen(Effect.die("test dispatch failure")),
+              ),
+          }),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () => Effect.succeed(false),
+          }),
+          NodeCrypto.layer,
+          Scheduler.layer,
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const threadId = ThreadId.make("thread:deleted-during-run");
+      const { task } = yield* service.upsert({
+        id: ScheduledTaskId.make("task:deleted-during-run"),
+        title: "Check orchestration",
+        prompt: "Check progress",
+        enabled: true,
+        schedule: { type: "interval", everyMs: 60_000 },
+        projectId: ProjectId.make("project:test"),
+        threadId,
+        workspaceStrategy: { type: "root" },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+      yield* service.subscribeList().pipe(
+        Stream.runForEach(({ tasks }) => {
+          const current = tasks.find((candidate) => candidate.id === task.id);
+          if (current === undefined) return Deferred.succeed(removed, undefined);
+          return current.lastRunStatus === "running"
+            ? Deferred.succeed(running, undefined)
+            : Deferred.succeed(subscribed, undefined);
+        }),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(subscribed);
+      const run = yield* service.runNow({ id: task.id }).pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      yield* Deferred.await(running);
+      yield* service.deleteForThread(threadId);
+      yield* Deferred.await(removed);
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(run);
+      assert.lengthOf((yield* service.list()).tasks, 0);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
