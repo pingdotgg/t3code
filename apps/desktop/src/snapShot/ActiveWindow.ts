@@ -100,15 +100,20 @@ function run() {
 
 function runMacLookup(): Promise<string> {
   return new Promise((resolve, reject) => {
-    NodeChildProcess.execFile(
+    // Endpoint security agents can SIGKILL osascript when this ObjC-bridge script arrives
+    // inline through `-e`; the same script read from stdin (`-`) is allowed to run.
+    const child = NodeChildProcess.execFile(
       "/usr/bin/osascript",
-      ["-l", "JavaScript", "-e", MAC_LOOKUP_SCRIPT],
+      ["-l", "JavaScript", "-"],
       { timeout: MAC_LOOKUP_TIMEOUT_MS, maxBuffer: 1024 * 1024 },
       (error, stdout) => {
         if (error) reject(error);
         else resolve(stdout);
       },
     );
+    // A write error means osascript already exited, which the callback above reports.
+    child.stdin?.on("error", () => undefined);
+    child.stdin?.end(MAC_LOOKUP_SCRIPT);
   });
 }
 
