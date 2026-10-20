@@ -319,6 +319,24 @@ const isGraphQlClientError = (error: unknown): error is GraphQLClientError.Graph
 
 const { isNotFoundOnly } = GitHubGraphQlClient;
 
+const isRefusedRequestedReviewersOnly = (error: unknown): boolean =>
+  isGraphQlClientError(error) &&
+  error.reason._tag === "ResponseError" &&
+  error.reason.status === 200 &&
+  error.reason.errors.every(
+    ({ path, type }) =>
+      type === "FORBIDDEN" &&
+      path?.length === 6 &&
+      path[0] === "repository" &&
+      path[1] === "pullRequest" &&
+      path[2] === "reviewRequests" &&
+      path[3] === "nodes" &&
+      typeof path[4] === "number" &&
+      Number.isInteger(path[4]) &&
+      path[4] >= 0 &&
+      path[5] === "requestedReviewer",
+  );
+
 /** A large pull request can produce a multi-megabyte patch; past this it is truncated. */
 const DIFF_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const DIFF_TIMEOUT = Duration.seconds(60);
@@ -1384,43 +1402,45 @@ export const make = Effect.gen(function* () {
   const getPullRequestDetail: GitHubPullRequestApi["Service"]["getPullRequestDetail"] = (input) => {
     const { owner, name } = parseRepositorySelector(input.repository);
     const operation = "getPullRequestDetail";
+    const read = (requestedReviewers: number) =>
+      client.PullRequestCore({
+        owner,
+        name,
+        number: input.number,
+        headRef: `refs/pull/${input.number}/head`,
+        required: asksRequired(input.host),
+        requestedReviewers,
+      });
     return SourceControlRateLimit.Interactive.pipe(
       Effect.flatMap((allowReserve) =>
-        client
-          .PullRequestCore({
-            owner,
-            name,
-            number: input.number,
-            headRef: `refs/pull/${input.number}/head`,
-            required: asksRequired(input.host),
-          })
-          .pipe(
-            graphql({ ...input, operation, allowReserve }),
-            Effect.map(toPullRequestCore),
-            Effect.flatMap(found({ ...input, operation })),
-            // Past a hundred checks the first page would let the rest imply success, so the whole
-            // rollup is walked instead.
-            Effect.filterOrElse(
-              (core) => !core.checksTruncated,
-              (core) =>
-                readAllCheckContexts(input, allowReserve).pipe(
-                  Effect.filterOrFail(
-                    (all) => all.headSha === core.headSha,
-                    () =>
-                      readError(
-                        input.cwd,
-                        operation,
-                        new Error("Pull request head changed while reading checks."),
-                      ),
-                  ),
-                  Effect.map((all) => ({
-                    ...core,
-                    ...pullRequestChecksFromContexts(all.contexts),
-                    checksTruncated: all.truncated,
-                  })),
+        read(100).pipe(
+          Effect.catchIf(isRefusedRequestedReviewersOnly, () => read(0)),
+          graphql({ ...input, operation, allowReserve }),
+          Effect.map(toPullRequestCore),
+          Effect.flatMap(found({ ...input, operation })),
+          // Past a hundred checks the first page would let the rest imply success, so the whole
+          // rollup is walked instead.
+          Effect.filterOrElse(
+            (core) => !core.checksTruncated,
+            (core) =>
+              readAllCheckContexts(input, allowReserve).pipe(
+                Effect.filterOrFail(
+                  (all) => all.headSha === core.headSha,
+                  () =>
+                    readError(
+                      input.cwd,
+                      operation,
+                      new Error("Pull request head changed while reading checks."),
+                    ),
                 ),
-            ),
+                Effect.map((all) => ({
+                  ...core,
+                  ...pullRequestChecksFromContexts(all.contexts),
+                  checksTruncated: all.truncated,
+                })),
+              ),
           ),
+        ),
       ),
     );
   };
@@ -2113,12 +2133,25 @@ export const make = Effect.gen(function* () {
       function* (input) {
         const { owner, name } = parseRepositorySelector(input.repository);
         const target = { ...input, operation: "listReviewThreadComments" };
+        let requestedReviewers = 50;
         const threadPage = (
           after: string | null,
-        ): Effect.Effect<GitHubReviewThreadPage, GitHubPullRequestApiError> =>
-          client
-            .ReviewThreads({ owner, name, number: input.number, after })
-            .pipe(graphql(target), Effect.map(toReviewThreadPage), Effect.flatMap(found(target)));
+        ): Effect.Effect<GitHubReviewThreadPage, GitHubPullRequestApiError> => {
+          const read = () =>
+            client.ReviewThreads({ owner, name, number: input.number, after, requestedReviewers });
+          return read().pipe(
+            Effect.catchIf(
+              (error) => requestedReviewers > 0 && isRefusedRequestedReviewersOnly(error),
+              () => {
+                requestedReviewers = 0;
+                return read();
+              },
+            ),
+            graphql(target),
+            Effect.map(toReviewThreadPage),
+            Effect.flatMap(found(target)),
+          );
+        };
         const entries: GitHubReviewThreadEntry[] = [];
         const avatarsByLogin = new Map<string, string>();
         const botLogins = new Set<string>();
