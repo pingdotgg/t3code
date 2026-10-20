@@ -10,10 +10,10 @@ import {
 const RELATIVE_PATH_PREFIX_PATTERN = /^(~\/|\.{1,2}\/)/;
 
 const RELATIVE_FILE_PATH_PATTERN =
-  /^(?:[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*\/)+[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*(?::\d+){0,2}$/;
+  /^(?:[\p{L}\p{N}\p{M}._-]+(?: +[\p{L}\p{N}\p{M}._-]+)*\/)+[\p{L}\p{N}\p{M}._-]+(?: +[\p{L}\p{N}\p{M}._-]+)*(?::\d+){0,2}$/u;
 
 const RELATIVE_FILE_NAME_PATTERN =
-  /^[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*\.[A-Za-z0-9_-]+(?::\d+){0,2}$/;
+  /^[\p{L}\p{N}\p{M}._-]+(?: +[\p{L}\p{N}\p{M}._-]+)*\.[A-Za-z0-9_-]+(?::\d+){0,2}$/u;
 
 const EXTERNAL_SCHEME_PATTERN = /^([A-Za-z][A-Za-z0-9+.-]*):(.*)$/;
 

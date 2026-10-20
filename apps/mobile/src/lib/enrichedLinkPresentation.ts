@@ -34,7 +34,7 @@ export function enrichedLinkVariantPattern(url: string) {
 }
 
 export const ENRICHED_INLINE_FILE_LINK_REGEX =
-  /^(?!\S*:\/\/)(?:(?:\.{1,2}[\\/]|~[\\/]|\/(?:Users|home|tmp|var|etc|opt|mnt|Volumes|private|root|usr|bin|sbin|lib|lib64|srv|dev|proc|sys|run|boot|media|workspace|workspaces)\/|[A-Za-z]:[\\/])[^\s`]+|(?:[A-Za-z0-9._-]+[\\/])+[A-Za-z0-9._-]+\.[A-Za-z0-9_-]+(?::\d+){0,2}|[A-Za-z0-9._-]+\.[A-Za-z0-9_-]+:\d+(?::\d+)?)$/;
+  /^(?!\S*:\/\/)(?:(?:\.{1,2}[\\/]|~[\\/]|\/(?:Users|home|tmp|var|etc|opt|mnt|Volumes|private|root|usr|bin|sbin|lib|lib64|srv|dev|proc|sys|run|boot|media|workspace|workspaces)\/|[A-Za-z]:[\\/])[^\s`]+|(?:[\p{L}\p{N}\p{M}._-]+[\\/])+[\p{L}\p{N}\p{M}._-]+\.[A-Za-z0-9_-]+(?::\d+){0,2}|[\p{L}\p{N}\p{M}._-]+\.[A-Za-z0-9_-]+:\d+(?::\d+)?)$/u;
 
 export function enrichedSkillLinkRegex(skills?: ReadonlyArray<SelectableMarkdownSkill>) {
   const names = [...new Set(skills?.map((skill) => skill.name) ?? [])].filter(Boolean);

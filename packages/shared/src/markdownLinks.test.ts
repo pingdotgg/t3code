@@ -127,6 +127,9 @@ describe("parseMarkdownFileLink", () => {
     ["AGENTS.md", "AGENTS.md"],
     ["script.ts:10", "script.ts"],
     ["/tmp/clip%23one.mp4#t=2", "/tmp/clip#one.mp4"],
+    ["Summer 2026/線性代數/期中考.md", "Summer 2026/線性代數/期中考.md"],
+    ["期中考.md", "期中考.md"],
+    ["docs/cafe\u0301.md", "docs/cafe\u0301.md"],
   ])("recognizes %s as a file", (href, path) => {
     expect(parseMarkdownFileLink(href)?.path).toBe(path);
   });

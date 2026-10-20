@@ -17,6 +17,8 @@ describe("Enriched link presentation", () => {
       "/tmp/report.md",
       "C:\\repo\\app.tsx",
       "app.tsx:12:3",
+      "線性代數/試卷.pdf",
+      "線性代數.pdf:12",
     ]) {
       expect(ENRICHED_INLINE_FILE_LINK_REGEX.test(path), path).toBe(true);
     }
