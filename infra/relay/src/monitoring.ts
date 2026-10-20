@@ -234,8 +234,8 @@ const relayDashboardCharts = (dataset: string): ReadonlyArray<QueryChart> => {
     ),
     timeSeries(
       "link-latency",
-      "Link latency (ms, 9 s deadline)",
-      `${linkRequests}\n| summarize p50 = percentile(duration, 50) / 1000000, p90 = percentile(duration, 90) / 1000000 by bin_auto(_time)`,
+      "Link latency (9 s deadline)",
+      `${linkRequests}\n| summarize p50 = percentile(duration, 50), p90 = percentile(duration, 90) by bin_auto(_time)`,
     ),
     timeSeries(
       "reachability",
@@ -254,8 +254,8 @@ const relayDashboardCharts = (dataset: string): ReadonlyArray<QueryChart> => {
     ),
     timeSeries(
       "postgres",
-      "Postgres query time (ms)",
-      `${source}\n| where name == "postgres"\n| summarize p50 = percentile(duration, 50) / 1000000, p90 = percentile(duration, 90) / 1000000 by bin_auto(_time)`,
+      "Postgres query time",
+      `${source}\n| where name == "postgres"\n| summarize p50 = percentile(duration, 50), p90 = percentile(duration, 90) by bin_auto(_time)`,
     ),
     timeSeries(
       "push",
@@ -292,8 +292,8 @@ const relayDashboardCharts = (dataset: string): ReadonlyArray<QueryChart> => {
     // and the host's spans. An attempt lasts until initial sync finishes.
     timeSeries(
       "connect-time",
-      "Connecting: time to connected by surface (ms)",
-      `${clientConnections}\n| summarize p50 = percentile(duration, 50) / 1000000, p90 = percentile(duration, 90) / 1000000 by bin_auto(_time), surface`,
+      "Connecting: time to connected by surface",
+      `${clientConnections}\n| summarize p50 = percentile(duration, 50), p90 = percentile(duration, 90) by bin_auto(_time), surface`,
     ),
     timeSeries(
       "connect-outcomes",
@@ -302,7 +302,7 @@ const relayDashboardCharts = (dataset: string): ReadonlyArray<QueryChart> => {
     ),
     {
       id: "connect-phases",
-      name: "Connecting: where the time goes (ms)",
+      name: "Connecting: where the time goes",
       type: "Table",
       query: {
         // Failed direct route checks stay in: waiting out an unreachable LAN
@@ -323,15 +323,15 @@ const relayDashboardCharts = (dataset: string): ReadonlyArray<QueryChart> => {
           `    name == "relay.connection.attempt", "Total: time to connected",`,
           `    "")`,
           `| where phase != "" and (error != true or phase startswith "0.")`,
-          `| summarize calls = count(), p50_ms = round(percentile(duration, 50) / 1000000, 0), p90_ms = round(percentile(duration, 90) / 1000000, 0) by phase`,
+          `| summarize calls = count(), p50 = percentile(duration, 50), p90 = percentile(duration, 90) by phase`,
           `| order by phase asc`,
         ].join("\n"),
       },
     },
     timeSeries(
       "relay-latency-by-continent",
-      "Relay token and connect latency by user continent (p50 ms)",
-      `${source}\n| where kind == "server" and ['attributes.http.request.method'] == "POST" and (['attributes.http.route'] == "/v1/client/dpop-token" or ['attributes.http.route'] == "/v1/environments/:environmentId/connect")\n| extend continent = tostring(['attributes.custom']['relay.edge.continent'])\n| where isnotempty(continent)\n| summarize p50 = percentile(duration, 50) / 1000000 by bin_auto(_time), continent`,
+      "Relay token and connect latency by user continent (p50)",
+      `${source}\n| where kind == "server" and ['attributes.http.request.method'] == "POST" and (['attributes.http.route'] == "/v1/client/dpop-token" or ['attributes.http.route'] == "/v1/environments/:environmentId/connect")\n| extend continent = tostring(['attributes.custom']['relay.edge.continent'])\n| where isnotempty(continent)\n| summarize p50 = percentile(duration, 50) by bin_auto(_time), continent`,
     ),
   ];
 };
