@@ -3,12 +3,14 @@ import type { ParamListBase, StackNavigationState } from "@react-navigation/nati
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  collapsedSplitTransition,
   nativeStackPopAction,
   nativeWorkspacePopAction,
   nativeWorkspacePopCount,
   projectWorkspaceStack,
   partitionStackPresentations,
   reconcileStackScreens,
+  type CollapsedSplitColumn,
 } from "./workspace-stack-projection";
 
 const requireNavigation = NodeModule.createRequire(
@@ -182,6 +184,111 @@ describe("native card pop handoff", () => {
     expect(nativeStackPopAction(state, files.key, settings.key)).toBeNull();
     expect(nativeStackPopAction(state, home.key)).toBeNull();
     expect(nativeStackPopAction({ ...state, index: 1 }, files.key)).toBeNull();
+  });
+});
+
+describe("collapsed split Back", () => {
+  const routerOptions = {
+    routeNames: history([home]).routeNames,
+    routeParamList: {},
+    routeGetIdList: {},
+  };
+  type Appearance = "willAppear" | "didAppear" | "willDisappear";
+  // UIKit's appearance callbacks for one collapsed transition, against the router at each step.
+  function replay(
+    steps: ReadonlyArray<readonly [Appearance, string, StackNavigationState<ParamListBase>]>,
+  ) {
+    let column: CollapsedSplitColumn = { visible: "secondary", leaving: null };
+    let pop: ReturnType<typeof nativeStackPopAction> = null;
+    for (const [type, key, state] of steps) {
+      const transition = collapsedSplitTransition(column, { type, key }, state, home.key);
+      column = transition.column;
+      pop ??= transition.pop;
+    }
+    return { visible: column.visible, pop };
+  }
+
+  it("returns the router to the list so the next selection opens a new detail", () => {
+    const state = history([home, thread]);
+    const back = replay([
+      ["willDisappear", thread.key, state],
+      ["willAppear", home.key, state],
+      ["didAppear", home.key, state],
+    ]);
+    expect(back.visible).toBe("primary");
+    const router = StackRouter({});
+    const listed = router.getStateForAction(state, back.pop!, routerOptions);
+    expect(listed?.routes).toEqual([home]);
+    if (!listed || listed.stale !== false) throw new Error("Expected a rehydrated router history");
+    const select = {
+      type: "NAVIGATE",
+      payload: { name: "Thread", params: { threadId: "next" } },
+    } as const;
+    expect(router.getStateForAction(listed, select, routerOptions)?.routes[1]?.key).not.toBe(
+      thread.key,
+    );
+    // Left on the hidden detail, the selection would only rename it and never show the column.
+    expect(router.getStateForAction(state, select, routerOptions)?.routes[1]?.key).toBe(thread.key);
+  });
+
+  it("clears every detail while keeping a presentation opened during the Back animation", () => {
+    const leaving = history([home, thread, files]);
+    const presented = history([home, thread, files, settings]);
+    const { pop } = replay([
+      ["willDisappear", files.key, leaving],
+      ["didAppear", home.key, presented],
+    ]);
+    expect(StackRouter({}).getStateForAction(presented, pop!, routerOptions)?.routes).toEqual([
+      home,
+      settings,
+    ]);
+  });
+
+  it("keeps the detail when it appears again before the list finishes appearing", () => {
+    const state = history([home, thread]);
+    const cancelledSwipe = replay([
+      ["willDisappear", thread.key, state],
+      ["willAppear", home.key, state],
+      ["willAppear", thread.key, state],
+      ["didAppear", thread.key, state],
+    ]);
+    expect(cancelledSwipe).toEqual({ visible: "secondary", pop: null });
+    expect(
+      replay([
+        ["willDisappear", thread.key, state],
+        ["willAppear", thread.key, state],
+        ["didAppear", home.key, state],
+      ]).pop,
+    ).toBeNull();
+  });
+
+  it("does not mistake JS navigation or a cold link for native Back", () => {
+    const pushed = history([home, thread, files]);
+    expect(
+      replay([
+        ["willDisappear", thread.key, pushed],
+        ["didAppear", files.key, pushed],
+      ]),
+    ).toEqual({ visible: "secondary", pop: null });
+    const presented = history([home, thread, settings]);
+    expect(
+      replay([
+        ["willDisappear", thread.key, presented],
+        ["didAppear", home.key, presented],
+      ]).pop,
+    ).toBeNull();
+    const popped = history([home]);
+    expect(
+      replay([
+        ["willDisappear", thread.key, popped],
+        ["didAppear", home.key, popped],
+      ]).pop,
+    ).toBeNull();
+    // A linked thread whose list appears first still needs its detail column shown.
+    expect(replay([["didAppear", home.key, history([home, thread])]])).toEqual({
+      visible: "primary",
+      pop: null,
+    });
   });
 });
 
