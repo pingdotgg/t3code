@@ -237,9 +237,12 @@ function getMenuActionDisabledReason({
   const isBehind = gitStatus.behindCount > 0;
   const terminology = getSourceControlPresentation(gitStatus.sourceControlProvider).terminology;
 
-  if (item.id === "commit") {
+  if (item.id === "commit" || item.id === "commit_dialog") {
     if (!hasChanges) {
       return "Worktree is clean. Make changes before committing.";
+    }
+    if (item.id === "commit" && (!hasBranch || gitStatus.isDefaultRef)) {
+      return "Use Commit dialog to review changes and choose a branch before committing.";
     }
     return "Commit is currently unavailable.";
   }
@@ -1443,8 +1446,12 @@ export default function GitActionsControl({
     }
   };
 
-  const openDialogForMenuItem = (item: GitActionMenuItem) => {
+  const runMenuItem = (item: GitActionMenuItem) => {
     if (item.disabled) return;
+    if (item.kind === "run_action" && item.action) {
+      void runGitActionWithToast({ action: item.action });
+      return;
+    }
     if (item.dialogAction === "create_branch") {
       void runGitActionWithToast({
         action: "commit",
@@ -1581,7 +1588,7 @@ export default function GitActionsControl({
             key={`${item.id}-${item.label}`}
             disabled={!canWriteSourceControl || item.disabled}
             onClick={() => {
-              openDialogForMenuItem(item);
+              runMenuItem(item);
             }}
           >
             <GitActionItemIcon icon={item.icon} SourceControlIcon={SourceControlIcon} />
