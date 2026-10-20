@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import { SourceControlProviderError, type ChangeRequest } from "@t3tools/contracts";
 
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
+import type { NormalizedAzureDevOpsPullRequestRecord } from "./azureDevOpsPullRequests.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import {
   combinedAuthOutput,
@@ -54,19 +55,7 @@ export const discovery = {
     "Install the Azure command-line tools (`az`), then enable Azure DevOps support with `az extension add --name azure-devops`.",
 } satisfies SourceControlCliDiscoverySpec;
 
-function toChangeRequest(summary: {
-  readonly number: number;
-  readonly title: string;
-  readonly url: string;
-  readonly baseRefName: string;
-  readonly headRefName: string;
-  readonly state: "open" | "closed" | "merged";
-  readonly isDraft?: boolean;
-  readonly isCrossRepository: boolean;
-  readonly closedAt?: string | null;
-  readonly mergedAt?: string | null;
-  readonly updatedAt: ChangeRequest["updatedAt"];
-}): ChangeRequest {
+function toChangeRequest(summary: NormalizedAzureDevOpsPullRequestRecord): ChangeRequest {
   return {
     provider: SourceControlProviderKind.make("azure-devops"),
     number: summary.number,
@@ -74,6 +63,7 @@ function toChangeRequest(summary: {
     url: summary.url,
     baseRefName: summary.baseRefName,
     headRefName: summary.headRefName,
+    ...(summary.headSha !== undefined ? { headSha: summary.headSha } : {}),
     state: summary.state,
     ...(summary.isDraft === true ? { isDraft: true } : {}),
     closedAt: summary.closedAt ?? null,

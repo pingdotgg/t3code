@@ -555,6 +555,7 @@ it.effect("loads Forgejo pull request references from files and commits views", 
       const result = yield* provider.getChangeRequest({ cwd: "/repo", reference });
       assert.strictEqual(result.number, 42);
       assert.strictEqual(result.title, "Forgejo view reference");
+      assert.strictEqual(result.headSha, "head");
     }
     const invalid = yield* provider
       .getChangeRequest({

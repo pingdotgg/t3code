@@ -244,6 +244,7 @@ export interface GitLabMergeRequestSummary {
   readonly url: string;
   readonly baseRefName: string;
   readonly headRefName: string;
+  readonly headSha?: string;
   readonly state?: "open" | "closed" | "merged";
   readonly isDraft?: boolean;
   readonly closedAt?: string | null;

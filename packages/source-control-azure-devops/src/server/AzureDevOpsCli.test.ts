@@ -43,6 +43,7 @@ describe("AzureDevOpsCli.layer", () => {
               title: "Add Azure provider",
               sourceRefName: "refs/heads/feature/source-control",
               targetRefName: "refs/heads/main",
+              lastMergeSourceCommit: { commitId: "a".repeat(40) },
               status: "active",
               creationDate: "2026-01-02T00:00:00.000Z",
               closedDate: null,
@@ -67,6 +68,7 @@ describe("AzureDevOpsCli.layer", () => {
       assert.strictEqual(result.url, "https://dev.azure.com/acme/project/_git/repo/pullrequest/42");
       assert.strictEqual(result.baseRefName, "main");
       assert.strictEqual(result.headRefName, "feature/source-control");
+      assert.strictEqual(result.headSha, "a".repeat(40));
       assert.strictEqual(result.state, "open");
       assert.deepStrictEqual(result.updatedAt._tag, Option.some(1)._tag);
       assert.deepStrictEqual(mockRun.mock.calls.at(-1)?.[0], {

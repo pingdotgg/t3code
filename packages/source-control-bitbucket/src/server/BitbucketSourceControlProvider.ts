@@ -16,6 +16,7 @@ function toChangeRequest(summary: NormalizedBitbucketPullRequestRecord): ChangeR
     url: summary.url,
     baseRefName: summary.baseRefName,
     headRefName: summary.headRefName,
+    ...(summary.headSha !== undefined ? { headSha: summary.headSha } : {}),
     state: summary.state,
     ...(summary.isDraft === true ? { isDraft: true } : {}),
     updatedAt: summary.updatedAt ?? Option.none(),

@@ -9,6 +9,7 @@ export interface NormalizedBitbucketPullRequestRecord {
   readonly url: string;
   readonly baseRefName: string;
   readonly headRefName: string;
+  readonly headSha?: string;
   readonly state: "open" | "closed" | "merged";
   readonly isDraft?: boolean;
   readonly updatedAt: Option.Option<DateTime.Utc>;
@@ -33,6 +34,9 @@ export const BitbucketPullRequestBranchSchema = Schema.Struct({
   branch: Schema.Struct({
     name: TrimmedNonEmptyString,
   }),
+  commit: Schema.optional(
+    Schema.NullOr(Schema.Struct({ hash: Schema.optional(Schema.NullOr(Schema.String)) })),
+  ),
 });
 
 export const BitbucketPullRequestSchema = Schema.Struct({
@@ -85,6 +89,7 @@ export function normalizeBitbucketPullRequestRecord(
 ): NormalizedBitbucketPullRequestRecord {
   const headRepositoryNameWithOwner = trimOptionalString(raw.source.repository?.full_name);
   const baseRepositoryNameWithOwner = trimOptionalString(raw.destination.repository?.full_name);
+  const headSha = trimOptionalString(raw.source.commit?.hash);
   const headRepositoryOwnerLogin = raw.source.repository
     ? repositoryOwner(raw.source.repository)
     : null;
@@ -99,6 +104,7 @@ export function normalizeBitbucketPullRequestRecord(
     url: raw.links.html.href,
     baseRefName: raw.destination.branch.name,
     headRefName: raw.source.branch.name,
+    ...(headSha ? { headSha } : {}),
     state: normalizeBitbucketPullRequestState(raw.state),
     ...(raw.draft === true ? { isDraft: true } : {}),
     updatedAt: raw.updated_on ?? Option.none(),
