@@ -13,6 +13,7 @@ import { updateMobilePreferencesAtom } from "../../../../state/preferences";
 import { canPickInstalledFont, pickInstalledFont } from "../../../../native/installed-fonts";
 import {
   BUILT_IN_FONT_OPTIONS,
+  REPLY_EMPHASIS_OPTIONS,
   DEFAULT_FONT_SELECTIONS,
   type MobileFontRole,
 } from "../../../../lib/mobileFonts";
@@ -33,6 +34,9 @@ export function FontAppearanceSection() {
     unavailableFonts,
     fonts,
     replyFontSize,
+    replyEmphasisWeight,
+    replyEmphasisFontFamily,
+    setReplyEmphasisWeight,
     composerFontSize,
     customReplyFontSize,
     customComposerFontSize,
@@ -76,11 +80,11 @@ export function FontAppearanceSection() {
             lineHeight: Math.round(replyFontSize * 1.45),
           }}
         >
-          A reply in your selected font.
+          A reply in your selected font.{" "}
+          <Text style={{ fontFamily: replyEmphasisFontFamily }}>Emphasized text.</Text>
         </Text>
         <Text className="text-xs text-foreground-muted">
-          Defaults follow the interface. Choose an installed font to use its matching styles. These
-          choices stay on this device.
+          Defaults follow the interface. These choices stay on this device.
         </Text>
       </View>
       {ROLES.map(({ role, label }) => (
@@ -122,6 +126,45 @@ export function FontAppearanceSection() {
           </View>
         </Menu>
       ))}
+      <Menu
+        accessibilityLabel="Reply emphasis weight"
+        accessibilityRole="button"
+        actions={[
+          {
+            id: "default",
+            title: "Default",
+            state: replyEmphasisWeight === undefined ? "on" : "off",
+            attributes: { disabled: !isReady || busy },
+          },
+          ...REPLY_EMPHASIS_OPTIONS.map((option) => ({
+            id: option.id,
+            title: option.label,
+            state: replyEmphasisWeight === option.id ? ("on" as const) : ("off" as const),
+            attributes: { disabled: !isReady || busy || !fonts.reply.emphasisFaces?.[option.id] },
+          })),
+        ]}
+        onPressAction={({ nativeEvent }) =>
+          setReplyEmphasisWeight(
+            REPLY_EMPHASIS_OPTIONS.find((option) => option.id === nativeEvent.event)?.id,
+          )
+        }
+      >
+        <View>
+          <ListRowLayout
+            icon="textformat.size"
+            label="Reply emphasis weight"
+            detail={
+              REPLY_EMPHASIS_OPTIONS.find((option) => option.id === replyEmphasisWeight)?.label ??
+              "Default"
+            }
+          />
+        </View>
+      </Menu>
+      <View className="px-4 pb-2">
+        <Text className="text-xs text-foreground-muted">
+          Emphasis is remembered for this reply font. Unavailable weights are disabled.
+        </Text>
+      </View>
       <SettingsSwitchRow
         icon="textformat.size"
         label="Custom reply size"
@@ -175,6 +218,7 @@ export function FontAppearanceSection() {
         onPress={() =>
           void savePreferences({
             fontSelections: DEFAULT_FONT_SELECTIONS,
+            replyEmphasisWeights: {},
             replyFontSize: null,
             composerFontSize: null,
           }).catch(report)

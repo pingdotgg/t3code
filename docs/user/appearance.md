@@ -18,11 +18,15 @@ Under mobile **Appearance → Fonts**, choose fonts independently for the interf
 composer, and code in messages or Markdown previews. Reply and composer sizes can follow Text size
 or use their own size. Diffs and the terminal keep their existing fonts.
 
-To use your own font, choose **Import fonts from Files** and select static `.ttf` or `.otf` files.
-Import matching regular, bold, and italic faces together; they are grouped by family name. Variable
-font files and font collections are not supported by this import. Font files and selections stay on
-this device and are not uploaded to connected environments. Removing an imported family resets any
-choices using it to Default.
+On iOS, choose **Choose installed font…** from a font menu to open the system font picker.
+iOS manages each family's matching styles. Installed fonts must be available to apps through iOS;
+if a selected font becomes unavailable, the app uses its default. Android offers the built-in
+system sans, serif, and monospace choices.
+
+Use **Reply emphasis weight** to choose an available Medium, Semibold, or Bold face for emphasized
+reply text. Default keeps the font's existing emphasis. The choice is remembered for each reply
+font, so changing fonts restores that font's choice. Unavailable weights are disabled. Reset font
+choices and message sizes to clear these selections. Fonts and preferences stay on this device.
 
 On Android 12 or newer, choose the **Material You** theme in Appearance to use colors from
 your wallpaper. Selecting another theme replaces those colors. Like other themes, Material You

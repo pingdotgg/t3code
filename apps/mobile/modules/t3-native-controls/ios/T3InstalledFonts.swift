@@ -3,7 +3,7 @@ import UIKit
 
 @MainActor
 enum T3InstalledFonts {
-  static func describe(_ font: UIFont, name: String? = nil) -> [String: String] {
+  static func describe(_ font: UIFont, name: String? = nil) -> [String: Any] {
     func variant(_ weight: UIFont.Weight) -> String {
       let descriptor = UIFontDescriptor(fontAttributes: [
         .family: font.familyName,
@@ -12,16 +12,27 @@ enum T3InstalledFonts {
       let candidate = UIFont(descriptor: descriptor, size: font.pointSize)
       return candidate.familyName == font.familyName ? candidate.fontName : font.fontName
     }
+    // CoreText reports medium as 0.20 while UIKit requests 0.23.
+    var emphasisFaces: [String: String] = [:]
+    for (key, weight) in [("500", UIFont.Weight.medium), ("600", .semibold), ("700", .bold)] {
+      let name = variant(weight)
+      guard let candidate = UIFont(name: name, size: font.pointSize),
+            let traits = candidate.fontDescriptor.object(forKey: .traits) as? [UIFontDescriptor.TraitKey: Any],
+            let actual = traits[.weight] as? NSNumber,
+            abs(actual.doubleValue - Double(weight.rawValue)) < 0.04 else { continue }
+      emphasisFaces[key] = name
+    }
     return [
       "name": name ?? font.fontName,
       "label": font.familyName,
       "regular": font.fontName,
       "medium": variant(.medium),
       "bold": variant(.bold),
+      "emphasisFaces": emphasisFaces,
     ]
   }
 
-  static func resolve(_ names: [String], completion: @escaping ([[String: String]]) -> Void) {
+  static func resolve(_ names: [String], completion: @escaping ([[String: Any]]) -> Void) {
     guard !names.isEmpty else { completion([]); return }
     // Provider fonts must be requested again for each process. Persist names,
     // not file URLs: iOS owns the files and the picker grants family access.
@@ -39,11 +50,11 @@ enum T3InstalledFonts {
 
 @MainActor
 final class T3FontPickerPresentation: NSObject, UIFontPickerViewControllerDelegate, UIAdaptivePresentationControllerDelegate {
-  private let completion: ([String: String]?) -> Void
+  private let completion: ([String: Any]?) -> Void
   private var picker: UIFontPickerViewController?
   private var finished = false
 
-  init(completion: @escaping ([String: String]?) -> Void) {
+  init(completion: @escaping ([String: Any]?) -> Void) {
     self.completion = completion
   }
 
@@ -79,7 +90,7 @@ final class T3FontPickerPresentation: NSObject, UIFontPickerViewControllerDelega
     picker.dismiss(animated: true) { self.finish(nil) }
   }
 
-  private func finish(_ result: [String: String]?) {
+  private func finish(_ result: [String: Any]?) {
     guard !finished else { return }
     finished = true
     picker?.delegate = nil
