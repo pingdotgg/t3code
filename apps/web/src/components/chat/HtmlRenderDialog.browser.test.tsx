@@ -100,6 +100,19 @@ it("zooms the loaded page within bounds and resets without reloading it", async 
   expect(frame.getAttribute("sandbox")).toBe("allow-scripts allow-forms");
 });
 
+it("keeps the close button below native window controls and the zoom bar on screen", async () => {
+  await page.viewport(1280, 800);
+  document.documentElement.style.setProperty("--native-titlebar-height", "52px");
+  try {
+    const close = button("Close").element().getBoundingClientRect();
+    const zoomBar = button("Zoom in").element().getBoundingClientRect();
+    expect(close.top).toBeGreaterThanOrEqual(52);
+    expect(zoomBar.bottom).toBeLessThanOrEqual(800);
+  } finally {
+    document.documentElement.style.removeProperty("--native-titlebar-height");
+  }
+});
+
 it("closes with the close button or Escape", async () => {
   await click("Close");
   expect(onClose).toHaveBeenCalledOnce();
