@@ -6,6 +6,8 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { afterEach, assert, beforeEach, describe, it } from "@effect/vitest";
+import type { TranscriptUsageFormat } from "@t3tools/provider-core/server/usage";
+import * as Schema from "effect/Schema";
 
 import { TEST_FORMATS } from "./usageTestFormats.ts";
 import { readTranscriptRecords, transcriptLineGate } from "./usageTranscriptReader.ts";
@@ -70,6 +72,71 @@ function codexUsageLine(outputTokens: number, secondsOffset: number): string {
 }
 
 describe("readTranscriptRecords resume", () => {
+  it.each([
+    { mode: "buffered", streamingThresholdBytes: Infinity },
+    { mode: "streaming", streamingThresholdBytes: 0 },
+  ])("counts malformed tails once across $mode reads and resume", async (options) => {
+    const format: TranscriptUsageFormat<{ errors: number }> = {
+      ...TEST_FORMATS.claude,
+      selectFields: { ...TEST_FORMATS.claude.selectFields, usage: true },
+      state: {
+        initial: () => ({ errors: 0 }),
+        schema: Schema.Struct({ errors: Schema.Number }),
+      },
+      parseLine(line, state) {
+        return this.parseProjected(JSON.parse(line), state);
+      },
+      parseProjected(value, state) {
+        if (
+          typeof value === "object" &&
+          value !== null &&
+          "usage" in value &&
+          value.usage === "malformed"
+        ) {
+          state.errors += 1;
+          return [];
+        }
+        return TEST_FORMATS.claude.parseProjected(value, undefined);
+      },
+      readMalformedRecords: (state: { errors: number }) => state.errors,
+    };
+    const path = NodePath.join(dir, "diagnostics.jsonl");
+    const malformed = JSON.stringify({ usage: "malformed" });
+    // Completed lines enter the projected parser only when they cross a stream chunk.
+    const committed = `${JSON.stringify({ usage: "malformed", padding: "x".repeat(256 * 1024) })}\n${claudeLine(1, 5)}`;
+    await NodeFSP.writeFile(path, committed + malformed);
+
+    const first = await readTranscriptRecords(path, format, undefined, options);
+    assert.isNotNull(first);
+    assert.deepStrictEqual(
+      first.records.map((record) => record.totals.outputTokens),
+      [5],
+    );
+    assert.deepStrictEqual(first.tailRecords, []);
+    assert.strictEqual(first.position.resumeOffset, Buffer.byteLength(committed));
+    assert.deepStrictEqual(first.position.state, { errors: 1 });
+    assert.strictEqual(first.malformedRecords, 2);
+
+    const savedPosition = JSON.parse(JSON.stringify(first.position));
+    await NodeFSP.appendFile(path, `\n${claudeLine(2, 7)}${malformed}\n`);
+    const resumed = await readTranscriptRecords(path, format, savedPosition, options);
+    assert.isNotNull(resumed);
+    assert.isTrue(resumed.resumed);
+    assert.deepStrictEqual(
+      resumed.records.map((record) => record.totals.outputTokens),
+      [7],
+    );
+    assert.deepStrictEqual(resumed.position.state, { errors: 3 });
+    assert.strictEqual(resumed.malformedRecords, 3);
+
+    const full = await readTranscriptRecords(path, format, undefined, options);
+    assert.isNotNull(full);
+    assert.deepStrictEqual([...first.records, ...resumed.records], full.records);
+    assert.deepStrictEqual(resumed.tailRecords, full.tailRecords);
+    assert.deepStrictEqual(resumed.position, full.position);
+    assert.strictEqual(resumed.malformedRecords, full.malformedRecords);
+  });
+
   it("parses only appended lines when resuming a grown file", async () => {
     const path = NodePath.join(dir, "claude.jsonl");
     await NodeFSP.writeFile(path, claudeLine(1, 5) + claudeLine(2, 7));
@@ -77,6 +144,7 @@ describe("readTranscriptRecords resume", () => {
     assert.isNotNull(first);
     assert.strictEqual(first.records.length, 2);
     assert.isFalse(first.resumed);
+    assert.strictEqual(first.malformedRecords, 0);
 
     await NodeFSP.appendFile(path, claudeLine(3, 11));
     const second = await readTranscriptRecords(path, TEST_FORMATS.claude, first.position);

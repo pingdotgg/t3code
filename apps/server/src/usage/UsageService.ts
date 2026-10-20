@@ -353,7 +353,7 @@ export const make = Effect.gen(function* () {
             ([filePath, entry]) =>
               entry.provider === provider &&
               entry.mtimeMs >= retentionCutoffMs &&
-              entry.records.length + entry.tailRecords.length > 0 &&
+              (entry.records.length + entry.tailRecords.length > 0 || entry.malformedRecords > 0) &&
               isWithinDirectory(filePath, dir),
           );
         const volumeId =
@@ -459,6 +459,7 @@ export const make = Effect.gen(function* () {
     format: TranscriptUsageFormat<unknown>,
   ): Effect.fn.Return<{
     readonly records: readonly UsageRecord[];
+    readonly malformedRecords: number;
     readonly failed?: true;
     readonly update?: { readonly entry: CachedFile; readonly replaces: CachedFile | undefined };
   }> {
@@ -476,6 +477,7 @@ export const make = Effect.gen(function* () {
           cached.tailRecords.length === 0
             ? cached.records
             : [...cached.records, ...cached.tailRecords],
+        malformedRecords: cached.malformedRecords,
       };
     }
 
@@ -492,6 +494,7 @@ export const make = Effect.gen(function* () {
     if (parsed === null)
       return {
         records: cached?.provider === provider ? [...cached.records, ...cached.tailRecords] : [],
+        malformedRecords: cached?.provider === provider ? cached.malformedRecords : 0,
         failed: true,
       };
 
@@ -502,8 +505,17 @@ export const make = Effect.gen(function* () {
 
     return {
       records: tailRecords.length === 0 ? records : [...records, ...tailRecords],
+      malformedRecords: parsed.malformedRecords,
       update: {
-        entry: { size, mtimeMs, provider, records, tailRecords, position: parsed.position },
+        entry: {
+          size,
+          mtimeMs,
+          provider,
+          records,
+          tailRecords,
+          malformedRecords: parsed.malformedRecords,
+          position: parsed.position,
+        },
         replaces: cached,
       },
     };
@@ -518,7 +530,11 @@ export const make = Effect.gen(function* () {
     readonly message?: string;
     readonly action?: UsageSource["action"];
     readonly files:
-      | readonly { readonly path: string; readonly records: readonly UsageRecord[] }[]
+      | readonly {
+          readonly path: string;
+          readonly records: readonly UsageRecord[];
+          readonly malformedRecords: number;
+        }[]
       | null;
     readonly refreshing?: true;
   }
@@ -543,8 +559,8 @@ export const make = Effect.gen(function* () {
         ),
       { concurrency: TRANSCRIPT_READ_CONCURRENCY },
     );
-    const parsedFiles = read.map(({ path, records, update }) => {
-      if (update === undefined) return { path, records };
+    const parsedFiles = read.map(({ path, records, malformedRecords, update }) => {
+      if (update === undefined) return { path, records, malformedRecords };
       // A scan of another window may have cached its own read of this file
       // meanwhile. Then keep whichever read saw the later file, so a slower
       // scan never replaces newer usage with older.
@@ -557,7 +573,7 @@ export const make = Effect.gen(function* () {
         fileCache.set(path, update.entry);
         cacheDirty = true;
       }
-      return { path, records };
+      return { path, records, malformedRecords };
     });
     const unread = failedPaths + read.filter((file) => file.failed).length;
     return {
@@ -602,6 +618,7 @@ export const make = Effect.gen(function* () {
                     : Effect.succeed(volumeId),
                   (resolved): ScannedDir => ({
                     ...source,
+                    files: source.files?.map((file) => ({ ...file, malformedRecords: 0 })) ?? null,
                     provider: reader.provider,
                     volumeId: resolved,
                   }),
@@ -710,7 +727,11 @@ export const make = Effect.gen(function* () {
           !isWithinDirectory(filePath, dir)
         )
           continue;
-        retainedFiles.push({ path: filePath, records: [...entry.records, ...entry.tailRecords] });
+        retainedFiles.push({
+          path: filePath,
+          records: [...entry.records, ...entry.tailRecords],
+          malformedRecords: entry.malformedRecords,
+        });
       }
       return retainedFiles;
     });
@@ -722,11 +743,13 @@ export const make = Effect.gen(function* () {
     ] of scannedDirs.entries()) {
       let scannedFiles = 0;
       let skippedFiles = 0;
+      let malformedRecords = 0;
       // Distinct per directory. Buckets carry per-cell session counts, but a
       // session spans days and models, so clients total this figure instead.
       const sessionIds = new Set<string>();
 
       for (const file of filesByDir[index] ?? []) {
+        malformedRecords += file.malformedRecords;
         if (file.records.length === 0) {
           skippedFiles += 1;
           continue;
@@ -758,15 +781,31 @@ export const make = Effect.gen(function* () {
         }
       }
 
+      const sourceMessage =
+        message ?? (files === null ? "No transcript directory on this environment." : null);
       sources.push({
         fingerprint: { hostId: sourceHostId ?? hostId, provider, resolvedHomePath: dir, volumeId },
-        status: files === null && scannedFiles === 0 ? "missing" : (status ?? "ok"),
+        status:
+          files === null && scannedFiles === 0
+            ? "missing"
+            : malformedRecords > 0
+              ? status === undefined || status === "ok"
+                ? "partial"
+                : status
+              : (status ?? "ok"),
         scannedFiles,
         skippedFiles,
-        malformedRecords: 0,
+        malformedRecords,
         distinctSessions: sessionIds.size,
         message:
-          message ?? (files === null ? "No transcript directory on this environment." : null),
+          malformedRecords > 0
+            ? [
+                sourceMessage,
+                `${malformedRecords} malformed or inconsistent usage record(s) were skipped; usage may be incomplete.`,
+              ]
+                .filter(Boolean)
+                .join(" ")
+            : sourceMessage,
         ...(action ? { action } : {}),
         ...(refreshing ? { refreshing } : {}),
       });

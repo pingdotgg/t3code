@@ -19,6 +19,7 @@ import {
   type UsageSummaryInput,
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -42,6 +43,7 @@ import * as AntigravityUsage from "../provider/Drivers/AntigravityUsage.ts";
 import * as ProviderHostLive from "../provider/ProviderHostLive.ts";
 import { totalTokens, type UsageRecord } from "@t3tools/provider-core/server/usage";
 import * as UsageService from "./UsageService.ts";
+import { encodeScanCache } from "./usageScanCache.ts";
 
 const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -1879,6 +1881,51 @@ describe("UsageService", () => {
           Effect.provide(layerService({ prefix: "usage-service-late-read-test", home, settings })),
         );
       }).pipe(Effect.scoped),
+  );
+
+  it.live("keeps an absent directory missing when its cached files only contain diagnostics", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() =>
+        NodeFSP.rm(NodePath.join(home, "claude", "projects"), { recursive: true }),
+      );
+      yield* Effect.gen(function* () {
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        const mtimeMs = yield* Clock.currentTimeMillis;
+        const cache = encodeScanCache(
+          new Map([
+            [
+              transcript,
+              {
+                size: 0,
+                mtimeMs,
+                provider: "claude" as const,
+                records: [],
+                tailRecords: [],
+                malformedRecords: 2,
+                position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+              },
+            ],
+          ]),
+        );
+        yield* Effect.promise(async () => {
+          await NodeFSP.mkdir(stateDir, { recursive: true });
+          await NodeFSP.writeFile(
+            NodePath.join(stateDir, "usage-scan-cache-v5.json"),
+            encodeUnknownJsonString(cache),
+          );
+        });
+        const summary = yield* (yield* UsageService.make).readSummary(WINDOW);
+        const source = summary.sources.find((source) => source.fingerprint.provider === "claude");
+        assert.strictEqual(source?.status, "missing");
+        assert.strictEqual(source?.scannedFiles, 0);
+        assert.strictEqual(source?.malformedRecords, 2);
+      }).pipe(
+        Effect.provide(
+          layerService({ prefix: "usage-service-missing-diagnostics", home, settings }),
+        ),
+      );
+    }).pipe(Effect.scoped),
   );
 
   it.live("reports saved usage of a removed directory only for windows it reaches", () =>

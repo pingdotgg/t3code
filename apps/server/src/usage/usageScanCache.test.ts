@@ -52,6 +52,7 @@ function cacheWith(entries: readonly [string, number, readonly UsageRecord[]][])
       provider: "claude",
       records,
       tailRecords: [],
+      malformedRecords: 0,
       position: position(),
     });
   }
@@ -86,6 +87,7 @@ describe("scan cache round trip", () => {
     ]);
     original.set("/grok.jsonl", {
       size: 40,
+      malformedRecords: 2,
       mtimeMs: 300,
       provider: "grok",
       records: [
@@ -97,6 +99,7 @@ describe("scan cache round trip", () => {
     });
     original.set("/codex.jsonl", {
       size: 80,
+      malformedRecords: 3,
       mtimeMs: 400,
       provider: "codex",
       records: [
@@ -135,7 +138,33 @@ describe("scan cache round trip", () => {
       TEST_FORMAT_MAP,
     );
 
+    expect(restored.size).toBe(4);
     expect(restored).toEqual(original);
+  });
+
+  it("defaults missing v5 diagnostic counts to zero without losing cached records", () => {
+    const original = cacheWith([["/gone.jsonl", 100, [record({ speed: "fast" })]]]);
+    const encoded = encodeScanCache(original);
+    const entry = encoded.files["/gone.jsonl"]!;
+    const legacy = {
+      ...encoded,
+      version: 5,
+      files: {
+        "/gone.jsonl": {
+          s: entry.s,
+          m: entry.m,
+          p: entry.p,
+          r: entry.r,
+          t: entry.t,
+          o: entry.o,
+          gl: entry.gl,
+          gh: entry.gh,
+          cs: entry.cs,
+        },
+      },
+    };
+
+    expect(decodeScanCache(JSON.parse(JSON.stringify(legacy)), TEST_FORMAT_MAP)).toEqual(original);
   });
 
   it("drops an entry whose persisted parse state is corrupt", () => {
@@ -190,12 +219,14 @@ describe("scan cache round trip", () => {
       ["/a.jsonl", 100, [record()]],
       ["/b.jsonl", 200, [record({ sessionId: "session-b" })]],
     ]);
+    cache.set("/b.jsonl", { ...cache.get("/b.jsonl")!, malformedRecords: 2 });
     const sources = { "claude\u0000/projects": { dir: "/projects", volumeId: "1:2" } };
     expect(decodeScanCache(JSON.parse(write(cache, { sources })), TEST_FORMAT_MAP)).toEqual(cache);
 
     cache.set("/b.jsonl", {
       ...cache.get("/b.jsonl")!,
       size: 30,
+      malformedRecords: 4,
       records: [record({ sessionId: "session-c", model: "claude-opus-5-5", dedupeKey: "msg_3:" })],
     });
     const document = JSON.parse(write(cache, { sources }));

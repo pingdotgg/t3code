@@ -62,6 +62,8 @@ export interface TranscriptUsageFormat<State> {
   readonly usageMarkers: readonly [string, ...string[]];
   parseLine(line: string, state: State): readonly UsageRecord[];
   parseProjected(projected: unknown, state: State): readonly UsageRecord[];
+  /** Cumulative malformed or inconsistent usage records, including skipped records. */
+  readMalformedRecords?(state: State): number;
   /**
    * Present for formats whose records depend on earlier lines. The state at a
    * resume point is persisted in the scan cache through `schema`, so a grown
