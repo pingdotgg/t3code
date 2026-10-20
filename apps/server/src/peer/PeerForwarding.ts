@@ -29,6 +29,14 @@ export const FORWARDED_WAIT_CHUNK_MS = 50_000;
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
 const MAX_WAIT_TIMEOUT_MS = 60 * 60 * 1_000;
 
+const hasScheduleSecretRef = Schema.is(
+  Schema.Struct({
+    schedule: Schema.Struct({
+      signature: Schema.Struct({ secretRef: Schema.String }),
+    }),
+  }),
+);
+
 type Scope = McpInvocationContext.McpInvocationScope;
 
 /**
@@ -115,6 +123,16 @@ const make = Effect.gen(function* () {
       return yield* new OrchestratorMcpFailure({
         code: "invalid_request",
         message: "A launch in a linked environment cannot carry attachments yet.",
+      });
+    }
+    if (
+      (toolName === "schedule_task" || toolName === "update_scheduled_task") &&
+      hasScheduleSecretRef(args)
+    ) {
+      return yield* new OrchestratorMcpFailure({
+        code: "invalid_request",
+        message:
+          "A schedule in a linked environment cannot use signature.secretRef: secret references are local to this server and work once. Configure the webhook signing secret from a thread in the destination environment instead.",
       });
     }
     if (typeof args.clientRequestId === "string") {

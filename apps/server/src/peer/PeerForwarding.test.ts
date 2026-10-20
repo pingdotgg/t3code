@@ -612,3 +612,56 @@ it.effect("refuses what a linked environment cannot take before anything leaves"
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
+
+it.effect("keeps a local secret reference out of a linked environment's schedule", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const seen = yield* Ref.make<Seen>(nothingSeen);
+      const b = yield* serveBox(seen);
+      const a = yield* makeLaptop;
+      yield* linkTo(a.links, b, "auto");
+      yield* Ref.set(b.bearers, []);
+      const probes = yield* Ref.get(b.probes);
+
+      for (const [name, args] of [
+        ["schedule_task", { projectId: boxProject, prompt: "Handle {{body.action}}." }],
+        ["update_scheduled_task", { scheduledTaskId: "scheduled-task:box" }],
+      ] as const) {
+        const signed = yield* a.call("thread:laptop-full", name, {
+          ...args,
+          environmentId: box.environmentId,
+          schedule: {
+            type: "webhook",
+            signature: {
+              header: "x-hub-signature-256",
+              encoding: "hex",
+              prefix: "sha256=",
+              secretRef: "secret:local-only",
+            },
+          },
+        });
+        expect(yield* Ref.get(b.probes), name).toBe(probes);
+        expect(yield* Ref.get(b.bearers), name).toEqual([]);
+        expect(failureOf(signed), name).toMatchObject({
+          code: "invalid_request",
+          message: expect.stringContaining("signature.secretRef"),
+        });
+      }
+
+      // Without a secret reference the schedule still goes there.
+      for (const [name, args] of [
+        ["schedule_task", { projectId: boxProject, prompt: "Check in hourly." }],
+        ["update_scheduled_task", { scheduledTaskId: "scheduled-task:box" }],
+      ] as const) {
+        yield* Ref.set(b.bearers, []);
+        const ordinary = yield* a.call("thread:laptop-full", name, {
+          ...args,
+          environmentId: box.environmentId,
+          schedule: { type: "interval", everyMs: 3_600_000 },
+        });
+        expect(JSON.stringify(ordinary), name).not.toContain("signature.secretRef");
+        expect(yield* Ref.get(b.bearers), name).not.toEqual([]);
+      }
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
