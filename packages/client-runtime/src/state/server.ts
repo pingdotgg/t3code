@@ -1187,6 +1187,10 @@ export function createServerEnvironmentAtoms<R, E>(
       concurrency: configConcurrency,
     }),
     updateSettings,
+    getSettings: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:get-settings",
+      tag: WS_METHODS.serverGetSettings,
+    }),
     mutateProviderInstance: updateSettings,
     prepareAcpRegistryAgent: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:acp-registry:prepare",

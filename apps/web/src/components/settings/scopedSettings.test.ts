@@ -5,6 +5,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   type ServerSettings,
+  type ServerSettingsPatch,
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
@@ -14,6 +15,7 @@ import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import {
   listProjectOverrides,
+  createScopedSettingsWriter,
   persistScopedSettingsPatch,
   planProjectOverridesClear,
   planScopedSettingsClear,
@@ -102,6 +104,242 @@ const checkout = resolveSettingsScope(
   [group],
   environments,
 );
+
+function scopedWriter(initial = server.serverConfig!.settings) {
+  let stored = initial;
+  const write = createScopedSettingsWriter();
+  const read = vi.fn<Parameters<typeof write>[2]>(async () => ({
+    _tag: "Success",
+    value: stored,
+  }));
+  const persistClient = vi.fn();
+  const commit = async ({ input }: { input: { patch: ServerSettingsPatch } }) => {
+    stored = applyServerSettingsPatch(stored, input.patch);
+    return { _tag: "Success" as const, value: stored };
+  };
+  const persist = vi.fn<Parameters<typeof write>[3]>(commit);
+  // Keep the client snapshot stale, as it is while config pushes are delayed.
+  const run = (planner: Parameters<typeof write>[1]) =>
+    write([environment("Server", { settings: initial })], planner, read, persist, persistClient);
+  const edit = (patch: ServerSettingsPatch) =>
+    run((current) => planScopedSettingsPatch(checkout, current, patch));
+  const clear = (keys: Parameters<typeof planScopedSettingsClear>[2]) =>
+    run((current) => planScopedSettingsClear(checkout, current, keys));
+  return { run, edit, clear, read, persistClient, persist, commit, stored: () => stored };
+}
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
+
+describe("queued scoped settings writes", () => {
+  it("preserves both overrides from rapid edits before config pushes arrive", async () => {
+    const writes = scopedWriter();
+    const started = deferred();
+    const release = deferred();
+    writes.persist.mockImplementationOnce(async (request) => {
+      started.resolve();
+      await release.promise;
+      return writes.commit(request);
+    });
+    const first = writes.edit({ defaultAutoPull: true });
+    await started.promise;
+    const second = writes.edit({ removeAgentCreditsOnMerge: true });
+    release.resolve();
+    const results = await Promise.all([first, second]);
+    expect(results.map((result) => result.savedEnvironmentCount)).toEqual([1, 1]);
+    expect(writes.stored().projectSettingsOverrides[projectId]).toEqual({
+      defaultAutoPull: true,
+      removeAgentCreditsOnMerge: true,
+    });
+  });
+
+  it("uses another client's reset and edit instead of the last save response", async () => {
+    const writes = scopedWriter();
+    await writes.edit({ defaultAutoPull: true });
+    await writes.commit({
+      input: {
+        patch: {
+          projectSettingsOverrides: { [projectId]: { defaultThreadEnvMode: "local" } },
+        },
+      },
+    });
+    await writes.edit({ removeAgentCreditsOnMerge: true });
+    expect(writes.stored().projectSettingsOverrides[projectId]).toEqual({
+      defaultThreadEnvMode: "local",
+      removeAgentCreditsOnMerge: true,
+    });
+  });
+
+  it("reports a dropped reset against the freshly read override", async () => {
+    const writes = scopedWriter();
+    await writes.commit({
+      input: {
+        patch: { projectSettingsOverrides: { [projectId]: { defaultAutoPull: true } } },
+      },
+    });
+    writes.persist.mockImplementationOnce(async () => ({
+      _tag: "Success",
+      value: writes.stored(),
+    }));
+    const result = await writes.clear(["defaultAutoPull"]);
+    expect(writes.persist).toHaveBeenCalledExactlyOnceWith({
+      environmentId: server.environmentId,
+      input: { patch: { projectSettingsOverrides: { [projectId]: null } } },
+    });
+    expect(result.savedEnvironmentCount).toBe(0);
+    expect(result.failedEnvironments).toMatchObject([
+      {
+        environmentId: server.environmentId,
+        message: "This environment does not support this setting. Update T3 Code on it.",
+      },
+    ]);
+  });
+
+  it("keeps a queued reset from erasing an earlier edit", async () => {
+    const writes = scopedWriter({
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: { [projectId]: { defaultAutoPull: true } },
+    });
+    await Promise.all([
+      writes.edit({ removeAgentCreditsOnMerge: true }),
+      writes.clear(["defaultAutoPull"]),
+    ]);
+    expect(writes.stored().projectSettingsOverrides[projectId]).toEqual({
+      removeAgentCreditsOnMerge: true,
+    });
+  });
+
+  it("keeps a queued edit from restoring a reset override", async () => {
+    const writes = scopedWriter({
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: { [projectId]: { defaultAutoPull: true } },
+    });
+    await Promise.all([
+      writes.clear(["defaultAutoPull"]),
+      writes.edit({ removeAgentCreditsOnMerge: true }),
+    ]);
+    expect(writes.stored().projectSettingsOverrides[projectId]).toEqual({
+      removeAgentCreditsOnMerge: true,
+    });
+  });
+
+  it("keeps project edits when resetting overrides from environment scope", async () => {
+    const writes = scopedWriter({
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: { [projectId]: { defaultAutoPull: true } },
+    });
+    await Promise.all([
+      writes.edit({ removeAgentCreditsOnMerge: true }),
+      writes.run((current) =>
+        planProjectOverridesClear(
+          current,
+          [{ environmentId: server.environmentId, projectId }],
+          ["defaultAutoPull"],
+        ),
+      ),
+    ]);
+    expect(writes.stored().projectSettingsOverrides[projectId]).toEqual({
+      removeAgentCreditsOnMerge: true,
+    });
+  });
+
+  it.each(["read", "save"])(
+    "reports a failed %s and allows the next edit to save",
+    async (stage) => {
+      const writes = scopedWriter();
+      const error = new Error("Disconnected");
+      if (stage === "read") {
+        writes.read.mockResolvedValueOnce({ _tag: "Failure", cause: Cause.fail(error) });
+      } else {
+        writes.persist.mockRejectedValueOnce(error);
+      }
+      const results = await Promise.all([
+        writes.edit({ defaultAutoPull: true }),
+        writes.edit({ removeAgentCreditsOnMerge: true }),
+      ]);
+      expect(results[0]?.failedEnvironments).toMatchObject([
+        { environmentId: server.environmentId, message: "Disconnected" },
+      ]);
+      expect(results[1]?.savedEnvironmentCount).toBe(1);
+      expect(writes.stored().projectSettingsOverrides[projectId]).toEqual({
+        removeAgentCreditsOnMerge: true,
+      });
+    },
+  );
+
+  it("persists client preferences immediately while a server save is pending", async () => {
+    const writes = scopedWriter();
+    const started = deferred();
+    const release = deferred();
+    writes.persist.mockImplementationOnce(async (request) => {
+      started.resolve();
+      await release.promise;
+      return writes.commit(request);
+    });
+    const first = writes.edit({ defaultAutoPull: true });
+    await started.promise;
+    const second = writes.run((current) =>
+      planScopedSettingsPatch(checkout, current, {
+        diffIgnoreWhitespace: false,
+        removeAgentCreditsOnMerge: true,
+      }),
+    );
+    expect(writes.persistClient).toHaveBeenCalledExactlyOnceWith({
+      diffIgnoreWhitespace: false,
+    });
+    release.resolve();
+    await Promise.all([first, second]);
+    expect(writes.stored().projectSettingsOverrides[projectId]).toEqual({
+      defaultAutoPull: true,
+      removeAgentCreditsOnMerge: true,
+    });
+  });
+
+  it("does not block another environment while one save is pending", async () => {
+    const write = createScopedSettingsWriter();
+    const started = deferred();
+    const release = deferred();
+    const saved = new Map<EnvironmentId, ServerSettings>();
+    const persist = async (request: {
+      environmentId: EnvironmentId;
+      input: { patch: ServerSettingsPatch };
+    }) => {
+      if (request.environmentId === server.environmentId) {
+        started.resolve();
+        await release.promise;
+      }
+      const settings = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, request.input.patch);
+      saved.set(request.environmentId, settings);
+      return { _tag: "Success" as const, value: settings };
+    };
+    const first = write(
+      [server],
+      (current) => planScopedSettingsPatch(named, current, { defaultAutoPull: true }),
+      async () => ({ _tag: "Success", value: DEFAULT_SERVER_SETTINGS }),
+      persist,
+      vi.fn(),
+    );
+    await started.promise;
+    const other = await write(
+      [laptop],
+      (current) => planScopedSettingsPatch(all, current, { defaultAutoPull: true }),
+      async () => ({ _tag: "Success", value: DEFAULT_SERVER_SETTINGS }),
+      persist,
+      vi.fn(),
+    );
+    expect(other.savedEnvironmentCount).toBe(1);
+    expect(saved.get(laptop.environmentId)?.defaultAutoPull).toBe(true);
+    expect(saved.has(server.environmentId)).toBe(false);
+    release.resolve();
+    await first;
+    expect(saved.get(server.environmentId)?.defaultAutoPull).toBe(true);
+  });
+});
 
 describe("scoped settings targets", () => {
   it("uses the named environment even when a different primary is available", () => {
