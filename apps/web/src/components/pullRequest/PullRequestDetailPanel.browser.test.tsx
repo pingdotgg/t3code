@@ -15,6 +15,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
+import { selectActiveRightPanelSurface, useRightPanelStore } from "~/rightPanelStore";
+import { RightPanelSurfaceContent } from "../chat/RightPanelSurfaceContent";
 
 import "~/index.css";
 
@@ -259,6 +261,7 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   currentDetail = detail;
   useComposerDraftStore.setState({ draftsByThreadKey: {} });
+  useRightPanelStore.setState({ byThreadKey: {} });
   usePullRequestReviewStore.setState({ drafts: {}, summaries: {} });
   hostCommand.mockReset();
   newThread
@@ -540,6 +543,94 @@ it("folds the title only for the active tab's own scroller", async () => {
   await vi.waitFor(() => expect(titleFold()).toBe(false));
   await tab("Code").click();
   await vi.waitFor(() => expect(titleFold()).toBe(true));
+});
+
+it("restores the selected PR tab when switching threads and remounting the right panel", async () => {
+  const otherThread = { ...threadRef, threadId: ThreadId.make("thread-2") };
+  useRightPanelStore.getState().openPullRequest(threadRef, surface);
+  useRightPanelStore.getState().openPullRequest(otherThread, surface);
+  const codeTab = () => page.getByRole("button", { name: "Expand all files", exact: true });
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  document.body.append(container);
+  const root = createRoot(container);
+  roots.push(root);
+  const show = (ref: ScopedThreadRef) => {
+    const selected = selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, ref);
+    return act(async () => {
+      root.render(
+        <RightPanelSurfaceContent
+          surface={selected}
+          activeSurfaceId={selected?.id ?? null}
+          threadRef={ref}
+          environmentId={ref.environmentId}
+          visible
+          composerDraftTarget={ref}
+          keybindings={[]}
+          configuredPreviewUrls={[]}
+          workspaceMutationId={null}
+          getShortcutContext={shortcutContext}
+          onSendAnnotation={() => {}}
+          onCloseSurface={() => {}}
+          terminal={{
+            launchContext: null,
+            focusRequestId: 0,
+            keybindings: [],
+            onAddTerminalContext: () => {},
+            onSplitTerminal: () => {},
+            onSplitTerminalVertical: () => {},
+            onNewTerminal: () => {},
+            onActiveTerminalChange: () => {},
+            onCloseTerminal: () => {},
+          }}
+          pullRequest={{
+            capabilityKnown: true,
+            supported: true,
+            projectId: detail.projectId,
+            pullRequests: [],
+            linkedPullRequest: null,
+            branchPullRequest: null,
+            onBack: undefined,
+          }}
+          files={{
+            projectName: null,
+            workspaceRoot: undefined,
+            availableEditors: [],
+            pendingSurfaceIds: new Set(),
+            onOpenFile: () => {},
+            onPendingChange: () => {},
+          }}
+        />,
+      );
+    });
+  };
+
+  await show(threadRef);
+  await expect.element(page.getByTestId("summary-scroller")).toBeVisible();
+  await tab("Code").click();
+  await expect.element(codeTab()).toBeVisible();
+  await show(otherThread);
+  await expect.element(page.getByTestId("summary-scroller")).toBeVisible();
+  await show(threadRef);
+  await expect.element(codeTab()).toBeVisible();
+
+  useRightPanelStore
+    .getState()
+    .openPullRequest(threadRef, { ...surface, projectId: "other-project" });
+  await show(threadRef);
+  await expect.element(page.getByTestId("summary-scroller")).toBeVisible();
+  useRightPanelStore.getState().openPullRequest(threadRef, surface);
+  await show(threadRef);
+  await expect.element(codeTab()).toBeVisible();
+
+  await act(async () => root.render(null));
+  useRightPanelStore.getState().openPullRequest(threadRef, { ...surface, url: detail.url });
+  await show(threadRef);
+  await expect.element(codeTab()).toBeVisible();
+  await tab("Summary").click();
+  await show(otherThread);
+  await show(threadRef);
+  await expect.element(page.getByTestId("summary-scroller")).toBeVisible();
 });
 
 it("stays collapsed at the bottom after native scroll clamping and reopens at the top", async () => {

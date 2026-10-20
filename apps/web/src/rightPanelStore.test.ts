@@ -3,6 +3,7 @@ import { type EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import { useClosedViewStore } from "./closedViewStore";
+import { reopenClosedView } from "./reopenClosedView";
 import {
   migratePersistedRightPanelState,
   pullRequestSurface,
@@ -1243,6 +1244,62 @@ describe("rightPanelStore", () => {
       selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA),
     ).toMatchObject({ url });
     expect(state.surfaces[1]).not.toHaveProperty("url");
+  });
+
+  it("restores each environment, thread and PR surface's detail tab after reload and URL reopen", async () => {
+    const pr = { projectId: "project-a", repository: "pingdotgg/t3code", number: 4909 };
+    const otherPr = { ...pr, projectId: "project-b" };
+    const otherEnvironment = scopeThreadRef("env-2" as EnvironmentId, refA.threadId);
+    const selections = [
+      [refA, pr, "code"],
+      [refB, pr, "guide"],
+      [otherEnvironment, pr, "timeline"],
+      [refA, otherPr, "summary"],
+    ] as const;
+    const store = useRightPanelStore.getState();
+    for (const [ref, reference, tab] of selections) {
+      store.openPullRequest(ref, reference);
+      store.setPullRequestDetailTab(ref, pullRequestSurfaceId(reference), "guide");
+      store.setPullRequestDetailTab(ref, pullRequestSurfaceId(reference), tab);
+    }
+
+    store.openPullRequest(refA, pr);
+    const revision = store.getUserActionRevision(refA);
+    store.setPullRequestDetailTab(refA, pullRequestSurfaceId(pr), "timeline");
+    expect(store.openProactive(refA, linkedPullRequest, revision)).toBe(true);
+    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual(
+      linkedPullRequest,
+    );
+    store.setPullRequestDetailTab(refA, pullRequestSurfaceId(pr), "code");
+
+    const { storage, name } = useRightPanelStore.persist.getOptions();
+    const saved = await storage!.getItem(name!);
+    expect(saved).not.toBeNull();
+    useRightPanelStore.setState({ byThreadKey: {} });
+    await storage!.setItem(name!, saved!);
+    await useRightPanelStore.persist.rehydrate();
+
+    for (const [ref, reference, tab] of selections) {
+      store.openPullRequest(ref, {
+        ...reference,
+        url: `https://github.com/${reference.repository}/pull/${reference.number}`,
+      });
+      const active = selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, ref);
+      expect(active?.id).toBe(pullRequestSurfaceId(reference));
+      expect(active?.kind === "pull-request" && (active.detailTab ?? "summary")).toBe(tab);
+      store.closeSurface(ref, active!.id);
+      await reopenClosedView(useClosedViewStore.getState().entries[0]!, {
+        workspaceAvailable: true,
+        openPreview: () => {
+          throw new Error("A PR tab must not create a browser session");
+        },
+      });
+      const reopened = selectActiveRightPanelSurface(
+        useRightPanelStore.getState().byThreadKey,
+        ref,
+      );
+      expect(reopened?.kind === "pull-request" && (reopened.detailTab ?? "summary")).toBe(tab);
+    }
   });
 
   it("keeps matching repository and number on different hosts as separate tabs", () => {
