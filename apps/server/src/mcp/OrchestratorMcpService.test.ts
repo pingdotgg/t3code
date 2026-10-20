@@ -3,7 +3,9 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   CommandId,
   EnvironmentId,
+  GitCommandError,
   MessageId,
+  type OrchestratorMcpFailure,
   NodeId,
   type OrchestrationV2ThreadShell,
   type ScheduledTask,
@@ -21,6 +23,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import { ChildProcessSpawner } from "effect/process";
 
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
@@ -2445,6 +2448,161 @@ describe("OrchestratorMcpService provider resolution", () => {
         assert.equal(yield* Ref.get(upserted), 1);
         assert.equal(updated.scheduledTaskId, bound.id);
         assert.equal(updated.webhookUrl, undefined);
+      }),
+    );
+  });
+
+  describe("scheduled tasks that start a fresh thread per run", () => {
+    const projectId = ProjectId.make("project:fresh-runs");
+    const client: McpInvocationScope = {
+      environmentId: EnvironmentId.make("environment:fresh-runs"),
+      requestNamespace: "client:fresh-runs",
+      thread: undefined,
+      client: { sessionId: "fresh-runs", label: "Claude Code", access: "full-access" },
+      capabilities: new Set(["orchestration"]),
+      issuedAt: 1,
+    };
+    const modelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" };
+    const worktree = { type: "worktree", baseRef: "main", startFromOrigin: true } as const;
+    const savedTask = (workspaceStrategy: ScheduledTask["workspaceStrategy"]): ScheduledTask => ({
+      id: ScheduledTaskId.make("scheduled-task:fresh-runs"),
+      title: "Weekly review",
+      prompt: "Review the week.",
+      enabled: true,
+      schedule: { type: "interval", everyMs: 604_800_000 },
+      projectId,
+      threadId: null,
+      workspaceStrategy,
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdBy: "agent",
+      creationSource: "mcp",
+      createdAt: "2026-10-12T00:00:00.000Z",
+      updatedAt: "2026-10-12T00:00:00.000Z",
+      nextRunAt: null,
+      lastRunAt: null,
+      lastRunStatus: "never",
+      lastRunError: null,
+      runCount: 0,
+    });
+    const savedStrategies = (
+      workspaceRoot: "/work/plain" | "/work/repo" | "/work/unreadable",
+      call: (
+        mcp: OrchestratorMcpService.OrchestratorMcpService["Service"],
+      ) => Effect.Effect<unknown, OrchestratorMcpFailure>,
+      existing?: ScheduledTask,
+    ) =>
+      Effect.gen(function* () {
+        const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]);
+        yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.flatMap(call),
+          Effect.provide(
+            OrchestratorMcpService.layer.pipe(
+              Layer.provide(
+                Layer.mergeAll(
+                  NodeServices.layer,
+                  Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+                  Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+                  ServerSettings.layerTest(),
+                  Layer.mock(ProviderRegistry.ProviderRegistry)({
+                    getProviders: Effect.succeed([]),
+                  }),
+                  Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+                    list: () => Effect.succeed([]),
+                  }),
+                  Layer.mock(ProjectService.ProjectService)({
+                    getById: (id) =>
+                      Effect.succeedSome({
+                        id,
+                        title: "Weekly reviews",
+                        workspaceRoot,
+                        defaultModelSelection: modelSelection,
+                        scripts: [],
+                        createdAt: "2026-10-12T00:00:00.000Z",
+                        updatedAt: "2026-10-12T00:00:00.000Z",
+                        deletedAt: null,
+                      }),
+                  }),
+                  Layer.mock(GitVcsDriver.GitVcsDriver)({
+                    execute: ({ cwd }) =>
+                      cwd === "/work/unreadable"
+                        ? Effect.fail(
+                            new GitCommandError({
+                              operation: "OrchestratorMcpService.scheduledTaskWorkspaceStrategy",
+                              command: "git",
+                              cwd,
+                              detail: "Permission denied.",
+                            }),
+                          )
+                        : cwd === "/work/plain"
+                          ? Effect.fail(
+                              new GitCommandError({
+                                operation: "OrchestratorMcpService.scheduledTaskWorkspaceStrategy",
+                                command: "git",
+                                cwd,
+                                reason: "not_a_repository",
+                                detail: "Not a Git repository.",
+                              }),
+                            )
+                          : Effect.succeed({
+                              exitCode: ChildProcessSpawner.ExitCode(0),
+                              stdout: ".git\n",
+                              stderr: "",
+                              stdoutTruncated: false,
+                              stderrTruncated: false,
+                            }),
+                  }),
+                  Layer.mock(SecretRequests.SecretRequests)({}),
+                  Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+                    list: () => Effect.succeed({ tasks: existing === undefined ? [] : [existing] }),
+                    upsert: (input) =>
+                      Ref.update(saved, (strategies) => [
+                        ...strategies,
+                        input.workspaceStrategy,
+                      ]).pipe(Effect.as({ task: savedTask(input.workspaceStrategy) })),
+                  }),
+                ),
+              ),
+            ),
+          ),
+        );
+        return yield* Ref.get(saved);
+      });
+    const scheduleWeekly = (mcp: OrchestratorMcpService.OrchestratorMcpService["Service"]) =>
+      mcp.scheduleTask(client, {
+        projectId,
+        prompt: "Review the week.",
+        schedule: { type: "interval", everyMs: 604_800_000 },
+      });
+
+    it.effect("uses the project folder only when the Git check confirms a non-repository", () =>
+      Effect.gen(function* () {
+        assert.deepEqual(yield* savedStrategies("/work/plain", scheduleWeekly), [{ type: "root" }]);
+        assert.deepEqual(yield* savedStrategies("/work/repo", scheduleWeekly), [worktree]);
+        assert.deepEqual(yield* savedStrategies("/work/unreadable", scheduleWeekly), [worktree]);
+      }),
+    );
+
+    it.effect("preserves the saved strategy until explicit unbinding repairs a non-Git task", () =>
+      Effect.gen(function* () {
+        const existing = savedTask(worktree);
+        const saved = yield* savedStrategies(
+          "/work/plain",
+          (mcp) =>
+            Effect.gen(function* () {
+              yield* mcp.updateScheduledTask(client, {
+                scheduledTaskId: existing.id,
+                prompt: "Review this week instead.",
+              });
+              yield* mcp.updateScheduledTask(client, {
+                scheduledTaskId: existing.id,
+                bindToCurrentThread: false,
+              });
+            }),
+          existing,
+        );
+        assert.deepEqual(saved, [worktree, { type: "root" }]);
       }),
     );
   });

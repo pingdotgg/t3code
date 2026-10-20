@@ -1506,6 +1506,7 @@ describe("orchestrator MCP toolkit", () => {
             expect(storedAfterCreate).toHaveLength(1);
             expect(storedAfterCreate[0]).toMatchObject({
               threadId: parentThreadId,
+              workspaceStrategy: { type: "root" },
               projectId,
               createdBy: "agent",
               creationSource: "mcp",
