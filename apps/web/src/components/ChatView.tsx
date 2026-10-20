@@ -5212,7 +5212,7 @@ export default function ChatView(props: ChatViewProps) {
         <span
           className={cn(
             "size-1.5 rounded-full bg-foreground",
-            presentation.waiting && "animate-status-pulse",
+            presentation.waiting && "motion-safe:animate-status-pulse",
           )}
           aria-hidden="true"
         />
