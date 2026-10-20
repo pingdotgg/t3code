@@ -2066,11 +2066,11 @@ export const copyDirectoryPreservingSymlinks = Effect.fn("copyDirectoryPreservin
     // probe cannot resolve through staging and Windows needs no symlink privilege.
     yield* fs.copy(source, destination);
 
-    const restoreRelativeSymlinks = (
-      sourceDirectory: string,
-      destinationDirectory: string,
-    ): Effect.Effect<void, PlatformError | BundleNotSelfContainedError> =>
-      Effect.gen(function* () {
+    const restoreRelativeSymlinks = Effect.fn("build-desktop-artifact.restoreRelativeSymlinks")(
+      function* (
+        sourceDirectory: string,
+        destinationDirectory: string,
+      ): Effect.fn.Return<void, PlatformError | BundleNotSelfContainedError> {
         for (const entry of yield* fs.readDirectory(sourceDirectory)) {
           const sourceEntry = path.join(sourceDirectory, entry);
           const destinationEntry = path.join(destinationDirectory, entry);
@@ -2107,7 +2107,8 @@ export const copyDirectoryPreservingSymlinks = Effect.fn("copyDirectoryPreservin
             }
           }
         }
-      });
+      },
+    );
 
     yield* restoreRelativeSymlinks(source, destination);
   },
@@ -2373,69 +2374,69 @@ export const stageBrowserSecret = Effect.fn("stageBrowserSecret")(function* (inp
   );
 });
 
-function generateMacIconSet(
+const generateMacIconSet = Effect.fn("build-desktop-artifact.generateMacIconSet")(function* (
   sourcePng: string,
   targetIcns: string,
   tmpRoot: string,
   path: Path.Path,
   verbose: boolean,
 ) {
-  return Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const iconsetDir = path.join(tmpRoot, "icon.iconset");
-    yield* fs.makeDirectory(iconsetDir, { recursive: true });
+  const fs = yield* FileSystem.FileSystem;
+  const iconsetDir = path.join(tmpRoot, "icon.iconset");
+  yield* fs.makeDirectory(iconsetDir, { recursive: true });
 
-    const iconSizes = [16, 32, 128, 256, 512] as const;
-    for (const size of iconSizes) {
-      yield* runCommand(
-        ChildProcess.make(
-          {},
-        )`sips -z ${size} ${size} ${sourcePng} --out ${path.join(iconsetDir, `icon_${size}x${size}.png`)}`,
-        { label: `sips icon ${size}x${size}`, verbose },
-      );
+  const iconSizes = [16, 32, 128, 256, 512] as const;
+  for (const size of iconSizes) {
+    yield* runCommand(
+      ChildProcess.make(
+        {},
+      )`sips -z ${size} ${size} ${sourcePng} --out ${path.join(iconsetDir, `icon_${size}x${size}.png`)}`,
+      { label: `sips icon ${size}x${size}`, verbose },
+    );
 
-      const retinaSize = size * 2;
-      yield* runCommand(
-        ChildProcess.make(
-          {},
-        )`sips -z ${retinaSize} ${retinaSize} ${sourcePng} --out ${path.join(iconsetDir, `icon_${size}x${size}@2x.png`)}`,
-        { label: `sips icon ${size}x${size}@2x`, verbose },
-      );
-    }
+    const retinaSize = size * 2;
+    yield* runCommand(
+      ChildProcess.make(
+        {},
+      )`sips -z ${retinaSize} ${retinaSize} ${sourcePng} --out ${path.join(iconsetDir, `icon_${size}x${size}@2x.png`)}`,
+      { label: `sips icon ${size}x${size}@2x`, verbose },
+    );
+  }
 
-    yield* runCommand(ChildProcess.make({})`iconutil -c icns ${iconsetDir} -o ${targetIcns}`, {
-      label: "iconutil icns",
-      verbose,
-    });
+  yield* runCommand(ChildProcess.make({})`iconutil -c icns ${iconsetDir} -o ${targetIcns}`, {
+    label: "iconutil icns",
+    verbose,
   });
-}
+});
 
-function stageMacIcons(stageResourcesDir: string, sourcePng: string, verbose: boolean) {
-  return Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    if (!(yield* fs.exists(sourcePng))) {
-      return yield* new DesktopIconSourceMissingError({
-        platform: "mac",
-        sourcePath: sourcePng,
-      });
-    }
-
-    const tmpRoot = yield* fs.makeTempDirectoryScoped({
-      prefix: "t3code-icon-build-",
+const stageMacIcons = Effect.fn("build-desktop-artifact.stageMacIcons")(function* (
+  stageResourcesDir: string,
+  sourcePng: string,
+  verbose: boolean,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  if (!(yield* fs.exists(sourcePng))) {
+    return yield* new DesktopIconSourceMissingError({
+      platform: "mac",
+      sourcePath: sourcePng,
     });
+  }
 
-    const iconPngPath = path.join(stageResourcesDir, "icon.png");
-    const iconIcnsPath = path.join(stageResourcesDir, "icon.icns");
-
-    yield* runCommand(ChildProcess.make({})`sips -z 512 512 ${sourcePng} --out ${iconPngPath}`, {
-      label: "sips mac icon",
-      verbose,
-    });
-
-    yield* generateMacIconSet(sourcePng, iconIcnsPath, tmpRoot, path, verbose);
+  const tmpRoot = yield* fs.makeTempDirectoryScoped({
+    prefix: "t3code-icon-build-",
   });
-}
+
+  const iconPngPath = path.join(stageResourcesDir, "icon.png");
+  const iconIcnsPath = path.join(stageResourcesDir, "icon.icns");
+
+  yield* runCommand(ChildProcess.make({})`sips -z 512 512 ${sourcePng} --out ${iconPngPath}`, {
+    label: "sips mac icon",
+    verbose,
+  });
+
+  yield* generateMacIconSet(sourcePng, iconIcnsPath, tmpRoot, path, verbose);
+});
 
 export const stageDesktopDmgBackground = Effect.fn("stageDesktopDmgBackground")(function* (
   stageResourcesDir: string,
@@ -2470,32 +2471,34 @@ export const stageDesktopDmgBackground = Effect.fn("stageDesktopDmgBackground")(
   }
 });
 
-function stageLinuxIcons(stageResourcesDir: string, sourcePng: string, verbose: boolean) {
-  return Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    if (!(yield* fs.exists(sourcePng))) {
-      return yield* new DesktopIconSourceMissingError({
-        platform: "linux",
-        sourcePath: sourcePng,
-      });
-    }
+const stageLinuxIcons = Effect.fn("build-desktop-artifact.stageLinuxIcons")(function* (
+  stageResourcesDir: string,
+  sourcePng: string,
+  verbose: boolean,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  if (!(yield* fs.exists(sourcePng))) {
+    return yield* new DesktopIconSourceMissingError({
+      platform: "linux",
+      sourcePath: sourcePng,
+    });
+  }
 
-    const iconPath = path.join(stageResourcesDir, "icon.png");
-    yield* fs.copyFile(sourcePng, iconPath);
+  const iconPath = path.join(stageResourcesDir, "icon.png");
+  yield* fs.copyFile(sourcePng, iconPath);
 
-    const iconsDir = path.join(stageResourcesDir, "icons");
-    yield* fs.makeDirectory(iconsDir, { recursive: true });
-    for (const iconSize of LINUX_ICON_SIZES) {
-      yield* stageLinuxIconSize(
-        sourcePng,
-        path.join(iconsDir, `${iconSize}x${iconSize}.png`),
-        iconSize,
-        verbose,
-      );
-    }
-  });
-}
+  const iconsDir = path.join(stageResourcesDir, "icons");
+  yield* fs.makeDirectory(iconsDir, { recursive: true });
+  for (const iconSize of LINUX_ICON_SIZES) {
+    yield* stageLinuxIconSize(
+      sourcePng,
+      path.join(iconsDir, `${iconSize}x${iconSize}.png`),
+      iconSize,
+      verbose,
+    );
+  }
+});
 
 export function stageLinuxIconSize(
   sourcePng: string,
@@ -2531,24 +2534,25 @@ export function stageLinuxIconSize(
   );
 }
 
-function stageWindowsIcons(stageResourcesDir: string, sourceIco: string) {
-  return Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    if (!(yield* fs.exists(sourceIco))) {
-      return yield* new DesktopIconSourceMissingError({
-        platform: "win",
-        sourcePath: sourceIco,
-      });
-    }
+const stageWindowsIcons = Effect.fn("build-desktop-artifact.stageWindowsIcons")(function* (
+  stageResourcesDir: string,
+  sourceIco: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  if (!(yield* fs.exists(sourceIco))) {
+    return yield* new DesktopIconSourceMissingError({
+      platform: "win",
+      sourcePath: sourceIco,
+    });
+  }
 
-    const iconPath = path.join(stageResourcesDir, "icon.ico");
-    yield* fs.copyFile(sourceIco, iconPath);
-  });
-}
+  const iconPath = path.join(stageResourcesDir, "icon.ico");
+  yield* fs.copyFile(sourceIco, iconPath);
+});
 
-function validateBundledClientAssets(clientDir: string) {
-  return Effect.gen(function* () {
+const validateBundledClientAssets = Effect.fn("build-desktop-artifact.validateBundledClientAssets")(
+  function* (clientDir: string) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const indexPath = path.join(clientDir, "index.html");
@@ -2580,8 +2584,8 @@ function validateBundledClientAssets(clientDir: string) {
         missingFiles: missing,
       });
     }
-  });
-}
+  },
+);
 
 export function resolveDesktopRuntimeDependencies(
   dependencies: Record<string, string> | undefined,

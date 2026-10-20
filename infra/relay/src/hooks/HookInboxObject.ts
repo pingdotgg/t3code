@@ -89,33 +89,39 @@ export const layer = HookInboxObject.make(
         effect.pipe(Effect.provide(layerSql), Effect.orDie);
       yield* run(HookInboxStore.migrate);
 
-      const scheduleBy = (at: number) =>
-        Effect.gen(function* () {
-          const current = yield* state.storage.getAlarm();
-          if (current === null || current > at) yield* state.storage.setAlarm(at);
-        });
+      const scheduleBy = Effect.fn("HookInboxObject.scheduleBy")(function* (at: number) {
+        const current = yield* state.storage.getAlarm();
+        if (current === null || current > at) yield* state.storage.setAlarm(at);
+      });
 
+      // withInboxSpan supplies each method's root span; avoid a second wrapper span.
       return {
-        hold: (hook: HookInboxStore.HeldHook, baseUrl: string) =>
-          Effect.gen(function* () {
+        hold: Effect.fnUntraced(
+          function* (hook: HookInboxStore.HeldHook, baseUrl: string) {
             const dueAt = yield* run(HookInboxStore.hold(hook, baseUrl));
             yield* Effect.annotateCurrentSpan({ "relay.inbox.stored": dueAt !== null });
             if (dueAt === null) return false;
             yield* scheduleBy(dueAt);
             return true;
-          }).pipe(withInboxSpan("relay.inbox.hold", inboxId)),
-        wake: (baseUrl: string) =>
-          Effect.gen(function* () {
+          },
+          withInboxSpan("relay.inbox.hold", inboxId),
+        ),
+        wake: Effect.fnUntraced(
+          function* (baseUrl: string) {
             const pending = yield* run(HookInboxStore.wake(baseUrl));
             yield* Effect.annotateCurrentSpan({ "relay.inbox.pending": pending });
             if (pending) yield* state.storage.setAlarm(yield* Clock.currentTimeMillis);
             return pending;
-          }).pipe(withInboxSpan("relay.inbox.wake", inboxId)),
-        clear: () =>
-          Effect.gen(function* () {
+          },
+          withInboxSpan("relay.inbox.wake", inboxId),
+        ),
+        clear: Effect.fnUntraced(
+          function* () {
             yield* run(HookInboxStore.clear);
             yield* state.storage.deleteAlarm();
-          }).pipe(withInboxSpan("relay.inbox.clear", inboxId)),
+          },
+          withInboxSpan("relay.inbox.clear", inboxId),
+        ),
         alarm: () =>
           run(HookInboxStore.deliverDue(deliver)).pipe(
             // A wake during this run may already have asked for an earlier

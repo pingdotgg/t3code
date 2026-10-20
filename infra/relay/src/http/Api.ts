@@ -207,51 +207,51 @@ const relayRequestDeadline = <E, R>(
 
 const SENDER_TRACE_HEADER = /^(traceparent|tracestate|b3|x-b3-.*)$/i;
 
-export const traceRelayHttpRequest = <E, R>(
+// The method-named server span is created below; this wrapper must not add another span.
+export const traceRelayHttpRequest = Effect.fnUntraced(function* <E, R>(
   httpEffect: Effect.Effect<
     HttpServerResponse.HttpServerResponse,
     E,
     HttpServerRequest.HttpServerRequest | R
   >,
-) =>
-  Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const traced = appendRelayTraceContextResponseHeader.pipe(
-      Effect.andThen(relayRequestDeadline(httpEffect)),
-    );
-    if (!isRelayHookPath(request.url)) {
-      return yield* HttpMiddleware.tracer(traced).pipe(
-        Effect.provideService(HttpMiddleware.TracerDisabledWhen, () => false),
-        // HttpMiddleware finalizes its span on the dispatcher; do not close a request-scoped exporter first.
-        Effect.ensuring(Effect.yieldNow),
-      );
-    }
-    // Hook URLs carry a secret token: the tracer and deadline log see a redacted
-    // request, while the route itself still receives the original. A webhook
-    // sender's trace context is dropped, so it cannot pick the trace our relay
-    // and environment spans land in.
-    const redacted = request.modify({
-      url: redactRelayHookUrl(request.url),
-      headers: Headers.removeMany(
-        request.headers,
-        Object.keys(request.headers).filter((name) => SENDER_TRACE_HEADER.test(name)),
-      ),
-    });
-    return yield* HttpMiddleware.tracer(
-      appendRelayTraceContextResponseHeader.pipe(
-        Effect.andThen(
-          relayRequestDeadline(
-            httpEffect.pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request)),
-            RELAY_HOOK_REQUEST_DEADLINE_MS,
-          ),
-        ),
-      ),
-    ).pipe(
-      Effect.provideService(HttpServerRequest.HttpServerRequest, redacted),
+) {
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const traced = appendRelayTraceContextResponseHeader.pipe(
+    Effect.andThen(relayRequestDeadline(httpEffect)),
+  );
+  if (!isRelayHookPath(request.url)) {
+    return yield* HttpMiddleware.tracer(traced).pipe(
       Effect.provideService(HttpMiddleware.TracerDisabledWhen, () => false),
+      // HttpMiddleware finalizes its span on the dispatcher; do not close a request-scoped exporter first.
       Effect.ensuring(Effect.yieldNow),
     );
+  }
+  // Hook URLs carry a secret token: the tracer and deadline log see a redacted
+  // request, while the route itself still receives the original. A webhook
+  // sender's trace context is dropped, so it cannot pick the trace our relay
+  // and environment spans land in.
+  const redacted = request.modify({
+    url: redactRelayHookUrl(request.url),
+    headers: Headers.removeMany(
+      request.headers,
+      Object.keys(request.headers).filter((name) => SENDER_TRACE_HEADER.test(name)),
+    ),
   });
+  return yield* HttpMiddleware.tracer(
+    appendRelayTraceContextResponseHeader.pipe(
+      Effect.andThen(
+        relayRequestDeadline(
+          httpEffect.pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request)),
+          RELAY_HOOK_REQUEST_DEADLINE_MS,
+        ),
+      ),
+    ),
+  ).pipe(
+    Effect.provideService(HttpServerRequest.HttpServerRequest, redacted),
+    Effect.provideService(HttpMiddleware.TracerDisabledWhen, () => false),
+    Effect.ensuring(Effect.yieldNow),
+  );
+});
 
 const layerWebhookHeaderRedaction = Layer.effect(
   Headers.CurrentRedactedNames,
@@ -1147,8 +1147,9 @@ export const layerServerApi = HttpApiBuilder.group(
     const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
     const publishSignatures = yield* EnvironmentPublishSignatures.EnvironmentPublishSignatures;
     const heldHooks = yield* HeldHooks.HeldHooks;
-    const requireOwnEnvironment = (environmentId: string) =>
-      Effect.gen(function* () {
+    const requireOwnEnvironment =
+      /* Request instrumentation already owns the span; keep this helper in that context. */
+      Effect.fnUntraced(function* (environmentId: string) {
         const principal = yield* RelayEnvironmentPrincipal;
         if (principal.environmentId !== environmentId) {
           return yield* new HttpApiError.Unauthorized({});

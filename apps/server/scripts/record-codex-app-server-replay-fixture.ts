@@ -1110,7 +1110,7 @@ function recorderThreadConfigMetadata(scenario: ReplayScenario) {
   return keys.length === 0 ? {} : { recorderThreadConfigKeys: keys };
 }
 
-function makeRecorder({
+const makeRecorder = Effect.fn("record-codex-app-server-replay-fixture.makeRecorder")(function* ({
   outPath,
   scenario,
   checkout,
@@ -1118,55 +1118,53 @@ function makeRecorder({
   readonly outPath: string;
   readonly scenario: ReplayScenario;
   readonly checkout: string;
-}): Effect.Effect<Recorder, PlatformError.PlatformError, FileSystem.FileSystem> {
-  return Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    let version = "unknown";
-    const records: Array<Record<string, unknown>> = [];
-    const setVersion = (nextVersion: string) =>
-      Effect.sync(() => {
-        version = nextVersion;
-      });
-    const writeRecord = (record: Record<string, unknown>) =>
-      Effect.sync(() => {
-        records.push(record);
-      });
-    const flush = () => {
-      const outputRecords = codexReplayRecordingOutputRecords(records, {
-        workspace: process.cwd(),
-        machine: {
-          home: NodeOS.homedir(),
-          hostname: NodeOS.hostname(),
-          checkout,
-        },
-      });
-      return fs.writeFileString(
-        outPath,
-        `${[
-          {
-            type: "transcript_start",
-            provider: "codex",
-            protocol: "codex.app-server",
-            version,
-            scenario: scenario.name,
-            metadata: {
-              source: "record-codex-app-server-replay-fixture",
-              fileName: scenario.fileName,
-              description: scenario.description,
-              model: scenarioModel(scenario),
-              ...recorderThreadConfigMetadata(scenario),
-            },
+}): Effect.fn.Return<Recorder, PlatformError.PlatformError, FileSystem.FileSystem> {
+  const fs = yield* FileSystem.FileSystem;
+  let version = "unknown";
+  const records: Array<Record<string, unknown>> = [];
+  const setVersion = (nextVersion: string) =>
+    Effect.sync(() => {
+      version = nextVersion;
+    });
+  const writeRecord = (record: Record<string, unknown>) =>
+    Effect.sync(() => {
+      records.push(record);
+    });
+  const flush = () => {
+    const outputRecords = codexReplayRecordingOutputRecords(records, {
+      workspace: process.cwd(),
+      machine: {
+        home: NodeOS.homedir(),
+        hostname: NodeOS.hostname(),
+        checkout,
+      },
+    });
+    return fs.writeFileString(
+      outPath,
+      `${[
+        {
+          type: "transcript_start",
+          provider: "codex",
+          protocol: "codex.app-server",
+          version,
+          scenario: scenario.name,
+          metadata: {
+            source: "record-codex-app-server-replay-fixture",
+            fileName: scenario.fileName,
+            description: scenario.description,
+            model: scenarioModel(scenario),
+            ...recorderThreadConfigMetadata(scenario),
           },
-          ...outputRecords,
-        ]
-          .map((record) => JSON.stringify(record))
-          .join("\n")}\n`,
-      );
-    };
+        },
+        ...outputRecords,
+      ]
+        .map((record) => JSON.stringify(record))
+        .join("\n")}\n`,
+    );
+  };
 
-    return { path: outPath, setVersion, writeRecord, flush };
-  });
-}
+  return { path: outPath, setVersion, writeRecord, flush };
+});
 
 function layerCodex({ recorder }: { readonly recorder: Recorder }) {
   const clientRequestMethodById = new Map<string, string>();
@@ -1348,16 +1346,16 @@ function installReplayHandlers({
   );
 }
 
-function runReplaySession({
-  scenario,
-  run,
-  recorder,
-}: {
-  readonly scenario: ReplayScenario;
-  readonly run: ReplayRun;
-  readonly recorder: Recorder;
-}) {
-  return Effect.gen(function* () {
+const runReplaySession = Effect.fn("record-codex-app-server-replay-fixture.runReplaySession")(
+  function* ({
+    scenario,
+    run,
+    recorder,
+  }: {
+    readonly scenario: ReplayScenario;
+    readonly run: ReplayRun;
+    readonly recorder: Recorder;
+  }) {
     const startedTurns = yield* makeReplayRecorderDeferredRegistry();
     const completedTurns = yield* makeReplayRecorderDeferredRegistry();
     const startedCommandExecutions = yield* makeReplayRecorderDeferredRegistry();
@@ -1397,73 +1395,72 @@ function runReplaySession({
       return client;
     });
 
-    const runTurnStep = (
+    const runTurnStep = Effect.fn("record-codex-app-server-replay-fixture.runTurnStep")(function* (
       client: CodexClient.CodexAppServerClient["Service"],
       threadId: string,
       step: TurnReplayStep,
-    ) =>
-      Effect.gen(function* () {
-        const turnParams: TurnStartParams = {
-          approvalPolicy: "never",
-          sandboxPolicy: { type: "dangerFullAccess" },
-          cwd: process.cwd(),
-          model,
-          summary: "detailed",
-          approvalsReviewer: "user",
-          ...(run.interactionMode === "plan"
-            ? { collaborationMode: planCollaborationMode(model) }
-            : {}),
-          ...run.turnDefaults,
-          ...step.turnOverrides,
-          input: turnInput(step.prompt),
+    ) {
+      const turnParams: TurnStartParams = {
+        approvalPolicy: "never",
+        sandboxPolicy: { type: "dangerFullAccess" },
+        cwd: process.cwd(),
+        model,
+        summary: "detailed",
+        approvalsReviewer: "user",
+        ...(run.interactionMode === "plan"
+          ? { collaborationMode: planCollaborationMode(model) }
+          : {}),
+        ...run.turnDefaults,
+        ...step.turnOverrides,
+        input: turnInput(step.prompt),
+        threadId,
+      };
+
+      if (step.type === "steeredTurn") {
+        approvalGate = yield* Deferred.make<void>();
+      }
+
+      const turn = yield* client.request("turn/start", turnParams);
+      const turnId = getTurnId(turn);
+      const started = yield* getStarted(turnId);
+      yield* getCompletion(turnId);
+
+      if (step.type === "steeredTurn") {
+        yield* Deferred.await(started);
+        yield* client.request("turn/steer", {
+          expectedTurnId: turnId,
+          input: turnInput(step.steer),
           threadId,
-        };
-
-        if (step.type === "steeredTurn") {
-          approvalGate = yield* Deferred.make<void>();
+        });
+        if (approvalGate) {
+          yield* Deferred.succeed(approvalGate, void 0);
+          approvalGate = undefined;
         }
+      }
 
-        const turn = yield* client.request("turn/start", turnParams);
-        const turnId = getTurnId(turn);
-        const started = yield* getStarted(turnId);
-        yield* getCompletion(turnId);
-
-        if (step.type === "steeredTurn") {
-          yield* Deferred.await(started);
-          yield* client.request("turn/steer", {
-            expectedTurnId: turnId,
-            input: turnInput(step.steer),
+      if (step.type === "interruptedTurn") {
+        if (step.interruptAfterCommandExecutionStarted === true) {
+          const commandExecutionStarted = yield* getCommandExecutionStarted(turnId);
+          yield* Deferred.await(commandExecutionStarted);
+        } else {
+          yield* Effect.sleep(`${step.interruptAfterMs ?? 1_500} millis`);
+        }
+        yield* client.request("turn/interrupt", {
+          threadId,
+          turnId,
+        });
+        for (const processId of runningCommandProcessIds.get(turnId)?.values() ?? []) {
+          yield* client.raw.request("thread/backgroundTerminals/terminate", {
             threadId,
+            processId,
           });
-          if (approvalGate) {
-            yield* Deferred.succeed(approvalGate, void 0);
-            approvalGate = undefined;
-          }
         }
+      }
 
-        if (step.type === "interruptedTurn") {
-          if (step.interruptAfterCommandExecutionStarted === true) {
-            const commandExecutionStarted = yield* getCommandExecutionStarted(turnId);
-            yield* Deferred.await(commandExecutionStarted);
-          } else {
-            yield* Effect.sleep(`${step.interruptAfterMs ?? 1_500} millis`);
-          }
-          yield* client.request("turn/interrupt", {
-            threadId,
-            turnId,
-          });
-          for (const processId of runningCommandProcessIds.get(turnId)?.values() ?? []) {
-            yield* client.raw.request("thread/backgroundTerminals/terminate", {
-              threadId,
-              processId,
-            });
-          }
-        }
-
-        const completed = yield* getCompletion(turnId);
-        yield* Deferred.await(completed);
-        lastTurnIdByThread.set(threadId, turnId);
-      });
+      const completed = yield* getCompletion(turnId);
+      yield* Deferred.await(completed);
+      lastTurnIdByThread.set(threadId, turnId);
+    });
 
     if (scenario.name === "provider_thread_resume") {
       const firstStep = run.steps[0];
@@ -1611,36 +1608,34 @@ function runReplaySession({
         }),
       ),
     );
-  });
-}
+  },
+);
 
-function runScenario({
+const runScenario = Effect.fn("record-codex-app-server-replay-fixture.runScenario")(function* ({
   scenario,
   outPath,
 }: {
   readonly scenario: ReplayScenario;
   readonly outPath: string;
 }) {
-  return Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const checkout = path.resolve(yield* path.fromFileUrl(new URL("../../..", import.meta.url)));
-    const recorder = yield* makeRecorder({ outPath, scenario, checkout });
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const checkout = path.resolve(yield* path.fromFileUrl(new URL("../../..", import.meta.url)));
+  const recorder = yield* makeRecorder({ outPath, scenario, checkout });
 
-    yield* fs.makeDirectory(path.dirname(outPath), { recursive: true });
-    yield* Console.log(`Writing ${scenario.name} Codex replay events to ${recorder.path}`);
+  yield* fs.makeDirectory(path.dirname(outPath), { recursive: true });
+  yield* Console.log(`Writing ${scenario.name} Codex replay events to ${recorder.path}`);
 
-    yield* Effect.forEach(scenario.runs, (run) => runReplaySession({ scenario, run, recorder }), {
-      concurrency: 1,
-    });
-
-    yield* recorder.writeRecord({
-      type: "runtime_exit",
-      status: "success",
-    });
-    yield* recorder.flush();
+  yield* Effect.forEach(scenario.runs, (run) => runReplaySession({ scenario, run, recorder }), {
+    concurrency: 1,
   });
-}
+
+  yield* recorder.writeRecord({
+    type: "runtime_exit",
+    status: "success",
+  });
+  yield* recorder.flush();
+});
 
 const program = Effect.gen(function* () {
   const path = yield* Path.Path;

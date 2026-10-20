@@ -170,62 +170,60 @@ export const runCommand = Effect.fn("runCommand")(function* (
   }
 });
 
-export function collectSources(
+export const collectSources = Effect.fn("mobile-native-static-check.collectSources")(function* (
   directory: string,
   root: string,
-): Effect.Effect<
+): Effect.fn.Return<
   ReadonlyArray<string>,
   NativeStaticCheckSourceDiscoveryError,
   FileSystem.FileSystem | Path.Path
 > {
-  return Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const entries = yield* fs.readDirectory(directory).pipe(
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const entries = yield* fs.readDirectory(directory).pipe(
+    Effect.mapError(
+      (cause) =>
+        new NativeStaticCheckSourceDiscoveryError({
+          operation: "read-directory",
+          path: directory,
+          cause,
+        }),
+    ),
+  );
+  const sources: Array<string> = [];
+
+  for (const entry of entries) {
+    const entryPath = path.join(directory, entry);
+    const stat = yield* fs.stat(entryPath).pipe(
       Effect.mapError(
         (cause) =>
           new NativeStaticCheckSourceDiscoveryError({
-            operation: "read-directory",
-            path: directory,
+            operation: "stat-entry",
+            path: entryPath,
             cause,
           }),
       ),
     );
-    const sources: Array<string> = [];
 
-    for (const entry of entries) {
-      const entryPath = path.join(directory, entry);
-      const stat = yield* fs.stat(entryPath).pipe(
-        Effect.mapError(
-          (cause) =>
-            new NativeStaticCheckSourceDiscoveryError({
-              operation: "stat-entry",
-              path: entryPath,
-              cause,
-            }),
-        ),
-      );
+    if (stat.type === "Directory") {
+      const isGeneratedNativeProjectDirectory =
+        directory === root && generatedNativeProjectDirectories.has(entry);
 
-      if (stat.type === "Directory") {
-        const isGeneratedNativeProjectDirectory =
-          directory === root && generatedNativeProjectDirectories.has(entry);
-
-        if (excludedDirectories.has(entry) || isGeneratedNativeProjectDirectory) {
-          continue;
-        }
-
-        sources.push(...(yield* collectSources(entryPath, root)));
+      if (excludedDirectories.has(entry) || isGeneratedNativeProjectDirectory) {
         continue;
       }
 
-      if (stat.type === "File" && sourceExtensions.has(path.extname(entry))) {
-        sources.push(entryPath);
-      }
+      sources.push(...(yield* collectSources(entryPath, root)));
+      continue;
     }
 
-    return sources;
-  });
-}
+    if (stat.type === "File" && sourceExtensions.has(path.extname(entry))) {
+      sources.push(entryPath);
+    }
+  }
+
+  return sources;
+});
 
 const runNativeStaticChecks = Effect.fn("runNativeStaticChecks")(function* () {
   const path = yield* Path.Path;
