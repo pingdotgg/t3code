@@ -19,6 +19,7 @@ import { environmentPresentations } from "~/state/presentation";
 export interface RemoteOpenHost {
   readonly kind: "ssh-alias" | RemoteOpenTarget["kind"];
   readonly host: string;
+  readonly username?: string;
 }
 
 export type RemoteOpenState =
@@ -50,7 +51,7 @@ function parseHostname(url: string): string | null {
 
 export function resolveRemoteOpenState(input: {
   readonly target: ConnectionTarget | null;
-  readonly sshAlias: string | null;
+  readonly sshTarget: { readonly alias: string; readonly username: string | null } | null;
   readonly remoteOpenTargets: ReadonlyArray<RemoteOpenTarget> | undefined;
   readonly isDesktopRenderer: boolean;
 }): RemoteOpenState {
@@ -72,8 +73,21 @@ export function resolveRemoteOpenState(input: {
     return LOCAL_EXEC;
   }
 
-  if (input.sshAlias !== null && input.sshAlias.length > 0) {
-    return { mode: "remote-links", host: { kind: "ssh-alias", host: input.sshAlias } };
+  if (input.sshTarget !== null && input.sshTarget.alias.length > 0) {
+    const { alias } = input.sshTarget;
+    const userSeparator = alias.lastIndexOf("@");
+    const host = userSeparator === -1 ? alias : alias.slice(userSeparator + 1);
+    const username =
+      input.sshTarget.username?.trim() ||
+      (userSeparator === -1 ? null : alias.slice(0, userSeparator));
+    return {
+      mode: "remote-links",
+      host: {
+        kind: "ssh-alias",
+        host,
+        ...(username === null ? {} : { username }),
+      },
+    };
   }
   const advertised = input.remoteOpenTargets?.[0];
   if (advertised !== undefined) {
@@ -85,7 +99,11 @@ export function resolveRemoteOpenState(input: {
 function remoteOpenStatesEqual(previous: RemoteOpenState, next: RemoteOpenState): boolean {
   if (previous.mode !== next.mode) return false;
   if (previous.mode !== "remote-links" || next.mode !== "remote-links") return true;
-  return previous.host.kind === next.host.kind && previous.host.host === next.host.host;
+  return (
+    previous.host.kind === next.host.kind &&
+    previous.host.host === next.host.host &&
+    previous.host.username === next.host.username
+  );
 }
 
 // The presentation changes with every server config push and reconnect. This
@@ -102,8 +120,8 @@ const remoteOpenResolutionAtom = Atom.family((environmentId: EnvironmentId) =>
     const next: RemoteOpenResolution = {
       state: resolveRemoteOpenState({
         target: entry.target,
-        sshAlias:
-          profile !== null && profile._tag === "SshConnectionProfile" ? profile.target.alias : null,
+        sshTarget:
+          profile !== null && profile._tag === "SshConnectionProfile" ? profile.target : null,
         remoteOpenTargets: presentation?.serverConfig?.remoteOpenTargets,
         isDesktopRenderer: window.desktopBridge !== undefined,
       }),
