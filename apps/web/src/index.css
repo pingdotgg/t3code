@@ -2118,7 +2118,7 @@ code {
 .chat-markdown th,
 .chat-markdown td {
   padding: 0.45rem 0.75rem;
-  text-align: left;
+  text-align: center;
 }
 
 .chat-markdown thead th {
