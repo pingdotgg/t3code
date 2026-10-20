@@ -177,6 +177,23 @@ it("omits an empty reset plate but keeps countdowns and banked credits visible",
   expect(plate()?.textContent).toBe("1");
 });
 
+it("cuts the pace gap through the segment track and keeps the tick inside it", async () => {
+  setup();
+  // Five hours before the reset is the start of the window, the right-hand end of the bar.
+  await using _screen = await render(
+    <UsageLimitsPooled
+      presentations={presentations("2026-09-03T14:00:00Z", 0)}
+      now={Date.parse("2026-09-03T09:00:00Z")}
+    />,
+  );
+  const segment = page.getByRole("button", { name: /^Alpha:/ }).element();
+  const tick = segment.querySelector(':scope > span[style*="left"]')!.getBoundingClientRect();
+  const rect = segment.getBoundingClientRect();
+  expect(getComputedStyle(segment).backgroundImage).toMatch(/^linear-gradient/);
+  expect(tick.left).toBeGreaterThanOrEqual(rect.left);
+  expect(tick.right).toBeLessThanOrEqual(rect.right);
+});
+
 it("moves the one limit popover between windows on hover", async () => {
   setup();
   await using screen = await render(initial());

@@ -1,0 +1,516 @@
+{
+  "A": {
+    "c1": {
+      "provider": "codex",
+      "email": "c1.codex.owner@example.com",
+      "windows": [
+        [30, 120],
+        [60, 7560.0]
+      ]
+    },
+    "c2": {
+      "provider": "codex",
+      "email": "c2.codex.owner@example.com",
+      "windows": [
+        [0, 310],
+        [40, null]
+      ]
+    },
+    "c3": {
+      "provider": "codex",
+      "email": "c3.codex.owner@example.com",
+      "windows": [
+        [20, -1],
+        [50, 5040.0]
+      ],
+      "credits": 2
+    },
+    "a1": {
+      "provider": "claude",
+      "email": "a1.claude.owner@example.com",
+      "windows": [
+        [50, 150.0],
+        [10, 9273.6],
+        [0, 10140]
+      ]
+    },
+    "a2": {
+      "provider": "claude",
+      "email": "a2.claude.owner@example.com",
+      "windows": [
+        [100, 60],
+        [92, 5040.0],
+        [75, 7200]
+      ]
+    },
+    "a3": {
+      "provider": "claude",
+      "email": "a3.claude.owner@example.com",
+      "windows": [
+        [30, 180],
+        [100, 120]
+      ]
+    }
+  },
+  "B": {
+    "c1": {
+      "provider": "codex",
+      "email": "c1.codex.owner@example.com",
+      "windows": [
+        [30, 120],
+        [60, 7560.0]
+      ]
+    },
+    "a1": {
+      "provider": "claude",
+      "email": "a1.claude.owner@example.com",
+      "windows": [
+        [50, 150.0],
+        [10, 9273.6],
+        [0, 10140]
+      ]
+    }
+  },
+  "C": {
+    "m1": {
+      "provider": "codex",
+      "email": "firstname1.lastname.contractor@example-company.com",
+      "windows": [
+        [0, 310],
+        [0, 10140]
+      ]
+    },
+    "m2": {
+      "provider": "codex",
+      "email": "firstname2.lastname.contractor@example-company.com",
+      "windows": [
+        [100, -1],
+        [100, 60]
+      ]
+    },
+    "m3": {
+      "provider": "codex",
+      "email": "firstname3.lastname.contractor@example-company.com",
+      "windows": [
+        [45, 165.0],
+        [30, 7200]
+      ]
+    },
+    "m4": {
+      "provider": "codex",
+      "email": "firstname4.lastname.contractor@example-company.com",
+      "windows": [
+        [10, 30.0],
+        [80, 8640]
+      ]
+    },
+    "m5": {
+      "provider": "codex",
+      "email": "firstname5.lastname.contractor@example-company.com",
+      "windows": [
+        [40, null],
+        [40, null]
+      ]
+    },
+    "m6": {
+      "provider": "codex",
+      "email": "firstname6.lastname.contractor@example-company.com",
+      "windows": [
+        [60, 240],
+        [5, 1440]
+      ]
+    }
+  },
+  "L": {
+    "platform-team-primary": {
+      "provider": "codex",
+      "windows": [
+        [30, 120],
+        [60, 7560.0]
+      ]
+    },
+    "platform-team-backup": {
+      "provider": "codex",
+      "windows": [
+        [0, 310],
+        [40, null]
+      ]
+    },
+    "contractor-shared-pool": {
+      "provider": "codex",
+      "windows": [
+        [20, -1],
+        [50, 9072.0]
+      ],
+      "credits": 2
+    },
+    "research-lab-claude-seat-1": {
+      "provider": "claude",
+      "windows": [
+        [50, 150.0],
+        [10, 9273.6],
+        [0, 10140]
+      ]
+    },
+    "research-lab-claude-seat-2": {
+      "provider": "claude",
+      "windows": [
+        [100, 60],
+        [92, 5040.0],
+        [75, 7200]
+      ]
+    },
+    "research-lab-claude-seat-3": {
+      "provider": "claude",
+      "windows": [
+        [30, 180],
+        [100, 120]
+      ]
+    },
+    "research-lab-claude-seat-4": {
+      "provider": "claude",
+      "windows": [
+        [50, 150.0],
+        [10, 9273.6],
+        [0, 10140]
+      ]
+    },
+    "research-lab-claude-seat-5": {
+      "provider": "claude",
+      "windows": [
+        [100, 60],
+        [92, 5040.0],
+        [75, 7200]
+      ]
+    },
+    "research-lab-claude-seat-6": {
+      "provider": "claude",
+      "windows": [
+        [30, 180],
+        [100, 120]
+      ]
+    }
+  },
+  "T": {
+    "t01": {
+      "provider": "codex",
+      "email": "t01@example.com",
+      "windows": [
+        [7, 37],
+        [13, 697]
+      ]
+    },
+    "t02": {
+      "provider": "codex",
+      "email": "t02@example.com",
+      "windows": [
+        [14, 44],
+        [26, 794]
+      ]
+    },
+    "t03": {
+      "provider": "codex",
+      "email": "t03@example.com",
+      "windows": [
+        [21, 51],
+        [39, 891]
+      ]
+    },
+    "t04": {
+      "provider": "codex",
+      "email": "t04@example.com",
+      "windows": [
+        [28, 58],
+        [52, 988]
+      ]
+    },
+    "t05": {
+      "provider": "codex",
+      "email": "t05@example.com",
+      "windows": [
+        [35, 65],
+        [65, 1085]
+      ]
+    },
+    "t06": {
+      "provider": "codex",
+      "email": "t06@example.com",
+      "windows": [
+        [42, 72],
+        [78, 1182]
+      ]
+    },
+    "t07": {
+      "provider": "codex",
+      "email": "t07@example.com",
+      "windows": [
+        [49, 79],
+        [91, 1279]
+      ]
+    },
+    "t08": {
+      "provider": "codex",
+      "email": "t08@example.com",
+      "windows": [
+        [56, 86],
+        [4, 1376]
+      ]
+    },
+    "t09": {
+      "provider": "codex",
+      "email": "t09@example.com",
+      "windows": [
+        [63, 93],
+        [17, 1473]
+      ]
+    },
+    "t10": {
+      "provider": "codex",
+      "email": "t10@example.com",
+      "windows": [
+        [70, 100],
+        [30, 1570]
+      ]
+    },
+    "t11": {
+      "provider": "codex",
+      "email": "t11@example.com",
+      "windows": [
+        [77, 107],
+        [43, 1667]
+      ]
+    },
+    "t12": {
+      "provider": "codex",
+      "email": "t12@example.com",
+      "windows": [
+        [84, 114],
+        [56, 1764]
+      ]
+    },
+    "t13": {
+      "provider": "codex",
+      "email": "t13@example.com",
+      "windows": [
+        [91, 121],
+        [69, 1861]
+      ]
+    },
+    "t14": {
+      "provider": "codex",
+      "email": "t14@example.com",
+      "windows": [
+        [98, 128],
+        [82, 1958]
+      ]
+    },
+    "t15": {
+      "provider": "codex",
+      "email": "t15@example.com",
+      "windows": [
+        [5, 135],
+        [95, 2055]
+      ]
+    },
+    "t16": {
+      "provider": "codex",
+      "email": "t16@example.com",
+      "windows": [
+        [12, 142],
+        [8, 2152]
+      ]
+    },
+    "t17": {
+      "provider": "codex",
+      "email": "t17@example.com",
+      "windows": [
+        [19, 149],
+        [21, 2249]
+      ]
+    },
+    "t18": {
+      "provider": "codex",
+      "email": "t18@example.com",
+      "windows": [
+        [26, 156],
+        [34, 2346]
+      ]
+    },
+    "t19": {
+      "provider": "codex",
+      "email": "t19@example.com",
+      "windows": [
+        [33, 163],
+        [47, 2443]
+      ]
+    },
+    "t20": {
+      "provider": "codex",
+      "email": "t20@example.com",
+      "windows": [
+        [40, 170],
+        [60, 2540]
+      ]
+    },
+    "t21": {
+      "provider": "codex",
+      "email": "t21@example.com",
+      "windows": [
+        [47, 177],
+        [73, 2637]
+      ]
+    },
+    "t22": {
+      "provider": "codex",
+      "email": "t22@example.com",
+      "windows": [
+        [54, 184],
+        [86, 2734]
+      ]
+    },
+    "t23": {
+      "provider": "codex",
+      "email": "t23@example.com",
+      "windows": [
+        [61, 191],
+        [99, 2831]
+      ]
+    },
+    "t24": {
+      "provider": "codex",
+      "email": "t24@example.com",
+      "windows": [
+        [68, 198],
+        [12, 2928]
+      ]
+    },
+    "t25": {
+      "provider": "codex",
+      "email": "t25@example.com",
+      "windows": [
+        [75, 205],
+        [25, 3025]
+      ]
+    },
+    "t26": {
+      "provider": "codex",
+      "email": "t26@example.com",
+      "windows": [
+        [82, 212],
+        [38, 3122]
+      ]
+    },
+    "t27": {
+      "provider": "codex",
+      "email": "t27@example.com",
+      "windows": [
+        [89, 219],
+        [51, 3219]
+      ]
+    },
+    "t28": {
+      "provider": "codex",
+      "email": "t28@example.com",
+      "windows": [
+        [96, 226],
+        [64, 3316]
+      ]
+    },
+    "t29": {
+      "provider": "codex",
+      "email": "t29@example.com",
+      "windows": [
+        [3, 233],
+        [77, 3413]
+      ]
+    },
+    "t30": {
+      "provider": "codex",
+      "email": "t30@example.com",
+      "windows": [
+        [10, 240],
+        [90, 3510]
+      ]
+    },
+    "t31": {
+      "provider": "codex",
+      "email": "t31@example.com",
+      "windows": [
+        [17, 247],
+        [3, 3607]
+      ]
+    },
+    "t32": {
+      "provider": "codex",
+      "email": "t32@example.com",
+      "windows": [
+        [24, 254],
+        [16, 3704]
+      ]
+    },
+    "t33": {
+      "provider": "codex",
+      "email": "t33@example.com",
+      "windows": [
+        [31, 261],
+        [29, 3801]
+      ]
+    },
+    "t34": {
+      "provider": "codex",
+      "email": "t34@example.com",
+      "windows": [
+        [38, 268],
+        [42, 3898]
+      ]
+    },
+    "t35": {
+      "provider": "codex",
+      "email": "t35@example.com",
+      "windows": [
+        [45, 275],
+        [55, 3995]
+      ]
+    },
+    "t36": {
+      "provider": "codex",
+      "email": "t36@example.com",
+      "windows": [
+        [52, 282],
+        [68, 4092]
+      ]
+    },
+    "t37": {
+      "provider": "codex",
+      "email": "t37@example.com",
+      "windows": [
+        [59, 289],
+        [81, 4189]
+      ]
+    },
+    "t38": {
+      "provider": "codex",
+      "email": "t38@example.com",
+      "windows": [
+        [66, 296],
+        [94, 4286]
+      ]
+    },
+    "t39": {
+      "provider": "codex",
+      "email": "t39@example.com",
+      "windows": [
+        [73, 33],
+        [7, 4383]
+      ]
+    },
+    "t40": {
+      "provider": "codex",
+      "email": "t40@example.com",
+      "windows": [
+        [80, 40],
+        [20, 4480]
+      ]
+    }
+  }
+}

@@ -49,6 +49,32 @@ function WindowRow(props: {
   const timeLeft = paceRemainingPercent(window, now);
   const pace = paceOf(window, now);
   const resetsIn = formatResetsIn(window, now);
+  const [barWidth, setBarWidth] = useState(0);
+  const tickX =
+    timeLeft === null || barWidth < 6
+      ? null
+      : Math.min(Math.max((barWidth * timeLeft) / 100, 3), barWidth - 3);
+  const bar = (
+    <View
+      className="h-1.5 flex-row overflow-hidden rounded-full bg-subtle"
+      style={barWidth > 0 ? { width: barWidth } : undefined}
+    >
+      <View
+        className={
+          remaining <= 10
+            ? "h-full rounded-full bg-red-500"
+            : remaining <= 30
+              ? "h-full rounded-full bg-amber-500"
+              : "h-full rounded-full bg-foreground"
+        }
+        style={[
+          { flex: remaining },
+          remaining > 30 && props.color ? { backgroundColor: props.color } : null,
+        ]}
+      />
+      <View style={{ flex: 100 - remaining }} />
+    </View>
+  );
   return (
     <View className="gap-1">
       <View className="flex-row items-baseline justify-between gap-3">
@@ -57,27 +83,35 @@ function WindowRow(props: {
           {remaining}% left
         </Text>
       </View>
-      <View className="h-3 justify-center">
-        <View className="h-1.5 flex-row overflow-hidden rounded-full bg-subtle">
+      <View
+        className="h-3 justify-center"
+        onLayout={(event) => setBarWidth(event.nativeEvent.layout.width)}
+      >
+        {tickX === null ? (
+          bar
+        ) : (
+          <View className="h-1.5">
+            {/* Clip the same full-width bar so neither fill proportions nor corner radii change. */}
+            {(
+              [
+                [0, tickX - 3],
+                [tickX + 3, barWidth],
+              ] as const
+            ).map(([start, end]) => (
+              <View
+                key={start}
+                className="absolute top-0 bottom-0 overflow-hidden"
+                style={{ left: start, width: end - start }}
+              >
+                <View style={{ marginLeft: -start }}>{bar}</View>
+              </View>
+            ))}
+          </View>
+        )}
+        {tickX !== null ? (
           <View
-            className={
-              remaining <= 10
-                ? "h-full rounded-full bg-red-500"
-                : remaining <= 30
-                  ? "h-full rounded-full bg-amber-500"
-                  : "h-full rounded-full bg-foreground"
-            }
-            style={[
-              { flex: remaining },
-              remaining > 30 && props.color ? { backgroundColor: props.color } : null,
-            ]}
-          />
-          <View style={{ flex: 100 - remaining }} />
-        </View>
-        {timeLeft !== null ? (
-          <View
-            className="absolute top-0 bottom-0 w-px bg-foreground"
-            style={{ left: `${timeLeft}%`, opacity: 0.6 }}
+            className="absolute top-px bottom-px w-0.5 rounded-full bg-foreground"
+            style={{ left: tickX - 1 }}
           />
         ) : null}
       </View>

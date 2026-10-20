@@ -42,6 +42,7 @@ import {
   PaceIcon,
   ResetCreditDialog,
   barColor,
+  usePaceMark,
   resetCreditsSummary,
   useResetCredit,
 } from "./UsageLimits";
@@ -342,6 +343,7 @@ function SegmentTriggers({
   const payload: SegmentPayload = { account, window, reset, redeem };
   const remaining = remainingPercent(window);
   const timeLeft = paceRemainingPercent(window, now);
+  const [segmentRef, paceMark] = usePaceMark(timeLeft);
   const resetsIn = formatResetsIn(window, now);
   const credits = account.limits.resetCredits?.availableCount ?? 0;
   return (
@@ -352,35 +354,39 @@ function SegmentTriggers({
         openOnHover
         render={
           <button
+            ref={segmentRef}
             type="button"
-            style={{ gridColumn: index, gridRow: 1 }}
+            style={{ gridColumn: index, gridRow: 1, ...paceMark?.gappedTrack }}
             aria-label={`${account.displayName ?? (account.email ? accountInitials(account.email) : account.driver)}: ${remaining}% left${resetsIn ? `, ${resetsIn}` : ""}${timeLeft === null ? "" : `, ${timeLeft}% of the window left`}${credits ? `, ${credits} reset ${credits === 1 ? "credit" : "credits"} banked` : ""}`}
             className="relative h-5 min-w-0 cursor-pointer rounded-md bg-muted text-start outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[popup-open]:ring-1 data-[popup-open]:ring-inset data-[popup-open]:ring-border @2xl/pool:h-8"
           />
         }
       >
         <div aria-hidden className="absolute inset-0 overflow-hidden rounded-md">
-          <div
-            aria-hidden
-            className="absolute inset-y-0 left-0 rounded-md opacity-35"
-            style={{ width: `${remaining}%`, backgroundColor: color }}
-          />
-          {remaining < 100 && reset && refillPercent > 0 ? (
+          {/* Clipped inside the rounded clip so the bar's own corners keep their antialiasing. */}
+          <div className="absolute inset-0" style={paceMark?.gap}>
             <div
               aria-hidden
-              className="absolute inset-y-0 right-0 opacity-20"
-              style={{
-                width: `${Math.min(100 - remaining, refillPercent)}%`,
-                backgroundImage: `repeating-linear-gradient(135deg, ${color} 0 1px, transparent 1px 5px)`,
-              }}
+              className="absolute inset-y-0 left-0 rounded-md opacity-35"
+              style={{ width: `${remaining}%`, backgroundColor: color }}
             />
-          ) : null}
+            {remaining < 100 && reset && refillPercent > 0 ? (
+              <div
+                aria-hidden
+                className="absolute inset-y-0 right-0 opacity-20"
+                style={{
+                  width: `${Math.min(100 - remaining, refillPercent)}%`,
+                  backgroundImage: `repeating-linear-gradient(135deg, ${color} 0 1px, transparent 1px 5px)`,
+                }}
+              />
+            ) : null}
+          </div>
         </div>
-        {timeLeft !== null ? (
+        {paceMark ? (
           <span
             aria-hidden
-            className="absolute -inset-y-1 w-0.5 -translate-x-1/2 rounded-full bg-muted-foreground"
-            style={{ left: `${timeLeft}%` }}
+            className="absolute inset-y-0.5 w-0.5 -translate-x-1/2 rounded-full bg-foreground"
+            style={paceMark.tick}
           />
         ) : null}
         <span
