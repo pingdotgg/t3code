@@ -2808,6 +2808,40 @@ describe("parseAgentSessionTranscript", () => {
     });
   });
 
+  it.each([
+    { customTitles: ["Refactor auth module"], expected: "Refactor auth module" },
+    // Claude writes an empty customTitle when the user clears a rename.
+    { customTitles: ["Refactor auth module", ""], expected: "Generated title" },
+  ])("uses Claude custom titles $customTitles over the AI title", ({ customTitles, expected }) => {
+    const aiTitle = JSON.stringify({
+      type: "ai-title",
+      aiTitle: "Generated title",
+      sessionId: "claude-session",
+    });
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [
+        JSON.stringify({
+          type: "user",
+          sessionId: "claude-session",
+          timestamp: "2026-08-24T10:00:00.000Z",
+          message: { role: "user", content: "<command-name>/effort</command-name>" },
+        }),
+        // Claude rewrites both records on every metadata flush with ai-title
+        // last, so a later ai-title must not override the user's rename.
+        ...customTitles.flatMap((customTitle) => [
+          JSON.stringify({ type: "custom-title", customTitle, sessionId: "claude-session" }),
+          aiTitle,
+        ]),
+      ].join("\n"),
+      source: "claudeAgent",
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      fallbackSessionId: "fallback",
+      lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
+    });
+
+    expect(thread?.title).toBe(expected);
+  });
+
   it("drops injected Codex instructions while keeping the visible user event", () => {
     const thread = AgentSessionScanner.parseAgentSessionTranscript({
       contents: [
