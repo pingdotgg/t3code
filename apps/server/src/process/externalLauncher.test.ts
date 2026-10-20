@@ -465,16 +465,21 @@ it.effect("reveals a file in File Explorer through PowerShell on Windows", () =>
     const decodedCommand = Buffer.from(encodedCommand, "base64").toString("utf16le");
     assert.equal(
       decodedCommand,
-      "$ProgressPreference = 'SilentlyContinue'; Start-Process 'explorer.exe' -ArgumentList ('/select,\"' + 'C:\\workspace with spaces\\media\\author''s clip.mp4' + '\"')",
+      "$ProgressPreference = 'SilentlyContinue'; $folderVerb = (Get-ItemProperty -LiteralPath 'Registry::HKEY_CLASSES_ROOT\\Directory\\shell' -ErrorAction SilentlyContinue).'(default)'; if ($folderVerb -and $folderVerb -ne 'none') { Invoke-Item -LiteralPath 'C:\\workspace with spaces\\media' } else { Start-Process 'explorer.exe' -ArgumentList ('/select,\"' + 'C:\\workspace with spaces\\media\\author''s clip.mp4' + '\"') }",
     );
     assert.equal(spawned.options.shell, false);
     assert.equal(spawned.options.detached, false);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-for (const kind of ["browser", "reveal"] as const) {
+for (const { kind, folderVerb } of [
+  { kind: "browser", folderVerb: "none" },
+  { kind: "reveal", folderVerb: "none" },
+  { kind: "reveal", folderVerb: "" },
+  { kind: "reveal", folderVerb: "open" },
+] as const) {
   it.live.skipIf(!windowsHost)(
-    `completes a ${kind} launch through real PowerShell after the launcher scope closes`,
+    `completes a ${kind} launch through real PowerShell after the launcher scope closes (folder verb: ${folderVerb || "empty"})`,
     () =>
       Effect.gen(function* () {
         const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-reveal-smoke-"));
@@ -499,22 +504,28 @@ for (const kind of ["browser", "reveal"] as const) {
             );
           });
 
-          const target = "C:/workspace with spaces/media/author's clip.mp4";
+          const target = "C:/workspace with spaces/author's media/clip.mp4";
           yield* Effect.all(
             [
               Effect.gen(function* () {
                 const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
                 const recordingSpawner = ChildProcessSpawner.make((command) => {
                   assert.ok(ChildProcess.isStandardCommand(command));
+                  const recorderLiteral = `'${recorderPath.replaceAll("'", "''")}'`;
                   const source = Buffer.from(command.args.at(-1) ?? "", "base64")
                     .toString("utf16le")
-                    .replace("'explorer.exe'", `'${recorderPath.replaceAll("'", "''")}'`);
+                    .replace("'explorer.exe'", recorderLiteral);
+                  // Control the association without changing the host registry or opening its file manager.
+                  const handlers =
+                    kind === "reveal"
+                      ? `function Get-ItemProperty { [CmdletBinding()] param([string]$LiteralPath); if ($LiteralPath -ne 'Registry::HKEY_CLASSES_ROOT\\Directory\\shell') { throw 'Unexpected registry path' }; @{ '(default)' = '${folderVerb}' } }; function Invoke-Item { param([string]$LiteralPath); Start-Process ${recorderLiteral} -ArgumentList ('"' + $LiteralPath + '"') }; `
+                      : "";
                   return realSpawner.spawn(
                     ChildProcess.make(
                       command.command,
                       [
                         ...command.args.slice(0, -1),
-                        Buffer.from(source, "utf16le").toString("base64"),
+                        Buffer.from(handlers + source, "utf16le").toString("base64"),
                       ],
                       command.options,
                     ),
@@ -537,7 +548,11 @@ for (const kind of ["browser", "reveal"] as const) {
                 recorded.then((value) => {
                   assert.equal(
                     value,
-                    kind === "browser" ? "" : `/select,"${target.replaceAll("/", "\\")}"`,
+                    kind === "browser"
+                      ? ""
+                      : folderVerb === "open"
+                        ? `"C:\\workspace with spaces\\author's media"`
+                        : `/select,"${target.replaceAll("/", "\\")}"`,
                   );
                 }),
               ),
@@ -606,7 +621,7 @@ it.effect.skipIf(windowsHost)(
         const editors = yield* launcher.resolveAvailableEditors();
         yield* launcher.launchEditor({
           editor: "file-manager",
-          cwd: "/home/t3/workspace/media/clip.mp4",
+          cwd: "/home/t3/workspace [draft]/author's $media/clip|draft.mp4",
           reveal: true,
         });
         return { kind, editors };
@@ -635,7 +650,7 @@ it.effect.skipIf(windowsHost)(
       const decodedCommand = Buffer.from(encodedCommand, "base64").toString("utf16le");
       assert.equal(
         decodedCommand,
-        "$ProgressPreference = 'SilentlyContinue'; Start-Process 'explorer.exe' -ArgumentList ('/select,\"' + '\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\workspace\\media\\clip.mp4' + '\"')",
+        "$ProgressPreference = 'SilentlyContinue'; $folderVerb = (Get-ItemProperty -LiteralPath 'Registry::HKEY_CLASSES_ROOT\\Directory\\shell' -ErrorAction SilentlyContinue).'(default)'; if ($folderVerb -and $folderVerb -ne 'none') { Invoke-Item -LiteralPath '\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\workspace [draft]\\author''s $media' } else { Start-Process 'explorer.exe' -ArgumentList ('/select,\"' + '\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\workspace [draft]\\author''s $media\\clip|draft.mp4' + '\"') }",
       );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
@@ -798,7 +813,7 @@ it.effect.skipIf(windowsHost)(
         const launcher = yield* ExternalLauncher.ExternalLauncher;
         yield* launcher.launchEditor({
           editor: "file-manager",
-          cwd: '/home/t3/work "quoted"/clip.mp4',
+          cwd: '/home/t3/work/clip "quoted".mp4',
           reveal: true,
         });
       }).pipe(
@@ -818,8 +833,14 @@ it.effect.skipIf(windowsHost)(
       );
 
       assert.ok(spawned);
-      assert.equal(spawned.command, "explorer.exe");
-      assert.deepEqual(spawned.args, ['\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\work "quoted"']);
+      assert.equal(spawned.command, "powershell.exe");
+      assert.equal(spawned.options.detached, true);
+      assert.equal(spawned.options.shell, false);
+      const source = Buffer.from(spawned.args.at(-1) ?? "", "base64").toString("utf16le");
+      assert.equal(
+        source,
+        `Invoke-Item -LiteralPath '\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\work'`,
+      );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 

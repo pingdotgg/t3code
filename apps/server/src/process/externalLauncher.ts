@@ -1,3 +1,4 @@
+import * as NodePath from "@effect/platform-node/NodePath";
 import {
   EDITORS,
   ExternalLauncherError,
@@ -561,30 +562,24 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   };
 });
 
-/**
- * Explorer's contract is the single argument `/select,"<path>"` with only the
- * path quoted; Node's default spawn quoting wraps the whole argument when the
- * path has spaces and Explorer misparses it, silently opening a fallback
- * folder. A single `-ArgumentList` string in Windows PowerShell 5.1 reaches the
- * child's command line verbatim, preserving the raw switch.
- */
-function buildFileExplorerRevealPowerShellSource(explorerCommand: string, target: string): string {
-  return `$ProgressPreference = 'SilentlyContinue'; Start-Process ${escapePowerShellStringLiteral(explorerCommand)} -ArgumentList ('/select,"' + ${escapePowerShellStringLiteral(target)} + '"')`;
+// A replacement manager registers a default Directory shell verb; stock Windows
+// uses "none". Explorer needs its /select argument passed verbatim through
+// PowerShell because Node's argument quoting changes how Explorer parses it.
+function buildFileManagerRevealPowerShellSource(target: string, parent: string): string {
+  const literal = escapePowerShellStringLiteral(target);
+  return `$ProgressPreference = 'SilentlyContinue'; $folderVerb = (Get-ItemProperty -LiteralPath 'Registry::HKEY_CLASSES_ROOT\\Directory\\shell' -ErrorAction SilentlyContinue).'(default)'; if ($folderVerb -and $folderVerb -ne 'none') { Invoke-Item -LiteralPath ${escapePowerShellStringLiteral(parent)} } else { Start-Process 'explorer.exe' -ArgumentList ('/select,"' + ${literal} + '"') }`;
 }
 
-function fileExplorerRevealLaunch(
+function powerShellFileManagerLaunch(
   target: string,
-  explorerTarget: string,
+  source: string,
   powershellCommand: string,
 ): EditorLaunch {
   return {
     editor: "file-manager",
     target,
     command: powershellCommand,
-    args: [
-      ...POWERSHELL_ARGUMENTS_PREFIX,
-      encodeUtf16LeBase64(buildFileExplorerRevealPowerShellSource("explorer.exe", explorerTarget)),
-    ],
+    args: [...POWERSHELL_ARGUMENTS_PREFIX, encodeUtf16LeBase64(source)],
   };
 }
 
@@ -607,10 +602,12 @@ const resolveFileManagerRevealLaunch = Effect.fn("resolveFileManagerRevealLaunch
   }
 
   if (platform === "win32") {
+    const path = yield* Path.Path.pipe(Effect.provide(NodePath.layerWin32));
+    const windowsTarget = normalizeWindowsFileManagerPath(target);
     return {
-      ...fileExplorerRevealLaunch(
+      ...powerShellFileManagerLaunch(
         target,
-        normalizeWindowsFileManagerPath(target),
+        buildFileManagerRevealPowerShellSource(windowsTarget, path.dirname(windowsTarget)),
         resolvePowerShellPath(env),
       ),
       detached: WINDOWS_POWERSHELL_DETACHED,
@@ -624,20 +621,15 @@ const resolveFileManagerRevealLaunch = Effect.fn("resolveFileManagerRevealLaunch
   ) {
     const explorerTarget = resolveWslFileManagerPath(target, env.WSL_DISTRO_NAME);
     if (yield* isCommandAvailable(WSL_POWERSHELL_COMMAND, { env })) {
-      // Explorer's raw switch cannot express a double quote, and unlike
-      // Windows paths a WSL path may legally contain one: open the containing
-      // directory in File Explorer instead, matching the advertised
-      // "file-explorer" kind.
-      if (explorerTarget.includes('"')) {
-        const path = yield* Path.Path;
-        return {
-          editor: "file-manager",
-          target,
-          command: "explorer.exe",
-          args: [resolveWslFileManagerPath(path.dirname(target), env.WSL_DISTRO_NAME)],
-        };
-      }
-      return fileExplorerRevealLaunch(target, explorerTarget, WSL_POWERSHELL_COMMAND);
+      // WSL names may contain quotes that Explorer's /select cannot encode.
+      // Open the parent through the shell so replacement managers still apply.
+      const path = yield* Path.Path;
+      // .NET path parsing rejects characters that are legal in WSL filenames.
+      const parent = resolveWslFileManagerPath(path.dirname(target), env.WSL_DISTRO_NAME);
+      const source = explorerTarget.includes('"')
+        ? `Invoke-Item -LiteralPath ${escapePowerShellStringLiteral(parent)}`
+        : buildFileManagerRevealPowerShellSource(explorerTarget, parent);
+      return powerShellFileManagerLaunch(target, source, WSL_POWERSHELL_COMMAND);
     }
     if (hasGraphicalLinuxSession(env) && (yield* isUsableFileManagerCommand("xdg-open", env))) {
       const path = yield* Path.Path;
