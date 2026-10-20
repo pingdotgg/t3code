@@ -100,7 +100,7 @@ import { PullRequestStackMenu } from "./PullRequestStackMenu";
 import { PullRequestChangeBreakdownStat } from "./PullRequestChangeBreakdownStat";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { PullRequestThreadLinks } from "./PullRequestThreadLinks";
-import { vcsEnvironment } from "~/state/vcs";
+import { useVcsTerminology, vcsEnvironment } from "~/state/vcs";
 import { RelativeTime } from "~/components/RelativeTime";
 import { useUiStateStore } from "~/uiStateStore";
 
@@ -811,6 +811,7 @@ export function PullRequestDetailPanel({
         changeRequestRepositoryUrl(handoffSummary.url),
       )
     : loadingCheckoutCommand;
+  const vcsTerminology = useVcsTerminology(environmentId, detail?.workspaceRoot ?? null);
   const branchRefsQuery = useEnvironmentQuery(
     detail === null
       ? null
@@ -1275,7 +1276,7 @@ export function PullRequestDetailPanel({
               description:
                 mode === "local"
                   ? "This repository is on the pull request's branch, with a thread open on it."
-                  : "The pull request is in its own worktree, with a thread open on it.",
+                  : `The pull request is in its own ${vcsTerminology.workspaceNoun}, with a thread open on it.`,
             }
           : OFF_HEAD_PULL_REQUEST_CHECKOUT_TOAST,
       );
@@ -1573,7 +1574,7 @@ export function PullRequestDetailPanel({
           <MenuItem disabled={!canPrepareWorktree} onClick={() => startCheckout("worktree")}>
             <GitBranchIcon className="mt-1 size-3.5 shrink-0 self-start" />
             <span className="flex min-w-0 flex-col">
-              <span>In a separate worktree</span>
+              <span>In a separate {vcsTerminology.workspaceNoun}</span>
               <span className="text-xs text-muted-foreground">
                 Its own folder and thread. Nothing you have open moves.
               </span>

@@ -182,6 +182,7 @@ function WorkflowMemberRow(props: {
         </TooltipTrigger>
         <ThreadHoverCardPopup>
           <SubagentTooltipContent
+            environmentId={props.environmentId}
             title={member.title}
             model={member.model}
             providerInstanceId={props.providerInstanceId}

@@ -55,6 +55,8 @@ import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useProject, useThreadShell } from "../../state/entities";
+import { useVcsActionSupport } from "../../state/vcs";
 import { toolActivityFaviconUrl } from "@t3tools/shared/favicon";
 import { isJavaScriptReplTool } from "@t3tools/shared/toolActivity";
 import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
@@ -793,6 +795,15 @@ function WorkspacePreparationRetryButton(props: {
   readonly threadId: ThreadId;
   readonly runId: RunId;
 }) {
+  const thread = useThreadShell(scopeThreadRef(props.environmentId, props.threadId));
+  const project = useProject(
+    thread ? { environmentId: props.environmentId, projectId: thread.projectId } : null,
+  );
+  const vcsSupport = useVcsActionSupport(props.environmentId, project?.workspaceRoot ?? null);
+  const workspaceVcsSupport = useVcsActionSupport(
+    props.environmentId,
+    thread?.worktreePath ?? null,
+  );
   const retryable = useAtomValue(
     environmentThreadDetails.threadAtom(scopeThreadRef(props.environmentId, props.threadId)),
     (thread) => {
@@ -806,11 +817,12 @@ function WorkspacePreparationRetryButton(props: {
   return (
     <View className="ml-7 mt-2">
       <Button
-        label="Retry"
+        label={vcsSupport.unsupportedReason ?? workspaceVcsSupport.unsupportedReason ?? "Retry"}
         tone="secondary"
         accessibilityLabel="Retry workspace preparation"
-        disabled={busy}
+        disabled={busy || !vcsSupport.supported || !workspaceVcsSupport.supported}
         onPress={() => {
+          if (!vcsSupport.canUseVcsActions() || !workspaceVcsSupport.canUseVcsActions()) return;
           setBusy(true);
           void Haptics.selectionAsync();
           void retry({

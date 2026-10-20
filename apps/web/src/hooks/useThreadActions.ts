@@ -4,6 +4,7 @@ import {
   scopeThreadRef,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
+import { resolveVcsTerminology } from "@t3tools/shared/vcs";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { canSnooze, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
@@ -18,6 +19,7 @@ import {
 } from "@t3tools/contracts";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
 import { useRouter } from "@tanstack/react-router";
@@ -465,14 +467,28 @@ export function useThreadActions() {
     const automaticWorktreeCleanup = environmentSettings
       ? resolveWorktreeCleanup(environmentSettings, thread.projectId).worktreeOnDelete
       : false;
+    const terminology = resolveVcsTerminology(
+      canDeleteWorktree && orphanedWorktreePath
+        ? Option.getOrNull(
+            AsyncResult.value(
+              appAtomRegistry.get(
+                vcsEnvironment.status({
+                  environmentId: threadRef.environmentId,
+                  input: { cwd: orphanedWorktreePath, includeRemote: false },
+                }),
+              ),
+            ),
+          )
+        : null,
+    );
     if (canDeleteWorktree && localApi && !automaticWorktreeCleanup) {
       const confirmationResult = await settlePromise(() =>
         localApi.dialogs.confirm(
           [
-            "This thread is the only one linked to this worktree:",
+            `This thread is the only one linked to this ${terminology.workspaceNoun}:`,
             displayWorktreePath ?? orphanedWorktreePath,
             "",
-            "Delete the worktree too?",
+            `Delete the ${terminology.workspaceNoun} too?`,
           ].join("\n"),
           { variant: "destructive" },
         ),
@@ -551,7 +567,7 @@ export function useThreadActions() {
       : AsyncResult.failure(
           Cause.fail(
             new EnvironmentAuthorizationError({
-              message: "This connection can no longer remove worktrees.",
+              message: `This connection can no longer remove ${terminology.workspaceNounPlural}.`,
               requiredScope: AuthSourceControlWriteScope,
             }),
           ),
@@ -583,8 +599,8 @@ export function useThreadActions() {
         stackedThreadToast({
           type: "error",
           title: removalFailed
-            ? "Failed to delete worktree"
-            : "Worktree deleted, but Git status refresh failed",
+            ? `Failed to delete ${terminology.workspaceNoun}`
+            : `${terminology.workspaceNounTitle} deleted, but ${terminology.systemName} status refresh failed`,
           description: removalFailed
             ? `Could not remove ${displayWorktreePath ?? orphanedWorktreePath}. ${message}`
             : message,

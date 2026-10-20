@@ -1,6 +1,11 @@
 import { SheetHeader } from "../../../components/ui/SheetHeader";
 import { Button } from "../../../components/ui/Button";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import {
+  resolveVcsTerminology,
+  resolveVcsUnsupportedReason,
+  supportsVcsActions,
+} from "@t3tools/shared/vcs";
 import { useState } from "react";
 import { Platform, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
@@ -43,6 +48,9 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
 
   const busy = gitState.gitOperationLabel !== null;
   const isDefaultRef = gitStatus.data?.isDefaultRef ?? false;
+  const vcsTerminology = resolveVcsTerminology(gitStatus.data);
+  const vcsUnsupportedReason = resolveVcsUnsupportedReason(gitStatus.data);
+  const vcsActionsSupported = supportsVcsActions(gitStatus.data);
   const allFiles = gitStatus.data?.workingTree?.files ?? [];
 
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
@@ -55,7 +63,8 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
   const selectedDeletions = selectedFiles.reduce((sum, file) => sum + file.deletions, 0);
 
   const runCommitAction = async (featureBranch: boolean) => {
-    if (!canWriteSourceControl || (featureBranch && !canChangeThreadBranch)) return;
+    if (!vcsActionsSupported || !canWriteSourceControl || (featureBranch && !canChangeThreadBranch))
+      return;
     const commitMessage = dialogCommitMessage.trim();
     navigation.goBack();
     await gitActions.onRunSelectedThreadGitAction({
@@ -80,7 +89,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
       <SheetHeader
         presentation={Platform.OS === "android" ? "inline" : "native"}
         title="Commit changes"
-        subtitle={gitStatus.data?.refName ?? "(detached HEAD)"}
+        subtitle={gitStatus.data?.refName ?? vcsTerminology.noRefDisplay}
         onCancel={() => navigation.goBack()}
         accessibilityLabel="Cancel commit"
       />
@@ -94,9 +103,19 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
         contentContainerClassName="px-5 pt-4 pb-6 gap-5"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
+        {vcsUnsupportedReason ? (
+          <Text accessibilityRole="alert" className="text-warning-foreground">
+            {vcsUnsupportedReason}
+          </Text>
+        ) : null}
+        {vcsTerminology.hooksNotice ? (
+          <Text className="text-xs leading-normal text-foreground-muted">
+            {vcsTerminology.hooksNotice}
+          </Text>
+        ) : null}
         {isDefaultRef ? (
           <Text className="text-sm text-warning-foreground">
-            You’re on the default branch. You can create a new branch when committing.
+            {`You’re on the default ${vcsTerminology.refNoun}. You can create a new ${vcsTerminology.refNoun} when committing.`}
           </Text>
         ) : null}
         <View className="gap-2">
@@ -210,15 +229,25 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
             icon="checkmark"
             tone="primary"
             fullWidth
-            disabled={!canWriteSourceControl || noneSelected || busy}
+            disabled={!vcsActionsSupported || !canWriteSourceControl || noneSelected || busy}
             onPress={() => void runCommitAction(false)}
           />
           <Button
-            label="Commit on a new branch"
+            label={
+              vcsTerminology.systemName === "Git"
+                ? "Commit on a new branch"
+                : vcsTerminology.changeOnNewRefLabel
+            }
             icon="arrow.branch"
             tone="text"
             fullWidth
-            disabled={!canWriteSourceControl || !canChangeThreadBranch || noneSelected || busy}
+            disabled={
+              !vcsActionsSupported ||
+              !canWriteSourceControl ||
+              !canChangeThreadBranch ||
+              noneSelected ||
+              busy
+            }
             onPress={() => void runCommitAction(true)}
           />
         </View>

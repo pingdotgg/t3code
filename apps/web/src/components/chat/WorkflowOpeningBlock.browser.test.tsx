@@ -1,6 +1,13 @@
-import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
-import { EnvironmentId } from "@t3tools/contracts";
+import {
+  deriveWorkflowGroups,
+  projectedSubagentsToRuntime,
+  type WorkflowOpening,
+} from "@t3tools/client-runtime/state/subagentRuntime";
+import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import type { ComponentProps } from "react";
 import { expect, it, vi } from "vite-plus/test";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { act, render } from "../../../test/render";
@@ -10,6 +17,19 @@ import { AppAtomRegistryProvider } from "../../rpc/atomRegistry";
 import { MarkdownFindContext } from "./markdownFindContext";
 import { useThreadFindHighlights } from "./threadFindHighlights";
 import { WorkflowOpeningBlock } from "./WorkflowOpeningBlock";
+
+const state = vi.hoisted(() => ({ tooltipEnvironment: vi.fn() }));
+
+vi.mock(import("./SubagentTooltipContent"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    SubagentTooltipContent: (props: ComponentProps<typeof actual.SubagentTooltipContent>) => {
+      state.tooltipEnvironment(props.title, props.environmentId);
+      return <actual.SubagentTooltipContent {...props} />;
+    },
+  };
+});
 
 vi.mock(import("../../state/server"), async (original) => {
   const actual = await original();
@@ -62,7 +82,8 @@ function Find(props: { readonly container: HTMLElement | null; readonly query: s
   return null;
 }
 
-async function renderOpening(script: string, query = "") {
+async function renderOpening(script: string, query = "", workflow?: WorkflowOpening) {
+  state.tooltipEnvironment.mockClear();
   const container = document.createElement("div");
   container.style.width = "720px";
   const block = (script: string, query: string) => (
@@ -70,7 +91,7 @@ async function renderOpening(script: string, query = "") {
       <MarkdownFindContext value={query.length > 0}>
         <div data-timeline-row-id="opening">
           <WorkflowOpeningBlock
-            opening={opening(script)}
+            opening={workflow ?? opening(script)}
             environmentId={EnvironmentId.make("environment-local")}
             onOpenThread={() => undefined}
           />
@@ -130,4 +151,48 @@ it("finds the workflow's name and opens a folded script on a match below the fol
   await screen.rerender(LONG_SCRIPT, "TAILONLY");
   expect(CSS.highlights.get("t3-thread-find-active")?.size).toBe(1);
   expect(foldToggle(screen.container)?.getAttribute("aria-expanded")).toBe("true");
+});
+
+it("passes the workflow environment to the real member hover card", async () => {
+  const [group] = deriveWorkflowGroups(
+    projectedSubagentsToRuntime([
+      {
+        id: "workflow",
+        title: "Checkout review",
+        prompt: "",
+        model: null,
+        status: "running",
+        result: null,
+        startedAt: null,
+        completedAt: null,
+        updatedAt: DateTime.makeUnsafe("2026-09-21T12:00:00Z"),
+        workflow: {
+          name: "Checkout review",
+          phases: [{ index: 0, title: "Inspect" }],
+          agents: [
+            {
+              index: 0,
+              label: "Checker",
+              state: "running",
+              phaseIndex: 0,
+              childThreadId: ThreadId.make("checker"),
+            },
+          ],
+        },
+      },
+    ]),
+  );
+  if (!group) throw new Error("Workflow fixture did not produce a group.");
+  await using _screen = await renderOpening(SHORT_SCRIPT, "", {
+    ...opening(SHORT_SCRIPT),
+    providerInstanceId: ProviderInstanceId.make("claude-work"),
+    group,
+  });
+  await userEvent.hover(page.getByRole("button", { name: "Open Checker", exact: true }));
+  await vi.waitFor(() =>
+    expect(state.tooltipEnvironment).toHaveBeenCalledWith(
+      "Checker",
+      EnvironmentId.make("environment-local"),
+    ),
+  );
 });

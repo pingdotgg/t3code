@@ -9,6 +9,7 @@ const harness = vi.hoisted(() => ({
   setOptionsCalls: 0,
   renderedRightItems: [] as Array<ReadonlyArray<Record<string, unknown>>>,
   navigatedRoutes: [] as string[],
+  openedPullRequests: [] as string[],
 }));
 
 vi.mock("@react-navigation/native", () => {
@@ -30,7 +31,12 @@ vi.mock("@react-navigation/native", () => {
     useNavigation: () => navigation,
   };
 });
-vi.mock("../../native/useOpenPullRequest", () => ({ useOpenPullRequest: () => () => {} }));
+vi.mock("../../native/useOpenPullRequest", () => ({
+  useOpenPullRequest: () => async (url: string) => {
+    harness.openedPullRequests.push(url);
+    return true;
+  },
+}));
 
 vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
 vi.mock("../../components/ui/AppBar", async () => {
@@ -150,6 +156,7 @@ afterEach(() => {
   harness.setOptionsCalls = 0;
   harness.renderedRightItems = [];
   harness.navigatedRoutes = [];
+  harness.openedPullRequests = [];
 });
 
 describe("ThreadHeader", () => {
@@ -172,6 +179,23 @@ describe("ThreadHeader", () => {
       render(<Header gitStatus={status([])} />);
     }
     expect(harness.setOptionsCalls).toBe(applied);
+  });
+
+  it("opens the existing PR from the clean synced Git quick action", async () => {
+    const url = "https://example.com/pr/1";
+    render(
+      <Header
+        gitStatus={status([], {
+          hasPrimaryRemote: true,
+          hasUpstream: true,
+          pr: { state: "open", url },
+        } as Partial<VcsStatusResult>)}
+      />,
+    );
+    expect(renderedGitMenuItems()[1]?.label).toBe("View PR");
+    await act(async () => renderedGitMenuItems()[1]?.onPress?.());
+    expect(harness.openedPullRequests).toEqual([url]);
+    expect(harness.navigatedRoutes).toEqual([]);
   });
 
   it("re-applies menu actions when the default ref changes behind the same label", async () => {

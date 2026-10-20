@@ -28,6 +28,7 @@ import * as ProjectStore from "./ProjectStore.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import { forkParked } from "../serverActivation.ts";
+import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 
 class ThreadPullRequestServiceV2 extends Context.Service<
@@ -102,6 +103,7 @@ export const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const projectStore = yield* ProjectStore.ProjectStoreV2;
   const git = yield* GitManager.GitManager;
+  const workflow = yield* GitWorkflowService.GitWorkflowService;
   const pullRequests = yield* PullRequestService.PullRequestService;
   const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
   const crypto = yield* Crypto.Crypto;
@@ -187,10 +189,12 @@ export const make = Effect.gen(function* () {
           if (first.branch !== null && repository === null) return finishBackfill(group);
           const worktreeExists =
             first.worktreePath !== null && (yield* fileSystem.exists(first.worktreePath));
-          const cwd =
+          const checkoutCwd =
             worktreeExists && first.worktreePath !== null
               ? first.worktreePath
               : project.workspaceRoot;
+          const cwd =
+            first.branch === null ? checkoutCwd : yield* workflow.providerCwd(checkoutCwd);
           const detected =
             first.branch === null
               ? null
