@@ -370,9 +370,7 @@ describe("server browser drag", () => {
   });
 });
 
-// TODO(#19913 follow-up): flaky in CI since 2e8b5b9d; the capture can return the pre-resize frame.
-// Skipped to unblock main; a proper fix makes the capture wait for the resized frame.
-it.skip("captures the native display viewport after page script reassigns the globals", async () => {
+it("captures the native display viewport after page script reassigns the globals", async () => {
   // Context deviceScaleFactor changes DPR but does not scale raw CDP captures.
   const browser = await chromium.launch({
     headless: true,
@@ -411,9 +409,13 @@ it.skip("captures the native display viewport after page script reassigns the gl
       offset: { x: 0, y: 0 },
     });
     const { windowId } = await cdp.send("Browser.getWindowForTarget");
-    // CDP acknowledges the bounds change before the renderer applies the resize.
+    // CDP acknowledges the bounds change before the renderer applies it, and a resize event can
+    // fire for a size on the way there. Page script replaced innerWidth, so read the layout.
     const resize = await page.evaluateHandle(`({
-      done: new Promise(resolve => window.addEventListener("resize", () => resolve(), { once: true })),
+      done: new Promise(resolve => window.addEventListener("resize", () => {
+        const { clientWidth, clientHeight } = document.documentElement;
+        if (clientWidth === 390 && clientHeight === 844) resolve();
+      })),
     })`);
     await cdp.send("Browser.setWindowBounds", {
       windowId,
@@ -421,6 +423,11 @@ it.skip("captures the native display viewport after page script reassigns the gl
     });
     await resize.evaluate("resize => resize.done");
     await resize.dispose();
+    expect(await ServerBrowserPage.readPageMetrics(cdp)).toMatchObject({
+      ratio: 1.5,
+      width: 390,
+      height: 844,
+    });
     expect(await snapshotSize()).toEqual({ width: 585, height: 1266 });
   } finally {
     await browser.close();
