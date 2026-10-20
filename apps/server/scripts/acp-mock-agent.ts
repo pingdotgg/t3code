@@ -1383,6 +1383,7 @@ const program = Effect.gen(function* () {
         (emitRunningCommandThenHangOnFirstPrompt && promptCount === 1)
       ) {
         const toolCallId = "tool-call-running-1";
+        let runningCommandPublished: Promise<void> = Promise.resolve();
         if (runningCommandPidPath !== undefined) {
           const command = runningCommandIgnoresTerm
             ? 'trap "" TERM; bash -c \'trap "" TERM; while :; do sleep 1; done\' & child=$!; printf "%s %s\n" "$$" "$child" > "$1"; wait "$child"'
@@ -1390,19 +1391,24 @@ const program = Effect.gen(function* () {
           if (runningCommandSeparateSession) {
             const launcher = [
               'const { spawn } = require("node:child_process");',
-              "const child = spawn(process.argv[1], process.argv.slice(2), { stdio: 'ignore' });",
+              "const child = spawn(process.argv[1], process.argv.slice(2), { stdio: ['ignore', 'inherit', 'ignore'] });",
               "child.once('exit', (code, signal) => process.exitCode = code ?? (signal ? 1 : 0));",
             ].join(" ");
             const detachedCommand = runningCommandIgnoresTerm
-              ? 'trap "" TERM; bash -c \'trap "" TERM; while :; do sleep 1; done\' & child=$!; printf "%s %s %s\n" "$PPID" "$$" "$child" > "$1"; wait "$child"'
-              : 'sleep 120 & child=$!; printf "%s %s %s\n" "$PPID" "$$" "$child" > "$1"; wait "$child"';
+              ? 'trap "" TERM; bash -c \'trap "" TERM; while :; do sleep 1; done\' & child=$!; printf "%s %s %s\n" "$PPID" "$$" "$child" > "$1"; echo published; wait "$child"'
+              : 'sleep 120 & child=$!; printf "%s %s %s\n" "$PPID" "$$" "$child" > "$1"; echo published; wait "$child"';
             // Nested bash publishes "$PPID $$ $child" once it starts. Do not
             // write the launcher PID alone here: that races with bash and can
-            // clobber the triple that interrupt tests wait for.
+            // clobber the triple that interrupt tests wait for. It then prints a
+            // line, so an agent that exits after launch only exits once the
+            // triple exists instead of racing a slow launcher start.
             const detachedLauncher = NodeChildProcess.spawn(
               process.execPath,
               ["-e", launcher, "bash", "-c", detachedCommand, "bash", runningCommandPidPath],
-              { detached: true, stdio: "ignore" },
+              { detached: true, stdio: ["ignore", "pipe", "ignore"] },
+            );
+            runningCommandPublished = new Promise((resolve) =>
+              detachedLauncher.stdout.once("data", () => resolve()),
             );
             detachedLauncher.unref();
           } else {
@@ -1460,6 +1466,7 @@ const program = Effect.gen(function* () {
           },
         });
         if (exitAfterRunningCommandLaunch) {
+          yield* Effect.promise(() => runningCommandPublished);
           yield* Effect.sleep("100 millis");
           return yield* Effect.sync(() => process.exit(0));
         }

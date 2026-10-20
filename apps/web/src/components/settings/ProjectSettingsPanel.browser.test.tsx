@@ -429,35 +429,36 @@ describe("project settings permissions", () => {
 });
 
 describe("project settings scope", () => {
-  it("offers project checkout environments while keeping unselected and unknown projects recoverable", async () => {
+  const environmentMenu = () => page.getByRole("button", { name: /^Environment scope:/ });
+  const primaryOption = () => page.getByRole("menuitemradio", { name: /^primary/ });
+  const remoteOption = () => page.getByRole("menuitemradio", { name: /^remote/ });
+
+  it("offers every environment while no project is selected", async () => {
     setup();
     state.projects = state.projects.filter((project) => project.environmentId === primaryId);
-    const key = projectKey();
-    await using screen = await mountSettings({});
-    const environmentMenu = () => page.getByRole("button", { name: /^Environment scope:/ });
-    const primaryOption = () => page.getByRole("menuitemradio", { name: /^primary/ });
-    const remoteOption = () => page.getByRole("menuitemradio", { name: /^remote/ });
+    await using _screen = await mountSettings({});
 
     await userEvent.click(environmentMenu());
     await expect.element(primaryOption()).toBeVisible();
     await expect.element(remoteOption()).toBeVisible();
-    await userEvent.keyboard("{Escape}");
+  });
 
-    await act(async () =>
-      screen.router.navigate({ to: "/settings/projects", search: () => ({ project: key }) }),
-    );
+  it("offers only the selected project's checkout environments", async () => {
+    setup();
+    state.projects = state.projects.filter((project) => project.environmentId === primaryId);
+    await using _screen = await mountSettings({ project: projectKey() });
+
     await expect.element(page.getByRole("textbox", { name: "Project name" })).toBeVisible();
     await userEvent.click(environmentMenu());
     await expect.element(primaryOption()).toBeVisible();
     await expect.element(remoteOption()).not.toBeInTheDocument();
-    await userEvent.keyboard("{Escape}");
+  });
 
-    await act(async () =>
-      screen.router.navigate({
-        to: "/settings/projects",
-        search: () => ({ project: "removed-project" }),
-      }),
-    );
+  it("keeps an unknown project recoverable from any environment", async () => {
+    setup();
+    state.projects = state.projects.filter((project) => project.environmentId === primaryId);
+    await using screen = await mountSettings({ project: "removed-project" });
+
     await userEvent.click(environmentMenu());
     await expect.element(primaryOption()).toBeVisible();
     await expect.element(remoteOption()).toBeVisible();

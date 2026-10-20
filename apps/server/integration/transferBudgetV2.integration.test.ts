@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - Measures real local HTTP/WebSocket sockets.
 import * as NodeHttp from "node:http";
+import * as NodeUtil from "node:util";
 import { assert, it } from "@effect/vitest";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
@@ -299,9 +300,16 @@ it.live(
             const events = turnEvents(provider, TRANSFER_HISTORY_TURN_COUNT, true);
             const stored = yield* sink.write({ events });
             const last = stored.at(-1)!;
-            const terminal = (item: StreamItem) =>
+            const threadTerminal = (item: StreamItem) =>
               "sequence" in item && item.sequence >= last.sequence;
-            for (const queue of [tq, sq, ttq, ssq]) yield* collectUntil(queue, terminal);
+            // Shell items carry the shell read when their batch is projected, and unchanged
+            // shells are skipped, so a turn split across batches may never yield an item at
+            // the last sequence. Wait for the final shell instead.
+            const finalShell = yield* projection.getThreadShell(THREAD_ID);
+            const shellTerminal = (item: StreamItem) =>
+              item.kind === "thread.updated" && NodeUtil.isDeepStrictEqual(item.thread, finalShell);
+            for (const queue of [tq, ttq]) yield* collectUntil(queue, threadTerminal);
+            for (const queue of [sq, ssq]) yield* collectUntil(queue, shellTerminal);
             const measuredTurnWebSocket = difference(thread.recorder.totals(), threadBefore);
             const measuredTurnShellWebSocket = difference(shell.recorder.totals(), shellBefore);
             const measuredTurnSecondClientWebSocket = difference(

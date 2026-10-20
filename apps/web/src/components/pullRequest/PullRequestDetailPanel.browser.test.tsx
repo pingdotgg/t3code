@@ -153,6 +153,14 @@ vi.mock(import("./PullRequestSummaryTab"), async (original) => {
     }) as never,
   };
 });
+// The Code tab waits for the diff worker pool, and a cold pool starts real Shiki workers that
+// a loaded runner can keep past Pierre's 10s startup limit. These tests are about the panel,
+// so the pool falls back to main-thread highlighting at once.
+vi.mock("@pierre/diffs/worker/worker.js?worker", () => ({
+  default: function UnavailableDiffsWorker() {
+    throw new Error("Diff workers are disabled in panel tests");
+  },
+}));
 vi.mock(import("../ui/toast"), async (original) => {
   const actual = await original();
   return {
@@ -398,7 +406,6 @@ describe.each([
     );
   });
 
-  // The first Code-tab action starts real diff workers as well as driving the panel.
   it.each([
     "Resolve conflicts",
     "Ask a question",
@@ -406,7 +413,7 @@ describe.each([
     "Fix findings in this thread",
     "Fix check",
     "Add to agent",
-  ])("%s writes to the correct composer", { timeout: 30_000 }, async (action) => {
+  ])("%s writes to the correct composer", async (action) => {
     setup();
     // Cover both a host without inline comments and an account that cannot write them.
     currentDetail =

@@ -129,9 +129,14 @@ const imageUrl = `data:image/svg+xml,${encodeURIComponent(
   '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="red"/></svg>',
 )}`;
 
+// The registry drops an unsubscribed atom on its next task. A row calls createUrl while it
+// renders but subscribes only after React commits, so on a busy runner a URL published
+// in between would be dropped. A server keeps its answer; keepAlive models that.
 function addFiles(paths: string[]) {
   state.entries = paths.map((path) => ({ path, kind: "file" }));
-  for (const path of paths) state.assets.set(path, Atom.make<AssetResult>(AsyncResult.initial()));
+  for (const path of paths) {
+    state.assets.set(path, Atom.make<AssetResult>(AsyncResult.initial()).pipe(Atom.keepAlive));
+  }
 }
 
 function fileRow(path: string) {
