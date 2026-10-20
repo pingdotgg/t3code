@@ -172,6 +172,7 @@ const isTransientGitExit = (stderr: string) =>
 // bare write error too; explicit unrelated errors remain failures.
 // Linux writeout-only only starts writeback, so it must not use this fallback.
 const FULL_FSYNC_ARG = "core.fsyncMethod=fsync";
+const BATCH_FSYNC_ARG = "core.fsyncMethod=batch";
 const WRITEOUT_ONLY_FSYNC_ARG = "core.fsyncMethod=writeout-only";
 const canRetryFullFsync = (stderr: string) =>
   /fsync error on [^\r\n]+: operation not supported\r?$/im.test(stderr) ||
@@ -249,13 +250,15 @@ export const make = Effect.gen(function* () {
       result.code !== null &&
       result.code !== 0 &&
       input.command === "git" &&
-      input.args.includes(FULL_FSYNC_ARG) &&
+      (input.args.includes(FULL_FSYNC_ARG) || input.args.includes(BATCH_FSYNC_ARG)) &&
       canRetryFullFsync(result.stderr)
     ) {
       result = yield* spawn(
         {
           ...input,
-          args: input.args.map((arg) => (arg === FULL_FSYNC_ARG ? WRITEOUT_ONLY_FSYNC_ARG : arg)),
+          args: input.args.map((arg) =>
+            arg === FULL_FSYNC_ARG || arg === BATCH_FSYNC_ARG ? WRITEOUT_ONLY_FSYNC_ARG : arg,
+          ),
         },
         baseError,
       );

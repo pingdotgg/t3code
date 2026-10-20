@@ -184,8 +184,17 @@ describe("VcsProcess.run", () => {
       stderr: "fatal: fsync error on '.git/objects/a5/tmp_obj_Pseg66': Operation not supported",
       fsyncMethods: ["fsync"],
     },
+    {
+      stderr: "fatal: fsync error on '.git/objects/bulk_fsync_Pseg66': Operation not supported",
+      fsyncMethods: ["batch", "writeout-only"],
+    },
+    {
+      stderr:
+        "fatal: update_ref failed for ref 'refs/t3/checkpoints/x': cannot update ref 'refs/t3/checkpoints/x': couldn't write '/Volumes/share/.git/refs/t3/checkpoints/x.lock'",
+      fsyncMethods: ["batch", "writeout-only"],
+    },
   ] as const)(
-    "falls back to writeout-only only for unsupported fsync on macOS: $stderr",
+    "falls back to writeout-only only for unsupported flushes on macOS ($fsyncMethods): $stderr",
     ({ stderr, fsyncMethods, ...scenario }) =>
       Effect.gen(function* () {
         const seen: Array<ReadonlyArray<string>> = [];
@@ -199,7 +208,7 @@ describe("VcsProcess.run", () => {
               Effect.sync(() => {
                 seen.push(input.args);
                 const failed =
-                  input.args.includes("core.fsyncMethod=fsync") ||
+                  input.args.includes(`core.fsyncMethod=${fsyncMethods[0]}`) ||
                   ("fallbackFails" in scenario && scenario.fallbackFails);
                 return {
                   stdout: "",
@@ -221,7 +230,14 @@ describe("VcsProcess.run", () => {
               "operation" in scenario
                 ? scenario.operation
                 : VcsProcess.CHECKPOINT_CAPTURE_OPERATION,
-            args: ["-c", "core.fsync=objects,reference", "-c", "core.fsyncMethod=fsync", "add"],
+            args: [
+              "-c",
+              "core.fsync=objects,reference",
+              "-c",
+              ...(fsyncMethods[0] === "batch" ? ["core.fsyncMethod=fsync", "-c"] : []),
+              `core.fsyncMethod=${fsyncMethods[0]}`,
+              "add",
+            ],
           })
           .pipe(Effect.exit);
         expect(seen).toEqual(
@@ -229,6 +245,9 @@ describe("VcsProcess.run", () => {
             "-c",
             "core.fsync=objects,reference",
             "-c",
+            ...(fsyncMethods[0] === "batch"
+              ? [`core.fsyncMethod=${method === "batch" ? "fsync" : method}`, "-c"]
+              : []),
             `core.fsyncMethod=${method}`,
             "add",
           ]),

@@ -1367,69 +1367,83 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it.effect("GitVcsDriver flushes checkpoint objects and refs to disk before publishing them", () => {
-  const observedArgs: ReadonlyArray<string>[] = [];
+it.effect.each([
+  { platform: "linux", fsyncMethods: ["fsync"] },
+  { platform: "darwin", fsyncMethods: ["fsync", "batch"] },
+  { platform: "win32", fsyncMethods: ["fsync", "batch"] },
+] as const)(
+  "GitVcsDriver flushes checkpoint objects and refs to disk before publishing them on $platform",
+  ({ platform, fsyncMethods }) => {
+    const observedArgs: ReadonlyArray<string>[] = [];
 
-  return Effect.gen(function* () {
-    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    return Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
 
-    yield* driver.checkpoints.captureCheckpoint({
-      cwd: "/repo",
-      checkpointRef: CheckpointRef.make("refs/t3/checkpoints/thread/turn/1"),
-    });
+      yield* driver.checkpoints.captureCheckpoint({
+        cwd: "/repo",
+        checkpointRef: CheckpointRef.make("refs/t3/checkpoints/thread/turn/1"),
+      });
 
-    const writeCommands = ["add", "write-tree", "commit-tree", "update-ref"];
-    const writes = observedArgs.filter((args) =>
-      writeCommands.some((command) => args.includes(command)),
-    );
-    assert.strictEqual(writes.length, 4);
-    for (const args of writes) {
-      const command = args.findIndex((arg) => writeCommands.includes(arg));
-      for (const setting of ["core.fsync=objects,reference", "core.fsyncMethod=fsync"]) {
-        const index = args.indexOf(setting);
-        assert.strictEqual(args[index - 1], "-c", args.join(" "));
-        assert.isBelow(index, command);
+      const writeCommands = ["add", "write-tree", "commit-tree", "update-ref"];
+      const writes = observedArgs.filter((args) =>
+        writeCommands.some((command) => args.includes(command)),
+      );
+      assert.strictEqual(writes.length, 4);
+      for (const args of writes) {
+        const command = args.findIndex((arg) => writeCommands.includes(arg));
+        assert.deepStrictEqual(
+          args.filter((arg) => arg.startsWith("core.fsyncMethod=")),
+          fsyncMethods.map((method) => `core.fsyncMethod=${method}`),
+        );
+        for (const setting of [
+          "core.fsync=objects,reference",
+          ...fsyncMethods.map((method) => `core.fsyncMethod=${method}`),
+        ]) {
+          const index = args.indexOf(setting);
+          assert.strictEqual(args[index - 1], "-c", args.join(" "));
+          assert.isBelow(index, command);
+        }
       }
-    }
-    assert.deepStrictEqual(observedArgs.at(-1), [
-      "-C",
-      "/repo",
-      "-c",
-      "core.fsync=objects,reference",
-      "-c",
-      "core.fsyncMethod=fsync",
-      "update-ref",
-      "refs/t3/checkpoints/thread/turn/1",
-      "commit0000",
-    ]);
-  }).pipe(
-    Effect.provide(
-      Layer.mergeAll(
-        NodeServices.layer,
-        Layer.mock(VcsProcess.VcsProcess)({
-          run: (input) =>
-            Effect.sync(() => {
-              observedArgs.push(input.args);
-              const stdout = input.args.includes("write-tree")
-                ? "tree0000\n"
-                : input.args.includes("commit-tree")
-                  ? "commit0000\n"
-                  : input.args.includes("--git-common-dir")
-                    ? ".git\n"
-                    : "";
-              return {
-                exitCode: ChildProcessSpawner.ExitCode(0),
-                stdout,
-                stderr: "",
-                stdoutTruncated: false,
-                stderrTruncated: false,
-              };
-            }),
-        }),
+      assert.deepStrictEqual(observedArgs.at(-1), [
+        "-C",
+        "/repo",
+        "-c",
+        "core.fsync=objects,reference",
+        ...fsyncMethods.flatMap((method) => ["-c", `core.fsyncMethod=${method}`]),
+        "update-ref",
+        "refs/t3/checkpoints/thread/turn/1",
+        "commit0000",
+      ]);
+    }).pipe(
+      Effect.provideService(HostProcess.Platform, platform),
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          Layer.mock(VcsProcess.VcsProcess)({
+            run: (input) =>
+              Effect.sync(() => {
+                observedArgs.push(input.args);
+                const stdout = input.args.includes("write-tree")
+                  ? "tree0000\n"
+                  : input.args.includes("commit-tree")
+                    ? "commit0000\n"
+                    : input.args.includes("--git-common-dir")
+                      ? ".git\n"
+                      : "";
+                return {
+                  exitCode: ChildProcessSpawner.ExitCode(0),
+                  stdout,
+                  stderr: "",
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                };
+              }),
+          }),
+        ),
       ),
-    ),
-  );
-});
+    );
+  },
+);
 
 it.effect.each(["win32", "linux"] as const)(
   "checkpoint working-tree commands enable Git long paths only on Windows (%s)",
