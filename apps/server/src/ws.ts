@@ -1573,11 +1573,7 @@ export const layerWsRpc = (
             }
             // The thread is usable without its history, so a failed read only logs.
             yield* agentSessionImporter
-              .importNativeHistory({
-                threadId,
-                adapter: instance.orchestrationAdapter,
-                workspaceRoot: project.workspaceRoot,
-              })
+              .importNativeHistory({ threadId, workspaceRoot: project.workspaceRoot })
               .pipe(
                 Effect.catch((cause) =>
                   Effect.logWarning("Could not import ACP session history", {

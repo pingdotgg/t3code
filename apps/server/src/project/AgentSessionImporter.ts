@@ -33,8 +33,8 @@ import * as Stream from "effect/Stream";
 
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.ts";
 import * as AgentSessionScanner from "./AgentSessionScanner.ts";
 import * as ProjectService from "./ProjectService.ts";
@@ -173,6 +173,7 @@ const make = Effect.gen(function* () {
   const eventSink = yield* EventSink.EventSinkV2;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const runtimes = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+  const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
   const importRecentAgentThreads = Effect.fn("importRecentAgentThreadsV2")(function* (
     input: AgentSessionImportInput,
   ) {
@@ -412,7 +413,6 @@ const make = Effect.gen(function* () {
    */
   const importNativeHistory = Effect.fn("importNativeHistoryV2")(function* (input: {
     readonly threadId: ThreadId;
-    readonly adapter: ProviderAdapter.ProviderAdapterV2["Service"];
     readonly workspaceRoot: string;
   }) {
     const { thread, providerThreads } = yield* orchestrator.getThreadRecords(input.threadId, [
@@ -427,7 +427,9 @@ const make = Effect.gen(function* () {
       providerInstanceId: providerThread.providerInstanceId,
       threadId: input.threadId,
     });
-    const snapshot = yield* input.adapter
+    // The registry admits this open against sign-in changes, like any other open.
+    const adapter = yield* registry.get(thread.modelSelection.instanceId);
+    const snapshot = yield* adapter
       .openSession({
         threadId: input.threadId,
         providerSessionId,

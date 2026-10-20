@@ -7921,7 +7921,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     !restartRequired &&
                     !transportHadOutstandingResponses
                   ) {
-                    yield* runtime.closeSession().pipe(Effect.ignore);
+                    // Finalizers can't be interrupted, so an agent that never
+                    // answers would keep its process and this scope open.
+                    yield* runtime
+                      .closeSession()
+                      .pipe(Effect.timeoutOption("10 seconds"), Effect.ignore);
                   }
                 }),
               );

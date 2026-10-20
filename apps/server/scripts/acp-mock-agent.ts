@@ -696,6 +696,9 @@ const program = Effect.gen(function* () {
   yield* agent.handleCloseSession(() =>
     Effect.gen(function* () {
       yield* requireAuthentication();
+      if (process.env.T3_ACP_HANG_CLOSE_SESSION === "1") {
+        return yield* Effect.never;
+      }
       return {};
     }),
   );

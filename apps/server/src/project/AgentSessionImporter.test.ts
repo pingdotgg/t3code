@@ -27,6 +27,7 @@ import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as EventStore from "../orchestration-v2/EventStore.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
   CLAUDE_MODEL_SELECTION,
   CODEX_MODEL_SELECTION,
@@ -171,6 +172,7 @@ const seedOwner = Effect.fn(function* (
 const makeImporter = Effect.fn(function* (
   candidates: ReadonlyArray<ReturnType<typeof candidate>>,
   beforeTransaction: Effect.Effect<void> = Effect.void,
+  getAdapter?: ProviderAdapterRegistry.ProviderAdapterRegistryV2Shape["get"],
 ) {
   const sql = yield* SqlClient.SqlClient;
   const events = yield* EventStore.EventStoreV2;
@@ -237,6 +239,9 @@ const makeImporter = Effect.fn(function* (
                   ),
                 ),
           }),
+          Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)(
+            getAdapter === undefined ? {} : { get: getAdapter },
+          ),
         ),
       ),
     ),
@@ -412,7 +417,7 @@ it.effect("copies the history a native session load replays into the imported th
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const source = candidate(CODEX_MODEL_SELECTION, "native-history");
     const threadId = yield* seedOwner(source);
-    const importer = yield* makeImporter([]);
+    const resolved: Array<ProviderInstanceId> = [];
     const opened: Array<ProviderAdapter.ProviderAdapterV2OpenSessionInput> = [];
     let closed = false;
     const replayed = (role: "user" | "assistant", text: string) => ({
@@ -454,14 +459,17 @@ it.effect("copies the history a native session load replays into the imported th
             }),
         ),
     } as unknown as ProviderAdapter.ProviderAdapterV2["Service"];
+    const importer = yield* makeImporter([], Effect.void, (instanceId) =>
+      Effect.sync(() => {
+        resolved.push(instanceId);
+        return adapter;
+      }),
+    );
 
     expect(
-      yield* importer.importNativeHistory({
-        threadId,
-        adapter,
-        workspaceRoot: "/workspace/project",
-      }),
+      yield* importer.importNativeHistory({ threadId, workspaceRoot: "/workspace/project" }),
     ).toBe(2);
+    expect(resolved).toEqual([CODEX_MODEL_SELECTION.instanceId]);
     expect(opened).toMatchObject([
       {
         threadId,
