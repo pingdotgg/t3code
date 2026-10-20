@@ -114,11 +114,17 @@ describe("resolveLinkPullRequestInput", () => {
     expect(result).toMatchObject({ error: expect.stringContaining("gitlab.com") });
   });
 
-  it("asks for a URL when a bare number has no project to resolve against", () => {
-    expect(
-      resolveLinkPullRequestInput({ reference: "12", project: null, hasProject: () => true }),
-    ).toMatchObject({ error: expect.stringContaining("full URL") });
-  });
+  it.each(["12", "#12"])(
+    "names the missing repository when resolving bare number %s",
+    (reference) => {
+      expect(
+        resolveLinkPullRequestInput({ reference, project: null, hasProject: () => true }),
+      ).toEqual({
+        error:
+          "Paste the full pull request URL; this thread has no repository to resolve the number against.",
+      });
+    },
+  );
 
   it("accepts a checkout command as a reference", () => {
     expect(
