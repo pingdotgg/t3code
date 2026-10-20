@@ -220,6 +220,9 @@ minimumReleaseAgeExclude:
   - "@expo/schema-utils@58.0.2"
 
 overrides:
+  # Keep on the patched version. A fresh resolution would take a newer release and
+  # fail on the unused patch. Move this with patches/expo-modules-core@*.patch.
+  expo-modules-core: 58.0.22
   # Keep jsdom's optional peer consistent so Vite+ has one test-runner instance.
   "@exodus/bytes>@noble/hashes": "1.8.0"
   # Earlier React Navigation declarations create a circular type alias in TypeScript 7.
