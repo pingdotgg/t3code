@@ -9,7 +9,7 @@ import { useNpmReleasePublished } from "~/state/npmRelease";
 import { environmentIdsKey } from "~/state/environmentAtomList";
 import { environmentUpdateStatesAtom } from "~/state/server";
 import { environmentSessionStatesAtom } from "~/state/session";
-import { getProviderUpdateRunOutcome } from "../ProviderUpdateLaunchNotification.logic";
+import { getProviderUpdateRunOutcome } from "../ProviderUpdate.logic";
 import { useProviderUpdates } from "../ProviderUpdatesAction";
 import { canUpdateServer, type ServerUpdateOutcome, useServerUpdate } from "../ServerUpdateAction";
 import {

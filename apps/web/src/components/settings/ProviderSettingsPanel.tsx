@@ -73,7 +73,7 @@ import {
   isProviderSettingsUpdateCandidate,
   isProviderUpdateActive,
   type ProviderSettingsUpdateCandidate,
-} from "../ProviderUpdateLaunchNotification.logic";
+} from "../ProviderUpdate.logic";
 import { ProviderUpdatesAction } from "../ProviderUpdatesAction";
 import { Button } from "../ui/button";
 import {

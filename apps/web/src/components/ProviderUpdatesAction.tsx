@@ -10,7 +10,7 @@ import {
   collectProviderUpdateCandidates,
   getProviderUpdateRunToastView,
   type ProviderUpdateRun,
-} from "./ProviderUpdateLaunchNotification.logic";
+} from "./ProviderUpdate.logic";
 import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
