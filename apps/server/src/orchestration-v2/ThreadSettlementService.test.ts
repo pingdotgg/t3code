@@ -297,8 +297,28 @@ describe("resolveAutoSettlementAt", () => {
     expect(
       ThreadSettlementService.resolveAutoSettlementAt({ ...input, autoSettleAfterDays: null }),
     ).toBeNull();
+  });
+
+  it("anchors an empty thread's inactivity at its creation time", () => {
+    const input = {
+      thread: shell({ createdAt: at(-3 * DAY_MS) }),
+      pullRequest: null,
+      nowMs: NOW_MS,
+      autoSettleAfterDays: 2,
+      autoSettleOnMerge: false,
+    };
+    expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toEqual(at(-3 * DAY_MS));
     expect(
-      ThreadSettlementService.resolveAutoSettlementAt({ ...input, thread: shell() }),
+      ThreadSettlementService.resolveAutoSettlementAt({
+        ...input,
+        thread: shell({ createdAt: at(-DAY_MS) }),
+      }),
+    ).toBeNull();
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({
+        ...input,
+        thread: { ...input.thread, lastSnoozeWakeAt: at(-DAY_MS) },
+      }),
     ).toBeNull();
   });
 

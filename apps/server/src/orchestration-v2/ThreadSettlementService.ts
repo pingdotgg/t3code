@@ -231,19 +231,20 @@ export function resolveAutoSettlementAt(input: {
           };
   }
   if (!isAutoSettlementCandidate(thread, input.nowMs)) return null;
-  const activityAtMs = latestMillis([
-    toMillis(thread.latestUserMessageAt),
-    toMillis(thread.latestRunRequestedAt),
-    toMillis(thread.latestRunStartedAt),
-    toMillis(thread.latestRunCompletedAt),
-  ]);
+  const activityAtMs =
+    latestMillis([
+      toMillis(thread.latestUserMessageAt),
+      toMillis(thread.latestRunRequestedAt),
+      toMillis(thread.latestRunStartedAt),
+      toMillis(thread.latestRunCompletedAt),
+    ]) ?? DateTime.toEpochMillis(thread.createdAt);
   if (pullRequest !== null && pullRequestSettles(thread, pullRequest, input.autoSettleOnMerge)) {
-    return activityAtMs === null ? thread.createdAt : DateTime.makeUnsafe(activityAtMs);
+    return DateTime.makeUnsafe(activityAtMs);
   }
   const hasPullRequest =
     pullRequest !== null || thread.linkedPullRequest != null || thread.branchPullRequest != null;
   if (input.autoSettleKeepPullRequests === true && hasPullRequest) return null;
-  if (input.autoSettleAfterDays === null || activityAtMs === null) return null;
+  if (input.autoSettleAfterDays === null) return null;
   const snoozedUntilMs = toMillis(thread.snoozedUntil);
   const timerWakeAtMs =
     snoozedUntilMs !== null && snoozedUntilMs <= input.nowMs ? snoozedUntilMs : null;
