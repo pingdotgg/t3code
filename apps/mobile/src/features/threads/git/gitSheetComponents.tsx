@@ -1,4 +1,5 @@
 import { SymbolView } from "../../../components/ui/AppSymbol";
+import { DEFAULT_VCS_TERMINOLOGY, type VcsTerminology } from "@t3tools/shared/vcs";
 import type { ComponentProps } from "react";
 import { View } from "react-native";
 import { Button } from "../../../components/ui/Button";
@@ -34,13 +35,14 @@ export function statusSummary(
     readonly behindCount?: number;
     readonly pr?: { readonly state?: string; readonly number?: number } | null;
   } | null,
+  terminology: VcsTerminology = DEFAULT_VCS_TERMINOLOGY,
 ): string {
   if (!gitStatus) {
-    return "Loading branch status\u2026";
+    return `Loading ${terminology.refNoun} status\u2026`;
   }
 
   if (!gitStatus.isRepo) {
-    return "Not a git repository";
+    return `Not a ${terminology.repositoryAdjective} repository`;
   }
 
   const parts: string[] = [];

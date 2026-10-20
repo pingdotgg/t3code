@@ -118,6 +118,7 @@ const layerLive = RuntimeLayer.layer.pipe(
   Layer.provide(McpSessionRegistryTestkit.layer),
   Layer.provide(SqlitePersistence.layerMemory),
   Layer.provide(layerCheckpointStore),
+  Layer.provide(layerVcsDriverRegistry),
   Layer.provide(layerServerConfig),
   Layer.provide(layerServerSettings),
   Layer.provide(layerProviderInstanceRegistry),

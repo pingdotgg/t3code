@@ -2,9 +2,11 @@ import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
   EnvironmentId,
+  GitCommandError,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
 import { memo } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -13,9 +15,9 @@ import { page, userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 import { act, render } from "../../test/render";
 
-type Branched = { readonly branch: string };
+type Branched = { readonly branch: string | null };
 type GitActionInput = { featureBranch?: boolean; threadId?: string; action: string };
-type Toast = { actionProps?: { onClick: () => void } };
+type Toast = { actionProps?: { onClick: () => void }; description?: string };
 
 const state = vi.hoisted(() => ({
   scopes: new Set<string>(),
@@ -23,8 +25,11 @@ const state = vi.hoisted(() => ({
   shell: null as Branched | null,
   detail: null as Branched | null,
   draft: null as (Branched & { worktreePath: null; envMode: "local" }) | null,
-  branch: "main",
+  branch: "main" as string | null,
   isDefaultRef: false,
+  jj: false,
+  unsupportedReason: "",
+  actionError: null as unknown,
   actions: [] as { scope: { cwd: string | null }; input: GitActionInput }[],
   metadataRequests: [] as { environmentId: string; branch: string }[],
   toasts: [] as Toast[],
@@ -73,6 +78,10 @@ vi.mock(import("~/state/query"), async (original) => ({
       aheadCount: 0,
       behindCount: 0,
       pr: null,
+      vcs: {
+        kind: state.jj ? "jj" : "git",
+        unsupportedReason: state.unsupportedReason || undefined,
+      },
     },
     error: null,
   })) as never,
@@ -122,6 +131,7 @@ vi.mock(import("~/lib/sourceControlActions"), async (original) => ({
   useGitStackedAction: ((scope: { cwd: string | null }) => ({
     run: async (input: GitActionInput) => {
       state.actions.push({ scope, input });
+      if (state.actionError) return AsyncResult.failure(Cause.fail(state.actionError));
       if (input.featureBranch) state.branch = "feature";
       state.afterGitAction?.();
       return {
@@ -199,6 +209,9 @@ function setup() {
   state.draft = null;
   state.branch = "main";
   state.isDefaultRef = false;
+  state.jj = false;
+  state.unsupportedReason = "";
+  state.actionError = null;
   state.actions = [];
   state.metadataRequests = [];
   state.toasts = [];
@@ -373,6 +386,86 @@ describe("Changed-file editor targets", () => {
 
     await expect.element(button("Open nested/new.txt in editor")).toBeDisabled();
     expect(state.editorOpens).toEqual([]);
+  });
+});
+
+describe("unsupported VCS transitions", () => {
+  it.each(["unsupported_repository", "path_already_exists"] as const)(
+    "shows the serialized %s refusal when preparing a feature branch",
+    async (reason) => {
+      setup();
+      state.scopes.add(AuthOrchestrationOperateScope);
+      const codec = Schema.toCodecJson(GitCommandError);
+      const error = new GitCommandError({
+        operation: "runStackedAction",
+        command: "jj",
+        cwd: "/repo",
+        reason,
+        detail: "Enable colocation with jj git colocation enable.",
+      });
+      state.actionError = Schema.decodeSync(codec)(Schema.encodeSync(codec)(error));
+      await using screen = await render(control());
+      await openCommitDialog();
+      await userEvent.click(button("Commit on new branch"));
+
+      await vi.waitFor(() =>
+        expect(state.toasts.at(-1)?.description).toBe(
+          reason === "unsupported_repository" ? error.detail : error.message,
+        ),
+      );
+      expect(state.branch).toBe("main");
+      expect(state.metadataRequests).toEqual([]);
+    },
+  );
+
+  it("gates a branchless existing thread after its first unsupported status", async () => {
+    setup();
+    state.scopes.add(AuthOrchestrationOperateScope);
+    state.shell = { branch: null };
+    state.branch = null;
+    state.jj = true;
+    state.unsupportedReason =
+      "Only colocated Jujutsu repositories are supported. Run jj git colocation enable.";
+    await using screen = await render(control());
+    await expect.element(page.getByRole("alert")).toHaveTextContent(state.unsupportedReason);
+    await expect.element(button(/^Commit/)).toBeDisabled();
+    expect(commits()).toBe(0);
+  });
+
+  it("disables a previously opened commit dialog and displays the reason", async () => {
+    setup();
+    state.scopes.add(AuthOrchestrationOperateScope);
+    await using screen = await render(control());
+    await openCommitDialog();
+    state.jj = true;
+    state.unsupportedReason = "Enable colocation with jj git colocation enable.";
+    await screen.rerender(control());
+    await expect.element(page.getByRole("alert")).toHaveTextContent(state.unsupportedReason);
+    await expect.element(button("Change on new bookmark")).toBeDisabled();
+    await expect
+      .element(
+        page
+          .getByRole("dialog", { name: "Commit changes" })
+          .getByRole("button", { name: "Commit", exact: true }),
+      )
+      .toBeDisabled();
+    expect(commits()).toBe(0);
+  });
+
+  it("disables a previously opened default-bookmark prompt", async () => {
+    setup();
+    state.scopes.add(AuthOrchestrationOperateScope);
+    state.jj = true;
+    state.isDefaultRef = true;
+    await using screen = await render(control());
+    await userEvent.click(button(/^Commit & push/));
+    await expect
+      .element(page.getByRole("dialog", { name: "Commit & push to default bookmark?" }))
+      .toBeVisible();
+    state.unsupportedReason = "Enable colocation with jj git colocation enable.";
+    await screen.rerender(control());
+    await expect.element(button("Check out feature bookmark")).toBeDisabled();
+    expect(commits()).toBe(0);
   });
 });
 

@@ -39,6 +39,7 @@ import {
   type ScopedMobileSettingsTarget,
 } from "./settings-scoped-server";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
+import { useVcsTerminology } from "../../state/vcs";
 
 type SettingsPage = "new-threads" | "source-control" | "agent-behavior" | "maintenance";
 
@@ -142,6 +143,15 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
   const navigation = useNavigation();
   const { selectedTargets, projectGroups, selectedProjectKey } = useSettingsEnvironmentFilter();
   const selectedProject = projectGroups.find((group) => group.key === selectedProjectKey);
+  const terminologyProjects = selectedProject?.members.filter((member) =>
+    selectedTargets.some((target) => target.environmentId === member.project.environmentId),
+  );
+  const terminologyProject =
+    terminologyProjects?.length === 1 ? terminologyProjects[0]?.project : undefined;
+  const vcsTerminology = useVcsTerminology(
+    terminologyProject?.environmentId ?? null,
+    terminologyProject?.workspaceRoot ?? null,
+  );
   const writableEnvironments = useEnvironmentsWithScope(selectedTargets, AuthSettingsWriteScope);
   const projectSelected = selectedProjectKey !== null;
   const targets = resolveMobileSettingsTargets(
@@ -363,6 +373,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     instructions={uniform("branchNameInstructions")}
                     disabled={disabledFor("branchNamingMode")}
                     onChange={write}
+                    terminology={vcsTerminology}
                   />
                   <SettingsSection title="Pull requests">
                     <SettingsSwitchRow

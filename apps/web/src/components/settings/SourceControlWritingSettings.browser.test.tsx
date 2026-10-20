@@ -1,5 +1,6 @@
 import { render } from "../../../test/render";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import { getVcsTerminology } from "@t3tools/shared/vcs";
 import { StrictMode, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
@@ -11,6 +12,9 @@ type WritingStyle = typeof DEFAULT_UNIFIED_SETTINGS.sourceControlWritingStyle;
 const state = vi.hoisted(() => ({
   styles: [] as WritingStyle[],
   updateSettings: vi.fn<(patch: ScopedSettingsPatch) => void>(),
+  vcsKind: "git" as "git" | "jj",
+  scopeKind: "all" as "all" | "project" | "checkout",
+  terminologyLookup: vi.fn(),
 }));
 
 vi.mock(import("@tanstack/react-router"), async (original) => ({
@@ -31,18 +35,40 @@ vi.mock(import("./useScopedSettings"), async (original) => ({
 vi.mock(import("./SettingsScopeContext"), async (original) => ({
   ...(await original()),
   useSettingsScope: (() => ({
-    scope: { kind: "all", environmentIds: [] },
+    scope: {
+      kind: state.scopeKind,
+      environmentIds: [],
+      checkout: {
+        id: "naming-project",
+        environmentId: "naming-environment",
+        workspaceRoot: "/naming-project",
+      },
+      members: [
+        {
+          id: "naming-project",
+          environmentId: "naming-environment",
+          workspaceRoot: "/naming-project",
+        },
+      ],
+    },
     environment: null,
     connectedEnvironments: [],
     targets: state.styles.map((style) => ({
       settings: { ...DEFAULT_UNIFIED_SETTINGS, sourceControlWritingStyle: style },
     })),
-    target: null,
+    target: { projectId: "naming-project" },
   })) as never,
 }));
 vi.mock(import("../../state/environments"), async (original) => ({
   ...(await original()),
   useEnvironmentProviders: () => new Map(),
+}));
+vi.mock(import("../../state/vcs"), async (original) => ({
+  ...(await original()),
+  useVcsTerminology: (environmentId, workspaceRoot) => {
+    state.terminologyLookup(environmentId, workspaceRoot);
+    return getVcsTerminology(state.vcsKind);
+  },
 }));
 // The real row reads write permission and overrides from live environment state; this
 // suite is about how the section writes mixed writing styles.
@@ -77,6 +103,9 @@ const content = () => (
 );
 
 async function setup() {
+  state.vcsKind = "git";
+  state.scopeKind = "all";
+  state.terminologyLookup.mockReset();
   state.styles = [
     {
       ...DEFAULT_UNIFIED_SETTINGS.sourceControlWritingStyle,
@@ -191,5 +220,24 @@ describe("mixed source control instructions", () => {
     await expect
       .element(page.getByRole("textbox", { name: "Custom source control writing instructions" }))
       .toHaveValue("Shared instructions");
+  });
+});
+
+describe("checkout-aware source control naming", () => {
+  it.each([
+    ["git", "branch", "checkout"],
+    ["jj", "bookmark", "checkout"],
+    ["jj", "bookmark", "project"],
+  ] as const)("uses %s naming in %s controls for %s scope", async (kind, noun, scopeKind) => {
+    await using screen = await setup();
+    state.vcsKind = kind;
+    state.scopeKind = scopeKind;
+    await screen.rerender(content());
+
+    expect(state.terminologyLookup).toHaveBeenCalledWith("naming-environment", "/naming-project");
+    await userEvent.click(resetButton(`${noun} naming`));
+    expect(state.updateSettings).toHaveBeenCalledWith({
+      branchNamingMode: DEFAULT_UNIFIED_SETTINGS.branchNamingMode,
+    });
   });
 });

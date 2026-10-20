@@ -550,6 +550,7 @@ function SubagentTimelineTooltip(
   const childProject = useProject(child ? scopeProjectRef(environmentId, child.projectId) : null);
   return (
     <SubagentTooltipContent
+      environmentId={environmentId}
       title={formatSubagentDisplayTitle(child?.title ?? props.title)}
       model={props.model}
       providerInstanceId={props.providerInstanceId}

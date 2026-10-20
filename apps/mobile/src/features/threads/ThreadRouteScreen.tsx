@@ -28,6 +28,7 @@ import {
   projectScriptTerminalInput,
   resolveProjectScripts,
 } from "@t3tools/shared/projectScripts";
+import { resolveVcsUnsupportedReason } from "@t3tools/shared/vcs";
 import { Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useConnectionsReady } from "../../state/workspace";
@@ -923,6 +924,7 @@ function ThreadRouteContent(
             worktreeSetup
               ? {
                   snapshot: worktreeSetup,
+                  unsupportedReason: resolveVcsUnsupportedReason(gitStatus.data),
                   turnStartedAt: setupTurnStartedAt,
                   working: composer.activeWorkStartedAt !== null,
                   turnStarted: setupTurnStartedAt !== null,

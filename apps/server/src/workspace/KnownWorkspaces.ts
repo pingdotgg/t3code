@@ -2,8 +2,9 @@
  * KnownWorkspaces - the folders a client-named cwd may act in: a T3-managed
  * worktree folder, a registered project, or a thread's worktree. Clients send
  * the thread's worktree, else the project root. A client also sets a thread's
- * worktree path, so one counts only under a managed folder or when git lists
- * it as a worktree of the thread's project.
+ * worktree path, so one counts only under a managed folder or when the project's
+ * Git worktree list registers it, or jj lists it and it still belongs to the
+ * project's shared jj repository.
  *
  * @module KnownWorkspaces
  */
@@ -12,6 +13,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -20,6 +22,8 @@ import * as ServerConfig from "../config.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as JjVcsDriver from "../vcs/JjVcsDriver.ts";
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import { isFilesystemRoot, managedWorktreesDirectories } from "../worktreesDirectory.ts";
 
 export class UnknownWorkspaceError extends Schema.TaggedError<UnknownWorkspaceError>()(
@@ -62,6 +66,8 @@ export const make = Effect.gen(function* () {
   const projectStore = yield* ProjectStore.ProjectStoreV2;
   const sql = yield* SqlClient.SqlClient;
   const git = yield* GitVcsDriver.GitVcsDriver;
+  const registry = yield* Effect.serviceOption(VcsDriverRegistry.VcsDriverRegistry);
+  const jj = yield* Effect.serviceOption(JjVcsDriver.JjVcsDriver);
 
   // A root that does not exist yet keeps its lexical path. One that cannot be
   // resolved for another reason, or resolves to a filesystem root, grants nothing.
@@ -115,7 +121,37 @@ export const make = Effect.gen(function* () {
         if (project === undefined) return false;
         let listed = projectWorktrees.get(projectId);
         if (listed === undefined) {
-          listed = yield* git.listWorktreePaths(project.workspaceRoot).pipe(
+          listed = yield* Effect.gen(function* () {
+            // Git remains authoritative even when jj detection or listing fails.
+            const gitPaths = yield* git
+              .listWorktreePaths(project.workspaceRoot)
+              .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+            const jjPaths = yield* Effect.gen(function* () {
+              if (Option.isNone(registry) || Option.isNone(jj)) return [];
+              const handle = yield* registry.value.detect({
+                cwd: project.workspaceRoot,
+                jjOnly: true,
+              });
+              if (handle?.kind !== "jj") return [];
+              const driver = jj.value;
+              const projectPaths = yield* driver.repoPaths(project.workspaceRoot);
+              const workspaces = yield* driver.listWorkspaces(project.workspaceRoot);
+              const roots = yield* Effect.forEach(workspaces, (workspace) =>
+                Effect.gen(function* () {
+                  // jj also lists deleted workspaces. Never authorize a missing
+                  // root, a replacement checkout, or an ancestor's workspace.
+                  const root = yield* fileSystem.realPath(workspace.root);
+                  const workspacePaths = yield* driver.repoPaths(root);
+                  return workspacePaths.workspaceRoot === root &&
+                    workspacePaths.mainWorkspaceRoot === projectPaths.mainWorkspaceRoot
+                    ? root
+                    : null;
+                }).pipe(Effect.orElseSucceed(() => null)),
+              );
+              return roots.filter((root) => root !== null);
+            }).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+            return [...gitPaths, ...jjPaths];
+          }).pipe(
             Effect.flatMap((paths) => Effect.forEach(paths, resolveRoot)),
             Effect.map((paths) => paths.filter((listedPath) => listedPath !== null)),
             Effect.orElseSucceed((): ReadonlyArray<string> => []),

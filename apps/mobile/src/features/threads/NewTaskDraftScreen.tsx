@@ -989,10 +989,12 @@ export function NewTaskDraftScreen(props: {
     startFromOrigin: flow.startFromOrigin,
     workspaceMode: flow.workspaceMode,
     pullRequestReference: flow.pullRequestReference,
+    terminology: flow.vcsTerminology,
   });
   const workspaceLabel = resolveNewTaskWorkspaceLabel({
     workspaceMode: flow.workspaceMode,
     worktreePath: flow.selectedWorktreePath,
+    terminology: flow.vcsTerminology,
   });
   const showBranchLoading = flow.branchesLoading && flow.availableBranches.length === 0;
 
@@ -1192,6 +1194,14 @@ export function NewTaskDraftScreen(props: {
       ) ?? flow.selectedModel;
     const workspaceMode = draft.workspaceSelection?.mode ?? flow.workspaceMode;
     const selectedBranchName = draft.workspaceSelection?.branch ?? flow.selectedBranchName;
+    if (
+      (workspaceMode === "worktree" || draft.workspaceSelection?.pullRequestReference) &&
+      !flow.canUseVcsActions(
+        workspaceMode === "local" ? draft.workspaceSelection?.worktreePath : null,
+      )
+    ) {
+      return;
+    }
     const initialMessageText = draft.text.trim();
 
     if (
@@ -1354,6 +1364,7 @@ export function NewTaskDraftScreen(props: {
   const isAndroid = Platform.OS === "android";
   const canStart =
     !isImportingContext &&
+    (flow.vcsActionsSupported || (flow.workspaceMode === "local" && !flow.pullRequestReference)) &&
     !cloneBlocksStart &&
     taskPermissionReason === null &&
     attachmentBlockReason === null &&
@@ -1453,7 +1464,10 @@ export function NewTaskDraftScreen(props: {
     navigation.dispatch(StackActions.push("NewTask", { incomingShareId: props.incomingShareId }));
   };
   const openContextPicker = (routeName: "NewTaskBranch" | "NewTaskEnvironment") => {
-    if (isComposerInteractionLocked) {
+    if (
+      isComposerInteractionLocked ||
+      (routeName === "NewTaskBranch" && !flow.canUseVcsActions())
+    ) {
       return;
     }
     promptInputRef.current?.blur();
@@ -1551,9 +1565,13 @@ export function NewTaskDraftScreen(props: {
   const workspaceControls = (
     <View className="flex-row items-center gap-1 px-2">
       <ComposerInlineControl
-        accessibilityHint={`Switches to ${flow.workspaceMode === "local" ? "a new worktree" : "the current checkout"}`}
+        accessibilityHint={`Switches to ${flow.workspaceMode === "local" ? `a new ${flow.vcsTerminology.workspaceNoun}` : `the current ${flow.vcsTerminology.currentRefFallback}`}`}
         accessibilityLabel={workspaceLabel}
-        disabled={isComposerInteractionLocked || voiceInput.isBusy}
+        disabled={
+          isComposerInteractionLocked ||
+          voiceInput.isBusy ||
+          (flow.workspaceMode === "local" && !flow.vcsActionsSupported)
+        }
         renderIcon={(size) => (
           <NewTaskWorkspaceIcon
             workspaceMode={flow.workspaceMode}
@@ -1568,11 +1586,13 @@ export function NewTaskDraftScreen(props: {
       />
 
       <ComposerInlineControl
-        accessibilityLabel={`${flow.workspaceMode === "worktree" ? "Base branch" : "Branch"}: ${selectedBranchLabel}`}
+        accessibilityLabel={`${flow.workspaceMode === "worktree" ? `Base ${flow.vcsTerminology.refNoun}` : flow.vcsTerminology.refNounTitle}: ${selectedBranchLabel}`}
         chevronDirection="right"
-        disabled={isComposerInteractionLocked}
+        disabled={isComposerInteractionLocked || !flow.vcsActionsSupported}
         icon="arrow.triangle.branch"
-        label={showBranchLoading ? "Loading branches…" : selectedBranchLabel}
+        label={
+          showBranchLoading ? `Loading ${flow.vcsTerminology.refNounPlural}…` : selectedBranchLabel
+        }
         maxWidth={190}
         onPress={() => openContextPicker("NewTaskBranch")}
       />
@@ -1624,6 +1644,11 @@ export function NewTaskDraftScreen(props: {
         </View>
       ) : null}
       {flow.canChooseWorkspace ? <View className="pb-1">{workspaceControls}</View> : null}
+      {flow.vcsUnsupportedReason !== null ? (
+        <Text accessibilityRole="alert" className="px-3 py-2 text-xs text-muted-foreground">
+          {flow.vcsUnsupportedReason}
+        </Text>
+      ) : null}
 
       {taskPermissionReason ? (
         <Text className="px-3 py-2 text-xs text-muted-foreground">{taskPermissionReason}</Text>

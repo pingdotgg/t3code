@@ -8,6 +8,15 @@ import {
   useThreadShell,
 } from "../../state/entities";
 import { UsageLimitRecoveryCard } from "./UsageLimitRecoveryCard";
+import { AppText as Text } from "../../components/ui/AppText";
+import { useThreadSelection } from "../../state/use-thread-selection";
+import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
+import {
+  selectNotice,
+  selectTerminology,
+  selectUnsupportedReason,
+  vcsEnvironment,
+} from "../../state/vcs";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import type { WorktreeSetupCardProps } from "./worktree-setup-card";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
@@ -103,7 +112,7 @@ import {
 } from "../../lib/layout";
 import { editPendingThreadMessage } from "../../state/edit-pending-thread-message";
 import { deviceEnvironment } from "../../state/device";
-import { useEnvironmentQuery } from "../../state/query";
+import { useEnvironmentQuery, useEnvironmentQuerySelector } from "../../state/query";
 import { threadDevicePreviews } from "../devices/threadDevicePreviews";
 import { ThreadBrowserFloat } from "../browser/ThreadBrowserFloat";
 import { useThreadServerBrowserTabs } from "../../state/preview";
@@ -423,6 +432,21 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
     });
   };
   const insets = useSafeAreaInsets();
+  // Same (environment, cwd) key the git sheets use, so this reads the shared
+  // status atom rather than opening a second stream.
+  const { selectedThread } = useThreadSelection();
+  const { selectedThreadCwd } = useSelectedThreadWorktree();
+  const vcsEnvironmentId = selectedThread?.environmentId ?? null;
+  const vcsStatusAtom =
+    vcsEnvironmentId === null || selectedThreadCwd === null
+      ? null
+      : vcsEnvironment.status({
+          environmentId: vcsEnvironmentId,
+          input: { cwd: selectedThreadCwd },
+        });
+  const vcsTerminology = useEnvironmentQuerySelector(vcsStatusAtom, selectTerminology);
+  const vcsUnsupportedReason = useEnvironmentQuerySelector(vcsStatusAtom, selectUnsupportedReason);
+  const vcsNotice = useEnvironmentQuerySelector(vcsStatusAtom, selectNotice);
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
   const liveKeyboardHeight = useKeyboardState((state) => state.height);
   // Android can swallow the IME hide callbacks when the app is backgrounded mid keyboard-hide
@@ -536,7 +560,9 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
       if (props.worktreeSetup) return null;
       return {
         kind: "preparing",
-        label: props.creationState.preparingWorktree ? "Setting up worktree…" : "Starting…",
+        label: props.creationState.preparingWorktree
+          ? `Setting up ${vcsTerminology.workspaceNoun}…`
+          : "Starting…",
       };
     }
     if (props.creationState?.kind === "failed") {
@@ -1094,6 +1120,19 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
         selectedThread={props.selectedThread}
         showContent={showContent}
       />
+      {vcsNotice ? (
+        <Text className="border-b border-border bg-card px-4 py-3 text-sm text-muted-foreground">
+          {vcsNotice}
+        </Text>
+      ) : null}
+      {vcsUnsupportedReason ? (
+        <Text
+          accessibilityRole="alert"
+          className="border-b border-border bg-card px-4 py-3 text-sm text-danger-foreground"
+        >
+          {vcsUnsupportedReason}
+        </Text>
+      ) : null}
       {showContent ? (
         <View
           style={{ flex: 1 }}
@@ -1127,7 +1166,11 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
               workspaceRoot={props.threadCwd}
               feed={props.selectedThreadFeed}
               pendingHandoff={props.pendingHandoff}
-              worktreeSetup={props.worktreeSetup}
+              worktreeSetup={
+                props.worktreeSetup
+                  ? { ...props.worktreeSetup, vcsTerminology }
+                  : props.worktreeSetup
+              }
               setupWorkingStartedAt={props.setupWorkingStartedAt}
               queuedMessages={props.queuedMessages}
               dispatchingMessageId={props.dispatchingMessageId}

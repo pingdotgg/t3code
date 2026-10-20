@@ -11,9 +11,31 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { TestClock } from "effect/testing";
+import { vi } from "vite-plus/test";
 
 import * as ProcessRunner from "../processRunner.ts";
+import { createJjRepo, JJ_AVAILABLE } from "../vcs/testing/JjTestSupport.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
+
+const markerStatInterceptor = vi.hoisted(() => ({
+  failPath: null as string | null,
+  errorCode: "EACCES",
+}));
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof NodeFS>();
+  return {
+    ...actual,
+    statSync: (...args: Parameters<typeof actual.statSync>) => {
+      if (args[0] === markerStatInterceptor.failPath) {
+        throw Object.assign(new Error("marker stat failed"), {
+          code: markerStatInterceptor.errorCode,
+        });
+      }
+      return actual.statSync(...args);
+    },
+  };
+});
 
 const normalizePathSeparators = (value: string) => value.replaceAll("\\", "/");
 const normalizeResolvedPath = (value: string) => normalizePathSeparators(value);
@@ -40,6 +62,43 @@ const layerRepositoryIdentityResolverTest = (options: {
   ).pipe(Layer.provide(ProcessRunner.layer));
 
 it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
+  it.effect("does not inherit an ancestor jj identity for a missing cwd", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-repository-identity-missing-cwd-",
+      });
+      yield* fileSystem.makeDirectory(path.join(root, ".jj", "repo"), { recursive: true });
+      const cwd = path.join(root, "deleted");
+      expect(RepositoryIdentityResolver.resolveRepositoryRootFromMarkers(cwd)).toBeNull();
+      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      expect(yield* resolver.resolve(cwd)).toBeNull();
+    }).pipe(Effect.provide(layerRepositoryIdentityResolverTest({}))),
+  );
+
+  it.effect.each(["ENOENT", "ENOTDIR"])(
+    "continues to the parent when a jj marker stat fails with %s",
+    (code) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-repository-identity-marker-absent-",
+        });
+        yield* fileSystem.makeDirectory(path.join(root, ".jj", "repo"), { recursive: true });
+        const nested = path.join(root, "nested");
+        yield* fileSystem.makeDirectory(nested);
+        markerStatInterceptor.failPath = path.join(nested, ".jj");
+        markerStatInterceptor.errorCode = code;
+        try {
+          expect(RepositoryIdentityResolver.resolveRepositoryRootFromMarkers(nested)).toBe(root);
+        } finally {
+          markerStatInterceptor.failPath = null;
+        }
+      }),
+  );
+
   it.effect("refreshes the Git root only when requested", () => {
     const calls: Array<ReadonlyArray<string>> = [];
     let rootPath = "/repo";
@@ -348,6 +407,47 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
   );
 
+  it.effect.each(["bare clone", "dot-bare"] as const)(
+    "keeps a nested %s from inheriting an ancestor jj identity",
+    (layout) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-repository-identity-nested-bare-",
+        });
+        yield* fileSystem.makeDirectory(path.join(root, ".jj", "repo"), { recursive: true });
+        const nested = path.join(root, "nested");
+        yield* fileSystem.makeDirectory(nested);
+        const bareGitDir = layout === "dot-bare" ? path.join(nested, ".bare") : nested;
+        yield* git(nested, ["init", "--bare", bareGitDir]);
+        if (layout === "dot-bare") {
+          yield* fileSystem.writeFileString(path.join(nested, ".git"), "gitdir: ./.bare\n");
+        }
+        yield* git(nested, [
+          "--git-dir",
+          bareGitDir,
+          "remote",
+          "add",
+          "origin",
+          "git@github.com:T3Tools/nested.git",
+        ]);
+
+        const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+        const projectRoots = layout === "dot-bare" ? [nested, bareGitDir] : [nested];
+        for (const projectRoot of projectRoots) {
+          expect(RepositoryIdentityResolver.resolveRepositoryRootFromMarkers(projectRoot)).toBeNull();
+          const identity = yield* resolver.resolve(projectRoot);
+          expect(identity?.canonicalKey).toBe("github.com/t3tools/nested");
+          const resolvedIdentityRoot =
+            identity?.rootPath === undefined ? "" : NodeFS.realpathSync.native(identity.rootPath);
+          expect(normalizeResolvedPath(resolvedIdentityRoot)).toBe(
+            normalizeResolvedPath(NodeFS.realpathSync.native(bareGitDir)),
+          );
+        }
+      }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+  );
+
   it.effect("returns null for non-git folders and repos without remotes", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -558,5 +658,31 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
         ),
       ),
     ),
+  );
+
+  it.effect.skipIf(!JJ_AVAILABLE)(
+    "keeps a Git worktree nested under a Jujutsu root on the Git path",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const base = yield* fileSystem.realPath(
+          yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-repository-identity-nested-" }),
+        );
+        const jjRoot = path.join(base, "outer");
+        yield* fileSystem.makeDirectory(jjRoot, { recursive: true });
+        yield* createJjRepo(jjRoot);
+        yield* git(jjRoot, ["remote", "add", "origin", "git@github.com:T3Tools/outer.git"]);
+
+        const nested = path.join(jjRoot, "nested");
+        yield* fileSystem.makeDirectory(nested, { recursive: true });
+        yield* git(nested, ["init"]);
+        yield* git(nested, ["remote", "add", "origin", "git@github.com:T3Tools/nested.git"]);
+
+        const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+        const identity = yield* resolver.resolve(nested);
+
+        expect(identity?.canonicalKey).toBe("github.com/t3tools/nested");
+      }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
   );
 });

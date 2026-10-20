@@ -1,5 +1,11 @@
-import { AuthOrchestrationOperateScope, AuthSourceControlWriteScope } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  AuthSourceControlWriteScope,
+  GitCommandError,
+} from "@t3tools/contracts";
+import { resolveVcsTerminology } from "@t3tools/shared/vcs";
 import * as Cause from "effect/Cause";
+import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -20,6 +26,11 @@ const state = vi.hoisted(() => ({
   results: [] as { type: string; description?: string }[],
   afterGitAction: undefined as (() => void) | undefined,
   statusRefreshes: 0,
+  statusReads: [] as unknown[],
+  cwd: "/repo",
+  unsupportedRoot: false,
+  worktreeRefusal: null as unknown,
+  status: null as { vcs: { kind: "jj"; unsupportedReason: string } } | null,
 }));
 
 vi.mock("react", () => ({
@@ -42,7 +53,7 @@ vi.mock("./use-thread-selection", () => ({
 }));
 vi.mock("./use-selected-thread-worktree", () => ({
   useSelectedThreadWorktree: () => ({
-    selectedThreadCwd: "/repo",
+    selectedThreadCwd: state.cwd,
     selectedThreadWorktreePath: null,
   }),
 }));
@@ -50,7 +61,19 @@ vi.mock("./queries", () => ({
   useBranches: () => ({ data: { refs: [] }, refresh: () => {} }),
 }));
 vi.mock("./use-atom-command", () => ({ useAtomCommand: (command: unknown) => command }));
-vi.mock("./atom-registry", () => ({ appAtomRegistry: {} }));
+vi.mock("./query", () => ({ useEnvironmentQuery: () => ({ data: state.status }) }));
+vi.mock("./atom-registry", () => ({
+  appAtomRegistry: {
+    get: (atom: { input: { cwd: string } }) => {
+      state.statusReads.push(atom);
+      return AsyncResult.success(
+        state.unsupportedRoot && atom.input.cwd === "/repo"
+          ? { vcs: { kind: "jj", unsupportedReason: "Install Jujutsu" } }
+          : state.status,
+      );
+    },
+  },
+}));
 vi.mock("./use-remote-environment-registry", () => ({ setPendingConnectionError: () => {} }));
 vi.mock("./use-vcs-action-state", () => ({
   showGitActionResult: (result: { type: string; description?: string }) =>
@@ -76,7 +99,9 @@ vi.mock("./threads", () => ({
   },
 }));
 vi.mock("./vcs", () => ({
+  useVcsTerminology: () => resolveVcsTerminology(state.status),
   vcsEnvironment: {
+    status: (input: unknown) => input,
     refreshStatus: async () => {
       state.statusRefreshes += 1;
       return AsyncResult.success({ refName: state.branch });
@@ -92,6 +117,9 @@ vi.mock("./vcs", () => ({
       return AsyncResult.success({ refName: state.branch });
     },
     createWorktree: async ({ input }: { input: { newRefName: string } }) => {
+      if (state.worktreeRefusal) {
+        return AsyncResult.failure(Cause.fail(state.worktreeRefusal));
+      }
       state.worktrees.push("/repo-worktree");
       state.afterGitAction?.();
       return AsyncResult.success({
@@ -125,6 +153,7 @@ describe("thread Git mutation permissions", () => {
     state.primaryScopes = new Set([AuthSourceControlWriteScope, AuthOrchestrationOperateScope]);
     state.branch = "main";
     state.worktrees = [];
+    state.worktreeRefusal = null;
     state.thread.branch = "main";
     state.thread.worktreePath = null;
     state.commits = 0;
@@ -133,6 +162,83 @@ describe("thread Git mutation permissions", () => {
     state.results = [];
     state.afterGitAction = undefined;
     state.statusRefreshes = 0;
+    state.status = null;
+    state.statusReads = [];
+    state.cwd = "/repo";
+    state.unsupportedRoot = false;
+  });
+
+  it("reads the existing full-status atom once for a same-root workspace mutation", async () => {
+    state.scopes.add(AuthOrchestrationOperateScope);
+    const actions = useSelectedThreadGitActions();
+    await actions.onCreateSelectedThreadWorktree({ baseBranch: "main", newBranch: "feature" });
+    expect(state.worktrees).toEqual(["/repo-worktree"]);
+    expect(state.statusReads).toEqual([{ environmentId: "environment", input: { cwd: "/repo" } }]);
+  });
+
+  it("checks a distinct root only for root-target workspace creation", async () => {
+    state.scopes.add(AuthOrchestrationOperateScope);
+    state.cwd = "/repo-worktree";
+    state.unsupportedRoot = true;
+    const actions = useSelectedThreadGitActions();
+    await actions.onRunSelectedThreadGitAction({ action: "push" });
+    expect(state.pushes).toBe(1);
+    expect(state.statusReads).toEqual([
+      { environmentId: "environment", input: { cwd: "/repo-worktree" } },
+    ]);
+
+    state.statusReads = [];
+    await actions.onCreateSelectedThreadWorktree({ baseBranch: "main", newBranch: "feature" });
+    expect(state.worktrees).toEqual([]);
+    expect(state.statusReads).toEqual([
+      { environmentId: "environment", input: { cwd: "/repo-worktree" } },
+      { environmentId: "environment", input: { cwd: "/repo" } },
+    ]);
+  });
+
+  it("refuses unsupported workspace actions even when handlers are called directly", async () => {
+    state.scopes.add(AuthOrchestrationOperateScope);
+    state.status = { vcs: { kind: "jj", unsupportedReason: "Install Jujutsu" } };
+    const actions = useSelectedThreadGitActions();
+    expect(actions.vcsActionsSupported).toBe(false);
+    expect(actions.canWriteSourceControl).toBe(false);
+    expect(actions.canChangeThreadBranch).toBe(false);
+    expect(await actions.onCheckoutSelectedThreadBranch("feature")).toBeNull();
+    expect(await actions.onCreateSelectedThreadBranch("feature")).toBeNull();
+    expect(
+      await actions.onCreateSelectedThreadWorktree({
+        baseBranch: "main",
+        newBranch: "feature",
+      }),
+    ).toBeNull();
+    expect(await actions.onPullSelectedThreadBranch()).toBeUndefined();
+    for (const action of ["commit", "push", "create_pr", "commit_push_pr"] as const) {
+      expect(await actions.onRunSelectedThreadGitAction({ action })).toBeNull();
+    }
+    expect(state.branch).toBe("main");
+    expect(state.worktrees).toEqual([]);
+    expect(state.metadataRequests).toEqual([]);
+    expect(state.commits).toBe(0);
+    expect(state.pushes).toBe(0);
+    expect(state.statusRefreshes).toBe(0);
+  });
+
+  it("refuses a retained handler after live status becomes unsupported", async () => {
+    state.scopes.add(AuthOrchestrationOperateScope);
+    const actions = useSelectedThreadGitActions();
+    state.status = { vcs: { kind: "jj", unsupportedReason: "Install Jujutsu" } };
+    expect(
+      await actions.onCreateSelectedThreadWorktree({
+        baseBranch: "main",
+        newBranch: "feature",
+      }),
+    ).toBeNull();
+    expect(await actions.onCheckoutSelectedThreadBranch("feature")).toBeNull();
+    expect(await actions.onRunSelectedThreadGitAction({ action: "push" })).toBeNull();
+    expect(state.worktrees).toEqual([]);
+    expect(state.branch).toBe("main");
+    expect(state.pushes).toBe(0);
+    expect(state.metadataRequests).toEqual([]);
   });
 
   it.each([false, true])(
@@ -181,6 +287,36 @@ describe("thread Git mutation permissions", () => {
       }),
     ).toBeNull();
     expect(state.worktrees).toEqual([]);
+    expect(state.thread.worktreePath).toBeNull();
+  });
+
+  it("shows the unsupported workspace reason without changing the selected thread", async () => {
+    state.scopes.add(AuthOrchestrationOperateScope);
+    const detail =
+      "T3 Code supports colocated Jujutsu repositories. Run `jj git colocation enable` in this repository, or open its Git checkout instead.";
+    const codec = Schema.toCodecJson(GitCommandError);
+    state.worktreeRefusal = Schema.decodeSync(codec)(
+      Schema.encodeSync(codec)(
+        new GitCommandError({
+          operation: "createWorktree",
+          command: "jj",
+          cwd: "/repo",
+          reason: "unsupported_repository",
+          detail,
+        }),
+      ),
+    );
+    expect(
+      await useSelectedThreadGitActions().onCreateSelectedThreadWorktree({
+        baseBranch: "main",
+        newBranch: "feature",
+      }),
+    ).toBeNull();
+    expect(state.results).toEqual([
+      { type: "error", title: "Git action failed", description: detail },
+    ]);
+    expect(state.worktrees).toEqual([]);
+    expect(state.metadataRequests).toEqual([]);
     expect(state.thread.worktreePath).toBeNull();
   });
 
