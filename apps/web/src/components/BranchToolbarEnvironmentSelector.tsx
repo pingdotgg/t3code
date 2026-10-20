@@ -5,10 +5,10 @@ import { useAtomValue } from "@effect/atom-react";
 import { shortcutLabelForCommand } from "../keybindings";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { CircleArrowUpIcon, ScaleIcon } from "lucide-react";
+import { CircleArrowUpIcon, PlusIcon, ScaleIcon } from "lucide-react";
 import { memo } from "react";
 
-import type { EnvironmentOption } from "./BranchToolbar.logic";
+import { ADD_TO_MACHINE_LABEL_CLASS, type EnvironmentOption } from "./BranchToolbar.logic";
 import {
   ServerUpdateAction,
   type PendingServerUpdate,
@@ -32,12 +32,14 @@ interface BranchToolbarEnvironmentSelectorProps {
   environmentId: EnvironmentId;
   availableEnvironments: readonly EnvironmentOption[];
   onEnvironmentChange?: (environmentId: EnvironmentId) => void;
+  onAddToMachine?: (() => void) | undefined;
   serverUpdate?: PendingServerUpdate | null;
 }
 
 // Action values cannot collide with server-minted environment IDs.
 const AUTO_VALUE = "action:auto";
 const UPDATE_VALUE = "action:update";
+const ADD_MACHINE_VALUE = "action:add-machine";
 const environmentValue = (id: EnvironmentId) => `env:${id}`;
 
 export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvironmentSelector(
@@ -60,6 +62,7 @@ function EnvironmentSelector({
   environmentId,
   availableEnvironments,
   onEnvironmentChange,
+  onAddToMachine,
   serverUpdate,
   updateControl,
 }: BranchToolbarEnvironmentSelectorProps & {
@@ -84,6 +87,7 @@ function EnvironmentSelector({
     ...(serverUpdate && updateControl
       ? [{ value: UPDATE_VALUE, label: `${updateControl.label} ${serverUpdate.serverLabel}` }]
       : []),
+    ...(onAddToMachine ? [{ value: ADD_MACHINE_VALUE, label: "Add to another machine" }] : []),
   ];
   const updateTooltip = serverUpdate
     ? `${serverUpdate.serverLabel} ${serverUpdate.serverVersion} → ${serverUpdate.targetVersion}. ${
@@ -114,7 +118,7 @@ function EnvironmentSelector({
   // the glass seam joining it to the composer assumes a fixed strip height, so
   // a shorter label would drag the seam out of line whenever this label is the
   // only thing in the strip.
-  if (envLocked || onEnvironmentChange === undefined) {
+  if (envLocked || (onEnvironmentChange === undefined && onAddToMachine === undefined)) {
     const lockedRow = updateControl ? (
       <ComposerControl
         size="xs"
@@ -161,10 +165,12 @@ function EnvironmentSelector({
       onValueChange={(value) => {
         if (value === UPDATE_VALUE) {
           updateControl?.onClick();
+        } else if (value === ADD_MACHINE_VALUE) {
+          onAddToMachine?.();
         } else if (value === AUTO_VALUE) {
           onAutoEnvironment?.();
         } else if (value?.startsWith("env:")) {
-          onEnvironmentChange(value.slice(4) as EnvironmentId);
+          onEnvironmentChange?.(value.slice(4) as EnvironmentId);
         }
       }}
       items={environmentItems}
@@ -212,7 +218,11 @@ function EnvironmentSelector({
             </SelectItem>
           )}
           {availableEnvironments.map((env) => (
-            <SelectItem key={env.environmentId} value={environmentValue(env.environmentId)}>
+            <SelectItem
+              key={env.environmentId}
+              value={environmentValue(env.environmentId)}
+              disabled={onEnvironmentChange === undefined && env.environmentId !== environmentId}
+            >
               <span className="inline-flex items-center gap-1.5">
                 {serverUpdate?.environmentId === env.environmentId ? (
                   <CircleArrowUpIcon aria-hidden="true" className="size-3" />
@@ -223,6 +233,14 @@ function EnvironmentSelector({
               </span>
             </SelectItem>
           ))}
+          {onAddToMachine ? (
+            <SelectItem value={ADD_MACHINE_VALUE}>
+              <span className={ADD_TO_MACHINE_LABEL_CLASS}>
+                <PlusIcon aria-hidden="true" className="size-3" />
+                Add to another machine
+              </span>
+            </SelectItem>
+          ) : null}
         </SelectGroup>
         {serverUpdate && updateControl ? (
           <SelectGroup>

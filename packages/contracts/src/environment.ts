@@ -141,6 +141,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
    */
   agentActivityPublishing: Schema.optionalKey(Schema.Boolean),
   projectCloneTracking: Schema.optionalKey(Schema.Boolean),
+  /** Server answers projects.listIgnoredFiles. */
+  ignoredFileListing: Schema.optionalKey(Schema.Boolean),
   environmentIcon: Schema.optionalKey(Schema.Boolean),
   desktopAppUpdate: Schema.optionalKey(Schema.Boolean),
   /** Server answers orchestration.subscribeCommandOutput. Absent on older servers,
