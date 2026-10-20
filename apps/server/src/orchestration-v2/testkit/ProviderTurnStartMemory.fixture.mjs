@@ -4,7 +4,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeAssert from "node:assert/strict";
 const root = process.argv[2];
 const mode = process.argv[3];
-const withHandoff = mode.startsWith("handoff");
+const withHandoff = mode.startsWith("handoff") || mode === "subagent-result";
 const require = NodeModule.createRequire(root + "/apps/server/package.json");
 const load = (name) => import(NodeURL.pathToFileURL(require.resolve("effect/" + name)));
 const [Effect, Layer, FileSystem, Path] = await Promise.all([
@@ -160,7 +160,10 @@ function fixture(index) {
         driver: "codex",
         providerSessionId: "session",
         nativeThreadRef: { nativeId: "native", driver: "codex", strength: "strong" },
-        contextUsage: { usedTokens: 0, maxTokens: 128000 },
+        contextUsage:
+          mode === "subagent-result"
+            ? { usedTokens: 390458, maxTokens: 475000 }
+            : { usedTokens: 0, maxTokens: 128000 },
         handoffIds: [],
       },
     ],
@@ -170,19 +173,21 @@ function fixture(index) {
       ? [
           {
             id: "handoff",
+            transferId: mode === "subagent-result" ? "subagent-transfer" : null,
             threadId: "thread",
             targetRunId: runId,
             toProviderThreadId: "provider",
             fromProviderThreadIds: ["provider"],
             coveredRunOrdinals: { from: 1, to: 1 },
             status: "ready",
-            strategy: "full_thread_summary",
+            strategy: mode === "subagent-result" ? "manual_context" : "full_thread_summary",
             summaryText: "Synthetic summary",
             handoffIds: [],
           },
         ]
       : [],
-    contextTransfers: [],
+    contextTransfers:
+      mode === "subagent-result" ? [{ id: "subagent-transfer", type: "subagent_result" }] : [],
     providerSessions: [],
     providerTurns: [],
     subagents: [],

@@ -6,7 +6,7 @@ import { expect, it } from "vite-plus/test";
 
 const execFile = NodeUtil.promisify(NodeChildProcess.execFile);
 
-it.each(["regular", "handoff", "handoff-compact", "handoff-failure"])(
+it.each(["regular", "handoff", "handoff-compact", "handoff-failure", "subagent-result"])(
   "releases startup history while %s run workers remain alive",
   async (mode) => {
     const root = NodeURL.fileURLToPath(new URL("../../../../", import.meta.url));
