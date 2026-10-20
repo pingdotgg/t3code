@@ -38,6 +38,17 @@ credentials and skills remain managed by the installed agent or its wrapper. Mod
 options come from ACP, including model IDs that contain JSON. T3 Code launches the executable directly
 without expanding shell expressions.
 
+### Command Code
+
+Install [Command Code](https://commandcode.ai/docs/quickstart) and run `cmd login` on the machine
+hosting your T3 Code server. In **Settings → Providers → Add provider**, choose **Add Command Code**.
+Confirm the executable and name, then add the instance. T3 Code runs `cmd acp` and reuses the CLI's
+login. If `cmd` is not on the server's PATH, enter its full path before adding the instance.
+
+Command Code supplies its models and reasoning options through ACP. You can use the configured
+instance from web, desktop, or a connected mobile client. See the
+[Command Code ACP guide](https://commandcode.ai/docs/acp) for CLI setup and troubleshooting.
+
 ## Where agents run
 
 Registry agents always run on the machine that hosts your T3 Code server. That stays true when you

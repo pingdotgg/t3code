@@ -245,6 +245,30 @@ describe("AddProviderInstanceDialog environment routing", () => {
     expect(signInStep()).not.toBeNull();
   });
 
+  it("adds Command Code on the selected environment with its ACP command and identity", async () => {
+    setup();
+    await using _screen = await render(dialog());
+    await click("Add Command Code");
+    expect(input("#add-provider-acpRegistry-manual-commandPath").value).toBe("cmd");
+    expect(input('input[aria-label="Argument 1"]').value).toBe("acp");
+    await click("Next");
+    await click("Add instance");
+
+    expect(settingsHooks.useMutation).toHaveBeenCalledWith(remoteEnvironmentId);
+    expect(settingsHooks.mutate).toHaveBeenCalledWith({
+      operation: "create",
+      instanceId: "acpRegistry_command_code",
+      instance: {
+        driver: "acpRegistry",
+        enabled: true,
+        displayName: "Command Code",
+        config: { source: "local", commandPath: "cmd", commandArgs: ["acp"] },
+      },
+    });
+    expect(actions.onOpenChange).toHaveBeenCalledWith(false);
+    expect(signInStep()).toBeNull();
+  });
+
   it("creates a local command in the selected environment without a sign-in step", async () => {
     setup();
     await using _screen = await render(dialog());

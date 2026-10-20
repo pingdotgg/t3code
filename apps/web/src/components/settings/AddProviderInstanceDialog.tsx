@@ -277,17 +277,25 @@ export function AddProviderInstanceDialog({
     setHasAttemptedSubmit(false);
   };
 
-  const handleLocalAcpConfiguration = () => {
+  const handleLocalAcpConfiguration = (preset?: {
+    readonly label: string;
+    readonly commandPath: string;
+    readonly commandArgs: readonly string[];
+  }) => {
     setDriver(ACP_REGISTRY_DRIVER_KIND);
     setSelectedAcp(null);
     setIsManualAcpConfiguration(true);
     setConfigByDriver((existing) => ({
       ...existing,
-      [ACP_REGISTRY_DRIVER_KIND]: { source: "local", commandArgs: [] },
+      [ACP_REGISTRY_DRIVER_KIND]: {
+        source: "local",
+        commandArgs: preset?.commandArgs ?? [],
+        ...(preset ? { commandPath: preset.commandPath } : {}),
+      },
     }));
     setIdentityByDriver((existing) =>
       updateProviderIdentityDraft(existing, ACP_REGISTRY_DRIVER_KIND, {
-        label: "Local ACP",
+        label: preset?.label ?? "Local ACP",
         instanceIdOverride: null,
       }),
     );
@@ -500,12 +508,35 @@ export function AddProviderInstanceDialog({
                     </div>
                   ) : (
                     <>
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <h3 className="text-sm font-medium text-foreground">Command Code</h3>
+                          <p className="mt-0.5 text-xs text-muted-foreground">
+                            Run <code>cmd login</code> on {environmentLabel} first, then connect
+                            your installed Command Code CLI.
+                          </p>
+                        </div>
+                        <Button
+                          disabled={isPreparingRegistryAgent}
+                          onClick={() =>
+                            handleLocalAcpConfiguration({
+                              label: "Command Code",
+                              commandPath: "cmd",
+                              commandArgs: ["acp"],
+                            })
+                          }
+                          size="sm"
+                          variant="outline"
+                        >
+                          Add Command Code
+                        </Button>
+                      </div>
                       <AcpRegistrySearchStep
                         environmentId={environmentId}
                         providerInstances={settings.providerInstances}
                         onPrepared={handleAcpPrepared}
                         onManualConfiguration={handleManualAcpConfiguration}
-                        onLocalConfiguration={handleLocalAcpConfiguration}
+                        onLocalConfiguration={() => handleLocalAcpConfiguration()}
                         onLoadingChange={setIsRegistryLoading}
                         onPreparingChange={setIsPreparingRegistryAgent}
                       />
