@@ -45,6 +45,7 @@ import {
   AuthFilesystemReadScope,
   type DesktopWslState,
   type ClientSettings,
+  type ContextMenuItem,
   type EnvironmentId,
   type EnvironmentMachineKind,
   type FilesystemBrowseResult,
@@ -77,8 +78,25 @@ import {
   SquarePenIcon,
   SunIcon,
   TextSearchIcon,
+  ArchiveIcon,
+  CircleCheckIcon,
+  ClockIcon,
+  CopyIcon,
+  FolderTreeIcon,
+  GitBranchIcon,
+  HashIcon,
+  MailOpenIcon,
+  MessageSquarePlusIcon,
+  PencilIcon,
+  PinIcon,
+  PinOffIcon,
+  RefreshCwIcon,
+  TimerIcon,
+  TrashIcon,
+  type LucideIcon,
 } from "lucide-react";
 import { requestThreadFindOpen } from "./chat/threadFindActionBus";
+import { requestThreadRenameStart } from "./chat/threadRenameActionBus";
 import {
   useDeferredValue,
   useEffect,
@@ -96,6 +114,8 @@ import { useAtomValue } from "@effect/atom-react";
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useThreadActionMenu } from "../hooks/useThreadActionMenu";
+import type { ThreadActionMenuId } from "./threadActionMenu.logic";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import {
@@ -357,6 +377,103 @@ function overlayModeForCommand(command: string | null): SearchOverlayMode | null
   return command in OVERLAY_MODE_BY_COMMAND
     ? OVERLAY_MODE_BY_COMMAND[command as keyof typeof OVERLAY_MODE_BY_COMMAND]
     : null;
+}
+
+const THREAD_ACTION_ICONS: Record<string, LucideIcon> = {
+  archive: ArchiveIcon,
+  "circle-check": CircleCheckIcon,
+  clock: ClockIcon,
+  copy: CopyIcon,
+  folder: FolderIcon,
+  "folder-tree": FolderTreeIcon,
+  "git-branch": GitBranchIcon,
+  hash: HashIcon,
+  "mail-open": MailOpenIcon,
+  "message-square-plus": MessageSquarePlusIcon,
+  pencil: PencilIcon,
+  pin: PinIcon,
+  "pin-off": PinOffIcon,
+  "refresh-cw": RefreshCwIcon,
+  settings: SettingsIcon,
+  timer: TimerIcon,
+  trash: TrashIcon,
+};
+
+// The context menu opens on a thread, so its terse labels need the target named once they stand alone in the palette.
+const THREAD_ACTION_PALETTE_TITLES: Partial<Record<ThreadActionMenuId, string>> = {
+  snooze: "Snooze thread",
+  "mark-unread": "Mark thread unread",
+  copy: "Copy thread details",
+  delete: "Delete thread",
+};
+
+function buildThreadMenuPaletteItems(
+  items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>>,
+  runAction: (action: ThreadActionMenuId) => Promise<void>,
+): Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> {
+  return items.flatMap<CommandPaletteActionItem | CommandPaletteSubmenuItem>((item) => {
+    // The palette already lists project settings for the current project.
+    if (item.id === "project-settings") return [];
+    const title = THREAD_ACTION_PALETTE_TITLES[item.id] ?? item.label;
+    const Icon = item.icon ? THREAD_ACTION_ICONS[item.icon] : undefined;
+    const icon = Icon ? <Icon className={ITEM_ICON_CLASS} /> : null;
+    // Root search does not descend into submenus, so a parent carries its children's labels.
+    const searchTerms = [
+      title,
+      item.label,
+      "thread",
+      ...(item.children?.map((child) => child.label) ?? []),
+    ];
+    if (!item.children) {
+      return [
+        {
+          kind: "action",
+          value: `thread-action:${item.id}`,
+          searchTerms,
+          title,
+          icon,
+          ...(item.disabled ? { disabled: true } : {}),
+          run: () => runAction(item.id),
+        },
+      ];
+    }
+    return [
+      {
+        kind: "submenu",
+        value: `thread-action:${item.id}`,
+        searchTerms,
+        title,
+        icon,
+        addonIcon: Icon ? <Icon className={ADDON_ICON_CLASS} /> : null,
+        ...(item.disabled ? { disabled: true } : {}),
+        groups: [
+          {
+            value: `thread-action:${item.id}`,
+            label: title,
+            items: item.children.map((child) => {
+              const ChildIcon = (child.icon ? THREAD_ACTION_ICONS[child.icon] : undefined) ?? Icon;
+              return {
+                kind: "action",
+                value: `thread-action:${child.id}`,
+                searchTerms: [child.label],
+                title: child.label,
+                icon: ChildIcon ? <ChildIcon className={ITEM_ICON_CLASS} /> : null,
+                ...(child.disabled ? { disabled: true } : {}),
+                ...(child.checked
+                  ? {
+                      titleTrailingContent: (
+                        <span className="text-xs text-muted-foreground/70">Current</span>
+                      ),
+                    }
+                  : {}),
+                run: () => runAction(child.id),
+              };
+            }),
+          },
+        ],
+      },
+    ];
+  });
 }
 
 const APPEARANCE_OPTIONS = [
@@ -1000,6 +1117,14 @@ function OpenCommandPaletteDialog(props: {
   };
 
   const { projectCwdById, projectByKey, projectTitleById } = useProjectLookups();
+  const activeThreadActionMenu = useThreadActionMenu({
+    threadRef: activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null,
+    projectCwd: activeThread
+      ? (projectByKey.get(`${activeThread.environmentId}:${activeThread.projectId}`)
+          ?.workspaceRoot ?? null)
+      : null,
+    onStartRename: requestThreadRenameStart,
+  });
 
   const activeThreadId = activeThread?.id;
   const supportsThreadFind =
@@ -1778,6 +1903,12 @@ function OpenCommandPaletteDialog(props: {
         if (refreshed._tag === "Failure") throw squashAtomCommandFailure(refreshed);
       },
     });
+    const { items: threadMenuItems, snoozePresets } = activeThreadActionMenu.buildMenu(thread);
+    actionItems.push(
+      ...buildThreadMenuPaletteItems(threadMenuItems, (action) =>
+        activeThreadActionMenu.runAction(action, snoozePresets),
+      ),
+    );
   }
 
   actionItems.push({

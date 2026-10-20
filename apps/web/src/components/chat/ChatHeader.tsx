@@ -19,10 +19,12 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { isTrailingDoubleClick } from "../Sidebar.logic";
+import { subscribeThreadRenameStart } from "./threadRenameActionBus";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import { useThreadActionMenu } from "~/hooks/useThreadActionMenu";
 import { readLocalApi } from "~/localApi";
+import { useRightPanelStore } from "~/rightPanelStore";
 import { threadEnvironment } from "../../state/threads";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
@@ -191,6 +193,15 @@ export const ChatHeader = memo(function ChatHeader({
     projectCwd: activeProjectCwd,
     onStartRename: startRename,
   });
+  useEffect(
+    () =>
+      subscribeThreadRenameStart(() => {
+        // A maximized right panel collapses the chat column, which would hide the title input.
+        useRightPanelStore.getState().setMaximized(activeThreadRef, false);
+        startRename();
+      }),
+    [activeThreadRef, startRename],
+  );
   const titleButtonRef = useRef<HTMLButtonElement | null>(null);
   const titleMenuTimerRef = useRef<number | null>(null);
   const cancelPendingTitleMenu = () => {
