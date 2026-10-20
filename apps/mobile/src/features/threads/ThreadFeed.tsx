@@ -174,6 +174,7 @@ import {
   resolveMarkdownLinkPresentation,
 } from "../../lib/markdownLinks";
 import {
+  createThreadFeedCache,
   failedFeedRunIds,
   deriveThreadFeedPresentation,
   threadFeedRunIsUnsettled,
@@ -1681,6 +1682,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const disclosureSettleFrameRef = useRef<number | null>(null);
   const disclosureSettleSecondFrameRef = useRef<number | null>(null);
   const disclosureAnchorKeyRef = useRef<string | null>(null);
+  const [feedCache] = useState(createThreadFeedCache);
   const previousLatestTurnRef = useRef(props.latestRun);
   const userScrollSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const headerMaterialVisibleRef = useRef(false);
@@ -2101,6 +2103,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       ),
       props.activeWorkStartedAt,
       props.runlessWorkActive ?? false,
+      feedCache,
     ),
     props.feed,
     props.queuedMessages,
