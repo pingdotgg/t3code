@@ -6,7 +6,7 @@ import type {
   WorktreeSubmodules,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { isTemporaryWorktreeBranch, sanitizeNewRefName } from "@t3tools/shared/git";
+import { sanitizeNewRefName } from "@t3tools/shared/git";
 import { toSortableTimestamp } from "../lib/threadSort";
 export {
   dedupeRemoteBranchesWithLocalMatches,
@@ -238,35 +238,20 @@ export function resolveBranchToolbarPrBranch(input: {
   return input.activeThreadBranch === input.resolvedActiveBranch ? input.activeThreadBranch : null;
 }
 
-export function resolveCheckoutBranchMismatch(input: {
+export function resolveLocalCheckoutBranchMismatch(input: {
   effectiveEnvMode: EnvMode;
   activeWorktreePath: string | null;
   activeThreadBranch: string | null;
   currentGitBranch: string | null;
-}) {
+}): { threadBranch: string; currentBranch: string } | null {
   const { effectiveEnvMode, activeWorktreePath, activeThreadBranch, currentGitBranch } = input;
-  const isLocalCheckout = effectiveEnvMode === "local" && activeWorktreePath === null;
-  const isEstablishedWorktree = effectiveEnvMode === "worktree" && activeWorktreePath !== null;
-  if (!isLocalCheckout && !isEstablishedWorktree) {
+  if (effectiveEnvMode !== "local" || activeWorktreePath !== null) {
     return null;
   }
   if (!activeThreadBranch || !currentGitBranch || activeThreadBranch === currentGitBranch) {
     return null;
   }
-  // Cached status can predate the automatic rename of a temporary worktree branch.
-  if (
-    isEstablishedWorktree &&
-    !isTemporaryWorktreeBranch(activeThreadBranch) &&
-    isTemporaryWorktreeBranch(currentGitBranch)
-  ) {
-    return null;
-  }
-  return {
-    threadBranch: activeThreadBranch,
-    currentBranch: currentGitBranch,
-    // Restoring a worktree checkout could switch the branch for sibling threads.
-    canRestoreThreadBranch: isLocalCheckout,
-  };
+  return { threadBranch: activeThreadBranch, currentBranch: currentGitBranch };
 }
 
 export function resolveBranchSelectionTarget(input: {

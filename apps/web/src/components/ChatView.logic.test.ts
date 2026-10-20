@@ -261,14 +261,14 @@ describe("resolveThreadMetadataUpdateForNextTurn", () => {
     model: "gpt-5.4",
   };
 
-  it("adopts the checkout branch without clearing the worktree attachment", () => {
+  it("updates a stale local thread branch to the active checkout", () => {
     expect(
       resolveThreadMetadataUpdateForNextTurn({
         currentModelSelection: modelSelection,
         currentBranch: "feature/thread",
         nextBranch: "feature/checkout",
       }),
-    ).toEqual({ branch: "feature/checkout" });
+    ).toEqual({ branch: "feature/checkout", worktreePath: null });
   });
 
   it("does not write metadata when the model and branch are unchanged", () => {
