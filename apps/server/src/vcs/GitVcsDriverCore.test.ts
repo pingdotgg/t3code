@@ -4019,6 +4019,57 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect.each([false, true])(
+      "cleans up links left by successful worktree removal, preserving ordinary files: %s",
+      (keepFile) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const fileSystem = yield* FileSystem.FileSystem;
+          const pathService = yield* Path.Path;
+          const outside = yield* makeTmpDir("git-worktree-link-target-");
+          yield* writeTextFile(outside, "keep.txt", "external target\n");
+          const worktreePath = pathService.join(cwd, "leftover");
+          const nested = pathService.join(worktreePath, "node_modules");
+          yield* fileSystem.makeDirectory(nested, { recursive: true });
+          yield* fileSystem.makeDirectory(pathService.join(worktreePath, "empty"));
+          NodeFS.symlinkSync(outside, pathService.join(worktreePath, "linked"), "junction");
+          NodeFS.symlinkSync(outside, pathService.join(nested, "pkg"), "junction");
+          if (keepFile) {
+            yield* writeTextFile(worktreePath, "notes/draft.txt", "new work\n");
+          }
+
+          // Git removes symlinks on Unix; simulate its successful Windows removal
+          // leaving junctions behind so the cleanup is exercised on every platform.
+          const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const spawner = ChildProcessSpawner.make((command) =>
+            ChildProcess.isStandardCommand(command) &&
+            command.args.join(" ").includes("worktree remove")
+              ? Effect.succeed(makeSuccessfulHandle(""))
+              : delegate.spawn(command),
+          );
+          const driver = yield* makeGitVcsDriverCore().pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.provide(layerServerConfig),
+          );
+
+          yield* driver.removeWorktree({ cwd, path: worktreePath });
+
+          assert.equal(
+            yield* fileSystem.readFileString(pathService.join(outside, "keep.txt")),
+            "external target\n",
+          );
+          if (keepFile) {
+            assert.deepEqual(yield* fileSystem.readDirectory(worktreePath), ["notes"]);
+            assert.equal(
+              yield* fileSystem.readFileString(pathService.join(worktreePath, "notes/draft.txt")),
+              "new work\n",
+            );
+          } else {
+            assert.equal(yield* fileSystem.exists(worktreePath), false);
+          }
+        }),
+    );
+
     it.effect("keeps a worktree whose untracked files status is configured to hide", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
@@ -4044,6 +4095,33 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           yield* fileSystem.readFileString(pathService.join(worktreePath, "notes.txt")),
           "draft\n",
         );
+      }),
+    );
+
+    it.effect("leaves a folder alone that only shares the worktree's short name", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const pathService = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), "short");
+        yield* driver.createWorktree({
+          cwd,
+          path: worktreePath,
+          refName: initialBranch,
+          newRefName: "feature/short",
+        });
+        // Unrelated to the worktree, but resolving "short" against cwd lands here.
+        const outside = yield* makeTmpDir("git-worktree-link-target-");
+        const unrelated = pathService.join(cwd, "short");
+        NodeFS.mkdirSync(unrelated);
+        NodeFS.symlinkSync(outside, pathService.join(unrelated, "linked"), "junction");
+
+        yield* Effect.result(driver.removeWorktree({ cwd, path: "short" }));
+
+        assert.isTrue(NodeFS.lstatSync(pathService.join(unrelated, "linked")).isSymbolicLink());
+        assert.equal(yield* fileSystem.exists(worktreePath), true);
       }),
     );
 
