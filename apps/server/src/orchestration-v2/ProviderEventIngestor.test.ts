@@ -2120,6 +2120,75 @@ layer("ProviderEventIngestorV2", (it) => {
     }),
   );
 
+  it.effect(
+    "recovers a missing Claude child once and preserves saved metadata on later recovery",
+    () =>
+      Effect.gen(function* () {
+        const now = yield* DateTime.now;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const rootEvent = yield* threadCreatedEvent(now);
+        if (rootEvent.type !== "thread.created") throw new Error("Expected thread fixture");
+        const driver = ProviderDriverKind.make("claude");
+        const providerInstanceId = ProviderInstanceId.make("claude");
+        const childThreadId = idAllocator.derive.threadFromProviderThread({
+          driver,
+          nativeThreadId: "recovered-claude-child",
+        });
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId,
+          threadId: rootEvent.threadId,
+        });
+        const recovered: OrchestrationV2AppThread = {
+          ...rootEvent.payload,
+          id: childThreadId,
+          title: "Recovered subagent",
+          providerInstanceId,
+          modelSelection: { instanceId: providerInstanceId, model: "claude-sonnet-4-6" },
+          activeProviderThreadId: null,
+          createdBy: "agent",
+          creationSource: "provider",
+          lineage: {
+            parentThreadId: rootEvent.threadId,
+            relationshipToParent: "subagent",
+            rootThreadId: rootEvent.threadId,
+          },
+        };
+        const ingest = (appThread: OrchestrationV2AppThread, createOnly: boolean) =>
+          ingestor.ingestNormalized({
+            providerSessionId,
+            providerInstanceId,
+            threadId: rootEvent.threadId,
+            event: { type: "app_thread.created", driver, appThread, createOnly },
+          });
+        yield* eventSink.write({ events: [rootEvent] });
+        const created = yield* Effect.all([ingest(recovered, true), ingest(recovered, true)], {
+          concurrency: "unbounded",
+        });
+        assert.deepEqual(
+          created.flat().map((stored) => stored.event.type),
+          ["thread.created"],
+        );
+        assert.deepEqual(yield* projectionStore.getThread(childThreadId), recovered);
+
+        yield* ingest(
+          {
+            ...recovered,
+            title: "Review authentication",
+            modelSelection: { instanceId: providerInstanceId, model: "claude-opus-4-6" },
+          },
+          false,
+        );
+        const saved = yield* projectionStore.getThread(childThreadId);
+        assert.equal(saved.title, "Review authentication");
+        assert.equal(saved.modelSelection.model, "claude-opus-4-6");
+        assert.deepEqual(yield* ingest(recovered, true), []);
+        assert.deepEqual(yield* projectionStore.getThread(childThreadId), saved);
+      }),
+  );
+
   it.effect("moves a native subagent's thread to the model its provider reports later", () =>
     Effect.gen(function* () {
       const now = yield* DateTime.now;

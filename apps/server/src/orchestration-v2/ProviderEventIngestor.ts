@@ -532,8 +532,9 @@ export const layer: Layer.Layer<
               );
               if (
                 existing !== null &&
-                existing.title === offered.title &&
-                modelSelectionsEqual(existing.modelSelection, offered.modelSelection)
+                (input.event.createOnly === true ||
+                  (existing.title === offered.title &&
+                    modelSelectionsEqual(existing.modelSelection, offered.modelSelection)))
               )
                 return [];
               const now = yield* DateTime.now;

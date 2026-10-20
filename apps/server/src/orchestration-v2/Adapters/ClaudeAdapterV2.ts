@@ -5456,13 +5456,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               createdBy: "agent",
               creationSource: "provider",
             });
-            if (existingSubagent === undefined) {
-              yield* emitProviderEvent({
-                type: "app_thread.created",
-                driver: CLAUDE_PROVIDER,
-                appThread: childThread,
-              });
-            }
+            // Recovery cannot tell whether the child thread was already persisted.
+            yield* emitProviderEvent({
+              type: "app_thread.created",
+              driver: CLAUDE_PROVIDER,
+              appThread: childThread,
+              ...(existingSubagent === undefined ? {} : { createOnly: true }),
+            });
             subagent.childThread = childThread;
           }
 
