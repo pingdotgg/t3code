@@ -882,6 +882,76 @@ describe("server state projection", () => {
     }),
   );
 
+  it.effect("shows a reported stall but never caches it", () =>
+    Effect.gen(function* () {
+      const events = yield* Queue.unbounded<ServerConfigStreamEvent>();
+      const client = {
+        [WS_METHODS.subscribeServerConfig]: () => Stream.fromQueue(events),
+      } as unknown as WsRpcProtocolClient;
+      const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+        target: TARGET,
+        state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+        session: yield* SubscriptionRef.make(Option.some(session(client))),
+        prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+        connect: Effect.void,
+        disconnect: Effect.void,
+        retryNow: Effect.void,
+      } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+      const savedConfigs = yield* Queue.unbounded<ServerConfig>();
+      const cache = Persistence.EnvironmentCacheStore.of({
+        loadShell: () => Effect.succeedNone,
+        saveShell: () => Effect.void,
+        loadThread: () => Effect.succeedNone,
+        saveThread: () => Effect.void,
+        removeThread: () => Effect.void,
+        loadServerConfig: () => Effect.succeedSome(CONFIG),
+        saveServerConfig: (_environmentId, config) => Queue.offer(savedConfigs, config),
+        loadVcsRefs: () => Effect.succeedNone,
+        saveVcsRefs: () => Effect.void,
+        removeVcsRefs: () => Effect.void,
+        clearVcsRefs: () => Effect.void,
+        clear: () => Effect.void,
+      });
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const state = yield* makeEnvironmentServerConfigState({}).pipe(
+            Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+            Effect.provideService(Persistence.EnvironmentCacheStore, cache),
+          );
+          expect(Option.getOrThrow(yield* SubscriptionRef.get(state)).config).toBe(CONFIG);
+
+          const lastEventLoopStall = {
+            detectedAt: "2026-10-20T07:50:37.633Z",
+            durationMs: 12_422,
+            loadAverage: 219.4,
+            cpuCount: 18,
+          };
+          yield* Queue.offer(events, {
+            version: 1,
+            type: "snapshot",
+            config: { ...CONFIG, lastEventLoopStall },
+          });
+          const projected = yield* SubscriptionRef.changes(state).pipe(
+            Stream.filter((value) =>
+              Option.match(value, {
+                onNone: () => false,
+                onSome: (projection) => projection.source === "live",
+              }),
+            ),
+            Stream.runHead,
+          );
+          expect(Option.getOrThrow(Option.getOrThrow(projected)).config.lastEventLoopStall).toEqual(
+            lastEventLoopStall,
+          );
+        }),
+      );
+
+      // Cached, it would read as a fresh freeze on the next launch.
+      expect(yield* Queue.take(savedConfigs)).not.toHaveProperty("lastEventLoopStall");
+    }),
+  );
+
   it.effect("does not rewrite cached configuration when no live update arrives", () =>
     Effect.gen(function* () {
       const client = {

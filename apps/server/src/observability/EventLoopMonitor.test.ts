@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -27,6 +28,8 @@ const stalled: EventLoopMonitor.EventLoopReadings = {
   rssBytes: 1536 * 1024 * 1024,
   heapUsedBytes: 512 * 1024 * 1024,
   elapsedMs: 30_000,
+  loadAverage: 219.43,
+  cpuCount: 18,
 };
 const quiet: EventLoopMonitor.EventLoopReadings = { ...stalled, delayMaxNs: ms(2_950) };
 
@@ -79,6 +82,30 @@ describe("EventLoopMonitor", () => {
         [["event loop stalled for 4950 ms", "WARN"]],
       );
     }),
+  );
+
+  it.effect("reports a long stall when a client connects, before the next timed sample", () =>
+    Effect.gen(function* () {
+      const long = { ...stalled, delayMaxNs: ms(13_000), activeMs: 13_000 };
+      const context = yield* monitor([quiet, stalled, long]);
+      const eventLoop = Context.get(context, EventLoopMonitor.EventLoopMonitor);
+      // The startup sample is skipped, so a connect before it reads nothing.
+      assert.isUndefined(yield* eventLoop.latestNoticeableStall);
+
+      yield* TestClock.adjust("30 seconds");
+      // Under 5 s: logged, but not worth telling a client about.
+      assert.isUndefined(yield* eventLoop.latestNoticeableStall);
+      assert.deepStrictEqual(yield* eventLoop.latestNoticeableStall, {
+        detectedAt: "1970-01-01T00:00:30.000Z",
+        durationMs: 12_000,
+        loadAverage: 219.4,
+        cpuCount: 18,
+      });
+
+      // Too old to explain a drop now.
+      yield* TestClock.adjust("301 seconds");
+      assert.isUndefined(yield* eventLoop.latestNoticeableStall);
+    }).pipe(Effect.scoped),
   );
 
   it.effect("exports the server's memory, CPU and event loop from each sample", () =>

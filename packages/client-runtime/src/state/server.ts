@@ -386,7 +386,9 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
     const persist = Effect.fn("EnvironmentServerConfigState.persist")(function* (
       config: ServerConfig,
     ) {
-      return yield* cache.saveServerConfig(environmentId, withoutEnvironmentThemes(config)).pipe(
+      // A cached stall would read as a fresh freeze on the next launch.
+      const { lastEventLoopStall: _stall, ...cacheable } = withoutEnvironmentThemes(config);
+      return yield* cache.saveServerConfig(environmentId, cacheable).pipe(
         Effect.as(true),
         Effect.catch((error) =>
           Effect.logWarning("Could not persist cached server configuration.").pipe(
