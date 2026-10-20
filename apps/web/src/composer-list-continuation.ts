@@ -153,7 +153,7 @@ export function listContinuationForEnter(value: string, cursor: number): Compose
   if (!Number.isInteger(cursor) || cursor < 0 || cursor > value.length) return null;
   const line = currentLine(value, cursor);
   const parsed = parseListMarker(line.text);
-  if (!parsed) return null;
+  if (!parsed || parsed.marker.space === "") return null;
   const markerEnd = line.start + parsed.markerEnd;
   if (cursor < markerEnd) return null;
   const tokens = inlineTokenRanges(value);
