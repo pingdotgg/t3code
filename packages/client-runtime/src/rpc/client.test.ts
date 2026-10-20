@@ -137,9 +137,9 @@ describe("environment RPC", () => {
         Effect.provideService(
           EnvironmentRpcRequestObserver,
           EnvironmentRpcRequestObserver.of({
-            observe: ({ environmentId, method }) =>
+            observe: ({ environmentId, environmentLabel, method }) =>
               Effect.sync(() => {
-                observations.push(`start:${environmentId}:${method}`);
+                observations.push(`start:${environmentId}:${environmentLabel}:${method}`);
                 return Effect.sync(() => {
                   observations.push(`finish:${environmentId}:${method}`);
                 });
@@ -150,7 +150,7 @@ describe("environment RPC", () => {
 
       expect(result).toEqual({ status: "available", version: "2026.6.0" });
       expect(observations).toEqual([
-        `start:${TARGET.environmentId}:${WS_METHODS.cloudGetRelayClientStatus}`,
+        `start:${TARGET.environmentId}:${TARGET.label}:${WS_METHODS.cloudGetRelayClientStatus}`,
         `finish:${TARGET.environmentId}:${WS_METHODS.cloudGetRelayClientStatus}`,
       ]);
     }),
