@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { cn } from "../../lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -31,9 +31,17 @@ export function RedactedSensitiveText(props: {
   readonly hideTooltip: string;
   readonly className?: string;
 }) {
-  const [revealed, setRevealed] = useState(false);
+  const [visibility, setVisibility] = useState<"hidden" | "hiding" | "revealed">("hidden");
+  const revealed = visibility === "revealed";
   const value = props.value?.trim();
   const redacted = value ? redactedPlaceholder(value) : "";
+
+  useEffect(() => {
+    if (visibility !== "hiding") return;
+    // Theme changes can suppress the filter transition and its completion event.
+    const timeout = window.setTimeout(() => setVisibility("hidden"), 400);
+    return () => window.clearTimeout(timeout);
+  }, [visibility]);
 
   if (!value) return null;
 
@@ -48,10 +56,17 @@ export function RedactedSensitiveText(props: {
               revealed ? "text-muted-foreground" : "select-none text-muted-foreground blur-xs",
               props.className,
             )}
-            onClick={() => setRevealed((current) => !current)}
+            onClick={() =>
+              setVisibility((current) => (current === "revealed" ? "hiding" : "revealed"))
+            }
+            onTransitionEnd={(event) => {
+              if (event.propertyName === "filter") {
+                setVisibility((current) => (current === "hiding" ? "hidden" : current));
+              }
+            }}
             aria-label={props.ariaLabel}
           >
-            {revealed ? value : redacted}
+            {visibility === "hidden" ? redacted : value}
           </button>
         }
       />

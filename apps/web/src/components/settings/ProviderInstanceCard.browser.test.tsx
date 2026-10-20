@@ -6,6 +6,8 @@ import { userEvent } from "vite-plus/test/browser";
 
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
 
+import "../../index.css";
+
 let root: Root;
 let container: HTMLDivElement;
 
@@ -19,6 +21,7 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -66,8 +69,21 @@ async function renderCard(
   );
 }
 
+function pauseBlur(toggle: HTMLButtonElement) {
+  const transition = toggle
+    .getAnimations()
+    .find(
+      (animation) =>
+        animation instanceof CSSTransition && animation.transitionProperty === "filter",
+    );
+  expect(transition).toBeDefined();
+  transition!.pause();
+  transition!.currentTime = Number(transition!.effect!.getComputedTiming().duration) / 2;
+  return transition!;
+}
+
 describe("ProviderInstanceCard", () => {
-  it("hides the account email until the user reveals it, and hides it again", async () => {
+  it("blurs the revealed email before replacing it with the placeholder", async () => {
     await renderCard(
       provider({ auth: { status: "authenticated", email: "developer@example.com" } }),
       "editor",
@@ -78,11 +94,73 @@ describe("ProviderInstanceCard", () => {
     const toggle = container.querySelector<HTMLButtonElement>(
       'button[aria-label="Toggle account email visibility"]',
     )!;
-    await userEvent.click(toggle);
+    const placeholder = toggle.textContent;
+    const hiddenFilter = getComputedStyle(toggle).filter;
+    await act(() => userEvent.click(toggle));
+    await act(async () =>
+      Promise.all(toggle.getAnimations().map((animation) => animation.finished)),
+    );
+    expect(toggle.textContent).toBe("developer@example.com");
+    const revealedFilter = getComputedStyle(toggle).filter;
+
+    // A synchronous click lets us inspect the real CSS transition before the next paint.
+    await act(() => toggle.click());
+    const blur = pauseBlur(toggle);
+    expect(getComputedStyle(toggle).filter).not.toBe(revealedFilter);
+    expect(getComputedStyle(toggle).filter).not.toBe(hiddenFilter);
     expect(toggle.textContent).toBe("developer@example.com");
 
-    await userEvent.click(toggle);
-    expect(container.textContent).not.toContain("developer@example.com");
+    const transitionEnd = new Promise<TransitionEvent>((resolve) =>
+      toggle.addEventListener("transitionend", resolve, { once: true }),
+    );
+    await act(async () => {
+      blur.finish();
+      await transitionEnd;
+    });
+    expect(toggle.textContent).toBe(placeholder);
+    expect(getComputedStyle(toggle).filter).toBe(hiddenFilter);
+  });
+
+  it("keeps a later hide intact after revealing during a theme-interrupted hide", async () => {
+    await renderCard(
+      provider({ auth: { status: "authenticated", email: "developer@example.com" } }),
+      "editor",
+    );
+    const toggle = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Toggle account email visibility"]',
+    )!;
+    const placeholder = toggle.textContent;
+    const hiddenFilter = getComputedStyle(toggle).filter;
+    await act(() => userEvent.click(toggle));
+    await act(async () =>
+      Promise.all(toggle.getAnimations().map((animation) => animation.finished)),
+    );
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+
+    container.classList.add("no-transitions");
+    await act(() => toggle.click());
+    expect(getComputedStyle(toggle).filter).toBe(hiddenFilter);
+    await act(() => vi.advanceTimersByTime(300));
+
+    await act(() => toggle.click());
+    expect(toggle.textContent).toBe("developer@example.com");
+    expect(getComputedStyle(toggle).filter).not.toBe(hiddenFilter);
+    await act(() => vi.advanceTimersByTime(50));
+    container.classList.remove("no-transitions");
+    expect(getComputedStyle(toggle).filter).not.toBe(hiddenFilter);
+
+    await act(() => toggle.click());
+    const blur = pauseBlur(toggle);
+    // Cross the first hide's fallback deadline while the second blur is still incomplete.
+    await act(() => vi.advanceTimersByTime(50));
+    expect(getComputedStyle(toggle).filter).not.toBe(hiddenFilter);
+    expect(toggle.textContent).toBe("developer@example.com");
+
+    // A canceled transition has no transitionend event to finish the hide.
+    blur.cancel();
+    expect(getComputedStyle(toggle).filter).toBe(hiddenFilter);
+    await act(() => vi.advanceTimersByTime(1_000));
+    expect(toggle.textContent).toBe(placeholder);
   });
 
   it.each(["list", "editor"] as const)(
