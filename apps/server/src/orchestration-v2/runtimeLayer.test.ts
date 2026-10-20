@@ -2668,6 +2668,95 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("ends a watch the host refuses to show on the first pass, and says why", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("runtime-pull-request-watch-refused");
+      const projectId = ProjectId.make("pr-watch-refused-project");
+      yield* seedProject({
+        projectId,
+        title: "Watch refused",
+        workspaceRoot: "/workspace/watch-refused",
+        defaultModelSelection: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("pr-watch-refused-create"),
+        threadId,
+        projectId,
+        title: "Watch refused",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make("pr-watch-refused-start"),
+        threadId,
+        host: "github.com",
+        repository: "pingdotgg/t3code",
+        number: 14,
+        watching: true,
+        link: { url: "https://github.com/pingdotgg/t3code/pull/14", source: "agent" },
+      });
+      // GitHub answers a credential that cannot see a private repository with a 404.
+      const hidden = new PullRequestOperationError({
+        operation: "detail",
+        detail: "GitHub could not find the requested resource, or the credential cannot see it.",
+        reason: "not-found",
+        cause: new PullRequestProviderError({
+          provider: SourceControlProviderKind.make("github"),
+          operation: "getChangeRequest",
+          reason: "not-found",
+          detail: "GitHub could not find the requested resource, or the credential cannot see it.",
+        }),
+      });
+      // A field the credential may not read, such as one requested reviewer, is not a refusal of
+      // the pull request, so it keeps the usual retries.
+      const forbiddenField = new PullRequestOperationError({
+        operation: "detail",
+        detail: "Resource not accessible by integration",
+        cause: new PullRequestProviderError({
+          provider: SourceControlProviderKind.make("github"),
+          operation: "getChangeRequest",
+          reason: "failed",
+          detail: "Resource not accessible by integration",
+        }),
+      });
+      let failure: PullRequestOperationError = forbiddenField;
+      const reactor = yield* PullRequestWatchReactor.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            Layer.mock(PullRequestService.PullRequestService)({
+              detail: () => Effect.fail(failure),
+              activity: () => Effect.fail(failure),
+            }),
+          ),
+        ),
+      );
+      yield* reactor.sweep;
+      assert.isDefined((yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch);
+
+      failure = hidden;
+      yield* reactor.sweep;
+
+      const thread = yield* orchestrator.getThreadShell(threadId);
+      assert.isUndefined(thread?.pullRequests?.[0]?.watch);
+      const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
+      assert.deepEqual(
+        messages.flatMap((message) => message.notification?.summary ?? []),
+        ["#14: stopped watching, could not read it"],
+      );
+      assert.include(messages.at(-1)?.text ?? "", "the credential cannot see it");
+    }),
+  );
+
   it.effect(
     "reads a watched pull request once a pass, waits out rate limits, and skips quiet passes",
     () =>
