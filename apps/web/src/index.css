@@ -2046,7 +2046,7 @@ code {
 }
 
 .chat-markdown pre::-webkit-scrollbar {
-  height: 7px;
+  height: var(--app-scrollbar-width);
 }
 
 .chat-markdown pre::-webkit-scrollbar-thumb {
