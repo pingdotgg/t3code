@@ -12,6 +12,7 @@ describe("toChangeBreakdown", () => {
           { path: "src/b.ts", additions: 5, deletions: 1 },
           { path: "src/a.test.ts", additions: 40, deletions: 0 },
           { path: "pnpm-lock.yaml", additions: 300, deletions: 120 },
+          { path: "README.md", additions: 7, deletions: 3 },
         ],
       }),
     ).toEqual({
@@ -19,6 +20,7 @@ describe("toChangeBreakdown", () => {
       tests: { additions: 40, deletions: 0 },
       mocks: { additions: 0, deletions: 0 },
       generated: { additions: 300, deletions: 120 },
+      docs: { additions: 7, deletions: 3 },
     });
   });
 

@@ -29,6 +29,7 @@ const BREAKDOWN_LABELS = {
   tests: "Tests",
   mocks: "Mocks",
   generated: "Generated",
+  docs: "Docs",
 } satisfies Record<keyof NonNullable<PullRequestChangeBreakdown>, string>;
 
 function PullRequestChangeBreakdownLine(props: {

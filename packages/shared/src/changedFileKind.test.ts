@@ -36,6 +36,12 @@ describe("classifyChangedFile", () => {
     ["src/routeTree.gen.ts", "generated"],
     ["src/__generated__/types.ts", "generated"],
     ["dist/app.min.js", "generated"],
+    ["README.md", "docs"],
+    ["docs/internals/overview.mdx", "docs"],
+    ["NOTES.txt", "docs"],
+    ["requirements-dev.txt", "code"],
+    ["CMakeLists.txt", "code"],
+    ["tests/README.md", "tests"],
   ] as const)("%s is %s", (path, kind) => {
     expect(classifyChangedFile(path)).toBe(kind);
   });
