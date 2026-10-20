@@ -116,6 +116,42 @@ function typeText(editor: Editor, from: number, to: number, text: string) {
   }
 }
 
+function textWithMark(editor: Editor, name: string) {
+  const text: string[] = [];
+  editor.state.doc.descendants((node) => {
+    if (node.isText && node.marks.some((mark) => mark.type.name === name)) {
+      text.push(node.textContent);
+    }
+  });
+  return text;
+}
+
+it.each([
+  { value: "clean _build and node", code: [] },
+  { value: "clean `_build` and `node", code: ["_build"] },
+])("keeps a typed underscore literal after $value", async ({ value, code }) => {
+  const editor = await mountEditor(value);
+  await act(async () => {
+    editor.commands.focus("end");
+    const { from, to } = editor.state.selection;
+    typeText(editor, from, to, "_");
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(`${value}_`);
+  expect(textWithMark(editor, "italic")).toEqual([]);
+  expect(textWithMark(editor, "code")).toEqual(code);
+});
+
+it("still italicizes text when typing a closing asterisk", async () => {
+  const editor = await mountEditor("clean *build");
+  await act(async () => {
+    editor.commands.focus("end");
+    const { from, to } = editor.state.selection;
+    typeText(editor, from, to, "*");
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe("clean *build*");
+  expect(textWithMark(editor, "italic")).toEqual(["build"]);
+});
+
 it.each([false, true])(
   "composes an umlaut without wrapping the preedit text (rich text: %s)",
   async (richTextEnabled) => {

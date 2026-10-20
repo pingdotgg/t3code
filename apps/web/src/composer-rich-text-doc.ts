@@ -11,7 +11,14 @@ import { Blockquote } from "@tiptap/extension-blockquote";
 import { CodeBlock } from "@tiptap/extension-code-block";
 import { Heading } from "@tiptap/extension-heading";
 import { HorizontalRule } from "@tiptap/extension-horizontal-rule";
-import { type Command, type Editor, mergeAttributes } from "@tiptap/core";
+import { Italic, starInputRegex, starPasteRegex } from "@tiptap/extension-italic";
+import {
+  type Command,
+  type Editor,
+  markInputRule,
+  markPasteRule,
+  mergeAttributes,
+} from "@tiptap/core";
 import { BulletList, ListItem, OrderedList } from "@tiptap/extension-list";
 import { TaskItem } from "@tiptap/extension-task-item";
 import { TaskList } from "@tiptap/extension-task-list";
@@ -124,6 +131,20 @@ export const ComposerCodeExtension = Code.extend({
   exitable: false,
   addProseMirrorPlugins() {
     return [...(this.parent?.() ?? []), codePairCaretPlugin(this.type)];
+  },
+});
+
+/**
+ * The composer writes italic as `*text*`, so it keeps only the `*` shortcuts.
+ * Tiptap's `_text_` rules fire on the `_` in names like `node_modules` and
+ * italicize back to an earlier `_build`, even one inside a code span.
+ */
+export const ComposerItalicExtension = Italic.extend({
+  addInputRules() {
+    return [markInputRule({ find: starInputRegex, type: this.type })];
+  },
+  addPasteRules() {
+    return [markPasteRule({ find: starPasteRegex, type: this.type })];
   },
 });
 
