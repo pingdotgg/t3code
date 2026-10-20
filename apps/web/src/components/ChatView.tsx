@@ -1436,8 +1436,8 @@ export default function ChatView(props: ChatViewProps) {
   const composerMountedRef = useRef(true);
   const [scrollToEndClearance, setScrollToEndClearance] = useState(0);
   const isAtEndRef = useRef(true);
-  const isTimelineAtLogicalEnd = () =>
-    resolveTimelineIsAtEnd(legendListRef.current?.getState()) ?? isAtEndRef.current;
+  const isTimelineAtLogicalEnd = (scrollOffset?: number) =>
+    resolveTimelineIsAtEnd(legendListRef.current?.getState(), scrollOffset) ?? isAtEndRef.current;
   const isTimelineAtLogicalEndStable = useStableCallback(isTimelineAtLogicalEnd);
   const [timelineOverflows, setTimelineOverflows] = useState(false);
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});

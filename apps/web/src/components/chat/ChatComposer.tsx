@@ -363,12 +363,11 @@ import {
   importComposerThreadAttachment,
   remainingComposerAttachmentSlots,
 } from "./composerThreadImport";
-import { isTimelineScrollTarget } from "./timelineScrollTarget";
 import {
   createComposerScrollGestureState,
-  recordComposerScrollGestureEvent,
+  listenForComposerScrollGestures,
+  COMPOSER_SCROLL_GESTURE_RESET_MS,
   shouldCollapseComposerForScrollKey,
-  resetComposerScrollGesture,
   suppressActiveComposerScrollGesture,
 } from "./composerScrollGesture";
 import { prepareVideoFirstFrame } from "../../lib/videoFirstFrame";
@@ -446,8 +445,6 @@ const COMPOSER_PULL_REQUEST_RESULT_LIMIT = 12;
 const EMPTY_PULL_REQUEST_LIST_TARGETS: ReadonlyArray<EnvironmentQueryTarget<PullRequestListInput>> =
   [];
 
-const COMPOSER_SCROLL_COLLAPSE_THRESHOLD_PX = 24;
-const COMPOSER_SCROLL_GESTURE_RESET_MS = 120;
 const COMPOSER_RESTING_TRANSITION_CLEANUP_BUFFER_MS = 50;
 const COMPOSER_RESTING_TRANSITION_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
 const COMPOSER_RESTING_CONTROLS_ARRIVAL_DRIFT_PX = 4;
@@ -1595,7 +1592,7 @@ export interface ChatComposerProps {
   restingControlsHaveLeadingContext: boolean;
   onRestingControlsVisibilityChange: (visible: boolean) => void;
   getTimelineScrollableNode: () => HTMLElement | null;
-  isTimelineAtLogicalEnd: () => boolean;
+  isTimelineAtLogicalEnd: (scrollOffset?: number) => boolean;
   timelineOverflows: boolean;
   onComposerOverlayHeightChange: (height: number) => void;
   onRestingChange: (resting: boolean) => void;
@@ -2498,7 +2495,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const mobileComposerExpandFrameRef = useRef<number | null>(null);
   const mobileComposerExpandReleaseFrameRef = useRef<number | null>(null);
   const mobileComposerExpandInFlightRef = useRef(false);
-  const composerScrollCollapseTimeoutRef = useRef<number | null>(null);
   const composerScrollCollapseEligibleRef = useRef(false);
   const windowRefocusInFlightRef = useRef(false);
   const composerScrollGestureRef = useRef(createComposerScrollGestureState());
@@ -5029,71 +5025,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   useEffect(() => {
     if (!canTrackComposerScrollGesture) return;
 
-    const finishScrollGesture = () => {
-      if (composerScrollCollapseTimeoutRef.current !== null) {
-        window.clearTimeout(composerScrollCollapseTimeoutRef.current);
-      }
-      composerScrollCollapseTimeoutRef.current = null;
-      resetComposerScrollGesture(composerScrollGestureRef.current);
-    };
-    const handleTimelineWheel = (event: WheelEvent) => {
-      if (event.ctrlKey || !(event.target instanceof Element)) {
-        return;
-      }
-
-      const scrollNode = getTimelineScrollableNode();
-      if (!scrollNode) return;
-      const targetsTimeline = isTimelineScrollTarget(event.target, scrollNode, event.deltaY);
-      if (
-        !scrollNode.contains(event.target) &&
-        !composerScrollGestureRef.current.collapseSuppressed
-      )
-        return;
-
-      if (composerScrollCollapseTimeoutRef.current !== null) {
-        window.clearTimeout(composerScrollCollapseTimeoutRef.current);
-      }
-      composerScrollCollapseTimeoutRef.current = window.setTimeout(
-        finishScrollGesture,
-        COMPOSER_SCROLL_GESTURE_RESET_MS,
-      );
-
-      const canScrollInGestureDirection =
-        targetsTimeline &&
-        (event.deltaY < 0
-          ? scrollNode.scrollTop > 0
-          : scrollNode.scrollTop < scrollNode.scrollHeight - scrollNode.clientHeight);
-      const deltaPx =
-        Math.abs(event.deltaY) *
-        (event.deltaMode === WheelEvent.DOM_DELTA_LINE
-          ? 16
-          : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
-            ? scrollNode.clientHeight
-            : 1);
-      const shouldCollapse = recordComposerScrollGestureEvent(composerScrollGestureRef.current, {
-        now: window.performance.now(),
-        deltaPx,
-        collapseThresholdPx: COMPOSER_SCROLL_COLLAPSE_THRESHOLD_PX,
-        collapseEligible: targetsTimeline && composerScrollCollapseEligibleRef.current,
-        canScrollInGestureDirection,
-        scrollsTowardLogicalEnd: event.deltaY > 0 && isTimelineAtLogicalEnd(),
-      });
-      if (!shouldCollapse) {
-        return;
-      }
-
-      setIsComposerScrollCollapsed(true);
-    };
-
-    document.addEventListener("wheel", handleTimelineWheel, { capture: true, passive: true });
-    return () => {
-      document.removeEventListener("wheel", handleTimelineWheel, true);
-      finishScrollGesture();
-    };
+    return listenForComposerScrollGestures({
+      gestureState: composerScrollGestureRef.current,
+      getTimelineScrollableNode,
+      isTimelineAtLogicalEnd,
+      isCollapseEligible: () => composerScrollCollapseEligibleRef.current,
+      onCollapse: () => setIsComposerScrollCollapsed(true),
+      restoreAfterTimelineReachedEnd,
+    });
   }, [
     canTrackComposerScrollGesture,
     getTimelineScrollableNode,
     isTimelineAtLogicalEnd,
+    restoreAfterTimelineReachedEnd,
     setIsComposerScrollCollapsed,
   ]);
 

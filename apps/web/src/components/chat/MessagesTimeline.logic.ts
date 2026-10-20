@@ -323,11 +323,15 @@ export interface TimelineEndState {
  */
 const TIMELINE_FOLLOW_REARM_THRESHOLD_PX = 40;
 
-export function resolveTimelineIsAtEnd(state: TimelineEndState | undefined): boolean | undefined {
+export function resolveTimelineIsAtEnd(
+  state: TimelineEndState | undefined,
+  scrollOffset?: number,
+): boolean | undefined {
   if (!state) {
     return undefined;
   }
-  const { contentLength, scroll, scrollLength } = state;
+  const { contentLength, scrollLength } = state;
+  const scroll = scrollOffset ?? state.scroll;
   if (contentLength === undefined || scroll === undefined || scrollLength === undefined) {
     return state.isAtEnd;
   }
