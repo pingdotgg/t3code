@@ -754,16 +754,22 @@ internal class SelectionAwareEditText(context: Context) : EditText(context) {
     return shouldIntercept
   }
 
-  // coerceToText opens content: URIs synchronously. Leave URI-backed
-  // clipboard items to Android's normal paste path so the UI thread never
-  // reads an arbitrary provider just to measure a text paste.
-  private fun ClipData.plainText(): String? =
-    takeIf { itemCount > 0 }
-      ?.getItemAt(0)
-      ?.takeIf { it.uri == null }
-      ?.coerceToText(context)
-      ?.toString()
-      ?.takeIf(String::isNotEmpty)
+  // Match native paste's newlines, including empty items.
+  // URI-backed clips stay native: coerceToText can read a provider synchronously.
+  private fun ClipData.plainText(): String? {
+    var joined: StringBuilder? = null
+    for (index in 0 until itemCount) {
+      val item = getItemAt(index)
+      if (item.uri != null) return null
+      val itemText = item.coerceToText(context) ?: continue
+      if (joined == null) {
+        joined = StringBuilder(itemText)
+      } else {
+        joined.append('\n').append(itemText)
+      }
+    }
+    return joined?.toString()?.takeIf(String::isNotEmpty)
+  }
 
   override fun onKeyShortcut(keyCode: Int, event: KeyEvent): Boolean {
     if (keyCode == KeyEvent.KEYCODE_V && event.isCtrlPressed && event.isShiftPressed) {
