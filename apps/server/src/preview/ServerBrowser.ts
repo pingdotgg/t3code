@@ -496,6 +496,11 @@ const make = Effect.gen(function* () {
     },
   });
 
+  const seen = (tab: ServerTab) =>
+    tab.viewers.size > 0 ||
+    (tab.desktop !== null &&
+      desktopChannel.isVisible({ threadId: tab.threadId, tabId: tab.tabId }));
+
   const dialogStatus = (tab: ServerTab) =>
     tab.dialog
       ? {
@@ -589,7 +594,7 @@ const make = Effect.gen(function* () {
             liveTabs: [...tabs.values()].map((tab) => ({
               threadId: tab.threadId,
               tabId: tab.tabId,
-              visible: tab.viewers.size > 0,
+              visible: seen(tab),
             })),
           }),
         ),
@@ -1295,9 +1300,7 @@ const make = Effect.gen(function* () {
         .filter((tab) => tab.control.agentId === agentSessionId)
         .sort((left, right) => right.createdAt - left.createdAt)[0] ??
       threadTabs.sort(
-        (left, right) =>
-          Number(right.viewers.size > 0) - Number(left.viewers.size > 0) ||
-          right.usedAt - left.usedAt,
+        (left, right) => Number(seen(right)) - Number(seen(left)) || right.usedAt - left.usedAt,
       )[0]
     );
   };
@@ -1371,7 +1374,7 @@ const make = Effect.gen(function* () {
     const viewport = tab.page.viewportSize();
     const status = {
       available: true,
-      visible: tab.viewers.size > 0,
+      visible: seen(tab),
       tabId: tab.tabId,
       url: url === "about:blank" ? null : url,
       title: null,
@@ -1395,7 +1398,7 @@ const make = Effect.gen(function* () {
           ...(candidate.openerTabId === undefined ? {} : { openerTabId: candidate.openerTabId }),
           owner: tabOwner(candidate),
           ownedByCaller: candidate.control.agentId === agentSessionId,
-          visible: candidate.viewers.size > 0,
+          visible: seen(candidate),
           ...(candidate.profileId === undefined ? {} : { profileId: candidate.profileId }),
         })),
       ...profileStatus(),
@@ -2484,6 +2487,10 @@ const make = Effect.gen(function* () {
         if (snapshot) yield* Effect.promise(() => ensureTab(snapshot).catch(constVoid));
       }).pipe(Effect.ignore),
     ),
+    Effect.forkScoped,
+  );
+  yield* desktopChannel.visibilityChanged.pipe(
+    Stream.runForEach(() => Effect.sync(reportLiveTabs)),
     Effect.forkScoped,
   );
   yield* Effect.sync(closeIdleAgentTabs).pipe(

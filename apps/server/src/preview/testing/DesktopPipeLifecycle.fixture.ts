@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
 import * as ServerSettings from "../../serverSettings.ts";
@@ -44,13 +45,34 @@ Effect.gen(function* () {
     Effect.forkScoped,
   );
   const detached = yield* browser.detached.pipe(Stream.runHead, Effect.forkScoped);
+  const visibility = yield* Queue.unbounded<DesktopBrowserChannel.DesktopTabKey>();
+  yield* browser.visibilityChanged.pipe(
+    Stream.runForEach((changed) => Queue.offer(visibility, changed)),
+    Effect.forkScoped,
+  );
   yield* Console.log("ready");
   if (!(yield* browser.awaitAttached(key, "5 seconds"))) {
     return yield* Effect.die("The browser attach message was not received.");
   }
   yield* Fiber.join(healthy);
+  if (browser.isVisible(key)) return yield* Effect.die("An attached tab started visible.");
   yield* Console.log("attached");
+  for (const [visible, milestone] of [
+    [true, "shown"],
+    [false, "hidden"],
+    [true, "shown-again"],
+  ] as const) {
+    const changed = yield* Queue.take(visibility);
+    if (
+      changed.threadId !== key.threadId ||
+      changed.tabId !== key.tabId ||
+      browser.isVisible(key) !== visible
+    )
+      return yield* Effect.die("The desktop visibility message was not applied.");
+    yield* Console.log(milestone);
+  }
   yield* Fiber.join(detached);
+  if (browser.isVisible(key)) return yield* Effect.die("A detached tab stayed visible.");
   const endpoint = yield* Effect.exit(Effect.scoped(browser.endpoint(key)));
   if (Exit.isSuccess(endpoint)) return yield* Effect.die("A detached tab received an endpoint.");
   yield* Console.log("verified");

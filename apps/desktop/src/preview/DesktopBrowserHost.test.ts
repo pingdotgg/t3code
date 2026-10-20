@@ -4,6 +4,7 @@ import { DesktopBrowserEvent } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as NodeEvents from "node:events";
 
@@ -60,6 +61,48 @@ describe("DesktopBrowserHost", () => {
       expect(yield* takeEvents(host, 1)).toEqual([{ type: "attached", ...key }]);
       expect(yield* takeEvents(host, 1)).toEqual([{ type: "attached", ...key }]);
     }),
+  );
+
+  it.effect(
+    "replays a shown tab across backend restarts and reports its hide and detach lifecycle",
+    () =>
+      Effect.gen(function* () {
+        const host = yield* DesktopBrowserHost.make;
+        host.setVisible(key, true);
+        host.attach(key, makeDebuggee().tab);
+        const announcement = [
+          { type: "attached", ...key },
+          { type: "visibility", ...key, visible: true },
+        ];
+        expect(yield* takeEvents(host, 2)).toEqual(announcement);
+
+        const events = yield* Queue.unbounded<DesktopBrowserEvent>();
+        const reader = yield* host.events.pipe(
+          Stream.runForEach((line) =>
+            Queue.offer(events, decodeEvent(new TextDecoder().decode(line))),
+          ),
+          Effect.forkScoped,
+        );
+        expect(yield* Queue.take(events)).toEqual(announcement[0]);
+        expect(yield* Queue.take(events)).toEqual(announcement[1]);
+
+        host.setVisible(key, false);
+        host.setVisible(key, false);
+        host.setVisible(key, true);
+        expect(yield* Queue.take(events)).toEqual({ type: "visibility", ...key, visible: false });
+        expect(yield* Queue.take(events)).toEqual({ type: "visibility", ...key, visible: true });
+
+        host.detach(key);
+        expect(yield* Queue.take(events)).toEqual({ type: "detached", ...key });
+        // Guest replacement retains the panel's presentation until the panel hides.
+        host.attach(key, makeDebuggee().tab);
+        expect(yield* Queue.take(events)).toEqual(announcement[0]);
+        expect(yield* Queue.take(events)).toEqual(announcement[1]);
+        host.setVisible(key, false);
+        expect(yield* Queue.take(events)).toEqual({ type: "visibility", ...key, visible: false });
+        yield* Fiber.interrupt(reader);
+        expect(yield* takeEvents(host, 1)).toEqual([{ type: "attached", ...key }]);
+      }).pipe(Effect.scoped),
   );
 
   it.effect("drops replies from a relay the server released", () =>

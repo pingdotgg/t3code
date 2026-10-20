@@ -34,6 +34,12 @@ it("receives desktop messages and exits while the parent keeps both input pipes 
         write(3, { type: "attached", ...key });
         write(5, { version: 1, type: "desktopTelemetryHello", electronPid: process.pid });
       } else if (line === "attached") {
+        write(3, { type: "visibility", ...key, visible: true });
+      } else if (line === "shown") {
+        write(3, { type: "visibility", ...key, visible: false });
+      } else if (line === "hidden") {
+        write(3, { type: "visibility", ...key, visible: true });
+      } else if (line === "shown-again") {
         write(3, { type: "detached", ...key });
       } else if (line === "verified") {
         verified = true;

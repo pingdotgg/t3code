@@ -61,6 +61,7 @@ export class DesktopBrowserHost extends Context.Service<
     readonly handleCommandLine: (line: string) => Effect.Effect<void>;
     readonly attach: (key: DesktopBrowserTabKey, debuggee: DesktopBrowserTabDebugger) => void;
     readonly detach: (key: DesktopBrowserTabKey) => void;
+    readonly setVisible: (key: DesktopBrowserTabKey, visible: boolean) => void;
     readonly humanStartedDownload: (source: Electron.WebContents) => boolean;
     readonly placeDownload: (source: Electron.WebContents, item: Electron.DownloadItem) => boolean;
     readonly pointers: Stream.Stream<{
@@ -82,7 +83,16 @@ export const make = Effect.gen(function* () {
   }>(16);
   const runFork = Effect.runForkWith(yield* Effect.context<never>());
   const tabs = new Map<string, AttachedTab>();
+  // Preserve panel visibility while its guest is detached or still attaching.
+  const visibleTabs = new Set<string>();
   const emit = (event: DesktopBrowserEventType) => runFork(PubSub.publish(outbox, event));
+  const announcement = (key: DesktopBrowserTabKey): ReadonlyArray<DesktopBrowserEventType> =>
+    visibleTabs.has(keyOf(key))
+      ? [
+          { type: "attached", ...key },
+          { type: "visibility", ...key, visible: true },
+        ]
+      : [{ type: "attached", ...key }];
 
   const relayFor = (tab: AttachedTab) => {
     if (tab.relay) return tab.relay;
@@ -158,7 +168,15 @@ export const make = Effect.gen(function* () {
     };
     tabs.set(id, tab);
     debuggee.debugger.on("message", tab.onMessage);
-    emit({ type: "attached", ...key });
+    announcement(key).forEach(emit);
+  };
+
+  const setVisible = (key: DesktopBrowserTabKey, visible: boolean) => {
+    const id = keyOf(key);
+    if (visibleTabs.has(id) === visible) return;
+    if (visible) visibleTabs.add(id);
+    else visibleTabs.delete(id);
+    if (tabs.has(id)) emit({ type: "visibility", ...key, visible });
   };
 
   const handleCommandLine = (line: string) =>
@@ -190,7 +208,7 @@ export const make = Effect.gen(function* () {
       [...tabs.values()],
       (tab) => {
         tab.relay = null;
-        return PubSub.publish(outbox, { type: "attached", ...tab.key });
+        return PubSub.publishAll(outbox, announcement(tab.key));
       },
       { discard: true },
     ),
@@ -209,6 +227,7 @@ export const make = Effect.gen(function* () {
     handleCommandLine,
     attach,
     detach,
+    setVisible,
     placeDownload,
     humanStartedDownload,
   });

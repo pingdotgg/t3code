@@ -12,6 +12,7 @@ export const DesktopBrowserEvent = Schema.Union([
   /** Its `<webview>` went away: closed, crashed, swapped, or devtools took the debugger. */
   Schema.Struct({ type: Schema.Literal("detached"), ...TabKey }),
   Schema.Struct({ type: Schema.Literal("cdp"), ...TabKey, message: Schema.String }),
+  Schema.Struct({ type: Schema.Literal("visibility"), ...TabKey, visible: Schema.Boolean }),
 ]);
 export type DesktopBrowserEvent = typeof DesktopBrowserEvent.Type;
 

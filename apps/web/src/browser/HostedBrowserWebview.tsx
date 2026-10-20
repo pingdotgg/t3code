@@ -209,6 +209,16 @@ export function HostedBrowserWebview(props: {
   ]);
 
   const active = presentation.visible && presentation.rect !== null;
+  useEffect(() => {
+    const bridge = window.desktopBridge?.preview;
+    if (!bridge || !serverDriven || !clientSettingsHydrated) return;
+    withDesktopTab(runtimeTabId, () => bridge.setVisible(runtimeTabId, active));
+  }, [active, clientSettingsHydrated, runtimeTabId, serverDriven]);
+  useEffect(() => {
+    const bridge = window.desktopBridge?.preview;
+    if (!bridge || !serverDriven) return;
+    return () => withDesktopTab(runtimeTabId, () => bridge.setVisible(runtimeTabId, false));
+  }, [runtimeTabId, serverDriven]);
   const lastRect = presentation.rect;
   const layoutZoomFactor = useBrowserLayoutZoomFactor(zoomFactor);
   const viewportWidth = viewport._tag === "fill" ? null : viewport.width;

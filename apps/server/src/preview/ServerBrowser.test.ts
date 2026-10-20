@@ -235,6 +235,7 @@ const desktopRenders = (tabId: string) => {
   }
   return desktopTabs.has(tabId);
 };
+const desktopVisibleTabs = new Set<string>();
 const releasedDesktopTabs: Array<string> = [];
 const desktopConnections: Array<{ endpoint: string; context: ReturnType<typeof makeContext> }> = [];
 const testThread = {
@@ -291,6 +292,8 @@ const dependencies = Layer.mergeAll(
       ),
     ),
     isAttached: (key) => Effect.sync(() => desktopRenders(key.tabId)),
+    isVisible: (key) => desktopVisibleTabs.has(key.tabId),
+    visibilityChanged: Stream.empty,
     endpoint: (key) =>
       Effect.acquireRelease(Effect.succeed(`ws://desktop/${key.tabId}`), () =>
         Effect.sync(() => releasedDesktopTabs.push(key.tabId)),
@@ -340,6 +343,7 @@ beforeEach(() => {
   keyCopy = "";
   focusedFrame = null;
   desktopTabs.clear();
+  desktopVisibleTabs.clear();
   desktopRendersNext = false;
   releasedDesktopTabs.length = 0;
   desktopConnections.length = 0;
@@ -2084,6 +2088,67 @@ it.live("desktop file pickers stay native outside agent actions and remote contr
       expect(
         (yield* Queue.clear(observer.output)).some((item) => item._tag === "fileChooser"),
       ).toBe(false);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("prefers the shown native tab and keeps stream visibility independent of its panel", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const broker = yield* Broker.PreviewAutomationBroker;
+      const manager = yield* Manager.PreviewManager;
+      yield* Effect.yieldNow;
+      desktopRendersNext = true;
+      const opened = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
+      const status = broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "status",
+        input: {},
+        tabId: PreviewTabId.make(opened.tabId),
+      });
+      expect(yield* status).toMatchObject({ visible: false });
+      const later = (yield* Clock.currentTimeMillis) + 1;
+      const clock = vi.spyOn(Date, "now").mockReturnValue(later);
+      yield* Effect.addFinalizer(() => Effect.sync(() => clock.mockRestore()));
+      desktopRendersNext = true;
+      const background = yield* manager.open({
+        threadId: scope.thread.threadId,
+        runtime: "server",
+      });
+      yield* broker.invoke({
+        scope,
+        operation: "status",
+        input: {},
+        tabId: PreviewTabId.make(background.tabId),
+      });
+
+      desktopVisibleTabs.add(opened.tabId);
+      const shown = yield* broker.invoke<PreviewAutomationStatus>({
+        scope: asSession("new-agent"),
+        operation: "status",
+        input: {},
+      });
+      expect(shown).toMatchObject({ tabId: opened.tabId, visible: true });
+      expect(shown.tabs).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ tabId: opened.tabId, visible: true }),
+          expect.objectContaining({ tabId: background.tabId, visible: false }),
+        ]),
+      );
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* browser.attachViewer(viewerInput(opened.tabId, false));
+          desktopVisibleTabs.delete(opened.tabId);
+          expect(yield* status).toMatchObject({ visible: true });
+        }),
+      );
+      const hidden = yield* status;
+      expect(hidden).toMatchObject({ visible: false });
+      expect(hidden.tabs).toEqual(
+        expect.arrayContaining([expect.objectContaining({ tabId: opened.tabId, visible: false })]),
+      );
     }),
   ).pipe(Effect.provide(layer)),
 );

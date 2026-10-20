@@ -10,6 +10,7 @@ import {
   DesktopPreviewScreenshotArtifactSchema,
   DesktopPreviewSetAudioMutedInputSchema,
   DesktopPreviewSetColorSchemeInputSchema,
+  DesktopPreviewSetVisibleInputSchema,
   DesktopPreviewSetZoomFactorInputSchema,
   BrowserImportResult,
   BrowserImportSource,
@@ -194,6 +195,15 @@ export const setAudioMuted = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.preview.setAudioMuted")(function* ({ tabId, audioMuted }) {
     const manager = yield* PreviewManager.PreviewManager;
     yield* manager.setAudioMuted(tabId, audioMuted);
+  }),
+});
+export const setVisible = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_SET_VISIBLE_CHANNEL,
+  payload: DesktopPreviewSetVisibleInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.setVisible")(function* ({ tabId, visible }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.setVisible(tabId, visible);
   }),
 });
 export const openDevTools = tabMethod(
@@ -452,6 +462,7 @@ export const methods = [
   setColorScheme,
   setZoomFactor,
   setAudioMuted,
+  setVisible,
   openDevTools,
   clearCookies,
   clearCache,

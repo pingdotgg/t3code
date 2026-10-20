@@ -1,6 +1,6 @@
 import { it as effectIt } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
-import { DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER } from "@t3tools/contracts";
+import { DesktopBrowserEvent, DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER } from "@t3tools/contracts";
 import type {
   DesktopPreviewRecordingFrame,
   DesktopPreviewRecordingInputEvent,
@@ -16,6 +16,7 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -3011,36 +3012,72 @@ describe("PreviewManager", () => {
     ),
   );
 
-  effectIt.effect("tells the server when a tab it renders natively closes", () =>
-    Effect.gen(function* () {
-      const host = yield* DesktopBrowserHost.DesktopBrowserHost;
-      const serverTab = { threadId: "thread-1", tabId: "server-tab-1" };
-      const lines = yield* Queue.unbounded<string>();
-      yield* host.events.pipe(
-        Stream.runForEach((line) => Queue.offer(lines, new TextDecoder().decode(line))),
-        Effect.forkScoped,
-      );
-      const nextType = Queue.take(lines).pipe(
-        Effect.map((line) => /"type":"(\w+)"/.exec(line)?.[1]),
-      );
-      const capturePage = vi.fn(async () => ({
-        toPNG: () => Buffer.from("png"),
-        toJPEG: () => Buffer.from("jpeg"),
-        getSize: () => ({ width: 100, height: 80 }),
-      }));
-      fromId.mockReturnValue(
-        Object.assign(makeTestPreviewWebContents(capturePage, 42), {
-          isDevToolsOpened: () => false,
-          getUserAgent: () => "Electron",
-        }),
-      );
-      const manager = yield* PreviewManager.PreviewManager;
-      yield* manager.createTab("tab_1", { serverTab });
-      yield* manager.registerWebview("tab_1", 42);
-      expect(yield* nextType).toBe("attached");
-      yield* manager.closeTab("tab_1");
-      expect(yield* nextType).toBe("detached");
-    }).pipe(Effect.provide(managerLayer()), Effect.scoped),
+  effectIt.effect(
+    "preserves a native server tab's visibility through navigation and clears it on close",
+    () =>
+      Effect.gen(function* () {
+        const host = yield* DesktopBrowserHost.DesktopBrowserHost;
+        const serverTab = { threadId: "thread-1", tabId: "server-tab-1" };
+        const events = yield* Queue.unbounded<DesktopBrowserEvent>();
+        const decodeEvent = Schema.decodeUnknownEffect(Schema.fromJsonString(DesktopBrowserEvent));
+        yield* host.events.pipe(
+          Stream.runForEach((line) =>
+            decodeEvent(new TextDecoder().decode(line)).pipe(
+              Effect.flatMap((event) => Queue.offer(events, event)),
+            ),
+          ),
+          Effect.forkScoped,
+        );
+        const capturePage = vi.fn(async () => ({
+          toPNG: () => Buffer.from("png"),
+          toJPEG: () => Buffer.from("jpeg"),
+          getSize: () => ({ width: 100, height: 80 }),
+        }));
+        fromId.mockReturnValue(
+          Object.assign(makeTestPreviewWebContents(capturePage, 42), {
+            isDevToolsOpened: () => false,
+            getUserAgent: () => "Electron",
+            loadURL: vi.fn(async () => undefined),
+          }),
+        );
+        const manager = yield* PreviewManager.PreviewManager;
+        yield* manager.createTab("tab_1", { serverTab });
+        yield* manager.setVisible("tab_1", true);
+        yield* manager.registerWebview("tab_1", 42);
+        expect(yield* Queue.take(events)).toEqual({ type: "attached", ...serverTab });
+        expect(yield* Queue.take(events)).toEqual({
+          type: "visibility",
+          ...serverTab,
+          visible: true,
+        });
+
+        yield* manager.navigate("tab_1", "https://example.com");
+        yield* manager.setVisible("tab_1", false);
+        expect(yield* Queue.take(events)).toEqual({
+          type: "visibility",
+          ...serverTab,
+          visible: false,
+        });
+        yield* manager.setVisible("tab_1", true);
+        expect(yield* Queue.take(events)).toEqual({
+          type: "visibility",
+          ...serverTab,
+          visible: true,
+        });
+        yield* manager.closeTab("tab_1");
+        expect(yield* Queue.take(events)).toEqual({
+          type: "visibility",
+          ...serverTab,
+          visible: false,
+        });
+        expect(yield* Queue.take(events)).toEqual({ type: "detached", ...serverTab });
+
+        yield* manager.createTab("tab_1", { serverTab });
+        yield* manager.registerWebview("tab_1", 42);
+        expect(yield* Queue.take(events)).toEqual({ type: "attached", ...serverTab });
+        yield* manager.closeTab("tab_1");
+        expect(yield* Queue.take(events)).toEqual({ type: "detached", ...serverTab });
+      }).pipe(Effect.provide(managerLayer()), Effect.scoped),
   );
 
   effectIt.effect("stops capture retries when the tab swaps during the retry delay", () =>
