@@ -17,7 +17,6 @@ import type { BrowserImportPathContext } from "./Sources.ts";
 import {
   BROWSER_IMPORT_SOURCES,
   chromiumProcessIsAlive,
-  chromiumSingletonLockIsHeld,
   cookieDatabaseCandidatePaths,
   firefoxSymlinkLockIsHeld,
   resolveCookieDatabase,
@@ -120,7 +119,7 @@ const writeFirefoxCookieDatabase = (
   });
 
 describe("Helium on Linux", () => {
-  it.effect.skipIf(!symlinksSupported)("discovers its profiles and checks the user-data lock", () =>
+  it.effect("discovers its profiles", () =>
     run(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -142,9 +141,6 @@ describe("Helium on Linux", () => {
         assert.deepEqual(yield* listSourceProfiles(helium, context), [
           { directory: "Default", name: "Personal", cookieCount: 3 },
         ]);
-        assert.isFalse(yield* isSourceRunning(helium, context));
-        yield* fileSystem.symlink("foreign-host-4242", `${root}/SingletonLock`);
-        assert.isTrue(yield* isSourceRunning(helium, context));
       }),
     ),
   );
@@ -214,93 +210,6 @@ describe("isSourceRunning", () => {
         assert.deepEqual(probed, [database]);
       }),
     ),
-  );
-
-  it.effect.skipIf(!symlinksSupported)(
-    "reads Chromium's dangling SingletonLock symlink as a running browser",
-    () =>
-      run(
-        Effect.gen(function* () {
-          const fileSystem = yield* FileSystem.FileSystem;
-          const context = yield* withSourceHome();
-          assert.isFalse(yield* isSourceRunning(helium, context));
-
-          // Chromium points the lock at `<host>-<pid>`, a target that never
-          // exists on disk. A check that follows the link reports a running
-          // browser as closed, letting an import read a live, mid-write database.
-          yield* fileSystem.symlink(
-            "host-that-does-not-exist-1234",
-            `${userDataDirectory(context)}/SingletonLock`,
-          );
-
-          assert.isTrue(yield* isSourceRunning(helium, context));
-        }),
-      ),
-  );
-
-  it.effect.skipIf(!symlinksSupported)(
-    "uses the provided hostname to classify Chromium locks",
-    () =>
-      run(
-        Effect.gen(function* () {
-          const fileSystem = yield* FileSystem.FileSystem;
-          const paths = yield* withSourceHome();
-          yield* fileSystem.symlink(
-            "lock-owner-99999999",
-            `${helium.userDataDirectory(paths)}/SingletonLock`,
-          );
-
-          assert.isTrue(
-            yield* isSourceRunning(helium, paths).pipe(
-              Effect.provideService(HostProcess.Hostname, "another-host"),
-            ),
-          );
-          assert.isFalse(
-            yield* isSourceRunning(helium, paths).pipe(
-              Effect.provideService(HostProcess.Hostname, "lock-owner"),
-            ),
-          );
-        }),
-      ),
-  );
-});
-
-describe("chromiumSingletonLockIsHeld", () => {
-  it.effect("ignores a positively dead PID on the current host", () =>
-    Effect.gen(function* () {
-      const checked: number[] = [];
-      const held = yield* chromiumSingletonLockIsHeld("current-host-4321", "current-host", (pid) =>
-        Effect.sync(() => {
-          checked.push(pid);
-          return false;
-        }),
-      );
-      assert.isFalse(held);
-      assert.deepEqual(checked, [4321]);
-    }),
-  );
-
-  it.effect("keeps a live PID on the current host", () =>
-    chromiumSingletonLockIsHeld("current-host-4321", "current-host", () =>
-      Effect.succeed(true),
-    ).pipe(Effect.tap((held) => Effect.sync(() => assert.isTrue(held)))),
-  );
-
-  it.effect("keeps foreign-host and malformed targets without probing a PID", () =>
-    Effect.gen(function* () {
-      let probes = 0;
-      const probe = (_pid: number) =>
-        Effect.sync(() => {
-          probes += 1;
-          return false;
-        });
-      assert.isTrue(yield* chromiumSingletonLockIsHeld("another-host-4321", "current-host", probe));
-      assert.isTrue(
-        yield* chromiumSingletonLockIsHeld("current-host-no-pid", "current-host", probe),
-      );
-      assert.isTrue(yield* chromiumSingletonLockIsHeld("current-host-0", "current-host", probe));
-      assert.strictEqual(probes, 0);
-    }),
   );
 });
 

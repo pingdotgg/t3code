@@ -4,8 +4,9 @@ The desktop app can import cookies from another browser so you can reuse its sig
 in the preview browser.
 
 Open **Settings → Integrations → Browser profiles → Add profile**, then choose a browser under
-**Import from**. Close the source browser before importing, and allow an operating-system keyring
-unlock prompt if one appears.
+**Import from**. On macOS and Linux, Chromium-based browsers can stay open during the import.
+Close Firefox before importing from it. On Windows, close Helium before importing. Allow an
+operating-system keyring unlock prompt if one appears.
 
 This is a one-time copy. Later login changes stay separate between the two browsers, and some
 sites may still require you to sign in again.
