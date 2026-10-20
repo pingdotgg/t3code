@@ -1,8 +1,6 @@
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
-import * as Clock from "effect/Clock";
 import * as Random from "effect/Random";
-import * as Semaphore from "effect/Semaphore";
 import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
@@ -22,7 +20,6 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import * as Schedule from "effect/Schedule";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/http";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
@@ -148,8 +145,9 @@ import * as RelayTracing from "./cloud/relayTracing.ts";
 import * as CloudManagedEndpointRuntime from "./cloud/ManagedEndpointRuntime.ts";
 import {
   MANAGED_TUNNEL_FIRST_REGISTRATION_JITTER,
-  MANAGED_TUNNEL_RECOVERY_COOLDOWN,
+  makeManagedTunnelRecovery,
   managedTunnelStartupAction,
+  retryDesiredLinkReconcile,
   retryManagedTunnelRegistration,
 } from "./cloud/managedTunnelStartup.ts";
 import * as CloudCliTokenManager from "./cloud/CliTokenManager.ts";
@@ -855,42 +853,26 @@ const layerMakeServer = Layer.unwrap(
             if (typeof address === "string" || !("port" in address)) return;
             const localOrigin = `http://127.0.0.1:${address.port}`;
             const endpointRuntime = yield* CloudManagedEndpointRuntime.CloudManagedEndpointRuntime;
-            const recoveryLock = yield* Semaphore.make(1);
-            let lastRecoveryAtMillis = 0;
+            const runManagedTunnelRecovery = yield* makeManagedTunnelRecovery({
+              recover: (config: RelayManagedEndpointRuntimeConfig) =>
+                cloudLink.recoverManagedTunnel(localOrigin, config, {
+                  retryRuntimeFailures: true,
+                }),
+              isRetryable: (error) =>
+                CloudLink.shouldRetryCloudLink(error) &&
+                error._tag !== "CloudLinkEndpointUnavailableError",
+            });
             const recoverManagedTunnel = (config: RelayManagedEndpointRuntimeConfig) =>
-              recoveryLock.withPermits(1)(
-                Effect.gen(function* () {
-                  const elapsed = (yield* Clock.currentTimeMillis) - lastRecoveryAtMillis;
-                  const wait = Duration.toMillis(MANAGED_TUNNEL_RECOVERY_COOLDOWN) - elapsed;
-                  if (wait > 0) yield* Effect.sleep(Duration.millis(wait));
-                  lastRecoveryAtMillis = yield* Clock.currentTimeMillis;
-                }).pipe(
-                  Effect.andThen(
-                    cloudLink.recoverManagedTunnel(localOrigin, config, {
-                      retryRuntimeFailures: true,
-                    }),
-                  ),
-                  Effect.retry({
-                    while: (error) =>
-                      CloudLink.shouldRetryCloudLink(error) &&
-                      error._tag !== "CloudLinkEndpointUnavailableError",
-                    schedule: Schedule.exponential("1 second").pipe(
-                      Schedule.modifyDelay(({ duration }) =>
-                        Effect.succeed(Duration.min(duration, Duration.seconds(30))),
-                      ),
-                      Schedule.jittered,
-                    ),
-                  }),
-                  Effect.tap((recovered) =>
-                    recovered ? Effect.logInfo("T3 Connect managed tunnel recovered") : Effect.void,
-                  ),
-                  Effect.catchCause((cause) =>
-                    Cause.hasInterrupts(cause)
-                      ? Effect.interrupt
-                      : Effect.logWarning("Failed to recover the T3 Connect managed tunnel", {
-                          cause,
-                        }),
-                  ),
+              runManagedTunnelRecovery(config).pipe(
+                Effect.tap((recovered) =>
+                  recovered ? Effect.logInfo("T3 Connect managed tunnel recovered") : Effect.void,
+                ),
+                Effect.catchCause((cause) =>
+                  Cause.hasInterrupts(cause)
+                    ? Effect.interrupt
+                    : Effect.logWarning("Failed to recover the T3 Connect managed tunnel", {
+                        cause,
+                      }),
                 ),
               );
             yield* endpointRuntime.recoveryRequests.pipe(
@@ -992,15 +974,13 @@ const layerMakeServer = Layer.unwrap(
               const reconciledMode = yield* cloudLink
                 .reconcileDesiredLinkIfStillDesired(localOrigin)
                 .pipe(
-                  Effect.retry({
-                    while: CloudLink.shouldRetryCloudLink,
-                    schedule: Schedule.exponential("1 second").pipe(
-                      Schedule.modifyDelay(({ duration }) =>
-                        Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+                  (reconcile) =>
+                    retryDesiredLinkReconcile(reconcile, CloudLink.shouldRetryCloudLink, (cause) =>
+                      Effect.logWarning(
+                        "T3 Connect relay is still unavailable; retrying the desired link in the background",
+                        { cause },
                       ),
-                      Schedule.upTo({ duration: "10 minutes" }),
                     ),
-                  }),
                   Effect.tap((mode) =>
                     mode === null
                       ? Effect.void
