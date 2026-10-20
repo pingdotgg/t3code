@@ -22,35 +22,32 @@ export class BackgroundRelayConfig extends Context.Reference<{
   readonly environmentCredential: Redacted.Redacted<string>;
 } | null>("t3/relay/BackgroundRelayConfig", { defaultValue: () => null }) {}
 
-export const layer = Layer.effect(
-  BackgroundRelayConfig,
-  Effect.gen(function* () {
-    const config = yield* Config.all({
-      url: Config.String("T3CODE_BACKGROUND_RELAY_URL").pipe(Config.option),
-      issuer: Config.String("T3CODE_BACKGROUND_RELAY_ISSUER").pipe(Config.option),
-      environmentCredential: Config.Redacted("T3CODE_BACKGROUND_RELAY_ENVIRONMENT_CREDENTIAL").pipe(
-        Config.option,
-      ),
-    });
-    if (
-      Option.isNone(config.url) &&
-      Option.isNone(config.environmentCredential) &&
-      Option.isNone(config.issuer)
-    ) {
-      return null;
-    }
-    const url = Option.isSome(config.url) ? normalizeSecureRelayUrl(config.url.value) : null;
-    const issuer = Option.isSome(config.issuer)
-      ? normalizeSecureRelayUrl(config.issuer.value)
-      : url;
-    if (
-      !url ||
-      !issuer ||
-      Option.isNone(config.environmentCredential) ||
-      !Redacted.value(config.environmentCredential.value).trim()
-    ) {
-      return yield* new BackgroundRelayConfigInvalid();
-    }
-    return { url, issuer, environmentCredential: config.environmentCredential.value };
-  }),
-);
+const make = Effect.gen(function* () {
+  const config = yield* Config.all({
+    url: Config.String("T3CODE_BACKGROUND_RELAY_URL").pipe(Config.option),
+    issuer: Config.String("T3CODE_BACKGROUND_RELAY_ISSUER").pipe(Config.option),
+    environmentCredential: Config.Redacted("T3CODE_BACKGROUND_RELAY_ENVIRONMENT_CREDENTIAL").pipe(
+      Config.option,
+    ),
+  });
+  if (
+    Option.isNone(config.url) &&
+    Option.isNone(config.environmentCredential) &&
+    Option.isNone(config.issuer)
+  ) {
+    return null;
+  }
+  const url = Option.isSome(config.url) ? normalizeSecureRelayUrl(config.url.value) : null;
+  const issuer = Option.isSome(config.issuer) ? normalizeSecureRelayUrl(config.issuer.value) : url;
+  if (
+    !url ||
+    !issuer ||
+    Option.isNone(config.environmentCredential) ||
+    !Redacted.value(config.environmentCredential.value).trim()
+  ) {
+    return yield* new BackgroundRelayConfigInvalid();
+  }
+  return { url, issuer, environmentCredential: config.environmentCredential.value };
+});
+
+export const layer = Layer.effect(BackgroundRelayConfig, make);
