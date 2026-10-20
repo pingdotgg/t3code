@@ -723,49 +723,6 @@ describe("CodexAdapterV2 runtime policy", () => {
 });
 
 describe("CodexAdapterV2 process spawning", () => {
-  it("injects cwd, model, and MCP authorization into thread-scoped params", () => {
-    const threadId = ThreadId.make("thread-codex-mcp");
-    const mcpSession = {
-      environmentId: EnvironmentId.make("environment-codex-mcp"),
-      threadId,
-      providerSessionId: "mcp-session-codex",
-      providerInstanceId: ProviderInstanceId.make("codex"),
-      endpoint: "http://127.0.0.1:43123/mcp",
-      authorizationHeader: "Bearer secret-codex-token",
-      browserToolsAvailable: true,
-    };
-
-    assert.deepEqual(
-      CodexAdapterV2.codexThreadRuntimeParams({
-        mcpSession,
-        modelSelection: { model: "gpt-5.4" },
-        runtimePolicy: {
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          cwd: "/workspace/thread-codex-mcp",
-        },
-      }),
-      {
-        cwd: "/workspace/thread-codex-mcp",
-        model: "gpt-5.4",
-        config: {
-          "tools.update_plan.enabled": true,
-          // Codex waits up to 10 s, not 1 s, for MCP servers before the first request (#13437).
-          mcp_optional_startup_grace_ms: 10_000,
-          mcp_servers: {
-            "t3-code": {
-              url: "http://127.0.0.1:43123/mcp",
-              tool_timeout_sec: 3_900,
-              http_headers: {
-                Authorization: "Bearer secret-codex-token",
-              },
-            },
-          },
-        },
-      },
-    );
-  });
-
   it.effect("resolves Windows command shims through the shared spawn policy", () =>
     Effect.gen(function* () {
       const command = yield* CodexAdapterV2.makeCodexAppServerSpawnCommand({
@@ -2273,6 +2230,123 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
         ),
       ),
+  );
+
+  it.effect("adds the session MCP server without replacing launch-argument servers", () =>
+    Effect.gen(function* () {
+      const scenario = "launch-mcp-servers";
+      yield* (yield* McpProviderSessions.McpProviderSessions).set({
+        environmentId: EnvironmentId.make("environment-codex-mcp"),
+        threadId: ThreadId.make(`thread-${scenario}`),
+        providerSessionId: `provider-session-${scenario}`,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer secret-codex-token",
+        browserToolsAvailable: true,
+      });
+      const requests: Array<unknown> = [];
+      yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario,
+          entries: codexReplayPreamble({
+            nativeThreadId: "launch-mcp-thread",
+            nativeTurnId: "unused",
+            prompt: "unused",
+          }).slice(0, 5),
+        }),
+        () => Effect.void,
+        (method, params) =>
+          Effect.sync(() => {
+            if (method === "thread/start") requests.push(params);
+          }),
+      );
+      assert.deepEqual(requests, [
+        {
+          cwd: "/workspace",
+          model: "gpt-5.4",
+          config: {
+            "tools.update_plan.enabled": true,
+            mcp_optional_startup_grace_ms: 10_000,
+            "mcp_servers.t3-code": {
+              url: "http://127.0.0.1:43123/mcp",
+              tool_timeout_sec: 3_900,
+              http_headers: { Authorization: "Bearer secret-codex-token" },
+            },
+          },
+        },
+      ]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("replays historical and dotted MCP config while enforcing other thread config", () =>
+    Effect.gen(function* () {
+      const recordedServer = {
+        url: "http://127.0.0.1:41000/mcp",
+        http_headers: { Authorization: "Bearer recorded-token" },
+      };
+      const currentConfig = {
+        "tools.update_plan.enabled": true,
+        "mcp_servers.t3-code": {
+          url: "http://127.0.0.1:42000/mcp",
+          http_headers: { Authorization: "Bearer current-token" },
+        },
+        "mcp_servers.extra.command": "cat",
+      };
+      for (const recordedMcp of [
+        { mcp_servers: { "t3-code": recordedServer } },
+        { "mcp_servers.t3-code": recordedServer, "mcp_servers.extra.command": "echo" },
+      ]) {
+        const entries = codexReplayPreamble({
+          nativeThreadId: "replayed-mcp-thread",
+          nativeTurnId: "unused",
+          prompt: "unused",
+        })
+          .slice(3, 5)
+          .map((entry) => withReplayRequestId(entry, 1));
+        entries[0] = {
+          type: "expect_outbound",
+          frame: {
+            id: 1,
+            method: "thread/start",
+            params: { config: { "tools.update_plan.enabled": true, ...recordedMcp } },
+          },
+        };
+        entries.push({
+          ...entries[0],
+          frame: {
+            id: 2,
+            method: "thread/start",
+            params: { config: { "tools.update_plan.enabled": true, ...recordedMcp } },
+          },
+        });
+        const driver = yield* CodexReplay.makeReplayDriver(
+          makeCodexReplayTranscript({
+            scenario: "mcp-config-normalization",
+            entries,
+          }),
+        );
+        yield* Effect.gen(function* () {
+          const client = yield* CodexClient.CodexAppServerClient;
+          const response = yield* client.request("thread/start", { config: currentConfig });
+          assert.equal(response.thread.id, "replayed-mcp-thread");
+          assert.isNull((yield* Ref.get(driver.state)).failure);
+          yield* client
+            .request("thread/start", {
+              config: { ...currentConfig, "tools.update_plan.enabled": false },
+            })
+            .pipe(Effect.flip);
+          assert.instanceOf(
+            (yield* Ref.get(driver.state)).failure,
+            CodexReplay.CodexAppServerReplayFrameMismatchError,
+          );
+        }).pipe(Effect.provide(CodexReplay.layerReplayWithDriver(driver)));
+      }
+    }).pipe(Effect.scoped),
   );
 
   it.effect("identifies sessions to Codex with the same client info as main", () =>
