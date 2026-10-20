@@ -628,6 +628,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.enableProviderUpdateChecks !== DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks
       ? ["Provider update checks"]
       : []),
+    ...(settings.autoUpgradeProviders !== DEFAULT_UNIFIED_SETTINGS.autoUpgradeProviders
+      ? ["Automatically upgrade providers"]
+      : []),
     ...(settings.continueThreadsAfterServerUpdate !==
     DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate
       ? ["Continue threads after restarts"]
@@ -750,6 +753,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       snoozeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.snoozeLimitedThreads,
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
+      autoUpgradeProviders: DEFAULT_UNIFIED_SETTINGS.autoUpgradeProviders,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
       backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
@@ -2828,6 +2832,35 @@ export function GeneralSettingsPanel() {
                 updateSettings({ enableProviderUpdateChecks: Boolean(checked) })
               }
               aria-label="Check provider versions"
+            />
+          }
+        />
+
+        <SettingsRow
+          serverScoped
+          settingKeys={["autoUpgradeProviders"]}
+          {...searchableSetting("auto-upgrade-providers")}
+          description="Automatically install compatible provider CLI updates on the selected environments when update checks find them. Requires provider update checks. Providers that require manual updates are skipped."
+          resetAction={
+            settings.autoUpgradeProviders !== DEFAULT_UNIFIED_SETTINGS.autoUpgradeProviders ? (
+              <SettingResetButton
+                label="automatic provider upgrades"
+                onClick={() =>
+                  updateSettings({
+                    autoUpgradeProviders: DEFAULT_UNIFIED_SETTINGS.autoUpgradeProviders,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <ScopedSwitch
+              settingKeys={["autoUpgradeProviders"]}
+              checked={settings.autoUpgradeProviders}
+              onCheckedChange={(checked) =>
+                updateSettings({ autoUpgradeProviders: Boolean(checked) })
+              }
+              aria-label="Automatically upgrade providers"
             />
           }
         />

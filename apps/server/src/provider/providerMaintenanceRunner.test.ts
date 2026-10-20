@@ -4,6 +4,7 @@ import {
   ProviderInstanceId,
   type ServerProvider,
   type ServerProviderUpdateState,
+  type ServerSettings as ServerSettingsValue,
 } from "@t3tools/contracts";
 import { ServerProviderUpdateError } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -24,6 +25,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
 import * as ProviderRegistry from "./ProviderRegistry.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as ModelManifest from "./ModelManifest.ts";
 import * as ProviderMaintenanceRunner from "./providerMaintenanceRunner.ts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
@@ -223,6 +225,7 @@ const makeTestRunner = (
       ranges: [],
     })),
   },
+  settings: Partial<ServerSettingsValue> = {},
 ) =>
   Effect.service(ProviderMaintenanceRunner.ProviderMaintenanceRunner).pipe(
     Effect.provide(
@@ -237,6 +240,7 @@ const makeTestRunner = (
               refreshInBackground: Effect.void,
             }),
             ProviderLatestVersions.layer,
+            ServerSettings.ServerSettingsService.layerTest(settings),
           ),
         ),
       ),
@@ -244,6 +248,165 @@ const makeTestRunner = (
   );
 
 describe("providerMaintenanceRunner", () => {
+  const outdatedProvider: ServerProvider = {
+    ...baseNativeCliProvider,
+    versionAdvisory: {
+      status: "behind_latest",
+      currentVersion: "0.0.0",
+      checkedAt: null,
+      latestVersion: "1.0.0",
+      canUpdate: true,
+      updateCommand: "native-agent update",
+      message: "Update available.",
+    },
+  };
+
+  it.effect.each([{}, { autoUpgradeProviders: true, enableProviderUpdateChecks: false }])(
+    "does not install automatically with settings %j",
+    (settings) => {
+      let calls = 0;
+      return Effect.gen(function* () {
+        const { registry } = yield* makeRegistry(outdatedProvider);
+        const runner = yield* makeTestRunner(registry, undefined, settings);
+        yield* runner.upgradeAutomatically;
+        assert.strictEqual(calls, 0);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layerNonWindowsPlatform,
+            layerLatestVersionHttpClient("1.0.0"),
+            layerMockSpawner(() => {
+              calls++;
+              return {};
+            }),
+          ),
+        ),
+      );
+    },
+  );
+
+  it.effect("skips disabled, missing, manual, busy, and incompatible providers", () => {
+    let calls = 0;
+    return Effect.gen(function* () {
+      const { registry, providersRef } = yield* makeRegistry(outdatedProvider);
+      const runner = yield* makeTestRunner(registry, undefined, { autoUpgradeProviders: true });
+      const variants: ReadonlyArray<Partial<ServerProvider>> = [
+        { enabled: false },
+        { installed: false },
+        { versionAdvisory: { ...outdatedProvider.versionAdvisory!, canUpdate: false } },
+        { versionAdvisory: { ...outdatedProvider.versionAdvisory!, latestVersion: null } },
+        ...(["queued", "running"] as const).map((status) => ({
+          updateState: { status, startedAt: null, finishedAt: null, message: null, output: null },
+        })),
+        ...(["broken", "unsupported"] as const).map((latestVersionStatus) => ({
+          compatibilityAdvisory: {
+            status: "supported" as const,
+            latestVersionStatus,
+            message: "Incompatible update.",
+            recommendedVersion: null,
+            recommendedRange: null,
+          },
+        })),
+      ];
+      for (const variant of variants) {
+        yield* Ref.set(providersRef, [{ ...outdatedProvider, ...variant }]);
+        yield* runner.upgradeAutomatically;
+      }
+      assert.strictEqual(calls, 0);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerNonWindowsPlatform,
+          layerLatestVersionHttpClient("1.0.0"),
+          layerMockSpawner(() => {
+            calls++;
+            return {};
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect(
+    "attempts failed upgrades once per detected version and keeps manual retry available",
+    () => {
+      let calls = 0;
+      return Effect.gen(function* () {
+        const { registry, providersRef, updateStatesRef } = yield* makeRegistry(outdatedProvider);
+        const runner = yield* makeTestRunner(registry, undefined, { autoUpgradeProviders: true });
+        yield* runner.upgradeAutomatically;
+        yield* runner.upgradeAutomatically;
+        assert.strictEqual(calls, 1);
+        assert.strictEqual((yield* Ref.get(updateStatesRef)).at(-1)?.status, "failed");
+        yield* runner.updateProvider(NATIVE_CLI_DRIVER);
+        assert.strictEqual(calls, 2);
+        yield* Ref.update(providersRef, (providers) =>
+          providers.map((provider) => ({
+            ...provider,
+            versionAdvisory: { ...outdatedProvider.versionAdvisory!, latestVersion: "2.0.0" },
+          })),
+        );
+        yield* runner.upgradeAutomatically;
+        assert.strictEqual(calls, 3);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layerNonWindowsPlatform,
+            layerLatestVersionHttpClient("1.0.0"),
+            layerMockSpawner(() => {
+              calls++;
+              return { code: 1, stderr: "Install failed" };
+            }),
+          ),
+        ),
+      );
+    },
+  );
+
+  it.effect("upgrades on provider changes without a client connection and starts only once", () =>
+    Effect.gen(function* () {
+      const { registry, providersRef } = yield* makeRegistry([]);
+      const finished = yield* Deferred.make<void>();
+      let calls = 0;
+      const runner = yield* makeTestRunner(
+        {
+          ...registry,
+          streamChanges: Stream.fromEffect(
+            Ref.set(providersRef, [outdatedProvider]).pipe(Effect.as([outdatedProvider])),
+          ),
+          setProviderMaintenanceActionState: (input) =>
+            registry
+              .setProviderMaintenanceActionState(input)
+              .pipe(
+                Effect.tap(() =>
+                  input.state?.status === "succeeded" || input.state?.status === "unchanged"
+                    ? Deferred.succeed(finished, undefined)
+                    : Effect.void,
+                ),
+              ),
+        },
+        undefined,
+        { autoUpgradeProviders: true },
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layerNonWindowsPlatform,
+            layerLatestVersionHttpClient("1.0.0"),
+            layerMockSpawner(() => {
+              calls++;
+              return {};
+            }),
+          ),
+        ),
+      );
+      yield* runner.start;
+      yield* Deferred.await(finished);
+      yield* runner.start;
+      yield* runner.upgradeAutomatically;
+      assert.strictEqual(calls, 1);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("runs the allowlisted provider update command and records success", () => {
     const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
     return Effect.gen(function* () {

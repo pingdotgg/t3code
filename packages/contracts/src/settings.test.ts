@@ -21,6 +21,18 @@ const encodeClientSettings = Schema.encodeSync(ClientSettingsSchema);
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
+
+describe("ServerSettings automatic provider upgrades", () => {
+  it("defaults to opt-in and persists both toggle values", () => {
+    expect(decodeServerSettings({}).autoUpgradeProviders).toBe(false);
+    for (const autoUpgradeProviders of [true, false]) {
+      const input = { autoUpgradeProviders };
+      expect(encodeServerSettings(decodeServerSettings(input))).toMatchObject(input);
+      expect(decodeServerSettingsPatch(input)).toEqual(input);
+    }
+    expect(() => decodeServerSettingsPatch({ autoUpgradeProviders: "true" })).toThrow();
+  });
+});
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
 describe("ServerSettings response streaming", () => {

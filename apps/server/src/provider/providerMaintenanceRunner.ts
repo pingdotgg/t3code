@@ -19,6 +19,8 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -27,6 +29,7 @@ import * as NodeUtil from "node:util";
 import * as ModelManifest from "./ModelManifest.ts";
 import { resolveProviderCompatibility } from "./providerCompatibility.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { makeProviderMaintenanceCommandCoordinator } from "./providerMaintenanceCommandCoordinator.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
@@ -59,6 +62,8 @@ export interface ProviderMaintenanceCommandResult {
 }
 
 export interface ProviderMaintenanceRunnerShape {
+  readonly upgradeAutomatically: Effect.Effect<void>;
+  readonly start: Effect.Effect<void, never, Scope.Scope>;
   readonly updateProvider: (
     target:
       | ProviderDriverKind
@@ -282,6 +287,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;
   const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
+  const settingsService = yield* ServerSettings.ServerSettingsService;
   const runMaintenanceCommand = (
     update: ProviderMaintenanceCommandAction,
     onProgress: (line: string) => Effect.Effect<void>,
@@ -583,9 +589,72 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
       );
   });
 
-  return ProviderMaintenanceRunner.of({
-    updateProvider,
+  const attemptedVersions = new Map<ProviderInstanceId, string>();
+  const automaticUpgradeLock = yield* Semaphore.make(1);
+  const upgradeAutomatically = Effect.gen(function* () {
+    const providers = yield* providerRegistry.getProviders;
+    for (const snapshot of providers) {
+      // Read again after each installer, since settings and provider state can change meanwhile.
+      const settings = yield* settingsService.getSettings;
+      if (!settings.autoUpgradeProviders || !settings.enableProviderUpdateChecks) return;
+      const provider = (yield* providerRegistry.getProviders).find(
+        (candidate) => candidate.instanceId === snapshot.instanceId,
+      );
+      if (
+        !provider?.enabled ||
+        !provider.installed ||
+        provider.versionAdvisory?.status !== "behind_latest" ||
+        !provider.versionAdvisory.canUpdate ||
+        !provider.versionAdvisory.latestVersion ||
+        provider.compatibilityAdvisory?.latestVersionStatus === "broken" ||
+        provider.compatibilityAdvisory?.latestVersionStatus === "unsupported" ||
+        provider.updateState?.status === "queued" ||
+        provider.updateState?.status === "running"
+      )
+        continue;
+      const versionKey = `${provider.version}:${provider.versionAdvisory.latestVersion}`;
+      if (attemptedVersions.get(provider.instanceId) === versionKey) continue;
+      // Failed or unverifiable installs must not loop on their own progress notifications.
+      attemptedVersions.set(provider.instanceId, versionKey);
+      yield* updateProvider({ provider: provider.driver, instanceId: provider.instanceId }).pipe(
+        Effect.catchTags({
+          ServerProviderUpdateError: () =>
+            Effect.logWarning("Automatic provider upgrade failed", {
+              instanceId: provider.instanceId,
+            }),
+        }),
+      );
+    }
+  }).pipe(
+    automaticUpgradeLock.withPermits(1),
+    Effect.catchTags({
+      ServerSettingsError: () =>
+        Effect.logWarning("Could not read automatic provider upgrade settings"),
+    }),
+  );
+
+  const started = yield* Ref.make(false);
+  const start = Effect.gen(function* () {
+    if (yield* Ref.getAndSet(started, true)) return;
+    const settingsChanges = yield* settingsService.subscribeChanges;
+    yield* Stream.merge(
+      providerRegistry.streamChanges.pipe(Stream.map(() => undefined)),
+      settingsChanges.pipe(
+        Stream.changesWith(
+          (a, b) =>
+            a.autoUpgradeProviders === b.autoUpgradeProviders &&
+            a.enableProviderUpdateChecks === b.enableProviderUpdateChecks,
+        ),
+        Stream.map(() => undefined),
+      ),
+    ).pipe(
+      Stream.onStart(upgradeAutomatically),
+      Stream.runForEach(() => upgradeAutomatically),
+      Effect.forkScoped,
+    );
   });
+
+  return ProviderMaintenanceRunner.of({ updateProvider, upgradeAutomatically, start });
 });
 
 export const layer = Layer.effect(ProviderMaintenanceRunner, make());

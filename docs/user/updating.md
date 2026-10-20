@@ -118,6 +118,17 @@ directory and pair with the running server.
 at once. Hover it to see which providers it will update. Providers that only
 offer a manual update command are not included.
 
+To install provider updates automatically, enable **Automatically upgrade providers**
+in **Settings → General** for the environments you want to keep updated. On mobile,
+the option is in **Settings → Maintenance**. It is off by default and requires
+provider update checks. Each environment installs compatible updates as its provider
+checks find them, even when no client is connected. Providers that require manual
+updates are skipped. New sessions use the updated provider.
+
+If an automatic upgrade fails, review its status in provider settings and retry
+manually. T3 Code attempts each detected version once per server run. Turn the
+setting off to stop future automatic upgrades; an upgrade already running finishes.
+
 ## Mobile updates
 
 To update an environment from your phone, open **Settings → Environments** and

@@ -479,6 +479,20 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     />
                     <View className="border-t border-border-subtle">
                       <SettingsSwitchRow
+                        icon="arrow.down.circle"
+                        label="Automatically upgrade providers"
+                        subtitle={
+                          projectSelected
+                            ? "Environment-wide setting. Select All projects to change it."
+                            : "Install compatible provider CLI updates when update checks find them. Requires provider update checks. Manual updates are skipped."
+                        }
+                        value={uniform("autoUpgradeProviders")}
+                        disabled={disabledFor("autoUpgradeProviders")}
+                        onValueChange={(value) => write({ autoUpgradeProviders: value })}
+                      />
+                    </View>
+                    <View className="border-t border-border-subtle">
+                      <SettingsSwitchRow
                         icon="arrow.uturn.forward"
                         label="Continue after restart"
                         subtitle={

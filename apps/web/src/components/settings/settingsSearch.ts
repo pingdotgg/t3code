@@ -440,6 +440,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "environment-defaults",
   },
   {
+    id: "auto-upgrade-providers",
+    title: "Automatically upgrade providers",
+    to: "/settings/general",
+    searchTerms: ["auto update install cli versions codex claude cursor grok opencode"],
+    scope: "environment-defaults",
+  },
+  {
     id: "continue-threads-after-server-update",
     title: "Continue threads after restarts",
     to: "/settings/general",
