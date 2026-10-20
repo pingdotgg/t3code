@@ -58,24 +58,25 @@ export const make = Effect.gen(function* () {
     });
   });
 
-  const redeem: ResetCreditCoordinator["Service"]["redeem"] = (accountKey, consume, isSettled) =>
-    Effect.gen(function* () {
-      const state = yield* stateFor(accountKey);
-      return yield* state.lock.withPermits(1)(
-        Effect.gen(function* () {
-          const existing = yield* Ref.get(state.pendingKey);
-          const idempotencyKey = existing ?? (yield* crypto.randomUUIDv4());
-          yield* Ref.set(state.pendingKey, idempotencyKey);
-          const outcome = yield* consume(idempotencyKey).pipe(
-            Effect.tapError((error) =>
-              isSettled?.(error) ? Ref.set(state.pendingKey, null) : Effect.void,
-            ),
-          );
-          yield* Ref.set(state.pendingKey, null);
-          return outcome;
-        }),
-      );
-    });
+  const redeem: ResetCreditCoordinator["Service"]["redeem"] = Effect.fn(
+    "resetCreditCoordinator.redeem",
+  )(function* (accountKey, consume, isSettled) {
+    const state = yield* stateFor(accountKey);
+    return yield* state.lock.withPermits(1)(
+      Effect.gen(function* () {
+        const existing = yield* Ref.get(state.pendingKey);
+        const idempotencyKey = existing ?? (yield* crypto.randomUUIDv4());
+        yield* Ref.set(state.pendingKey, idempotencyKey);
+        const outcome = yield* consume(idempotencyKey).pipe(
+          Effect.tapError((error) =>
+            isSettled?.(error) ? Ref.set(state.pendingKey, null) : Effect.void,
+          ),
+        );
+        yield* Ref.set(state.pendingKey, null);
+        return outcome;
+      }),
+    );
+  });
 
   return { redeem } satisfies ResetCreditCoordinator["Service"];
 });

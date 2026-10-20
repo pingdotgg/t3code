@@ -122,25 +122,28 @@ export function claudeResetCreditsToContract(
   };
 }
 
-const readJson = <S extends Schema.Top>(schema: S, file: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    return yield* fs.readFileString(file).pipe(
-      Effect.catchTags({
-        PlatformError: (error) =>
-          error.reason._tag === "NotFound" ? Effect.succeed("{}") : Effect.fail(error),
-      }),
-      Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(schema))),
-    );
-  });
+const readJson = Effect.fn("claudeResetCredits.readJson")(function* <S extends Schema.Top>(
+  schema: S,
+  file: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  return yield* fs.readFileString(file).pipe(
+    Effect.catchTags({
+      PlatformError: (error) =>
+        error.reason._tag === "NotFound" ? Effect.succeed("{}") : Effect.fail(error),
+    }),
+    Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(schema))),
+  );
+});
 
-const readAccessToken = (configDir: string) =>
-  Effect.gen(function* () {
-    if ((yield* HostProcess.Platform) === "darwin") return undefined;
-    const path = yield* Path.Path;
-    const credentials = yield* readJson(Credentials, path.join(configDir, ".credentials.json"));
-    return credentials.claudeAiOauth?.accessToken?.trim() || undefined;
-  });
+const readAccessToken = Effect.fn("claudeResetCredits.readAccessToken")(function* (
+  configDir: string,
+) {
+  if ((yield* HostProcess.Platform) === "darwin") return undefined;
+  const path = yield* Path.Path;
+  const credentials = yield* readJson(Credentials, path.join(configDir, ".credentials.json"));
+  return credentials.claudeAiOauth?.accessToken?.trim() || undefined;
+});
 
 const withClaudeHeaders = (token: string, version: string) =>
   HttpClientRequest.setHeaders({

@@ -433,47 +433,49 @@ export const readAntigravityUsage = Effect.fn("readAntigravityUsage")(function* 
     cache?.set(canonical, { fingerprint, candidates });
     return candidates;
   });
-  const walk = (directory: string, root: string): Effect.Effect<void> =>
-    Effect.gen(function* () {
-      const names = yield* fileSystem.readDirectory(directory).pipe(
-        Effect.catchTags({
-          PlatformError: (cause) => {
-            if (cause.reason._tag !== "NotFound") errors.push(directory);
-            return Effect.succeed(null);
-          },
-        }),
-      );
-      if (names === null) return;
-      names.sort((a, b) => a.localeCompare(b));
-      for (const name of names) {
-        const path = pathService.join(directory, name);
-        // Like a directory listing's entry types: symlinks are neither files nor directories.
-        const isLink = Exit.isSuccess(yield* Effect.exit(fileSystem.readLink(path)));
-        const type = isLink
-          ? "SymbolicLink"
-          : yield* fileSystem.stat(path).pipe(
-              Effect.map((info) => info.type),
-              Effect.orElseSucceed(() => null),
-            );
-        if (type === "Directory") {
-          yield* walk(path, root);
-        } else if ((type === "File" || type === null) && name.endsWith(".db")) {
-          const candidates = yield* readFile(path).pipe(
-            Effect.catch(() => {
-              errors.push(path);
-              return Effect.succeed(null);
-            }),
+  const walk = Effect.fn("antigravityUsageReader.walk")(function* (
+    directory: string,
+    root: string,
+  ): Effect.fn.Return<void> {
+    const names = yield* fileSystem.readDirectory(directory).pipe(
+      Effect.catchTags({
+        PlatformError: (cause) => {
+          if (cause.reason._tag !== "NotFound") errors.push(directory);
+          return Effect.succeed(null);
+        },
+      }),
+    );
+    if (names === null) return;
+    names.sort((a, b) => a.localeCompare(b));
+    for (const name of names) {
+      const path = pathService.join(directory, name);
+      // Like a directory listing's entry types: symlinks are neither files nor directories.
+      const isLink = Exit.isSuccess(yield* Effect.exit(fileSystem.readLink(path)));
+      const type = isLink
+        ? "SymbolicLink"
+        : yield* fileSystem.stat(path).pipe(
+            Effect.map((info) => info.type),
+            Effect.orElseSucceed(() => null),
           );
-          if (candidates === null) continue;
-          const fileIndex = files.length;
-          files.push({ root, path, records: [] });
-          for (const [index, candidate] of candidates.entries()) {
-            append(candidate, fileIndex);
-            if (index % 256 === 255) yield* Effect.yieldNow;
-          }
+      if (type === "Directory") {
+        yield* walk(path, root);
+      } else if ((type === "File" || type === null) && name.endsWith(".db")) {
+        const candidates = yield* readFile(path).pipe(
+          Effect.catch(() => {
+            errors.push(path);
+            return Effect.succeed(null);
+          }),
+        );
+        if (candidates === null) continue;
+        const fileIndex = files.length;
+        files.push({ root, path, records: [] });
+        for (const [index, candidate] of candidates.entries()) {
+          append(candidate, fileIndex);
+          if (index % 256 === 255) yield* Effect.yieldNow;
         }
       }
-    });
+    }
+  });
   for (const root of roots) yield* walk(root, root);
   if (cache !== undefined) {
     for (const key of cache.keys()) if (!visited.has(key)) cache.delete(key);

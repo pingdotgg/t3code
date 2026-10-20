@@ -543,33 +543,16 @@ export const probeCodexSkillsForCwd = Effect.fn("probeCodexSkillsForCwd")(functi
 const emptyCodexModelsFromSettings = (codexSettings: CodexSettings): ServerProvider["models"] =>
   appendCustomCodexModels([], codexSettings.customModels);
 
-const makePendingCodexProvider = (
+const makePendingCodexProvider = Effect.fn("CodexProvider.makePendingCodexProvider")(function* (
   codexSettings: CodexSettings,
-): Effect.Effect<ServerProviderDraft> =>
-  Effect.gen(function* () {
-    const checkedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
-    const models = emptyCodexModelsFromSettings(codexSettings);
+): Effect.fn.Return<ServerProviderDraft> {
+  const checkedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
+  const models = emptyCodexModelsFromSettings(codexSettings);
 
-    if (!codexSettings.enabled) {
-      return buildServerProvider({
-        presentation: CODEX_PRESENTATION,
-        enabled: false,
-        checkedAt,
-        models,
-        skills: [],
-        probe: {
-          installed: false,
-          version: null,
-          status: "warning",
-          auth: { status: "unknown" },
-          message: "Codex is disabled in T3 Code settings.",
-        },
-      });
-    }
-
+  if (!codexSettings.enabled) {
     return buildServerProvider({
       presentation: CODEX_PRESENTATION,
-      enabled: true,
+      enabled: false,
       checkedAt,
       models,
       skills: [],
@@ -578,10 +561,26 @@ const makePendingCodexProvider = (
         version: null,
         status: "warning",
         auth: { status: "unknown" },
-        message: "Codex provider status has not been checked in this session yet.",
+        message: "Codex is disabled in T3 Code settings.",
       },
     });
+  }
+
+  return buildServerProvider({
+    presentation: CODEX_PRESENTATION,
+    enabled: true,
+    checkedAt,
+    models,
+    skills: [],
+    probe: {
+      installed: false,
+      version: null,
+      status: "warning",
+      auth: { status: "unknown" },
+      message: "Codex provider status has not been checked in this session yet.",
+    },
   });
+});
 
 function accountProbeStatus({ account, rateLimits }: CodexAppServerProviderSnapshot): {
   readonly status: Exclude<ServerProviderState, "disabled">;

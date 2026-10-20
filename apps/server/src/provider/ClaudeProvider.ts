@@ -684,11 +684,11 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
-export const makePendingClaudeProvider = (
-  claudeSettings: ClaudeSettings,
-  modelCatalog: ClaudeModelCatalog = BUNDLED_CLAUDE_MODEL_CATALOG,
-): Effect.Effect<ServerProviderDraft> =>
-  Effect.gen(function* () {
+export const makePendingClaudeProvider = Effect.fn("ClaudeProvider.makePendingClaudeProvider")(
+  function* (
+    claudeSettings: ClaudeSettings,
+    modelCatalog: ClaudeModelCatalog = BUNDLED_CLAUDE_MODEL_CATALOG,
+  ): Effect.fn.Return<ServerProviderDraft> {
     const checkedAt = yield* nowIso;
     const models = providerModelsFromSettings(
       modelCatalog.models.map((entry) => entry.model),
@@ -725,6 +725,7 @@ export const makePendingClaudeProvider = (
         message: "Claude provider status has not been checked in this session yet.",
       },
     });
-  });
+  },
+);
 
 export { probeClaudeCapabilities };
