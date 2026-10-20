@@ -206,11 +206,38 @@ function envCaptureEnd(name: string): string {
   return `__T3CODE_ENV_${name}_END__`;
 }
 
-function buildEnvironmentCaptureCommand(names: ReadonlyArray<string>): string {
+export function buildEnvironmentCaptureCommand(
+  shell: string,
+  names: ReadonlyArray<string>,
+): string {
+  const executableName = NodePath.basename(shell).toLowerCase();
+  const isNushell = executableName.startsWith("nu");
+
   return names
     .map((name) => {
       if (!SHELL_ENV_NAME_PATTERN.test(name)) {
         throw new Error(`Unsupported environment variable name: ${name}`);
+      }
+
+      if (isNushell) {
+        // Without a configured conversion, Nu expands home paths only in a list PATH.
+        const defaultValue =
+          name === "PATH"
+            ? "if ($env.PATH? | describe | str starts-with 'list') { " +
+              "$env.PATH | each {|p| if ($p | str starts-with '~') { " +
+              "$p | path expand --no-symlink } else { $p } } | str join (char esep) " +
+              "} else { $env.PATH? | default '' }"
+            : `$env.${name}? | default ''`;
+        const value =
+          `if $env.${name}? == null { '' } else if ` +
+          `$env.ENV_CONVERSIONS?.${name}?.to_string? != null { ` +
+          `$env.${name} | do $env.ENV_CONVERSIONS.${name}.to_string $env.${name} ` +
+          `} else { ${defaultValue} }`;
+        return [
+          `print '${envCaptureStart(name)}'`,
+          `print (${value})`,
+          `print '${envCaptureEnd(name)}'`,
+        ].join("; ");
       }
 
       return [
@@ -275,7 +302,7 @@ export const readEnvironmentFromLoginShell: ShellEnvironmentReader = (
 
   // Interactive startup loads PATH entries; detaching prevents job control on an
   // inherited controlling TTY from stopping the probe while the parent waits.
-  const output = execFile(shell, ["-ilc", buildEnvironmentCaptureCommand(names)], {
+  const output = execFile(shell, ["-ilc", buildEnvironmentCaptureCommand(shell, names)], {
     encoding: "utf8",
     timeout: 5000,
     detached: true,
@@ -511,8 +538,9 @@ const PathDirectoryListings = Context.Reference<
   Cache.Cache<string, PathDirectoryListing, never, FileSystem.FileSystem> | undefined
 >("@t3tools/shared/shell/PathDirectoryListings", { defaultValue: () => undefined });
 
-export const withPathDirectoryListings = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  Effect.gen(function* () {
+export const withPathDirectoryListings =
+  /* Directory reads are cached inside one shell operation; a span for each lookup adds noise. */
+  Effect.fnUntraced(function* <A, E, R>(effect: Effect.Effect<A, E, R>) {
     const listings = yield* Cache.make({
       capacity: 1024,
       lookup: listPathDirectory,

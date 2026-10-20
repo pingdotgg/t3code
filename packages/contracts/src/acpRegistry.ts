@@ -47,8 +47,13 @@ export type AcpRegistryDistribution = typeof AcpRegistryDistribution.Type;
 export const AcpRegistryIntegrity = Schema.Literals(["sha256", "registry"]);
 export type AcpRegistryIntegrity = typeof AcpRegistryIntegrity.Type;
 
+export const ACP_REGISTRY_MAX_AGENTS = 512;
+
 export const AcpRegistrySearchInput = Schema.Struct({
   query: TrimmedString.check(Schema.isMaxLength(120)),
+  limit: Schema.optional(
+    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: ACP_REGISTRY_MAX_AGENTS })),
+  ),
 });
 export type AcpRegistrySearchInput = typeof AcpRegistrySearchInput.Type;
 
@@ -70,7 +75,7 @@ export const AcpRegistrySearchAgent = Schema.Struct({
 export type AcpRegistrySearchAgent = typeof AcpRegistrySearchAgent.Type;
 
 export const AcpRegistrySearchResult = Schema.Struct({
-  agents: Schema.Array(AcpRegistrySearchAgent).check(Schema.isMaxLength(20)),
+  agents: Schema.Array(AcpRegistrySearchAgent).check(Schema.isMaxLength(ACP_REGISTRY_MAX_AGENTS)),
 });
 export type AcpRegistrySearchResult = typeof AcpRegistrySearchResult.Type;
 

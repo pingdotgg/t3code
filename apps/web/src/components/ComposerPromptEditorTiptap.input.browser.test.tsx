@@ -1,10 +1,16 @@
+import type { ServerProviderSkill } from "@t3tools/contracts";
 import type { Editor } from "@tiptap/core";
-import { act, createRef } from "react";
+import { act, createRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
+import { detectComposerTrigger } from "~/composer-logic";
 import { serializeEditorDoc } from "~/composer-rich-text-doc";
-import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
+import {
+  ComposerPromptEditor,
+  type ComposerPromptEditorHandle,
+  type ComposerPromptEditorProps,
+} from "./ComposerPromptEditor";
 
 let root: Root;
 let container: HTMLDivElement;
@@ -22,20 +28,56 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-async function mountEditor(value: string, richTextEnabled = true) {
+const babysit: ServerProviderSkill = {
+  name: "babysit",
+  path: "/skills/babysit/SKILL.md",
+  enabled: true,
+};
+
+function Composer({
+  value,
+  richTextEnabled,
+  skills,
+  onChange,
+}: {
+  value: string;
+  richTextEnabled: boolean;
+  skills: ReadonlyArray<ServerProviderSkill>;
+  onChange?: ComposerPromptEditorProps["onChange"] | undefined;
+}) {
+  const [prompt, setPrompt] = useState({ value, cursor: value.length });
+  return (
+    <ComposerPromptEditor
+      editorRef={createRef<ComposerPromptEditorHandle>()}
+      value={prompt.value}
+      cursor={prompt.cursor}
+      richTextEnabled={richTextEnabled}
+      contextRecords={new Map()}
+      skills={skills}
+      disabled={false}
+      placeholder=""
+      onChange={(...args) => {
+        setPrompt({ value: args[0], cursor: args[1] });
+        onChange?.(...args);
+      }}
+      onPaste={() => {}}
+    />
+  );
+}
+
+async function mountEditor(
+  value: string,
+  richTextEnabled = true,
+  skills: ReadonlyArray<ServerProviderSkill> = [],
+  onChange?: ComposerPromptEditorProps["onChange"],
+) {
   await act(async () =>
     root.render(
-      <ComposerPromptEditor
-        editorRef={createRef<ComposerPromptEditorHandle>()}
+      <Composer
         value={value}
-        cursor={value.length}
         richTextEnabled={richTextEnabled}
-        contextRecords={new Map()}
-        skills={[]}
-        disabled={false}
-        placeholder=""
-        onChange={() => {}}
-        onPaste={() => {}}
+        skills={skills}
+        onChange={onChange}
       />,
     ),
   );
@@ -73,6 +115,42 @@ function typeText(editor: Editor, from: number, to: number, text: string) {
     editor.view.dispatch(insert());
   }
 }
+
+function textWithMark(editor: Editor, name: string) {
+  const text: string[] = [];
+  editor.state.doc.descendants((node) => {
+    if (node.isText && node.marks.some((mark) => mark.type.name === name)) {
+      text.push(node.textContent);
+    }
+  });
+  return text;
+}
+
+it.each([
+  { value: "clean _build and node", code: [] },
+  { value: "clean `_build` and `node", code: ["_build"] },
+])("keeps a typed underscore literal after $value", async ({ value, code }) => {
+  const editor = await mountEditor(value);
+  await act(async () => {
+    editor.commands.focus("end");
+    const { from, to } = editor.state.selection;
+    typeText(editor, from, to, "_");
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(`${value}_`);
+  expect(textWithMark(editor, "italic")).toEqual([]);
+  expect(textWithMark(editor, "code")).toEqual(code);
+});
+
+it("still italicizes text when typing a closing asterisk", async () => {
+  const editor = await mountEditor("clean *build");
+  await act(async () => {
+    editor.commands.focus("end");
+    const { from, to } = editor.state.selection;
+    typeText(editor, from, to, "*");
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe("clean *build*");
+  expect(textWithMark(editor, "italic")).toEqual(["build"]);
+});
 
 it.each([false, true])(
   "composes an umlaut without wrapping the preedit text (rich text: %s)",
@@ -135,3 +213,143 @@ it.each([false, true])(
     expect(serializeEditorDoc(editor.state.doc).value).toBe('"word"');
   },
 );
+
+it("keeps unknown dollar names editable when restoring and pasting a draft", async () => {
+  const value = "echo $HOME $PATH $anything $notaskill $20 $20k $babysit ";
+  const editor = await mountEditor(value, true, [babysit]);
+  expect(editor.state.doc.textContent).toBe(value.replace("$babysit", ""));
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(value);
+  await act(async () => {
+    editor.commands.setTextSelection("echo $HO".length + 1);
+    editor.commands.insertContent("X");
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(value.replace("$HOME", "$HOXME"));
+  await act(async () => {
+    editor.commands.selectAll();
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", value);
+    editor.view.dom.dispatchEvent(new ClipboardEvent("paste", { clipboardData, cancelable: true }));
+  });
+  expect(editor.state.doc.textContent).toBe(value.replace("$babysit", ""));
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(value);
+});
+
+it("keeps skill queries active before whitespace and line breaks, suppressing only real chips", async () => {
+  const onChange = vi.fn<ComposerPromptEditorProps["onChange"]>();
+  const editor = await mountEditor("use  now\nfirst \n$babysit tail", true, [babysit], onChange);
+  const trigger = () => {
+    const [value, , expandedCursor, suppressTrigger] = onChange.mock.lastCall!;
+    return suppressTrigger ? null : detectComposerTrigger(value, expandedCursor);
+  };
+  await act(async () => {
+    editor.commands.setTextSelection("use ".length + 1);
+    typeText(editor, editor.state.selection.from, editor.state.selection.to, "$bab");
+  });
+  expect.soft(trigger()).toMatchObject({ kind: "skill", query: "bab" });
+  await act(async () => {
+    editor.commands.setTextSelection(editor.state.doc.child(0).nodeSize + 1 + "first ".length);
+    typeText(editor, editor.state.selection.from, editor.state.selection.to, "$bab");
+  });
+  expect.soft(trigger()).toMatchObject({ kind: "skill", query: "bab" });
+  await act(async () => {
+    editor.commands.setHardBreak();
+  });
+  await act(async () => {
+    editor.commands.setTextSelection(editor.state.selection.from - 1);
+  });
+  expect(editor.state.selection.$from.nodeAfter?.type.name).toBe("hardBreak");
+  expect.soft(trigger()).toMatchObject({ kind: "skill", query: "bab" });
+
+  const chip = serializeEditorDoc(editor.state.doc).runs.find((run) => run.kind === "token")!;
+  await act(async () => {
+    editor.commands.setTextSelection(chip.pmPos);
+  });
+  expect(onChange.mock.lastCall![3]).toBe(true);
+  await act(async () => {
+    editor.commands.setTextSelection(chip.pmPos + 1);
+  });
+  expect(onChange.mock.lastCall![3]).toBe(true);
+  expect(trigger()).toBeNull();
+});
+
+it("keeps the caret inside unknown dollar text across rich and plain remounts", async () => {
+  const value = "echo $HOME now";
+  let editor = await mountEditor(value);
+  await act(async () => {
+    editor.commands.setTextSelection("echo $HO".length + 1);
+  });
+  editor = await mountEditor(value, false);
+  await act(async () => {
+    editor.commands.insertContent("X");
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe("echo $HOXME now");
+  editor = await mountEditor(value, true);
+  await act(async () => {
+    editor.commands.insertContent("Y");
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe("echo $HOXYME now");
+});
+
+it("reconciles provider skills and metadata without losing formatting, caret, or undo", async () => {
+  const value = "run **use $babysit now** then $HOME";
+  const disabled = { ...babysit, enabled: false };
+  const agentOnly = { ...babysit, userInvocable: false };
+  const editor = await mountEditor(value, true, [disabled]);
+  expect.soft(editor.state.doc.textContent).toBe("run use $babysit now then $HOME");
+  await mountEditor(value, true, [agentOnly]);
+  expect.soft(editor.state.doc.textContent).toBe("run use $babysit now then $HOME");
+  await act(async () => {
+    editor.commands.setTextSelection("run use $baby".length + 1);
+  });
+  await mountEditor(value, true, [disabled, babysit]);
+  expect(editor.state.doc.textContent).toBe("run use  now then $HOME");
+  const chip = serializeEditorDoc(editor.state.doc).runs.find((run) => run.kind === "token")!;
+  expect(editor.state.selection.from).toBe(chip.pmPos + 1);
+  await mountEditor(value, true, [disabled]);
+  expect.soft(editor.state.doc.textContent).toBe("run use $babysit now then $HOME");
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(value);
+  await act(async () => {
+    editor.commands.insertContent("X");
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(value.replace("$babysit", "$babysitX"));
+  await act(async () => {
+    editor.commands.undo();
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(value);
+  expect(editor.state.doc.textContent).toBe("run use $babysit now then $HOME");
+
+  await mountEditor(value, true, [babysit]);
+  await act(async () => {
+    editor.commands.deleteRange({ from: chip.pmPos, to: chip.pmPos + 1 });
+  });
+  await mountEditor(value, true, [agentOnly]);
+  await act(async () => {
+    editor.commands.undo();
+  });
+  expect(editor.state.doc.textContent).toBe("run use $babysit now then $HOME");
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(value);
+
+  await mountEditor(value, true, [{ ...babysit, description: "Previous provider description" }]);
+  await act(async () => {
+    container
+      .querySelector<HTMLButtonElement>('[aria-label="Skill Babysit. Show details"]')!
+      .click();
+  });
+  expect(document.body.textContent).toContain("Previous provider description");
+  await mountEditor(value, true, [
+    { ...disabled, displayName: "Disabled Babysit" },
+    {
+      ...babysit,
+      displayName: "Current Babysit",
+      shortDescription: "  Current short description  ",
+    },
+  ]);
+  expect(container.textContent).toContain("Current Babysit");
+  expect(document.body.textContent).toContain("Current short description");
+  expect(document.body.textContent).not.toContain("Previous provider description");
+  await mountEditor(value, true, [{ ...babysit, displayName: "Current Babysit" }]);
+  expect(container.textContent).toContain("Current Babysit");
+  expect(document.body.textContent).not.toContain("Current short description");
+  expect(document.body.textContent).toContain("No description is available for this skill.");
+  expect(document.body.textContent).not.toContain("Previous provider description");
+});

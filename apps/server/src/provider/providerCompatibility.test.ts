@@ -11,6 +11,7 @@ import * as Stream from "effect/Stream";
 import * as ServerConfig from "../config.ts";
 import * as ModelManifest from "./ModelManifest.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
@@ -53,6 +54,61 @@ const provider: ServerProvider = {
 const V2_RELEASE = "0.0.46";
 
 describe("provider compatibility", () => {
+  it("offers Homebrew metadata recovery only while installed and latest versions are incompatible", () => {
+    const versionAdvisory = {
+      status: "current",
+      currentVersion: "1.0.0",
+      latestVersion: "1.0.0",
+      canUpdate: true,
+      updateCommand: "brew upgrade --cask codex",
+      checkedAt: provider.checkedAt,
+      message: null,
+    } as const;
+    for (const [version, command] of [
+      ["1.0.0", "brew upgrade --cask codex"],
+      ["0.9.0", "brew upgrade codex"],
+    ] as const) {
+      const stale = {
+        ...provider,
+        version,
+        versionAdvisory: {
+          ...versionAdvisory,
+          currentVersion: version,
+          latestVersion: version,
+          updateCommand: command,
+        },
+      };
+      const result = applyProviderCompatibility(stale, [policy], []);
+      assert.include(result.compatibilityAdvisory?.message ?? "", `brew update && ${command}`);
+      assert.include(result.compatibilityAdvisory?.message ?? "", "environment's host");
+      assert.include(result.compatibilityAdvisory?.message ?? "", "refresh provider status");
+      assert.strictEqual(result.message, provider.message);
+      assert.deepStrictEqual(result.versionAdvisory, stale.versionAdvisory);
+
+      const refreshed = applyProviderCompatibility(
+        { ...result, versionAdvisory: { ...stale.versionAdvisory, latestVersion: "2.0.0" } },
+        [policy],
+        [],
+      );
+      assert.strictEqual(refreshed.compatibilityAdvisory?.latestVersionStatus, "supported");
+      assert.notInclude(refreshed.compatibilityAdvisory?.message ?? "", "brew update");
+    }
+
+    for (const advisory of [
+      { ...versionAdvisory, updateCommand: "npm install -g @openai/codex@latest" },
+      { ...versionAdvisory, updateCommand: null, canUpdate: false },
+      { ...versionAdvisory, latestVersion: null },
+      { ...versionAdvisory, latestVersion: "9.0.0" },
+    ]) {
+      const result = applyProviderCompatibility(
+        { ...provider, versionAdvisory: advisory },
+        [policy],
+        [],
+      );
+      assert.notInclude(result.compatibilityAdvisory?.message ?? "", "brew update");
+    }
+  });
+
   it("bundles a compatibility policy for every built-in harness", () => {
     for (const builtIn of BUILT_IN_DRIVERS) {
       if (builtIn.driverKind === "acpRegistry") continue;
@@ -350,6 +406,7 @@ it.effect("a remote policy refresh preserves a newer health result on the regist
       ),
     );
     const layerDependencies = Layer.mergeAll(
+      ProviderLatestVersions.layer,
       Layer.succeed(ModelManifest.ModelManifest, {
         current: Ref.get(manifest),
         refresh,

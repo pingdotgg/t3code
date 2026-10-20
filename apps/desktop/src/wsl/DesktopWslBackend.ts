@@ -136,7 +136,7 @@ export const layer = Layer.effect(
                 Ref.set(
                   preflightErrorRef,
                   Option.some(
-                    "Another T3 Code server is using this distro's T3 home. Stop it, or pair with it instead.",
+                    "Another T3 Code server is using this distro's T3 home, or an older background service is set up for it. Stop that server or pair with it, or try `t3 update` in the distro. If the older launcher cannot update, run `t3 service uninstall` and optionally reinstall with `t3 service install` from a current CLI in the distro. Use `npx t3@latest` if `t3` is missing or outdated, and pass `--base-dir` with the service's T3 home to each command.",
                   ),
                 ),
               ),

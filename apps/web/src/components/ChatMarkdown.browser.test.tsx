@@ -1,14 +1,32 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { searchableMessageSegments } from "@t3tools/shared/threadFindText";
 import { countThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
-import { act, type ReactElement } from "react";
+import { AsyncResult } from "effect/reactivity";
+import { act, useEffect, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { page, userEvent } from "vite-plus/test/browser";
 
+import "../index.css";
+import { useTheme } from "../hooks/useTheme";
+import { applyThemeColorPreview, getStandardThemeColors } from "../themePalette";
+
+import { filesystemEnvironment } from "../state/filesystem";
+import { useRightPanelStore } from "../rightPanelStore";
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import { MarkdownFindContext } from "./chat/markdownFindContext";
 import { useThreadFindHighlights } from "./chat/threadFindHighlights";
 import { setMarkdownTaskChecked } from "./files/filePreviewMode";
+
+const { workspaceSearch, filesystemMetadata } = vi.hoisted(() => ({
+  workspaceSearch: vi.fn(),
+  filesystemMetadata: vi.fn(),
+}));
+vi.mock(import("../state/use-atom-query-runner"), async (original) => ({
+  ...(await original()),
+  useAtomQueryRunner: ((family: unknown) =>
+    family === filesystemEnvironment.getMetadata ? filesystemMetadata : workspaceSearch) as never,
+}));
 
 // Atoms derived from the server config run in the real registry over a missing config.
 vi.mock(import("../state/server"), async (original) => {
@@ -36,17 +54,43 @@ vi.mock(import("../remoteOpen"), async (original) => ({
   ...(await original()),
   useRemoteOpenResolution: () => ({ state: { mode: "local-exec" }, isResolved: true }) as never,
 }));
-// A rendered diagram is an SVG; real Mermaid layout is not what these tests exercise.
-vi.mock(import("./chat/MermaidDiagram"), async (original) => ({
-  ...(await original()),
-  MermaidDiagram: () => <svg aria-label="Diagram" />,
+const { renderDiagram } = vi.hoisted(() => ({
+  renderDiagram: vi.fn<(source: string) => Promise<string> | undefined>(),
 }));
+// Control rendering latency without running Mermaid layout.
+vi.mock(import("./chat/MermaidDiagram"), async (original) => {
+  const { use } = await import("react");
+  return {
+    ...(await original()),
+    MermaidDiagram: ({ source }: { source: string }) => {
+      const pending = renderDiagram(source);
+      return <svg role="img" aria-label={pending ? use(pending) : "Diagram"} />;
+    },
+  };
+});
+
+const settingsOverrides = vi.hoisted(() => ({ mathRenderingEnabled: false }));
+vi.mock(import("../hooks/useSettings"), async (original) => {
+  const actual = await original();
+  type Settings = ReturnType<typeof actual.getClientSettings>;
+  function useClientSettings<T = Settings>(select?: (settings: Settings) => T): T {
+    const settings = { ...actual.getClientSettings(), ...settingsOverrides };
+    return select ? select(settings) : (settings as T);
+  }
+  return { ...actual, useClientSettings };
+});
 
 import ChatMarkdown from "./ChatMarkdown";
+import { serializeTableElementToCsv, chatMarkdownClipboardPayload } from "../markdown-clipboard";
+import { captureAssistantTextSelection } from "../lib/assistantTextSelection";
 
 const roots: Root[] = [];
 
 beforeEach(() => {
+  settingsOverrides.mathRenderingEnabled = false;
+  renderDiagram.mockReset();
+  workspaceSearch.mockReset().mockResolvedValue(AsyncResult.success({ entries: [] }));
+  filesystemMetadata.mockReset().mockResolvedValue(AsyncResult.success({ entries: [null] }));
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 });
 
@@ -88,6 +132,119 @@ function fileOptions(container: HTMLElement) {
     .map((button) => button.getAttribute("aria-label"))
     .filter((label) => label?.startsWith("File options for "));
 }
+
+describe("ChatMarkdown theme drafts", () => {
+  afterEach(() => {
+    act(() => {
+      localStorage.clear();
+      window.dispatchEvent(new StorageEvent("storage", { key: null }));
+    });
+  });
+
+  it.each(["dark", "light"] as const)(
+    "previews opposite syntax colors and restores saved %s colors on cancel",
+    async (savedAppearance) => {
+      let selection: ReturnType<typeof useTheme>;
+      function Preview() {
+        const theme = useTheme();
+        useEffect(() => {
+          selection = theme;
+        }, [theme]);
+        return <ChatMarkdown cwd={undefined} text={"```typescript\nconst answer = 42;\n```"} />;
+      }
+      await getSyntaxHighlighterPromise("typescript");
+      const { container } = await render(<Preview />);
+      await act(async () => {
+        selection.setTheme(savedAppearance);
+        selection.setAppearanceMode(savedAppearance);
+      });
+      const keywordColor = () =>
+        container.querySelector<HTMLElement>(".chat-markdown-shiki .line span")?.style.color;
+      await vi.waitFor(() => expect(keywordColor()).toBeTruthy());
+      const savedColor = keywordColor();
+      const savedStorage = Object.fromEntries(Object.entries(localStorage));
+      const draftAppearance = savedAppearance === "dark" ? "light" : "dark";
+
+      await act(async () =>
+        applyThemeColorPreview(getStandardThemeColors(draftAppearance), draftAppearance),
+      );
+      await vi.waitFor(() => {
+        expect(keywordColor()).toBeTruthy();
+        expect(keywordColor()).not.toBe(savedColor);
+      });
+      expect(document.documentElement.classList.contains("dark")).toBe(draftAppearance === "dark");
+      expect(selection!).toMatchObject({
+        theme: savedAppearance,
+        resolvedTheme: savedAppearance,
+        appearanceMode: savedAppearance,
+      });
+      expect(Object.fromEntries(Object.entries(localStorage))).toEqual(savedStorage);
+
+      await act(async () => selection.refreshTheme());
+      await vi.waitFor(() => expect(keywordColor()).toBe(savedColor));
+      expect(document.documentElement.classList.contains("dark")).toBe(savedAppearance === "dark");
+      expect(Object.fromEntries(Object.entries(localStorage))).toEqual(savedStorage);
+    },
+  );
+});
+
+describe("ChatMarkdown table layout", () => {
+  it.each([
+    { width: 36, timeline: true, fits: true },
+    { width: 48, timeline: true, fits: true },
+    { width: 35, timeline: true, fits: false },
+    { width: 48, timeline: false, fits: false },
+  ])(
+    "wraps expanded cells with fit=$fits in a $width rem container (timeline=$timeline)",
+    async ({ width, timeline, fits }) => {
+      const { container } = await render(
+        <div style={{ width: `${width}rem` }}>
+          <div className={timeline ? "@container/chat-lane chat-content-lane overflow-x-clip" : ""}>
+            <ChatMarkdown
+              cwd={undefined}
+              text={[
+                "| Change summary | Reason details | Verification status | Release impact | Followup actions |",
+                "| --- | --- | --- | --- | --- |",
+                "| Keep the complete explanation readable when the table is expanded in the conversation. | Allow each column to wrap its prose within the available space in the current chat lane. | Collapse and expand the table again to check that the text still fits and remains readable. | Keep the existing layout for narrow chat lanes and file previews. | Check the table again after resizing the conversation lane. |",
+              ].join("\n")}
+            />
+          </div>
+        </div>,
+      );
+      const table = container.querySelector("table")!;
+      const viewport = table.closest<HTMLElement>('[data-slot="scroll-area-viewport"]')!;
+      const cell = table.tBodies[0]!.rows[0]!.cells[0]!;
+      const collapse = () => buttonsLabelled(container, "Collapse table cells")[0];
+      if (collapse()) await act(async () => collapse()!.click());
+
+      const collapsedWidth = table.getBoundingClientRect().width;
+      const collapsedHeight = cell.getBoundingClientRect().height;
+      expect(viewport.clientWidth).toBeGreaterThan(0);
+      expect(viewport.scrollWidth).toBeGreaterThan(viewport.clientWidth);
+      expect(cell.scrollWidth).toBeGreaterThan(cell.clientWidth);
+
+      await act(async () => buttonsLabelled(container, "Expand table cells")[0]!.click());
+      const expandedWidth = table.getBoundingClientRect().width;
+      const expandedHeight = cell.getBoundingClientRect().height;
+      if (fits) {
+        expect(viewport.scrollWidth).toBeLessThanOrEqual(viewport.clientWidth + 1);
+        expect(expandedWidth).toBeLessThanOrEqual(viewport.clientWidth + 1);
+      } else {
+        expect(viewport.scrollWidth).toBeGreaterThan(viewport.clientWidth);
+        viewport.scrollLeft = 100;
+        expect(viewport.scrollLeft).toBeGreaterThan(0);
+      }
+      expect(expandedHeight).toBeGreaterThan(collapsedHeight);
+
+      await act(async () => collapse()!.click());
+      expect(table.getBoundingClientRect().width).toBeCloseTo(collapsedWidth, 0);
+      expect(cell.getBoundingClientRect().height).toBeCloseTo(collapsedHeight, 0);
+      await act(async () => buttonsLabelled(container, "Expand table cells")[0]!.click());
+      expect(table.getBoundingClientRect().width).toBeCloseTo(expandedWidth, 0);
+      expect(cell.getBoundingClientRect().height).toBeCloseTo(expandedHeight, 0);
+    },
+  );
+});
 
 describe("ChatMarkdown bare anchor placeholders", () => {
   it.each(["<A>", "<a>", "<a >", "<a/>", "<A/>", "<a />"])(
@@ -134,6 +291,99 @@ describe("ChatMarkdown bare anchor placeholders", () => {
     expect(linkTexts(container)).toEqual(["label", "", "docs"]);
     expect(container.querySelector("code")?.textContent).toBe("<A>");
     expect(container.querySelector("[data-markdown-details]")?.textContent).toContain("More");
+  });
+});
+
+describe("ChatMarkdown Mermaid streaming", () => {
+  it("reveals a completed fence while streaming and preserves it through later prose and stream end", async () => {
+    let finishRender!: (label: string) => void;
+    renderDiagram.mockReturnValue(
+      new Promise<string>((resolve) => {
+        finishRender = resolve;
+      }),
+    );
+    const source = "flowchart LR\nA --> B";
+    const open = `\`\`\`mermaid\n${source}`;
+    const closed = `${open}\n\`\`\`\n\n`;
+    const message = (text: string, isStreaming = true) => (
+      <ChatMarkdown cwd={undefined} text={text} isStreaming={isStreaming} />
+    );
+    const { container, rerender } = await render(message(open));
+    expect(container.querySelector("pre")?.textContent).toContain(source);
+    expect(renderDiagram).not.toHaveBeenCalled();
+
+    await rerender(message(closed));
+    expect(renderDiagram).toHaveBeenCalledWith(expect.stringContaining(source));
+    expect(container.querySelector('svg[role="img"]')).toBeNull();
+    expect(container.querySelector(".chat-markdown-shiki")).toBeNull();
+    const placeholder = container.querySelector("pre");
+    expect(placeholder?.getAttribute("aria-hidden")).toBe("true");
+    expect(placeholder?.textContent).toContain(source);
+
+    await act(async () => finishRender("Completed diagram"));
+    const diagram = container.querySelector('svg[role="img"]');
+    expect(diagram?.getAttribute("aria-label")).toBe("Completed diagram");
+    for (const streaming of [true, false]) {
+      await rerender(message(`${closed}The remaining explanation.`, streaming));
+      expect(container.querySelector('svg[role="img"]')).toBe(diagram);
+      expect(container.textContent).toContain("The remaining explanation.");
+    }
+
+    await act(async () => buttonsLabelled(container, "Show code")[0]!.click());
+    expect(container.querySelector('svg[role="img"]')).toBeNull();
+    expect(container.querySelector("pre")?.textContent).toContain(source);
+    await act(async () => buttonsLabelled(container, "Show diagram")[0]!.click());
+    expect(container.querySelector('svg[role="img"]')?.getAttribute("aria-label")).toBe(
+      "Completed diagram",
+    );
+  });
+
+  it.each([
+    ["short tilde marker", "~~~~mermaid\nflowchart LR\nA --> B\n~~~", "\n~~~~"],
+    [
+      "overindented blockquote marker",
+      "> ```mermaid\n> flowchart LR\n> A --> B\n>     ```",
+      "\n> ```",
+    ],
+    [
+      "overindented list marker",
+      "- Diagram\n\n  ```mermaid\n  flowchart LR\n  A --> B\n      ```",
+      "\n  ```",
+    ],
+  ])("keeps a %s in source until a real closer arrives", async (_, open, closing) => {
+    const message = (text: string) => <ChatMarkdown cwd={undefined} text={text} isStreaming />;
+    const { container, rerender } = await render(message(open));
+    expect(renderDiagram).not.toHaveBeenCalled();
+    expect(container.querySelector("pre")?.textContent).toContain("A --> B");
+
+    await rerender(message(`${open}${closing}`));
+    expect(container.querySelector('svg[role="img"]')?.getAttribute("aria-label")).toBe("Diagram");
+  });
+
+  it("does not mistake a CRLF stream cut after CR for a closed fence", async () => {
+    const open = "```mermaid\r\nflowchart LR\r\nA --> B\r\n\t```";
+    const message = (text: string) => <ChatMarkdown cwd={undefined} text={text} isStreaming />;
+    const { container, rerender } = await render(message(open));
+    expect(renderDiagram).not.toHaveBeenCalled();
+    await rerender(message(`${open}\r`));
+    expect(renderDiagram).not.toHaveBeenCalled();
+    expect(container.querySelector("pre")?.textContent).toContain("A --> B");
+
+    await rerender(message(`${open}\r\n\`\`\``));
+    expect(container.querySelector('svg[role="img"]')?.getAttribute("aria-label")).toBe("Diagram");
+  });
+
+  it("falls back to source when a completed diagram fails during streaming", async () => {
+    await getSyntaxHighlighterPromise("mermaid");
+    renderDiagram.mockImplementation(() => {
+      throw new Error("Invalid Mermaid diagram");
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const container = await renderText("```mermaid\ninvalid diagram\n```", { isStreaming: true });
+    expect(renderDiagram).toHaveBeenCalledWith(expect.stringContaining("invalid diagram"));
+    expect(container.querySelector('svg[role="img"]')).toBeNull();
+    expect(container.querySelector("pre")?.textContent).toContain("invalid diagram");
+    expect(container.querySelector("pre")?.getAttribute("aria-hidden")).not.toBe("true");
   });
 });
 
@@ -220,6 +470,8 @@ describe("ChatMarkdown streaming", () => {
       "~~~bash\necho tilde\n~~~",
       "> ```bash\n> echo quote\n> ```",
       "````bash\necho four\n````",
+      "- Command\n\n  ```bash\n  echo list\n  ```",
+      "```bash\r\necho crlf\r\n```\r",
     ]) {
       await rerender(message(text));
       expect(runButtons()).toHaveLength(1);
@@ -397,6 +649,165 @@ describe("ChatMarkdown skill chips", () => {
 
     await rerender(<ChatMarkdown cwd="/tmp/project" text={text} skills={[]} />);
     expect(container.textContent).not.toContain("2Spec");
+  });
+});
+
+describe("ChatMarkdown workspace file opens", () => {
+  const threadRef = {
+    environmentId: EnvironmentId.make("workspace"),
+    threadId: ThreadId.make("thread"),
+  };
+
+  it.each([
+    {
+      cwd: "/school/courses/physics",
+      path: "courses/physics/notes/a.md",
+      indexedPath: "notes/a.md",
+    },
+    {
+      cwd: "C:/school/courses/Physics",
+      path: "courses/physics/notes/a.md",
+      indexedPath: "Notes/A.md",
+    },
+  ])(
+    "opens a repo-relative chip at its indexed path in $cwd",
+    async ({ cwd, path, indexedPath }) => {
+      workspaceSearch.mockResolvedValue(
+        AsyncResult.success({
+          entries: [
+            { path: indexedPath, kind: "file" },
+            { path, kind: "file" },
+          ],
+          truncated: false,
+        }),
+      );
+      const openFile = vi
+        .spyOn(useRightPanelStore.getState(), "openFile")
+        .mockImplementation(() => {});
+      const container = await renderText(`[Notes](${path}:7)`, { cwd, threadRef });
+
+      await act(async () => container.querySelector("a")!.click());
+
+      expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, indexedPath, 7);
+    },
+  );
+
+  it("prefers an existing literal nested file over the stripped Windows match", async () => {
+    filesystemMetadata.mockResolvedValue(
+      AsyncResult.success({ entries: [{ kind: "file", byteLength: 10 }] }),
+    );
+    workspaceSearch.mockResolvedValue(
+      AsyncResult.success({
+        entries: [
+          { path: "Notes/A.md", kind: "file" },
+          { path: "Physics/Notes/A.md", kind: "file" },
+        ],
+        truncated: false,
+      }),
+    );
+    const openFile = vi
+      .spyOn(useRightPanelStore.getState(), "openFile")
+      .mockImplementation(() => {});
+    const container = await renderText("[Notes](physics/notes/a.md)", {
+      cwd: "C:/school/Physics",
+      threadRef,
+    });
+
+    await act(async () => container.querySelector("a")!.click());
+
+    expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "physics/notes/a.md", undefined);
+  });
+
+  it("keeps a literal file omitted by a truncated search", async () => {
+    workspaceSearch.mockResolvedValue(
+      AsyncResult.success({
+        entries: [{ path: "notes/a.md", kind: "file" }],
+        truncated: true,
+      }),
+    );
+    filesystemMetadata.mockResolvedValue(
+      AsyncResult.success({ entries: [{ kind: "file", byteLength: 10 }] }),
+    );
+    const openFile = vi
+      .spyOn(useRightPanelStore.getState(), "openFile")
+      .mockImplementation(() => {});
+    const container = await renderText("[Notes](physics/notes/a.md:7)", {
+      cwd: "/school/physics",
+      threadRef,
+    });
+
+    await act(async () => container.querySelector("a")!.click());
+
+    expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "physics/notes/a.md", 7);
+    expect(filesystemMetadata).toHaveBeenCalledExactlyOnceWith({
+      environmentId: threadRef.environmentId,
+      input: { paths: ["/school/physics/physics/notes/a.md"] },
+    });
+  });
+
+  it.each([
+    {
+      kind: "absolute link",
+      href: "/school/physics/physics/notes/a.md:7",
+      imageBaseDir: undefined,
+    },
+    { kind: "nested preview", href: "notes/a.md:7", imageBaseDir: "/school/physics/physics" },
+  ])(
+    "keeps the literal target for a $kind when only its stripped twin exists",
+    async ({ href, imageBaseDir }) => {
+      workspaceSearch.mockResolvedValue(
+        AsyncResult.success({
+          entries: [{ path: "notes/a.md", kind: "file" }],
+          truncated: false,
+        }),
+      );
+      const openFile = vi
+        .spyOn(useRightPanelStore.getState(), "openFile")
+        .mockImplementation(() => {});
+      const container = await renderText(`[Notes](${href})`, {
+        cwd: "/school/physics",
+        imageBaseDir,
+        threadRef,
+      });
+
+      await act(async () => container.querySelector("a")!.click());
+
+      expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "physics/notes/a.md", 7);
+      expect(workspaceSearch).not.toHaveBeenCalled();
+      expect(filesystemMetadata).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps a newer absolute file open when an earlier repo-relative lookup finishes", async () => {
+    const result = AsyncResult.success({
+      entries: [{ path: "notes/a.md", kind: "file" }],
+      truncated: false,
+    });
+    let resolvePending!: (value: typeof result) => void;
+    const pending = new Promise<typeof result>((resolve) => {
+      resolvePending = resolve;
+    });
+    workspaceSearch.mockReturnValueOnce(pending);
+    const openFile = vi
+      .spyOn(useRightPanelStore.getState(), "openFile")
+      .mockImplementation(() => {});
+    const container = await renderText(
+      "[Notes](physics/notes/a.md) and [Other](/elsewhere/b.md:9)",
+      {
+        cwd: "/school/physics",
+        threadRef,
+      },
+    );
+    const [notes, other] = container.querySelectorAll("a");
+    await act(async () => notes!.click());
+    expect(workspaceSearch).toHaveBeenCalledOnce();
+    expect(openFile).not.toHaveBeenCalled();
+
+    await act(async () => other!.click());
+    await act(async () => resolvePending(result));
+
+    expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "/elsewhere/b.md", 9);
+    expect(workspaceSearch).toHaveBeenCalledOnce();
   });
 });
 
@@ -849,4 +1260,169 @@ describe("ChatMarkdown thread find", () => {
       ).toBe(count);
     },
   );
+});
+
+describe("ChatMarkdown math", () => {
+  const renderMath = async (
+    text: string,
+    options: Partial<Parameters<typeof ChatMarkdown>[0]> = {},
+  ) => {
+    settingsOverrides.mathRenderingEnabled = true;
+    const { container: host } = await render(
+      <ChatMarkdown cwd="/tmp/project" text={text} {...options} />,
+    );
+    host.setAttribute("data-assistant-citation-source", "assistant");
+    await act(async () => {
+      await import("./chat/MathTypeset");
+    });
+    return { host };
+  };
+
+  it.each(["$x$", "$$x$$", "```math\nx\n```", "$\\notACommand{x}$"])(
+    "keeps keyboard focus on the parent control in compact previews of %s",
+    async (formula) => {
+      settingsOverrides.mathRenderingEnabled = true;
+      const { container } = await render(
+        <>
+          <button type="button">
+            Preview <ChatMarkdown inline text={formula} cwd={undefined} />
+          </button>
+          <button type="button">After preview</button>
+        </>,
+      );
+      await act(async () => {
+        await import("./chat/MathTypeset");
+      });
+      const [preview, after] = container.querySelectorAll("button");
+      preview!.focus();
+      await act(() => userEvent.tab());
+      expect(document.activeElement).toBe(after);
+      if (formula.includes("notACommand")) {
+        expect(page.getByRole("button", { name: /notACommand/ }).element()).toBe(preview);
+      }
+    },
+  );
+
+  it("keeps message formulas reachable by keyboard", async () => {
+    settingsOverrides.mathRenderingEnabled = true;
+    const { container } = await render(
+      <>
+        <button type="button">Before equation</button>
+        <ChatMarkdown text="$x$" cwd={undefined} />
+      </>,
+    );
+    container.querySelector("button")!.focus();
+    await act(() => userEvent.tab());
+    expect(document.activeElement).toBe(
+      container.querySelector('[aria-label="Scroll inline equation"]'),
+    );
+  });
+
+  it("renders table formulas and exports their TeX instead of duplicate glyph text", async () => {
+    const rendered = await renderMath(
+      "| Name | Formula |\n| --- | --- |\n| Norm | $|x|$ and \\(\\|y\\|\\) |\n| Price | $5 and $10 |",
+    );
+
+    const table = rendered.host.querySelector("table")!;
+    expect([...table.rows].map((row) => row.cells.length)).toEqual([2, 2, 2]);
+    expect(table.querySelectorAll(".katex")).toHaveLength(2);
+    const norm = table.querySelectorAll(".katex")[1]!;
+    expect([...norm.querySelectorAll(".katex-mathml mi")].map((node) => node.textContent)).toEqual([
+      "∥",
+      "y",
+      "∥",
+    ]);
+    expect(serializeTableElementToCsv(table)).toBe(
+      "Name,Formula\nNorm,\\(|x|\\) and \\(\\|y\\|\\)\nPrice,$5 and $10",
+    );
+    const glyph = table.querySelector(".katex-mathml mi")!.firstChild!;
+    const range = document.createRange();
+    range.setStart(glyph, 0);
+    range.setEnd(glyph, 1);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    const payload = chatMarkdownClipboardPayload(selection)!;
+    expect(payload.text).toBe("\\(|x|\\)");
+    expect(payload.html).toContain("\\(|x|\\)");
+    expect(payload.html).not.toContain("katex");
+    expect(captureAssistantTextSelection(rendered.host, selection)?.selector.text).toBe(
+      "\\(|x|\\)",
+    );
+  });
+
+  it("renders explicit math fences and keeps unfinished streamed fences readable", async () => {
+    const rendered = await renderMath("```math\nx_i^2\n```\n\n`$literal$`\n\n$unfinished");
+
+    expect(rendered.host.querySelectorAll(".katex")).toHaveLength(1);
+    expect(rendered.host.textContent).toContain("$literal$");
+    expect(rendered.host.textContent).toContain("$unfinished");
+
+    const streamed = await renderMath("```math\nx_i^2", { isStreaming: true });
+
+    expect(streamed.host.querySelector(".katex")).toBeNull();
+    expect(streamed.host.textContent).toContain("x_i^2");
+  });
+
+  it.each(["$$\nx^2\n", "\\[\nx^2\n"])(
+    "keeps unfinished display %s and following prose readable while streaming",
+    async (source) => {
+      for (const text of [source, `${source}\nFollowing prose.`]) {
+        const { host } = await renderMath(text, { isStreaming: true });
+        expect(host.querySelector(".katex")).toBeNull();
+        expect(host.querySelector("[data-markdown-math]")).toBeNull();
+        expect(host.textContent).toContain("x^2");
+        if (text.includes("Following prose."))
+          expect(host.textContent).toContain("Following prose.");
+      }
+    },
+  );
+
+  it.each(["$$x^2$$", "$$\nx^2\n$$", "\\[\nx^2\n\\]", "```math\nx^2\n```"])(
+    "renders completed %s while the response is streaming",
+    async (source) => {
+      const { host } = await renderMath(source, { isStreaming: true });
+      expect(host.querySelectorAll(".katex")).toHaveLength(1);
+      expect(host.querySelector('[data-markdown-math="display"]')).not.toBeNull();
+    },
+  );
+
+  it("shows unsupported TeX as source and keeps active TeX commands inert", async () => {
+    const rendered = await renderMath(
+      "\\(\\notACommand{x}\\) and \\(\\href{https://example.com}{x}\\)",
+    );
+
+    expect(rendered.host.textContent).toContain("\\(\\notACommand{x}\\)");
+    expect(rendered.host.querySelector('a[href="https://example.com"]')).toBeNull();
+  });
+
+  it("typesets only when enabled, keeping prices and task offsets intact", async () => {
+    const text = "Area $\\pi r^2$ costs $5 and $10.\n\n\\[\nE = mc^2\n\\]\n\n- [ ] check \\(x\\)";
+    const off = await renderText(text);
+    expect(off.querySelector("[data-markdown-math]")).toBeNull();
+    const html = await renderText('<code class="language-math math-inline">x</code>');
+    expect(html.querySelector("[data-markdown-math]")).toBeNull();
+    for (const parseRawHtml of [true, false]) {
+      let editedText = text;
+      const { host } = await renderMath(text, {
+        parseRawHtml,
+        onTaskListChange: ({ markerOffset, checked }) => {
+          editedText = setMarkdownTaskChecked(text, markerOffset, checked);
+        },
+      });
+      expect(
+        [...host.querySelectorAll("[data-markdown-math]")].map((node) =>
+          node.getAttribute("data-markdown-copy"),
+        ),
+      ).toEqual(["\\(\\pi r^2\\)", "\\[\nE = mc^2\n\\]\n\n", "\\(x\\)"]);
+      await act(() => host.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
+      expect(editedText).toBe(text.replace("- [ ]", "- [x]"));
+    }
+    const { host } = await renderMath("-       intro\n\n        $$\n        x^2\n        $$");
+    expect(
+      [...host.querySelectorAll("[data-markdown-math]")].map((node) =>
+        node.getAttribute("data-markdown-copy"),
+      ),
+    ).toEqual(["\\[\nx^2\n\\]\n\n"]);
+  });
 });

@@ -1801,6 +1801,10 @@ code {
   margin: 0.65rem 0;
 }
 
+.chat-markdown-math-display .katex-display {
+  margin: 0;
+}
+
 :is(.chat-markdown, .composer-tiptap) h1,
 :is(.chat-markdown, .composer-tiptap) h2,
 :is(.chat-markdown, .composer-tiptap) h3,
@@ -1863,6 +1867,48 @@ code {
    browser counter. Browsers without ::marker content fall back to `start`. */
 .composer-tiptap ol > li[data-marker]::marker {
   content: attr(data-marker) " ";
+}
+
+/* The prompt font and size can differ from the interface, so its gutter must
+   also follow the prompt's font metrics. */
+.composer-tiptap ol {
+  --list-gutter: max(1.25rem, 3ch);
+}
+
+.composer-tiptap ol:has(> li[data-marker-width="3"]) {
+  --list-gutter: max(1.25rem, 4ch);
+}
+
+.composer-tiptap ol:has(> li[data-marker-width="4"]) {
+  --list-gutter: max(1.25rem, 5ch);
+}
+
+.composer-tiptap ol:has(> li[data-marker-width="5"]) {
+  --list-gutter: max(1.25rem, 6ch);
+}
+
+.composer-tiptap ol:has(> li[data-marker-width="6"]) {
+  --list-gutter: max(1.25rem, 7ch);
+}
+
+.composer-tiptap ol:has(> li[data-marker-width="7"]) {
+  --list-gutter: max(1.25rem, 8ch);
+}
+
+.composer-tiptap ol:has(> li[data-marker-width="8"]) {
+  --list-gutter: max(1.25rem, 9ch);
+}
+
+.composer-tiptap ol:has(> li[data-marker-width="9"]) {
+  --list-gutter: max(1.25rem, 10ch);
+}
+
+.composer-tiptap ol:has(> li[data-marker-width="10"]) {
+  --list-gutter: max(1.25rem, 11ch);
+}
+
+.composer-tiptap ul {
+  padding-left: max(1.25rem, 2ch);
 }
 
 :is(.chat-markdown, .composer-tiptap) ul ul {
@@ -2045,7 +2091,8 @@ code {
    shot, no layout change. */
 @media (prefers-reduced-motion: no-preference) {
   .chat-markdown[data-streaming] > *,
-  .chat-markdown[data-streaming] .chat-markdown-shiki {
+  .chat-markdown[data-streaming] .chat-markdown-shiki,
+  .chat-markdown[data-streaming] .chat-markdown-mermaid {
     transition: opacity 600ms ease-out;
 
     @starting-style {
@@ -2071,7 +2118,7 @@ code {
 .chat-markdown th,
 .chat-markdown td {
   padding: 0.45rem 0.75rem;
-  text-align: left;
+  text-align: center;
 }
 
 .chat-markdown thead th {
@@ -2098,6 +2145,28 @@ code {
 .chat-markdown .chat-markdown-table-container[data-expanded="true"] td {
   max-width: 24rem;
   overflow-wrap: anywhere;
+}
+
+/* Fit expanded tables to wide timeline lanes; narrow lanes keep horizontal
+   scrolling so prose columns remain readable. */
+@container chat-lane (min-width: 36rem) {
+  .chat-markdown .chat-markdown-table-container[data-expanded="true"] table {
+    min-width: 0;
+  }
+
+  .chat-markdown .chat-markdown-table-container[data-expanded="true"] th {
+    white-space: normal;
+  }
+
+  .chat-markdown .chat-markdown-table-container[data-expanded="true"] td {
+    overflow-wrap: break-word;
+  }
+}
+
+/* Formula cells keep their natural width and scroll with the table. */
+.chat-markdown .chat-markdown-table-container td:has([data-markdown-math]) {
+  max-width: none;
+  overflow: visible;
 }
 
 :root {

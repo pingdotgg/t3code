@@ -1,4 +1,5 @@
 import {
+  ACP_REGISTRY_MAX_AGENTS,
   AcpRegistryOperationError,
   AcpRegistryOperationErrorReason,
   TrimmedNonEmptyString,
@@ -51,7 +52,8 @@ const ACP_REGISTRY_URL = "https://cdn.agentclientprotocol.com/registry/v1/latest
 const MAX_REGISTRY_BYTES = 1024 * 1024;
 const MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024;
 const MAX_PACKAGE_MANIFEST_BYTES = 1024 * 1024;
-const MAX_SEARCH_RESULTS = 20;
+// Older clients omit the limit and validate responses against a 20-agent cap.
+const DEFAULT_SEARCH_LIMIT = 20;
 const REGISTRY_REQUEST_TIMEOUT = "30 seconds";
 const ARCHIVE_REQUEST_TIMEOUT = "20 minutes";
 const PACKAGE_INSTALL_TIMEOUT = "20 minutes";
@@ -170,7 +172,7 @@ type AcpRegistryPackageInstallReceipt = typeof AcpRegistryPackageInstallReceipt.
 
 const AcpRegistryIndexEnvelope = Schema.Struct({
   version: BoundedVersion,
-  agents: Schema.Array(Schema.Unknown).check(Schema.isMaxLength(512)),
+  agents: Schema.Array(Schema.Unknown).check(Schema.isMaxLength(ACP_REGISTRY_MAX_AGENTS)),
 });
 export interface AcpRegistryIndex {
   readonly version: string;
@@ -1589,8 +1591,8 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     return distribution;
   });
 
-  const search: AcpRegistryCatalog["Service"]["search"] = (input) =>
-    Effect.gen(function* () {
+  const search: AcpRegistryCatalog["Service"]["search"] = Effect.fn("AcpRegistryCatalog.search")(
+    function* (input) {
       const registry = yield* refreshRegistry();
       const ranked = registry.agents.flatMap((agent) => {
         const distribution = resolveAcpRegistryDistribution({
@@ -1614,8 +1616,9 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
           compareText(left.agent.name.toLowerCase(), right.agent.name.toLowerCase()) ||
           compareText(left.agent.id, right.agent.id),
       );
+      const limit = input.limit ?? DEFAULT_SEARCH_LIMIT;
       return {
-        agents: ranked.slice(0, MAX_SEARCH_RESULTS).map(({ agent, distribution }) => ({
+        agents: ranked.slice(0, limit).map(({ agent, distribution }) => ({
           id: agent.id,
           name: agent.name,
           version: agent.version,
@@ -1632,10 +1635,11 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
               : "registry",
         })),
       } satisfies AcpRegistrySearchResult;
-    });
+    },
+  );
 
-  const prepare: AcpRegistryCatalog["Service"]["prepare"] = (input) =>
-    Effect.gen(function* () {
+  const prepare: AcpRegistryCatalog["Service"]["prepare"] = Effect.fn("AcpRegistryCatalog.prepare")(
+    function* (input) {
       const registry = yield* refreshRegistry();
       const agent = yield* findAgent(registry, input.agentId);
       const distribution = yield* compatibleDistribution(agent, "auto");
@@ -1658,7 +1662,8 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         distribution: distribution.kind,
         prepared: true,
       } satisfies AcpRegistryPrepareResult;
-    });
+    },
+  );
 
   const validateLocalExecutable = (command: string) =>
     platform === "win32" && /\.(?:cmd|bat)$/iu.test(command)
@@ -1671,8 +1676,8 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         )
       : Effect.void;
 
-  const inspect: AcpRegistryCatalog["Service"]["inspect"] = (settings, environment) =>
-    Effect.gen(function* () {
+  const inspect: AcpRegistryCatalog["Service"]["inspect"] = Effect.fn("AcpRegistryCatalog.inspect")(
+    function* (settings, environment) {
       if (settings.source === "local") {
         const command = settings.commandPath.trim();
         if (!command) return { status: "unconfigured" } as const;
@@ -1782,10 +1787,11 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
             distribution: distribution.kind,
             runner,
           } as const);
-    });
+    },
+  );
 
-  const resolve: AcpRegistryCatalog["Service"]["resolve"] = (settings, cwd, environment) =>
-    Effect.gen(function* () {
+  const resolve: AcpRegistryCatalog["Service"]["resolve"] = Effect.fn("AcpRegistryCatalog.resolve")(
+    function* (settings, cwd, environment) {
       if (settings.source === "local") {
         const executable = settings.commandPath.trim();
         if (!executable) {
@@ -1875,7 +1881,8 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
           env: spawnEnvironment,
         },
       } satisfies ResolvedAcpRegistryAgent;
-    });
+    },
+  );
 
   const uninstallManagedBinary: AcpRegistryCatalog["Service"]["uninstallManagedBinary"] = (input) =>
     hostSettings

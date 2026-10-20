@@ -59,7 +59,7 @@ function readResult(value: unknown, depth = 0): ToolResult {
 
 function readInput(value: unknown): Record<string, unknown> | undefined {
   const input = readResult(value).data;
-  // Cursor retains its MCP args envelope; other adapters retain the arguments directly.
+  // Historical Cursor items retain the MCP args envelope.
   return input && typeof input.toolName === "string" ? asRecord(input.args) : input;
 }
 
@@ -405,15 +405,19 @@ export function summarizeT3ToolCalls(
       const started = outcomes.filter((outcome) => outcome !== "failed").length;
       const failed = outcomes.length - started;
       failedCount += failed;
-      if (outcomes.length > 0 && started === 0) {
+      if (outcomes.length === 0) {
+        label = phrase(
+          "Started writing",
+          "start writing",
+          `review guides${selected.length === 1 ? "" : ` ${times}`}`,
+        );
+      } else if (started === 0) {
         label = `Could not start ${quantity(failed, "review guide")}`;
       } else {
         label = phrase(
           "Started",
           "start",
-          outcomes.length === 0
-            ? `review guides ${times}`
-            : `${quantity(started, "review guide")}${failed > 0 ? `, ${failed} failed` : ""}`,
+          `${quantity(started, "review guide")}${failed > 0 ? `, ${failed} failed` : ""}`,
         );
       }
       break;

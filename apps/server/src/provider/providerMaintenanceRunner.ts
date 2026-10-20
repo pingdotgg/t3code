@@ -306,28 +306,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
     maintenanceCapabilities: ProviderMaintenanceCapabilities,
     instanceId: ProviderInstanceId,
   ): Effect.Effect<VerifiedProviderRefresh> =>
-    providerRegistry.getProviders.pipe(
-      Effect.map((providers) => {
-        const instanceIds: Array<ProviderInstanceId> = [];
-        for (const candidate of providers) {
-          if (candidate.driver === provider && candidate.instanceId === instanceId) {
-            instanceIds.push(candidate.instanceId);
-          }
-        }
-        return instanceIds;
-      }),
-      Effect.flatMap((instanceIds) =>
-        instanceIds.length === 0
-          ? providerRegistry.refreshInstance(instanceId)
-          : Effect.forEach(
-              instanceIds,
-              (instanceId) => providerRegistry.refreshInstance(instanceId),
-              {
-                concurrency: "unbounded",
-                discard: true,
-              },
-            ).pipe(Effect.andThen(providerRegistry.getProviders)),
-      ),
+    providerRegistry.refreshAfterUpdate(provider, instanceId).pipe(
       Effect.flatMap((providers) => {
         const refreshedProviders = providers.filter(
           (candidate) => candidate.driver === provider && candidate.instanceId === instanceId,
@@ -519,12 +498,20 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
             // fail transiently on a healthy binary.
             const couldNotVerify =
               verifiedProviders.length === 0 ||
-              verifiedProviders.some(
-                (verifiedProvider) =>
+              verifiedProviders.some((verifiedProvider) => {
+                const installedVersion =
+                  verifiedProvider.installedVersion !== undefined
+                    ? verifiedProvider.installedVersion
+                    : verifiedProvider.version;
+                return (
                   !isStillInstalled(verifiedProvider) ||
+                  (verifiedProvider.status === "error" &&
+                    (verifiedProvider.auth.status !== "unauthenticated" ||
+                      !verifiedProvider.version)) ||
                   (targetVersion !== undefined &&
-                    verifiedProvider.version?.replace(/^v/, "") !== targetVersion),
-              );
+                    installedVersion?.replace(/^v/, "") !== targetVersion)
+                );
+              });
             const stillOutdated =
               targetVersion === undefined &&
               verifiedProviders.some((verifiedProvider) => isOutdatedProvider(verifiedProvider));

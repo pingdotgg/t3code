@@ -136,12 +136,15 @@ export const make = Effect.fn("OpenCode2Server.make")(function* (input: {
   readonly environment: NodeJS.ProcessEnv;
 }) {
   const opencode = yield* OpenCode2Client.OpenCode2Client;
-  const connectTo = (url: string, password: Redacted.Redacted, external: boolean) =>
-    Effect.gen(function* () {
-      const api = yield* opencode.connect({ baseUrl: url, password });
-      const version = yield* verifyServer(api.client);
-      return { ...api, url, version, external } satisfies OpenCode2Connection;
-    });
+  const connectTo = Effect.fn("OpenCode2Server.connectTo")(function* (
+    url: string,
+    password: Redacted.Redacted,
+    external: boolean,
+  ) {
+    const api = yield* opencode.connect({ baseUrl: url, password });
+    const version = yield* verifyServer(api.client);
+    return { ...api, url, version, external } satisfies OpenCode2Connection;
+  });
   let latest: OpenCode2Connection | undefined;
   const remember = (connection: OpenCode2Connection) =>
     Effect.sync(() => {

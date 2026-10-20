@@ -1,3 +1,4 @@
+import { Button } from "../../components/ui/Button";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
@@ -166,15 +167,11 @@ export function SettingsMicrophoneRouteScreen() {
           title="Preferred order"
           trailing={
             hasDevices ? (
-              <Pressable
-                accessibilityRole="button"
+              <Button
+                label={editing ? "Done" : "Edit"}
+                tone="text"
                 onPress={() => setEditing((value) => !value)}
-                className="px-2 py-1 active:opacity-70"
-              >
-                <Text className="text-sm font-t3-medium text-foreground">
-                  {editing ? "Done" : "Edit"}
-                </Text>
-              </Pressable>
+              />
             ) : undefined
           }
         >

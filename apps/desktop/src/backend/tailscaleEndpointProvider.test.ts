@@ -209,6 +209,7 @@ describe("tailscale endpoint provider", () => {
           return {
             magicDnsName: "desktop.tail.ts.net",
             tailnetIpv4Addresses: ["100.74.126.34"],
+            httpsServeEnabled: null,
           };
         }),
       });

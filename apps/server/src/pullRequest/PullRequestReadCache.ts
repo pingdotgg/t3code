@@ -153,8 +153,8 @@ export const make = Effect.gen(function* () {
         lock.withPermits(1),
       );
     }),
-    invalidate: (scope) =>
-      Effect.gen(function* () {
+    invalidate: Effect.fn("PullRequestReadCache.invalidate")(
+      function* (scope) {
         const now = clock.currentTimeMillisUnsafe();
         const current = yield* Cache.get(revisions, undefined);
         const next = Object.fromEntries(
@@ -164,14 +164,14 @@ export const make = Effect.gen(function* () {
         const encoded = yield* Schema.encodeEffect(revisionCodec)(next);
         yield* backing.set("revisions", encoded);
         yield* Cache.set(revisions, undefined, next);
-      }).pipe(
-        Effect.catch(() => {
-          enabled = false;
-          return Effect.logWarning("PR cache disabled after clearing failed");
-        }),
-        Effect.uninterruptible,
-        lock.withPermits(CONCURRENT_READS),
-      ),
+      },
+      Effect.catch(() => {
+        enabled = false;
+        return Effect.logWarning("PR cache disabled after clearing failed");
+      }),
+      Effect.uninterruptible,
+      lock.withPermits(CONCURRENT_READS),
+    ),
   });
 });
 
@@ -214,17 +214,18 @@ export const layer = Layer.unwrap(
     const directory = path.join(config.providerStatusCacheDir, "pull-requests");
     return Layer.effect(PullRequestReadCache, make).pipe(
       Layer.provide(
-        KeyValueStore.layerFileSystem(directory).pipe(
-          Layer.tap(() =>
-            forkParked(
-              pruneExpiredEntryFiles(directory).pipe(
-                Effect.catch((cause) =>
-                  Effect.logWarning("Failed to prune PR cache files", { cause }),
-                ),
-                Effect.repeat(Schedule.spaced(Duration.hours(1))),
+        // Memoize cleanup acquisition with the store; Layer.tap runs per consumer.
+        Layer.effectDiscard(
+          forkParked(
+            pruneExpiredEntryFiles(directory).pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("Failed to prune PR cache files", { cause }),
               ),
+              Effect.repeat(Schedule.spaced(Duration.hours(1))),
             ),
           ),
+        ).pipe(
+          Layer.provideMerge(KeyValueStore.layerFileSystem(directory)),
           Layer.catch(() =>
             Layer.effectDiscard(
               Effect.logWarning("PR cache directory unavailable; using memory cache"),

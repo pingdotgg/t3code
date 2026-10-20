@@ -136,26 +136,25 @@ export const layerFromProviderInstanceRegistry: Layer.Layer<
         instances.listInstances.pipe(
           Effect.map((available) => available.map((instance) => instance.instanceId)),
         ),
-      getMetadata: (instanceId) =>
-        Effect.gen(function* () {
-          const instance = yield* instances.getInstance(instanceId);
-          if (instance === undefined) {
-            return yield* new ProviderAdapterRegistryLookupError({ instanceId });
-          }
-          const capabilities = yield* instance.orchestrationAdapter
-            .getCapabilities()
-            .pipe(
-              Effect.mapError(
-                (cause) => new ProviderAdapterRegistryMetadataError({ instanceId, cause }),
-              ),
-            );
-          return {
-            driver: instance.driverKind,
-            continuationKey: instance.continuationIdentity.continuationKey,
-            enabled: instance.enabled,
-            capabilities,
-          };
-        }),
+      getMetadata: Effect.fn("ProviderAdapterRegistry.getMetadata")(function* (instanceId) {
+        const instance = yield* instances.getInstance(instanceId);
+        if (instance === undefined) {
+          return yield* new ProviderAdapterRegistryLookupError({ instanceId });
+        }
+        const capabilities = yield* instance.orchestrationAdapter
+          .getCapabilities()
+          .pipe(
+            Effect.mapError(
+              (cause) => new ProviderAdapterRegistryMetadataError({ instanceId, cause }),
+            ),
+          );
+        return {
+          driver: instance.driverKind,
+          continuationKey: instance.continuationIdentity.continuationKey,
+          enabled: instance.enabled,
+          capabilities,
+        };
+      }),
     });
   }),
 );
@@ -167,14 +166,13 @@ function makeRegistry(
   adapters: ReadonlyArray<ProviderAdapter.ProviderAdapterV2["Service"]>,
 ): ProviderAdapterRegistryV2Shape {
   return {
-    get: (instanceId) =>
-      Effect.gen(function* () {
-        const adapter = adapters.find((candidate) => candidate.instanceId === instanceId);
-        if (!adapter) {
-          return yield* new ProviderAdapterRegistryLookupError({ instanceId });
-        }
-        return adapter;
-      }),
+    get: Effect.fn("ProviderAdapterRegistry.get")(function* (instanceId) {
+      const adapter = adapters.find((candidate) => candidate.instanceId === instanceId);
+      if (!adapter) {
+        return yield* new ProviderAdapterRegistryLookupError({ instanceId });
+      }
+      return adapter;
+    }),
     list: () => Effect.succeed(adapters.map((adapter) => adapter.instanceId)),
   };
 }
@@ -318,20 +316,20 @@ const buildAdaptersFromConfigMap = Effect.fn("ProviderAdapterRegistry.buildAdapt
   },
 );
 
-export function makeRegistryFromConfigMap<R>(input: {
+export const makeRegistryFromConfigMap = Effect.fn(
+  "ProviderAdapterRegistry.makeRegistryFromConfigMap",
+)(function* <R>(input: {
   readonly drivers: ReadonlyArray<AnyProviderAdapterDriver<R>>;
   readonly configMap: ProviderInstanceConfigMap;
-}): Effect.Effect<
+}): Effect.fn.Return<
   ProviderAdapterRegistryV2Shape,
   ProviderAdapterRegistryBuildError,
   R | Scope.Scope
 > {
-  return Effect.gen(function* () {
-    const parentScope = yield* Effect.scope;
-    const entries = yield* buildAdaptersFromConfigMap({ ...input, parentScope });
-    return makeRegistry(Array.from(entries.values()).map((entry) => entry.adapter));
-  });
-}
+  const parentScope = yield* Effect.scope;
+  const entries = yield* buildAdaptersFromConfigMap({ ...input, parentScope });
+  return makeRegistry(Array.from(entries.values()).map((entry) => entry.adapter));
+});
 
 export function layerFromDrivers<R>(input: {
   readonly drivers: ReadonlyArray<AnyProviderAdapterDriver<R>>;

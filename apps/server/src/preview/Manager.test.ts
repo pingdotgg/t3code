@@ -6,6 +6,7 @@ import { PreviewUrlNormalizationError } from "@t3tools/shared/preview";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
+import * as TestClock from "effect/testing/TestClock";
 import { expect } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
@@ -459,12 +460,12 @@ it.layer(layer)("PreviewManager", (it) => {
       const threadId = freshThreadId();
       const manager = yield* PreviewManager.PreviewManager;
       const first = yield* manager.open({ threadId, url: "http://localhost:5173" });
+      yield* TestClock.adjust("1 second");
       const second = yield* manager.open({ threadId, url: "http://localhost:3000" });
+      yield* TestClock.adjust("1 second");
+      yield* manager.navigate({ threadId, tabId: first.tabId, url: "http://localhost:5173/next" });
       const result = yield* manager.list({ threadId });
-      expect(result.sessions).toHaveLength(2);
-      const ids = result.sessions.map((s) => s.tabId);
-      expect(ids).toContain(first.tabId);
-      expect(ids).toContain(second.tabId);
+      expect(result.sessions.map((s) => s.tabId)).toEqual([second.tabId, first.tabId]);
     }),
   );
 

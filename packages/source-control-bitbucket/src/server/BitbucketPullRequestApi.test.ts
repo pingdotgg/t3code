@@ -568,18 +568,39 @@ layer("BitbucketPullRequestApi.layer", (it) => {
       const next = "https://api.bitbucket.org/2.0/statuses?page=2";
       mockedRequest
         .mockReturnValueOnce(
-          Effect.succeed(response(valuePage([{ name: "Build", state: "SUCCESSFUL" }], next))),
+          Effect.succeed(
+            response(
+              valuePage(
+                [
+                  { name: "Build", state: "SUCCESSFUL" },
+                  { name: "Tests", state: "STOPPED" },
+                ],
+                next,
+              ),
+            ),
+          ),
         )
         .mockReturnValueOnce(
-          Effect.succeed(response(valuePage([{ name: "Lint", state: "FAILED" }]))),
+          Effect.succeed(
+            response(
+              valuePage([
+                { name: "Lint", state: "FAILED" },
+                { name: "Deploy", state: "INPROGRESS" },
+                { name: "Audit", state: "FAILED" },
+              ]),
+            ),
+          ),
         );
       const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
 
       const checks = yield* api.listChecks({ repository: "acme/web", number: 7 });
 
       expect(checks.map((check) => [check.name, check.status])).toEqual([
-        ["Build", "success"],
+        ["Tests", "cancelled"],
         ["Lint", "failure"],
+        ["Audit", "failure"],
+        ["Build", "success"],
+        ["Deploy", "pending"],
       ]);
       expect(callAt(1).url).toBe(next);
     }),

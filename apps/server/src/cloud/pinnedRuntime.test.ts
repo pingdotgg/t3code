@@ -1,10 +1,12 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -213,6 +215,165 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       assert.isTrue(cancelled);
       assert.deepEqual(yield* fs.readDirectory(path.join(baseDir, "runtime", "versions")), []);
     }),
+  );
+
+  it.effect.each([true, false])(
+    "installs a download receiving bytes for over ten minutes (progress: %s)",
+    (reportProgress) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-slow-" });
+        const checksums = yield* validChecksums;
+        const reads = yield* Effect.forEach(archiveBytes, () => Deferred.make<void>());
+        let controller: ReadableStreamDefaultController<Uint8Array>;
+        let offset = 0;
+        const body = new ReadableStream<Uint8Array>(
+          {
+            start(value) {
+              controller = value;
+            },
+            pull() {
+              Deferred.doneUnsafe(reads[offset++]!, Effect.void);
+            },
+          },
+          { highWaterMark: 0 },
+        );
+        const client = HttpClient.make((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(request.url.endsWith("/SHA256SUMS") ? checksums : body),
+            ),
+          ),
+        );
+        const progress: PinnedRuntimeProgress[] = [];
+        yield* Effect.gen(function* () {
+          // Each read is demanded by the consumer, with no prefetched chunks.
+          for (let index = 0; index < archiveBytes.length; index++) {
+            yield* Deferred.await(reads[index]!);
+            yield* TestClock.adjust(Duration.seconds(40));
+            controller.enqueue(archiveBytes.slice(index, index + 1));
+          }
+          controller.close();
+        }).pipe(Effect.forkScoped);
+        const installed = yield* ensurePinnedRuntimeInstalled({
+          baseDir,
+          version,
+          fs,
+          path,
+          platform: "linux",
+          arch: "x64",
+          httpClient: client,
+          runner: extractingRunner(fs, path),
+          validate: () => Effect.void,
+          ...(reportProgress
+            ? { onProgress: (event: PinnedRuntimeProgress) => progress.push(event) }
+            : {}),
+        });
+        assert.equal(yield* fs.readFileString(installed.sentinelPath), `${version}\n`);
+        if (reportProgress) {
+          assert.deepEqual(progress.slice(-4), [
+            { stage: "download", received: archiveBytes.length, total: archiveBytes.length },
+            { stage: "verify" },
+            { stage: "extract" },
+            { stage: "validate" },
+          ]);
+        }
+      }),
+  );
+
+  it.effect.each([
+    { stall: "response", reportProgress: false },
+    { stall: "body", reportProgress: false },
+    { stall: "body", reportProgress: true },
+  ])(
+    "fails a one-minute $stall stall, cleans up and releases the lock (progress: $reportProgress)",
+    ({ stall, reportProgress }) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-stalled-" });
+        const checksums = yield* validChecksums;
+        const waiting = yield* Deferred.make<void>();
+        let cancelled = false;
+        let sentChunk = false;
+        const client = HttpClient.make((request) => {
+          if (request.url.endsWith("/SHA256SUMS")) {
+            return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(checksums)));
+          }
+          if (stall === "response") {
+            return Deferred.succeed(waiting, undefined).pipe(
+              Effect.andThen(Effect.never),
+              Effect.ensuring(
+                Effect.sync(() => {
+                  cancelled = true;
+                }),
+              ),
+            );
+          }
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(
+                new ReadableStream<Uint8Array>(
+                  {
+                    pull(controller) {
+                      if (!sentChunk) {
+                        sentChunk = true;
+                        controller.enqueue(archiveBytes.slice(0, 4));
+                      } else {
+                        Deferred.doneUnsafe(waiting, Effect.void);
+                      }
+                    },
+                    cancel() {
+                      cancelled = true;
+                    },
+                  },
+                  { highWaterMark: 0 },
+                ),
+              ),
+            ),
+          );
+        });
+        const progress: PinnedRuntimeProgress[] = [];
+        const commands: string[] = [];
+        const install = yield* ensurePinnedRuntimeInstalled({
+          baseDir,
+          version,
+          fs,
+          path,
+          platform: "linux",
+          arch: "x64",
+          httpClient: client,
+          runner: extractingRunner(fs, path, commands),
+          validate: () => Effect.die("must not validate a stalled archive"),
+          ...(reportProgress
+            ? { onProgress: (event: PinnedRuntimeProgress) => progress.push(event) }
+            : {}),
+        }).pipe(Effect.forkScoped);
+        yield* Deferred.await(waiting);
+        yield* TestClock.adjust(Duration.minutes(1));
+        assert.isTrue(cancelled, "the stalled transfer must be cancelled after one minute");
+        const error = yield* Fiber.join(install).pipe(Effect.flip);
+        assert.instanceOf(error, PinnedRuntimeInstallError);
+        assert.equal(error.step, "downloading the t3 release archive (timed out)");
+        assert.deepEqual(commands, []);
+        assert.isTrue(progress.every((event) => event.stage === "download"));
+        assert.deepEqual(yield* fs.readDirectory(path.join(baseDir, "runtime", "versions")), []);
+        const installed = yield* ensurePinnedRuntimeInstalled({
+          baseDir,
+          version,
+          fs,
+          path,
+          platform: "linux",
+          arch: "x64",
+          httpClient: releaseHttpClient(checksums),
+          runner: extractingRunner(fs, path),
+          validate: () => Effect.void,
+        });
+        assert.equal(yield* fs.readFileString(installed.sentinelPath), `${version}\n`);
+      }),
   );
 
   it.effect("refuses an archive whose checksum does not match the release", () =>

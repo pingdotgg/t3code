@@ -29,7 +29,7 @@ export function* enabledEnvironmentIds(
   catalog: EnvironmentCatalogState,
 ): Generator<EnvironmentIdType> {
   for (const [environmentId, entry] of catalog.entries) {
-    if (entry.enabled) {
+    if (entry.enabled && entry.unsupportedReason === undefined) {
       yield environmentId;
     }
   }

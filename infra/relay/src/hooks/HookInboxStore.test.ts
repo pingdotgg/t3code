@@ -8,6 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
+import * as Tracer from "effect/Tracer";
 
 import * as HookInboxStore from "./HookInboxStore.ts";
 
@@ -44,6 +45,35 @@ const withInbox = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   );
 
 describe("HookInboxStore", () => {
+  it.effect.each(["delivered", "unreachable"] as const)(
+    "keeps %s delivery results on the operation span",
+    (outcome) =>
+      withInbox(
+        Effect.gen(function* () {
+          yield* HookInboxStore.hold(yield* hook("traced"), BASE_URL);
+          const spans: Array<Tracer.NativeSpan> = [];
+          const tracer = Tracer.make({
+            span(options) {
+              const span = new Tracer.NativeSpan(options);
+              spans.push(span);
+              return span;
+            },
+          });
+          yield* HookInboxStore.deliverDue(deliverer(() => outcome).send).pipe(
+            Effect.withTracer(tracer),
+          );
+          const run = spans.find((span) => span.name === "HookInboxStore.deliverDue");
+          expect(run?.attributes.get("relay.inbox.run_result")).toBe(
+            outcome === "delivered" ? "drained" : "unreachable",
+          );
+          expect(run?.attributes.get("relay.inbox.sent")).toBe(1);
+          expect(run?.attributes.get("relay.inbox.delivered")).toBe(
+            outcome === "delivered" ? 1 : 0,
+          );
+        }),
+      ),
+  );
+
   it.effect.each(["delivered", "busy", "unreachable"] as const)(
     "stops a prefetched batch cleared during a %s send",
     (outcome) =>

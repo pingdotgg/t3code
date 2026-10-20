@@ -28,7 +28,7 @@ import { OrchestratorDispatchError } from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import type * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
-import { liveThreadShell } from "./McpToolAccess.testkit.ts";
+import { idleThreadProjection, liveThreadShell } from "./McpToolAccess.testkit.ts";
 
 const layerOrchestratorService = OrchestratorMcpService.layer.pipe(
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
@@ -684,5 +684,63 @@ it("sendToThread reports why the orchestrator refused the message", async () => 
     expect(failure.message).toBe(
       `Unable to send to thread ${targetThreadId}: Provider session provider-session-dead is not active.`,
     );
+  }).pipe(Effect.provide(layer), Effect.runPromise);
+});
+
+it("readThread exposes the stored sender thread only for thread-sent messages", async () => {
+  const shell = liveThreadShell(parentThreadId);
+  const messages = [
+    { id: "message-from-child", text: "Child reporting in", senderThreadId: childThreadId },
+    { id: "message-from-user", text: "Thanks" },
+  ];
+  const projection = {
+    ...idleThreadProjection(shell),
+    messages,
+    visibleTurnItems: messages.map((message, position) => ({
+      position,
+      visibility: "local",
+      sourceThreadId: parentThreadId,
+      sourceItemId: `item-${message.id}`,
+      item: {
+        id: `item-${message.id}`,
+        type: "user_message",
+        messageId: message.id,
+        runId: activeRunId,
+        status: "completed",
+        title: null,
+        text: message.text,
+        updatedAt: now,
+      },
+    })),
+  } as unknown as OrchestrationV2ThreadProjection;
+  const layer = layerOrchestratorService.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadShell: () => Effect.succeed(shell),
+          getThreadRecords: () => Effect.succeed(projection),
+          getProjectThreadRecords: () => Effect.succeed(projection),
+          getTimelinePage: () =>
+            Effect.succeed({ items: projection.visibleTurnItems, totalItems: 2, hasMore: false }),
+        }),
+        ServerSettings.layerTest(),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({}),
+        NodeCrypto.layer,
+      ),
+    ),
+  );
+
+  await Effect.gen(function* () {
+    const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+    const result = yield* service.readThread(makeScope(), { threadId: parentThreadId });
+    expect(result.items).toMatchObject([
+      { messageId: "message-from-child", senderThreadId: childThreadId },
+      { messageId: "message-from-user" },
+    ]);
+    expect(result.items[1]).not.toHaveProperty("senderThreadId");
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });

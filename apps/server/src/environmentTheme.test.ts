@@ -142,10 +142,19 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
           path.join(environmentThemesDir, "shared-light.json"),
           encodeThemeFile(SHARED_THEME),
         );
-        const first = yield* environmentTheme.streamChanges.pipe(Stream.runHead);
+        const seen = yield* Queue.unbounded<ReadonlyArray<{ readonly id: string }>>();
+        yield* Stream.runForEach(environmentTheme.streamChanges, (themes) =>
+          Queue.offer(seen, themes),
+        ).pipe(Effect.forkScoped);
         assert.deepEqual(
-          Option.getOrNull(first)?.map((theme) => theme.id),
+          (yield* Queue.take(seen)).map((theme) => theme.id),
           ["nightfall", "shared-light"],
+        );
+        yield* fs.remove(path.join(environmentThemesDir, "nightfall.json"));
+        yield* currentThemes;
+        assert.deepEqual(
+          (yield* Queue.take(seen)).map((theme) => theme.id),
+          ["shared-light"],
         );
       }),
     ),

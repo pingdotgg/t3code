@@ -26,6 +26,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 import * as Etag from "effect/http/Etag";
@@ -41,7 +42,10 @@ import {
   RelayEnvironmentAuth,
   RelayEnvironmentPrincipal,
   RelayApi,
+  RelayEnvironmentLinkUnavailableError,
+  RelayEnvironmentLinkRequest,
 } from "@t3tools/contracts/relay";
+import { relayProtectedErrorMessage } from "@t3tools/client-runtime/relay";
 import { RELAY_MANAGED_TUNNEL_RECOVERY_TYP, signRelayJwt } from "@t3tools/shared/relayJwt";
 
 import {
@@ -92,6 +96,103 @@ const relaySettings: RelayConfiguration.RelayConfiguration["Service"] = {
   managedEndpointBaseDomain: undefined,
   managedEndpointNamespace: undefined,
 };
+
+const encodeLinkRequest = Schema.encodeEffect(Schema.fromJsonString(RelayEnvironmentLinkRequest));
+const decodeLinkUnavailableError = Schema.decodeUnknownEffect(RelayEnvironmentLinkUnavailableError);
+
+describe("managed endpoint provisioning errors", () => {
+  it.effect("returns the failed stage without exposing provider secrets through HTTP", () => {
+    let traceId = "";
+    const handlers = RelayHttpApi.layerClientApi.pipe(
+      HttpRouter.provideRequest(
+        Layer.mergeAll(
+          Layer.mock(EnvironmentCredentials.EnvironmentCredentials, {}),
+          Layer.mock(EnvironmentLinks.EnvironmentLinks, {}),
+          Layer.mock(ManagedEndpointProvider.ManagedEndpointProvider, {}),
+          Layer.mock(RelayDb.RelayTransactions, {}),
+          Layer.mock(HookInbox.HookInbox, {}),
+        ),
+      ),
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.succeed(RelayConfiguration.RelayConfiguration, relaySettings),
+          NodeCryptoLayer.layer,
+          Layer.mock(RelayTokens.RelayTokens, { resolveDpopAccessTokenScopes: () => null }),
+          Layer.mock(EnvironmentLinker.EnvironmentLinker, {
+            link: () =>
+              Effect.gen(function* () {
+                traceId = (yield* Effect.currentSpan.pipe(Effect.orDie)).traceId;
+                return yield* new ManagedEndpointProvider.ManagedEndpointProvisioningFailed({
+                  userId: "user-1",
+                  environmentId: "environment-1",
+                  stage: "ensure-tunnel",
+                  tunnelId: "private-tunnel-id",
+                  cause: new Error("private-provider-token"),
+                });
+              }),
+          }),
+          Layer.mock(EnvironmentLinks.EnvironmentLinks, {}),
+          Layer.mock(ManagedEndpointProvider.ManagedEndpointProvider, {}),
+          Layer.mock(Devices.Devices, {}),
+        ),
+      ),
+      Layer.provideMerge(
+        Layer.succeed(RelayClientAuth, {
+          clientBearer: (effect) =>
+            Effect.provideService(effect, RelayClientPrincipal, {
+              userId: "user-1",
+              token: "test-token",
+            }),
+        }),
+      ),
+    );
+    return Effect.gen(function* () {
+      const app = yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          HttpRouter.toWebHandler(
+            HttpApiBuilder.layer(HttpApi.make("RelayApi").add(RelayApi.groups.client)).pipe(
+              Layer.provide(handlers),
+              Layer.provide(HttpServer.layerServices),
+            ),
+            { disableLogger: true },
+          ),
+        ),
+        (app) => Effect.promise(() => app.dispose()),
+      );
+      const payload = yield* encodeLinkRequest({
+        proof: "test-proof",
+        notificationsEnabled: false,
+        liveActivitiesEnabled: false,
+        managedTunnelsEnabled: true,
+      });
+      const response = yield* Effect.promise(() =>
+        app.handler(
+          new Request("https://relay.example.test/v1/client/environment-links", {
+            method: "POST",
+            headers: {
+              authorization: "Bearer test-token",
+              "content-type": "application/json",
+            },
+            body: payload,
+          }),
+        ),
+      );
+      expect(response.status).toBe(503);
+      const body = yield* Effect.promise(() => response.json());
+      expect(body).toEqual({
+        _tag: "RelayEnvironmentLinkUnavailableError",
+        code: "environment_link_unavailable",
+        reason: "managed_endpoint_provisioning_failed",
+        provisioningStage: "ensure-tunnel",
+        traceId,
+      });
+      const error = yield* decodeLinkUnavailableError(body);
+      expect(relayProtectedErrorMessage(error)).toBe(
+        "Relay cannot provision the managed endpoint (managed_endpoint_provisioning_failed). Failed stage: ensure-tunnel.",
+      );
+    }).pipe(Effect.scoped);
+  });
+});
 
 describe("device listing compatibility", () => {
   it.effect("keeps v1 iOS-only while v2 returns every platform for the same account", () => {
@@ -185,6 +286,102 @@ describe("device listing compatibility", () => {
       }
     }).pipe(Effect.scoped);
   });
+});
+
+describe("Cloudflare rate-limit retry hint", () => {
+  const provisioningFailed = (cause?: unknown) =>
+    new ManagedEndpointProvider.ManagedEndpointProvisioningFailed({
+      userId: "user-1",
+      environmentId: "env-1",
+      stage: "ensure-tunnel",
+      ...(cause === undefined
+        ? {}
+        : {
+            cause: new ManagedEndpointProvider.ManagedEndpointTunnelClientError({
+              operation: "list",
+              cause,
+            }),
+          }),
+    });
+
+  const linkResponse = (failure: ManagedEndpointProvider.ManagedEndpointProvisioningFailed) => {
+    const layerHandlers = RelayHttpApi.layerClientApi.pipe(
+      HttpRouter.provideRequest(
+        Layer.mergeAll(
+          Layer.mock(EnvironmentCredentials.EnvironmentCredentials, {}),
+          Layer.mock(EnvironmentLinks.EnvironmentLinks, {}),
+          Layer.mock(ManagedEndpointProvider.ManagedEndpointProvider, {}),
+          Layer.mock(RelayDb.RelayTransactions, {}),
+          Layer.mock(HookInbox.HookInbox, {}),
+        ),
+      ),
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.succeed(RelayConfiguration.RelayConfiguration, relaySettings),
+          NodeCryptoLayer.layer,
+          Layer.mock(RelayTokens.RelayTokens, { resolveDpopAccessTokenScopes: () => null }),
+          Layer.mock(EnvironmentLinker.EnvironmentLinker, { link: () => Effect.fail(failure) }),
+          Layer.mock(EnvironmentLinks.EnvironmentLinks, {}),
+          Layer.mock(ManagedEndpointProvider.ManagedEndpointProvider, {}),
+          Layer.mock(Devices.Devices, {}),
+        ),
+      ),
+      Layer.provideMerge(
+        Layer.succeed(RelayClientAuth, {
+          clientBearer: (effect) =>
+            Effect.provideService(effect, RelayClientPrincipal, {
+              userId: "user-1",
+              token: "test-token",
+            }),
+        }),
+      ),
+    );
+    return Effect.acquireRelease(
+      Effect.sync(() =>
+        HttpRouter.toWebHandler(
+          HttpApiBuilder.layer(HttpApi.make("RelayApi").add(RelayApi.groups.client)).pipe(
+            Layer.provide(layerHandlers),
+            Layer.provide(HttpServer.layerServices),
+          ),
+          { disableLogger: true },
+        ),
+      ),
+      (app) => Effect.promise(() => app.dispose()),
+    ).pipe(
+      Effect.flatMap((app) =>
+        Effect.promise(() =>
+          app.handler(
+            new Request("https://relay.example.test/v1/client/environment-links", {
+              method: "POST",
+              headers: { authorization: "Bearer test-token", "content-type": "application/json" },
+              body: JSON.stringify({
+                proof: "signed-proof",
+                notificationsEnabled: true,
+                liveActivitiesEnabled: true,
+                managedTunnelsEnabled: true,
+              }),
+            }),
+          ),
+        ),
+      ),
+    );
+  };
+
+  it.effect("tells a link refused during a Cloudflare pause when to retry", () =>
+    Effect.gen(function* () {
+      const paused = yield* linkResponse(
+        provisioningFailed(
+          new ManagedEndpointProvider.CloudflareApiPaused({ retryAfterMillis: 24_100 }),
+        ),
+      );
+      expect(paused.status).toBe(503);
+      expect(paused.headers.get("retry-after")).toBe("25");
+
+      const other = yield* linkResponse(provisioningFailed());
+      expect(other.status).toBe(503);
+      expect(other.headers.get("retry-after")).toBeNull();
+    }).pipe(Effect.scoped),
+  );
 });
 
 describe("relay client authentication", () => {
@@ -1196,6 +1393,40 @@ describe("relay request tracing", () => {
       }),
   );
 
+  it.effect("records the Cloudflare edge a request entered through on its server span", () =>
+    Effect.gen(function* () {
+      const spans: Array<Tracer.NativeSpan> = [];
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+          return span;
+        },
+      });
+      const source = new Request("https://relay.test/v1/environments/env-1/connect", {
+        method: "POST",
+      });
+      Object.defineProperty(source, "cf", {
+        value: { colo: "JNB", country: "ZA", continent: "AF", asn: 37_100 },
+      });
+
+      yield* traceRelayHttpRequestWith(
+        Effect.succeed(HttpServerResponse.empty({ status: 204 })),
+        Layer.succeed(Tracer.Tracer, tracer),
+      ).pipe(
+        Effect.provideService(
+          HttpServerRequest.HttpServerRequest,
+          HttpServerRequest.fromWeb(source),
+        ),
+      );
+
+      const server = spans.find((span) => span.kind === "server");
+      expect(server?.attributes.get("relay.edge.colo")).toBe("JNB");
+      expect(server?.attributes.get("relay.edge.country")).toBe("ZA");
+      expect(server?.attributes.get("relay.edge.continent")).toBe("AF");
+    }),
+  );
+
   it.effect("records one server span inside the worker's disabled HTTP tracer", () =>
     Effect.gen(function* () {
       const spans: Array<Tracer.NativeSpan> = [];
@@ -1275,6 +1506,7 @@ describe("relay routing fallback", () => {
             return { ok: true as const, deliveries: [] };
           }),
         replayForLiveActivityRegistration: () => Effect.succeed(null),
+        endIdleLiveActivities: Effect.void,
       });
       const layerSignatures = Layer.succeed(
         EnvironmentPublishSignatures.EnvironmentPublishSignatures,

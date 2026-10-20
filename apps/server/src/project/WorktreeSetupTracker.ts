@@ -147,8 +147,8 @@ export const make = Effect.gen(function* () {
       Effect.tap(() => Effect.sync(() => lastSequenceByThread.delete(threadId))),
     );
 
-  const begin: WorktreeSetupTracker["Service"]["begin"] = (input) =>
-    Effect.gen(function* () {
+  const begin: WorktreeSetupTracker["Service"]["begin"] = Effect.fn("WorktreeSetupTracker.begin")(
+    function* (input) {
       yield* clearRetention(input.threadId);
       const startedAt = yield* nowIso;
       const ordered = WORKTREE_SETUP_STAGE_ORDER.filter((id) => input.stages.includes(id));
@@ -172,7 +172,8 @@ export const make = Effect.gen(function* () {
         return next;
       });
       yield* publish(input.threadId, snapshot);
-    });
+    },
+  );
 
   const update: WorktreeSetupTracker["Service"]["update"] = (threadId, mutate) =>
     modify(threadId, (tracked) => ({ ...tracked, snapshot: mutate(tracked.snapshot) })).pipe(
@@ -235,44 +236,45 @@ export const make = Effect.gen(function* () {
       ),
     }));
 
-  const finish: WorktreeSetupTracker["Service"]["finish"] = (threadId, phase, error) =>
-    Effect.gen(function* () {
-      const endedAt = yield* nowIso;
-      const snapshot = yield* modify(threadId, (tracked) => ({
-        fiber: null,
-        snapshot: {
-          ...tracked.snapshot,
-          phase,
-          endedAt,
-          error:
-            error === undefined || error === null
-              ? null
-              : clampText(error, WORKTREE_SETUP_ERROR_MAX_LENGTH),
-          stages: tracked.snapshot.stages.map((entry) =>
-            entry.status === "running"
-              ? {
-                  ...entry,
-                  status: phase === "done" ? "done" : phase === "cancelled" ? "skipped" : "failed",
-                  endedAt,
-                }
-              : entry,
-          ),
-        },
-      }));
-      if (!snapshot) return null;
-      yield* clearRetention(threadId);
-      const fiber = yield* remove(threadId).pipe(
-        Effect.delay(FINISHED_RETENTION),
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (retentionFibers.get(threadId) === fiber) retentionFibers.delete(threadId);
-          }),
+  const finish: WorktreeSetupTracker["Service"]["finish"] = Effect.fn(
+    "WorktreeSetupTracker.finish",
+  )(function* (threadId, phase, error) {
+    const endedAt = yield* nowIso;
+    const snapshot = yield* modify(threadId, (tracked) => ({
+      fiber: null,
+      snapshot: {
+        ...tracked.snapshot,
+        phase,
+        endedAt,
+        error:
+          error === undefined || error === null
+            ? null
+            : clampText(error, WORKTREE_SETUP_ERROR_MAX_LENGTH),
+        stages: tracked.snapshot.stages.map((entry) =>
+          entry.status === "running"
+            ? {
+                ...entry,
+                status: phase === "done" ? "done" : phase === "cancelled" ? "skipped" : "failed",
+                endedAt,
+              }
+            : entry,
         ),
-        Effect.forkDetach,
-      );
-      retentionFibers.set(threadId, fiber);
-      return snapshot;
-    });
+      },
+    }));
+    if (!snapshot) return null;
+    yield* clearRetention(threadId);
+    const fiber = yield* remove(threadId).pipe(
+      Effect.delay(FINISHED_RETENTION),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (retentionFibers.get(threadId) === fiber) retentionFibers.delete(threadId);
+        }),
+      ),
+      Effect.forkDetach,
+    );
+    retentionFibers.set(threadId, fiber);
+    return snapshot;
+  });
 
   const markUncancellable: WorktreeSetupTracker["Service"]["markUncancellable"] = (threadId) =>
     Ref.update(setups, (current) => {
@@ -283,16 +285,17 @@ export const make = Effect.gen(function* () {
       return next;
     });
 
-  const cancel: WorktreeSetupTracker["Service"]["cancel"] = (threadId) =>
-    Effect.gen(function* () {
-      const current = yield* Ref.get(setups);
-      const tracked = current.get(threadId);
-      if (!tracked || tracked.snapshot.phase !== "running" || !tracked.fiber) {
-        return false;
-      }
-      yield* Fiber.interrupt(tracked.fiber);
-      return true;
-    });
+  const cancel: WorktreeSetupTracker["Service"]["cancel"] = Effect.fn(
+    "WorktreeSetupTracker.cancel",
+  )(function* (threadId) {
+    const current = yield* Ref.get(setups);
+    const tracked = current.get(threadId);
+    if (!tracked || tracked.snapshot.phase !== "running" || !tracked.fiber) {
+      return false;
+    }
+    yield* Fiber.interrupt(tracked.fiber);
+    return true;
+  });
 
   const get: WorktreeSetupTracker["Service"]["get"] = (threadId) =>
     Ref.get(setups).pipe(Effect.map((current) => current.get(threadId)?.snapshot ?? null));

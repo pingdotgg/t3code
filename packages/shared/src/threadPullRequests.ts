@@ -230,8 +230,26 @@ export function resolveThreadPullRequestChains(
     nativeStacks.set(stackKey, members);
   }
   for (const members of nativeStacks.values()) {
-    const order = new Map(members[0]!.stack!.layers.map((layer, index) => [layer.number, index]));
-    members.sort((left, right) => (order.get(left.number) ?? 0) - (order.get(right.number) ?? 0));
+    // Saved snapshots can lag behind newer members of the same stack.
+    const memberNumbers = new Set(members.map((member) => member.number));
+    let layers = members[0]!.stack!.layers;
+    let coverage = layers.filter((layer) => memberNumbers.has(layer.number)).length;
+    for (const member of members.slice(1)) {
+      const candidate = member.stack!.layers;
+      const candidateCoverage = candidate.filter((layer) => memberNumbers.has(layer.number)).length;
+      if (
+        candidateCoverage > coverage ||
+        (candidateCoverage === coverage && candidate.length > layers.length)
+      ) {
+        layers = candidate;
+        coverage = candidateCoverage;
+      }
+    }
+    const order = new Map(layers.map((layer, index) => [layer.number, index]));
+    members.sort(
+      (left, right) =>
+        (order.get(left.number) ?? layers.length) - (order.get(right.number) ?? layers.length),
+    );
     for (const member of members) placed.add(threadPullRequestKeyOf(member));
     chains.push({ kind: "native", layers: members, depths: members.map((_, index) => index) });
   }

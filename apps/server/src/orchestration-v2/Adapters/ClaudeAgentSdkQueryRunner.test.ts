@@ -9,11 +9,13 @@ import { assert, describe, it } from "@effect/vitest";
 import { ProviderSessionId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import { vi } from "vite-plus/test";
 
-import { ProviderEventLoggers } from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { ProviderEventLoggers } from "@t3tools/provider-core/server/ProviderEventLoggers";
 import {
   CLAUDE_AGENT_SDK_QUERY_PROTOCOL,
   ClaudeAgentSdkQueryRunner,
@@ -85,6 +87,103 @@ it.effect("logs successful task stops for replay and omits failed stops", () =>
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+const FORK_SESSION_ID = "11111111-1111-4111-8111-111111111111";
+
+const writeClaudeSession = Effect.fnUntraced(function* (configDir: string) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const projectDir = path.join(configDir, "projects", "-repo");
+  const entry = (uuid: string, parentUuid: string | null, message: unknown) => ({
+    type: parentUuid === null ? "user" : "assistant",
+    uuid,
+    parentUuid,
+    sessionId: FORK_SESSION_ID,
+    cwd: "/repo",
+    isSidechain: false,
+    timestamp: "2026-10-01T00:00:00.000Z",
+    message,
+  });
+  yield* fileSystem.makeDirectory(projectDir, { recursive: true });
+  yield* fileSystem.writeFileString(
+    path.join(projectDir, `${FORK_SESSION_ID}.jsonl`),
+    [
+      entry("aaaaaaaa-0000-4000-8000-000000000001", null, { role: "user", content: "hello" }),
+      entry("aaaaaaaa-0000-4000-8000-000000000002", "aaaaaaaa-0000-4000-8000-000000000001", {
+        role: "assistant",
+        content: [{ type: "text", text: "hi" }],
+      }),
+    ]
+      .map((line) => JSON.stringify(line))
+      .join("\n"),
+  );
+  return projectDir;
+});
+
+const forkRunnerLayer = layerQueryRunner.pipe(
+  Layer.provide(Layer.succeed(ProviderEventLoggers, { native: undefined, canonical: undefined })),
+);
+
+it.effect("forks a session stored under the instance's own CLAUDE_CONFIG_DIR", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const configDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-claude-fork-config-",
+      });
+      const projectDir = yield* writeClaudeSession(configDir);
+      const hostConfigDir = process.env.CLAUDE_CONFIG_DIR;
+      const inProcessFork = vi.spyOn(ClaudeSdk, "forkSession");
+      yield* Effect.addFinalizer(() => Effect.sync(() => inProcessFork.mockRestore()));
+
+      const runner = yield* ClaudeAgentSdkQueryRunner;
+      const forked = yield* runner.forkSession({
+        sessionId: FORK_SESSION_ID,
+        options: { dir: "/repo" },
+        environment: { ...process.env, CLAUDE_CONFIG_DIR: configDir },
+        threadId: ThreadId.make("thread-fork-config-dir"),
+        providerSessionId: ProviderSessionId.make("session-fork-config-dir"),
+      });
+
+      assert.notEqual(forked.sessionId, FORK_SESSION_ID);
+      const transcript = yield* fileSystem.readFileString(
+        path.join(projectDir, `${forked.sessionId}.jsonl`),
+      );
+      assert.include(transcript, '"content":"hello"');
+      assert.include(transcript, '"text":"hi"');
+      const inheritedHead = transcript
+        .trim()
+        .split("\n")
+        .findLast((line) => line.includes('"type":"assistant"'))
+        ?.match(/"uuid"\s*:\s*"([^"]+)"/)?.[1];
+      assert.isString(inheritedHead);
+      assert.equal(forked.headMessageId, inheritedHead);
+      assert.equal(process.env.CLAUDE_CONFIG_DIR, hostConfigDir);
+      assert.equal(inProcessFork.mock.calls.length, 0);
+    }).pipe(Effect.provide(forkRunnerLayer)),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("forks in-process when the instance shares the server's config dir", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const inProcessFork = vi
+        .spyOn(ClaudeSdk, "forkSession")
+        .mockResolvedValue({ sessionId: "forked-in-process" });
+      yield* Effect.addFinalizer(() => Effect.sync(() => inProcessFork.mockRestore()));
+      const runner = yield* ClaudeAgentSdkQueryRunner;
+      const forked = yield* runner.forkSession({
+        sessionId: FORK_SESSION_ID,
+        options: { dir: "/repo" },
+        environment: { ...process.env },
+        threadId: ThreadId.make("thread-fork-shared-config-dir"),
+        providerSessionId: ProviderSessionId.make("session-fork-shared-config-dir"),
+      });
+
+      assert.equal(forked.sessionId, "forked-in-process");
+    }).pipe(Effect.provide(forkRunnerLayer)),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
 const realQueryRunner = layerQueryRunner.pipe(
   Layer.provide(
     Layer.succeed(ProviderEventLoggers, {
@@ -93,6 +192,52 @@ const realQueryRunner = layerQueryRunner.pipe(
     }),
   ),
   Layer.provide(NodeServices.layer),
+);
+
+it.effect.each(["readable", "unreadable"] as const)(
+  "forks with a %s transcript, retaining the inherited head when available",
+  (transcript) =>
+    Effect.gen(function* () {
+      let forkCompleted = false;
+      const fork = vi.spyOn(ClaudeSdk, "forkSession").mockImplementation(async () => {
+        forkCompleted = true;
+        return { sessionId: "forked-session" };
+      });
+      const read = vi.spyOn(ClaudeSdk, "getSessionMessages").mockImplementation(async () => {
+        assert.isTrue(forkCompleted);
+        if (transcript === "unreadable") throw new Error("transcript unreadable");
+        return ["remapped-user", "remapped-assistant"].map((uuid) => ({
+          type: "assistant" as const,
+          uuid,
+          session_id: "forked-session",
+          message: { role: "assistant", content: uuid },
+          parent_tool_use_id: null,
+          parent_agent_id: null,
+        }));
+      });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          fork.mockRestore();
+          read.mockRestore();
+        }),
+      );
+      const runner = yield* ClaudeAgentSdkQueryRunner;
+      const forked = yield* runner.forkSession({
+        sessionId: "source-session",
+        options: { dir: "/workspace", upToMessageId: "source-assistant" },
+        environment: process.env,
+        threadId: ThreadId.make("thread-fork-head"),
+        providerSessionId: ProviderSessionId.make("session-fork-head"),
+      });
+      assert.deepEqual(forked, {
+        sessionId: "forked-session",
+        ...(transcript === "readable" ? { headMessageId: "remapped-assistant" } : {}),
+      });
+      assert.deepEqual(fork.mock.calls, [
+        ["source-session", { dir: "/workspace", upToMessageId: "source-assistant" }],
+      ]);
+      assert.deepEqual(read.mock.calls, [["forked-session", { dir: "/workspace" }]]);
+    }).pipe(Effect.provide(realQueryRunner)),
 );
 
 function fakeClaudeCli(script: string): string {

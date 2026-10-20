@@ -5,6 +5,7 @@ import { Atom } from "effect/reactivity";
 import * as SecureStore from "expo-secure-store";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { whenProtectedDataAvailable } from "../../lib/protectedData";
 import { useEnvironments } from "../../state/environments";
 import { environmentSession } from "../../state/session";
 
@@ -35,7 +36,8 @@ export function PermissionUpdateNotice() {
 
   useEffect(() => {
     let active = true;
-    void SecureStore.getItemAsync(storageKey)
+    void whenProtectedDataAvailable()
+      .then(() => SecureStore.getItemAsync(storageKey))
       .then((raw) => {
         const value: unknown = raw === null ? [] : JSON.parse(raw);
         if (active)

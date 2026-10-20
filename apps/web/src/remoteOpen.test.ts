@@ -29,7 +29,7 @@ describe("resolveRemoteOpenState", () => {
     expect(
       resolveRemoteOpenState({
         target: primaryTarget("http://127.0.0.1:8000"),
-        sshAlias: null,
+        sshTarget: null,
         isDesktopRenderer: false,
         remoteOpenTargets: TAILSCALE_TARGETS,
       }),
@@ -40,7 +40,7 @@ describe("resolveRemoteOpenState", () => {
     expect(
       resolveRemoteOpenState({
         target: primaryTarget("https://sol.tail1234.ts.net"),
-        sshAlias: null,
+        sshTarget: null,
         isDesktopRenderer: false,
         remoteOpenTargets: TAILSCALE_TARGETS,
       }),
@@ -56,7 +56,7 @@ describe("resolveRemoteOpenState", () => {
     expect(
       resolveRemoteOpenState({
         target: primaryTarget("http://172.29.112.1:14369"),
-        sshAlias: null,
+        sshTarget: null,
         isDesktopRenderer: true,
         remoteOpenTargets: TAILSCALE_TARGETS,
       }),
@@ -71,26 +71,79 @@ describe("resolveRemoteOpenState", () => {
           label: "WSL (Ubuntu)",
           connectionId: "local:wsl-1",
         }),
-        sshAlias: null,
+        sshTarget: null,
         isDesktopRenderer: false,
         remoteOpenTargets: TAILSCALE_TARGETS,
       }),
     ).toEqual({ mode: "local-exec" });
   });
 
-  it("prefers the desktop SSH alias over server-advertised hosts", () => {
+  it("leaves a bare desktop SSH alias for the editor to resolve through SSH config", () => {
+    const state = resolveRemoteOpenState({
+      target: new SshConnectionTarget({ environmentId, label: "sol", connectionId: "ssh-1" }),
+      sshTarget: { alias: "sol", username: null },
+      isDesktopRenderer: true,
+      remoteOpenTargets: [
+        { kind: "tailscale", host: "sol.tail1234.ts.net", username: "server-user" },
+      ],
+    });
+    expect(state).toEqual({ mode: "remote-links", host: { kind: "ssh-alias", host: "sol" } });
+    if (state.mode !== "remote-links") throw new Error("Expected a remote link");
     expect(
-      resolveRemoteOpenState({
-        target: new SshConnectionTarget({
-          environmentId,
-          label: "sol",
-          connectionId: "ssh-1",
-        }),
-        sshAlias: "sol",
-        isDesktopRenderer: true,
-        remoteOpenTargets: TAILSCALE_TARGETS,
-      }),
-    ).toEqual({ mode: "remote-links", host: { kind: "ssh-alias", host: "sol" } });
+      buildRemoteOpenUrl({ editor: "vscode", ...state.host, absolutePath: "/work/project" }),
+    ).toBe("vscode://vscode-remote/ssh-remote+sol/work/project");
+    expect(
+      buildRemoteOpenUrl({ editor: "zed", ...state.host, absolutePath: "/work/project" }),
+    ).toBe("zed://ssh/sol/work/project");
+    expect(
+      buildRemoteOpenUrl({ editor: "idea", ...state.host, absolutePath: "/work/project" }),
+    ).toBe(
+      "jetbrains://gateway/ssh/environment?h=sol&launchIde=true&ideHint=IU&projectHint=%2Fwork%2Fproject",
+    );
+  });
+
+  it.each([
+    { alias: "server", username: "admin-user" },
+    { alias: "admin-user@server", username: null },
+    { alias: "old-user@server", username: "admin-user" },
+    { alias: "admin-user@server", username: "" },
+    { alias: "admin-user@server", username: "  " },
+  ])("keeps one login username in editor links for $alias (username: '$username')", (sshTarget) => {
+    const state = resolveRemoteOpenState({
+      target: new SshConnectionTarget({ environmentId, label: "server", connectionId: "ssh-1" }),
+      sshTarget,
+      isDesktopRenderer: true,
+      remoteOpenTargets: TAILSCALE_TARGETS,
+    });
+    expect(state.mode).toBe("remote-links");
+    if (state.mode !== "remote-links") throw new Error("Expected a remote link");
+    expect(
+      buildRemoteOpenUrl({ editor: "vscode", ...state.host, absolutePath: "/work/project" }),
+    ).toBe("vscode://vscode-remote/ssh-remote+admin-user%40server/work/project");
+    expect(
+      buildRemoteOpenUrl({ editor: "zed", ...state.host, absolutePath: "/work/project" }),
+    ).toBe("zed://ssh/admin-user@server/work/project");
+    expect(
+      buildRemoteOpenUrl({ editor: "idea", ...state.host, absolutePath: "/work/project" }),
+    ).toBe(
+      "jetbrains://gateway/ssh/environment?h=server&launchIde=true&ideHint=IU&projectHint=%2Fwork%2Fproject&u=admin-user",
+    );
+  });
+
+  it("uses the advertised login username in editor links over a relay", () => {
+    const state = resolveRemoteOpenState({
+      target: new RelayConnectionTarget({ environmentId, label: "server" }),
+      sshTarget: null,
+      isDesktopRenderer: false,
+      remoteOpenTargets: [
+        { kind: "tailscale", host: "server.tail1234.ts.net", username: "admin-user" },
+      ],
+    });
+    expect(state.mode).toBe("remote-links");
+    if (state.mode !== "remote-links") throw new Error("Expected a remote link");
+    expect(
+      buildRemoteOpenUrl({ editor: "cursor", ...state.host, absolutePath: "/work/project" }),
+    ).toBe("cursor://vscode-remote/ssh-remote+admin-user%40server.tail1234.ts.net/work/project");
   });
 
   it("reports unavailable when a remote environment advertises no hosts", () => {
@@ -98,7 +151,7 @@ describe("resolveRemoteOpenState", () => {
       expect(
         resolveRemoteOpenState({
           target: new RelayConnectionTarget({ environmentId, label: "sol" }),
-          sshAlias: null,
+          sshTarget: null,
           isDesktopRenderer: false,
           remoteOpenTargets,
         }),
@@ -110,7 +163,7 @@ describe("resolveRemoteOpenState", () => {
     expect(
       resolveRemoteOpenState({
         target: null,
-        sshAlias: null,
+        sshTarget: null,
         isDesktopRenderer: false,
         remoteOpenTargets: undefined,
       }),
@@ -175,6 +228,33 @@ describe("buildRemoteOpenUrl", () => {
     ).toBe(
       "jetbrains://gateway/ssh/environment?h=sol&launchIde=true&ideHint=IU&projectHint=C%3A%2FUsers%2Ftheo",
     );
+  });
+
+  it("adds a file position only for confirmed VS Code-family file targets", () => {
+    const targets = [
+      ["vscode", true, "vscode://vscode-remote/ssh-remote+sol/tmp/my%20file.md:1:1"],
+      ["cursor", true, "cursor://vscode-remote/ssh-remote+sol/tmp/my%20file.md:1:1"],
+      ["vscode", false, "vscode://vscode-remote/ssh-remote+sol/tmp/my%20file.md"],
+      ["vscode", undefined, "vscode://vscode-remote/ssh-remote+sol/tmp/my%20file.md"],
+      ["zed", true, "zed://ssh/sol/tmp/my%20file.md"],
+      [
+        "pycharm",
+        true,
+        "jetbrains://gateway/ssh/environment?h=sol&launchIde=true&ideHint=PY&projectHint=%2Ftmp%2Fmy+file.md",
+      ],
+    ] as const;
+
+    for (const [editor, isFile, expected] of targets) {
+      expect(
+        buildRemoteOpenUrl({
+          editor,
+          host: "sol",
+          absolutePath: "/tmp/my file.md",
+          ...(isFile === undefined ? {} : { isFile }),
+        }),
+        `${editor}, isFile=${isFile}`,
+      ).toBe(expected);
+    }
   });
 
   it("returns undefined for editors without remote support", () => {

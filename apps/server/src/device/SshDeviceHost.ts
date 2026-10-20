@@ -172,7 +172,11 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
     provide(
       runSshCommand(targetFor(config), {
         preHostArgs: identityArgs(config),
-        remoteCommandArgs: commandArgs(`exec ${[command, ...args].map(quoteRemoteArg).join(" ")}`),
+        // Match the hub cwd so relative executables and PATH entries resolve identically.
+        remoteCommandArgs: commandArgs(
+          `cd "$HOME/.t3/device/hosts/${owner}" && exec ${[command, ...args].map(quoteRemoteArg).join(" ")}`,
+        ),
+        keepErrorOutputTail: true,
         ...(options?.stdin === undefined ? {} : { stdin: options.stdin }),
         ...(options?.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
       }),

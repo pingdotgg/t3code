@@ -110,4 +110,14 @@ describe("ExecutionEnvironmentDescriptor", () => {
       }).capabilities.serverResolvedCommandContext,
     ).toBe(true);
   });
+
+  it("enables thread Stop only when advertised by the server", () => {
+    expect(decodeDescriptor(descriptor).capabilities.threadStop).toBeUndefined();
+    expect(
+      decodeDescriptor({
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, threadStop: true },
+      }).capabilities.threadStop,
+    ).toBe(true);
+  });
 });

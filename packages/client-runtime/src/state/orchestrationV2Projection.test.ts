@@ -304,6 +304,74 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     expect(next?.visibleTurnItems.map((row) => row.position)).toEqual([0, 1]);
   });
 
+  it("moves an updated item to its new ordinal and renumbers the rows it passes", () => {
+    const inherited = {
+      ...commandItem("item-inherited", "parent", 0),
+      threadId: ThreadId.make("parent"),
+    };
+    const items = [
+      commandItem("item-a", "a", 1),
+      commandItem("item-b", "b", 2),
+      commandItem("item-c", "c", 2),
+    ];
+    const rows = [
+      {
+        position: 0,
+        visibility: "inherited" as const,
+        sourceThreadId: inherited.threadId,
+        sourceItemId: inherited.id,
+        item: inherited,
+      },
+      ...items.map((item, index) => ({
+        position: index + 1,
+        visibility: "local" as const,
+        sourceThreadId: threadId,
+        sourceItemId: item.id,
+        item,
+      })),
+    ];
+    const moved = commandItem("item-a", "moved", 2);
+    const next = applyOrchestrationV2ProjectionEvent(
+      { ...emptyProjection, runs: [run], turnItems: items, visibleTurnItems: rows },
+      {
+        id: "event-move",
+        type: "turn-item.updated",
+        threadId,
+        runId,
+        occurredAt: now,
+        payload: moved,
+      } as OrchestrationV2DomainEvent,
+    );
+
+    // Equal ordinals order by id, so item-a stays ahead of item-b.
+    expect(next?.visibleTurnItems.map((row) => [row.item.id, row.position])).toEqual([
+      ["item-inherited", 0],
+      ["item-a", 1],
+      ["item-b", 2],
+      ["item-c", 3],
+    ]);
+    expect(next?.visibleTurnItems[0]).toBe(rows[0]);
+    expect(next?.visibleTurnItems[1]?.item).toBe(moved);
+    expect(next?.turnItems.map((item) => item.id)).toEqual(["item-a", "item-b", "item-c"]);
+
+    const later = commandItem("item-a", "later", 3);
+    const last = applyOrchestrationV2ProjectionEvent(next, {
+      id: "event-move-later",
+      type: "turn-item.updated",
+      threadId,
+      runId,
+      occurredAt: now,
+      payload: later,
+    } as OrchestrationV2DomainEvent);
+    expect(last?.visibleTurnItems.map((row) => [row.item.id, row.position])).toEqual([
+      ["item-inherited", 0],
+      ["item-b", 1],
+      ["item-c", 2],
+      ["item-a", 3],
+    ]);
+    expect(last?.turnItems.at(0)).toBe(later);
+  });
+
   describe("partial timeline", () => {
     const queuedRunId = RunId.make("run-queued");
     const steerRunId = RunId.make("run-steer");

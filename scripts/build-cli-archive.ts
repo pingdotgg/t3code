@@ -230,12 +230,12 @@ const stageRuntimeExternals = Effect.fn("stageRuntimeExternals")(function* (inpu
   yield* removeNestedBinDirectories(fs, path, path.join(input.stageDir, "node_modules"));
 });
 
-const removeNestedBinDirectories = (
-  fs: FileSystem.FileSystem,
-  path: Path.Path,
-  root: string,
-): Effect.Effect<void, PlatformError.PlatformError> =>
-  Effect.gen(function* () {
+const removeNestedBinDirectories = Effect.fn("build-cli-archive.removeNestedBinDirectories")(
+  function* (
+    fs: FileSystem.FileSystem,
+    path: Path.Path,
+    root: string,
+  ): Effect.fn.Return<void, PlatformError.PlatformError> {
     const entries = yield* fs.readDirectory(root).pipe(Effect.orElseSucceed(() => []));
     for (const entry of entries) {
       const child = path.join(root, entry);
@@ -248,7 +248,8 @@ const removeNestedBinDirectories = (
         yield* removeNestedBinDirectories(fs, path, child);
       }
     }
-  });
+  },
+);
 
 const stageWebClient = Effect.fn("stageWebClient")(function* (source: string, target: string) {
   const fs = yield* FileSystem.FileSystem;

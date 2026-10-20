@@ -230,6 +230,62 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       staleTimeMs: 60_000,
     }),
   );
+  const loadDiff = Effect.fn("PullRequests.loadDiff")(function* (input: PullRequestDiffInput) {
+    const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+    const loader = yield* PullRequestDiffLoader.PullRequestDiffLoader;
+    const prepared = yield* SubscriptionRef.get(supervisor.prepared);
+    if (Option.isNone(prepared)) {
+      return yield* new EnvironmentHttpConnectionNotReadyError({
+        message: "The environment HTTP connection is not ready.",
+      });
+    }
+    return yield* loader.load(prepared.value, input);
+  });
+
+  const runAction = Effect.fn("PullRequests.runAction")(function* (
+    input: PullRequestActionInput & {
+      readonly resolveMergeMethod?: (detail: PullRequestDetail) => PullRequestMergeMethod;
+    },
+  ) {
+    const { resolveMergeMethod, ...actionInput } = input;
+    let preparedInput = actionInput;
+    if (actionInput.action === "merge" && resolveMergeMethod !== undefined) {
+      const { projectId, host, repository, number } = actionInput;
+      const reference = { projectId, host, repository, number, allowStale: false };
+      const detail = yield* routedRequest(WS_METHODS.pullRequestsDetail, reference);
+      if (
+        detail.state !== "open" ||
+        detail.isDraft ||
+        !detail.capabilities.actions.includes("merge") ||
+        !detail.viewerPermissions.actions.includes("merge")
+      ) {
+        return yield* new PullRequestOperationError({
+          operation: "runAction",
+          detail: "This pull request cannot be merged.",
+        });
+      }
+      if (detail.capabilities.stackActions) {
+        const stack = yield* routedRequest(WS_METHODS.pullRequestsStack, reference);
+        if (stack !== null) {
+          return yield* new PullRequestOperationError({
+            operation: "runAction",
+            detail: "Open this pull request to merge its stack.",
+          });
+        }
+      }
+      const mergeMethod = yield* Effect.try({
+        try: () => resolveMergeMethod(detail),
+        catch: (cause) =>
+          new PullRequestOperationError({
+            operation: "runAction",
+            detail: cause instanceof Error ? cause.message : "Could not choose a merge method.",
+          }),
+      });
+      preparedInput = { ...actionInput, mergeMethod };
+    }
+    return yield* routedRequest(WS_METHODS.pullRequestsRunAction, preparedInput);
+  });
+
   return {
     refreshes,
     linkedThreads: createEnvironmentRpcQueryAtomFamily(runtime, {
@@ -286,18 +342,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       label: "environment-data:pull-requests:diff",
       persistence: persistQuery(PullRequestDiffResult),
       staleTimeMs: 60_000,
-      execute: (input: PullRequestDiffInput) =>
-        Effect.gen(function* () {
-          const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
-          const loader = yield* PullRequestDiffLoader.PullRequestDiffLoader;
-          const prepared = yield* SubscriptionRef.get(supervisor.prepared);
-          if (Option.isNone(prepared)) {
-            return yield* new EnvironmentHttpConnectionNotReadyError({
-              message: "The environment HTTP connection is not ready.",
-            });
-          }
-          return yield* loader.load(prepared.value, input);
-        }),
+      execute: loadDiff,
     }),
     diffFileContents: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:diff-file-contents",
@@ -347,51 +392,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       label: "environment-data:pull-requests:run-action",
       // Preparation belongs to the write's lane. Refreshable queries would restart it after
       // every preceding action, and preparing outside the lane could reorder the clicks.
-      execute: (
-        input: PullRequestActionInput & {
-          readonly resolveMergeMethod?: (detail: PullRequestDetail) => PullRequestMergeMethod;
-        },
-      ) =>
-        Effect.gen(function* () {
-          const { resolveMergeMethod, ...actionInput } = input;
-          let preparedInput = actionInput;
-          if (actionInput.action === "merge" && resolveMergeMethod !== undefined) {
-            const { projectId, host, repository, number } = actionInput;
-            const reference = { projectId, host, repository, number, allowStale: false };
-            const detail = yield* routedRequest(WS_METHODS.pullRequestsDetail, reference);
-            if (
-              detail.state !== "open" ||
-              detail.isDraft ||
-              !detail.capabilities.actions.includes("merge") ||
-              !detail.viewerPermissions.actions.includes("merge")
-            ) {
-              return yield* new PullRequestOperationError({
-                operation: "runAction",
-                detail: "This pull request cannot be merged.",
-              });
-            }
-            if (detail.capabilities.stackActions) {
-              const stack = yield* routedRequest(WS_METHODS.pullRequestsStack, reference);
-              if (stack !== null) {
-                return yield* new PullRequestOperationError({
-                  operation: "runAction",
-                  detail: "Open this pull request to merge its stack.",
-                });
-              }
-            }
-            const mergeMethod = yield* Effect.try({
-              try: () => resolveMergeMethod(detail),
-              catch: (cause) =>
-                new PullRequestOperationError({
-                  operation: "runAction",
-                  detail:
-                    cause instanceof Error ? cause.message : "Could not choose a merge method.",
-                }),
-            });
-            preparedInput = { ...actionInput, mergeMethod };
-          }
-          return yield* routedRequest(WS_METHODS.pullRequestsRunAction, preparedInput);
-        }),
+      execute: runAction,
       onSuccess: ({ environmentId, input }, registry) =>
         Effect.sync(() => registry.refresh(preview({ environmentId, input }))),
       scheduler: commandScheduler,

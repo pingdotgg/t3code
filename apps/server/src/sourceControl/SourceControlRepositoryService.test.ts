@@ -270,13 +270,14 @@ it.effect("keeps arbitrary Bitbucket request failures out of the repository mess
   }),
 );
 
-it.effect("clones a looked-up repository into the requested destination", () =>
+it.effect("clones a looked-up repository after creating missing parent directories", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const parent = yield* fs.makeTempDirectoryScoped({
+    const temporaryDirectory = yield* fs.makeTempDirectoryScoped({
       prefix: "t3-source-control-clone-parent-",
     });
+    const parent = path.join(temporaryDirectory, "missing", "nested");
     const destinationPath = path.join(parent, "t3code");
     const cloneCalls: Array<{ cwd: string; args: ReadonlyArray<string> }> = [];
 
@@ -305,7 +306,8 @@ it.effect("clones a looked-up repository into the requested destination", () =>
         layer({
           git: {
             execute: (input) =>
-              Effect.sync(() => {
+              Effect.gen(function* () {
+                assert.isTrue(yield* fs.exists(parent).pipe(Effect.orDie));
                 cloneCalls.push({ cwd: input.cwd, args: input.args });
                 return processOutput();
               }),
@@ -527,6 +529,45 @@ it.effect("preserves destination probe failures instead of treating them as miss
     ),
   );
 });
+
+it.effect("clones directly under an existing filesystem root without recreating it", () =>
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const root = path.parse(path.resolve(".")).root;
+    const cloneCalls: Array<string> = [];
+
+    yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      yield* service.cloneRepository({
+        provider: SourceControlProviderKind.make("github"),
+        repository: "octocat/t3code",
+        destinationPath: path.join(root, "t3code"),
+        protocol: "https",
+      });
+
+      assert.deepStrictEqual(cloneCalls, [root]);
+    }).pipe(
+      Effect.provide(
+        layer({
+          fileSystem: FileSystem.makeNoop({
+            exists: (target) => Effect.succeed(target === root),
+            makeDirectory: (target) =>
+              Effect.sync(() => {
+                assert.notStrictEqual(target, root, "must not try to create the existing root");
+              }),
+          }),
+          git: {
+            execute: (input) =>
+              Effect.sync(() => {
+                cloneCalls.push(input.cwd);
+                return processOutput();
+              }),
+          },
+        }),
+      ),
+    );
+  }).pipe(Effect.provide(NodePath.layer)),
+);
 
 it.effect("publishes by creating the repository, adding a remote, and pushing upstream", () => {
   const createCalls: Array<{ cwd: string; repository: string; visibility: string }> = [];

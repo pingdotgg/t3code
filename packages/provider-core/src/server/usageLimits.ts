@@ -78,12 +78,15 @@ export function applyUsageLimitsUpdate(input: {
       changed = true;
     }
   }
-  if (!changed && previous !== undefined && previous.unavailable === undefined) {
+  if (!changed && previous !== undefined) {
     return previous;
   }
+  const unavailable =
+    previous === undefined ? { reason: "probeFailed" as const } : previous.unavailable;
   return {
     ...makeUsageLimits({ checkedAt: input.checkedAt, windows: merged.values() }),
     ...(previous?.resetCredits !== undefined ? { resetCredits: previous.resetCredits } : {}),
+    ...(unavailable !== undefined ? { unavailable } : {}),
   };
 }
 
@@ -105,6 +108,15 @@ export function resolveUsageLimitsAfterProbe(input: {
   const { published, probed } = input;
   if (probed?.unavailable?.reason === "probeFailed" && published && !published.unavailable) {
     return published;
+  }
+  if (
+    published &&
+    probed &&
+    !published.unavailable &&
+    !probed.unavailable &&
+    Date.parse(published.checkedAt) > Date.parse(probed.checkedAt)
+  ) {
+    return { ...probed, checkedAt: published.checkedAt, windows: published.windows };
   }
   return probed;
 }

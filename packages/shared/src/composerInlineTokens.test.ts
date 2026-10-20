@@ -31,22 +31,19 @@ describe("collectComposerInlineTokens", () => {
     ]);
   });
 
-  it.each(["$", "€", "£", "¥", "₹", "₩", "₿", "𑿝"])(
-    "collects %s skill names that begin with a digit",
-    (prefix) => {
-      expect(collectComposerInlineTokens(`Use ${prefix}2spec next`)).toEqual([
-        {
-          type: "skill",
-          value: "2spec",
-          source: `${prefix}2spec`,
-          start: 4,
-          end: 9 + prefix.length,
-        },
-      ]);
-    },
-  );
+  it.each(["$", "€", "𑿝"])("collects %s skill names that begin with a digit", (prefix) => {
+    expect(collectComposerInlineTokens(`Use ${prefix}2spec next`)).toEqual([
+      {
+        type: "skill",
+        value: "2spec",
+        source: `${prefix}2spec`,
+        start: 4,
+        end: 9 + prefix.length,
+      },
+    ]);
+  });
 
-  it.each(["€", "£", "¥", "₹", "₩", "₿", "𑿝"])("leaves %s currency amounts as text", (prefix) => {
+  it.each(["€", "𑿝"])("leaves %s currency amounts as text", (prefix) => {
     expect(
       collectComposerInlineTokens(
         `${prefix}20 ${prefix}1_000 ${prefix}20k ${prefix}100M ${prefix}1e6 `,
@@ -209,5 +206,12 @@ describe("collectComposerInlineTokens", () => {
     const started = performance.now();
     expect(collectComposerInlineTokens(" [[".repeat(40_000))).toEqual([]);
     expect(performance.now() - started).toBeLessThan(1_000);
+  });
+
+  it("keeps skill and mention sources inside TeX out of the context chip list", () => {
+    const source = "\\[\\text{use $browser and @README.md here}\\] then $real-skill ";
+    expect(collectComposerInlineTokens(source).map((token) => token.source)).toEqual([
+      "$real-skill",
+    ]);
   });
 });

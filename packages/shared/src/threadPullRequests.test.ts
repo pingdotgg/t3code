@@ -315,6 +315,63 @@ describe("resolveThreadPullRequestChains", () => {
     });
   });
 
+  it("uses a later complete native snapshot for layer order and the current pull request", () => {
+    const links = [18, 20, 83, 84].map((number) =>
+      link(number, {
+        linkedAt: "2026-01-01T00:00:00.000Z",
+        snapshot: snapshot(),
+        stack: {
+          kind: "native",
+          id: "80",
+          number: 80,
+          url: "https://github.com/pingdotgg/t3code/stacks/80",
+          base: "main",
+          layers: (number < 83
+            ? [79, 37, 38, 39, 76, 18, 20]
+            : [79, 37, 38, 39, 76, 18, 20, 83, 84]
+          ).map((number) => ({ number, headBranch: `pr-${number}`, state: "open" })),
+        },
+      }),
+    );
+    expect
+      .soft(
+        resolveThreadPullRequestChains(links).map((chain) =>
+          chain.layers.map((layer) => layer.number),
+        ),
+      )
+      .toEqual([[18, 20, 83, 84]]);
+    expect(resolveThreadCurrentPullRequest(links)).toMatchObject({
+      kind: "stack",
+      top: { number: 84 },
+      open: [{ number: 84 }, { number: 83 }, { number: 20 }, { number: 18 }],
+    });
+  });
+
+  it("uses the earliest longest partial snapshot and appends missing members in stored order", () => {
+    const links = [
+      [3, 2],
+      [9, 2, 3],
+      [9, 3, 2],
+      [9, 3, 2],
+    ].map((numbers, index) =>
+      link(index + 1, {
+        stack: {
+          kind: "native",
+          id: "s1",
+          number: 1,
+          url: "https://github.com/pingdotgg/t3code/stacks/1",
+          base: "main",
+          layers: numbers.map((number) => ({ number, headBranch: `pr-${number}`, state: "open" })),
+        },
+      }),
+    );
+    expect(
+      resolveThreadPullRequestChains(links).map((chain) =>
+        chain.layers.map((layer) => layer.number),
+      ),
+    ).toEqual([[2, 3, 1, 4]]);
+  });
+
   it("uses the native stack order when the host provides one", () => {
     const stack = {
       kind: "native" as const,

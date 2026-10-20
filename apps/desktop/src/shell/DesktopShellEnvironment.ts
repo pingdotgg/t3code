@@ -1,4 +1,9 @@
-import { listLoginShellCandidates, setWindowsPath } from "@t3tools/shared/shell";
+import {
+  buildEnvironmentCaptureCommand,
+  listLoginShellCandidates,
+  setWindowsPath,
+} from "@t3tools/shared/shell";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -114,6 +119,37 @@ const readEnvPath = (env: NodeJS.ProcessEnv): Option.Option<string> =>
 
 const normalizeRuntimeDir = (value: string): string => value.replace(/\/+$/u, "");
 
+const APPIMAGE_SEARCH_PATH_ENV_NAMES = ["PATH", "LD_LIBRARY_PATH", "XDG_DATA_DIRS"] as const;
+
+// The AppImage runtime mounts each launch at `$TMPDIR/.mount_<id>` and prepends
+// it to the search paths above. A launch started from a shell that inherited an
+// earlier launch's env carries that mount too, and once it is unmounted every
+// spawn that walks PATH (git first of all) fails with ENOTCONN.
+const APPIMAGE_MOUNT_ROOT = /^(.*?\/\.mount_[^/]+)(?:\/|$)/u;
+
+const stripStaleAppImageMounts = (env: NodeJS.ProcessEnv): void => {
+  if (env.APPIMAGE === undefined && env.APPDIR === undefined) return;
+  const appDir = env.APPDIR === undefined ? undefined : normalizeRuntimeDir(env.APPDIR);
+  for (const name of APPIMAGE_SEARCH_PATH_ENV_NAMES) {
+    const value = env[name];
+    if (value === undefined) continue;
+    // glibc's loader also splits LD_LIBRARY_PATH on `;`.
+    const segments = value.split(name === "LD_LIBRARY_PATH" ? /[:;]/u : ":");
+    const kept = segments.filter((segment) => {
+      const mountRoot = APPIMAGE_MOUNT_ROOT.exec(segment)?.[1];
+      return mountRoot === undefined || mountRoot === appDir;
+    });
+    if (kept.length === segments.length) continue;
+    if (kept.length === 0) {
+      delete env[name];
+    } else {
+      // An empty segment is the current dir to the loader and to PATH lookup,
+      // but a lone one joins to "", which reads as unset.
+      env[name] = kept.join(":") || ":";
+    }
+  }
+};
+
 const linuxRuntimeDirCandidates = (
   env: NodeJS.ProcessEnv,
   uid: number | undefined,
@@ -198,17 +234,6 @@ const logShellEnvironmentCommandError = (
       error,
     }),
   );
-
-const capturePosixEnvironmentCommand = (names: ReadonlyArray<string>) =>
-  names
-    .map((name) => {
-      return [
-        `printf '%s\\n' '${startMarker(name)}'`,
-        `printenv ${name} || true`,
-        `printf '%s\\n' '${endMarker(name)}'`,
-      ].join("; ");
-    })
-    .join("; ");
 
 const captureWindowsEnvironmentCommand = (names: ReadonlyArray<string>) =>
   [
@@ -320,7 +345,7 @@ const readLoginShellEnvironment = (
     : runCommandOutput({
         probe: "login-shell",
         command: shell,
-        args: ["-ilc", capturePosixEnvironmentCommand(names)],
+        args: ["-ilc", buildEnvironmentCaptureCommand(shell, names)],
         timeout: LOGIN_SHELL_TIMEOUT,
       }).pipe(Effect.map((output) => extractEnvironment(output, names)));
 
@@ -346,12 +371,16 @@ const readWindowsEnvironment = Effect.fn("desktop.shellEnvironment.readWindowsEn
       captureWindowsEnvironmentCommand(names),
     ];
 
+    const deadline =
+      (yield* Clock.monotonicTimeNanos) + Duration.toNanosUnsafe(LOGIN_SHELL_TIMEOUT);
     for (const command of WINDOWS_SHELL_CANDIDATES) {
+      const remainingNanos = deadline - (yield* Clock.monotonicTimeNanos);
+      if (remainingNanos <= 0n) break;
       const output = yield* runCommandOutput({
         probe: options.loadProfile ? "powershell-profile" : "powershell-no-profile",
         command,
         args,
-        timeout: LOGIN_SHELL_TIMEOUT,
+        timeout: Duration.nanos(remainingNanos),
       });
       const environment = extractEnvironment(output, names);
       if (Object.keys(environment).length > 0) {
@@ -430,6 +459,9 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
     if (Option.isSome(mergedPath)) {
       config.env.PATH = mergedPath.value;
     }
+    // The server, relaunch and updater all inherit process.env, so scrubbing
+    // here keeps earlier AppImage launches' mounts out of every one of them.
+    stripStaleAppImageMounts(config.env);
     if (!config.env.SSH_AUTH_SOCK && shellEnvironment.SSH_AUTH_SOCK) {
       config.env.SSH_AUTH_SOCK = shellEnvironment.SSH_AUTH_SOCK;
     }

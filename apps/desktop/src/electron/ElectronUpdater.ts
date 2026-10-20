@@ -1,10 +1,12 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
 import { autoUpdater } from "electron-updater";
+import type { NsisUpdater, VerifyUpdateCodeSignature } from "electron-updater";
 
 type AutoUpdater = typeof autoUpdater;
 
@@ -67,6 +69,7 @@ export class ElectronUpdater extends Context.Service<
     readonly setAllowDowngrade: (value: boolean) => Effect.Effect<void>;
     readonly setFullChangelog: (value: boolean) => Effect.Effect<void>;
     readonly setDisableDifferentialDownload: (value: boolean) => Effect.Effect<void>;
+    readonly pendingDownloadDirectory: Effect.Effect<Option.Option<string>>;
     readonly checkForUpdates: Effect.Effect<void, ElectronUpdaterCheckForUpdatesError>;
     readonly downloadUpdate: Effect.Effect<void, ElectronUpdaterDownloadUpdateError>;
     readonly quitAndInstall: (options: {
@@ -79,6 +82,45 @@ export class ElectronUpdater extends Context.Service<
     ) => Effect.Effect<void, never, Scope.Scope>;
   }
 >()("@t3tools/desktop/electron/ElectronUpdater") {}
+
+const signatureChecksWithRetry = new WeakSet<VerifyUpdateCodeSignature>();
+
+const retrySignatureCheckAfterTimeout = () => {
+  // Only the Windows NSIS updater exposes this hook; its PowerShell check times out after 20 s.
+  const updater = autoUpdater as AutoUpdater &
+    Partial<Pick<NsisUpdater, "verifyUpdateCodeSignature">>;
+  const verify = updater.verifyUpdateCodeSignature;
+  if (verify === undefined || signatureChecksWithRetry.has(verify)) return;
+
+  const verifyWithRetry: VerifyUpdateCodeSignature = async (publisherNames, path) => {
+    try {
+      return await verify(publisherNames, path);
+    } catch (error) {
+      if (!(error instanceof Error && "killed" in error && error.killed === true)) throw error;
+    }
+
+    const logger = updater.logger;
+    let skipped = false;
+    updater.logger = {
+      info: (message) => logger?.info(message),
+      warn: (message) => {
+        // A failed capability probe makes electron-updater warn and return null without checking.
+        skipped ||= String(message).includes("Ignoring signature validation");
+        logger?.warn(message);
+      },
+      error: (message) => logger?.error(message),
+      debug: (message) => logger?.debug?.(message),
+    };
+    try {
+      const result = await verify(publisherNames, path);
+      return skipped ? "Signature validation was skipped after a timed-out check." : result;
+    } finally {
+      updater.logger = logger;
+    }
+  };
+  signatureChecksWithRetry.add(verifyWithRetry);
+  updater.verifyUpdateCodeSignature = verifyWithRetry;
+};
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = ElectronUpdater.of({
@@ -123,6 +165,17 @@ export const make = ElectronUpdater.of({
       autoUpdater.disableDifferentialDownload = value;
       return Effect.void;
     }),
+  // Use the updater's helper so cache lookup follows the same configuration as downloads.
+  pendingDownloadDirectory: Effect.tryPromise(() =>
+    (
+      autoUpdater as unknown as {
+        getOrCreateDownloadHelper: () => Promise<{ readonly cacheDirForPendingUpdate: string }>;
+      }
+    ).getOrCreateDownloadHelper(),
+  ).pipe(
+    Effect.map((helper) => helper.cacheDirForPendingUpdate),
+    Effect.option,
+  ),
   checkForUpdates: Effect.suspend(() => {
     const channel = autoUpdater.channel;
     return Effect.tryPromise({
@@ -131,6 +184,7 @@ export const make = ElectronUpdater.of({
     }).pipe(Effect.asVoid);
   }),
   downloadUpdate: Effect.suspend(() => {
+    retrySignatureCheckAfterTimeout();
     const channel = autoUpdater.channel;
     return Effect.tryPromise({
       try: () => autoUpdater.downloadUpdate(),

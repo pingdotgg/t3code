@@ -42,9 +42,11 @@ describe("diff tree file activation", () => {
   function Panel({
     files = entries,
     selectedPath = null,
+    revealRequestId = 0,
   }: {
     files?: DiffFileTreeEntry[];
     selectedPath?: string | null;
+    revealRequestId?: number;
   }) {
     const reveal = useCodeViewFileReveal(viewer, "working-tree");
     return (
@@ -52,6 +54,7 @@ describe("diff tree file activation", () => {
         entries={files}
         ariaLabel="Working tree files"
         selectedPath={selectedPath}
+        revealRequestId={revealRequestId}
         onSelectFile={(path) => reveal(`${path}\0${path}`)}
       />
     );
@@ -73,9 +76,18 @@ describe("diff tree file activation", () => {
     return element!;
   }
 
-  async function activate(path: string, modifiers: MouseEventInit = {}) {
+  function fileRows(): HTMLElement[] {
+    const host = container.querySelector("file-tree-container");
+    return [
+      ...(host?.shadowRoot ?? container).querySelectorAll<HTMLElement>(
+        '[role="treeitem"][data-item-type="file"]',
+      ),
+    ];
+  }
+
+  async function activate(target: string | HTMLElement, modifiers: MouseEventInit = {}) {
     await act(async () => {
-      row(path).dispatchEvent(
+      (typeof target === "string" ? row(target) : target).dispatchEvent(
         new MouseEvent("click", {
           bubbles: true,
           composed: true,
@@ -99,6 +111,7 @@ describe("diff tree file activation", () => {
     await act(async () => root?.unmount());
     root = undefined;
     container.remove();
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
@@ -200,16 +213,131 @@ describe("diff tree file activation", () => {
     expect(folder.isExpanded()).toBe(false);
   });
 
-  it("does not echo controlled selection, but lets the reader activate it", async () => {
-    await mount({ selectedPath: "02-short.ts" });
-    expect(model().getSelectedPaths()).toEqual(["02-short.ts"]);
+  it("reveals real diff paths and statuses when a directory is replaced by a file", async () => {
+    const files: DiffFileTreeEntry[] = [
+      { path: "office/config.ts", status: "deleted" },
+      { path: "office", status: "added" },
+    ];
+    await mount({ files, selectedPath: "office" });
+    expect(fileRows().map((row) => row.getAttribute("data-item-git-status"))).toEqual([
+      "deleted",
+      "added",
+    ]);
+    expect(fileRows()[1]!.getAttribute("aria-selected")).toBe("true");
     expect(targets).toEqual([]);
-    await activate("02-short.ts");
-    expect(targets).toHaveLength(1);
-    await act(async () => {
-      root!.render(<Panel selectedPath="03-medium.ts" />);
+    await activate(fileRows()[1]!);
+    await activate(fileRows()[0]!);
+    await activate("office/");
+    expect(targets).toEqual([
+      { type: "item", id: "office\0office", align: "start" },
+      { type: "item", id: "office/config.ts\0office/config.ts", align: "start" },
+    ]);
+    expect(row("office/").getAttribute("aria-expanded")).toBe("false");
+    await mount({ files, selectedPath: "office/config.ts" });
+    expect(row("office/").getAttribute("aria-expanded")).toBe("true");
+    expect(fileRows()[0]!.getAttribute("aria-selected")).toBe("true");
+    expect(targets).toHaveLength(2);
+  });
+
+  it("keeps selection, focus, and collapsed folders through a colliding slice and refresh", async () => {
+    const files: DiffFileTreeEntry[] = [
+      { path: "office", status: "deleted" },
+      { path: "src/route.ts", status: "modified" },
+    ];
+    await mount({ files });
+    await activate("src/");
+    await activate("office");
+    await act(async () => model().focusPath("office"));
+    expect(model().getFocusedPath()).toBe("office");
+    expect(row("office").getAttribute("aria-selected")).toBe("true");
+    const appended: DiffFileTreeEntry[] = [...files, { path: "office/config.ts", status: "added" }];
+    await mount({ files: appended });
+    expect(row("src/").getAttribute("aria-expanded")).toBe("false");
+    expect(fileRows()[0]!.getAttribute("aria-selected")).toBe("true");
+    expect(row("office/").getAttribute("aria-selected")).toBe("false");
+    expect.soft(model().getFocusedPath()).toBe("office\u200b");
+    expect(targets).toEqual([{ type: "item", id: "office\0office", align: "start" }]);
+    await activate(fileRows()[0]!);
+    await activate(fileRows()[1]!);
+    expect(targets).toEqual([
+      { type: "item", id: "office\0office", align: "start" },
+      { type: "item", id: "office\0office", align: "start" },
+      { type: "item", id: "office/config.ts\0office/config.ts", align: "start" },
+    ]);
+    await activate("office/");
+    await mount({ files: appended.map((file) => ({ ...file })) });
+    expect(row("src/").getAttribute("aria-expanded")).toBe("false");
+    expect(row("office/").getAttribute("aria-expanded")).toBe("false");
+    await activate(fileRows()[0]!);
+    expect(targets.at(-1)).toEqual({ type: "item", id: "office\0office", align: "start" });
+    expect(targets).toHaveLength(4);
+  });
+
+  it("preserves filename and extension icons when files become directory prefixes", async () => {
+    const files: DiffFileTreeEntry[] = [
+      { path: "AGENTS.md", status: "deleted" },
+      { path: "config.ts", status: "deleted" },
+    ];
+    const rootFileIcons = () =>
+      fileRows()
+        .filter((row) => row.getAttribute("aria-level") === "1")
+        .map((row) => row.querySelector('[data-item-section="icon"] use')?.getAttribute("href"));
+    await mount({ files });
+    const icons = rootFileIcons();
+    expect(icons).toEqual(["#t3-file-icon-agents", "#file-tree-builtin-typescript"]);
+    await mount({
+      files: [
+        ...files,
+        { path: "AGENTS.md/note.txt", status: "added" },
+        { path: "config.ts/note.txt", status: "added" },
+      ],
     });
-    expect(model().getSelectedPaths()).toEqual(["03-medium.ts"]);
+    expect(rootFileIcons()).toEqual(icons);
+  });
+
+  it("preserves a collapsed controlled selection through paging until explicitly revealed", async () => {
+    const files: DiffFileTreeEntry[] = [
+      { path: "src/office", status: "deleted" },
+      { path: "src/route.ts", status: "modified" },
+    ];
+    await mount({ files, selectedPath: "src/office" });
+    expect(model().getSelectedPaths()).toEqual(["src/office"]);
+    expect(targets).toEqual([]);
+    await activate("src/office");
+    expect(targets).toEqual([{ type: "item", id: "src/office\0src/office", align: "start" }]);
+
+    const folder = model().getItem("src/")!;
+    if (!("collapse" in folder)) throw new Error("Expected the directory handle");
+    await act(async () => folder.collapse());
+    expect(row("src/").getAttribute("aria-expanded")).toBe("false");
+    const scroll = vi.spyOn(model(), "scrollToPath");
+    const appended: DiffFileTreeEntry[] = [...files, { path: "src/office/x.ts", status: "added" }];
+    await mount({ files: appended, selectedPath: "src/office" });
+    expect.soft(row("src/").getAttribute("aria-expanded")).toBe("false");
+    expect.soft(scroll).not.toHaveBeenCalled();
+    const selected = model().getSelectedPaths();
+    expect(selected).toHaveLength(1);
+    expect(model().getItem(selected[0]!)?.isDirectory()).toBe(false);
     expect(targets).toHaveLength(1);
+
+    await act(async () => folder.collapse());
+    scroll.mockClear();
+    await mount({ files: appended, selectedPath: "src/office", revealRequestId: 1 });
+    expect(row("src/").getAttribute("aria-expanded")).toBe("true");
+    expect(model().getSelectedPaths()).toEqual(selected);
+    expect(row(selected[0]!).getAttribute("aria-selected")).toBe("true");
+    expect(scroll).toHaveBeenCalledOnce();
+    expect(targets).toHaveLength(1);
+    await activate(selected[0]!);
+    expect(targets).toEqual([
+      { type: "item", id: "src/office\0src/office", align: "start" },
+      { type: "item", id: "src/office\0src/office", align: "start" },
+    ]);
+
+    await act(async () => folder.collapse());
+    await mount({ files: appended, selectedPath: "src/route.ts", revealRequestId: 1 });
+    expect(row("src/").getAttribute("aria-expanded")).toBe("true");
+    expect(model().getSelectedPaths()).toEqual(["src/route.ts"]);
+    expect(targets).toHaveLength(2);
   });
 });

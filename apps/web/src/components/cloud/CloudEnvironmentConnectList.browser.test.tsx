@@ -254,6 +254,7 @@ describe("cloud onboarding discovery", () => {
     expect(checked()).toBe(false);
     expect(checkbox().hasAttribute("data-disabled")).toBe(true);
     expect(text()).toContain("Client not supported");
+    expect(text()).toContain("Update your app");
     await toggle();
     expect(discovery.register).not.toHaveBeenCalled();
     await act(async () =>

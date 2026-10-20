@@ -2,6 +2,7 @@ import {
   EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
+  UsageLimitSourceId,
   type ServerProvider,
 } from "@t3tools/contracts";
 import type { LimitPresentations } from "@t3tools/shared/usageLimits";
@@ -99,6 +100,28 @@ async function click(label: string) {
   await act(() => userEvent.click(button!));
 }
 
+/**
+ * Runs `change`, which takes the open popup's trigger out of the page, then watches the popup
+ * leave. A detached trigger has no rect, so a popup that keeps positioning against it slides
+ * to the viewport origin on its way out.
+ */
+async function expectDismissedInPlace(change: () => Promise<void> | void) {
+  const positioner = () => document.querySelector('[data-slot="popover-positioner"]');
+  const place = (node: Element) => {
+    const rect = node.getBoundingClientRect();
+    return [rect.left, rect.top];
+  };
+  const before = place(positioner()!);
+  await change();
+  const seen: number[][] = [];
+  for (let frame = 0; frame < 60 && positioner(); frame += 1) {
+    seen.push(place(positioner()!));
+    await new Promise(requestAnimationFrame);
+  }
+  expect(positioner()).toBeNull();
+  expect(seen).toEqual(seen.map(() => before));
+}
+
 it.each([
   {
     label: "success",
@@ -163,4 +186,126 @@ it("omits an empty reset plate but keeps countdowns and banked credits visible",
   );
   await expect.element(plate()).toBeVisible();
   expect(plate()?.textContent).toBe("1");
+});
+
+it("moves the one limit popover between windows on hover", async () => {
+  const [environmentId, presentation] = [...presentations("2026-09-03T14:00:00Z", 1)][0]!;
+  const serverConfig = presentation.serverConfig!;
+  const provider = serverConfig.providers[0]!;
+  const twoWindows: LimitPresentations = new Map([
+    [
+      environmentId,
+      {
+        ...presentation,
+        serverConfig: {
+          ...serverConfig,
+          providers: [
+            {
+              ...provider,
+              usageLimits: {
+                ...provider.usageLimits!,
+                windows: [
+                  ...provider.usageLimits!.windows,
+                  { id: "weekly", kind: "weekly", label: "Weekly", usedPercent: 32 },
+                ],
+              },
+            },
+          ],
+        },
+      },
+    ],
+  ]);
+  // Room above the bars so the popover opens there instead of flipping over the next card.
+  container.style.paddingTop = "20rem";
+  await act(() => root.render(<UsageLimitsPooled presentations={twoWindows} now={0} />));
+  const segment = (label: string) =>
+    Array.from(document.querySelectorAll("button")).find((node) =>
+      node.getAttribute("aria-label")?.startsWith(label),
+    )!;
+  // Popup contents, once the previous segment's details have animated away.
+  const popups = () =>
+    document.querySelector("[data-previous]")
+      ? null
+      : Array.from(
+          document.querySelectorAll('[data-slot="popover-popup"]'),
+          (node) => node.textContent,
+        );
+  const session = segment("Alpha: 60%");
+  const weekly = segment("Alpha: 68%");
+
+  await act(() => userEvent.click(session));
+  await expect.poll(popups).toEqual([expect.stringContaining("Left60%")]);
+
+  await act(() => userEvent.hover(weekly));
+  await expect.poll(popups).toEqual([expect.stringContaining("Left68%")]);
+
+  // Weekly's popover now sits over the middle of the Session bar; come back in at its edge.
+  await act(() => userEvent.hover(session, { position: { x: 4, y: 4 } }));
+  await expect.poll(popups).toEqual([expect.stringContaining("Left60%")]);
+
+  await expectDismissedInPlace(() =>
+    act(() => root.render(<UsageLimitsPooled presentations={new Map()} now={0} />)),
+  );
+  await act(() => userEvent.hover(container, { position: { x: 4, y: 4 } }));
+
+  await act(() => root.render(<UsageLimitsPooled presentations={twoWindows} now={0} />));
+  await expect.poll(popups).toEqual([]);
+  await act(() => userEvent.click(segment("Alpha: 60%")));
+  await expect.poll(popups).toEqual([expect.stringContaining("Left60%")]);
+});
+
+it("closes an open source-account popover when reset availability replaces its trigger", async () => {
+  const [environmentId, presentation] = [...presentations("2026-09-03T14:00:00Z", 1)][0]!;
+  const provider = presentation.serverConfig!.providers[0]!;
+  const source = (nextCreditId?: string): LimitPresentations =>
+    new Map([
+      [
+        environmentId,
+        {
+          ...presentation,
+          serverConfig: {
+            providers: [],
+            usageLimitSources: [
+              {
+                id: UsageLimitSourceId.make("hub"),
+                kind: "cliproxy",
+                label: "Hub",
+                checkedAt: "2026-09-03T11:00:00Z",
+                accounts: [
+                  {
+                    id: "Alpha",
+                    driver: provider.driver,
+                    usageLimits: {
+                      ...provider.usageLimits!,
+                      resetCredits: {
+                        availableCount: 1,
+                        ...(nextCreditId ? { nextCreditId } : {}),
+                      },
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    ]);
+  const popup = () => document.querySelector('[data-slot="popover-popup"]');
+  await act(() => root.render(<UsageLimitsPooled presentations={source("credit-1")} now={0} />));
+  await click("Alpha: 60%");
+  await expect.poll(() => popup()?.textContent).toContain("Use reset");
+
+  await expectDismissedInPlace(() =>
+    act(() => root.render(<UsageLimitsPooled presentations={source()} now={0} />)),
+  );
+  await click("Alpha: 60%");
+  await expect.poll(() => popup()?.textContent).toContain("Left60%");
+
+  await expectDismissedInPlace(() =>
+    act(() => root.render(<UsageLimitsPooled presentations={source("credit-2")} now={0} />)),
+  );
+  await click("Alpha: 60%");
+  await expect.poll(() => popup()?.textContent).toContain("Use reset");
+  await click("Use reset");
+  await expect.poll(() => document.querySelector('[role="alertdialog"]')).not.toBeNull();
 });

@@ -91,7 +91,10 @@ export function resolveLinkPullRequestInput(input: {
   const number = Number(parsed);
   if (!Number.isSafeInteger(number) || number < 1) return null;
   if (input.project === null) {
-    return { error: "Paste a full URL to link a pull request from another repository." };
+    return {
+      error:
+        "Paste the full pull request URL; this thread has no repository to resolve the number against.",
+    };
   }
   const webUrl = input.project.webUrl(number);
   const webReference = webUrl === null ? null : parseChangeRequestUrl(webUrl);

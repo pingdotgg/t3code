@@ -281,6 +281,22 @@ export function resolveAppModelSelectionForInstance(
   return options.find((option) => option.isDefault)?.slug ?? options[0]?.slug ?? null;
 }
 
+// New drafts carry the stored selection; capabilities resolve its raw options later.
+export function resolveEffectiveDefaultModelSelection(
+  settings: UnifiedSettings,
+  providers: ReadonlyArray<ServerProvider>,
+  selection: ModelSelection,
+): ModelSelection {
+  const model = resolveAppModelSelectionForInstance(
+    selection.instanceId,
+    settings,
+    providers,
+    selection.model,
+    { preserveUnavailableSelection: true },
+  );
+  return model === null || model === selection.model ? selection : { ...selection, model };
+}
+
 export function getCustomModelOptionsByInstance(
   settings: UnifiedSettings,
   providers: ReadonlyArray<ServerProvider>,

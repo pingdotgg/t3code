@@ -66,6 +66,7 @@ function harness(input?: {
   readonly namespace?: string;
   readonly failTunnelId?: string;
   readonly rateLimitedTunnelId?: string;
+  readonly rateLimitCause?: unknown;
   readonly failAllDeletes?: boolean;
   readonly failDeleteWhen?: (tunnelId: string) => boolean;
   readonly missingOnDeleteTunnelId?: string;
@@ -155,13 +156,13 @@ function harness(input?: {
                 tunnelId === input?.missingOnDeleteTunnelId
                   ? { _tag: "NotFound" }
                   : tunnelId === input?.rateLimitedTunnelId
-                    ? {
+                    ? (input.rateLimitCause ?? {
                         cause: {
                           _tag: "TooManyRequests",
                           message: "Cloudflare rate limit exceeded",
                           retryAfter: 60,
                         },
-                      }
+                      })
                     : "Cloudflare refused the deletion",
             }),
           )
@@ -653,7 +654,13 @@ describe("ManagedEndpointReaper", () => {
     }).pipe(Effect.provide(state.layer));
   });
 
-  it.effect("stops the sweep after a structured Cloudflare rate limit error", () => {
+  it.effect.each([
+    ["a structured Cloudflare rate limit error", undefined],
+    [
+      "a Cloudflare API pause recorded by another isolate",
+      new ManagedEndpointProvider.CloudflareApiPaused({ retryAfterMillis: 30_000 }),
+    ],
+  ] as const)("stops the sweep after %s", ([, rateLimitCause]) => {
     const state = harness({
       tunnels: [
         tunnel({
@@ -674,6 +681,7 @@ describe("ManagedEndpointReaper", () => {
         allocation({ tunnelId: "next", recoveryEnabled: true }),
       ],
       rateLimitedTunnelId: "limited",
+      rateLimitCause,
     });
 
     return Effect.gen(function* () {

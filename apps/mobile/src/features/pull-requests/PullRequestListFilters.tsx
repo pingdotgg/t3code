@@ -3,6 +3,7 @@ import { useMemo } from "react";
 import { Platform, ScrollView } from "react-native";
 import type { MenuProps } from "../../components/ui/Menu.types";
 import { ListFilterMenu } from "../workspace/ListFilterMenu";
+import { usePublishPullRequestFilterMenu } from "./PullRequestFilterMenuContext";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
 import { buildHomeProjectScopes, sortHomeProjectScopes } from "../home/homeThreadList";
@@ -63,6 +64,8 @@ function useProjectsInSidebarOrder<Project extends { id: string; environmentId: 
 }
 
 export function PullRequestListFilters(props: {
+  /** Android sidebar rows sit further in than full-width rows; the pills follow them. */
+  readonly sidebar?: boolean;
   readonly environments: readonly { id: string; label: string }[];
   readonly environmentId: string | null;
   readonly onEnvironmentChange: (id: string | null) => void;
@@ -100,6 +103,8 @@ export function PullRequestListFilters(props: {
         break;
       case "reset":
         props.onChange(DEFAULT_PR_LIST_CONTROLS);
+        // The Android header menu also holds the environment, so its reset clears that too.
+        if (next === "environment") props.onEnvironmentChange(null);
         break;
       case "state":
         props.onChange({ ...value, state: next as PullRequestListControls["state"] });
@@ -217,26 +222,89 @@ export function PullRequestListFilters(props: {
       ),
     },
     { id: "sort", title: SORTS[value.sort], subactions: choices("sort", SORTS, value.sort) },
-    {
-      id: id("reset", ""),
-      title: "Reset filters",
-      attributes: { disabled: count === 0 && value.sort === "updated" },
-    },
   ];
+  const reset = (withEnvironment: boolean): MenuProps["actions"][number] => ({
+    id: id("reset", withEnvironment ? "environment" : ""),
+    title: "Reset filters",
+    attributes: {
+      disabled:
+        count === 0 &&
+        value.sort === "updated" &&
+        (!withEnvironment || props.environmentId === null),
+    },
+  });
   const labels = [...new Set([...selectedLabels, ...props.labels])].slice(0, 60);
   const authors = [
     ...new Set([...(author && author !== "me" ? [author] : []), ...props.authors]),
   ].slice(0, 60);
+  const environmentActions = choices(
+    "environment",
+    Object.fromEntries([
+      ["", "All environments"],
+      ...props.environments.map((environment) => [environment.id, environment.label]),
+    ]),
+    props.environmentId ?? "",
+  );
+  const stateActions = choices("state", STATES, value.state);
+  const involvementActions = choices("involvement", INVOLVEMENT, value.involvement);
+  const labelActions: MenuProps["actions"] = [
+    { id: id("labels", ""), title: "All labels", state: selectedLabels.length ? "off" : "on" },
+    ...labels.map((label) => ({
+      id: id("label", label),
+      title: label,
+      state: selectedLabelSet.has(label) ? ("on" as const) : ("off" as const),
+    })),
+  ];
+  const authorActions = choices(
+    "author",
+    Object.fromEntries([
+      ["", "All authors"],
+      ["me", "Me"],
+      ...authors.map((login) => [login, login]),
+    ]),
+    author ?? "",
+  );
+  const customized = count > 0 || value.sort !== "updated" || props.environmentId !== null;
+  // The Android header's filter button opens every filter.
+  const headerMenu =
+    Platform.OS === "android"
+      ? {
+          actions: [
+            { id: "environment", title: "Environment", subactions: environmentActions },
+            { id: "state", title: "State", subactions: stateActions },
+            { id: "involvement", title: "Involvement", subactions: involvementActions },
+            { id: "labels", title: "Labels", subactions: labelActions },
+            { id: "author", title: "Author", subactions: authorActions },
+            ...more,
+            reset(true),
+          ],
+          onSelect: select,
+          customized,
+        }
+      : null;
+  usePublishPullRequestFilterMenu(headerMenu);
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={ROW_STYLE}>
-      <ListFilterMenu
-        label={count ? String(count) : "Filters"}
-        icon
-        active={count > 0}
-        accessibilityLabel={count ? `Filters, ${count} active` : "More filters"}
-        actions={more}
-        onSelect={select}
-      />
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      // In the Android sidebar the first pill lines up with the rows' content instead
+      // (8dp row margin + 12dp padding).
+      contentContainerStyle={
+        props.sidebar && Platform.OS === "android"
+          ? { ...ROW_STYLE, paddingHorizontal: 20 }
+          : ROW_STYLE
+      }
+    >
+      {Platform.OS === "android" ? null : (
+        <ListFilterMenu
+          label={count ? String(count) : "Filters"}
+          icon
+          active={count > 0}
+          accessibilityLabel={count ? `Filters, ${count} active` : "More filters"}
+          actions={[...more, reset(false)]}
+          onSelect={select}
+        />
+      )}
       {props.environments.length > 1 ? (
         <ListFilterMenu
           label={
@@ -244,14 +312,7 @@ export function PullRequestListFilters(props: {
               ?.label ?? "All environments"
           }
           accessibilityLabel="Choose pull request environment"
-          actions={choices(
-            "environment",
-            Object.fromEntries([
-              ["", "All environments"],
-              ...props.environments.map((environment) => [environment.id, environment.label]),
-            ]),
-            props.environmentId ?? "",
-          )}
+          actions={environmentActions}
           onSelect={select}
         />
       ) : null}
@@ -259,47 +320,28 @@ export function PullRequestListFilters(props: {
         label={STATES[value.state]}
         active={value.state !== "open"}
         accessibilityLabel="Filter by state"
-        actions={choices("state", STATES, value.state)}
+        actions={stateActions}
         onSelect={select}
       />
       <ListFilterMenu
         label={INVOLVEMENT[value.involvement]}
         active={value.involvement !== "all"}
         accessibilityLabel="Filter by involvement"
-        actions={choices("involvement", INVOLVEMENT, value.involvement)}
+        actions={involvementActions}
         onSelect={select}
       />
       <ListFilterMenu
         label={selectedLabels.length ? `Labels ${selectedLabels.length}` : "Labels"}
         active={selectedLabels.length > 0}
         accessibilityLabel="Filter by label"
-        actions={[
-          {
-            id: id("labels", ""),
-            title: "All labels",
-            state: selectedLabels.length ? "off" : "on",
-          },
-          ...labels.map((label) => ({
-            id: id("label", label),
-            title: label,
-            state: selectedLabelSet.has(label) ? ("on" as const) : ("off" as const),
-          })),
-        ]}
+        actions={labelActions}
         onSelect={select}
       />
       <ListFilterMenu
         label={author === "me" ? "By you" : (author ?? "Author")}
         active={Boolean(author)}
         accessibilityLabel="Filter by author"
-        actions={choices(
-          "author",
-          Object.fromEntries([
-            ["", "All authors"],
-            ["me", "Me"],
-            ...authors.map((login) => [login, login]),
-          ]),
-          author ?? "",
-        )}
+        actions={authorActions}
         onSelect={select}
       />
     </ScrollView>

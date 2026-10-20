@@ -1,3 +1,4 @@
+import { SheetHeader } from "../../components/ui/SheetHeader";
 import { Toolbar } from "../../components/ui/Toolbar";
 import * as Dialog from "../../components/ui/Dialog";
 import { createV5StackNavigator as createNativeStackNavigator } from "../../native/createV5StackNavigator";
@@ -28,7 +29,15 @@ import { useNavigation, useRoute, type RouteProp } from "@react-navigation/nativ
 import { type NativeStackNavigationProp } from "@react-navigation/native-stack";
 import * as Haptics from "expo-haptics";
 import { AsyncResult } from "effect/reactivity";
-import { createContext, use, useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  createContext,
+  use,
+  useEffect,
+  useEffectEvent,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { Platform, Pressable, RefreshControl, ScrollView, TextInput, View } from "react-native";
 import Animated, { FadeIn, FadeOut, LinearTransition } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -37,7 +46,6 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
 import { AndroidAnchoredMenu } from "../../components/ui/AndroidAnchoredMenu";
-import { Button } from "../../components/ui/Button";
 import { IconButton } from "../../components/ui/IconButton";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
@@ -51,10 +59,15 @@ import {
 import { applyProviderOptionSelection } from "../../lib/providerOptions";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
-import { rememberModelOptions } from "../../state/use-model-option-memory";
+import {
+  rememberModelOptions,
+  withRememberedModelOptions,
+} from "../../state/use-model-option-memory";
 import { NativeStackScreenOptions, nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { ChatGptSharingStatus } from "./ChatGptSharingStatus";
+import { environmentCatalog } from "../../connection/catalog";
+import { useEnvironmentQuery } from "../../state/query";
 import { environmentServerConfigsAtom, serverEnvironment } from "../../state/server";
 import { mobilePreferencesAtom } from "../../state/preferences";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -113,6 +126,8 @@ const EMPTY_MODEL_FAVORITES: ReadonlyArray<{
   readonly model: string;
 }> = [];
 const FAVORITES_PROVIDER_FILTER = "@favorites";
+// Servers that predate `migrateModelPreferences` drop it and keep reporting null favorites.
+const attemptedMigrationGenerations = new Map<EnvironmentId, number>();
 function ProviderHeader(props: {
   readonly driver: string | undefined;
   readonly iconUrl: string | undefined;
@@ -234,6 +249,7 @@ type ThreadSettingsSessionProps = {
   readonly selectedModel: ModelSelection | null;
   readonly reportedModelSelection?: ModelSelection | null;
   readonly onSelectModel: (option: ModelOption) => void;
+  readonly restoreSelection?: (selection: ModelSelection) => ModelSelection;
   readonly optionDescriptors: ReadonlyArray<ProviderOptionDescriptor>;
   readonly onUpdateOptionSelections: (selections: ReadonlyArray<ProviderOptionSelection>) => void;
   readonly runtimeMode: RuntimeMode;
@@ -324,6 +340,10 @@ function ThreadSettingsSessionProvider(
   const configs = useAtomValue(environmentServerConfigsAtom);
   const config = props.environmentId ? configs.get(props.environmentId) : undefined;
   const settings = config?.settings;
+  const connection = useEnvironmentQuery(
+    props.environmentId ? environmentCatalog.stateAtom(props.environmentId) : null,
+  ).data;
+  const connectionGeneration = connection?.phase === "connected" ? connection.generation : null;
   const [manageHidden, setManageHidden] = useState(false);
   const pendingHidden = useRef(new Set<string>());
   const pendingFavorites = useRef(
@@ -352,10 +372,26 @@ function ThreadSettingsSessionProvider(
   }).favorites;
   const saveSettings = useAtomCommand(serverEnvironment.updateSettings, "model favorites update");
   useEffect(() => {
-    if (!props.environmentId || !settings || !AsyncResult.isSuccess(preferences)) return;
+    if (
+      !props.environmentId ||
+      !settings ||
+      !AsyncResult.isSuccess(preferences) ||
+      connectionGeneration === null ||
+      attemptedMigrationGenerations.get(props.environmentId) === connectionGeneration
+    )
+      return;
     const patch = modelPreferencesMigrationPatch(settings, { favorites: legacyFavorites });
-    if (patch) void saveSettings({ environmentId: props.environmentId, input: { patch } });
-  }, [legacyFavorites, preferences, props.environmentId, saveSettings, settings]);
+    if (!patch) return;
+    attemptedMigrationGenerations.set(props.environmentId, connectionGeneration);
+    void saveSettings({ environmentId: props.environmentId, input: { patch } });
+  }, [
+    connectionGeneration,
+    legacyFavorites,
+    preferences,
+    props.environmentId,
+    saveSettings,
+    settings,
+  ]);
   const favoriteKeys = new Set(
     modelFavorites.map((favorite) => modelFavoriteKey(favorite.provider, favorite.model)),
   );
@@ -533,6 +569,7 @@ function ThreadSettingsSessionProvider(
         current,
         pressed: option,
         pressedIsApplied: isApplied(option),
+        restoreSelection: props.restoreSelection,
       }),
     );
   };
@@ -1120,12 +1157,11 @@ function ThreadSettingsModelsScreen() {
   const presentation = useThreadSettingsPickerPresentation();
   const navigation = useNavigation<NativeStackNavigationProp<ThreadSettingsPickerStackParams>>();
   const usesNativeMailSearchToolbar = useNativeMailSearchToolbar();
-  const theme = useUniwindTheme();
   const hasCustomCatalogFilter = session.providerFilter !== null || session.showLegacy;
-  const commitAndClose = () => {
+  const commitAndClose = useEffectEvent(() => {
     if (!session.commitPendingModel()) return;
     presentation.onClose();
-  };
+  });
   const providerFilters = [
     { id: "all-providers", title: "All providers", value: null },
     { id: "favorites", title: "Favorites", value: FAVORITES_PROVIDER_FILTER },
@@ -1164,7 +1200,7 @@ function ThreadSettingsModelsScreen() {
   return (
     <>
       {Platform.OS === "android" ? (
-        <AndroidScreenHeader
+        <SheetHeader
           trailing={
             <View className="flex-row items-center">
               <AndroidAnchoredMenu
@@ -1207,14 +1243,11 @@ function ThreadSettingsModelsScreen() {
                   />
                 )}
               </AndroidAnchoredMenu>
-              {session.pendingModel ? (
-                <Button label="Save" tone="text" onPress={commitAndClose} />
-              ) : null}
             </View>
           }
-          onBack={presentation.onClose}
+          onCancel={presentation.onClose}
           title="Thread settings"
-          hideBottomBorder
+          confirm={session.pendingModel ? { label: "Save", onPress: commitAndClose } : undefined}
         />
       ) : null}
       <NativeStackScreenOptions
@@ -1266,22 +1299,17 @@ function ThreadSettingsModelsScreen() {
           }}
         />
       </ScreenContent>
-      <Toolbar placement="left">
-        <Toolbar.Button
+      {Platform.OS === "ios" ? (
+        <SheetHeader
+          title="Thread settings"
+          onCancel={presentation.onClose}
           accessibilityLabel="Cancel thread settings"
-          icon="xmark"
-          onPress={presentation.onClose}
+          confirm={{
+            label: session.pendingModel ? "Save thread settings" : "Done",
+            onPress: commitAndClose,
+          }}
         />
-      </Toolbar>
-      <Toolbar placement="right">
-        <Toolbar.Button
-          accessibilityLabel={session.pendingModel ? "Save thread settings" : "Done"}
-          icon="checkmark"
-          variant="prominent"
-          tintColor={theme["--color-prominent-action"]}
-          onPress={commitAndClose}
-        />
-      </Toolbar>
+      ) : null}
       {Platform.OS === "ios" && !usesNativeMailSearchToolbar ? (
         <Toolbar placement="bottom">
           <Toolbar.Menu
@@ -1455,6 +1483,7 @@ export function NewTaskThreadSettingsRouteScreen() {
       providerGroups={flow.providerGroups}
       selectedModel={flow.selectedModel}
       onSelectModel={(option) => flow.setSelectedModelKey(option.key, option.selection.options)}
+      restoreSelection={withRememberedModelOptions}
       optionDescriptors={optionDescriptors}
       onUpdateOptionSelections={flow.setSelectedModelOptions}
       runtimeMode={flow.runtimeMode}

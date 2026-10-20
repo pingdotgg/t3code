@@ -68,6 +68,9 @@ list by environment or project. Each task runs on the environment you choose,
 using its project, model, and workspace settings. Fixed-time schedules use that
 environment's time zone, which may differ from your phone's.
 
+Deleting a thread also deletes tasks that post into that thread. Tasks that start
+a new thread on each run survive deletion of their previous threads.
+
 You can edit, pause, resume, run immediately, or delete a task from the list.
 Webhook tasks only run when their URL is called, so they can't be run
 immediately.

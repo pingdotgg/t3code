@@ -494,8 +494,12 @@ describe("toDiff", () => {
 
 describe("toChecks", () => {
   it("maps GitCafe's status and conclusion onto the shared check states", () => {
-    const check = (status: string, conclusion: string | null) => ({
-      name: `${status}-${conclusion}`,
+    const check = (
+      status: string,
+      conclusion: string | null,
+      name = `${status}-${conclusion}`,
+    ) => ({
+      name,
       status,
       conclusion,
       summary: null,
@@ -506,16 +510,24 @@ describe("toChecks", () => {
         items: [
           check("queued", null),
           check("in_progress", null),
-          check("completed", "success"),
+          check("completed", "success", "Build"),
+          check("completed", "cancelled"),
           check("completed", "action_required"),
-          check("completed", "timed_out"),
+          check("completed", "timed_out", "Build"),
         ],
         next: null,
       }),
     );
     assert.deepStrictEqual(
-      checks.map((item) => item.status),
-      ["pending", "pending", "success", "action-required", "failure"],
+      checks.map((item) => [item.name, item.status]),
+      [
+        ["completed-cancelled", "cancelled"],
+        ["Build", "failure"],
+        ["queued-null", "pending"],
+        ["in_progress-null", "pending"],
+        ["Build", "success"],
+        ["completed-action_required", "action-required"],
+      ],
     );
   });
 });

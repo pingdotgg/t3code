@@ -1,10 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
+  DeviceBootError,
   DeviceId,
   DeviceOperationError,
   LOCAL_DEVICE_HOST_ID,
   ThreadId,
+  type DeviceSummary,
   type DeviceServiceState,
   type ServerSettings as Settings,
   type SshDeviceHostConfig,
@@ -36,6 +38,8 @@ import { NodeRuntimeUnavailableError } from "@t3tools/shared/nodeRuntime";
 import * as DeviceService from "./DeviceService.ts";
 
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+const decodeBootError = Schema.decodeUnknownSync(Schema.fromJsonString(DeviceBootError));
+const encodeBootError = Schema.encodeSync(Schema.fromJsonString(DeviceBootError));
 
 const baseState: DeviceServiceState = {
   hosts: [],
@@ -76,7 +80,7 @@ describe("DeviceService.stateStream", () => {
 
 const fixture = Effect.fn("fixture")(function* (
   onBoot: Effect.Effect<void> = Effect.void,
-  bootError?: string,
+  bootError?: string | { error?: string; errors?: Array<{ message: string; error?: string }> },
   failListAfterShutdown = false,
   runtimeFailure?:
     | NodeRuntimeUnavailableError
@@ -90,13 +94,19 @@ const fixture = Effect.fn("fixture")(function* (
   const agentStarts: string[] = [];
   const agentStops: string[] = [];
   const requests: string[] = [];
+  const devices: Array<Omit<DeviceSummary, "hostId">> = [];
+  const discoveryErrors = yield* Ref.make<Array<{ message: string; error?: string }>>([]);
+  const encoderResult = yield* Ref.make({ code: 0, stdout: " V....D libx264", stderr: "" });
   let booted = false;
   let shutDown = false;
   const ready: DeviceHost.DeviceHostReady = {
     nodePath: process.execPath,
     hub: { origin: "http://device.test" },
     helpers: { serveSimAxSettings: null, serveSimCli: null },
-    run: () => Effect.succeed({ code: 0, stdout: "Pixel_API_35\n", stderr: "" }),
+    run: (command) =>
+      command === "emulator"
+        ? Effect.succeed({ code: 0, stdout: "Pixel_API_35\n", stderr: "" })
+        : Ref.get(encoderResult),
   };
   const host: DeviceHost.DeviceHost["Service"] = {
     ...(inspectError
@@ -115,7 +125,10 @@ const fixture = Effect.fn("fixture")(function* (
       id: LOCAL_DEVICE_HOST_ID,
       kind: "local",
       label: "Test server",
-      platforms: [{ platform: "android", available: true }],
+      platforms: [
+        { platform: "android", available: true },
+        { platform: "ios", available: true },
+      ],
       hubInstalled: true,
       agentDeviceInstalled: false,
     }),
@@ -203,33 +216,55 @@ const fixture = Effect.fn("fixture")(function* (
             return HttpClientResponse.fromWeb(
               request,
               Response.json(
-                bootError ? { ok: false, error: bootError } : { ok: true, serial: "emulator-5554" },
+                bootError
+                  ? {
+                      ok: false,
+                      ...(typeof bootError === "string" ? { error: bootError } : bootError),
+                    }
+                  : { ok: true, serial: "emulator-5554" },
               ),
             );
+          }
+          if (request.url.endsWith("/grid/api/start")) {
+            return HttpClientResponse.fromWeb(request, Response.json({ ok: true }));
           }
           return HttpClientResponse.fromWeb(
             request,
             Response.json({
-              simulators: [],
-              emulators: booted
-                ? [
-                    {
-                      id: "emulator-5554",
-                      name: "Pixel_API_35",
-                      platform: "android",
-                      version: "Android 15",
-                      booted: true,
-                      physical: false,
-                    },
-                  ]
-                : [],
+              errors: yield* Ref.get(discoveryErrors),
+              simulators: devices.filter((device) => device.platform === "ios"),
+              emulators: [
+                ...devices.filter((device) => device.platform === "android"),
+                ...(booted
+                  ? [
+                      {
+                        id: "emulator-5554",
+                        name: "Pixel_API_35",
+                        platform: "android",
+                        version: "Android 15",
+                        booted: true,
+                        physical: false,
+                      },
+                    ]
+                  : []),
+              ],
             }),
           );
         }),
       ),
     ),
   );
-  return { service, starts, agentStarts, agentStops, requests, settings };
+  return {
+    service,
+    starts,
+    agentStarts,
+    agentStops,
+    requests,
+    settings,
+    devices,
+    encoderResult,
+    discoveryErrors,
+  };
 });
 
 describe("device setup consent", () => {
@@ -349,6 +384,88 @@ describe("device setup consent", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("blocks only emulator video until ffmpeg is usable, then allows retry", () =>
+    Effect.gen(function* () {
+      const { service, requests, devices, encoderResult } = yield* fixture();
+      devices.push(
+        {
+          id: DeviceId.make("physical-android"),
+          name: "Pixel",
+          platform: "android",
+          version: "Android 15",
+          booted: true,
+          physical: true,
+        },
+        {
+          id: DeviceId.make("ios-simulator"),
+          name: "iPhone",
+          platform: "ios",
+          version: "iOS 18",
+          booted: true,
+          physical: false,
+        },
+      );
+      yield* Ref.set(encoderResult, { code: 127, stdout: "", stderr: "spawn ffmpeg ENOENT" });
+      const state = yield* service.configure({ enabled: true });
+      expect(state.devices.map((device) => device.id)).toEqual([
+        "ios-simulator",
+        "physical-android",
+        "Pixel_API_35",
+      ]);
+      const threadId = ThreadId.make("emulator-video-readiness");
+      const physical = yield* service.open({
+        threadId,
+        deviceId: "physical-android",
+        platform: "android",
+      });
+      const ios = yield* service.open({ threadId, deviceId: "ios-simulator", platform: "ios" });
+      expect(physical.deviceId).toBe("physical-android");
+      expect(ios.deviceId).toBe("ios-simulator");
+
+      const openEmulator = service.open({
+        threadId,
+        deviceId: "Pixel_API_35",
+        platform: "android",
+      });
+      const missing = yield* openEmulator.pipe(Effect.flip);
+      expect(missing.message).toMatch(/ffmpeg/i);
+      expect(missing.message).toMatch(/emulator/i);
+      expect(requests.filter((url) => url.endsWith("/boot"))).toEqual([]);
+      expect((yield* service.state).sessions).toEqual([physical, ios]);
+      expect((yield* service.state).bootingDevices ?? []).toEqual([]);
+
+      yield* Ref.set(encoderResult, { code: 1, stdout: "", stderr: "cannot execute ffmpeg" });
+      expect((yield* openEmulator.pipe(Effect.flip)).message).toMatch(/ffmpeg/i);
+      yield* Ref.set(encoderResult, {
+        code: 0,
+        stdout: " V....D libx264rgb   libx264 H.264 / AVC RGB (codec h264)",
+        stderr: "",
+      });
+      expect((yield* openEmulator.pipe(Effect.flip)).message).toMatch(/libx264/i);
+      expect(requests.filter((url) => url.endsWith("/boot"))).toEqual([]);
+      expect((yield* service.state).sessions).toEqual([physical, ios]);
+
+      devices.push({
+        id: DeviceId.make("emulator-5556"),
+        name: "Already_booted",
+        platform: "android",
+        version: "Android 15",
+        booted: true,
+        physical: false,
+      });
+      expect(
+        (yield* service
+          .open({ threadId, deviceId: "emulator-5556", platform: "android" })
+          .pipe(Effect.flip)).message,
+      ).toMatch(/libx264/i);
+
+      yield* Ref.set(encoderResult, { code: 0, stdout: " V....D libx264", stderr: "" });
+      const emulator = yield* openEmulator;
+      expect(emulator.deviceId).toBe("emulator-5554");
+      expect(requests.filter((url) => url.endsWith("/boot"))).toHaveLength(1);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("installs agent support only after the separate agent permission", () =>
     Effect.gen(function* () {
       const { service, agentStarts, agentStops, settings } = yield* fixture();
@@ -409,6 +526,60 @@ describe("device discovery after server restart", () => {
   );
 });
 
+const missingPlistMessage =
+  "[apple-utils] Failed to read CoreSimulator plist at /Users/test/Library/Developer/CoreSimulator/Devices/deleted-simulator/device.plist:";
+
+it.effect.each([
+  {
+    message: missingPlistMessage,
+    error: "Error: ENOENT: no such file or directory, open 'device.plist'",
+    ignored: true,
+  },
+  {
+    message: missingPlistMessage,
+    error: "Error: EACCES: permission denied, open 'device.plist'",
+    ignored: false,
+  },
+  { message: missingPlistMessage, error: undefined, ignored: false },
+  {
+    message: "[apple-utils] Failed to parse CoreSimulator device.plist:",
+    error: "Invalid XML",
+    ignored: false,
+  },
+  {
+    message: "[apple-utils] Failed to list devices:",
+    error: "Error: ENOENT: simctl missing",
+    ignored: false,
+  },
+])("handles discovery diagnostic: $error", ({ message, error, ignored }) =>
+  Effect.gen(function* () {
+    const { service, discoveryErrors } = yield* fixture();
+    yield* Ref.set(discoveryErrors, [{ message, ...(error ? { error } : {}) }]);
+    const state = yield* service.configure({ enabled: true });
+    expect(state.hostStatus).toBe("ready");
+    expect(state.devices.map((device) => device.id)).toEqual(["Pixel_API_35"]);
+    expect(state.hostStatusDetail).toBe(ignored ? undefined : message);
+    expect(state.hostStatuses.local?.detail).toBe(ignored ? undefined : message);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("keeps other discovery warnings and clears them when only a deleted plist remains", () =>
+  Effect.gen(function* () {
+    const { service, discoveryErrors } = yield* fixture();
+    const missing = {
+      message: missingPlistMessage,
+      error: "Error: ENOENT: no such file or directory",
+    };
+    yield* Ref.set(discoveryErrors, [missing, { message: "Android discovery failed." }]);
+    const initial = yield* service.configure({ enabled: true });
+    expect(initial.hostStatusDetail).toBe("Android discovery failed.");
+    yield* Ref.set(discoveryErrors, [missing]);
+    const refreshed = yield* service.list;
+    expect(refreshed.hostStatusDetail).toBeUndefined();
+    expect(refreshed.hostStatuses.local?.detail).toBeUndefined();
+  }).pipe(Effect.scoped),
+);
+
 it.effect.each([
   {
     diagnostic: "Insufficient disk space at /private/user/path",
@@ -421,7 +592,8 @@ it.effect.each([
     message: "did not become ready in time",
   },
   {
-    diagnostic: "Unexpected failure: secret-token",
+    diagnostic:
+      "The emulator process exited with code 1.\nTry manually: emulator -avd Pixel_API_35",
     reason: "launch_failed",
     message: "could not start",
   },
@@ -438,7 +610,34 @@ it.effect.each([
       .pipe(Effect.flip);
     expect(error._tag).toBe("DeviceBootError");
     expect(error.message).toContain(message);
-    expect(error.message).not.toContain(diagnostic);
+    expect(error.message).toContain(diagnostic);
+    expect((yield* service.state).bootingDevices).toEqual([]);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("includes nested hub boot diagnostics and bounds them to 2,000 characters", () =>
+  Effect.gen(function* () {
+    const diagnostic = "Error: emulator binary missing\n" + "diagnostic output\n".repeat(200);
+    const { service } = yield* fixture(Effect.void, {
+      error: "Failed to spawn emulator",
+      errors: [{ message: "Failed to launch emulator binary", error: diagnostic }],
+    });
+    yield* service.configure({ enabled: true });
+    const error = yield* service
+      .open({
+        threadId: ThreadId.make("nested-boot-failure"),
+        deviceId: "Pixel_API_35",
+        platform: "android",
+      })
+      .pipe(Effect.flip);
+    expect(error._tag).toBe("DeviceBootError");
+    if (error._tag !== "DeviceBootError") return;
+    const expected = `Failed to spawn emulator\n\nFailed to launch emulator binary\n\n${diagnostic}`;
+    expect(error.diagnostics).toBe(`${expected.slice(0, 1_999)}…`);
+    expect(error.diagnostics).toHaveLength(2_000);
+    expect(error.message).toContain(error.diagnostics);
+    const roundTrip = decodeBootError(encodeBootError(error));
+    expect(roundTrip.message).toBe(error.message);
     expect((yield* service.state).bootingDevices).toEqual([]);
   }).pipe(Effect.scoped),
 );
@@ -640,6 +839,83 @@ it.effect.each([
           (yield* service.state).devices.find((device) => device.id === deviceId)?.booted,
         ).toBe(true);
       }
+    }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
+);
+
+it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
+  "retains hub inventory on %s when AVD enumeration fails and recovers on retry",
+  (hostId) =>
+    Effect.gen(function* () {
+      let enumeration = { code: 1, stdout: "private stdout", stderr: "private stderr" };
+      const ready: DeviceHost.DeviceHostReady = {
+        nodePath: process.execPath,
+        hub: { origin: "http://device.test" },
+        helpers: { serveSimAxSettings: null, serveSimCli: null },
+        run: () => Effect.sync(() => enumeration),
+      };
+      const host: DeviceHost.DeviceHost["Service"] = {
+        id: hostId,
+        summary: Effect.succeed({
+          id: hostId,
+          kind: hostId === LOCAL_DEVICE_HOST_ID ? "local" : "ssh",
+          label: "Test device host",
+          platforms: [{ platform: "android", available: true }],
+          hubInstalled: true,
+          agentDeviceInstalled: false,
+        }),
+        platformAvailability: (platform) => Effect.succeed({ platform, available: true }),
+        ensureReady: () => Effect.succeed(ready),
+        ensureAgentReady: () => Effect.die("Agent access is not used in this test"),
+        current: Effect.succeed(ready),
+        stop: Effect.void,
+        stopAgent: Effect.void,
+      };
+      const hubDevices = [
+        { id: "iphone", name: "iPhone", platform: "ios", physical: false },
+        { id: "phone", name: "Pixel", platform: "android", physical: true },
+        { id: "emulator-5554", name: "Running_AVD", platform: "android", physical: false },
+      ].map((device) => ({ ...device, booted: true, version: "test" }));
+      const http = HttpClient.make((request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            Response.json({ simulators: hubDevices.slice(0, 1), emulators: hubDevices.slice(1) }),
+          ),
+        ),
+      );
+      const service = yield* DeviceService.makeWithHosts(new Map([[hostId, host]])).pipe(
+        Effect.provide(NodeCrypto.layer),
+        Effect.provideService(HttpClient.HttpClient, http),
+      );
+
+      const incomplete = yield* service.list;
+      expect(incomplete.devices).toEqual(hubDevices.map((device) => ({ ...device, hostId })));
+      expect(incomplete.hostStatuses[hostId]).toEqual({
+        status: "ready",
+        androidDiscoveryIncomplete: true,
+        detail:
+          "Could not list Android virtual devices (emulator -list-avds, exit code 1). Discovered devices remain available.",
+      });
+      if (hostId === LOCAL_DEVICE_HOST_ID) {
+        expect(incomplete.hostStatusDetail).toBe(incomplete.hostStatuses[hostId]?.detail);
+      }
+
+      enumeration = { code: 0, stdout: "Running_AVD\r\nStopped_AVD\nStopped_AVD\n", stderr: "" };
+      const recovered = yield* service.retryHost(hostId);
+      expect(recovered.devices).toEqual([
+        ...hubDevices.map((device) => ({ ...device, hostId })),
+        {
+          hostId,
+          id: "Stopped_AVD",
+          name: "Stopped_AVD",
+          platform: "android",
+          version: "Android",
+          booted: false,
+          physical: false,
+        },
+      ]);
+      expect(recovered.hostStatuses[hostId]).toEqual({ status: "ready" });
+      if (hostId === LOCAL_DEVICE_HOST_ID) expect(recovered.hostStatusDetail).toBeUndefined();
     }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
 );
 

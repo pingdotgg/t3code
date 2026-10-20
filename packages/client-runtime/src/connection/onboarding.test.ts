@@ -368,7 +368,10 @@ describe("connection onboarding", () => {
       );
       yield* registry.setCompatibility(PAIRED_ENVIRONMENT_ID, UNSUPPORTED_ERROR);
       const before = yield* SubscriptionRef.get(registry.entries);
-      expect(before.get(PAIRED_ENVIRONMENT_ID)?.enabled).toBe(false);
+      expect(before.get(PAIRED_ENVIRONMENT_ID)).toMatchObject({
+        enabled: true,
+        unsupportedReason: UNSUPPORTED_ERROR.message,
+      });
 
       const environmentId = yield* onboarding.registerPairing(PAIRING_INPUT);
 

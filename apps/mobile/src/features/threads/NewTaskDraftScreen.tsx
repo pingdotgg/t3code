@@ -1,4 +1,6 @@
-import { Toolbar } from "../../components/ui/Toolbar";
+import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
+import { SheetHeader } from "../../components/ui/SheetHeader";
+import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
@@ -53,7 +55,6 @@ import {
   ComposerInlineControl,
   ComposerToolbarRow,
 } from "../../components/ComposerToolbar";
-import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { ComposerAttachmentButton } from "./ComposerAttachmentButton";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
@@ -70,6 +71,7 @@ import { ProviderIcon } from "../../components/ProviderIcon";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { hasProviderUsageLimits, isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
+import { threadContextsOutsideEnvironment } from "@t3tools/shared/composerContextReferences";
 import { COMPOSER_LAYOUT_TRANSITION, ComposerSurface } from "./ThreadComposer";
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
 import { useComposerCommandMenu } from "./use-composer-command-menu";
@@ -1247,6 +1249,22 @@ export function NewTaskDraftScreen(props: {
       Dialog.alert("Too much context", contextBlockReason);
       return;
     }
+    const strandedThread = threadContextsOutsideEnvironment({
+      text: draft.text,
+      records: draft.context?.records ?? [],
+      environmentId: selectedProject.environmentId,
+    })[0];
+    if (strandedThread) {
+      const owner =
+        flow.environments.find(
+          (environment) => environment.environmentId === strandedThread.environmentId,
+        )?.environmentLabel ?? "its machine";
+      Dialog.alert(
+        "Attached thread unavailable",
+        `"${strandedThread.title}" is on another machine. Switch back to ${owner} or remove it from the draft.`,
+      );
+      return;
+    }
 
     const editingPendingTask = flow.editingPendingTask;
 
@@ -1472,11 +1490,11 @@ export function NewTaskDraftScreen(props: {
       <View className="flex-row flex-wrap items-center justify-center gap-x-1">
         <ComposerInlineControl
           accessibilityHint="Opens the project picker"
-          accessibilityLabel="Choose a project"
+          accessibilityLabel="No project"
           chevronDirection="right"
           disabled={isComposerInteractionLocked}
           icon="folder"
-          label="Choose a project"
+          label="No project"
           onPress={chooseProject}
         />
         {environmentControl}
@@ -1612,14 +1630,12 @@ export function NewTaskDraftScreen(props: {
       ) : null}
 
       {modelUnavailable ? (
-        <Pressable
-          accessibilityRole="button"
-          className="px-3 py-2"
+        <Button
+          label="Model unavailable. Open model settings."
+          tone="text"
           disabled={isComposerInteractionLocked}
           onPress={settingsSheetPresentation.open}
-        >
-          <Text className="text-xs text-foreground">Model unavailable. Open model settings.</Text>
-        </Pressable>
+        />
       ) : null}
 
       <ComposerSurface
@@ -1785,7 +1801,11 @@ export function NewTaskDraftScreen(props: {
     return (
       <View className="flex-1 bg-sheet" collapsable={false}>
         <NativeStackScreenOptions options={{ headerShown: false }} />
-        <AndroidScreenHeader title="New thread" hideBottomBorder onBack={closeNewTask} />
+        <SheetHeader
+          title="New thread"
+          onCancel={closeNewTask}
+          accessibilityLabel="Cancel new task"
+        />
         <ScreenContent>
           {heroViewport}
 
@@ -1809,9 +1829,11 @@ export function NewTaskDraftScreen(props: {
           title: "New thread",
         }}
       />
-      <Toolbar placement="left">
-        <Toolbar.Button accessibilityLabel="Cancel new task" icon="xmark" onPress={closeNewTask} />
-      </Toolbar>
+      <SheetHeader
+        title="New thread"
+        onCancel={closeNewTask}
+        accessibilityLabel="Cancel new task"
+      />
 
       {heroViewport}
       <KeyboardStickyView

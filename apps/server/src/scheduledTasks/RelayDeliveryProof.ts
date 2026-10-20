@@ -44,8 +44,8 @@ export class RelayDeliveryProof extends Context.Service<
 const make = Effect.gen(function* () {
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const environment = yield* ServerEnvironment.ServerEnvironment;
-  const verify: RelayDeliveryProof["Service"]["verify"] = (input) =>
-    Effect.gen(function* () {
+  const verify: RelayDeliveryProof["Service"]["verify"] = Effect.fn("webhook.verifyRelayDelivery")(
+    function* (input) {
       const proof = input.headers[RELAY_HOOK_DELIVERY_HEADER];
       const deliveryId = input.headers["x-t3-relay-delivery-id"];
       const receivedAt = input.headers["x-t3-relay-received-at"];
@@ -80,7 +80,9 @@ const make = Effect.gen(function* () {
         return Option.none();
       }
       return Option.some({ deliveryId, receivedAt });
-    }).pipe(Effect.orElseSucceed(Option.none), Effect.withSpan("webhook.verifyRelayDelivery"));
+    },
+    Effect.orElseSucceed(Option.none),
+  );
   return RelayDeliveryProof.of({ verify });
 });
 

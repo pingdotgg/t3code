@@ -238,20 +238,19 @@ export const make = Effect.gen(function* () {
   // matters when the disk is slow. Fibers are joined in order, so a hit returns
   // without waiting for lower-ranked probes (the scope interrupts them), and a
   // failure surfaces only when no earlier probe found a file.
-  const firstInOrder = <A>(
+  const firstInOrder = Effect.fn("ProjectFaviconResolver.firstInOrder")(function* <A>(
     items: ReadonlyArray<A>,
     probe: (item: A) => Effect.Effect<string | null, ProjectFaviconResolutionError>,
-  ) =>
-    Effect.gen(function* () {
-      const fibers = yield* Effect.forEach(items, (item) => Effect.forkScoped(probe(item)));
-      for (const fiber of fibers) {
-        const found = yield* Fiber.join(fiber);
-        if (found) {
-          return found;
-        }
+  ) {
+    const fibers = yield* Effect.forEach(items, (item) => Effect.forkScoped(probe(item)));
+    for (const fiber of fibers) {
+      const found = yield* Fiber.join(fiber);
+      if (found) {
+        return found;
       }
-      return null;
-    }).pipe(Effect.scoped);
+    }
+    return null;
+  }, Effect.scoped);
 
   const resolvePathUncached = Effect.fn("ProjectFaviconResolver.resolvePathUncached")(function* (
     cwd: string,

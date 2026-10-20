@@ -196,11 +196,11 @@ export const make = (dependencies: Dependencies) => {
       cause,
     });
 
-  const environmentFilesViewed = (
-    project: SupportedProject,
-    ref: PullRequestRef,
-  ): Effect.Effect<PullRequestFilesViewedResult, PullRequestError> =>
-    Effect.gen(function* () {
+  const environmentFilesViewed = Effect.fn("pullRequestViewedFiles.environmentFilesViewed")(
+    function* (
+      project: SupportedProject,
+      ref: PullRequestRef,
+    ): Effect.fn.Return<PullRequestFilesViewedResult, PullRequestError> {
       const viewer = yield* requiredViewerOf(project, "filesViewed");
       const held = yield* filesViewedStore
         .list(filesViewedScope(project, ref.number, viewer))
@@ -234,7 +234,8 @@ export const make = (dependencies: Dependencies) => {
         }),
         truncated: held.truncated,
       };
-    });
+    },
+  );
 
   /**
    * A tick's host round trip is slower than an untick's, so unordered presses could finish
@@ -271,11 +272,11 @@ export const make = (dependencies: Dependencies) => {
         );
     });
 
-  const environmentSetFilesViewed = (
-    project: SupportedProject,
-    input: PullRequestSetFilesViewedInput,
-  ): Effect.Effect<void, PullRequestError> =>
-    Effect.gen(function* () {
+  const environmentSetFilesViewed = Effect.fn("pullRequestViewedFiles.environmentSetFilesViewed")(
+    function* (
+      project: SupportedProject,
+      input: PullRequestSetFilesViewedInput,
+    ): Effect.fn.Return<void, PullRequestError> {
       const viewer = yield* requiredViewerOf(project, "setFilesViewed");
       const cleared = input.files.filter((file) => file.viewed).map((file) => file.path);
       const revisions =
@@ -304,7 +305,8 @@ export const make = (dependencies: Dependencies) => {
           viewedAt,
         })
         .pipe(Effect.mapError(toFilesViewedStoreError("setFilesViewed")));
-    });
+    },
+  );
 
   const filesViewed = (input: PullRequestRef) =>
     requireProject(input).pipe(

@@ -299,14 +299,15 @@ export function createAtomCommandScheduler(): AtomCommandScheduler {
   };
 }
 
-export function scheduleAtomCommandEffect<W, A, E, R>(
-  registry: AtomRegistry.AtomRegistry,
-  scheduler: AtomCommandScheduler,
-  concurrency: AtomCommandConcurrency<W>,
-  input: W,
-  effect: Effect.Effect<A, E, R>,
-): Effect.Effect<A, E, R> {
-  return Effect.gen(function* () {
+export const scheduleAtomCommandEffect =
+  /* Every atom command passes through this scheduler; the command owns its tracing boundary. */
+  Effect.fnUntraced(function* <W, A, E, R>(
+    registry: AtomRegistry.AtomRegistry,
+    scheduler: AtomCommandScheduler,
+    concurrency: AtomCommandConcurrency<W>,
+    input: W,
+    effect: Effect.Effect<A, E, R>,
+  ): Effect.fn.Return<A, E, R> {
     const context = yield* Effect.context<R>();
     const result = yield* Effect.promise((signal) =>
       scheduler.schedule<W, A, E>(registry, concurrency, input, async () => {
@@ -318,7 +319,6 @@ export function scheduleAtomCommandEffect<W, A, E, R>(
     );
     return result._tag === "Success" ? result.value : yield* Effect.failCause(result.cause);
   });
-}
 
 export async function runAtomCommand<W, A, E>(
   registry: AtomRegistry.AtomRegistry,

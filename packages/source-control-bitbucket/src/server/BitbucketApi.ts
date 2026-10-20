@@ -602,35 +602,33 @@ function originOf(value: string): string | null {
   }
 }
 
-function responseError(
+const responseError = Effect.fn("BitbucketApi.responseError")(function* (
   operation: BitbucketApiOperation,
   response: HttpClientResponse.HttpClientResponse,
-): Effect.Effect<never, BitbucketApiError> {
-  return Effect.gen(function* () {
-    const now = yield* Clock.currentTimeMillis;
-    const retryAt = retryAtFromHeader(response.headers["retry-after"], now);
-    const collected = yield* collectUint8StreamText({
-      stream: response.stream,
-      maxBytes: DEFAULT_MAX_RESPONSE_BYTES,
-    }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new BitbucketResponseBodyReadError({
-            operation,
-            status: response.status,
-            retryAt,
-            cause,
-          }),
-      ),
-    );
-    return yield* new BitbucketResponseError({
-      operation,
-      status: response.status,
-      responseBodyLength: collected.text.length,
-      retryAt,
-    });
+): Effect.fn.Return<never, BitbucketApiError> {
+  const now = yield* Clock.currentTimeMillis;
+  const retryAt = retryAtFromHeader(response.headers["retry-after"], now);
+  const collected = yield* collectUint8StreamText({
+    stream: response.stream,
+    maxBytes: DEFAULT_MAX_RESPONSE_BYTES,
+  }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new BitbucketResponseBodyReadError({
+          operation,
+          status: response.status,
+          retryAt,
+          cause,
+        }),
+    ),
+  );
+  return yield* new BitbucketResponseError({
+    operation,
+    status: response.status,
+    responseBodyLength: collected.text.length,
+    retryAt,
   });
-}
+});
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
@@ -1015,52 +1013,51 @@ export const make = Effect.gen(function* () {
         ),
         Effect.map(normalizeRepositoryCloneUrls),
       ),
-    createPullRequest: (input) =>
-      Effect.gen(function* () {
-        const repository = yield* resolveRepository(input);
-        const description = yield* fileSystem.readFileString(input.bodyFile).pipe(
-          Effect.mapError(
-            (cause) =>
-              new BitbucketPullRequestBodyReadError({
-                cwd: input.cwd,
-                bodyFile: input.bodyFile,
-                cause,
-              }),
-          ),
-        );
-        const sourceOwner = sourceWorkspace(input);
-        const body = {
-          title: input.title,
-          description,
-          source: {
-            branch: {
-              name: SourceControlProvider.sourceBranch(input),
-            },
-            ...(sourceOwner
-              ? {
-                  repository: {
-                    full_name: `${sourceOwner}/${input.source?.repository ?? repository.repoSlug}`,
-                  },
-                }
-              : {}),
+    createPullRequest: Effect.fn("BitbucketApi.createPullRequest")(function* (input) {
+      const repository = yield* resolveRepository(input);
+      const description = yield* fileSystem.readFileString(input.bodyFile).pipe(
+        Effect.mapError(
+          (cause) =>
+            new BitbucketPullRequestBodyReadError({
+              cwd: input.cwd,
+              bodyFile: input.bodyFile,
+              cause,
+            }),
+        ),
+      );
+      const sourceOwner = sourceWorkspace(input);
+      const body = {
+        title: input.title,
+        description,
+        source: {
+          branch: {
+            name: SourceControlProvider.sourceBranch(input),
           },
-          destination: {
-            branch: {
-              name: input.target?.refName ?? input.baseBranch,
-            },
+          ...(sourceOwner
+            ? {
+                repository: {
+                  full_name: `${sourceOwner}/${input.source?.repository ?? repository.repoSlug}`,
+                },
+              }
+            : {}),
+        },
+        destination: {
+          branch: {
+            name: input.target?.refName ?? input.baseBranch,
           },
-        };
+        },
+      };
 
-        yield* executeJson(
-          "createPullRequest",
-          HttpClientRequest.post(
-            apiUrl(
-              `/repositories/${encodeURIComponent(repository.workspace)}/${encodeURIComponent(repository.repoSlug)}/pullrequests`,
-            ),
-          ).pipe(HttpClientRequest.bodyJsonUnsafe(body)),
-          BitbucketPullRequestSchema,
-        );
-      }),
+      yield* executeJson(
+        "createPullRequest",
+        HttpClientRequest.post(
+          apiUrl(
+            `/repositories/${encodeURIComponent(repository.workspace)}/${encodeURIComponent(repository.repoSlug)}/pullrequests`,
+          ),
+        ).pipe(HttpClientRequest.bodyJsonUnsafe(body)),
+        BitbucketPullRequestSchema,
+      );
+    }),
     getDefaultBranch: (input) =>
       resolveRepository(input).pipe(
         Effect.flatMap((locator) =>
@@ -1078,8 +1075,8 @@ export const make = Effect.gen(function* () {
         ),
         Effect.map(defaultChangeRequestTargetBranch),
       ),
-    checkoutPullRequest: (input) =>
-      Effect.gen(function* () {
+    checkoutPullRequest: Effect.fn("BitbucketApi.checkoutPullRequest")(
+      function* (input) {
         const destinationRepository = yield* resolveRepository(input);
         const pullRequest = yield* getRawPullRequestFromRepository(
           destinationRepository,
@@ -1129,17 +1126,20 @@ export const make = Effect.gen(function* () {
           remoteBranch,
         });
         yield* Effect.scoped(git.switchRef({ cwd: input.cwd, refName: localBranch }));
-      }).pipe(
-        Effect.mapError((cause) =>
-          isBitbucketApiError(cause)
-            ? cause
-            : new BitbucketCheckoutError({
-                cwd: input.cwd,
-                reference: input.reference,
-                cause,
-              }),
+      },
+      (effect, input) =>
+        effect.pipe(
+          Effect.mapError((cause) =>
+            isBitbucketApiError(cause)
+              ? cause
+              : new BitbucketCheckoutError({
+                  cwd: input.cwd,
+                  reference: input.reference,
+                  cause,
+                }),
+          ),
         ),
-      ),
+    ),
   });
 });
 

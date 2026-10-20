@@ -137,6 +137,28 @@ describe("right panel new-tab shortcut", () => {
     },
   );
 
+  it("opens Files while a closed popup remains mounted", async () => {
+    await renderPanel();
+    const popup = document.createElement("div");
+    popup.dataset.slot = "menu-popup";
+    popup.dataset.closed = "";
+    container.append(popup);
+
+    expect((await press("f")).defaultPrevented).toBe(true);
+    expect(addFiles).toHaveBeenCalledOnce();
+  });
+
+  it("opens the add-surface menu while a closed popup remains mounted", async () => {
+    await renderPanel();
+    const popup = document.createElement("div");
+    popup.dataset.slot = "menu-popup";
+    popup.dataset.closed = "";
+    container.append(popup);
+
+    expect((await press("t", { metaKey: true })).defaultPrevented).toBe(true);
+    expect(document.querySelector('[role="menu"]:not([data-closed])')).not.toBeNull();
+  });
+
   it("leaves the shortcut alone while the mounted panel is closed", async () => {
     await renderPanel({ open: false });
     expect((await press("t", { metaKey: true })).defaultPrevented).toBe(false);
@@ -196,9 +218,45 @@ describe("right panel new-tab shortcut", () => {
     expect((await press("t", { metaKey: true, isComposing: true })).defaultPrevented).toBe(false);
     const dialog = document.createElement("div");
     dialog.dataset.slot = "dialog-popup";
+    dialog.dataset.open = "";
     container.append(dialog);
+    for (const state of ["data-open", "data-ending-style"]) {
+      dialog.setAttribute(state, "");
+      expect((await press("f")).defaultPrevented, state).toBe(false);
+      expect(addFiles, state).not.toHaveBeenCalled();
+      expect((await press("t", { metaKey: true })).defaultPrevented, state).toBe(false);
+      expect(document.querySelector('[role="menu"]'), state).toBeNull();
+      dialog.removeAttribute(state);
+    }
+  });
+
+  it("blocks panel shortcuts until a mounted popup finishes closing", async () => {
+    await renderPanel();
+    const popover = document.createElement("div");
+    popover.dataset.slot = "popover-popup";
+    popover.dataset.open = "";
+    container.append(popover);
+
     expect((await press("t", { metaKey: true })).defaultPrevented).toBe(false);
+    expect((await press("f")).defaultPrevented).toBe(false);
     expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(addFiles).not.toHaveBeenCalled();
+
+    delete popover.dataset.open;
+    popover.dataset.closed = "";
+    popover.dataset.endingStyle = "";
+    expect((await press("t", { metaKey: true })).defaultPrevented).toBe(false);
+    expect((await press("f")).defaultPrevented).toBe(false);
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(addFiles).not.toHaveBeenCalled();
+
+    delete popover.dataset.endingStyle;
+    popover.hidden = true;
+    expect((await press("f")).defaultPrevented).toBe(true);
+    expect(addFiles).toHaveBeenCalledOnce();
+    expect((await press("t", { metaKey: true })).defaultPrevented).toBe(true);
+    expect(document.querySelector('[role="menu"]')?.textContent).toContain("Files");
+    expect(document.activeElement?.closest('[role="menu"]')).not.toBeNull();
   });
 
   it("supports arrow keys with an existing tab in sheet mode and clears the menu on close", async () => {
@@ -219,5 +277,36 @@ describe("right panel new-tab shortcut", () => {
     expect(document.querySelector('[role="menu"]:not([data-closed])')).toBeNull();
     await renderPanel(panel);
     expect(document.querySelector('[role="menu"]:not([data-closed])')).toBeNull();
+  });
+});
+
+describe("right panel tab middle click", () => {
+  it("cancels middle-button defaults and closes once while preserving other buttons", async () => {
+    const onActivate = vi.fn();
+    const onCloseSurface = vi.fn();
+    const files = { id: "files" as const, kind: "files" as const };
+    await renderPanel({ surfaces: [files], activeSurfaceId: files.id, onActivate, onCloseSurface });
+    const tabLabel = container.querySelector("[data-active-tab] span.truncate")!;
+    const mouse = async (type: string, button: number) => {
+      const event = new MouseEvent(type, { button, bubbles: true, cancelable: true });
+      await act(() => tabLabel.dispatchEvent(event));
+      return event;
+    };
+
+    expect((await mouse("mousedown", 0)).defaultPrevented).toBe(false);
+    expect((await mouse("mouseup", 0)).defaultPrevented).toBe(false);
+    expect((await mouse("click", 0)).defaultPrevented).toBe(false);
+    expect(onActivate).toHaveBeenCalledExactlyOnceWith(files);
+    expect((await mouse("mousedown", 2)).defaultPrevented).toBe(false);
+    expect((await mouse("mouseup", 2)).defaultPrevented).toBe(false);
+    expect((await mouse("auxclick", 2)).defaultPrevented).toBe(false);
+    expect(onCloseSurface).not.toHaveBeenCalled();
+
+    expect((await mouse("mousedown", 1)).defaultPrevented).toBe(true);
+    expect((await mouse("mouseup", 1)).defaultPrevented).toBe(true);
+    expect(onCloseSurface).not.toHaveBeenCalled();
+    expect((await mouse("auxclick", 1)).defaultPrevented).toBe(true);
+    expect(onCloseSurface).toHaveBeenCalledExactlyOnceWith(files);
+    expect(onActivate).toHaveBeenCalledTimes(1);
   });
 });

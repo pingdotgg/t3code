@@ -49,7 +49,12 @@ const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 function fixture(
   options: {
-    accounts?: Array<(typeof accounts)[number] & { disabled?: boolean }>;
+    accounts?: Array<
+      (typeof accounts)[number] & {
+        disabled?: boolean;
+        id_token: { chatgpt_account_id: string; plan_type?: string; chatgpt_plan_type?: string };
+      }
+    >;
     upstream?: (request: RequestBody) => { status: number; body: unknown };
     cooldownStatus?: number;
   } = {},
@@ -252,6 +257,46 @@ describe("CLIProxyAPI built-in management API", () => {
           ],
         ).toBe("account-b");
       }),
+  );
+
+  it.effect("resolves a missing usage plan from current, then legacy, token plans", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [
+          { ...accounts[0]!, id_token: { chatgpt_account_id: "account-a", plan_type: "free" } },
+          {
+            ...accounts[1]!,
+            id_token: {
+              chatgpt_account_id: "account-b",
+              plan_type: "go",
+              chatgpt_plan_type: "plus",
+            },
+          },
+          {
+            ...accounts[1]!,
+            id: "third.json",
+            auth_index: "c",
+            id_token: { chatgpt_account_id: "account-c", chatgpt_plan_type: "free" },
+          },
+        ],
+        upstream: (request) => ({
+          status: 200,
+          body: {
+            ...(request.auth_index === "a" ? { plan_type: "plus" } : {}),
+            rate_limit: { primary_window: { used_percent: 12 } },
+          },
+        }),
+      });
+      const api = yield* test.api;
+      const result = yield* api.readAccounts(config);
+      expect(result.map((account) => [account.plan, account.usageLimits.windows[0]?.kind])).toEqual(
+        [
+          ["ChatGPT Plus Subscription", "session"],
+          ["ChatGPT Go Subscription", "monthly"],
+          ["ChatGPT Free Subscription", "monthly"],
+        ],
+      );
+    }),
   );
 
   it.effect("keeps the path of a hub served under a prefix", () =>

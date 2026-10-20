@@ -8,6 +8,8 @@ import {
 } from "@t3tools/client-runtime/state/terminal";
 
 import {
+  clampDrawerHeight,
+  resolveTerminalDrawerMaxHeight,
   shouldClearTerminalSelectionAction,
   shouldHandleTerminalExit,
   terminalContextMenuItems,
@@ -16,6 +18,40 @@ import {
   terminalSelectionMenuItems,
   terminalThemeFromApp,
 } from "./ThreadTerminalDrawer";
+
+describe("terminal drawer height", () => {
+  it("shrinks to fit beside the header and composer while the phone keyboard is open, then restores the preferred height", () => {
+    const controls = { headerHeight: 52, composerHeight: 108 };
+    const keyboardOpenMax = resolveTerminalDrawerMaxHeight({
+      ...controls,
+      viewportHeight: 400,
+      chatColumnHeight: 360,
+    });
+    const keyboardClosedMax = resolveTerminalDrawerMaxHeight({
+      ...controls,
+      viewportHeight: 800,
+      chatColumnHeight: 760,
+    });
+
+    // 360 - 52 - 108 leaves 200px, so the drawer stops short of its 280px preference.
+    expect(clampDrawerHeight(280, keyboardOpenMax)).toBe(200);
+    expect(clampDrawerHeight(280, keyboardClosedMax)).toBe(280);
+  });
+
+  it("keeps the window cap for panel terminals and collapses to zero when the controls fill the column", () => {
+    expect(clampDrawerHeight(900, resolveTerminalDrawerMaxHeight({ viewportHeight: 800 }))).toBe(
+      600,
+    );
+
+    const crowdedMax = resolveTerminalDrawerMaxHeight({
+      viewportHeight: 200,
+      chatColumnHeight: 160,
+      headerHeight: 52,
+      composerHeight: 120,
+    });
+    expect(clampDrawerHeight(280, crowdedMax)).toBe(0);
+  });
+});
 
 describe("terminal selection menus", () => {
   it("omits Add to chat when the terminal has no chat target", () => {

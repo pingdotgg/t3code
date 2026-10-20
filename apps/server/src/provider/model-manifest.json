@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-10-09T23:31:10Z",
+  "updatedAt": "2026-10-19T07:21:38Z",
   "compatibility": [
     {
       "driver": "codex",
@@ -653,7 +653,8 @@
               {
                 "id": "thinking",
                 "label": "Thinking",
-                "type": "boolean"
+                "type": "boolean",
+                "currentValue": true
               }
             ]
           },

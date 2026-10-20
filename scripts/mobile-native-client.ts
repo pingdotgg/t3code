@@ -96,40 +96,39 @@ export const hashBundle = Effect.fn("hashBundle")(function* (root: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const entries: string[] = [];
-  const visit = (
+  const visit = Effect.fn("mobile-native-client.visit")(function* (
     relative: string,
-  ): Effect.Effect<void, FileSystemError, FileSystem.FileSystem | Crypto.Crypto> =>
-    Effect.gen(function* () {
-      const names = (yield* fs.readDirectory(path.join(root, relative))).sort((a, b) =>
-        a.localeCompare(b, "en"),
+  ): Effect.fn.Return<void, FileSystemError, FileSystem.FileSystem | Crypto.Crypto> {
+    const names = (yield* fs.readDirectory(path.join(root, relative))).sort((a, b) =>
+      a.localeCompare(b, "en"),
+    );
+    for (const name of names) {
+      const key = path.join(relative, name);
+      const absolute = path.join(root, key);
+      // FileSystem.stat follows links; readLink distinguishes them without following a cycle.
+      const link = yield* fs.readLink(absolute).pipe(
+        Effect.catchIf(
+          (error) => isNotLink(error.reason.cause),
+          () => Effect.succeed(null),
+        ),
       );
-      for (const name of names) {
-        const key = path.join(relative, name);
-        const absolute = path.join(root, key);
-        // FileSystem.stat follows links; readLink distinguishes them without following a cycle.
-        const link = yield* fs.readLink(absolute).pipe(
-          Effect.catchIf(
-            (error) => isNotLink(error.reason.cause),
-            () => Effect.succeed(null),
-          ),
-        );
-        if (link !== null) {
-          entries.push(`link:${key}:${link}`);
-          continue;
-        }
-        const info = yield* fs.stat(absolute);
-        if (info.type === "Directory") {
-          entries.push(`directory:${key}`);
-          yield* visit(key);
-        } else {
-          const chunks = yield* fs.stream(absolute, { chunkSize: 65536 }).pipe(
-            Stream.mapEffect((chunk) => digest(chunk)),
-            Stream.runCollect,
-          );
-          entries.push(`file:${key}:${yield* digest(chunks.join("\n"))}`);
-        }
+      if (link !== null) {
+        entries.push(`link:${key}:${link}`);
+        continue;
       }
-    });
+      const info = yield* fs.stat(absolute);
+      if (info.type === "Directory") {
+        entries.push(`directory:${key}`);
+        yield* visit(key);
+      } else {
+        const chunks = yield* fs.stream(absolute, { chunkSize: 65536 }).pipe(
+          Stream.mapEffect((chunk) => digest(chunk)),
+          Stream.runCollect,
+        );
+        entries.push(`file:${key}:${yield* digest(chunks.join("\n"))}`);
+      }
+    }
+  });
   yield* visit("");
   return yield* digest(entries.map((entry) => `${entry.length}:${entry}`).join(""));
 });

@@ -99,7 +99,10 @@ const noSpawn = ChildProcessSpawner.make(() =>
   Effect.die("maintenance resolution should not spawn a process here"),
 );
 
-function stdoutSpawner(onSpawn: (command: string, args: ReadonlyArray<string>) => string) {
+function stdoutSpawner(
+  onSpawn: (command: string, args: ReadonlyArray<string>) => string,
+  exitCodeOf: (args: ReadonlyArray<string>) => number = () => 0,
+) {
   return ChildProcessSpawner.make((command) => {
     const { command: executable, args } = command as unknown as {
       readonly command: string;
@@ -108,7 +111,7 @@ function stdoutSpawner(onSpawn: (command: string, args: ReadonlyArray<string>) =
     return Effect.succeed(
       ChildProcessSpawner.makeHandle({
         pid: ChildProcessSpawner.ProcessId(1),
-        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(exitCodeOf(args))),
         isRunning: Effect.succeed(false),
         kill: () => Effect.void,
         unref: Effect.succeed(Effect.void),
@@ -158,9 +161,11 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
   );
 
   it.effect("does not fetch latest provider versions when update checks are disabled", () =>
-    enrichProviderSnapshotWithVersionAdvisory(installedPackageToolProvider, manualPackageTool, {
-      enableProviderUpdateChecks: false,
-    }).pipe(
+    enrichProviderSnapshotWithVersionAdvisory(
+      { ...installedPackageToolProvider, installedVersion: "1.1.0" },
+      manualPackageTool,
+      { enableProviderUpdateChecks: false },
+    ).pipe(
       Effect.provide(ProviderLatestVersions.layer),
       Effect.provideService(
         HttpClient.HttpClient,
@@ -171,7 +176,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       Effect.map((provider) => {
         expect(provider.versionAdvisory).toMatchObject({
           status: "unknown",
-          currentVersion: "1.0.0",
+          currentVersion: "1.1.0",
           latestVersion: null,
           checkedAt: "2026-04-10T00:00:00.000Z",
         });
@@ -539,6 +544,49 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     }),
   );
 
+  it.effect.each([
+    {
+      name: "the default home",
+      resolved: "/Users/theo/.vite-plus/bin/claude",
+      real: "/Users/theo/.vite-plus/current/bin/vp",
+      platform: "darwin",
+    },
+    {
+      name: "the XDG home",
+      resolved: "/home/theo/.local/share/vite-plus/bin/claude",
+      real: "/home/theo/.local/share/vite-plus/current/bin/vp",
+      platform: "linux",
+    },
+    {
+      name: "the Windows home",
+      resolved: "C:\\Users\\Theo\\AppData\\Local\\vite-plus\\bin\\claude.cmd",
+      real: "C:\\Users\\Theo\\AppData\\Local\\vite-plus\\packages\\@anthropic-ai\\claude-code\\lib\\node_modules\\@anthropic-ai\\claude-code\\cli.js",
+      platform: "win32",
+    },
+  ] as const)("updates a Vite+ global install in $name with vp", (fixture) =>
+    Effect.gen(function* () {
+      const capabilities = yield* resolveInstall({ definition: claudeUpdate, ...fixture });
+
+      expect(capabilities.update).toMatchObject({
+        command: "vp i -g @anthropic-ai/claude-code",
+        lockKey: "vite-plus-global",
+      });
+    }),
+  );
+
+  it.effect("keeps a project folder named vite-plus manual-only", () =>
+    Effect.gen(function* () {
+      const capabilities = yield* resolveInstall({
+        definition: claudeUpdate,
+        resolved: "/work/vite-plus/bin/claude",
+        real: "/work/vite-plus/node_modules/@anthropic-ai/claude-code/cli.js",
+        platform: "linux",
+      });
+
+      expect(capabilities.update).toBeNull();
+    }),
+  );
+
   it.effect("proves Windows npm ownership from the package manifest beside the shim", () =>
     Effect.gen(function* () {
       const tempDir = yield* makeTempDir("t3-npm-windows-capabilities");
@@ -624,6 +672,79 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       }),
   );
 
+  it.effect.each([
+    {
+      case: "the eligible release",
+      outdated: { "@example/package-tool": { current: "1.0.0", latest: "1.1.0" } },
+      exitCode: 1,
+      expected: "1.1.0",
+    },
+    { case: "no update during cooldown", outdated: {}, exitCode: 0, expected: "1.0.0" },
+    {
+      case: "the npm fallback when the pnpm probe fails",
+      outdated: { "@example/package-tool": { current: "1.0.0", latest: "1.1.0" } },
+      exitCode: 2,
+      expected: "9.9.9",
+    },
+  ])(
+    "advertises $case for pnpm-global installs",
+    (fixture) =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-pnpm-latest");
+        const pnpmBinDir = NodePath.join(tempDir, "pnpm-bin");
+        writeExecutable(NodePath.join(pnpmBinDir, "pnpm"));
+        const link = linkIntoPackage(tempDir, "package-tool", [
+          ".local",
+          "share",
+          "pnpm",
+          "global",
+          "5",
+          "node_modules",
+          "@example",
+          "package-tool",
+        ]);
+
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          packageToolUpdate,
+          { binaryPath: link, env: { PATH: "" } },
+        ).pipe(
+          Effect.provideService(HostProcess.Environment, { PATH: pnpmBinDir }),
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            stdoutSpawner(
+              (_command, args) =>
+                args[0] === "outdated"
+                  ? JSON.stringify(fixture.outdated)
+                  : JSON.stringify([
+                      { dependencies: { "@example/package-tool": { version: "1.0.0" } } },
+                    ]),
+              (args) => (args[0] === "outdated" ? fixture.exitCode : 0),
+            ),
+          ),
+        );
+
+        const provider = yield* enrichProviderSnapshotWithVersionAdvisory(
+          installedPackageToolProvider,
+          capabilities,
+        ).pipe(
+          Effect.provideServiceEffect(
+            ProviderLatestVersions.ProviderLatestVersions,
+            ProviderLatestVersions.make([["@example/package-tool", "9.9.9"]]),
+          ),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make(() => Effect.die("the npm version is already cached")),
+          ),
+        );
+        expect(provider.versionAdvisory).toMatchObject({
+          status: fixture.expected === "1.0.0" ? "current" : "behind_latest",
+          currentVersion: "1.0.0",
+          latestVersion: fixture.expected,
+        });
+      }),
+    { skip: !symlinksSupported || windowsHost },
+  );
+
   it.effect.skipIf(windowsHost)(
     "switches to bun updates when the resolved binary lives in bun's global bin",
     () =>
@@ -679,6 +800,43 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         },
       });
     }),
+  );
+
+  it.effect.each(["wrapper", "symlink"])(
+    "keeps a mise-owned %s in a native install location manual-only",
+    (launcher, { skip }) => {
+      if (windowsHost || (launcher === "symlink" && !symlinksSupported)) skip();
+      return Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-native-mise");
+        const nativePath = NodePath.join(tempDir, ".local", "bin", "native-package-tool");
+        if (launcher === "wrapper") {
+          writeExecutable(nativePath);
+          NodeFS.writeFileSync(
+            nativePath,
+            '#!/bin/sh\nexec mise x native-package-tool -- native-package-tool "$@"\n',
+          );
+        } else {
+          const target = NodePath.join(
+            tempDir,
+            "mise",
+            "installs",
+            "native-package-tool",
+            "1.0.0",
+            "native-package-tool",
+          );
+          writeExecutable(target);
+          NodeFS.mkdirSync(NodePath.dirname(nativePath), { recursive: true });
+          NodeFS.symlinkSync(target, nativePath);
+        }
+
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          nativePackageToolUpdate,
+          { binaryPath: nativePath, env: { PATH: "" } },
+        ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+
+        expect(capabilities.update).toBeNull();
+      });
+    },
   );
 
   it.effect.skipIf(windowsHost)("runs an explicit native updater outside PATH", () =>

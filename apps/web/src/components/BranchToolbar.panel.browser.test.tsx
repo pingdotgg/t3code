@@ -19,6 +19,10 @@ vi.mock(import("../localApi"), async (original) => ({
 vi.mock(import("../hooks/useCopyToClipboard"), async (original) => ({
   ...(await original()),
   writeTextToClipboard: state.writeTextToClipboard,
+  useCopyToClipboard: ((options: { target: string }) => ({
+    copyToClipboard: (command: string) => state.writeTextToClipboard(command, options.target),
+    isCopied: false,
+  })) as never,
 }));
 vi.mock(import("./BranchToolbarBranchSelector"), async (original) => ({
   ...(await original()),
@@ -26,16 +30,13 @@ vi.mock(import("./BranchToolbarBranchSelector"), async (original) => ({
 }));
 vi.mock(import("../state/entities"), async (original) => ({
   ...(await original()),
-  useQuietThreadShell: (() => ({
-    environmentId: "local",
-    projectId: "project",
-    worktreePath: state.worktreePath,
-  })) as never,
   useProject: (() => ({ workspaceRoot: "/tmp/project" })) as never,
   useThreadShellsForProjectRefs: () => [],
 }));
 
 import { BranchToolbar } from "./BranchToolbar";
+import { ComposerSurface } from "./chat/ComposerSurface";
+import type { ServerUpdateTarget } from "./ServerUpdateAction";
 
 let root: Root;
 let container: HTMLDivElement;
@@ -59,19 +60,24 @@ afterEach(async () => {
 function render(props: Partial<ComponentProps<typeof BranchToolbar>>) {
   return act(async () =>
     root.render(
-      <BranchToolbar
-        layout="panel"
-        panelSection="workspace"
-        environmentId={EnvironmentId.make("local")}
-        threadId={ThreadId.make("thread")}
-        showGitControls
-        envMode="local"
-        envLocked={false}
-        startFromOrigin={false}
-        onStartFromOriginChange={vi.fn()}
-        onEnvModeChange={vi.fn()}
-        {...props}
-      />,
+      <ComposerSurface.Shell>
+        <BranchToolbar
+          layout="panel"
+          panelSection="workspace"
+          environmentId={EnvironmentId.make("local")}
+          threadId={ThreadId.make("thread")}
+          projectId={ProjectId.make("project")}
+          worktreePath={state.worktreePath}
+          isServerThread
+          showGitControls
+          envMode="local"
+          envLocked={false}
+          startFromOrigin={false}
+          onStartFromOriginChange={vi.fn()}
+          onEnvModeChange={vi.fn()}
+          {...props}
+        />
+      </ComposerSurface.Shell>,
     ),
   );
 }
@@ -144,5 +150,57 @@ it.each([
         expect(state.writeTextToClipboard).toHaveBeenCalledWith(copiedPath, "workspace path"),
       );
     }
+  },
+);
+
+it.each([
+  { layout: "wide Git", width: 900, showGitControls: true },
+  { layout: "narrow Git", width: 360, showGitControls: true },
+  { layout: "sole primary non-Git", width: 360, showGitControls: false },
+])(
+  "copies the pending update from the $layout composer chip",
+  async ({ width, showGitControls }) => {
+    await page.viewport(1000, 700);
+    container.style.width = `${width}px`;
+    container.style.setProperty("--chat-content-max-width", `${width}px`);
+    const serverUpdate = {
+      environmentId: EnvironmentId.make("local"),
+      serverLabel: "Build box",
+      serverVersion: "0.0.30",
+      targetVersion: "0.0.31",
+      selfUpdate: null,
+      installation: { kind: "npm-global", prefix: "/opt/node" },
+    } satisfies ServerUpdateTarget & { serverVersion: string };
+    await render({
+      layout: "composer",
+      envLocked: showGitControls,
+      showGitControls,
+      availableEnvironments: [
+        {
+          environmentId: serverUpdate.environmentId,
+          projectId: ProjectId.make("project"),
+          label: serverUpdate.serverLabel,
+          isPrimary: true,
+          machine: "server",
+        },
+      ],
+      serverUpdate,
+    });
+
+    expect(
+      container.querySelector('[data-slot="composer-shell"]')!.getBoundingClientRect().width,
+    ).toBe(width);
+    const chip = page.getByRole("button", { name: /Build box|Copy update command/ });
+    await expect.element(chip).toBeVisible();
+    await userEvent.hover(chip);
+    await expect.element(page.getByRole("tooltip")).toMatchTextContent("0.0.30");
+    await expect.element(page.getByRole("tooltip")).toMatchTextContent("0.0.31");
+    await userEvent.click(chip);
+    await vi.waitFor(() =>
+      expect(state.writeTextToClipboard).toHaveBeenCalledWith(
+        "npm install --global --prefix '/opt/node' t3@0.0.31",
+        "update command",
+      ),
+    );
   },
 );

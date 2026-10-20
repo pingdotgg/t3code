@@ -5,10 +5,13 @@ import {
   PullRequestListEntry,
   PullRequestListProjectError,
   PullRequestListResult,
+  pullRequestHostOf,
   resolvePullRequestAuthorFilter,
 } from "@t3tools/contracts";
 import type {
   ProjectId,
+  RepositoryIdentity,
+  SourceControlProviderKind,
   PullRequestAction,
   PullRequestActor,
   PullRequestDiffStat,
@@ -19,6 +22,8 @@ import type {
   PullRequestListState,
   PullRequestState,
 } from "@t3tools/contracts";
+
+import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 
 import { toSortableTimestamp } from "../../lib/threadSort";
 import type { PullRequestListSort } from "./pullRequestListPreferences";
@@ -967,4 +972,43 @@ export function largestPullRequestReadCount(
     counts.set(read, (counts.get(read) ?? 0) + 1);
   }
   return Math.max(0, ...counts.values());
+}
+
+export function findProjectForRepository<
+  Project extends {
+    readonly id: string;
+    readonly environmentId: string;
+    readonly repositoryIdentity?: RepositoryIdentity | null | undefined;
+  },
+>(
+  projects: ReadonlyArray<Project>,
+  input: {
+    readonly repository: string;
+    readonly host?: string | undefined;
+    readonly selectedEnvironmentId?: string | null | undefined;
+    readonly scopedProjectId?: string | undefined;
+    readonly scopedEnvironmentId?: string | null | undefined;
+  },
+): Project | undefined {
+  const repository = input.repository.toLowerCase();
+  const host = input.host?.toLowerCase();
+  const candidates = projects.filter((project) => {
+    if (
+      input.selectedEnvironmentId != null &&
+      project.environmentId !== input.selectedEnvironmentId
+    ) {
+      return false;
+    }
+    const identity = project.repositoryIdentity;
+    if (!identity || sourceControlRepositorySelector(identity)?.toLowerCase() !== repository) {
+      return false;
+    }
+    return (
+      host === undefined ||
+      pullRequestHostOf(identity, identity.provider as SourceControlProviderKind) === host
+    );
+  });
+  // Azure repository names can collide across projects on the same host.
+  const scoped = findScopedProject(candidates, input.scopedEnvironmentId, input.scopedProjectId);
+  return scoped ?? candidates[0];
 }

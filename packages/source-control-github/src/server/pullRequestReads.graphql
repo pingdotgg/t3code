@@ -1,4 +1,11 @@
-# Reads of one pull request, or of the repository it belongs to.
+# Reads of the signed-in account, one pull request, or its repository.
+
+query RoutingIdentityViewer {
+  viewer {
+    databaseId
+    login
+  }
+}
 
 # Resolves a listing's authors to avatars, which no listing field carries.
 query ActorAvatars($ids: [ID!]!) {
@@ -51,11 +58,13 @@ query PullRequestCore(
   $number: Int!
   $headRef: String!
   $required: Boolean!
+  $requestedReviewers: Int!
 ) {
   repository(owner: $owner, name: $name) {
     mergeCommitAllowed
     squashMergeAllowed
     rebaseMergeAllowed
+    autoMergeAllowed
     viewerPermission
     pullRequest(number: $number) {
       number
@@ -65,6 +74,7 @@ query PullRequestCore(
       state
       isDraft
       mergeable
+      mergeStateStatus
       reviewDecision
       additions
       deletions
@@ -108,7 +118,7 @@ query PullRequestCore(
           behindBy
         }
       }
-      reviewRequests(first: 100) {
+      reviewRequests(first: $requestedReviewers) {
         nodes {
           requestedReviewer {
             ... on User {
@@ -359,6 +369,7 @@ query ViewerPermissions($owner: String!, $name: String!, $number: Int!) {
     mergeCommitAllowed
     squashMergeAllowed
     rebaseMergeAllowed
+    autoMergeAllowed
     viewerPermission
     pullRequest(number: $number) {
       viewerCanUpdate

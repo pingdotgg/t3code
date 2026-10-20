@@ -156,10 +156,15 @@ it("requires a new merge click after passing checks become pending and pass agai
 it.each<[PullRequestCheck["status"], PullRequestCheck["status"], string]>([
   ["success", "skipped", ""],
   ["failure", "cancelled", ""],
-  ["success", "action-required", ""],
+  ["success", "action-required", "1/2"],
   ["success", "pending", "1/2"],
+  ["pending", "pending", "0/2"],
+  ["pending", "action-required", "0/2"],
+  ["skipped", "pending", "1/2"],
+  ["neutral", "pending", "1/2"],
   ["failure", "pending", "1/2"],
-])("shows a count only while checks run (%s, %s)", (status, extraStatus, count) => {
+  ["cancelled", "pending", "1/2"],
+])("counts finished checks while work remains (%s, %s)", (status, extraStatus, count) => {
   state.status = status;
   state.extraStatus = extraStatus;
   act(() => {

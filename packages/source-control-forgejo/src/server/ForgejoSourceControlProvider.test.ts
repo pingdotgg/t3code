@@ -136,7 +136,8 @@ it.effect("reads the newest Forgejo checks without repository or viewer requests
     });
     assert.strictEqual(result.state, "open");
     assert.strictEqual(result.checks[0]?.status, "failure");
-    assert.deepStrictEqual(paths, [
+    assert.deepStrictEqual(paths.toSorted(), [
+      "repos/acme/web/branches/main",
       "repos/acme/web/pulls/1",
       "repos/acme/web/statuses/head?sort=recentupdate&limit=50&page=1",
       "repos/acme/web/statuses/head?sort=recentupdate&limit=50&page=2",
@@ -146,22 +147,188 @@ it.effect("reads the newest Forgejo checks without repository or viewer requests
       Layer.mock(ForgejoCli.ForgejoCli)({
         api: (input) => {
           paths.push(input.path);
-          assert.match(input.path, /^repos\/acme\/web\/(pulls\/1|statuses\/head)/);
+          assert.match(input.path, /^repos\/acme\/web\/(pulls\/1|statuses\/head|branches\/main)/);
           return Effect.succeed(
             processOutput(
-              input.path.endsWith("pulls/1")
-                ? `{"number":1,"title":"Checks","body":"","html_url":"https://forgejo.test/acme/web/pulls/1", "user":null,"state":"open","merged":false,
+              input.path.endsWith("branches/main")
+                ? `{"name":"main","protected":false,"enable_status_check":false,"status_check_contexts":[]}`
+                : input.path.endsWith("pulls/1")
+                  ? `{"number":1,"title":"Checks","body":"","html_url":"https://forgejo.test/acme/web/pulls/1", "user":null,"state":"open","merged":false,
             "head":{"ref":"feature","sha":"head","repo":null},"base":{"ref":"main","sha":"base","repo":null},
             "created_at":"2026-09-16T00:00:00Z","updated_at":"2026-09-16T00:00:00Z","closed_at":null,"merged_at":null,"labels":[]}`
-                : input.path.endsWith("page=1")
-                  ? `[{"context":"build","status":"failure","description":null,"target_url":null,"updated_at":"2026-09-16T00:00:00.500Z"},{"context":"build","status":"success","description":null,"target_url":null,"updated_at":"2026-09-16T00:00:00Z"}]`
-                  : "[]",
+                  : input.path.endsWith("page=1")
+                    ? `[{"context":"build","status":"failure","description":null,"target_url":null,"updated_at":"2026-09-16T00:00:00.500Z"},{"context":"build","status":"success","description":null,"target_url":null,"updated_at":"2026-09-16T00:00:00Z"}]`
+                    : "[]",
             ),
           );
         },
       }),
     ),
   );
+});
+
+const requiredChecksPullRequest = {
+  number: 7,
+  title: "Required checks",
+  body: "",
+  html_url: "https://forgejo.test/acme/web/pulls/7",
+  user: { login: "maria" },
+  state: "open",
+  merged: false,
+  head: { ref: "feature", sha: "head", repo: null },
+  base: { ref: "release/1.x", sha: "base", repo: null },
+  created_at: "2026-10-12T00:00:00Z",
+  updated_at: "2026-10-12T00:00:00Z",
+  closed_at: null,
+  merged_at: null,
+  labels: [],
+};
+const requiredChecksStatuses = [
+  ["ci/required-build", "success"],
+  ["ci/optional-lint", "failure"],
+].map(([context, status]) => ({
+  context,
+  status,
+  description: null,
+  target_url: null,
+  updated_at: "2026-10-12T00:00:00Z",
+}));
+
+const requiredChecksInput = {
+  cwd: "/repo",
+  repository: "acme/web",
+  host: "forgejo.test",
+  number: 7,
+};
+const requiredChecksLayer = (
+  branch: Effect.Effect<unknown, ForgejoCli.ForgejoCliError>,
+  statuses = requiredChecksStatuses,
+) =>
+  Layer.mock(ForgejoCli.ForgejoCli)({
+    api: (input) => {
+      const [path, query] = input.path.split("?");
+      const respond = (response: unknown) =>
+        encodeJsonEffect(response).pipe(Effect.orDie, Effect.map(processOutput));
+      switch (path) {
+        case "repos/acme/web/pulls/7":
+          return respond(requiredChecksPullRequest);
+        case "repos/acme/web/statuses/head":
+          return respond(new URLSearchParams(query).get("page") === "1" ? statuses : []);
+        case "repos/acme/web/branches/release/1.x":
+          return Effect.flatMap(branch, respond);
+        case "repos/acme/web":
+          return respond({ full_name: "acme/web", permissions: { push: true, admin: false } });
+        case "user":
+          return respond({ login: "maria" });
+        default:
+          return Effect.die(`Unexpected Forgejo request: ${input.path}`);
+      }
+    },
+  });
+
+it.effect.each([
+  ["ci/required-deploy", true],
+  ["test-*", true],
+  ["ci/[ab]", false],
+] as const)("keeps missing required pattern %s pending (supported: %s)", ([missing, supported]) =>
+  Effect.gen(function* () {
+    const provider = yield* ForgejoPullRequestProvider.make;
+    const readChecks = provider.getChangeRequestChecks;
+    if (readChecks === undefined) return yield* Effect.die("checks read missing");
+    const summary = yield* readChecks(requiredChecksInput);
+    const detail = yield* provider.getChangeRequest(requiredChecksInput);
+    for (const checks of [summary.checks, detail.checks]) {
+      assert.deepStrictEqual(
+        checks.map((check) => [check.name, check.status, check.required]),
+        supported
+          ? [
+              ["ci/optional-lint", "failure", undefined],
+              ["ci/required-build", "success", true],
+              [missing, "pending", true],
+            ]
+          : [
+              ["ci/required-build", "success", undefined],
+              ["ci/optional-lint", "success", undefined],
+              [missing, "pending", undefined],
+            ],
+      );
+      if (!supported) {
+        assert.strictEqual(
+          checks.at(-1)?.description,
+          "Required check pattern cannot be evaluated.",
+        );
+      }
+    }
+  }).pipe(
+    Effect.provide(
+      requiredChecksLayer(
+        Effect.succeed({
+          name: "release/1.x",
+          protected: true,
+          enable_status_check: true,
+          status_check_contexts: ["ci/required-*", missing, missing],
+        }),
+        supported
+          ? requiredChecksStatuses
+          : requiredChecksStatuses.map((status) => ({ ...status, status: "success" })),
+      ),
+    ),
+  ),
+);
+
+it.effect.each([
+  ["older branch metadata", Effect.succeed({ name: "release/1.x", protected: true })],
+  ...(["not-found", "forbidden"] as const).map(
+    (reason) =>
+      [
+        reason,
+        Effect.fail(
+          new ForgejoCli.ForgejoCliError({
+            command: "fj",
+            cwd: "/repo",
+            reason,
+            httpStatus: reason === "not-found" ? 404 : 403,
+            detail: "Branch metadata unavailable.",
+          }),
+        ),
+      ] as const,
+  ),
+] as const)("keeps all statuses gating with %s", ([, branch]) =>
+  Effect.gen(function* () {
+    const provider = yield* ForgejoPullRequestProvider.make;
+    const readChecks = provider.getChangeRequestChecks;
+    if (readChecks === undefined) return yield* Effect.die("checks read missing");
+    const summary = yield* readChecks(requiredChecksInput);
+    const detail = yield* provider.getChangeRequest(requiredChecksInput);
+    for (const checks of [summary.checks, detail.checks]) {
+      assert.deepStrictEqual(
+        checks.map((check) => [check.name, check.status, check.required]),
+        [
+          ["ci/optional-lint", "failure", undefined],
+          ["ci/required-build", "success", undefined],
+        ],
+      );
+    }
+  }).pipe(Effect.provide(requiredChecksLayer(branch))),
+);
+
+it.effect.each([
+  ["rate limit", { reason: "rate-limit", httpStatus: 429 }, "rate-limited"],
+  ["authentication failure", { reason: "authentication", httpStatus: 401 }, "unauthenticated"],
+  ["server failure", { httpStatus: 503 }, "failed"],
+  ["network failure", {}, "failed"],
+] as const)("propagates branch metadata %s", ([detail, fields, reason]) => {
+  const cause = new ForgejoCli.ForgejoCliError({ command: "fj", cwd: "/repo", detail, ...fields });
+  return Effect.gen(function* () {
+    const provider = yield* ForgejoPullRequestProvider.make;
+    const readChecks = provider.getChangeRequestChecks;
+    if (readChecks === undefined) return yield* Effect.die("checks read missing");
+    for (const read of [readChecks, provider.getChangeRequest]) {
+      const error = yield* read(requiredChecksInput).pipe(Effect.flip);
+      assert.strictEqual(error.reason, reason);
+      assert.strictEqual(error.cause, cause);
+    }
+  }).pipe(Effect.provide(requiredChecksLayer(Effect.fail(cause))));
 });
 
 it.effect("opens Forgejo Actions check links on the pull request's server", () =>
@@ -194,31 +361,33 @@ it.effect("opens Forgejo Actions check links on the pull request's server", () =
             target_url,
             updated_at: "2026-10-11T00:00:00Z",
           });
-          const body = input.path.endsWith("pulls/1")
-            ? {
-                number: 1,
-                title: "Checks",
-                body: "",
-                html_url: "https://forgejo.test/git/acme/web/pulls/1",
-                user: null,
-                state: "open",
-                merged: false,
-                head: { ref: "feature", sha: "head", repo: null },
-                base: { ref: "main", sha: "base", repo: null },
-                created_at: "2026-10-11T00:00:00Z",
-                updated_at: "2026-10-11T00:00:00Z",
-                closed_at: null,
-                merged_at: null,
-                labels: [],
-              }
-            : input.path.endsWith("page=1")
-              ? [
-                  // Forgejo includes any sub-path mount in the relative links it reports.
-                  status("actions", "/git/acme/web/actions/runs/7/jobs/2"),
-                  status("external", "https://ci.example/build/9"),
-                  status("none", null),
-                ]
-              : [];
+          const body = input.path.endsWith("branches/main")
+            ? {}
+            : input.path.endsWith("pulls/1")
+              ? {
+                  number: 1,
+                  title: "Checks",
+                  body: "",
+                  html_url: "https://forgejo.test/git/acme/web/pulls/1",
+                  user: null,
+                  state: "open",
+                  merged: false,
+                  head: { ref: "feature", sha: "head", repo: null },
+                  base: { ref: "main", sha: "base", repo: null },
+                  created_at: "2026-10-11T00:00:00Z",
+                  updated_at: "2026-10-11T00:00:00Z",
+                  closed_at: null,
+                  merged_at: null,
+                  labels: [],
+                }
+              : input.path.endsWith("page=1")
+                ? [
+                    // Forgejo includes any sub-path mount in the relative links it reports.
+                    status("actions", "/git/acme/web/actions/runs/7/jobs/2"),
+                    status("external", "https://ci.example/build/9"),
+                    status("none", null),
+                  ]
+                : [];
           return encodeJsonEffect(body).pipe(Effect.orDie, Effect.map(processOutput));
         },
       }),
@@ -296,6 +465,9 @@ it.effect.each([
                 break;
               case "repos/maria/project/statuses/head":
                 response = [];
+                break;
+              case "repos/maria/project/branches/main":
+                response = { name: "main", protected: false };
                 break;
               default:
                 return Effect.die(`Unexpected Forgejo request: ${input.path}`);
@@ -1046,7 +1218,9 @@ it.effect("prefers fj for HTTP and ported SSH aliases on root servers", () => {
                 input.cwd === "/no-remotes"
                   ? processOutput("", { exitCode: ChildProcessSpawner.ExitCode(2) })
                   : processOutput(
-                      `${input.cwd === "/upstream-only" ? "upstream" : "origin"}\thttp://forgejo.local:3000/maria/project.git (fetch)\nother\thttp://forgejo.local:3000/maria/other.git (fetch)\nunrelated\thttp://other.local:3000/maria/project.git (fetch)`,
+                      input.cwd === "/upstream-only"
+                        ? "upstream\thttp://forgejo.local:3000/maria/project.git (fetch) [blob:none]\nother\thttp://forgejo.local:3000/maria/other.git (fetch) [blob:none]\nunrelated\thttp://other.local:3000/maria/project.git (fetch) [blob:none]"
+                        : "origin\thttp://forgejo.local:3000/maria/project.git (fetch)\nother\thttp://forgejo.local:3000/maria/other.git (fetch)\nunrelated\thttp://other.local:3000/maria/project.git (fetch)",
                     ),
               );
             assert.strictEqual(input.command, "fj");

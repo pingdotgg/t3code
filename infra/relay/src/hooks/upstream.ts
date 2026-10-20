@@ -73,43 +73,45 @@ const readCapped = (response: HttpClientResponse.HttpClientResponse) =>
  * Sends a webhook request through the environment's tunnel. Fails when the
  * environment cannot be reached, and succeeds with None on timeout.
  */
-export const sendUpstream = (baseUrl: string, hook: UpstreamHook) =>
-  Effect.gen(function* () {
-    const httpClient = yield* HttpClient.HttpClient;
-    const base = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
-    // The environment's span joins this trace. Set by hand: the client span
-    // that would propagate it is off, because it records the token in url.full.
-    const parent = yield* Effect.currentSpan.pipe(Effect.option);
-    const headers: Record<string, string> = {
-      ...hook.headers,
-      ...(Option.isSome(parent) ? HttpTraceContext.toHeaders(parent.value) : {}),
-      [RELAY_DELIVERY_ID_HEADER]: hook.id,
-      [RELAY_RECEIVED_AT_HEADER]: hook.receivedAt,
-    };
-    let request = HttpClientRequest.make(hook.method as "GET" | "POST" | "PUT" | "PATCH")(
-      `${base}api/hooks/${hook.rawHookId}/${hook.rawToken}${hook.query ? `?${hook.query}` : ""}`,
-      { headers },
-    );
-    if (HttpMethod.hasBody(request.method)) {
-      request = HttpClientRequest.bodyUint8Array(request, hook.body, headers["content-type"]);
-    }
-    return yield* httpClient.execute(request).pipe(
-      Effect.flatMap((response) =>
-        readCapped(response).pipe(
-          Effect.map((body): UpstreamResponse => {
-            const outcome = response.headers["x-t3-hook-outcome"];
-            return {
-              status: response.status,
-              contentType: response.headers["content-type"],
-              outcome: outcome !== undefined && OUTCOME_PATTERN.test(outcome) ? outcome : undefined,
-              body,
-            };
-          }),
-        ),
+export const sendUpstream = Effect.fn("upstream.sendUpstream")(function* (
+  baseUrl: string,
+  hook: UpstreamHook,
+) {
+  const httpClient = yield* HttpClient.HttpClient;
+  const base = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
+  // The environment's span joins this trace. Set by hand: the client span
+  // that would propagate it is off, because it records the token in url.full.
+  const parent = yield* Effect.currentSpan.pipe(Effect.option);
+  const headers: Record<string, string> = {
+    ...hook.headers,
+    ...(Option.isSome(parent) ? HttpTraceContext.toHeaders(parent.value) : {}),
+    [RELAY_DELIVERY_ID_HEADER]: hook.id,
+    [RELAY_RECEIVED_AT_HEADER]: hook.receivedAt,
+  };
+  let request = HttpClientRequest.make(hook.method as "GET" | "POST" | "PUT" | "PATCH")(
+    `${base}api/hooks/${hook.rawHookId}/${hook.rawToken}${hook.query ? `?${hook.query}` : ""}`,
+    { headers },
+  );
+  if (HttpMethod.hasBody(request.method)) {
+    request = HttpClientRequest.bodyUint8Array(request, hook.body, headers["content-type"]);
+  }
+  return yield* httpClient.execute(request).pipe(
+    Effect.flatMap((response) =>
+      readCapped(response).pipe(
+        Effect.map((body): UpstreamResponse => {
+          const outcome = response.headers["x-t3-hook-outcome"];
+          return {
+            status: response.status,
+            contentType: response.headers["content-type"],
+            outcome: outcome !== undefined && OUTCOME_PATTERN.test(outcome) ? outcome : undefined,
+            body,
+          };
+        }),
       ),
-      withoutRedirects,
-      // The client span would record url.full, which carries the token.
-      Effect.provideService(HttpClient.TracerDisabledWhen, () => true),
-      Effect.timeoutOption(Duration.millis(RELAY_HOOK_UPSTREAM_TIMEOUT_MS)),
-    );
-  });
+    ),
+    withoutRedirects,
+    // The client span would record url.full, which carries the token.
+    Effect.provideService(HttpClient.TracerDisabledWhen, () => true),
+    Effect.timeoutOption(Duration.millis(RELAY_HOOK_UPSTREAM_TIMEOUT_MS)),
+  );
+});

@@ -783,6 +783,17 @@ export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThrea
   }
   let runId = input.runId ?? (input.turnId as RunId | undefined);
   if (runId === undefined) {
+    const config = yield* getInitialServerConfig();
+    if (config.environment.capabilities.threadStop === true) {
+      // A paginated projection can omit commands still running from earlier turns.
+      return yield* dispatch({
+        type: "thread.stop",
+        commandId: yield* allocateCommandId(input),
+        threadId: input.threadId,
+      });
+    }
+  }
+  if (runId === undefined) {
     const projection = yield* getProjection(input.threadId);
     runId = projection.runs.findLast(
       (run) =>

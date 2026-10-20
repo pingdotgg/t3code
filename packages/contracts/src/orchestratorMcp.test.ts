@@ -59,12 +59,31 @@ describe("orchestrator MCP contracts", () => {
       latestTerminalSummary: "Workspace inspected.",
       latestTerminalResultContextTransferId: "context-transfer-result-1",
       hasPendingQuestion: false,
+      pendingApproval: null,
       waitTimedOut: false,
     });
 
     expect(request.target?.providerInstanceId).toBe("claudeAgent");
     expect(result.status).toBe("completed");
     expect(result.summary).toBe("Workspace inspected.");
+    expect(result.pendingApproval).toBeNull();
+    const pendingApproval = {
+      requestId: "request-approval-1",
+      kind: "command",
+      runId: "run-child-1",
+    };
+    expect(
+      decodeDelegateTaskResult({
+        ...result,
+        pendingApproval: { ...pendingApproval, input: { command: "private command" } },
+      }).pendingApproval,
+    ).toEqual(pendingApproval);
+    expect(() =>
+      decodeDelegateTaskResult({
+        ...result,
+        pendingApproval: { ...pendingApproval, kind: "user_input" },
+      }),
+    ).toThrow();
   });
 
   it("decodes target model options in canonical and shorthand shapes", () => {

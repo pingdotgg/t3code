@@ -148,7 +148,8 @@ Press `Escape` while dragging to cancel.
 
 By default, environments settle inactive threads after three days and settle
 threads whose pull request merged. A closed pull request can also settle an idle
-thread. Work in progress, pending questions or approvals, and live background work
+thread. An empty thread's inactivity counts from when it was created.
+Work in progress, pending questions or approvals, and live background work
 prevent automatic settlement. An open pull request does not prevent inactivity
 settlement unless you turn on **Keep threads with a PR** in **Settings → General**,
 but an old closed or merged pull request does not settle work you
@@ -205,8 +206,8 @@ continuation. You can cancel it from the thread. Enable **Auto-resume limited
 threads** in **Settings → General** on web and desktop, or **Settings → Thread
 behavior** on mobile, to schedule limit stops by default.
 The environment must be running when the reset arrives; it resumes overdue
-continuations after a restart. Sending a new message, archiving, or settling the
-thread prevents a pending continuation from starting.
+continuations after a restart. Stopping the thread, sending a new message,
+archiving, or settling it prevents a pending continuation from starting.
 
 Choose **Snooze until reset** to hide the thread until its allowance returns.
 Snooze and auto-resume are independent: snooze alone wakes the thread without

@@ -125,6 +125,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   threadVisitedTracking: Schema.optionalKey(Schema.Boolean),
   threadPullRequestLinking: Schema.optionalKey(Schema.Boolean),
   serverResolvedCommandContext: Schema.optionalKey(Schema.Boolean),
+  threadStop: Schema.optionalKey(Schema.Boolean),
   threadPullRequests: Schema.optionalKey(Schema.Boolean),
   threadPullRequestWatch: Schema.optionalKey(Schema.Boolean),
   pullRequestStackActions: Schema.optionalKey(Schema.Boolean),
@@ -179,6 +180,7 @@ export const RepositoryIdentity = Schema.Struct({
   canonicalKey: TrimmedNonEmptyString,
   locator: RepositoryIdentityLocator,
   webUrl: Schema.optionalKey(TrimmedNonEmptyString),
+  /** Work tree root, or the git dir for a bare repository. */
   rootPath: Schema.optionalKey(TrimmedNonEmptyString),
   displayName: Schema.optionalKey(TrimmedNonEmptyString),
   provider: Schema.optionalKey(TrimmedNonEmptyString),

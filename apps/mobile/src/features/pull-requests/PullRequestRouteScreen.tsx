@@ -44,13 +44,13 @@ import {
   useRoute,
   type StaticScreenProps,
 } from "@react-navigation/native";
-import { useAtomRefresh } from "@effect/atom-react";
+import { RegistryContext, useAtomRefresh } from "@effect/atom-react";
 import { pullRequestReviewKey } from "./pullRequestReviewDrafts";
 import { type PullRequestDetail, type PullRequestListEntry } from "@t3tools/contracts";
 import { PullRequestOverviewLoading } from "./PullRequestOverviewLoading";
 import { copyPullRequestLink, sharePullRequestLink } from "./pullRequestLink";
 import { pullRequestStatus } from "./pullRequestStatus";
-import { useEffect, useRef, useState } from "react";
+import { use, useEffect, useRef, useState } from "react";
 import {
   Linking,
   Platform,
@@ -354,13 +354,22 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
   const stack = usePullRequestStack(params, pr);
   const refreshActivity = useAtomRefresh(composerPullRequests.activity(requestTarget(params)));
   const refreshGuide = useAtomRefresh(composerPullRequests.reviewGuide(requestTarget(params)));
-  const refresh = () => {
-    pullRefresh.onRefresh();
-    if (guidesEnabled) refreshGuide();
-    stack.refresh();
-    refreshActivity();
-    filesContent.refresh();
-  };
+  const registry = use(RegistryContext);
+  const refresh = () =>
+    pullRefresh.onRefresh(async (signal) => {
+      const target = requestTarget(params);
+      await composerPullRequests.invalidate
+        .run(registry, {
+          environmentId: target.environmentId,
+          input: { reference: target.input },
+        })
+        .catch(() => undefined);
+      if (signal.aborted) return;
+      if (guidesEnabled) refreshGuide();
+      stack.refresh();
+      refreshActivity();
+      filesContent.refresh();
+    });
   const jumpToFiles = () => {
     scrollViews.current.overview?.scrollToOffset({
       offset: bodyY.current + filesY.current - insets.top,
@@ -1213,13 +1222,9 @@ export function PullRequestFileRouteScreen({
           </View>
         ) : null}
         {result.error && result.nextCursor ? (
-          <Pressable
-            accessibilityRole="button"
-            onPress={result.refresh}
-            className="min-h-11 items-center justify-center py-2"
-          >
-            <Text className="text-sm font-t3-medium">Retry loading remaining files</Text>
-          </Pressable>
+          <View className="self-center">
+            <Button label="Retry loading remaining files" tone="text" onPress={result.refresh} />
+          </View>
         ) : null}
         {parsed.kind === "files" && parsed.notice ? (
           <Text className="px-4 py-2 text-2xs text-foreground-muted">{parsed.notice}</Text>

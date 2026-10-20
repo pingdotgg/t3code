@@ -1,10 +1,10 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { SourceControlProviderKind, VcsProcessExitError } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeV8 from "node:v8";
 import * as NodeVM from "node:vm";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
-import { assert, it } from "@effect/vitest";
+import { assert, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
@@ -34,8 +34,14 @@ import * as PullRequestFilesViewed from "../persistence/PullRequestFilesViewed.t
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
+import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
+import * as GitLabPullRequestCli from "@t3tools/source-control-gitlab/server/GitLabPullRequestCli";
+import * as GitLabPullRequestProvider from "@t3tools/source-control-gitlab/server/GitLabPullRequestProvider";
 import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
 import * as ForgejoPullRequestProvider from "@t3tools/source-control-forgejo/server/ForgejoPullRequestProvider";
+import * as BitbucketApi from "@t3tools/source-control-bitbucket/server/BitbucketApi";
+import * as BitbucketPullRequestApi from "@t3tools/source-control-bitbucket/server/BitbucketPullRequestApi";
+import * as BitbucketPullRequestProvider from "@t3tools/source-control-bitbucket/server/BitbucketPullRequestProvider";
 import * as GitHubRest from "@t3tools/source-control-github/server/GitHubRest";
 import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHubCredentials";
 import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/GitHubPullRequestApi";
@@ -921,6 +927,82 @@ it.effect("uses a provider's raw cursor advance when it consumed malformed rows"
   }),
 );
 
+it.effect("continues Bitbucket listings through tied timestamps and terminates", () =>
+  Effect.gen(function* () {
+    const boundary = "2026-10-12T00:00:00.000Z";
+    const older = "2026-10-11T00:00:00.000Z";
+    const rows = [1, 2, 3, 4, 5].map((id) => ({
+      id,
+      title: `Pull request ${id}`,
+      state: "OPEN",
+      created_on: older,
+      updated_on: id <= 3 ? boundary : older,
+      source: { branch: { name: `feat/${id}` } },
+      destination: { branch: { name: "main" } },
+      links: { html: { href: `https://bitbucket.org/acme/web/pull-requests/${id}` } },
+    }));
+    const provider = yield* BitbucketPullRequestProvider.make.pipe(
+      Effect.provide(
+        BitbucketPullRequestApi.layer.pipe(
+          Layer.provide(
+            Layer.mock(BitbucketApi.BitbucketApi)({
+              request: ({ url }) => {
+                if (url === "/user") {
+                  return Effect.succeed({
+                    body: JSON.stringify({ nickname: "bilal" }),
+                    truncated: false,
+                  });
+                }
+                const filter =
+                  new URL(url, "https://api.bitbucket.org").searchParams.get("q") ?? "";
+                const updatedBefore = /updated_on <= (\S+)/.exec(filter)?.[1];
+                const excluded = new Set(
+                  Array.from(filter.matchAll(/id != (\d+)/g), (match) => Number(match[1])),
+                );
+                const values = rows.filter(
+                  (row) =>
+                    (updatedBefore === undefined || row.updated_on <= updatedBefore) &&
+                    !excluded.has(row.id),
+                );
+                return Effect.succeed({ body: JSON.stringify({ values }), truncated: false });
+              },
+            }),
+          ),
+        ),
+      ),
+    );
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "web",
+          workspaceRoot: "/w",
+          repository: "acme/web",
+          provider: "bitbucket",
+          host: "bitbucket.org",
+        }),
+      ],
+      providers: [provider],
+    });
+    let page = yield* service.list({ state: "open", limit: 2 });
+    assert.deepStrictEqual(
+      page.entries.map((entry) => entry.number),
+      [1, 2],
+    );
+    for (const expected of [[3, 4], [5]]) {
+      assert.isTrue(page.truncated);
+      assert.isNotEmpty(page.nextCursors);
+      page = yield* service.list({ state: "open", limit: 2, cursors: page.nextCursors });
+      assert.deepStrictEqual(
+        page.entries.map((entry) => entry.number),
+        expected,
+      );
+    }
+    assert.isFalse(page.truncated);
+    assert.deepStrictEqual(page.nextCursors, {});
+  }),
+);
+
 it.effect("reads only the repositories it was asked to carry on with", () =>
   Effect.gen(function* () {
     const listed: string[] = [];
@@ -947,7 +1029,9 @@ it.effect("reads only the repositories it was asked to carry on with", () =>
     });
 
     assert.deepStrictEqual(listed, ["acme/web"]);
-    assert.deepStrictEqual(cursors, [{ updatedBefore: "2026-07-02T00:00:00Z", delivered: 99 }]);
+    assert.deepStrictEqual(cursors, [
+      { updatedBefore: "2026-07-02T00:00:00Z", delivered: 99, seenAt: [7] },
+    ]);
     assert.strictEqual(result.providers.length, 1);
   }),
 );
@@ -1729,6 +1813,7 @@ it.effect("keeps branch deletion on the credential that passed source repository
                   mergeCommitAllowed: true,
                   squashMergeAllowed: true,
                   rebaseMergeAllowed: true,
+                  autoMergeAllowed: true,
                   viewerPermission: "READ",
                   pullRequest: {
                     viewerCanUpdate: false,
@@ -1867,7 +1952,7 @@ it.effect("gates arming a merge for later exactly as it gates merging now", () =
       service.runAction({ ...reference, action: "enable-auto-merge", mergeMethod: "squash" }),
     );
     assert.strictEqual(refused._tag, "PullRequestOperationError");
-    assert.include(refused.message, "merged for you once it is ready");
+    assert.include(refused.message, "the repository has to allow it");
     assert.strictEqual(ranWith, null);
 
     const wrongStrategy = yield* Effect.flip(
@@ -4554,7 +4639,7 @@ it.effect("carries a slice on without sending the rows it already sent", () =>
       [4],
     );
     assert.deepStrictEqual(result.nextCursors, {
-      "github.com acme/web": "2026-07-02T00:00:00Z|2|3,3,4",
+      "github.com acme/web": "2026-07-02T00:00:00Z|2|3,4",
     });
   }),
 );
@@ -6214,6 +6299,65 @@ it.effect("names the signed-in account in the detail, and says nothing where the
   }),
 );
 
+it.effect("partial host viewed writes invalidate marks but keep the diff cached", () =>
+  Effect.gen(function* () {
+    let diffReads = 0;
+    const states = new Map<string, "viewed" | "unviewed">([
+      ["a.ts", "unviewed"],
+      ["b.ts", "unviewed"],
+    ]);
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("github"), {
+          capabilities: {
+            ...fakeProvider(SourceControlProviderKind.make("github")).capabilities,
+            viewedFiles: "host",
+          },
+          getDiff: () =>
+            Effect.sync(() => {
+              diffReads += 1;
+              return { patch: "@@", truncated: false, nextCursor: null };
+            }),
+          getFilesViewed: () =>
+            Effect.sync(() => ({
+              files: [...states].map(([path, state]) => ({ path, state })),
+              truncated: false,
+            })),
+          setFilesViewed: () =>
+            Effect.gen(function* () {
+              states.set("a.ts", "viewed");
+              return yield* new PullRequestProviderError({
+                provider: SourceControlProviderKind.make("github"),
+                operation: "setFilesViewed",
+                reason: "failed",
+                detail: "Second mutation refused",
+              });
+            }),
+        }),
+      ],
+    });
+    const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 10 };
+    yield* service.diff(ref);
+    assert.deepStrictEqual((yield* service.filesViewed(ref)).files, [
+      { path: "a.ts", state: "unviewed" },
+      { path: "b.ts", state: "unviewed" },
+    ]);
+    yield* Effect.flip(
+      service.setFilesViewed({
+        ...ref,
+        files: [...states.keys()].map((path) => ({ path, viewed: true })),
+      }),
+    );
+    yield* service.diff(ref);
+    assert.strictEqual(diffReads, 1);
+    assert.deepStrictEqual((yield* service.filesViewed(ref)).files, [
+      { path: "a.ts", state: "viewed" },
+      { path: "b.ts", state: "unviewed" },
+    ]);
+  }),
+);
+
 it.effect("keeps the diff cached across a file being ticked off", () =>
   Effect.gen(function* () {
     let diffReads = 0;
@@ -7713,6 +7857,86 @@ it.effect.each([
       });
       assert.deepStrictEqual(calls, [expected]);
     }),
+);
+
+it.effect("pauses uncached GitLab activity after only the reactions endpoint is rate limited", () =>
+  Effect.gen(function* () {
+    let commandCalls = 0;
+    const provider = yield* GitLabPullRequestProvider.make.pipe(
+      Effect.provide(
+        GitLabPullRequestCli.layer.pipe(
+          Layer.provide(GitLabCli.layer),
+          Layer.provide(
+            TestSourceControlHost.layer({
+              process: {
+                run: (input) =>
+                  Effect.suspend(() => {
+                    commandCalls += 1;
+                    return input.args[1] === "graphql"
+                      ? Effect.fail(
+                          new VcsProcessExitError({
+                            operation: input.operation,
+                            command: input.command,
+                            cwd: input.cwd,
+                            exitCode: 1,
+                            detail: "API rate limit exceeded.",
+                            failureKind: "rate-limited",
+                          }),
+                        )
+                      : Effect.succeed(TestSourceControlHost.processOutput("[]"));
+                  }),
+              },
+            }),
+          ),
+        ),
+      ),
+    );
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "web",
+          workspaceRoot: "/repo",
+          repository: "acme/web",
+          provider: "gitlab",
+          host: "gitlab.example.test",
+        }),
+      ],
+      providers: [provider],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+
+    expect(yield* Effect.result(service.activity(reference))).toMatchObject({
+      _tag: "Failure",
+      failure: {
+        _tag: "PullRequestOperationError",
+        cause: {
+          _tag: "PullRequestProviderError",
+          reason: "rate-limited",
+          cause: { _tag: "GitLabCliRateLimitError" },
+        },
+      },
+    });
+    const firstCommandCalls = commandCalls;
+    assert.isAbove(firstCommandCalls, 0);
+
+    // A different merge request cannot reuse the first request's cached failure.
+    expect(yield* Effect.result(service.activity({ ...reference, number: 2 }))).toMatchObject({
+      _tag: "Failure",
+      failure: {
+        _tag: "PullRequestOperationError",
+        cause: {
+          _tag: "PullRequestProviderError",
+          reason: "rate-limited",
+          cause: {
+            _tag: "SourceControlRateLimitPausedError",
+            host: "gitlab.example.test",
+          },
+        },
+      },
+    });
+    assert.strictEqual(commandCalls, firstCommandCalls);
+  }),
 );
 
 it.effect("expands only files the change request changes, across every slice of its diff", () =>

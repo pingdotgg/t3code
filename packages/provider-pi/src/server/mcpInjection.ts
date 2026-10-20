@@ -245,6 +245,7 @@ export function buildPiRpcLaunch(input: {
   readonly environment: NodeJS.ProcessEnv;
   readonly mcpSession: McpProviderSessionConfig | undefined;
   readonly extensionPath: string | undefined;
+  readonly sessionPath?: string | undefined;
   readonly ephemeral?: boolean;
   readonly disableExtensions?: boolean;
   readonly disableTools?: boolean;
@@ -265,7 +266,11 @@ export function buildPiRpcLaunch(input: {
   const args = [
     "--mode",
     "rpc",
-    ...(input.ephemeral === true ? ["--no-session"] : []),
+    ...(input.ephemeral === true
+      ? ["--no-session"]
+      : input.sessionPath !== undefined
+        ? ["--session", input.sessionPath]
+        : []),
     ...launchArgs,
     // Restrictions follow user launch args so a configured --tools or
     // --extension cannot silently re-enable unattended text-generation code.

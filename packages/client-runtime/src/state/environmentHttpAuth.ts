@@ -52,13 +52,13 @@ const withEnvironmentCredentials = <A, E, R>(
     ? request.pipe(Effect.provideService(FetchHttpClient.RequestInit, { credentials: "include" }))
     : request;
 
-const buildEnvironmentAuthHeaders = (
-  authorization: PreparedHttpAuthorization | null,
-  method: HttpMethod.HttpMethod,
-  url: string,
-  signer: Option.Option<ManagedRelayDpopSigner["Service"]>,
-): Effect.Effect<EnvironmentHttpAuthHeaders, RemoteEnvironmentAuthFetchError> =>
-  Effect.gen(function* () {
+const buildEnvironmentAuthHeaders = Effect.fn("environmentHttpAuth.buildEnvironmentAuthHeaders")(
+  function* (
+    authorization: PreparedHttpAuthorization | null,
+    method: HttpMethod.HttpMethod,
+    url: string,
+    signer: Option.Option<ManagedRelayDpopSigner["Service"]>,
+  ): Effect.fn.Return<EnvironmentHttpAuthHeaders, RemoteEnvironmentAuthFetchError> {
     if (authorization === null) {
       return {};
     }
@@ -83,7 +83,8 @@ const buildEnvironmentAuthHeaders = (
         ),
       );
     return { authorization: `DPoP ${authorization.accessToken}`, dpop: proof };
-  });
+  },
+);
 
 /**
  * A DPoP request is T3 Connect work, so its span starts an exported trace that

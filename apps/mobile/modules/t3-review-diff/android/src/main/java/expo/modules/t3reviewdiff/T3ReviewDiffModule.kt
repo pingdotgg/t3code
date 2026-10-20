@@ -38,9 +38,8 @@ class T3ReviewDiffModule : Module() {
       Prop("rowHeight") { view: T3ReviewDiffView, rowHeight: Double ->
         view.setRowHeight(rowHeight.toFloat())
       }
-      Prop("contentWidth") { view: T3ReviewDiffView, contentWidth: Double ->
-        view.setContentWidth(contentWidth.toFloat())
-      }
+      // Accept the shared prop while deriving Android's scroll range from the drawn text.
+      Prop("contentWidth") { _: T3ReviewDiffView, _: Double -> }
       Prop("contentInsetBottom") { view: T3ReviewDiffView, value: Double ->
         view.setContentInsetBottom(value.toFloat())
       }

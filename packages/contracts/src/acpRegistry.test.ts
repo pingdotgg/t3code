@@ -50,6 +50,7 @@ describe("ACP Registry contracts", () => {
     expect(decodeSearchInput({ query: "  codex  " })).toEqual({
       query: "codex",
     });
+    expect(decodeSearchInput({ query: "", limit: 512 })).toEqual({ query: "", limit: 512 });
     expect(
       decodePrepareResult({
         agentId: "codex-acp",
@@ -62,6 +63,8 @@ describe("ACP Registry contracts", () => {
 
   it("rejects oversized queries and result metadata", () => {
     expect(() => decodeSearchInput({ query: "x".repeat(121) })).toThrow();
+    expect(() => decodeSearchInput({ query: "", limit: 0 })).toThrow();
+    expect(() => decodeSearchInput({ query: "", limit: 513 })).toThrow();
     expect(() =>
       decodeSearchAgent({
         id: "agent",

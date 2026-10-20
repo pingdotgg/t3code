@@ -1447,7 +1447,7 @@ index 95465f2..d7cbe1c 100644
      }
    }
 diff --git a/react.js b/react.js
-index 914d2da..0c2917d 100644
+index 914d2da..86dbd9a 100644
 --- a/react.js
 +++ b/react.js
 @@ -4702,7 +4702,8 @@ function maybeUpdateAnchoredEndSpace(ctx) {
@@ -1473,7 +1473,17 @@ index 914d2da..0c2917d 100644
    }
    return nextSize;
  }
-@@ -5651,6 +5658,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
+@@ -4956,7 +4963,8 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
+     const itemKey = peek$(ctx, `containerItemKey${containerId}`);
+     const element = viewRef == null ? void 0 : viewRef.current;
+     if (itemKey !== void 0 && element) {
+-      const rect = element.getBoundingClientRect();
++      // Unlike getBoundingClientRect, offset sizes ignore ancestor transforms (e.g. a popup's zoom-in), like ResizeObserver.
++      const rect = { height: element.offsetHeight, width: element.offsetWidth };
+       setContainerLayoutBaseline(element, rect);
+       measurements.push({
+         containerId,
+@@ -5651,6 +5659,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
  });
  
  // src/utils/reordering.ts
@@ -1492,7 +1502,7 @@ index 914d2da..0c2917d 100644
  function sortDOMElements(container, indexByElement) {
    const elements = Array.from(container.children);
    if (elements.length <= 1) return elements;
-@@ -5690,9 +5709,9 @@ function sortDOMElements(container, indexByElement) {
+@@ -5690,9 +5710,9 @@ function sortDOMElements(container, indexByElement) {
          }
        }
        if (nextStableElement) {
@@ -1504,7 +1514,7 @@ index 914d2da..0c2917d 100644
        }
      }
    }
-@@ -6446,8 +6465,8 @@ function ScrollAdjust() {
+@@ -6446,8 +6466,8 @@ function ScrollAdjust() {
                window.getComputedStyle(contentNode)[axis.paddingEndProp]
              );
              const temporaryPaddingEnd = `${(currentPaddingEnd || 0) + pad}px`;
@@ -1515,7 +1525,7 @@ index 914d2da..0c2917d 100644
              scrollBy();
              if (resetPaddingRafRef.current !== void 0) {
 diff --git a/react.mjs b/react.mjs
-index 95465f2..b73bfdf 100644
+index 95465f2..cff49dc 100644
 --- a/react.mjs
 +++ b/react.mjs
 @@ -4681,7 +4681,8 @@ function maybeUpdateAnchoredEndSpace(ctx) {
@@ -1541,7 +1551,17 @@ index 95465f2..b73bfdf 100644
    }
    return nextSize;
  }
-@@ -5630,6 +5637,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
+@@ -4935,7 +4942,8 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
+     const itemKey = peek$(ctx, `containerItemKey${containerId}`);
+     const element = viewRef == null ? void 0 : viewRef.current;
+     if (itemKey !== void 0 && element) {
+-      const rect = element.getBoundingClientRect();
++      // Unlike getBoundingClientRect, offset sizes ignore ancestor transforms (e.g. a popup's zoom-in), like ResizeObserver.
++      const rect = { height: element.offsetHeight, width: element.offsetWidth };
+       setContainerLayoutBaseline(element, rect);
+       measurements.push({
+         containerId,
+@@ -5630,6 +5638,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
  });
  
  // src/utils/reordering.ts
@@ -1560,7 +1580,7 @@ index 95465f2..b73bfdf 100644
  function sortDOMElements(container, indexByElement) {
    const elements = Array.from(container.children);
    if (elements.length <= 1) return elements;
-@@ -5669,9 +5688,9 @@ function sortDOMElements(container, indexByElement) {
+@@ -5669,9 +5689,9 @@ function sortDOMElements(container, indexByElement) {
          }
        }
        if (nextStableElement) {
@@ -1572,7 +1592,7 @@ index 95465f2..b73bfdf 100644
        }
      }
    }
-@@ -6425,8 +6444,8 @@ function ScrollAdjust() {
+@@ -6425,8 +6445,8 @@ function ScrollAdjust() {
                window.getComputedStyle(contentNode)[axis.paddingEndProp]
              );
              const temporaryPaddingEnd = `${(currentPaddingEnd || 0) + pad}px`;

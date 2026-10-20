@@ -1,4 +1,9 @@
-import { EnvironmentId, ProviderDriverKind, type AcpRegistrySearchAgent } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProviderDriverKind,
+  type AcpRegistrySearchAgent,
+  type AcpRegistrySearchInput,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -127,22 +132,37 @@ afterEach(async () => {
   document.body.replaceChildren();
 });
 
-it("loads the catalog immediately and searches only after typing settles", async () => {
+it("shows the full catalog initially and after clearing a debounced search", async () => {
+  const agents = Array.from({ length: 25 }, (_, index) => ({
+    ...gemini,
+    id: `gemini-${index}`,
+    name: `Gemini CLI ${index + 1}`,
+  }));
+  state.search.mockImplementation(({ input }: { input: AcpRegistrySearchInput }) => {
+    state.result = {
+      agents: agents
+        .filter((agent) => agent.name.toLowerCase().includes(input.query.toLowerCase()))
+        .slice(0, input.limit ?? 20),
+    };
+  });
+  const addButtons = () => page.getByRole("button", { name: /^Add Gemini CLI / }).elements();
   await render();
-  expect(state.search).toHaveBeenLastCalledWith({ environmentId, input: { query: "" } });
+  expect(addButtons()).toHaveLength(25);
+  await expect.element(page.getByRole("button", { name: "Add Gemini CLI 25" })).toBeEnabled();
 
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   await userEvent.fill(searchBox(), "  Gemini  ");
   await act(async () => vi.advanceTimersByTime(200));
   await userEvent.fill(searchBox(), "  Gemini CLI  ");
   await act(async () => vi.advanceTimersByTime(299));
-  expect(lastQuery()).toBe("");
+  expect(addButtons()).toHaveLength(25);
   await act(async () => vi.advanceTimersByTime(1));
-  expect(lastQuery()).toBe("Gemini CLI");
+  expect(addButtons()).toHaveLength(20);
 
   await userEvent.clear(searchBox());
   await act(async () => vi.advanceTimersByTime(300));
-  expect(lastQuery()).toBe("");
+  expect(addButtons()).toHaveLength(25);
+  await expect.element(page.getByRole("button", { name: "Add Gemini CLI 25" })).toBeEnabled();
 });
 
 it("shows the loading, error, and empty states", async () => {
@@ -163,6 +183,8 @@ it("shows the loading, error, and empty states", async () => {
 
 it("submits a typed query at once and refreshes when the same query is submitted again", async () => {
   await render();
+  // A slow runner must not let the typing debounce submit the query before Enter does.
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   await userEvent.fill(searchBox(), "Codex");
   await userEvent.keyboard("{Enter}");
   expect(lastQuery()).toBe("Codex");

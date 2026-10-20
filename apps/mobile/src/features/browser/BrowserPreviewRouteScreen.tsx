@@ -1,4 +1,4 @@
-import { Toolbar } from "../../components/ui/Toolbar";
+import { SheetHeader } from "../../components/ui/SheetHeader";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import * as Dialog from "../../components/ui/Dialog";
 import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navigation/native";
@@ -159,14 +159,11 @@ function BrowserPreviewScreen({
         }
       />
       {Platform.OS === "ios" ? (
-        <Toolbar placement="left">
-          <Toolbar.Button
-            icon="xmark"
-            accessibilityLabel="Close browser"
-            onPress={onClose}
-            separateBackground
-          />
-        </Toolbar>
+        <SheetHeader
+          title={tab ? browserTabTitle(tab) : "Browser"}
+          onClose={onClose}
+          accessibilityLabel="Close browser"
+        />
       ) : null}
       {tab ? (
         <>
@@ -274,7 +271,7 @@ function BrowserAddressBar({
       <BrowserTabMenu
         environmentId={environmentId}
         tab={tab}
-        disabled={!streaming}
+        streaming={streaming}
         onPaste={ready ? onPaste : undefined}
       />
     </View>

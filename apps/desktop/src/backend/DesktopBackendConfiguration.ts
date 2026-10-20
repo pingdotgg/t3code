@@ -386,7 +386,7 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
       : ({ ok: true, windowsEntryPath, linuxAppRoot: mountedAppRoot.value } as const);
   });
 
-  let stagedFailure: { readonly runtimeId: string; readonly reason: string } | undefined;
+  let stagedFailure: { readonly runtimeId?: string; readonly reason: string } | undefined;
   const failedStaged = (failure: { readonly reason: string }) =>
     ({
       _tag: "Failed",
@@ -417,6 +417,7 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
       );
       stagedFailure = { runtimeId: input.runtimeArchive.runtimeId, reason: stagedProbe.reason };
     } else {
+      stagedFailure = { reason: runtime.reason };
       yield* Effect.logWarning(
         "Could not stage the WSL runtime; launching from the mounted server tree instead.",
         { reason: runtime.reason },
@@ -446,7 +447,7 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
       : failedNodePty(nodePtyResult);
   }
 
-  if (stagedFailure) {
+  if (stagedFailure?.runtimeId) {
     yield* wslEnv.invalidateRuntime(runningDistro, stagedFailure.runtimeId);
   }
 
@@ -874,8 +875,9 @@ export const make = Effect.gen(function* () {
       }
       return distro ? `WSL (${distro})` : "WSL";
     }).pipe(Effect.withSpan("desktop.backendConfiguration.resolvePrimaryLabel")),
-    resolveWsl: (input) =>
-      Effect.gen(function* () {
+    // The span options depend on each request's port and distro.
+    resolveWsl: Effect.fnUntraced(
+      function* (input) {
         const shared = yield* sharedInputs;
         return yield* resolveWslStartConfig({ ...shared, ...input }).pipe(
           Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
@@ -883,11 +885,14 @@ export const make = Effect.gen(function* () {
           Effect.provideService(DesktopWslServerTree.DesktopWslServerTree, wslServerTree),
           Effect.provideService(FileSystem.FileSystem, fileSystem),
         );
-      }).pipe(
-        Effect.withSpan("desktop.backendConfiguration.resolveWsl", {
-          attributes: { port: input.port, distro: input.distro ?? null },
-        }),
-      ),
+      },
+      (effect, input) =>
+        effect.pipe(
+          Effect.withSpan("desktop.backendConfiguration.resolveWsl", {
+            attributes: { port: input.port, distro: input.distro ?? null },
+          }),
+        ),
+    ),
   });
 });
 

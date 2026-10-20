@@ -130,6 +130,7 @@ import { readLocalApi } from "../localApi";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import { selectProjectGroupingSettings } from "../logicalProject";
 import {
+  countSidebarProjectChoices,
   projectGroupsSpanEnvironments,
   resolveSidebarProjectScopeKey,
   getSidebarProjectSettingsKey,
@@ -233,7 +234,7 @@ import {
   type SidebarSection,
   resolveSidebarRowThreadId,
 } from "./Sidebar.logic";
-import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
+import { resolveCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import {
   createSidebarCollisionDetection,
   createSidebarSortingStrategy,
@@ -905,8 +906,8 @@ function SidebarProviderStack(props: {
       acpRegistryAgentId={currentEntry.acpRegistryAgentId}
       acpRegistryIconUrl={currentEntry.acpRegistryIconUrl}
       showBadge={showInstanceBadge}
-      iconClassName="size-3.5 opacity-60"
-      badgeClassName="right-[-0.1875rem] bottom-[-0.1875rem] h-3 min-w-3 px-0.5 text-5xs"
+      size="compact"
+      iconClassName="opacity-60"
     />
   );
   if (stack.length === 1) {
@@ -1006,7 +1007,7 @@ function SidebarThreadTooltip({
         {branchMismatch ? (
           <div className="flex min-w-0 items-start gap-2 text-warning">
             <CircleAlertIcon aria-hidden className="mt-0.5 size-3 shrink-0 stroke-current" />
-            <div className="min-w-0 flex-1 wrap-break-word leading-5">
+            <div className="min-w-0 flex-1 wrap-break-word">
               You're currently checked out on another branch.
             </div>
           </div>
@@ -1735,7 +1736,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     : null;
   const isWokeStatus = topStatus?.icon === "woke";
 
-  const branchMismatch = resolveLocalCheckoutBranchMismatch({
+  const branchMismatch = resolveCheckoutBranchMismatch({
     effectiveEnvMode: thread.worktreePath === null ? "local" : "worktree",
     activeWorktreePath: thread.worktreePath,
     activeThreadBranch: thread.branch,
@@ -2574,7 +2575,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
     JSON.stringify([thread.environmentId, gitCwd]),
     gitStatus.data,
   );
-  const branchMismatch = resolveLocalCheckoutBranchMismatch({
+  const branchMismatch = resolveCheckoutBranchMismatch({
     effectiveEnvMode: thread.worktreePath === null ? "local" : "worktree",
     activeWorktreePath: thread.worktreePath,
     activeThreadBranch: thread.branch,
@@ -4532,8 +4533,9 @@ export default function Sidebar() {
     updateThreadJumpHintsVisibility(shouldShowJumpHintsNow);
   }, [shouldShowJumpHintsNow, updateThreadJumpHintsVisibility]);
 
+  const projectChoiceCount = countSidebarProjectChoices(projectGroups);
   const handleNewThreadClick = (event?: ReactMouseEvent) => {
-    if (shouldCreateNewThreadInCurrentProject(event?.shiftKey ?? false, projectGroups.length)) {
+    if (shouldCreateNewThreadInCurrentProject(event?.shiftKey ?? false, projectChoiceCount)) {
       if (isMobile) setOpenMobile(false);
       void startNewThreadFromContext({
         activeDraftThread: newThreadContext.activeDraftThread,
@@ -4549,7 +4551,7 @@ export default function Sidebar() {
 
   const newThreadShortcutLabel =
     shortcutLabelForCommand(keybindings, "chat.new") ??
-    (projectGroups.length <= 1 ? shortcutLabelForCommand(keybindings, "chat.newLocal") : undefined);
+    (projectChoiceCount <= 1 ? shortcutLabelForCommand(keybindings, "chat.newLocal") : undefined);
   const newThreadInProjectShortcutLabel = shortcutLabelForCommand(keybindings, "chat.newLocal");
   return (
     <>
@@ -4691,7 +4693,7 @@ export default function Sidebar() {
               newThreadDisabled={projects.length === 0}
               newThreadShortcutLabel={newThreadShortcutLabel}
               newThreadInProjectShortcutLabel={newThreadInProjectShortcutLabel}
-              showNewThreadInProjectHint={projectGroups.length > 1}
+              showNewThreadInProjectHint={projectChoiceCount > 1}
               searchInputRef={threadSearchInputRef}
               searchQuery={threadSearchQuery}
               onSearchQueryChange={(value) => {

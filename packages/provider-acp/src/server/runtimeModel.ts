@@ -50,6 +50,8 @@ export interface AcpAgentTerminalState {
   readonly command?: string;
   readonly cwd?: string;
   readonly output: string;
+  /** UTF-8 byte length of `output`, so appending a chunk never re-encodes the buffer. */
+  readonly outputBytes: number;
   readonly exitStatus?: EffectAcpSchema.TerminalExitStatus;
   readonly pendingOutputBytes?: Uint8Array;
 }
@@ -126,26 +128,43 @@ function decodeTerminalOutputChunk(
     : { text, pendingOutputBytes: Uint8Array.from(bytes.subarray(completeEnd)) };
 }
 
-function truncateTerminalOutput(output: string): string {
-  const bytes = Buffer.from(output, "utf8");
-  if (bytes.length <= MAX_ACP_TERMINAL_OUTPUT_BYTES) return output;
-  let start = bytes.length - MAX_ACP_TERMINAL_OUTPUT_BYTES;
-  while (start < bytes.length && (bytes[start]! & 0xc0) === 0x80) start += 1;
-  return bytes.subarray(start).toString("utf8");
+/**
+ * Appends decoded text to terminal output and keeps the newest
+ * `MAX_ACP_TERMINAL_OUTPUT_BYTES`, dropping whole leading characters. Only the
+ * appended text and the dropped prefix are measured, so per-chunk cost does not
+ * grow with the retained output.
+ */
+function appendTerminalOutput(
+  output: string,
+  outputBytes: number,
+  text: string,
+): Pick<AcpAgentTerminalState, "output" | "outputBytes"> {
+  const combined = `${output}${text}`;
+  const combinedBytes = outputBytes + Buffer.byteLength(text, "utf8");
+  const excess = combinedBytes - MAX_ACP_TERMINAL_OUTPUT_BYTES;
+  if (excess <= 0) return { output: combined, outputBytes: combinedBytes };
+  let start = 0;
+  let dropped = 0;
+  while (dropped < excess) {
+    const codePoint = combined.codePointAt(start)!;
+    dropped += codePoint < 0x80 ? 1 : codePoint < 0x800 ? 2 : codePoint < 0x10000 ? 3 : 4;
+    start += codePoint < 0x10000 ? 1 : 2;
+  }
+  return { output: combined.slice(start), outputBytes: combinedBytes - dropped };
 }
 
 export function applyAcpAgentTerminalUpdate(
   previous: AcpAgentTerminalState | undefined,
   update: AcpAgentTerminalUpdate,
 ): AcpAgentTerminalState {
-  const current = previous ?? { output: "" };
+  const current = previous ?? { output: "", outputBytes: 0 };
   if (update.sessionUpdate === "terminal_output_chunk") {
     const decoded = decodeTerminalOutputChunk(current.pendingOutputBytes, update.data);
     if (decoded === undefined) return current;
     const { pendingOutputBytes: _pendingOutputBytes, ...withoutPendingOutputBytes } = current;
     return {
       ...withoutPendingOutputBytes,
-      output: truncateTerminalOutput(`${current.output}${decoded.text}`),
+      ...appendTerminalOutput(current.output, current.outputBytes, decoded.text),
       ...(decoded.pendingOutputBytes === undefined
         ? {}
         : { pendingOutputBytes: decoded.pendingOutputBytes }),
@@ -173,7 +192,7 @@ export function applyAcpAgentTerminalUpdate(
       const { pendingOutputBytes: _pendingOutputBytes, ...withoutPendingOutputBytes } = next;
       next = {
         ...withoutPendingOutputBytes,
-        output: truncateTerminalOutput(decoded.text),
+        ...appendTerminalOutput("", 0, decoded.text),
         ...(decoded.pendingOutputBytes === undefined
           ? {}
           : { pendingOutputBytes: decoded.pendingOutputBytes }),
@@ -191,7 +210,7 @@ export function applyAcpAgentTerminalUpdate(
     const { pendingOutputBytes: _pendingOutputBytes, ...withoutPendingOutputBytes } = next;
     next = {
       ...withoutPendingOutputBytes,
-      output: truncateTerminalOutput(`${next.output}${pendingText}`),
+      ...appendTerminalOutput(next.output, next.outputBytes, pendingText),
       exitStatus: update.exitStatus,
     };
   }
@@ -379,15 +398,23 @@ type AcpToolCallUpdate = Extract<
   { readonly sessionUpdate: "tool_call" | "tool_call_update" }
 >;
 
+type AcpSelectConfigOption = Extract<
+  EffectAcpSchema.SessionConfigOption,
+  { readonly type: "select" }
+>;
+
+// ACP resolves options in the same category by array order.
+export function findModelConfigOption(
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
+): AcpSelectConfigOption | undefined {
+  return configOptions?.find(
+    (option): option is AcpSelectConfigOption =>
+      option.category === "model" && option.type === "select" && option.id.trim().length > 0,
+  );
+}
+
 export function extractModelConfigId(sessionResponse: AcpSessionSetupResponse): string | undefined {
-  const configOptions = sessionResponse.configOptions;
-  if (!configOptions) return undefined;
-  for (const opt of configOptions) {
-    if (opt.category === "model" && opt.id.trim().length > 0) {
-      return opt.id.trim();
-    }
-  }
-  return undefined;
+  return findModelConfigOption(sessionResponse.configOptions)?.id.trim();
 }
 
 export function findSessionConfigOption(
@@ -787,6 +814,7 @@ export function canonicalItemTypeFromAcpToolKind(kind: string | undefined): Tool
 function makeToolCallState(
   input: {
     readonly toolCallId: string;
+    readonly name?: string | null | undefined;
     readonly title?: string | null | undefined;
     readonly kind?: EffectAcpSchema.ToolKind | null | undefined;
     readonly status?: EffectAcpSchema.ToolCallStatus | null | undefined;
@@ -814,6 +842,7 @@ function makeToolCallState(
       ? title
       : undefined;
   const data: Record<string, unknown> = { toolCallId };
+  if (input.name != null) data.name = input.name;
   if (kind) {
     data.kind = kind;
   }
@@ -884,6 +913,7 @@ function parseTypedToolCallState(
   return makeToolCallState(
     {
       toolCallId: event.toolCallId,
+      name: event.name,
       title: event.title,
       kind: event.kind,
       status: event.status,
@@ -1260,27 +1290,24 @@ export interface SessionLoadGate {
   readonly candidateConfigOptions?: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
 }
 
-export const waitForSessionLoadReplayIdle = (input: {
+export const waitForSessionLoadReplayIdle = Effect.fn(
+  "AcpRuntimeModel.waitForSessionLoadReplayIdle",
+)(function* (input: {
   readonly gateRef: Ref.Ref<Option.Option<SessionLoadGate>>;
-}): Effect.Effect<EffectAcpSchema.LoadSessionResponse, never> =>
-  Effect.gen(function* () {
-    const pollInterval = Duration.millis(25);
-    while (true) {
-      const gate = yield* Ref.get(input.gateRef);
-      if (
-        Option.isSome(gate) &&
-        gate.value.active &&
-        gate.value.lastActivityAtMillis !== undefined
-      ) {
-        const idleGapMillis = Duration.toMillis(gate.value.idleGap);
-        const nowMillis = yield* Clock.currentTimeMillis;
-        if (nowMillis - gate.value.lastActivityAtMillis >= idleGapMillis) {
-          return syntheticLoadSessionResponseFromInitialize(gate.value.initializeResult);
-        }
+}): Effect.fn.Return<EffectAcpSchema.LoadSessionResponse, never> {
+  const pollInterval = Duration.millis(25);
+  while (true) {
+    const gate = yield* Ref.get(input.gateRef);
+    if (Option.isSome(gate) && gate.value.active && gate.value.lastActivityAtMillis !== undefined) {
+      const idleGapMillis = Duration.toMillis(gate.value.idleGap);
+      const nowMillis = yield* Clock.currentTimeMillis;
+      if (nowMillis - gate.value.lastActivityAtMillis >= idleGapMillis) {
+        return syntheticLoadSessionResponseFromInitialize(gate.value.initializeResult);
       }
-      yield* Effect.sleep(pollInterval);
     }
-  });
+    yield* Effect.sleep(pollInterval);
+  }
+});
 
 export function sessionModelStateFromInitialize(
   initializeResult: EffectAcpSchema.InitializeResponse,

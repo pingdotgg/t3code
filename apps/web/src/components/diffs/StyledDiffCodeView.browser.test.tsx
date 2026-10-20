@@ -1,11 +1,16 @@
 import {
+  CodeView,
+  FileDiff,
   FileRenderer,
   getSharedHighlighter,
+  type CodeViewItem,
   type CodeViewScrollTarget,
   type FileContents,
 } from "@pierre/diffs";
 import { useWorkerPool, type CodeViewProps } from "@pierre/diffs/react";
 import { WorkerPoolManager, type WorkerRequest, type WorkerResponse } from "@pierre/diffs/worker";
+import DiffsWorker from "@pierre/diffs/worker/worker.js?worker";
+import { getDiffLineStat, getRenderablePatch } from "../../lib/diffRendering";
 import {
   act,
   StrictMode,
@@ -34,7 +39,7 @@ const testState = vi.hoisted(() => ({
 
 vi.mock(import("../../hooks/useTheme"), async (original) => ({
   ...(await original()),
-  useTheme: (() => ({ resolvedTheme: "dark" })) as never,
+  useRenderedAppearance: (() => "dark") as never,
 }));
 
 // Wraps Pierre's real worker so the suite can count workers, read requests and hold startup.
@@ -302,6 +307,157 @@ describe("code-view worker lifecycle", () => {
     expect(testState.terminations).toBe(2);
     expect(testState.renderPools).toHaveLength(0);
     expect(document.querySelectorAll("pre")).toHaveLength(0);
+  });
+});
+
+describe("collapsed diff content", () => {
+  let pool: WorkerPoolManager;
+  let container: HTMLDivElement;
+  let viewer: FileDiff<string> | CodeView<string> | undefined;
+
+  const loadedDiff = () => {
+    const parsed = getRenderablePatch(
+      [
+        "diff --git a/before.ts b/after.ts",
+        "similarity index 50%",
+        "rename from before.ts",
+        "rename to after.ts",
+        "--- a/before.ts",
+        "+++ b/after.ts",
+        "@@ -1,2 +1,2 @@",
+        " const shared = 1;",
+        "-const before = 2;",
+        "+const after = 3;",
+      ].join("\n"),
+      "collapsed-content",
+    );
+    if (parsed?.kind !== "files" || !parsed.files[0]) throw new Error("Expected diff");
+    return parsed.files[0];
+  };
+  const code = () =>
+    [...container.querySelectorAll("diffs-container")]
+      .flatMap((element) => [...(element.shadowRoot?.querySelectorAll("[data-line]") ?? [])])
+      .map((line) => line.textContent)
+      .join("\n");
+
+  beforeEach(async () => {
+    testState.requests = [];
+    testState.failWorkers = false;
+    testState.holdInitialization = false;
+    pool = new WorkerPoolManager(
+      { workerFactory: () => new DiffsWorker(), poolSize: 1 },
+      { theme: "pierre-dark", langs: ["typescript"], preferredHighlighter: "shiki-wasm" },
+    );
+    await pool.initialize();
+    container = document.createElement("div");
+    container.style.cssText = "height: 400px; width: 800px; overflow: auto";
+    document.body.append(container);
+  });
+
+  afterEach(() => {
+    viewer?.cleanUp();
+    viewer = undefined;
+    pool.terminate();
+    container.remove();
+    vi.restoreAllMocks();
+  });
+
+  it("defers plain AST and highlight work across collapsed renders until expansion", async () => {
+    const fileDiff = loadedDiff();
+    const highlight = vi.spyOn(pool, "highlightDiffAST");
+    const plainAST = vi.spyOn(pool, "getPlainDiffAST");
+    const options = { theme: "pierre-dark", collapsed: true, disableErrorHandling: true } as const;
+    const file = new FileDiff<string>(options, pool);
+    viewer = file;
+    file.render({ fileDiff, containerWrapper: container });
+    file.render({ fileDiff, forceRender: true });
+    expect.soft(highlight.mock.calls.length).toBe(0);
+    expect.soft(plainAST.mock.calls.length).toBe(0);
+    expect(code()).toBe("");
+    expect(container.querySelector("diffs-container")?.shadowRoot?.textContent).toContain(
+      "after.ts",
+    );
+
+    file.setOptions({ ...options, collapsed: false });
+    file.render({ fileDiff, forceRender: true });
+    expect(highlight).toHaveBeenCalled();
+    await pool.primeDiffHighlightCache(fileDiff);
+    await vi.waitFor(() => expect(code()).toContain("const after = 3;"));
+    expect(code()).toContain("const before = 2;");
+    expect(testState.requests.filter((request) => request.type === "diff")).toHaveLength(1);
+  });
+
+  it("finds newly loaded collapsed lines and unfolds the match with its annotation and header", async () => {
+    const fileDiff = loadedDiff();
+    const item: CodeViewItem<string> = {
+      type: "diff",
+      id: "renamed",
+      fileDiff,
+      collapsed: true,
+      annotations: [{ side: "additions", lineNumber: 2, metadata: "Review this change" }],
+    };
+    const view = new CodeView<string>(
+      {
+        theme: "pierre-dark",
+        disableErrorHandling: true,
+        onRevealSearchMatch: (match) =>
+          view.setItems([{ ...match, collapsed: false, version: (match.version ?? 0) + 1 }]),
+        renderHeaderMetadata: (file) => {
+          if (!("hunks" in file)) return;
+          const metadata = document.createElement("span");
+          const { additions, deletions } = getDiffLineStat([file]);
+          metadata.textContent = "+" + additions + " / -" + deletions;
+          return metadata;
+        },
+        renderAnnotation: (annotation) => {
+          const note = document.createElement("span");
+          note.textContent = annotation.metadata ?? "";
+          return note;
+        },
+      },
+      pool,
+    );
+    viewer = view;
+    view.setup(container);
+    view.openSearch();
+    const search = container.querySelector("[data-diffs-search]")!.shadowRoot!;
+    const input = search.querySelector<HTMLInputElement>("input[data-search]")!;
+    input.value = "const after";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    view.setItems([item]);
+    view.render(true);
+    expect(code()).toBe("");
+    expect(search.textContent).toContain("1 results");
+    expect(container.textContent).toContain("+1 / -1");
+
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    view.render(true);
+    await vi.waitFor(() => expect(code()).toContain("const after = 3;"));
+    expect(search.textContent).toContain("1 of 1");
+    expect(container.textContent).toContain("Review this change");
+    expect(container.textContent).toContain("+1 / -1");
+    expect(container.querySelector("diffs-container")?.shadowRoot?.textContent).toContain(
+      "after.ts",
+    );
+
+    await pool.primeDiffHighlightCache(fileDiff);
+    view.render(true);
+    const highlight = vi.spyOn(pool, "highlightDiffAST");
+    const plainAST = vi.spyOn(pool, "getPlainDiffAST");
+    const updatedDiff = { ...fileDiff, name: "updated.ts", cacheKey: "collapsed-update" };
+    view.setItems([{ ...item, fileDiff: updatedDiff, version: 2 }]);
+    view.render(true);
+    expect(highlight).not.toHaveBeenCalled();
+    expect(plainAST).not.toHaveBeenCalled();
+    expect(code()).toBe("");
+    expect(search.textContent).toContain("1 of 1");
+    expect(container.querySelector("diffs-container")?.shadowRoot?.textContent).toContain(
+      "updated.ts",
+    );
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    view.render(true);
+    await vi.waitFor(() => expect(code()).toContain("const after = 3;"));
+    expect(container.textContent).toContain("Review this change");
   });
 });
 

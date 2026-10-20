@@ -469,11 +469,9 @@ export const make = Effect.gen(function* () {
 
 export const layer = Layer.effect(TraceDiagnostics, make);
 
-export function readTraceDiagnostics(
+export const readTraceDiagnostics = Effect.fn("TraceDiagnostics.readTraceDiagnostics")(function* (
   options: TraceDiagnosticsOptions,
-): Effect.Effect<ServerTraceDiagnosticsResult, never, TraceDiagnostics> {
-  return Effect.gen(function* () {
-    const diagnostics = yield* TraceDiagnostics;
-    return yield* diagnostics.read(options);
-  });
-}
+): Effect.fn.Return<ServerTraceDiagnosticsResult, never, TraceDiagnostics> {
+  const diagnostics = yield* TraceDiagnostics;
+  return yield* diagnostics.read(options);
+});

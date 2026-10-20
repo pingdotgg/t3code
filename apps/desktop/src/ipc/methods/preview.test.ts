@@ -3,6 +3,7 @@ import {
   DEFAULT_BROWSER_PROFILE_ID,
   INCOGNITO_BROWSER_PROFILE_ID,
   PreviewAutomationStatus,
+  PreviewCaptureFailure,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -14,6 +15,8 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import * as PreviewManager from "../../preview/Manager.ts";
 import * as BrowserImport from "../../preview/BrowserImport/BrowserImport.ts";
 import * as PreviewIpc from "./preview.ts";
+import * as DesktopIpc from "../DesktopIpc.ts";
+import * as DesktopClientSettings from "../../settings/DesktopClientSettings.ts";
 
 const { fromPartition } = vi.hoisted(() => ({
   fromPartition: vi.fn(() => {
@@ -33,7 +36,102 @@ vi.mock("electron", () => ({
   },
 }));
 
+const decodeCaptureFailure = Schema.decodeUnknownEffect(PreviewCaptureFailure);
+
 describe("preview IPC methods", () => {
+  const invokeCapture = (
+    method: typeof PreviewIpc.startRecording | typeof PreviewIpc.captureScreenshot,
+    manager: Partial<PreviewManager.PreviewManager["Service"]>,
+  ) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let listener: DesktopIpc.DesktopIpcHandleListener | undefined;
+        const ipc = DesktopIpc.make({
+          removeHandler: vi.fn(),
+          handle: (_channel, registered) => {
+            listener = registered;
+          },
+          removeAllListeners: vi.fn(),
+          on: vi.fn(),
+        });
+        yield* ipc.handle(method);
+        return yield* Effect.promise(async () =>
+          structuredClone(await listener!({ sender: { id: 7 } }, { tabId: "capture-tab" })),
+        );
+      }).pipe(
+        Effect.provideService(
+          PreviewManager.PreviewManager,
+          manager as PreviewManager.PreviewManager["Service"],
+        ),
+        Effect.provideService(DesktopClientSettings.DesktopClientSettings, {
+          get: Effect.succeedNone,
+          set: () => Effect.void,
+        }),
+      ),
+    );
+
+  effectIt.effect.each([
+    {
+      cause: new Error("Current display surface not available for capture"),
+      reason: "capture-unavailable",
+      guidance: ["target tab", "unlocked", "display is on", "window is restored"],
+    },
+    {
+      cause: new Cause.TimeoutError(),
+      reason: "capture-timeout",
+      guidance: ["timed out during capture-page"],
+    },
+    {
+      cause: new Error("Current display surface not available for capture: private page data"),
+      reason: "capture-failed",
+      guidance: ["Preview capture failed during capture-page"],
+    },
+  ])(
+    "transports a safe $reason screenshot diagnostic through registered IPC",
+    ({ cause, reason, guidance }) =>
+      Effect.gen(function* () {
+        const result = yield* invokeCapture(PreviewIpc.captureScreenshot, {
+          captureScreenshot: (tabId) =>
+            Effect.fail(
+              new PreviewManager.PreviewOperationError({
+                operation: "captureScreenshot.capturePage",
+                tabId,
+                artifactPath: "/private/capture.png",
+                cause,
+              }),
+            ),
+        });
+        expect(result).toEqual({
+          _tag: "PreviewCaptureFailure",
+          reason,
+          stage: "capture-page",
+        });
+        const failure = yield* decodeCaptureFailure(result);
+        for (const phrase of guidance) expect(failure.message).toContain(phrase);
+      }),
+  );
+
+  effectIt.effect("preserves recording arm failures without erasing successful void results", () =>
+    Effect.gen(function* () {
+      const result = yield* invokeCapture(PreviewIpc.startRecording, {
+        startRecording: (tabId) =>
+          Effect.fail(new PreviewManager.PreviewTabNotFoundError({ tabId })),
+      });
+      expect(result).toEqual({
+        _tag: "PreviewCaptureFailure",
+        reason: "renderer-unavailable",
+        stage: "recording-start",
+      });
+      const failure = yield* decodeCaptureFailure(result);
+      expect(failure.message).toContain("Reopen the preview tab");
+      expect(
+        yield* invokeCapture(PreviewIpc.startRecording, {
+          startRecording: () => Effect.void,
+        }),
+      ).toBeUndefined();
+    }),
+  );
+
   beforeEach(() => {
     fromPartition.mockClear();
   });

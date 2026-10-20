@@ -268,6 +268,42 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
     }),
   );
 
+  it.effect("keeps the JSON-RPC error of a failed v2 idle", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const delivered = yield* Deferred.make<AcpCompat.SessionNotification>();
+      const acp = yield* AcpClient.make(stdio);
+      yield* acp.handleSessionUpdate((notification) =>
+        Deferred.succeed(delivered, notification).pipe(Effect.asVoid),
+      );
+      const error = { code: -32000, message: "Please sign in to Claude", data: { retry: false } };
+      const idle = {
+        sessionUpdate: "state_update",
+        state: "idle",
+        stopReason: "error",
+        error,
+      } as const;
+
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(SessionUpdateNotification, {
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            sessionId: "session-1",
+            update: idle,
+          },
+        }),
+      );
+
+      const { update } = yield* Deferred.await(delivered);
+      assert.deepEqual(
+        update.sessionUpdate === "state_update" && update.state === "idle" ? update : undefined,
+        idle,
+      );
+    }),
+  );
+
   it.effect("reports idle child termination and rejects later requests and notifications", () =>
     Effect.gen(function* () {
       const handle = yield* makeHandle();

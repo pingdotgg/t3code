@@ -5,11 +5,13 @@ import { RotatingFileSink } from "@t3tools/shared/logging";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Metric from "effect/Metric";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 
 import * as ServerConfig from "../config.ts";
+import * as Metrics from "./Metrics.ts";
 
 // Node's delay histogram wakes a native timer every RESOLUTION_MS and records the
 // gap between wakeups, so an idle loop reads about RESOLUTION_MS and a stall of S
@@ -34,6 +36,9 @@ export interface EventLoopReadings {
     | "involuntaryContextSwitches"
   >;
   readonly rssBytes: number;
+  readonly heapUsedBytes: number;
+  /** Wall time the readings cover. */
+  readonly elapsedMs: number;
 }
 
 // Node skips the first gap after a reset, so a stall right at a sample boundary can be missed.
@@ -48,11 +53,14 @@ const makeNodeSampler = Effect.gen(function* () {
   );
   let elu = NodePerfHooks.performance.eventLoopUtilization();
   let usage = process.resourceUsage();
+  let sampledAt = NodePerfHooks.performance.now();
 
   // @effect-diagnostics-next-line returnEffectInGen:off - the read effect is the result.
   return Effect.sync(() => {
     const nextElu = NodePerfHooks.performance.eventLoopUtilization();
     const nextUsage = process.resourceUsage();
+    const nextSampledAt = NodePerfHooks.performance.now();
+    const memory = process.memoryUsage();
     const loop = NodePerfHooks.performance.eventLoopUtilization(nextElu, elu);
     const readings: EventLoopReadings = {
       delayMaxNs: histogram.max,
@@ -66,11 +74,14 @@ const makeNodeSampler = Effect.gen(function* () {
         involuntaryContextSwitches:
           nextUsage.involuntaryContextSwitches - usage.involuntaryContextSwitches,
       },
-      rssBytes: process.memoryUsage.rss(),
+      rssBytes: memory.rss,
+      heapUsedBytes: memory.heapUsed,
+      elapsedMs: nextSampledAt - sampledAt,
     };
     histogram.reset();
     elu = nextElu;
     usage = nextUsage;
+    sampledAt = nextSampledAt;
     return readings;
   });
 });
@@ -82,6 +93,21 @@ export const stallMs = ({ delayMaxNs, activeMs }: EventLoopReadings) => {
   if (delayMs <= STALL_THRESHOLD_MS || activeMs < delayMs) return undefined;
   return delayMs;
 };
+
+// Untraced: it runs inside every 30-second tick, which already has the monitor's own span.
+const recordGauges = Effect.fnUntraced(function* (readings: EventLoopReadings) {
+  const cpuMs = (readings.usage.userCPUTime + readings.usage.systemCPUTime) / 1000;
+  yield* Metric.update(Metrics.serverResidentBytes, readings.rssBytes);
+  yield* Metric.update(Metrics.serverHeapUsedBytes, readings.heapUsedBytes);
+  yield* Metric.update(Metrics.serverEventLoopUtilization, readings.utilization);
+  yield* Metric.update(
+    Metrics.serverEventLoopDelayMax,
+    Math.max(0, Math.round(readings.delayMaxNs / 1e6) - RESOLUTION_MS),
+  );
+  if (readings.elapsedMs > 0) {
+    yield* Metric.update(Metrics.serverCpuUtilization, cpuMs / readings.elapsedMs);
+  }
+});
 
 const encodeStallLine = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 
@@ -114,6 +140,7 @@ export const layerWith = (
       );
       const tick = Effect.gen(function* () {
         const readings = yield* sample;
+        yield* recordGauges(readings);
         const delayMaxMs = stallMs(readings);
         if (delayMaxMs === undefined) return;
         const { utilization, usage, rssBytes } = readings;

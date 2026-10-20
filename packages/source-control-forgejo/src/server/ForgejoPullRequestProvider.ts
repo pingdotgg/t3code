@@ -33,7 +33,10 @@ import {
   forgejoChecks,
   forgejoReactions,
 } from "./forgejoPullRequestJson.ts";
+import { ForgejoBranchStatusChecks, markRequiredForgejoChecks } from "./forgejoRequiredChecks.ts";
 import { definition } from "../client/definition.ts";
+
+const isForgejoCliError = Schema.is(ForgejoCli.ForgejoCliError);
 
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
@@ -202,6 +205,44 @@ export const make = Effect.gen(function* () {
     );
     return permissions(repo, pr, viewer);
   });
+  const readChecks = Effect.fn("ForgejoPullRequestProvider.readChecks")(function* (
+    input: ProviderRepositoryRef,
+    pr: typeof ForgejoPullRequest.Type,
+  ) {
+    const branch = read(
+      {
+        ...input,
+        path: `${repoPath(input)}/branches/${pr.base.ref.split("/").map(encodeURIComponent).join("/")}`,
+      },
+      ForgejoBranchStatusChecks,
+    ).pipe(
+      Effect.catchTags({
+        PullRequestProviderError: (error) => {
+          if (
+            isForgejoCliError(error.cause) &&
+            (error.cause.reason === "forbidden" || error.cause.reason === "not-found")
+          ) {
+            return Effect.succeed({});
+          }
+          return Effect.fail(error);
+        },
+      }),
+    );
+    const [statuses, policy] = yield* Effect.all(
+      [
+        page(
+          {
+            ...input,
+            path: `${repoPath(input)}/statuses/${encodeURIComponent(pr.head.sha)}?sort=recentupdate`,
+          },
+          ForgejoStatus,
+        ),
+        branch,
+      ],
+      { concurrency: 2 },
+    );
+    return markRequiredForgejoChecks(forgejoChecks(statuses.items, pr.html_url), policy);
+  });
   const unsupported = (operation: string) =>
     Effect.fail(failure(operation, `Forgejo does not expose ${operation} through its API.`));
   const provider: PullRequestProviderApi = {
@@ -244,17 +285,7 @@ export const make = Effect.gen(function* () {
     getChangeRequestChecks: Effect.fn("ForgejoPullRequestProvider.getChangeRequestChecks")(
       function* (input) {
         const pr = yield* getPull(input);
-        const statuses = yield* page(
-          {
-            ...input,
-            path: `${repoPath(input)}/statuses/${encodeURIComponent(pr.head.sha)}?sort=recentupdate`,
-          },
-          ForgejoStatus,
-        );
-        return {
-          state: forgejoChangeRequest(pr).state,
-          checks: forgejoChecks(statuses.items, pr.html_url),
-        };
+        return { state: forgejoChangeRequest(pr).state, checks: yield* readChecks(input, pr) };
       },
     ),
     getChangeRequest: Effect.fn("ForgejoPullRequestProvider.getChangeRequest")(function* (input) {
@@ -262,13 +293,7 @@ export const make = Effect.gen(function* () {
         [getPull(input), getRepo(input), getViewer(input)],
         { concurrency: 3 },
       );
-      const statuses = yield* page(
-        {
-          ...input,
-          path: `${repoPath(input)}/statuses/${encodeURIComponent(pr.head.sha)}?sort=recentupdate`,
-        },
-        ForgejoStatus,
-      );
+      const checks = yield* readChecks(input, pr);
       return {
         ...forgejoChangeRequest(pr),
         headSha: pr.head.sha,
@@ -278,7 +303,7 @@ export const make = Effect.gen(function* () {
           const actor = forgejoActor(user);
           return actor ? [actor] : [];
         }),
-        checks: forgejoChecks(statuses.items, pr.html_url),
+        checks,
         baseComparison: !pr.merge_base
           ? "unknown"
           : pr.merge_base === pr.base.sha

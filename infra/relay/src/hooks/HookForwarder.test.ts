@@ -700,6 +700,29 @@ describe("HookForwarder", () => {
           .find((span) => span.name === "relay.hooks.forward")
           ?.attributes.has("relay.hook.upstream_outcome"),
       ).toBe(false);
+
+      for (const [holdWebhooksWhileOffline, inboxCapacity, outcome] of [
+        [false, Infinity, "environment_unavailable"],
+        [true, Infinity, "held"],
+        [true, 0, "inbox_full"],
+      ] as const) {
+        spans.length = 0;
+        yield* forward(
+          makeHarness({
+            links: [{ ...managedLink, holdWebhooksWhileOffline }],
+            inboxCapacity,
+            execute: (request) =>
+              Effect.succeed(
+                HttpClientResponse.fromWeb(request, new Response("", { status: 503 })),
+              ),
+          }),
+        );
+        expect(
+          spans
+            .find((span) => span.name === "relay.hooks.forward")
+            ?.attributes.get("relay.hook.outcome"),
+        ).toBe(outcome);
+      }
     }),
   );
 

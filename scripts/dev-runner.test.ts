@@ -20,7 +20,6 @@ import {
   createDevRunnerEnv,
   devPortProbeHosts,
   findFirstAvailableOffset,
-  getDevRunnerModeArgs,
   isBrowserAllowedPort,
   resolveModePortOffsets,
   resolveOffset,
@@ -83,32 +82,6 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       assert.include(output, "[dev-runner] mode=dev");
     }),
   );
-
-  describe("getDevRunnerModeArgs", () => {
-    it.effect("lets Vite+ honor the desktop dev task graph", () =>
-      Effect.sync(() => {
-        assert.deepStrictEqual(getDevRunnerModeArgs("dev:desktop"), [
-          "run",
-          "--filter=@t3tools/desktop",
-          "--filter=@t3tools/web",
-          "dev",
-        ]);
-      }),
-    );
-
-    it.effect("places Vite+ run flags before the task name", () =>
-      Effect.sync(() => {
-        assert.deepStrictEqual(getDevRunnerModeArgs("dev"), [
-          "run",
-          "--filter=@t3tools/contracts",
-          "--filter=@t3tools/web",
-          "--filter=t3",
-          "--parallel",
-          "dev",
-        ]);
-      }),
-    );
-  });
 
   describe("resolveOffset", () => {
     it.effect("uses explicit T3CODE_PORT_OFFSET when provided", () =>

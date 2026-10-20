@@ -39,6 +39,30 @@ export const providerTurnDuration = Metric.timer("t3_provider_turn_duration", {
   description: "Time for the provider adapter to start a turn, not how long the turn runs.",
 });
 
+// OTLP carries the unit, and Prometheus names the series by it: a unitless gauge gains `_ratio`.
+export const serverResidentBytes = Metric.gauge("t3_server_resident_bytes", {
+  description: "Resident memory of the server process.",
+  attributes: { unit: "By" },
+});
+
+export const serverHeapUsedBytes = Metric.gauge("t3_server_heap_used_bytes", {
+  description: "JavaScript heap in use by the server process.",
+  attributes: { unit: "By" },
+});
+
+export const serverCpuUtilization = Metric.gauge("t3_server_cpu_utilization", {
+  description: "CPU time the server used per second over the last sample; 1 is one full core.",
+});
+
+export const serverEventLoopUtilization = Metric.gauge("t3_server_event_loop_utilization", {
+  description: "Share of the last sample the server's event loop spent busy.",
+});
+
+export const serverEventLoopDelayMax = Metric.gauge("t3_server_event_loop_delay_max", {
+  description: "Longest event loop delay over the last sample.",
+  attributes: { unit: "ms" },
+});
+
 export const gitCommandsTotal = Metric.counter("t3_git_commands_total", {
   description: "Total git commands executed by the server runtime.",
 });
@@ -101,12 +125,13 @@ export interface WithMetricsOptions {
   ) => Readonly<Record<string, unknown>>;
 }
 
-const recordMetrics = (
-  options: WithMetricsOptions,
-  startedAt: bigint,
-  exit: Exit.Exit<unknown, unknown>,
-) =>
-  Effect.gen(function* () {
+const recordMetrics =
+  /* Instrumentation must not create its own span for every recorded operation. */
+  Effect.fnUntraced(function* (
+    options: WithMetricsOptions,
+    startedAt: bigint,
+    exit: Exit.Exit<unknown, unknown>,
+  ) {
     const duration = Duration.nanos((yield* Clock.monotonicTimeNanos) - startedAt);
     const baseAttributes =
       typeof options.attributes === "function" ? options.attributes() : (options.attributes ?? {});

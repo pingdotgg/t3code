@@ -76,11 +76,13 @@ describe("mergeClaudeWorkflowProgress", () => {
           toolCalls: 3,
           durationMs: 1277,
           startedAt: 1_700_000_000_000,
+          lastProgressAt: 1_700_000_004_432,
           queuedAt: 1_699_999_999_000,
           promptPreview: "Reply with exactly: A1",
           resultPreview: "A1",
         }),
-        agent({ index: 2, label: "alpha:two", state: "queued" }),
+        agent({ index: 2, label: "alpha:two", state: "queued", lastProgressAt: 1000 }),
+        agent({ index: 3, state: "progress", lastProgressAt: 2000 }),
       ]),
     });
     expect(workflow?.phases).toEqual([{ index: 1, title: "Alpha" }]);
@@ -98,10 +100,13 @@ describe("mergeClaudeWorkflowProgress", () => {
       durationMs: 1277,
       queuedAt: 1_699_999_999_000,
       startedAt: 1_700_000_000_000,
+      completedAt: 1_700_000_004_432,
       prompt: "Reply with exactly: A1",
       result: "A1",
     });
     expect(workflow?.agents[1]?.state).toBe("queued");
+    expect(workflow?.agents[1]).not.toHaveProperty("completedAt");
+    expect(workflow?.agents[2]).not.toHaveProperty("completedAt");
   });
 
   it.each(["something-new", "toString", "constructor", "__proto__"])(
@@ -186,10 +191,13 @@ describe("mergeClaudeWorkflowProgress", () => {
           durationMs: 50,
           queuedAt: 1000,
           startedAt: 1010,
+          lastProgressAt: 2010,
         }),
         agent({ index: 2, state: "done" }),
       ]),
     });
+    expect(first?.agents[0]?.completedAt).toBe(2010);
+    expect(first?.agents[1]).not.toHaveProperty("completedAt");
     const second = mergeClaudeWorkflowProgress({
       previous: first,
       message: snapshotFrame([
@@ -293,12 +301,18 @@ describe("mergeClaudeWorkflowProgress", () => {
     const workflow = mergeClaudeWorkflowProgress({
       previous: undefined,
       message: snapshotFrame([
-        agent({ startedAt: 8_640_000_000_000_001, queuedAt: Number.MAX_SAFE_INTEGER }),
+        agent({
+          state: "done",
+          lastProgressAt: 8_640_000_000_000_001,
+          startedAt: 8_640_000_000_000_001,
+          queuedAt: Number.MAX_SAFE_INTEGER,
+        }),
         agent({ index: 2, startedAt: 8_640_000_000_000_000, queuedAt: 0 }),
       ]),
     });
     expect(workflow?.agents[0]).not.toHaveProperty("startedAt");
     expect(workflow?.agents[0]).not.toHaveProperty("queuedAt");
+    expect(workflow?.agents[0]).not.toHaveProperty("completedAt");
     expect(workflow?.agents[1]?.startedAt).toBe(8_640_000_000_000_000);
     expect(workflow?.agents[1]?.queuedAt).toBe(0);
   });

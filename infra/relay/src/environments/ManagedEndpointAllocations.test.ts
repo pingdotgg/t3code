@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { PgDialect } from "drizzle-orm/pg-core";
+import type { SQL } from "drizzle-orm";
 
 import * as RelayDb from "../db.ts";
 import { relayManagedEndpointAllocations } from "../persistence/schema.ts";
@@ -286,15 +287,18 @@ describe("ManagedEndpointAllocations", () => {
   );
 
   it.effect("returns a claim generation only when deprovision wins the allocation CAS", () => {
+    const conditions: SQL[] = [];
+    const results = [[{ generation: 8 }], []];
     const fakeDb = {
       update: (table: unknown) => {
         expect(table).toBe(relayManagedEndpointAllocations);
         return {
           set: (_values: { readonly updatedAt: string }) => {
             return {
-              where: () => ({
-                returning: () => Effect.succeed([{ generation: 8 }]),
-              }),
+              where: (condition: SQL) => {
+                conditions.push(condition);
+                return { returning: () => Effect.succeed(results.shift() ?? []) };
+              },
             };
           },
         };
@@ -303,14 +307,14 @@ describe("ManagedEndpointAllocations", () => {
 
     return Effect.gen(function* () {
       const allocations = yield* ManagedEndpointAllocations.ManagedEndpointAllocations;
-      const generation = yield* allocations.claimDeprovision({
-        userId: "user-1",
-        environmentId: "environment-1",
-        generation: 7,
-      });
+      const input = { userId: "user-1", environmentId: "environment-1", generation: 7 };
 
-      expect(generation).toBe(8);
-      expect(generation).not.toBeNull();
+      expect(yield* allocations.claimDeprovision(input)).toBe(8);
+      expect(yield* allocations.claimDeprovision(input)).toBeNull();
+      expect(new PgDialect().sqlToQuery(conditions[0]!)).toEqual({
+        sql: '(((("relay_managed_endpoint_allocations"."user_id" = $1) and ("relay_managed_endpoint_allocations"."environment_id" = $2))) and ("relay_managed_endpoint_allocations"."generation" = $3))',
+        params: ["user-1", "environment-1", 7],
+      });
     }).pipe(Effect.provide(layerWithDb(fakeDb)));
   });
 

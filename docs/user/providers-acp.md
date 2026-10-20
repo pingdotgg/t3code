@@ -13,6 +13,10 @@ configuration, compaction, and agent-terminal updates when the agent supports th
 negotiates ACP v1 for Registry agents that have not migrated yet, so agents such as Pi continue to
 work through the same generic integration.
 
+Claude Agent uses the ACP v2 preview by default for Registry and local `claude-agent-acp`
+commands. If you encounter preview issues, set `CLAUDE_AGENT_ACP_EXPERIMENTAL_V2=0` in the
+provider instance's environment overrides to use ACP v1.
+
 ## Add an agent
 
 1. Open **Settings → Providers**.

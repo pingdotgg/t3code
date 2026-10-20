@@ -43,6 +43,7 @@ import {
   extractXAiBackgroundTaskCompletion,
   extractXAiKilledBackgroundTasks,
   extractXAiMonitorTaskId,
+  xAiBackgroundShellTaskId,
   isXAiPersistentMonitor,
   extractXAiExitPlanMarkdown,
   registerXAiSubagentFinished,
@@ -56,7 +57,10 @@ import {
 } from "./xaiAcpExtension.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { acpPermissionDisposition } from "@t3tools/provider-acp/server/clientPolicy";
-import { sessionModelStateFromInitialize } from "@t3tools/provider-acp/server/runtimeModel";
+import {
+  findModelConfigOption,
+  sessionModelStateFromInitialize,
+} from "@t3tools/provider-acp/server/runtimeModel";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -261,24 +265,25 @@ export function makeGrokAcpAdapterFlavor(
         ? window
         : undefined;
     },
-    applyModelSelection: ({ runtime, startResult, modelSelection }) =>
-      Effect.gen(function* () {
-        const legacy = startResult.initializeResult.protocolVersion === 1;
-        const options = legacy ? [] : yield* runtime.getConfigOptions;
-        const configuredModel = options.find((option) => option.category === "model")?.currentValue;
-        return yield* applyGrokAcpModelSelection({
-          runtime: legacy
-            ? runtime
-            : { setSessionModel: (model) => runtime.setModel(model).pipe(Effect.as({})) },
-          currentModelId: legacy
-            ? currentGrokModelIdFromSessionSetup(startResult.sessionSetupResult)
-            : typeof configuredModel === "string"
-              ? configuredModel
-              : undefined,
-          requestedModelId: resolveGrokAcpBaseModelId(modelSelection.model),
-          mapError: (cause) => cause,
-        });
-      }),
+    applyModelSelection: Effect.fn("GrokAdapter.applyModelSelection")(function* ({
+      runtime,
+      startResult,
+      modelSelection,
+    }) {
+      const legacy = startResult.initializeResult.protocolVersion === 1;
+      const options = legacy ? [] : yield* runtime.getConfigOptions;
+      const configuredModel = findModelConfigOption(options)?.currentValue;
+      return yield* applyGrokAcpModelSelection({
+        runtime: legacy
+          ? runtime
+          : { setSessionModel: (model) => runtime.setModel(model).pipe(Effect.as({})) },
+        currentModelId: legacy
+          ? currentGrokModelIdFromSessionSetup(startResult.sessionSetupResult)
+          : configuredModel,
+        requestedModelId: resolveGrokAcpBaseModelId(modelSelection.model),
+        mapError: (cause) => cause,
+      });
+    }),
     makeRuntime:
       options.makeRuntime ??
       (({ runtimePolicy, ...input }) =>
@@ -319,6 +324,7 @@ export function makeGrokAcpAdapterFlavor(
         homeDirectory,
       }),
     extractBackgroundTaskId: extractXAiMonitorTaskId,
+    isBackgroundCommandTool: (toolCall) => xAiBackgroundShellTaskId(toolCall) !== undefined,
     extractBackgroundToolMutation: extractXAiAcpBackgroundToolMutation,
     extractBackgroundTaskCompletion: (toolCall) => [
       ...extractXAiBackgroundTaskCompletion(toolCall),

@@ -5,6 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as CodexReplay from "effect-codex-app-server/replay";
 import {
   type OrchestrationV2ThreadProjection,
@@ -25,6 +26,7 @@ import {
 } from "../Adapters/CursorAdapterV2.testkit.ts";
 import * as CursorAdapterV2Testkit from "../Adapters/CursorAdapterV2.testkit.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as EffectWorker from "../EffectWorker.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
 import {
@@ -46,8 +48,14 @@ import {
   assertUserMessagesInclude,
   projectionFor,
 } from "./fixtures/shared.ts";
-import type { OrchestratorV2ScenarioResult } from "./OrchestratorScenario.ts";
-import { runOrchestratorV2ProviderReplayScenario } from "./ProviderReplayHarness.ts";
+import {
+  runOrchestratorV2Scenario,
+  type OrchestratorV2ScenarioResult,
+} from "./OrchestratorScenario.ts";
+import {
+  layerProviderReplay,
+  runOrchestratorV2ProviderReplayScenario,
+} from "./ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { materializeReplayTranscriptRuntimeInstructions } from "./ReplayRuntimeInstructions.ts";
 import {
@@ -111,11 +119,15 @@ const readClaudeCancelledSubagentResumeTranscript = Effect.fn(
   const firstOutcome = indices.find(
     (index) => frameField(index, "subtype") === "task_notification",
   );
-  if (firstSubagentFrame === undefined || firstOutcome === undefined) {
+  const firstExit = recorded.entries.findIndex((entry) => entry.type === "runtime_exit");
+  if (firstSubagentFrame === undefined || firstOutcome === undefined || firstExit < 0) {
     throw new Error("Expected the recorded subagent's first run.");
   }
   const entries = recorded.entries
-    .filter((_, index) => index < firstSubagentFrame || index > firstOutcome)
+    // A CLI exit settles the task; hold at query.open:2 until the crash snapshot instead.
+    .filter(
+      (_, index) => (index < firstSubagentFrame || index > firstOutcome) && index !== firstExit,
+    )
     .map((entry) => {
       if (entry.type !== "expect_outbound" || entry.label !== "prompt.offer:2") return entry;
       const frame = entry.frame as {
@@ -524,18 +536,31 @@ describe("orchestrator replay recovery", () => {
         const childRootStatus = (child: OrchestrationV2ThreadProjection | undefined) =>
           child?.nodes.find((node) => node.kind === "root_turn" && node.runId === null)?.status;
 
+        const snapshotPath = path.join(tempDir, "restart-state.sqlite");
+        const beforeScenario = {
+          name: `${transcript.scenario}:cancelled-first-runtime`,
+          transcript,
+          commands: phase1Commands,
+          steps: phase1Steps,
+          projectionThreadIds: materialized.projectionThreadIds,
+          runtimePolicyOverride: { cwd: workspace },
+        };
         const before = yield* Effect.scoped(
-          runOrchestratorV2ProviderReplayScenario(
-            {
-              name: `${transcript.scenario}:cancelled-first-runtime`,
-              transcript,
-              commands: phase1Commands,
-              steps: phase1Steps,
-              projectionThreadIds: materialized.projectionThreadIds,
-              runtimePolicyOverride: { cwd: workspace },
-            },
-            harness,
-            options,
+          Effect.gen(function* () {
+            const result = yield* runOrchestratorV2Scenario(beforeScenario);
+            const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+            yield* worker.drain();
+            // Preserve the orphan before scoped teardown settles its provider work.
+            const sql = yield* SqlClient.SqlClient;
+            yield* sql`VACUUM INTO ${snapshotPath}`;
+            return result;
+          }).pipe(
+            Effect.provide(
+              Layer.merge(
+                layerProviderReplay(beforeScenario, harness, options),
+                options.databaseLayer,
+              ),
+            ),
           ),
         );
         const settled = projectionFor(before, transcript.scenario);
@@ -555,7 +580,13 @@ describe("orchestrator replay recovery", () => {
               runtimePolicyOverride: { cwd: workspace },
             },
             harness,
-            { ...options, recoverOnStartup: true, continueThreadsAfterServerUpdate: false },
+            {
+              databaseLayer: SqlitePersistence.layerFromPath(snapshotPath).pipe(
+                Layer.provide(NodeServices.layer),
+              ),
+              recoverOnStartup: true,
+              continueThreadsAfterServerUpdate: false,
+            },
           ),
         );
         yield* assertComplete;

@@ -15,7 +15,7 @@ import { type EnvironmentId, type ProjectIconOverride } from "@t3tools/contracts
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
 import { InfoIcon, Trash2Icon } from "lucide-react";
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { releaseProjectDraftUploads } from "../../lib/composerDraftUploads";
@@ -65,10 +65,12 @@ export function ProjectSettingsPanel({
   projectKey,
   environmentId = null,
   checkoutKey = null,
+  unavailable,
 }: {
   projectKey: string;
   environmentId?: EnvironmentId | null;
   checkoutKey?: string | null;
+  unavailable?: ReactNode;
 }) {
   const groups = useSettingsProjectGroups();
   const navigate = useNavigate({ from: "/settings" });
@@ -125,6 +127,8 @@ export function ProjectSettingsPanel({
       });
     }
   }, [groups, navigate, pathname, projectKey, members.length, environmentId, checkoutKey]);
+
+  if ((!selected || members.length === 0) && unavailable != null) return unavailable;
 
   if (!selected) {
     return (
@@ -387,7 +391,11 @@ function ProjectDetail({
     }
 
     if (isWholeGroup && !hasOtherMembers) {
-      void navigate({ to: "/", replace: true });
+      void navigate({
+        to: "/settings/projects",
+        search: ({ machine }) => ({ project: undefined, machine, checkout: undefined }),
+        replace: true,
+      });
     }
   };
 

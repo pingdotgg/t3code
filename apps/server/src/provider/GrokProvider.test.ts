@@ -402,8 +402,9 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
 
   // A stand-in for the Grok CLI: `--version` and `models` print canned text,
   // and `agent stdio` execs the mock ACP agent so `initialize` returns model metadata.
+  // A list of `models` outputs is served in call order, repeating the last one.
   const writeFakeGrokCli = (input: {
-    readonly modelsOutput: string;
+    readonly modelsOutput: string | ReadonlyArray<string>;
     readonly acp: boolean;
     readonly updateLogPath?: string;
   }) =>
@@ -428,7 +429,12 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
           "  process.exit(0);",
           "}",
           'if (process.argv[2] === "models") {',
-          `  process.stdout.write(${JSON.stringify(input.modelsOutput)});`,
+          '  const fs = await import("node:fs");',
+          `  const callsPath = ${JSON.stringify(NodePath.join(dir, "models-calls"))};`,
+          '  const calls = fs.existsSync(callsPath) ? fs.readFileSync(callsPath, "utf8").length : 0;',
+          '  fs.appendFileSync(callsPath, ".");',
+          `  const outputs = ${JSON.stringify([input.modelsOutput].flat())};`,
+          "  process.stdout.write(outputs[Math.min(calls, outputs.length - 1)]);",
           "  process.exit(0);",
           "}",
           'if (process.argv[2] !== "agent") process.exit(1);',
@@ -498,6 +504,28 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
     }),
   );
 
+  // An expired access token prints the logged-out banner, then the CLI refreshes it in the
+  // same run, so the next `grok models` reports the login (#14285).
+  it.effect("reports authenticated when `grok models` logs in after refreshing a token", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const grokPath = yield* writeFakeGrokCli({
+            modelsOutput: [LOGGED_OUT_MODELS_OUTPUT, LOGGED_IN_MODELS_OUTPUT],
+            acp: true,
+          });
+          return yield* checkGrokProviderStatus(
+            decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+            { ...process.env, XAI_API_KEY: "" },
+          );
+        }),
+      );
+
+      expect(snapshot.status).toBe("ready");
+      expect(snapshot.auth.status).toBe("authenticated");
+    }),
+  );
+
   it.effect("falls back to CLI-listed models with a warning when ACP initialize fails", () =>
     Effect.gen(function* () {
       const snapshot = yield* Effect.scoped(
@@ -552,6 +580,63 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
 
 describe("Grok usage limits", () => {
   const checkedAt = "2026-09-16T00:00:00.000Z";
+  const weeklyPeriod = {
+    type: "USAGE_PERIOD_TYPE_WEEKLY",
+    start: "2026-09-11T03:10:30.159171+00:00",
+    end: "2026-09-18T03:10:30.159171+00:00",
+  };
+
+  it("shows zero usage for complete weekly and monthly periods with no percentage", () => {
+    for (const [currentPeriod, kind, label, resetsAt] of [
+      [weeklyPeriod, "weekly", "Weekly", "2026-09-18T03:10:30.159Z"],
+      [
+        {
+          type: "USAGE_PERIOD_TYPE_MONTHLY",
+          start: "2026-09-01T00:00:00.000Z",
+          end: "2026-10-01T00:00:00.000Z",
+        },
+        "monthly",
+        "Monthly",
+        "2026-10-01T00:00:00.000Z",
+      ],
+    ] as const) {
+      const response = { config: { currentPeriod } };
+      expect
+        .soft(grokUsageResponseToLimits(response, checkedAt).windows)
+        .toEqual([{ id: "subscription", kind, label, usedPercent: 0, resetsAt }]);
+    }
+  });
+
+  it("keeps incomplete, invalid, unordered, and unknown periods unreported", () => {
+    for (const currentPeriod of [
+      undefined,
+      { ...weeklyPeriod, type: undefined },
+      { ...weeklyPeriod, type: "USAGE_PERIOD_TYPE_DAILY" },
+      { ...weeklyPeriod, start: undefined },
+      { ...weeklyPeriod, end: undefined },
+      { ...weeklyPeriod, start: "invalid" },
+      { ...weeklyPeriod, end: "invalid" },
+      { ...weeklyPeriod, start: weeklyPeriod.end },
+      { ...weeklyPeriod, start: weeklyPeriod.end, end: weeklyPeriod.start },
+    ]) {
+      const response = { config: { currentPeriod } };
+      expect
+        .soft(grokUsageResponseToLimits(response, checkedAt).windows, JSON.stringify(response))
+        .toEqual([]);
+    }
+  });
+
+  it("rejects impossible calendar dates at either period boundary", () => {
+    for (const [start, end] of [
+      ["2026-02-30T00:00:00.000Z", "2026-03-09T00:00:00.000Z"],
+      ["2026-02-23T00:00:00.000Z", "2026-02-30T00:00:00.000Z"],
+    ]) {
+      const response = { config: { currentPeriod: { ...weeklyPeriod, start, end } } };
+      expect
+        .soft(grokUsageResponseToLimits(response, checkedAt).windows, JSON.stringify(response))
+        .toEqual([]);
+    }
+  });
 
   it("uses the reported subscription percentage and weekly reset", () => {
     const limits = grokUsageResponseToLimits(
@@ -663,6 +748,50 @@ it.layer(NodeServices.layer)("readGrokAccount", (it) => {
           Effect.sync(() => expect(usageLimits.windows[0]?.usedPercent).toBe(12)),
         ),
       ),
+  );
+
+  it.effect("ignores malformed period starts without inventing usage", () =>
+    Effect.gen(function* () {
+      for (const start of [null, 42]) {
+        for (const creditUsagePercent of [37.5, undefined]) {
+          const response = {
+            config: {
+              creditUsagePercent,
+              currentPeriod: {
+                type: "USAGE_PERIOD_TYPE_WEEKLY",
+                start,
+                end: "2026-09-18T03:10:30.159171+00:00",
+              },
+            },
+          };
+          const { usageLimits } = yield* readGrokAccount({
+            HOME: "/definitely/not/a/grok-home",
+            GROK_AUTH: '{"https://accounts.x.ai/sign-in":{"key":"session-token"}}',
+          }).pipe(
+            Effect.provideService(
+              HttpClient.HttpClient,
+              HttpClient.make((request) =>
+                Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(response))),
+              ),
+            ),
+          );
+          expect.soft(usageLimits.unavailable, JSON.stringify(response)).toBeUndefined();
+          expect.soft(usageLimits.windows, JSON.stringify(response)).toEqual(
+            creditUsagePercent === undefined
+              ? []
+              : [
+                  {
+                    id: "subscription",
+                    kind: "weekly",
+                    label: "Weekly",
+                    usedPercent: creditUsagePercent,
+                    resetsAt: "2026-09-18T03:10:30.159Z",
+                  },
+                ],
+          );
+        }
+      }
+    }),
   );
 
   it.effect("does not use unrelated scopes, API keys, or custom auth deployments", () =>

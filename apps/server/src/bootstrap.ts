@@ -166,43 +166,44 @@ const isFdReady = (fd: number) =>
     }),
   );
 
-const makeBootstrapInputStream = (fd: number) =>
-  Effect.gen(function* () {
-    const platform = yield* HostProcess.Platform;
-    const fdPath = resolveFdPath(fd, platform);
-    return yield* Effect.try<NodeStream.Readable, BootstrapInputStreamOpenError>({
-      try: () => {
-        if (fdPath === undefined) {
+const makeBootstrapInputStream = Effect.fn("bootstrap.makeBootstrapInputStream")(function* (
+  fd: number,
+) {
+  const platform = yield* HostProcess.Platform;
+  const fdPath = resolveFdPath(fd, platform);
+  return yield* Effect.try<NodeStream.Readable, BootstrapInputStreamOpenError>({
+    try: () => {
+      if (fdPath === undefined) {
+        return makeDirectBootstrapStream(fd);
+      }
+
+      let streamFd: number | undefined;
+      try {
+        streamFd = NodeFS.openSync(fdPath, "r");
+        return NodeFS.createReadStream("", {
+          fd: streamFd,
+          encoding: "utf8",
+          autoClose: true,
+        });
+      } catch (error) {
+        if (isBootstrapFdPathDuplicationError(error)) {
+          if (streamFd !== undefined) {
+            NodeFS.closeSync(streamFd);
+          }
           return makeDirectBootstrapStream(fd);
         }
-
-        let streamFd: number | undefined;
-        try {
-          streamFd = NodeFS.openSync(fdPath, "r");
-          return NodeFS.createReadStream("", {
-            fd: streamFd,
-            encoding: "utf8",
-            autoClose: true,
-          });
-        } catch (error) {
-          if (isBootstrapFdPathDuplicationError(error)) {
-            if (streamFd !== undefined) {
-              NodeFS.closeSync(streamFd);
-            }
-            return makeDirectBootstrapStream(fd);
-          }
-          throw error;
-        }
-      },
-      catch: (error) =>
-        new BootstrapInputStreamOpenError({
-          fd,
-          platform,
-          ...(fdPath === undefined ? {} : { fdPath }),
-          cause: error,
-        }),
-    });
+        throw error;
+      }
+    },
+    catch: (error) =>
+      new BootstrapInputStreamOpenError({
+        fd,
+        platform,
+        ...(fdPath === undefined ? {} : { fdPath }),
+        cause: error,
+      }),
   });
+});
 
 const makeDirectBootstrapStream = (fd: number): NodeStream.Readable => {
   try {

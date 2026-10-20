@@ -272,6 +272,7 @@ export function useProjectPathSearch(
     isPending:
       !areProjectPathSearchTargetsEqual(normalizedTarget, debouncedTarget) ||
       (hasTarget && (fileAccess.isPending || result.isPending)),
+    searchedTarget: debouncedTarget,
     searchedQuery: debouncedTarget.query ?? "",
     truncated: result.data?.truncated ?? false,
     refresh: result.refresh,

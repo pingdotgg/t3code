@@ -50,7 +50,7 @@ import {
 import {
   decodeScanCache,
   dedupeWithinFile,
-  LEGACY_SCAN_CACHE_FILE_NAME,
+  LEGACY_SCAN_CACHE_FILE_NAMES,
   makeScanCacheWriter,
   pruneScanCache,
   SCAN_CACHE_FILE_NAME,
@@ -195,6 +195,11 @@ export const make = Effect.gen(function* () {
   const readerContext = yield* Effect.context<BuiltInUsageReadersEnv>();
 
   const fileCache: ScanCache = new Map();
+  // Reads from concurrent windows can still hold the original record after it is corrected.
+  const resolvedRecords = new WeakMap<UsageRecord, UsageRecord>();
+  const correctedRecord = (record: UsageRecord) => resolvedRecords.get(record) ?? record;
+  const correctedBatch = (records: readonly UsageRecord[]) =>
+    records.some((record) => resolvedRecords.has(record)) ? records.map(correctedRecord) : records;
   const sourceCache = new Map<string, typeof CachedSource.Type>();
   let cacheDirty = false;
   const isWithinDirectory = (filePath: string, dir: string) => {
@@ -204,7 +209,6 @@ export const make = Effect.gen(function* () {
 
   const ratesCachePath = path.join(config.stateDir, "usage-model-rates.json");
   const scanCachePath = path.join(config.stateDir, SCAN_CACHE_FILE_NAME);
-  const legacyScanCachePath = path.join(config.stateDir, LEGACY_SCAN_CACHE_FILE_NAME);
   const writeCacheFile = (filePath: string, contents: string) =>
     writeFileStringAtomically({ filePath, contents }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -353,7 +357,7 @@ export const make = Effect.gen(function* () {
             ([filePath, entry]) =>
               entry.provider === provider &&
               entry.mtimeMs >= retentionCutoffMs &&
-              entry.records.length + entry.tailRecords.length > 0 &&
+              (entry.records.length + entry.tailRecords.length > 0 || entry.malformedRecords > 0) &&
               isWithinDirectory(filePath, dir),
           );
         const volumeId =
@@ -392,8 +396,9 @@ export const make = Effect.gen(function* () {
           Effect.catchCause(() => Effect.succeed(null)),
         );
       let document = yield* readDocument(scanCachePath);
-      if (document === null) {
-        document = yield* readDocument(legacyScanCachePath);
+      for (const fileName of LEGACY_SCAN_CACHE_FILE_NAMES) {
+        if (document !== null) break;
+        document = yield* readDocument(path.join(config.stateDir, fileName));
         cacheDirty = document !== null;
       }
       if (document === null) return;
@@ -451,66 +456,102 @@ export const make = Effect.gen(function* () {
    * than completion order: saved records of deleted transcripts aggregate in
    * cache order, where the first copy of a duplicate wins.
    */
-  const readFileRecords = (
+  const readFileRecords = Effect.fn("UsageService.readFileRecords")(function* (
     filePath: string,
     size: number,
     mtimeMs: number,
     provider: UsageProviderKind,
     format: TranscriptUsageFormat<unknown>,
-  ): Effect.Effect<{
+  ): Effect.fn.Return<{
     readonly records: readonly UsageRecord[];
+    readonly malformedRecords: number;
     readonly failed?: true;
     readonly update?: { readonly entry: CachedFile; readonly replaces: CachedFile | undefined };
-  }> =>
-    Effect.gen(function* () {
-      const cached = fileCache.get(filePath);
-      // Provider is part of the identity: if both providers were ever pointed
-      // at one directory, a hit parsed by the other parser must not be reused.
-      if (
-        cached &&
-        cached.size === size &&
-        cached.mtimeMs === mtimeMs &&
-        cached.provider === provider
-      ) {
-        return {
-          records:
-            cached.tailRecords.length === 0
-              ? cached.records
-              : [...cached.records, ...cached.tailRecords],
-        };
-      }
-
-      // Only a strictly grown file may resume. Same size with a new mtime, or
-      // a shrunken file, means rewritten content; re-parse it whole.
-      const resumeFrom =
-        cached !== undefined && cached.provider === provider && size > cached.size
-          ? cached.position
-          : undefined;
-
-      const parsed = yield* Effect.promise(() =>
-        readTranscriptRecords(filePath, format, resumeFrom),
-      );
-      // A read failure is not an empty transcript: caching it under this
-      // (size, mtime) would silently drop the file's usage until it changes.
-      if (parsed === null)
-        return {
-          records: cached?.provider === provider ? [...cached.records, ...cached.tailRecords] : [],
-          failed: true,
-        };
-
-      const base = parsed.resumed && cached !== undefined ? cached.records : [];
-      const seen = new Set<string>();
-      const records = dedupeWithinFile([...base, ...parsed.records], seen);
-      const tailRecords = dedupeWithinFile(parsed.tailRecords, seen);
-
+  }> {
+    const cached = fileCache.get(filePath);
+    // Provider is part of the identity: if both providers were ever pointed
+    // at one directory, a hit parsed by the other parser must not be reused.
+    if (
+      cached &&
+      cached.size === size &&
+      cached.mtimeMs === mtimeMs &&
+      cached.provider === provider
+    ) {
       return {
-        records: tailRecords.length === 0 ? records : [...records, ...tailRecords],
-        update: {
-          entry: { size, mtimeMs, provider, records, tailRecords, position: parsed.position },
-          replaces: cached,
-        },
+        records:
+          cached.tailRecords.length === 0
+            ? cached.records
+            : [...cached.records, ...cached.tailRecords],
+        malformedRecords: cached.malformedRecords,
       };
-    });
+    }
+
+    // Only a strictly grown file may resume. Same size with a new mtime, or
+    // a shrunken file, means rewritten content; re-parse it whole.
+    const resumeFrom =
+      cached !== undefined && cached.provider === provider && size > cached.size
+        ? cached.position
+        : undefined;
+
+    const parsed = yield* Effect.promise(() => readTranscriptRecords(filePath, format, resumeFrom));
+    // A read failure is not an empty transcript: caching it under this
+    // (size, mtime) would silently drop the file's usage until it changes.
+    if (parsed === null)
+      return {
+        records: cached?.provider === provider ? [...cached.records, ...cached.tailRecords] : [],
+        malformedRecords: cached?.provider === provider ? cached.malformedRecords : 0,
+        failed: true,
+      };
+
+    if (parsed.resumed && cached !== undefined && cached.tailRecords.length > 0) {
+      // Completing a tentative line reparses it. Reuse its saved correction only when the
+      // same usage is emitted again, without putting inferred tiers in the parser state.
+      const reparsed = [...parsed.records, ...parsed.tailRecords];
+      const identity = (record: UsageRecord) =>
+        encodeUsageRecordKey([
+          record.provider,
+          record.sessionId,
+          record.timestampMs,
+          record.model,
+          record.rateModel,
+          record.totals,
+          record.reportedCostUsd,
+          record.dedupeKey,
+        ]);
+      for (const [index, previous] of cached.tailRecords.entries()) {
+        const record = reparsed[index];
+        const corrected = correctedRecord(previous);
+        if (
+          record?.unresolvedServiceTierTurnId !== undefined &&
+          corrected.unresolvedServiceTierTurnId === undefined &&
+          identity(record) === identity(corrected)
+        ) {
+          resolvedRecords.set(record, corrected);
+        }
+      }
+    }
+    const base = parsed.resumed && cached !== undefined ? cached.records : [];
+    const seen = new Set<string>();
+    const records = dedupeWithinFile([...base, ...parsed.records], seen);
+    const tailRecords = dedupeWithinFile(parsed.tailRecords, seen);
+
+    return {
+      records: tailRecords.length === 0 ? records : [...records, ...tailRecords],
+      malformedRecords: parsed.malformedRecords,
+      update: {
+        entry: {
+          size,
+          mtimeMs,
+          provider,
+          records,
+          tailRecords,
+          malformedRecords: parsed.malformedRecords,
+          position: parsed.position,
+        },
+        replaces: cached,
+      },
+    };
+  });
 
   interface ScannedDir {
     readonly provider: UsageProviderKind;
@@ -521,7 +562,11 @@ export const make = Effect.gen(function* () {
     readonly message?: string;
     readonly action?: UsageSource["action"];
     readonly files:
-      | readonly { readonly path: string; readonly records: readonly UsageRecord[] }[]
+      | readonly {
+          readonly path: string;
+          readonly records: readonly UsageRecord[];
+          readonly malformedRecords: number;
+        }[]
       | null;
     readonly refreshing?: true;
   }
@@ -546,8 +591,8 @@ export const make = Effect.gen(function* () {
         ),
       { concurrency: TRANSCRIPT_READ_CONCURRENCY },
     );
-    const parsedFiles = read.map(({ path, records, update }) => {
-      if (update === undefined) return { path, records };
+    const parsedFiles = read.map(({ path, records, malformedRecords, update }) => {
+      if (update === undefined) return { path, records, malformedRecords };
       // A scan of another window may have cached its own read of this file
       // meanwhile. Then keep whichever read saw the later file, so a slower
       // scan never replaces newer usage with older.
@@ -555,12 +600,16 @@ export const make = Effect.gen(function* () {
       if (
         current === update.replaces ||
         current === undefined ||
-        !isLaterRead(current, update.entry)
+        isLaterRead(update.entry, current)
       ) {
-        fileCache.set(path, update.entry);
+        fileCache.set(path, {
+          ...update.entry,
+          records: correctedBatch(update.entry.records),
+          tailRecords: correctedBatch(update.entry.tailRecords),
+        });
         cacheDirty = true;
       }
-      return { path, records };
+      return { path, records, malformedRecords };
     });
     const unread = failedPaths + read.filter((file) => file.failed).length;
     return {
@@ -605,6 +654,7 @@ export const make = Effect.gen(function* () {
                     : Effect.succeed(volumeId),
                   (resolved): ScannedDir => ({
                     ...source,
+                    files: source.files?.map((file) => ({ ...file, malformedRecords: 0 })) ?? null,
                     provider: reader.provider,
                     volumeId: resolved,
                   }),
@@ -713,10 +763,57 @@ export const make = Effect.gen(function* () {
           !isWithinDirectory(filePath, dir)
         )
           continue;
-        retainedFiles.push({ path: filePath, records: [...entry.records, ...entry.tailRecords] });
+        retainedFiles.push({
+          path: filePath,
+          records: [...entry.records, ...entry.tailRecords],
+          malformedRecords: entry.malformedRecords,
+        });
       }
       return retainedFiles;
     });
+    const windowEndMs =
+      hourlyWindow?.untilTimeMs ??
+      Date.parse(`${input.untilDay}T00:00:00Z`) + 86400000 + MTIME_SLACK_MS;
+    let resolvedAny = false;
+    for (const { reader } of transcriptReaders) {
+      if (reader.resolveServiceTiers === undefined) continue;
+      const pending = new Set<UsageRecord>();
+      for (const [index, files] of filesByDir.entries()) {
+        if (scannedDirs[index]?.provider !== reader.provider) continue;
+        for (const file of files) {
+          for (const raw of file.records) {
+            const record = correctedRecord(raw);
+            if (
+              record.provider === reader.provider &&
+              record.unresolvedServiceTierTurnId !== undefined &&
+              record.timestampMs >= windowStartMs &&
+              record.timestampMs < windowEndMs
+            ) {
+              pending.add(record);
+            }
+          }
+        }
+      }
+      if (pending.size === 0) continue;
+      const resolved = yield* reader
+        .resolveServiceTiers([...pending])
+        .pipe(Effect.provideContext(readerContext));
+      for (const [record, speed] of resolved) {
+        const { unresolvedServiceTierTurnId: _turnId, ...rest } = record;
+        resolvedRecords.set(record, { ...rest, speed });
+        resolvedAny = true;
+      }
+    }
+    if (resolvedAny) {
+      for (const [filePath, entry] of fileCache) {
+        const records = correctedBatch(entry.records);
+        const tailRecords = correctedBatch(entry.tailRecords);
+        if (records === entry.records && tailRecords === entry.tailRecords) continue;
+        // Update the current entry by identity; a slow resolver cannot restore an older file.
+        fileCache.set(filePath, { ...entry, records, tailRecords });
+        cacheDirty = true;
+      }
+    }
     const crossFileSessions = sharedSessions(filesByDir.flat());
 
     for (const [
@@ -725,18 +822,21 @@ export const make = Effect.gen(function* () {
     ] of scannedDirs.entries()) {
       let scannedFiles = 0;
       let skippedFiles = 0;
+      let malformedRecords = 0;
       // Distinct per directory. Buckets carry per-cell session counts, but a
       // session spans days and models, so clients total this figure instead.
       const sessionIds = new Set<string>();
 
       for (const file of filesByDir[index] ?? []) {
+        malformedRecords += file.malformedRecords;
         if (file.records.length === 0) {
           skippedFiles += 1;
           continue;
         }
         scannedFiles += 1;
         const eventOccurrences = new Map<string, number>();
-        for (const record of file.records) {
+        for (const rawRecord of file.records) {
+          const record = correctedRecord(rawRecord);
           let usageRecord = record;
           if (
             sharedSessionProviders.has(record.provider) &&
@@ -761,15 +861,31 @@ export const make = Effect.gen(function* () {
         }
       }
 
+      const sourceMessage =
+        message ?? (files === null ? "No transcript directory on this environment." : null);
       sources.push({
         fingerprint: { hostId: sourceHostId ?? hostId, provider, resolvedHomePath: dir, volumeId },
-        status: files === null && scannedFiles === 0 ? "missing" : (status ?? "ok"),
+        status:
+          files === null && scannedFiles === 0
+            ? "missing"
+            : malformedRecords > 0
+              ? status === undefined || status === "ok"
+                ? "partial"
+                : status
+              : (status ?? "ok"),
         scannedFiles,
         skippedFiles,
-        malformedRecords: 0,
+        malformedRecords,
         distinctSessions: sessionIds.size,
         message:
-          message ?? (files === null ? "No transcript directory on this environment." : null),
+          malformedRecords > 0
+            ? [
+                sourceMessage,
+                `${malformedRecords} malformed or inconsistent usage record(s) were skipped; usage may be incomplete.`,
+              ]
+                .filter(Boolean)
+                .join(" ")
+            : sourceMessage,
         ...(action ? { action } : {}),
         ...(refreshing ? { refreshing } : {}),
       });

@@ -6,6 +6,7 @@ import type {
 import {
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
+  DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
@@ -17,6 +18,7 @@ import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import {
   createMemoryHistory,
   createRootRoute,
+  createRoute,
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
@@ -25,7 +27,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import type { Project } from "../../types";
 
@@ -104,7 +106,7 @@ vi.mock(import("~/lib/composerDraftUploads"), async (original) => ({
   ...(await original()),
   releaseProjectDraftUploads: state.releaseUploads,
 }));
-// Sections with their own data sources and tests; this file covers project permissions.
+// These sections have separate data sources and their own tests.
 vi.mock(import("./ProjectDefaultsSettings"), async (original) => ({
   ...(await original()),
   ProjectDefaultsSettings: (() => null) as never,
@@ -114,10 +116,19 @@ vi.mock(import("./ProjectActionsSettings"), async (original) => ({
   ProjectActionsSettings: (() => null) as never,
 }));
 
+vi.mock(import("../files/projectFilesQueryState"), async (original) => ({
+  ...(await original()),
+  getProjectFileQueryAtom: () => missingProjectFile,
+}));
+
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { buildSidebarProjectSnapshots } from "../../sidebarProjectGrouping";
 import { ProjectSettingsPanel } from "./ProjectSettingsPanel";
+import { ProjectsSettings } from "./ProjectsSettings";
+import { SettingsScopeProvider } from "./SettingsScopeContext";
+import { validateSettingsScopeSearch, type SettingsScopeSearch } from "./settingsScope";
+import { retainSettingsScope, validateSettingsRouteSearch } from "./settingsScopeNavigation";
 
 const primaryId = EnvironmentId.make("primary");
 const remoteId = EnvironmentId.make("remote");
@@ -126,7 +137,11 @@ const environments = [primaryId, remoteId].map((environmentId) => ({
   environmentId,
   label: environmentId,
   connection: { phase: "connected" },
-  serverConfig: { keybindings: DEFAULT_RESOLVED_KEYBINDINGS },
+  serverConfig: {
+    keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
+    settings: DEFAULT_SERVER_SETTINGS,
+    environment: { platform: { machine: "server" } },
+  },
 }));
 const session = (scopes: ReadonlyArray<AuthEnvironmentScope>): AuthSessionState => ({
   authenticated: true,
@@ -139,6 +154,7 @@ const session = (scopes: ReadonlyArray<AuthEnvironmentScope>): AuthSessionState 
   },
 });
 const writable = () => AsyncResult.success(session([AuthOrchestrationOperateScope]));
+const missingProjectFile = Atom.make(AsyncResult.initial<never, never>());
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -210,11 +226,33 @@ function projectKey() {
   })[0]!.projectKey;
 }
 
-async function mountPanel() {
+async function mountPanel(search: Omit<SettingsScopeSearch, "project"> = {}) {
   const key = projectKey();
+  const rootRoute = createRootRoute();
+  const settingsRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "settings",
+    validateSearch: validateSettingsRouteSearch,
+    search: { middlewares: [retainSettingsScope] },
+  });
+  const projectsRoute = createRoute({
+    getParentRoute: () => settingsRoute,
+    path: "projects",
+    component: () => (
+      <ProjectSettingsPanel
+        projectKey={key}
+        environmentId={search.machine ? EnvironmentId.make(search.machine) : null}
+        checkoutKey={search.checkout ?? null}
+      />
+    ),
+  });
+  const query = new URLSearchParams({ project: key });
+  for (const [name, value] of Object.entries(search)) {
+    if (value !== undefined) query.set(name, value);
+  }
   const router = createRouter({
-    routeTree: createRootRoute({ component: () => <ProjectSettingsPanel projectKey={key} /> }),
-    history: createMemoryHistory({ initialEntries: ["/settings/projects"] }),
+    routeTree: rootRoute.addChildren([settingsRoute.addChildren([projectsRoute])]),
+    history: createMemoryHistory({ initialEntries: [`/settings/projects?${query}`] }),
   });
   await router.load();
   await act(async () =>
@@ -225,6 +263,39 @@ async function mountPanel() {
     ),
   );
   await vi.waitFor(() => expect(nameInput()).not.toBeNull());
+  return router;
+}
+
+async function mountSettings(search: SettingsScopeSearch) {
+  const searchParams = new URLSearchParams(
+    Object.entries(search).flatMap(([key, value]) => (value === undefined ? [] : [[key, value]])),
+  );
+  const route = createRootRoute({
+    validateSearch: validateSettingsScopeSearch,
+    component: () => (
+      <SettingsScopeProvider
+        search={route.useSearch()}
+        onChange={(next) => void router.navigate({ to: "/settings/projects", search: () => next })}
+      >
+        <ProjectsSettings />
+      </SettingsScopeProvider>
+    ),
+  });
+  const router = createRouter({
+    routeTree: route,
+    history: createMemoryHistory({
+      initialEntries: [`/settings/projects?${searchParams.toString()}`],
+    }),
+  });
+  await router.load();
+  await act(async () =>
+    root.render(
+      <RegistryContext.Provider value={appAtomRegistry}>
+        <RouterProvider router={router} />
+      </RegistryContext.Provider>,
+    ),
+  );
+  return router;
 }
 
 const nameInput = () => container.querySelector<HTMLInputElement>('[aria-label="Project name"]')!;
@@ -292,7 +363,8 @@ describe("project settings permissions", () => {
 
   it("removes a writable checkout while removal of the mixed group stays denied", async () => {
     await grant(remoteId, AsyncResult.success(session([])));
-    await mountPanel();
+    const router = await mountPanel();
+    const initialHref = router.state.location.href;
     expect(removeAll().disabled).toBe(true);
 
     await userEvent.click(removeCheckout("/work/primary"));
@@ -303,6 +375,7 @@ describe("project settings permissions", () => {
     });
     await vi.waitFor(() => expect(state.releaseUploads).toHaveBeenCalledOnce());
     expect(state.clearDraft).toHaveBeenCalledOnce();
+    expect(router.state.location.href).toBe(initialHref);
   });
 
   it("rechecks every removal target after confirmation before deleting or clearing drafts", async () => {
@@ -355,4 +428,95 @@ describe("project settings permissions", () => {
       expect(state.update).toHaveBeenCalledTimes(2);
     },
   );
+});
+
+describe("project settings scope", () => {
+  it("offers project checkout environments while keeping unselected and unknown projects recoverable", async () => {
+    state.projects = state.projects.filter((project) => project.environmentId === primaryId);
+    const key = projectKey();
+    const router = await mountSettings({});
+    const environmentMenu = () => page.getByRole("button", { name: /^Environment scope:/ });
+    const primaryOption = () => page.getByRole("menuitemradio", { name: /^primary/ });
+    const remoteOption = () => page.getByRole("menuitemradio", { name: /^remote/ });
+
+    await act(async () => userEvent.click(environmentMenu()));
+    await expect.element(primaryOption()).toBeVisible();
+    await expect.element(remoteOption()).toBeVisible();
+    await act(async () => userEvent.keyboard("{Escape}"));
+
+    await act(async () =>
+      router.navigate({ to: "/settings/projects", search: () => ({ project: key }) }),
+    );
+    await expect.element(page.getByRole("textbox", { name: "Project name" })).toBeVisible();
+    await act(async () => userEvent.click(environmentMenu()));
+    await expect.element(primaryOption()).toBeVisible();
+    await expect.element(remoteOption()).not.toBeInTheDocument();
+    await act(async () => userEvent.keyboard("{Escape}"));
+
+    await act(async () =>
+      router.navigate({ to: "/settings/projects", search: () => ({ project: "removed-project" }) }),
+    );
+    await act(async () => userEvent.click(environmentMenu()));
+    await expect.element(primaryOption()).toBeVisible();
+    await expect.element(remoteOption()).toBeVisible();
+    await act(async () => userEvent.click(remoteOption()));
+    await vi.waitFor(() =>
+      expect(router.state.location.search).toEqual({
+        project: "removed-project",
+        machine: remoteId,
+      }),
+    );
+  });
+
+  it.each([
+    [undefined, "This project has no checkout on this environment."],
+    [
+      "removed-checkout",
+      "This checkout is no longer available in the selected project and environment.",
+    ],
+  ])("recovers a stale environment link with checkout %s", async (checkout, message) => {
+    state.projects = state.projects.filter((project) => project.environmentId === primaryId);
+    const key = projectKey();
+    const router = await mountSettings({
+      project: key,
+      machine: remoteId,
+      ...(checkout ? { checkout } : {}),
+    });
+
+    await expect.element(page.getByText(message, { exact: true })).toBeVisible();
+    await expect.element(page.getByRole("button", { name: /^Project scope:/ })).toBeVisible();
+    await expect
+      .element(page.getByRole("button", { name: "Environment scope: remote" }))
+      .toBeVisible();
+    await act(async () =>
+      userEvent.click(page.getByRole("button", { name: "Show all environments" })),
+    );
+
+    await expect
+      .element(page.getByRole("textbox", { name: "Project name" }))
+      .toHaveValue("Shared repo");
+    expect(router.state.location.search).toEqual({ project: key });
+    await expect
+      .element(page.getByRole("button", { name: "Environment scope: All environments" }))
+      .toBeVisible();
+    await expect.element(page.getByText(message, { exact: true })).not.toBeInTheDocument();
+    await expect
+      .element(page.getByRole("button", { name: "Remove project", exact: true }))
+      .toBeEnabled();
+  });
+});
+
+it("returns to the project overview after removal, clearing the selection but keeping the environment", async () => {
+  state.projects = [state.projects[1]!];
+  const router = await mountPanel({ machine: remoteId, checkout: "remote:/work/remote" });
+  const removeProject = [...container.querySelectorAll("button")].find(
+    (button) => button.textContent === "Remove project",
+  )!;
+
+  await act(async () => userEvent.click(removeProject));
+
+  await vi.waitFor(() => {
+    expect(router.state.location.pathname).toBe("/settings/projects");
+    expect(router.state.location.search).toEqual({ machine: remoteId });
+  });
 });

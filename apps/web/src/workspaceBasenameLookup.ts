@@ -1,3 +1,5 @@
+import { isAbsolutePath, isWindowsAbsolutePath } from "@t3tools/shared/path";
+
 export const WORKSPACE_BASENAME_LOOKUP_LIMIT = 25;
 
 // One counter for every caller: they all open the same panel, so the newest
@@ -45,4 +47,35 @@ export function pickWorkspaceBasenameMatch(
     (entry) => basenameOfPath(entry.path).toLowerCase() === folded,
   );
   return foldedMatches.length === 1 ? (foldedMatches[0]?.path ?? null) : null;
+}
+
+// Repository-relative paths can repeat the project's suffix in subfolder projects.
+export function stripRepeatedWorkspacePrefix(relativePath: string, cwd: string): string | null {
+  if (isAbsolutePath(relativePath)) return null;
+  const pathSegments = relativePath.split(/[\\/]+/);
+  const cwdSegments = cwd.split(/[\\/]+/).filter(Boolean);
+  const fold = isWindowsAbsolutePath(cwd)
+    ? (segment: string | undefined) => segment?.toLowerCase()
+    : (segment: string | undefined) => segment;
+  for (let count = Math.min(cwdSegments.length, pathSegments.length - 1); count > 0; count--) {
+    const prefix = cwdSegments.slice(-count);
+    if (prefix.every((segment, index) => fold(segment) === fold(pathSegments[index]))) {
+      return pathSegments.slice(count).join("/") || null;
+    }
+  }
+  return null;
+}
+
+export function pickStrippedWorkspaceMatch(
+  strippedPath: string,
+  cwd: string,
+  entries: ReadonlyArray<WorkspaceEntryCandidate>,
+): string | null {
+  const caseInsensitive = isWindowsAbsolutePath(cwd);
+  const key = (path: string) => {
+    const normalized = path.replaceAll("\\", "/");
+    return caseInsensitive ? normalized.toLowerCase() : normalized;
+  };
+  const files = entries.filter((entry) => entry.kind === "file");
+  return files.find((entry) => key(entry.path) === key(strippedPath))?.path ?? null;
 }

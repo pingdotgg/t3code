@@ -21,6 +21,7 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ModelManifest from "./ModelManifest.ts";
 import { applyProviderCompatibility } from "./providerCompatibility.ts";
 import * as ServerConfig from "../config.ts";
@@ -61,6 +62,12 @@ export class ProviderRegistry extends Context.Service<
      */
     readonly refreshInstance: (
       instanceId: ProviderInstanceId,
+    ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+
+    /** Only refreshed instances can verify an update; the published list still includes every row. */
+    readonly refreshAfterUpdate: (
+      provider: ProviderDriverKind,
+      selectedInstanceId: ProviderInstanceId,
     ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
     readonly refreshWorkspaceSnapshot: (input: {
@@ -124,15 +131,17 @@ export function upsertProviderWorkspaceSnapshot(
   cwd: string,
   scopedSnapshot: ProviderWorkspaceSnapshot,
 ): ServerProvider {
+  const previousSnapshot = provider.workspaceSnapshots?.find((snapshot) => snapshot.cwd === cwd);
+  const optionDescriptors = scopedSnapshot.optionDescriptors ?? previousSnapshot?.optionDescriptors;
   const workspaceSnapshot = {
     cwd,
     checkedAt: scopedSnapshot.checkedAt,
     slashCommands: scopedSnapshot.slashCommandsPending
-      ? (provider.workspaceSnapshots?.find((snapshot) => snapshot.cwd === cwd)?.slashCommands ??
-        scopedSnapshot.slashCommands)
+      ? (previousSnapshot?.slashCommands ?? scopedSnapshot.slashCommands)
       : scopedSnapshot.slashCommands,
     ...(scopedSnapshot.slashCommandsPending ? { slashCommandsPending: true } : {}),
     skills: scopedSnapshot.skills,
+    ...(optionDescriptors === undefined ? {} : { optionDescriptors }),
   } satisfies NonNullable<ServerProvider["workspaceSnapshots"]>[number];
   return {
     ...provider,
@@ -188,10 +197,10 @@ const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean =>
     isAntigravity && provider.status === "warning" && provider.auth.status === "unknown";
   const isPendingInitialProbe =
     provider.enabled && !provider.installed && provider.status === "warning";
-  const didInstalledProviderProbeFail = provider.installed && provider.status === "error";
-  return (
-    isPendingAntigravityAuthentication || isPendingInitialProbe || didInstalledProviderProbeFail
-  );
+  const isIncompleteInstalledProbe =
+    provider.installed &&
+    (provider.status === "error" || (isCodex && provider.status === "warning"));
+  return isPendingAntigravityAuthentication || isPendingInitialProbe || isIncompleteInstalledProbe;
 };
 
 const shouldRetainMissingOpenCodeMetadata = (provider: ServerProvider): boolean =>
@@ -357,6 +366,7 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const instanceRegistry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
     const manifestService = yield* ModelManifest.ModelManifest;
+    const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
     const serviceScope = yield* Effect.scope;
     const config = yield* ServerConfig.ServerConfig;
     const fileSystem = yield* FileSystem.FileSystem;
@@ -437,7 +447,7 @@ export const layer = Layer.effect(
       cachedProviders.map((provider) => classifyCompatibility(provider, initialManifest)),
     );
     const workspaceRefreshesRef = yield* Ref.make<
-      ReadonlyMap<ProviderInstance, ReadonlySet<string>>
+      ReadonlyMap<ProviderInstance, ReadonlyMap<string, symbol>>
     >(new Map());
     const maintenanceActionStatesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstanceId, { readonly update?: ServerProviderUpdateState | undefined }>
@@ -452,21 +462,22 @@ export const layer = Layer.effect(
       liveSubsRef,
     ).pipe(Effect.map((map) => Array.from(map.values(), buildSnapshotSource)));
 
-    const persistProvider = (provider: ServerProvider) =>
-      Effect.gen(function* () {
-        const key = snapshotInstanceKey(provider);
-        const filePath = yield* resolveProviderStatusCachePath({
-          cacheDir: config.providerStatusCacheDir,
-          instanceId: key,
-        }).pipe(Effect.provideService(Path.Path, path));
-        const { workspaceSnapshots: _workspaceSnapshots, ...machineProvider } = provider;
-        yield* writeProviderStatusCache({ filePath, provider: machineProvider }).pipe(
-          Effect.provideService(FileSystem.FileSystem, fileSystem),
-          Effect.provideService(Path.Path, path),
-          Effect.tapError(Effect.logError),
-          Effect.ignore,
-        );
-      });
+    const persistProvider = Effect.fn("ProviderRegistry.persistProvider")(function* (
+      provider: ServerProvider,
+    ) {
+      const key = snapshotInstanceKey(provider);
+      const filePath = yield* resolveProviderStatusCachePath({
+        cacheDir: config.providerStatusCacheDir,
+        instanceId: key,
+      }).pipe(Effect.provideService(Path.Path, path));
+      const { workspaceSnapshots: _workspaceSnapshots, ...machineProvider } = provider;
+      yield* writeProviderStatusCache({ filePath, provider: machineProvider }).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+        Effect.tapError(Effect.logError),
+        Effect.ignore,
+      );
+    });
 
     const applyProviderUpdateState = Effect.fn("applyProviderUpdateState")(function* (
       provider: ServerProvider,
@@ -685,6 +696,70 @@ export const layer = Layer.effect(
       return yield* refreshOneSource(providerSource);
     });
 
+    const refreshAfterUpdate = Effect.fn("refreshAfterUpdate")(function* (
+      provider: ProviderDriverKind,
+      selectedInstanceId: ProviderInstanceId,
+    ) {
+      yield* manifestService.forceRefresh;
+      const instances = (yield* instanceRegistry.listInstances).filter(
+        (instance) =>
+          instance.driverKind === provider &&
+          (instance.enabled || instance.instanceId === selectedInstanceId),
+      );
+      const failedInstances = new Set<ProviderInstanceId>();
+      const recoverInstanceFailure = Effect.fn("recoverPostUpdateRefreshFailure")(function* (
+        instanceId: ProviderInstanceId,
+        cause: Cause.Cause<unknown>,
+      ) {
+        if (Cause.hasInterruptsOnly(cause)) {
+          return yield* Effect.interrupt;
+        }
+        yield* Effect.logError("provider post-update refresh failed", {
+          instanceId,
+          cause: Cause.pretty(cause),
+        });
+        failedInstances.add(instanceId);
+        // A cached ready snapshot cannot verify a successful update.
+        return yield* updateProviders((providers) =>
+          providers.map((candidate) =>
+            candidate.instanceId === instanceId
+              ? { ...candidate, status: "error", message: "Provider refresh failed after update." }
+              : candidate,
+          ),
+        );
+      });
+      // Accounts can share an installation, but discovery must use each
+      // instance's own executable, environment, and credentials.
+      yield* Effect.forEach(
+        instances,
+        (instance) =>
+          Effect.gen(function* () {
+            yield* instance.invalidateCaches ?? Effect.void;
+            const maintenance = yield* instance.snapshot.resolveMaintenance({ fresh: true });
+            if (maintenance.packageName) {
+              yield* latestVersions.invalidate(maintenance.packageName);
+            }
+          }).pipe(Effect.catchCause((cause) => recoverInstanceFailure(instance.instanceId, cause))),
+        { concurrency: "unbounded", discard: true },
+      );
+      yield* Effect.forEach(
+        instances.filter((instance) => !failedInstances.has(instance.instanceId)),
+        (instance) =>
+          refreshOneSource(buildSnapshotSource(instance)).pipe(
+            Effect.catchCause((cause) => recoverInstanceFailure(instance.instanceId, cause)),
+          ),
+        { concurrency: "unbounded", discard: true },
+      );
+      const refreshedInstanceIds = new Set(
+        instances
+          .filter((instance) => !failedInstances.has(instance.instanceId))
+          .map((instance) => instance.instanceId),
+      );
+      return (yield* Ref.get(providersRef)).filter((candidate) =>
+        refreshedInstanceIds.has(candidate.instanceId),
+      );
+    });
+
     const getProviderMaintenanceCapabilitiesForInstance = Effect.fn(
       "getProviderMaintenanceCapabilitiesForInstance",
     )(function* (
@@ -897,14 +972,15 @@ export const layer = Layer.effect(
       const scannedAt = DateTime.formatIso(now);
       const instance = yield* instanceRegistry.getInstance(input.instanceId);
       if (!instance?.snapshotForCwd) return providers;
+      const token = Symbol();
       const claimed = yield* Ref.modify(workspaceRefreshesRef, (refreshes) => {
         const current = refreshes.get(instance);
-        if (current?.has(input.cwd)) return [false, refreshes] as const;
+        if (!input.fresh && current?.has(input.cwd)) return [false, refreshes] as const;
         const next = new Map(refreshes);
-        next.set(instance, new Set(current).add(input.cwd));
+        next.set(instance, new Map(current).set(input.cwd, token));
         return [true, next] as const;
       });
-      if (!claimed && !input.fresh) return yield* Ref.get(providersRef);
+      if (!claimed) return yield* Ref.get(providersRef);
       const refreshMachineSnapshot = input.fresh
         ? (instance.invalidateCaches ?? Effect.void).pipe(
             Effect.andThen(refreshInstance(input.instanceId)),
@@ -918,8 +994,12 @@ export const layer = Layer.effect(
           instanceRegistry.getInstance(input.instanceId).pipe(
             Effect.flatMap((currentInstance) => {
               if (currentInstance !== instance) return Ref.get(providersRef);
-              return updateProviders((currentProviders) =>
-                currentProviders.map((candidate) =>
+              return updateProviders((currentProviders) => {
+                // Read ownership inside the update so a newer claim cannot race publication.
+                if (Ref.getUnsafe(workspaceRefreshesRef).get(instance)?.get(input.cwd) !== token) {
+                  return currentProviders;
+                }
+                return currentProviders.map((candidate) =>
                   candidate.instanceId === input.instanceId &&
                   Equal.equals(workspaceSnapshotOf(candidate), scannedFrom)
                     ? upsertProviderWorkspaceSnapshot(candidate, input.cwd, {
@@ -932,22 +1012,22 @@ export const layer = Layer.effect(
                           scopedSnapshot.slashCommandsPending ?? scopedSnapshot.status === "error",
                       })
                     : candidate,
-                ),
-              );
+                );
+              });
             }),
           ),
         ),
         Effect.ensuring(
-          claimed
-            ? Ref.update(workspaceRefreshesRef, (refreshes) => {
-                const next = new Map(refreshes);
-                const current = new Set(next.get(instance));
-                current.delete(input.cwd);
-                if (current.size) next.set(instance, current);
-                else next.delete(instance);
-                return next;
-              })
-            : Effect.void,
+          Ref.update(workspaceRefreshesRef, (refreshes) => {
+            const current = refreshes.get(instance);
+            if (current?.get(input.cwd) !== token) return refreshes;
+            const next = new Map(refreshes);
+            const nextCwds = new Map(current);
+            nextCwds.delete(input.cwd);
+            if (nextCwds.size) next.set(instance, nextCwds);
+            else next.delete(instance);
+            return next;
+          }),
         ),
       );
     });
@@ -960,6 +1040,7 @@ export const layer = Layer.effect(
         refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshWorkspaceSnapshot: (input) =>
         refreshWorkspaceSnapshot(input).pipe(Effect.catchCause(recoverRefreshFailure)),
+      refreshAfterUpdate,
       getProviderMaintenanceCapabilitiesForInstance,
       setProviderMaintenanceActionState,
       get streamChanges() {

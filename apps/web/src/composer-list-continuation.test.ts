@@ -43,6 +43,15 @@ describe("composer list continuation", () => {
   it("exits the list on an empty item", () => {
     expect(applyEdit("1. foo\n2. ", listContinuationForEnter("1. foo\n2. ", 10)!)).toBe("1. foo\n");
     expect(applyEdit("- ", listContinuationForEnter("- ", 2)!)).toBe("");
+    expect(applyEdit("1)\t", listContinuationForEnter("1)\t", 3)!)).toBe("");
+    expect(applyEdit("- [ ] ", listContinuationForEnter("- [ ] ", 6)!)).toBe("");
+  });
+
+  it("keeps a marker typed without a trailing space", () => {
+    expect(listContinuationForEnter("asd\n2.", 6)).toBeNull();
+    expect(listContinuationForEnter("1)", 2)).toBeNull();
+    expect(listContinuationForEnter("-", 1)).toBeNull();
+    expect(listContinuationForEnter("- [ ]", 5)).toBeNull();
   });
 
   it("ignores non-list lines and carets inside the marker", () => {

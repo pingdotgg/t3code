@@ -57,7 +57,33 @@ describe("timelineContentOverflowsViewport", () => {
         inset,
       ),
     ).toBe(false);
+    expect(
+      timelineContentOverflowsViewport(
+        buildState({ positions: [0, Number.NaN], sizes: [200] }),
+        inset,
+      ),
+    ).toBe(false);
   });
+
+  it.each([
+    { measurement: "missing", sizes: [200] },
+    { measurement: "NaN", sizes: [200, Number.NaN] },
+  ])(
+    "reports overflow with a $measurement tail size without inventing anchor metrics",
+    ({ sizes }) => {
+      const state = buildState({ positions: [0, 900], sizes });
+      expect(timelineContentOverflowsViewport(state, inset)).toBe(true);
+      expect(getRowBottom(state, 1)).toBeNull();
+      expect(
+        getAnchoredTurnMetrics({
+          state,
+          anchorIndex: 0,
+          composerOverlayHeight: 100,
+          anchorOffset: 24,
+        }),
+      ).toBeNull();
+    },
+  );
 });
 
 describe("timeline scroll anchoring", () => {

@@ -1,3 +1,4 @@
+import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
@@ -27,7 +28,7 @@ import {
 import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { ReactNode } from "react";
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
-import { Keyboard, Platform, Pressable, View, type ViewStyle } from "react-native";
+import { Keyboard, Platform, View, type ViewStyle } from "react-native";
 import { composerImageGallery } from "../../lib/composerImageGallery";
 import { filePreviewGallery } from "../../lib/filePreviewGallery";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
@@ -87,8 +88,9 @@ import {
   groupByProvider,
   isModelSelectionUnavailable,
 } from "../../lib/modelOptions";
-import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
+import { useScaledTextRole, type ScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import type { RemoteClientConnectionState } from "../../lib/connection";
+import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { Menu } from "../../components/ui/Menu";
 import type { ActiveTurnComposerAction } from "@t3tools/client-runtime/state/composer-dispatch";
@@ -126,6 +128,20 @@ import {
 
 export const COMPOSER_COLLAPSED_CHROME = 60;
 
+const COLLAPSED_EDITOR_DEFAULT_INSET = 6;
+// iOS puts line-height slack above glyphs. DM Sans's lowercase midline is
+// descender (0.31em) + half x-height (0.504em) above the line bottom.
+const LOWERCASE_MIDLINE_EM = 0.562;
+
+function lowercaseMidline(text: ScaledTextRole): number {
+  return text.lineHeight - LOWERCASE_MIDLINE_EM * text.fontSize;
+}
+
+function collapsedEditorInset(text: ScaledTextRole): number {
+  const shift = lowercaseMidline(text) - lowercaseMidline(MOBILE_TYPOGRAPHY.body);
+  return Math.max(0, Math.round(COLLAPSED_EDITOR_DEFAULT_INSET - shift));
+}
+
 export const COMPOSER_EXPANDED_CHROME = 156;
 
 export interface ThreadComposerProps {
@@ -154,6 +170,7 @@ export interface ThreadComposerProps {
   } | null;
   readonly followUpBehavior: FollowUpBehavior;
   readonly canSteerActiveTurn: boolean;
+  readonly hidden: boolean;
   readonly editorRef?: RefObject<ComposerEditorHandle | null>;
   readonly onChangeDraftMessage: (value: string) => void;
   readonly onPickDraftMedia: () => Promise<void>;
@@ -605,6 +622,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     reportedModelSelection: props.reportedModelSelection,
     onSelectModel: (option) =>
       props.onUpdateModelSelection(withRememberedModelOptions(option.selection)),
+    restoreSelection: withRememberedModelOptions,
     optionDescriptors: providerOptionDescriptors,
     onUpdateOptionSelections: (options) => {
       rememberModelOptions(
@@ -719,9 +737,11 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
           </Text>
         ) : null}
         {modelUnavailable ? (
-          <Pressable accessibilityRole="button" className="px-3 py-2" onPress={openSettings}>
-            <Text className="text-xs text-foreground">Model unavailable. Open model settings.</Text>
-          </Pressable>
+          <Button
+            label="Model unavailable. Open model settings."
+            tone="text"
+            onPress={openSettings}
+          />
         ) : null}
 
         <ComposerSurface
@@ -800,6 +820,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
               layout={COMPOSER_LAYOUT_TRANSITION}
             >
               <ComposerEditor
+                hidden={props.hidden}
                 draftKey={composerDraftKey}
                 environmentId={props.environmentId}
                 onOpenMention={(path) => {
@@ -816,7 +837,8 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 ref={inputRef}
                 multiline
                 value={draftMessage}
-                readOnly={voiceInput.freezesEditor}
+                // The save uses a draft snapshot; further typing would be discarded on success.
+                readOnly={voiceInput.freezesEditor || queuedEdit?.saving === true}
                 skills={composerMenu.skills}
                 selection={composerMenu.selection}
                 onChangeText={props.onChangeDraftMessage}
@@ -910,7 +932,9 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 }
                 scrollEnabled={isExpanded}
                 singleLineCentered={!isExpanded}
-                contentInsetVertical={isExpanded || Platform.OS === "android" ? 0 : 6}
+                contentInsetVertical={
+                  isExpanded || Platform.OS === "android" ? 0 : collapsedEditorInset(bodyText)
+                }
                 style={
                   isExpanded
                     ? {

@@ -19,12 +19,14 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as UsageLimitRecoveryWorker from "../orchestration-v2/UsageLimitRecoveryWorker.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ScheduledTasks from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as Scheduler from "./Scheduler.ts";
 
@@ -88,11 +90,16 @@ it.effect.each(["on time", "after restart"])(
       const receipts = yield* Queue.unbounded<"task" | "retry">();
       const layerDependencies = Layer.mergeAll(
         NodeCrypto.layer,
+        Layer.mock(Orchestrator.OrchestratorV2)({}),
         Layer.mock(ThreadLaunchService.ThreadLaunchService)({
           launch: () =>
             Queue.offer(receipts, "task").pipe(
               Effect.andThen(Effect.die("fixture dispatch failure")),
             ),
+        }),
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+          namedProjectsRoot: "/projects",
+          isScratchProject: () => Effect.succeed(false),
         }),
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           dispatch: (command) =>

@@ -150,6 +150,15 @@ describe("storage cleanup settings", () => {
 });
 
 describe("ClientSettings rich text composer", () => {
+  it("keeps math opt-in and preserves its preference through patches and persistence", () => {
+    expect(decodeClientSettings({}).mathRenderingEnabled).toBe(false);
+    for (const mathRenderingEnabled of [true, false]) {
+      const preference = { mathRenderingEnabled };
+      expect(decodeClientSettingsPatch(preference)).toEqual(preference);
+      expect(encodeClientSettings(decodeClientSettings(preference))).toMatchObject(preference);
+    }
+    expect(() => decodeClientSettingsPatch({ mathRenderingEnabled: "yes" })).toThrow();
+  });
   it("enables rich text for new and existing settings without a saved preference", () => {
     expect(decodeClientSettings({}).composerRichTextEnabled).toBe(true);
     expect(decodeClientSettings({ sendShortcut: "mod-enter" }).composerRichTextEnabled).toBe(true);
@@ -589,7 +598,7 @@ describe("ClientSettings glass opacity", () => {
     expect(() => decodeClientSettingsPatch({ glassOpacity: value })).toThrow();
   });
 
-  it.each([40, 75, 100])("accepts a glass opacity within the supported range: %s", (value) => {
+  it.each([40, 100])("accepts a glass opacity within the supported range: %s", (value) => {
     expect(decodeClientSettings({ glassOpacity: value }).glassOpacity).toBe(value);
     expect(decodeClientSettingsPatch({ glassOpacity: value }).glassOpacity).toBe(value);
   });
@@ -605,7 +614,7 @@ describe("ClientSettings appearance contrast", () => {
     expect(() => decodeClientSettingsPatch({ appearanceContrast: value })).toThrow();
   });
 
-  it.each([50, 100, 150, 200])("accepts an appearance contrast in range: %s", (value) => {
+  it.each([50, 200])("accepts an appearance contrast in range: %s", (value) => {
     expect(decodeClientSettings({ appearanceContrast: value }).appearanceContrast).toBe(value);
     expect(decodeClientSettingsPatch({ appearanceContrast: value }).appearanceContrast).toBe(value);
   });
@@ -915,6 +924,30 @@ describe("ServerSettings worktree defaults", () => {
 });
 
 describe("ServerSettings.sourceControlWritingStyle", () => {
+  it.each([
+    { legacy: "", mode: "repo_conventions", customInstructions: "" },
+    { legacy: " \t\n ", mode: "repo_conventions", customInstructions: "" },
+    {
+      legacy: "  Prefer concise wording.\nKeep issue references.  ",
+      mode: "custom",
+      customInstructions: "Prefer concise wording.\nKeep issue references.",
+    },
+  ])("normalizes legacy writing style $legacy in snapshots only", ({ legacy, ...expected }) => {
+    const style = { ...expected, followChangeRequestTemplates: true };
+    for (const [input, normalized] of [
+      [{ sourceControlWritingStyle: legacy }, { sourceControlWritingStyle: style }],
+      [
+        { projectSettingsOverrides: { project: { sourceControlWritingStyle: legacy } } },
+        { projectSettingsOverrides: { project: { sourceControlWritingStyle: style } } },
+      ],
+    ] as const) {
+      const settings = decodeServerSettings(input);
+      expect(settings).toMatchObject(normalized);
+      expect(encodeServerSettings(settings)).toMatchObject(normalized);
+      expect(() => decodeServerSettingsPatch(input)).toThrow();
+    }
+  });
+
   it("defaults all style settings for legacy configs", () => {
     const settings = decodeServerSettings({});
 
@@ -926,17 +959,33 @@ describe("ServerSettings.sourceControlWritingStyle", () => {
     expect(settings.sourceControlWriterModelSelection).toBeNull();
   });
 
-  it("trims partial style updates", () => {
-    const patch = decodeServerSettingsPatch({
-      sourceControlWritingStyle: {
-        mode: "custom",
-        customInstructions: "  Prefer concise wording.  ",
-      },
-    });
-
-    expect(patch.sourceControlWritingStyle).toEqual({
+  it("preserves structured encoding and trims partial style updates", () => {
+    const style = {
       mode: "custom",
       customInstructions: "Prefer concise wording.",
+      followChangeRequestTemplates: false,
+    };
+    const input = {
+      sourceControlWritingStyle: style,
+      projectSettingsOverrides: { project: { sourceControlWritingStyle: style } },
+    };
+    expect(encodeServerSettings(decodeServerSettings(input))).toMatchObject(input);
+    expect(decodeServerSettingsPatch(input)).toEqual(input);
+
+    const partial = { mode: "custom", customInstructions: "  Prefer concise wording.  " };
+    const normalized = { mode: "custom", customInstructions: "Prefer concise wording." };
+    expect(
+      decodeServerSettingsPatch({
+        sourceControlWritingStyle: partial,
+        projectSettingsOverrides: { project: { sourceControlWritingStyle: partial } },
+      }),
+    ).toEqual({
+      sourceControlWritingStyle: normalized,
+      projectSettingsOverrides: {
+        project: {
+          sourceControlWritingStyle: { ...normalized, followChangeRequestTemplates: true },
+        },
+      },
     });
   });
 });

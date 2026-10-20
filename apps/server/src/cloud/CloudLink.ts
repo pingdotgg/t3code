@@ -2,6 +2,7 @@
 import * as NodeCrypto from "node:crypto";
 import {
   AuthStandardClientScopes,
+  EnvironmentAuthenticatedPrincipal,
   type EnvironmentCloudLinkStateResult,
   type EnvironmentCloudPreferencesRequest,
   type EnvironmentCloudRelayConfigResult,
@@ -69,6 +70,7 @@ import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as AgentAwarenessRelay from "../relay/AgentAwarenessRelay.ts";
 import { makeRelayEnvironmentClient } from "../relay/relayEnvironmentClient.ts";
+import { loopbackUrlHostForAddress } from "../startupAccess.ts";
 import {
   type CliDesiredLinkMode,
   readCliDesiredCloudLink,
@@ -289,7 +291,9 @@ const isPermanentLinkError = Schema.is(
 );
 
 export const shouldRetryCloudLink = (error: unknown): boolean =>
-  shouldRetryRelayRequest(error) && !isPermanentLinkError(error);
+  shouldRetryRelayRequest(error) &&
+  !isPermanentLinkError(error) &&
+  !(CliTokenManager.isCloudCliCredentialRefreshError(error) && error.requiresLogin);
 
 const rollbackFailed = (cause: unknown) =>
   Effect.logWarning("Could not roll back a T3 Connect preference", { cause });
@@ -417,14 +421,18 @@ export class CloudLink extends Context.Service<
   {
     /**
      * Signs the proof the relay asks for to link this environment. The request
-     * must reach this server directly on the loopback origin it names.
+     * must reach this server directly. Desktop bootstrap sessions may use the
+     * WSL IP; all other sessions must use the loopback origin they name.
      */
     readonly linkProof: (
       request: RelayLinkProofRequest,
       httpRequest: HttpServerRequest.HttpServerRequest,
     ) => Effect.Effect<
       RelayEnvironmentLinkProof,
-      CloudLinkOriginInvalidError | CloudLinkInternalError | EnvironmentAuth.ServerAuthInternalError
+      | CloudLinkOriginInvalidError
+      | CloudLinkInternalError
+      | EnvironmentAuth.ServerAuthInternalError,
+      EnvironmentAuthenticatedPrincipal
     >;
     readonly applyRelayConfig: (
       payload: RelayEnvironmentConfigRequest,
@@ -580,6 +588,7 @@ const make = Effect.gen(function* () {
   const makeCloudLinkProof = Effect.fn("environment.cloud.makeLinkProof")(function* (
     request: RelayLinkProofRequest,
     requestUrl: string,
+    allowNonLoopbackRequestHost = false,
   ) {
     const keyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets);
     if (
@@ -587,6 +596,7 @@ const make = Effect.gen(function* () {
       !isAllowedEndpointOrigin({
         origin: request.origin,
         requestUrl,
+        allowNonLoopbackRequestHost,
       })
     ) {
       return yield* new CloudLinkOriginInvalidError({ origin: "endpoint" });
@@ -630,8 +640,13 @@ const make = Effect.gen(function* () {
       if (requestUrl === null || hasForwardedAuthorityHeaders(httpRequest)) {
         return yield* new CloudLinkOriginInvalidError({ origin: "endpoint" });
       }
-      const proof = yield* makeCloudLinkProof(request, requestUrl);
-      return proof satisfies RelayEnvironmentLinkProof;
+      const principal = yield* EnvironmentAuthenticatedPrincipal;
+      // WSL desktop requests use the distro IP; only the server-issued bootstrap subject qualifies.
+      return yield* makeCloudLinkProof(
+        request,
+        requestUrl,
+        principal.subject === "desktop-bootstrap",
+      );
     },
     Effect.catchIf(ServerSecretStore.isSecretStoreError, internalError("generate-link-proof")),
     Effect.catchTags({ PlatformError: internalError("generate-link-proof") }),
@@ -1181,7 +1196,7 @@ const make = Effect.gen(function* () {
           return yield* new CloudLinkInternalError({ operation: "resolve-server-origin" });
         }
         const registration = yield* registerManagedTunnelRecovery(
-          `http://127.0.0.1:${address.port}`,
+          `http://${loopbackUrlHostForAddress(address)}:${address.port}`,
         ).pipe(
           Effect.retry({
             times: 2,

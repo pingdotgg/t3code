@@ -341,8 +341,8 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  const measure = (html: string) =>
-    Effect.gen(function* () {
+  const measure = Effect.fn("HtmlRender.measure")(
+    function* (html: string) {
       const executable = yield* previewBrowser.installed;
       if (Option.isNone(executable)) return undefined;
       const heights = yield* launching(executable.value, (noSandbox) =>
@@ -365,14 +365,13 @@ const make = Effect.gen(function* () {
         }),
       );
       return heights.toSorted(([left], [right]) => left - right);
-    }).pipe(
-      Effect.catch((cause) =>
-        Effect.logWarning("Could not measure an HTML render; publishing it without heights.", {
-          cause,
-        }).pipe(Effect.as(undefined)),
-      ),
-      Effect.withSpan("HtmlRender.measure"),
-    );
+    },
+    Effect.catch((cause) =>
+      Effect.logWarning("Could not measure an HTML render; publishing it without heights.", {
+        cause,
+      }).pipe(Effect.as(undefined)),
+    ),
+  );
 
   // The bootstrap goes in first so its head scan never runs over inlined image data.
   const inline = (html: string) =>

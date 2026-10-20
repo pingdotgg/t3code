@@ -4,13 +4,16 @@ import { ClaudeSettings, ProviderInstanceId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import { expect } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
+import { makeProcessProbe, processProbeSource } from "../testUtils/processProbe.ts";
 import {
   SYNTHETIC_CLAUDE_CAPABLE_MODEL,
   SYNTHETIC_CLAUDE_COLLIDING_ALIAS,
@@ -31,7 +34,7 @@ const layerClaudeTextGenerationTest = ServerConfig.ServerConfig.layerTest(proces
 // The stub behaviour lives in Node so the same implementation runs on Windows,
 // where a shebang file is not executable and would fall through to the real
 // Claude CLI on PATH; `writeFakeCli` picks the launcher shape per host.
-function makeFakeClaudeBinary(dir: string) {
+function makeFakeClaudeBinary(dir: string, lifecyclePort?: number) {
   return Effect.gen(function* () {
     const path = yield* Path.Path;
     const fs = yield* FileSystem.FileSystem;
@@ -45,7 +48,10 @@ function makeFakeClaudeBinary(dir: string) {
       directory: binDir,
       name: "claude",
       platform,
-      source,
+      source:
+        lifecyclePort === undefined
+          ? source
+          : `process.on("SIGTERM", () => {}); ${processProbeSource(lifecyclePort)}`,
     });
     return binDir;
   });
@@ -54,6 +60,7 @@ function makeFakeClaudeBinary(dir: string) {
 function withFakeClaudeEnv<A, E, R>(
   input: {
     output: string;
+    lifecyclePort?: number;
     exitCode?: number;
     stderr?: string;
     argsMustContain?: string;
@@ -68,7 +75,7 @@ function withFakeClaudeEnv<A, E, R>(
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-claude-text-" });
-    const binDir = yield* makeFakeClaudeBinary(tempDir);
+    const binDir = yield* makeFakeClaudeBinary(tempDir, input.lifecyclePort);
     const pathDelimiter = (yield* HostProcess.isWindows) ? ";" : ":";
     const previousPath = process.env.PATH;
     const previousOutput = process.env.T3_FAKE_CLAUDE_OUTPUT;
@@ -192,7 +199,36 @@ function withFakeClaudeEnv<A, E, R>(
 }
 
 it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
-  it.effect("forwards Claude thinking settings without passing unsupported effort", () =>
+  it.effect("kills a stalled CLI when the request times out", () =>
+    Effect.gen(function* () {
+      const probe = yield* makeProcessProbe;
+      yield* withFakeClaudeEnv({ output: "", lifecyclePort: probe.port }, (textGeneration) =>
+        Effect.gen(function* () {
+          const fiber = yield* textGeneration
+            .generateThreadTitle({
+              cwd: process.cwd(),
+              message: "Name this thread",
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("claudeAgent"),
+                model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+              },
+            })
+            .pipe(Effect.flip, Effect.forkScoped);
+          yield* probe.started;
+
+          yield* TestClock.adjust("180 seconds");
+          yield* probe.exited;
+          expect((yield* Fiber.join(fiber)).detail).toBe("Claude CLI request timed out.");
+        }),
+      );
+    }),
+  );
+
+  it.effect.each([
+    { thinking: true, settings: '{"disableAllHooks":true,"alwaysThinkingEnabled":true}' },
+    { thinking: false, settings: '{"disableAllHooks":true,"alwaysThinkingEnabled":false}' },
+    { thinking: undefined, settings: '{"disableAllHooks":true}' },
+  ])("forwards only the explicit thinking choice ($thinking)", ({ thinking, settings }) =>
     withFakeClaudeEnv(
       {
         output: JSON.stringify({
@@ -201,7 +237,7 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
             body: "",
           },
         }),
-        argsMustContain: '--settings {"disableAllHooks":true,"alwaysThinkingEnabled":false}',
+        argsMustContain: `--settings ${settings}`,
         argsMustNotContain: "--effort",
       },
       (textGeneration) =>
@@ -211,16 +247,14 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
             branch: "feature/claude-effect",
             stagedSummary: "M README.md",
             stagedPatch: "diff --git a/README.md b/README.md",
-            modelSelection: {
-              ...createModelSelection(
-                ProviderInstanceId.make("claudeAgent"),
-                SYNTHETIC_CLAUDE_THINKING_MODEL,
-                [
-                  { id: "thinking", value: false },
-                  { id: "effort", value: "high" },
-                ],
-              ),
-            },
+            modelSelection: createModelSelection(
+              ProviderInstanceId.make("claudeAgent"),
+              SYNTHETIC_CLAUDE_THINKING_MODEL,
+              [
+                ...(thinking === undefined ? [] : [{ id: "thinking", value: thinking }]),
+                { id: "effort", value: "high" },
+              ],
+            ),
           });
 
           expect(generated.subject).toBe("Add important change");

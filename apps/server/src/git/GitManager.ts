@@ -35,6 +35,7 @@ import {
   type VcsStatusRemoteResult,
   VcsStatusResult,
   ModelSelection,
+  type OrchestrationV2TurnItem,
   type ProjectId,
   SourceControlProviderError,
   type SourceControlWritingStyleSettings,
@@ -73,6 +74,11 @@ import {
 } from "@t3tools/shared/threadPullRequests";
 
 import { GitManagerError, GitPullRequestMaterializationError } from "@t3tools/contracts";
+import {
+  historicalMessage,
+  renderHistory,
+  selectHistory,
+} from "@t3tools/provider-core/server/handoffBudget";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import {
   conventionalCommitsTextGenerationPolicy,
@@ -176,6 +182,8 @@ const PR_LOOKUP_FAILURE_BASE_TTL = Duration.seconds(20);
 const PR_LOOKUP_FAILURE_MAX_TTL = Duration.minutes(15);
 const PR_LOOKUP_CACHE_CAPACITY = 2_048;
 const PR_LOOKUP_GIT_STATE_TTL = Duration.minutes(5);
+const PR_THREAD_CONTEXT_BYTES = 16_000;
+const PR_THREAD_COMMAND_OUTPUT_CHARS = 2_000;
 const isSourceControlProviderError = Schema.is(SourceControlProviderError);
 
 /**
@@ -487,6 +495,13 @@ function limitContext(value: string, maxChars: number): string {
   return `${value.slice(0, maxChars)}\n\n[truncated]`;
 }
 
+// Preserve command evidence when selectHistory drops oversized items; test verdicts are at the tail.
+function limitCommandOutput(item: OrchestrationV2TurnItem): OrchestrationV2TurnItem {
+  if (item.type !== "command_execution" || item.output === undefined) return item;
+  if (item.output.length <= PR_THREAD_COMMAND_OUTPUT_CHARS) return item;
+  return { ...item, output: `[truncated]\n${item.output.slice(-PR_THREAD_COMMAND_OUTPUT_CHARS)}` };
+}
+
 function shortenSha(sha: string | undefined): string | null {
   if (!sha) return null;
   return sha.slice(0, SHORT_SHA_LENGTH);
@@ -737,6 +752,31 @@ export const make = Effect.gen(function* () {
         );
     return { settings: resolveProjectSettings(settings, projectId).settings, projectId };
   });
+  const readThreadContext = Effect.fnUntraced(
+    function* (threadId: ThreadId | undefined) {
+      if (threadId === undefined) return undefined;
+      const { visibleTurnItems } = yield* threads.getThreadProjection(threadId);
+      const selected = selectHistory({
+        messages: visibleTurnItems.flatMap(
+          ({ item }) => historicalMessage(limitCommandOutput(item)) ?? [],
+        ),
+        coverage: "Digest of the thread that made this change, oldest first.",
+        budget: PR_THREAD_CONTEXT_BYTES,
+      });
+      return selected.messages.length === 0
+        ? undefined
+        : renderHistory(selected.messages, selected.context);
+    },
+    (effect, threadId) =>
+      effect.pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("GitManager.readThreadContext failed", {
+            threadId,
+            errorTag: error._tag,
+          }).pipe(Effect.as(undefined)),
+        ),
+      ),
+  );
   const readWorktreesDirectory = serverSettingsService.getSettings.pipe(
     Effect.map((settings) => settings.worktreesDirectory),
     Effect.orElseSucceed(() => ""),
@@ -755,8 +795,8 @@ export const make = Effect.gen(function* () {
     return yield* gitCore.createWorktree(input, { worktreesDirectory, ...options, submodules });
   });
 
-  const readRepositoryInstructions = (cwd: string, fileName: string) =>
-    Effect.gen(function* () {
+  const readRepositoryInstructions = Effect.fn("GitManager.readRepositoryInstructions")(
+    function* (cwd: string, fileName: string) {
       const root = yield* fileSystem.realPath(cwd);
       const instructionPath = yield* fileSystem.realPath(path.join(root, fileName));
       const relative = path.relative(root, instructionPath);
@@ -768,7 +808,9 @@ export const make = Effect.gen(function* () {
         return "";
       }
       return (yield* fileSystem.readFileString(instructionPath)).trim();
-    }).pipe(Effect.orElseSucceed(() => ""));
+    },
+    Effect.orElseSucceed(() => ""),
+  );
 
   const readRecentCommitSubjects = (cwd: string) =>
     gitCore
@@ -787,51 +829,53 @@ export const make = Effect.gen(function* () {
         Effect.orElseSucceed(() => []),
       );
 
-  const resolveStylePolicy = (cwd: string, settings: SourceControlTextGenerationSettings) =>
-    Effect.gen(function* () {
-      switch (settings.style.mode) {
-        case "conventional_commits":
-          return conventionalCommitsTextGenerationPolicy;
-        case "custom":
-          return customTextGenerationPolicy(
-            settings.style.customInstructions
-              ? {
-                  commitInstructions: settings.style.customInstructions,
-                  changeRequestInstructions: settings.style.customInstructions,
-                }
-              : {},
+  const resolveStylePolicy = Effect.fn("GitManager.resolveStylePolicy")(function* (
+    cwd: string,
+    settings: SourceControlTextGenerationSettings,
+  ) {
+    switch (settings.style.mode) {
+      case "conventional_commits":
+        return conventionalCommitsTextGenerationPolicy;
+      case "custom":
+        return customTextGenerationPolicy(
+          settings.style.customInstructions
+            ? {
+                commitInstructions: settings.style.customInstructions,
+                changeRequestInstructions: settings.style.customInstructions,
+              }
+            : {},
+        );
+      case "repo_conventions": {
+        const subjects = yield* readRecentCommitSubjects(cwd);
+        const agentInstructions = yield* readRepositoryInstructions(cwd, "AGENTS.md");
+        const isClaudeWriter =
+          settings.modelSelection.instanceId === "claudeAgent" ||
+          (yield* providerRegistry.getProviders).some(
+            (provider) =>
+              provider.instanceId === settings.modelSelection.instanceId &&
+              provider.driver === "claudeAgent",
           );
-        case "repo_conventions": {
-          const subjects = yield* readRecentCommitSubjects(cwd);
-          const agentInstructions = yield* readRepositoryInstructions(cwd, "AGENTS.md");
-          const isClaudeWriter =
-            settings.modelSelection.instanceId === "claudeAgent" ||
-            (yield* providerRegistry.getProviders).some(
-              (provider) =>
-                provider.instanceId === settings.modelSelection.instanceId &&
-                provider.driver === "claudeAgent",
-            );
-          const claudeInstructions = isClaudeWriter
-            ? yield* readRepositoryInstructions(cwd, "CLAUDE.md")
-            : "";
-          const examples = [
-            ...(subjects.length > 0
-              ? [["Recent commit subjects from this repository:", ...subjects].join("\n")]
-              : []),
-            ...(agentInstructions ? [`Local AGENTS.md:\n${agentInstructions}`] : []),
-            ...(claudeInstructions ? [`Local CLAUDE.md:\n${claudeInstructions}`] : []),
-          ].join("\n\n");
-          if (!examples) {
-            return repositoryConventionsTextGenerationPolicy;
-          }
-          return {
-            ...repositoryConventionsTextGenerationPolicy,
-            commitInstructions: `${repositoryConventionsTextGenerationPolicy.commitInstructions}\n\n${examples}`,
-            changeRequestInstructions: `${repositoryConventionsTextGenerationPolicy.changeRequestInstructions}\n\n${examples}`,
-          };
+        const claudeInstructions = isClaudeWriter
+          ? yield* readRepositoryInstructions(cwd, "CLAUDE.md")
+          : "";
+        const examples = [
+          ...(subjects.length > 0
+            ? [["Recent commit subjects from this repository:", ...subjects].join("\n")]
+            : []),
+          ...(agentInstructions ? [`Local AGENTS.md:\n${agentInstructions}`] : []),
+          ...(claudeInstructions ? [`Local CLAUDE.md:\n${claudeInstructions}`] : []),
+        ].join("\n\n");
+        if (!examples) {
+          return repositoryConventionsTextGenerationPolicy;
         }
+        return {
+          ...repositoryConventionsTextGenerationPolicy,
+          commitInstructions: `${repositoryConventionsTextGenerationPolicy.commitInstructions}\n\n${examples}`,
+          changeRequestInstructions: `${repositoryConventionsTextGenerationPolicy.changeRequestInstructions}\n\n${examples}`,
+        };
       }
-    });
+    }
+  });
   const randomUUIDv4 = (cwd: string) =>
     crypto.randomUUIDv4().pipe(
       Effect.mapError(
@@ -1967,16 +2011,39 @@ export const make = Effect.gen(function* () {
     };
   });
 
-  const resolveBaseBranch = Effect.fn("resolveBaseBranch")(function* (
+  const resolvePrBase = Effect.fn("resolvePrBase")(function* (
     cwd: string,
     branch: string,
     upstreamRef: string | null,
     headContext: Pick<BranchHeadContext, "isCrossRepository" | "remoteName">,
   ) {
+    const configuredRef = yield* gitCore.readConfigValue(cwd, `branch.${branch}.t3-merge-base-ref`);
+    if (configuredRef?.startsWith("refs/heads/") || configuredRef?.startsWith("refs/remotes/")) {
+      const configuredBranch = yield* gitCore.resolveBranchName(cwd, configuredRef);
+      if (configuredBranch) return { baseBranch: configuredBranch, baseRef: configuredRef };
+    }
+
     const configured = yield* gitCore.readConfigValue(cwd, `branch.${branch}.gh-merge-base`);
     if (configured) {
+      const localRef = configured.startsWith("refs/") ? configured : `refs/heads/${configured}`;
+      const localBranch = yield* gitCore.resolveBranchName(cwd, localRef);
+      if (localBranch) {
+        const shadowsRemote =
+          configured.includes("/") &&
+          !configured.startsWith("refs/") &&
+          (yield* gitCore.resolveBranchName(cwd, `refs/remotes/${configured}`)) !== null;
+        return {
+          baseBranch: localBranch,
+          baseRef: configured.startsWith("refs/") || shadowsRemote ? localRef : localBranch,
+        };
+      }
+      if (configured.includes("/") && !configured.startsWith("refs/")) {
+        const remoteRef = `refs/remotes/${configured}`;
+        const remoteBranch = yield* gitCore.resolveBranchName(cwd, remoteRef);
+        if (remoteBranch) return { baseBranch: remoteBranch, baseRef: remoteRef };
+      }
       const configuredBranch = yield* gitCore.resolveBranchName(cwd, configured);
-      if (configuredBranch) return configuredBranch;
+      if (configuredBranch) return { baseBranch: configuredBranch, baseRef: configuredBranch };
     }
 
     if (upstreamRef && !headContext.isCrossRepository) {
@@ -1984,7 +2051,7 @@ export const make = Effect.gen(function* () {
         remoteName: headContext.remoteName,
       });
       if (upstreamBranch.length > 0 && upstreamBranch !== branch) {
-        return upstreamBranch;
+        return { baseBranch: upstreamBranch, baseRef: upstreamBranch };
       }
     }
 
@@ -1993,7 +2060,7 @@ export const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => null),
     );
     if (defaultFromProvider) {
-      return defaultFromProvider;
+      return { baseBranch: defaultFromProvider, baseRef: defaultFromProvider };
     }
 
     const defaultFromRemote = yield* gitCore.resolvePrimaryRemoteName(cwd).pipe(
@@ -2001,16 +2068,17 @@ export const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => null),
     );
     if (defaultFromRemote) {
-      return defaultFromRemote;
+      return { baseBranch: defaultFromRemote, baseRef: defaultFromRemote };
     }
 
-    return "main";
+    return { baseBranch: "main", baseRef: "main" };
   });
 
   const resolveBaseRangeRef = Effect.fn("resolveBaseRangeRef")(function* (
     cwd: string,
     baseBranch: string,
   ) {
+    if (baseBranch.startsWith("refs/")) return baseBranch;
     const remoteName = yield* gitCore
       .resolvePrimaryRemoteName(cwd)
       .pipe(Effect.orElseSucceed(() => null));
@@ -2197,6 +2265,7 @@ export const make = Effect.gen(function* () {
     settings: SourceControlTextGenerationSettings,
     cwd: string,
     fallbackBranch: string | null,
+    threadId: ThreadId | undefined,
     emit: GitActionProgressEmitter,
   ) {
     const provider = yield* sourceControlProvider(cwd);
@@ -2235,13 +2304,18 @@ export const make = Effect.gen(function* () {
       };
     }
 
-    const baseBranch = yield* resolveBaseBranch(cwd, branch, details.upstreamRef, headContext);
+    const { baseBranch, baseRef } = yield* resolvePrBase(
+      cwd,
+      branch,
+      details.upstreamRef,
+      headContext,
+    );
     yield* emit({
       kind: "phase_started",
       phase: "pr",
       label: `Generating ${terms.shortLabel} content...`,
     });
-    const baseRangeRef = yield* resolveBaseRangeRef(cwd, baseBranch);
+    const baseRangeRef = yield* resolveBaseRangeRef(cwd, baseRef);
     const rangeContext = yield* gitCore.readRangeContext(cwd, baseRangeRef);
     const policy = yield* resolveStylePolicy(cwd, settings);
     const changeRequestTemplate =
@@ -2250,6 +2324,7 @@ export const make = Effect.gen(function* () {
             yield* provider.readChangeRequestTemplate({ cwd, treeish: baseRangeRef }),
           )
         : undefined;
+    const threadContext = yield* readThreadContext(threadId);
 
     const generated = yield* textGeneration.generatePrContent({
       cwd,
@@ -2259,6 +2334,7 @@ export const make = Effect.gen(function* () {
       diffSummary: limitContext(rangeContext.diffSummary, 20_000),
       diffPatch: limitContext(rangeContext.diffPatch, 60_000),
       ...(changeRequestTemplate ? { changeRequestTemplate } : {}),
+      ...(threadContext ? { threadContext } : {}),
       ...(policy ? { policy } : {}),
       modelSelection: settings.modelSelection,
     });
@@ -2341,39 +2417,38 @@ export const make = Effect.gen(function* () {
     string,
     { readonly readAtMs: number; readonly value: string | null }
   >();
-  const rememberPrLookupGitState = <E>(
+  const rememberPrLookupGitState = Effect.fn("GitManager.rememberPrLookupGitState")(function* <E>(
     cwd: string,
     key: string,
     fresh: boolean,
     read: Effect.Effect<string | null, E>,
-  ) =>
-    Effect.gen(function* () {
-      const entryKey = `${cwd}\u0000${key}`;
-      const readAtMs = yield* Clock.currentTimeMillis;
-      const remembered = prLookupGitStateByKey.get(entryKey);
-      if (
-        !fresh &&
-        remembered !== undefined &&
-        readAtMs - remembered.readAtMs < Duration.toMillis(PR_LOOKUP_GIT_STATE_TTL)
-      ) {
-        return remembered.value;
-      }
-      // invalidateStatus bumps the epoch. A read that started before a T3 git
-      // action, or before a newer read finished, must not replace their state.
-      const epoch = prLookupEpoch(cwd);
-      const value = yield* read;
-      const latest = prLookupGitStateByKey.get(entryKey);
-      if (prLookupEpoch(cwd) !== epoch || (latest !== undefined && latest.readAtMs > readAtMs)) {
-        return value;
-      }
-      prLookupGitStateByKey.delete(entryKey);
-      if (prLookupGitStateByKey.size >= PR_LOOKUP_CACHE_CAPACITY) {
-        const oldestKey = prLookupGitStateByKey.keys().next().value;
-        if (oldestKey !== undefined) prLookupGitStateByKey.delete(oldestKey);
-      }
-      prLookupGitStateByKey.set(entryKey, { readAtMs, value });
+  ) {
+    const entryKey = `${cwd}\u0000${key}`;
+    const readAtMs = yield* Clock.currentTimeMillis;
+    const remembered = prLookupGitStateByKey.get(entryKey);
+    if (
+      !fresh &&
+      remembered !== undefined &&
+      readAtMs - remembered.readAtMs < Duration.toMillis(PR_LOOKUP_GIT_STATE_TTL)
+    ) {
+      return remembered.value;
+    }
+    // invalidateStatus bumps the epoch. A read that started before a T3 git
+    // action, or before a newer read finished, must not replace their state.
+    const epoch = prLookupEpoch(cwd);
+    const value = yield* read;
+    const latest = prLookupGitStateByKey.get(entryKey);
+    if (prLookupEpoch(cwd) !== epoch || (latest !== undefined && latest.readAtMs > readAtMs)) {
       return value;
-    });
+    }
+    prLookupGitStateByKey.delete(entryKey);
+    if (prLookupGitStateByKey.size >= PR_LOOKUP_CACHE_CAPACITY) {
+      const oldestKey = prLookupGitStateByKey.keys().next().value;
+      if (oldestKey !== undefined) prLookupGitStateByKey.delete(oldestKey);
+    }
+    prLookupGitStateByKey.set(entryKey, { readAtMs, value });
+    return value;
+  });
   const forgetPrLookupGitState = (cwd: string) =>
     normalizeStatusCacheKey(cwd).pipe(
       Effect.map((cacheCwd) => {
@@ -3119,7 +3194,13 @@ export const make = Effect.gen(function* () {
               .pipe(
                 Effect.tap(() => Ref.set(currentPhase, Option.some("pr"))),
                 Effect.flatMap(() =>
-                  runPrStep(textGenerationSettings, input.cwd, currentBranch, progress.emit),
+                  runPrStep(
+                    textGenerationSettings,
+                    input.cwd,
+                    currentBranch,
+                    input.threadId,
+                    progress.emit,
+                  ),
                 ),
               )
           : { status: "skipped_not_requested" as const };

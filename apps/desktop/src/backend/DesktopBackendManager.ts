@@ -37,9 +37,8 @@ const MAX_PREFLIGHT_FAILURE_ATTEMPTS = 5;
 const DEFAULT_BACKEND_READINESS_TIMEOUT = Duration.minutes(1);
 const DEFAULT_BACKEND_READINESS_INTERVAL = Duration.millis(100);
 const DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT = Duration.seconds(1);
-// Same as the service launcher. A killed backend leaves its agents running,
-// and a busy one needs a few seconds to stop every provider session.
-const DEFAULT_BACKEND_TERMINATE_GRACE = Duration.seconds(5);
+// Give busy backends time to stop provider sessions before forcing termination.
+const DEFAULT_BACKEND_TERMINATE_GRACE = Duration.seconds(30);
 const DEFAULT_BACKEND_OUTPUT_DRAIN_TIMEOUT = Duration.seconds(5);
 const BACKEND_READINESS_PATH = "/.well-known/t3/environment";
 const { logWarning: logBackendProcessWarning } =
@@ -568,8 +567,22 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
   yield* probeReadiness().pipe(Effect.repeat({ while: (ready) => !ready }), Effect.forkScoped);
 
   const exit = yield* handle.exitCode.pipe(
-    Effect.mapError(
-      (cause) =>
+    Effect.map((exitCode) => ({
+      code: Option.some(exitCode),
+      reason: `code=${exitCode}`,
+    })),
+    Effect.catch((cause) => {
+      // Effect's Node spawner exposes signal exits only through this cause message.
+      const signal =
+        cause.cause instanceof Error
+          ? /^Process interrupted due to receipt of signal: '(SIG[A-Z0-9]+)'$/.exec(
+              cause.cause.message,
+            )?.[1]
+          : undefined;
+      if (signal !== undefined) {
+        return Effect.succeed({ code: Option.none(), reason: `killed by ${signal}` });
+      }
+      return Effect.fail(
         new BackendProcessExitStatusError({
           executablePath: options.executablePath,
           entryPath: options.entryPath,
@@ -578,7 +591,8 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
           pid: Number(handle.pid),
           cause,
         }),
-    ),
+      );
+    }),
     Effect.exit,
   );
   yield* options.onExitObserved?.() ?? Effect.void;
@@ -592,11 +606,7 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
   if (Exit.isFailure(exit)) {
     return yield* Effect.failCause(exit.cause);
   }
-  const exitCode = exit.value;
-  return {
-    code: Option.some(exitCode),
-    reason: `code=${exitCode}`,
-  } satisfies BackendProcessExit;
+  return exit.value;
 });
 
 export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
@@ -1103,20 +1113,25 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
     });
   });
 
-  const waitForReady = (timeout: Duration.Duration): Effect.Effect<boolean> =>
-    Effect.gen(function* () {
+  const waitForReady: (timeout: Duration.Duration) => Effect.Effect<boolean> = Effect.fn(
+    "DesktopBackendManager.waitForReady",
+  )(
+    function* (_timeout: Duration.Duration) {
       const current = yield* Ref.get(state);
       if (!current.desiredRunning) return { done: true, ready: false };
       return current.ready ? { done: true, ready: true } : { done: false, ready: false };
-    }).pipe(
-      Effect.repeat({
-        until: (status) => status.done,
-        schedule: Schedule.spaced(Duration.millis(100)),
-      }),
-      Effect.map((status) => status.ready),
-      Effect.timeoutOption(timeout),
-      Effect.map(Option.getOrElse(() => false)),
-    );
+    },
+    (effect, timeout) =>
+      effect.pipe(
+        Effect.repeat({
+          until: (status) => status.done,
+          schedule: Schedule.spaced(Duration.millis(100)),
+        }),
+        Effect.map((status) => status.ready),
+        Effect.timeoutOption(timeout),
+        Effect.map(Option.getOrElse(() => false)),
+      ),
+  );
 
   yield* Effect.addFinalizer(() => stop());
 

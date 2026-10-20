@@ -213,11 +213,12 @@ export function RevertConfirmHost(props: {
           <AlertDialogTitle>Edit from here?</AlertDialogTitle>
           <AlertDialogDescription>
             Rewind chat to before this message. Your prompt and attachments return to the composer.
+            “Revert files too” also undoes your own edits.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
-          <Button variant="destructive" onClick={() => confirm(true)}>
+          <Button variant="destructive-outline" onClick={() => confirm(true)}>
             Revert files too
           </Button>
           <Button onClick={() => confirm(false)}>Revert and keep changes</Button>

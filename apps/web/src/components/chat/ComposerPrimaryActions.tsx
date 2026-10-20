@@ -239,7 +239,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
                   "h-9 rounded-l-none border-l border-message-action-foreground/20 px-2 sm:h-8",
                 )}
                 aria-label="Implementation actions"
-                {...pointerFocusProps}
+                onMouseDown={
+                  preserveComposerFocusOnPointerDown ? (event) => event.preventDefault() : undefined
+                }
                 disabled={isSendBusy || isSendDisabled || isConnecting || isEnvironmentUnavailable}
               />
             }
@@ -385,9 +387,12 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           <span>{compactTokens}</span>
         </TooltipTrigger>
         <TooltipPopup>
-          {keepFullHistory
-            ? `Next send keeps all ${compactTokens} tokens. Click to compact first`
-            : `Next send compacts ${compactTokens} tokens first. Click to keep full history`}
+          <div>
+            {keepFullHistory
+              ? `Next send keeps all ${compactTokens} tokens.`
+              : `Next send compacts ${compactTokens} tokens first.`}
+          </div>
+          <div>{keepFullHistory ? "Click to compact first" : "Click to keep full history"}</div>
         </TooltipPopup>
       </Tooltip>
       {submit}

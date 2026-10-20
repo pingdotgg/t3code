@@ -74,8 +74,8 @@ export const layer: Layer.Layer<
     const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
 
     return RuntimeRequestServiceV2.of({
-      respond: (input) =>
-        Effect.gen(function* () {
+      respond: Effect.fn("RuntimeRequestService.respond")(
+        function* (input) {
           const request = yield* projections.getRuntimeRequest(input.threadId, input.requestId);
           if (request === undefined) {
             return yield* new RuntimeRequestResponseExecutionError({
@@ -120,19 +120,22 @@ export const layer: Layer.Layer<
             ...(input.decision === undefined ? {} : { decision: input.decision }),
             ...(input.answers === undefined ? {} : { answers: input.answers }),
           });
-        }).pipe(
-          Effect.mapError((cause) =>
-            isRuntimeRequestResponseExecutionError(cause)
-              ? cause
-              : new RuntimeRequestResponseExecutionError({
-                  reason: "unexpected-failure",
-                  threadId: input.threadId,
-                  providerSessionId: input.providerSessionId,
-                  requestId: input.requestId,
-                  cause,
-                }),
+        },
+        (effect, input) =>
+          effect.pipe(
+            Effect.mapError((cause) =>
+              isRuntimeRequestResponseExecutionError(cause)
+                ? cause
+                : new RuntimeRequestResponseExecutionError({
+                    reason: "unexpected-failure",
+                    threadId: input.threadId,
+                    providerSessionId: input.providerSessionId,
+                    requestId: input.requestId,
+                    cause,
+                  }),
+            ),
           ),
-        ),
+      ),
     });
   }),
 );

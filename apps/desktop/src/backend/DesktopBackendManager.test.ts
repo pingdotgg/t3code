@@ -262,7 +262,7 @@ describe("DesktopBackendManager", () => {
         assert.equal(spawnedCommand.options.additionalFds?.fd5?.type, "output");
         assert.equal(
           Duration.toMillis(Duration.fromInputUnsafe(spawnedCommand.options.forceKillAfter)),
-          5_000,
+          30_000,
         );
 
         assert.deepEqual(yield* decodeBootstrap(bootstrapJson), configWithObservability);
@@ -428,6 +428,30 @@ describe("DesktopBackendManager", () => {
       assert.equal(error.message, "Failed to read the exit status of desktop backend process 123.");
       assert.notInclude(error.message, "exit-status-secret-sentinel");
       assert.isTrue(isBackendProcessError(error));
+    }),
+  );
+
+  it.effect("reports a SIGKILL exit without an exit code", () =>
+    Effect.gen(function* () {
+      const exitCause = PlatformError.systemError({
+        _tag: "Unknown",
+        module: "ChildProcess",
+        method: "exitCode",
+        cause: new Error("Process interrupted due to receipt of signal: 'SIGKILL'"),
+      });
+      const layerSpawner = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() =>
+          Effect.succeed(makeProcess({ exitCode: Effect.fail(exitCause) })),
+        ),
+      );
+
+      const exit = yield* DesktopBackendManager.runBackendProcess({
+        ...baseConfig,
+        desktopTelemetryStream: Stream.empty,
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSpawner, layerHealthyHttpClient)));
+
+      assert.deepEqual(exit, { code: Option.none(), reason: "killed by SIGKILL" });
     }),
   );
 
@@ -1522,14 +1546,15 @@ describe("DesktopBackendManager", () => {
     ),
   );
 
-  it.effect("stopAllPoolInstances bounds the quit finalizer when backends hang", () =>
+  it.effect("stopAllPoolInstances allows slow cleanup but bounds hung backends", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const teardownStarted = yield* Queue.unbounded<string>();
         const teardownFinished = yield* Queue.unbounded<string>();
-        const allowTeardown = yield* Deferred.make<void>();
+        const allowSlowTeardown = yield* Deferred.make<void>();
+        const allowHungTeardown = yield* Deferred.make<void>();
 
-        const makeInstance = (name: string) =>
+        const makeInstance = (name: string, allowTeardown: Deferred.Deferred<void>) =>
           makeTestInstance({
             spawnerLayer: Layer.succeed(
               ChildProcessSpawner.ChildProcessSpawner,
@@ -1551,8 +1576,8 @@ describe("DesktopBackendManager", () => {
             httpClientLayer: layerHttpClient(() => Effect.never),
           });
 
-        const instance1 = yield* makeInstance("instance1");
-        const instance2 = yield* makeInstance("instance2");
+        const instance1 = yield* makeInstance("instance1", allowSlowTeardown);
+        const instance2 = yield* makeInstance("instance2", allowHungTeardown);
 
         yield* instance1.start;
         yield* instance2.start;
@@ -1570,15 +1595,25 @@ describe("DesktopBackendManager", () => {
         ).pipe(Effect.provide(layerMockPool), Effect.forkChild);
 
         const started = yield* Queue.takeN(teardownStarted, 2);
+        yield* Effect.addFinalizer(() =>
+          Deferred.succeed(allowSlowTeardown, undefined).pipe(
+            Effect.andThen(Deferred.succeed(allowHungTeardown, undefined)),
+          ),
+        );
         assert.deepEqual(started.toSorted(), ["instance1", "instance2"]);
 
-        yield* TestClock.adjust(Duration.seconds(5));
+        yield* TestClock.adjust(Duration.seconds(6));
+        assert.isUndefined(quitFiber.pollUnsafe());
+        yield* Deferred.succeed(allowSlowTeardown, undefined);
+        assert.equal(yield* Queue.take(teardownFinished), "instance1");
+        assert.isUndefined(quitFiber.pollUnsafe());
+        yield* TestClock.adjust(Duration.seconds(39));
+
         yield* Fiber.join(quitFiber);
         assert.equal(yield* Queue.size(teardownFinished), 0);
 
-        yield* Deferred.succeed(allowTeardown, undefined);
-        const finished = yield* Queue.takeN(teardownFinished, 2);
-        assert.deepEqual(finished.toSorted(), ["instance1", "instance2"]);
+        yield* Deferred.succeed(allowHungTeardown, undefined);
+        assert.equal(yield* Queue.take(teardownFinished), "instance2");
       }).pipe(Effect.provide(TestClock.layer())),
     ),
   );

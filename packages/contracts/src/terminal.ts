@@ -3,6 +3,7 @@ import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
 export const DEFAULT_TERMINAL_ID = "term-1";
+export const DEFAULT_MAX_TERMINAL_BUFFER_BYTES = 512 * 1024;
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const TerminalColsSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)).check(

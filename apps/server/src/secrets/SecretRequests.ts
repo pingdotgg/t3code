@@ -73,8 +73,8 @@ const make = Effect.gen(function* () {
     yield* store.getOrCreateRandom("secret-request-salt", 32).pipe(Effect.orDie),
   ).toString("hex");
 
-  const answer: SecretRequests["Service"]["answer"] = (input) =>
-    Effect.gen(function* () {
+  const answer: SecretRequests["Service"]["answer"] = Effect.fn("SecretRequests.answer")(
+    function* (input) {
       yield* Effect.annotateCurrentSpan({
         "orchestration_v2.thread_id": input.threadId,
         "secret_request.answer": input.answer.type,
@@ -159,14 +159,16 @@ const make = Effect.gen(function* () {
         yield* removeLogged(storeName(refFor(salt, input.threadId, item.id)));
         return yield* new SecretRequestError({ reason: "agent_stopped" });
       }
-    }).pipe(Effect.withSpan("SecretRequests.answer"));
+    },
+  );
 
-  const savedRef: SecretRequests["Service"]["savedRef"] = (input) =>
-    Effect.gen(function* () {
+  const savedRef: SecretRequests["Service"]["savedRef"] = Effect.fn("SecretRequests.savedRef")(
+    function* (input) {
       const ref = refFor(salt, input.threadId, input.turnItemId);
       const stored = yield* store.get(storeName(ref)).pipe(Effect.orElseSucceed(Option.none));
       return Option.map(stored, () => ref);
-    });
+    },
+  );
 
   const removeLogged = (name: string) =>
     store.remove(name).pipe(
@@ -191,30 +193,32 @@ const make = Effect.gen(function* () {
       Effect.withSpan("SecretRequests.consume"),
     );
 
-  const consumeRef = (input: { readonly ref: SecretRef; readonly projectId: ProjectId }) =>
-    Effect.gen(function* () {
-      if (!REF_PATTERN.test(input.ref))
-        return yield* new SecretRequestError({ reason: "invalid_ref" });
-      const stored = yield* store
-        .get(storeName(input.ref))
-        .pipe(Effect.mapError((cause) => new SecretRequestError({ reason: "read_failed", cause })));
-      const decoded = Option.flatMap(stored, (bytes) =>
-        decodeStored(new TextDecoder().decode(bytes)),
-      );
-      if (Option.isNone(decoded) || decoded.value.projectId !== input.projectId) {
-        return yield* new SecretRequestError({ reason: "ref_unavailable" });
-      }
-      if ((yield* Clock.currentTimeMillis) - decoded.value.savedAt > SECRET_REF_TTL_MS) {
-        yield* removeLogged(storeName(input.ref));
-        return yield* new SecretRequestError({ reason: "ref_expired" });
-      }
-      // One use: the value moves into whatever consumed it. If it cannot be
-      // deleted, it is not handed out, so a ref is never used twice.
-      if (!(yield* removeLogged(storeName(input.ref)))) {
-        return yield* new SecretRequestError({ reason: "consume_failed" });
-      }
-      return decoded.value.value;
-    });
+  const consumeRef = Effect.fn("SecretRequests.consumeRef")(function* (input: {
+    readonly ref: SecretRef;
+    readonly projectId: ProjectId;
+  }) {
+    if (!REF_PATTERN.test(input.ref))
+      return yield* new SecretRequestError({ reason: "invalid_ref" });
+    const stored = yield* store
+      .get(storeName(input.ref))
+      .pipe(Effect.mapError((cause) => new SecretRequestError({ reason: "read_failed", cause })));
+    const decoded = Option.flatMap(stored, (bytes) =>
+      decodeStored(new TextDecoder().decode(bytes)),
+    );
+    if (Option.isNone(decoded) || decoded.value.projectId !== input.projectId) {
+      return yield* new SecretRequestError({ reason: "ref_unavailable" });
+    }
+    if ((yield* Clock.currentTimeMillis) - decoded.value.savedAt > SECRET_REF_TTL_MS) {
+      yield* removeLogged(storeName(input.ref));
+      return yield* new SecretRequestError({ reason: "ref_expired" });
+    }
+    // One use: the value moves into whatever consumed it. If it cannot be
+    // deleted, it is not handed out, so a ref is never used twice.
+    if (!(yield* removeLogged(storeName(input.ref)))) {
+      return yield* new SecretRequestError({ reason: "consume_failed" });
+    }
+    return decoded.value.value;
+  });
 
   const sweepExpired = Effect.gen(function* () {
     if (store.directory === undefined) return;

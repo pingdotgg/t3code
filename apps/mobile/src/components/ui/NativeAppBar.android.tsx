@@ -14,10 +14,13 @@ export function NativeAppBar(props: {
   const { colors } = useControlTheme();
   const layout = useToolbarLayout();
   return (
-    <NativeThemeHost matchContents={{ vertical: true }} style={{ width: "100%" }}>
+    // The bar's height is fixed, so React Native lays out the screen below it from the first frame
+    // instead of at zero height until Compose has measured and reported the bar.
+    <NativeThemeHost style={{ width: "100%", height: layout.height }}>
       <TopAppBar
         applyWindowInsets={false}
-        modifiers={[fillMaxWidth(), height(Math.max(64, layout.height))]}
+        // Every header shares the list toolbar's height, so titles line up across panes.
+        modifiers={[fillMaxWidth(), height(layout.height)]}
         colors={{
           containerColor: colors["--color-header"],
           titleContentColor: colors["--color-header-foreground"],

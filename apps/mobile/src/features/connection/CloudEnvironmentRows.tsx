@@ -1,3 +1,4 @@
+import { Button } from "../../components/ui/Button";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { ConnectionTraceId } from "./ConnectionTraceId";
 import { useAuth } from "@clerk/expo";
@@ -161,15 +162,13 @@ function CloudEnvironmentRowsContent(
           {controller.relayDiscovery.errorTraceId ? (
             <CopyTraceIdButton traceId={controller.relayDiscovery.errorTraceId} />
           ) : null}
-          <Pressable
-            accessibilityRole="button"
+          <Button
+            label="Try again"
+            tone="secondary"
             onPress={() => {
               void controller.refreshRelayEnvironments();
             }}
-            className="self-start rounded-full bg-subtle px-3.5 py-2 active:opacity-70"
-          >
-            <Text className="text-xs font-t3-bold text-foreground">Try again</Text>
-          </Pressable>
+          />
         </View>
       ) : null}
     </View>
@@ -432,20 +431,13 @@ function CloudEnvironmentRowShell(props: {
 
 function CopyTraceIdButton(props: { readonly traceId: string }) {
   return (
-    <Pressable
-      accessibilityRole="button"
+    <Button
+      label="Copy trace ID"
+      tone="secondary"
       onPress={() => {
         copyTextWithHaptic(props.traceId, { target: "connection-trace-id" });
       }}
-      className="self-start flex-row items-center gap-1.5 rounded-full bg-subtle px-3 py-2 active:opacity-70"
-    >
-      <SymbolView
-        name="doc.on.doc"
-        size={12}
-        tintColorClassName={"accent-icon"}
-        type="monochrome"
-      />
-      <Text className="text-xs font-t3-bold text-foreground">Copy trace ID</Text>
-    </Pressable>
+      icon="doc.on.doc"
+    />
   );
 }

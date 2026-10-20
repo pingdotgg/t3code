@@ -1,11 +1,14 @@
+import { ProjectId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   changeRequestUrlFor,
+  matchesLinkedPullRequestUrl,
   parseChangeRequestUrl,
   pullRequestCandidateUrlFromReferenceAutolink,
   siblingPullRequestUrl,
 } from "./changeRequestUrl.ts";
+import { normalizeThreadPullRequestKey } from "./threadPullRequests.ts";
 
 describe("parseChangeRequestUrl", () => {
   it("reads a GitHub pull request, lower-casing the repository", () => {
@@ -69,6 +72,32 @@ describe("parseChangeRequestUrl", () => {
     ).toEqual({ host: "acme.visualstudio.com", repository: "platform/_git/t3code", number: 17 });
   });
 
+  it("reads Azure DevOps Server links and keeps servers on different ports distinct", () => {
+    for (const host of ["scm.example.test", "git.cafe", "code.bitbucket.example.test"]) {
+      const repository = "tfs/collection/project/_git/repo";
+      const linked = {
+        projectId: ProjectId.make("project-1"),
+        host,
+        repository,
+        number: 123,
+        url: `https://${host.toUpperCase()}:8443/tfs/Collection/Project/_git/Repo/pullrequest/123`,
+      };
+      const other = { ...linked, url: linked.url.replace(":8443/", ":9443/") };
+      expect.soft(parseChangeRequestUrl(linked.url), host).toEqual({
+        host,
+        authority: `${host}:8443`,
+        repository,
+        number: 123,
+      });
+      expect.soft(matchesLinkedPullRequestUrl(linked, `${linked.url}?view=files`), host).toBe(true);
+      expect.soft(matchesLinkedPullRequestUrl(linked, other.url), host).toBe(false);
+      expect.soft([linked, other].map(normalizeThreadPullRequestKey), host).toEqual([
+        { host: `${host}:8443`, repository, number: 123 },
+        { host: `${host}:9443`, repository, number: 123 },
+      ]);
+    }
+  });
+
   it("survives trailing segments, a trailing slash and a query string", () => {
     expect(parseChangeRequestUrl("https://github.com/t3tools/t3code/pull/123/files?w=1")).toEqual({
       host: "github.com",
@@ -90,6 +119,12 @@ describe("parseChangeRequestUrl", () => {
       "https://github.com/t3tools/t3code/pull/abc",
       "https://gitlab.com/t3tools/t3code/-/issues/12",
       "https://blog.example.test/2026/updates/pull/3",
+      "https://scm.example.test/tfs/Collection/Project/_git/Repo",
+      "https://scm.example.test/tfs/Collection/Project/pullrequest/123",
+      "https://scm.example.test/tfs/Collection/Project/_git/Repo/pullrequest/abc",
+      "https://scm.example.test/tfs/Collection/Project/_git/Repo/pullrequest/0",
+      "https://scm.example.test/tfs/Collection/Project/_git/Repo/pullrequest/9007199254740992",
+      "ftp://scm.example.test/tfs/Collection/Project/_git/Repo/pullrequest/123",
       "javascript:alert(1)//github.com/t3tools/t3code/pull/1",
       "not a url",
     ]) {

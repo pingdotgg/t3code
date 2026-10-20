@@ -483,6 +483,7 @@ describe("pull request detail decoding", () => {
           mergeCommitAllowed: true,
           squashMergeAllowed: true,
           rebaseMergeAllowed: true,
+          autoMergeAllowed: true,
           viewerPermission: "WRITE",
           pullRequest: {
             number: 7,
@@ -492,6 +493,7 @@ describe("pull request detail decoding", () => {
             state: "OPEN",
             isDraft: false,
             mergeable: "MERGEABLE",
+            mergeStateStatus: "BLOCKED",
             reviewDecision: null,
             additions: 0,
             deletions: 0,
@@ -623,8 +625,8 @@ describe("pull request detail decoding", () => {
       check({ __typename: "StatusContext", context: "ci/legacy", state: "SUCCESS" }),
     ]);
     expect(detail.checks.map((check) => [check.name, check.status])).toEqual([
-      ["build", "pending"],
       ["test", "failure"],
+      ["build", "pending"],
       ["ci/legacy", "success"],
     ]);
   });
@@ -1260,6 +1262,7 @@ describe("repository access decoding", () => {
           mergeCommitAllowed: true,
           squashMergeAllowed: false,
           rebaseMergeAllowed: true,
+          autoMergeAllowed: true,
           viewerPermission: viewerPermission ?? null,
         },
       },
@@ -1312,6 +1315,7 @@ describe("viewer permission decoding", () => {
           mergeCommitAllowed: true,
           squashMergeAllowed: false,
           rebaseMergeAllowed: true,
+          autoMergeAllowed: true,
           ...repository,
         },
       },
@@ -1329,6 +1333,7 @@ describe("viewer permission decoding", () => {
       ),
     ).toEqual({
       mergeCapabilities: { merge: true, squash: false, rebase: true },
+      autoMergeAllowed: true,
       canWrite: false,
       canTriage: false,
       canUpdate: true,
@@ -1349,6 +1354,7 @@ describe("viewer permission decoding", () => {
       ),
     ).toEqual({
       mergeCapabilities: { merge: true, squash: false, rebase: true },
+      autoMergeAllowed: true,
       canWrite: false,
       canTriage: false,
       canUpdate: false,
@@ -1367,6 +1373,7 @@ describe("viewer permission decoding", () => {
       ),
     ).toEqual({
       mergeCapabilities: { merge: true, squash: false, rebase: true },
+      autoMergeAllowed: true,
       canWrite: false,
       canTriage: false,
       canUpdate: true,

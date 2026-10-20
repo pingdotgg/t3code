@@ -1,4 +1,5 @@
 import type { OrchestrationV2TurnItem } from "@t3tools/contracts";
+import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
 import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
 
 // Search results stay on the timeline wire, so keep their text a preview.
@@ -12,6 +13,7 @@ type ToolItemBase = Omit<
 export function openCodeToolProjectionKind(
   toolName: string,
 ): "command_execution" | "file_change" | "file_search" | "web_search" | "dynamic_tool" {
+  if (resolveT3McpToolId(toolName) !== null) return "dynamic_tool";
   const normalized = toolName.toLowerCase();
   if (normalized === "todowrite") {
     return "dynamic_tool";
@@ -64,6 +66,19 @@ function stableJson(value: unknown): string {
   } catch {
     return String(value);
   }
+}
+
+function nativeReadOutput(output: string): string {
+  const header = /^<path>[^\r\n]+<\/path>\r?\n<type>(directory|file)<\/type>\r?\n/.exec(output);
+  if (header === null) return output;
+  const body = output.slice(header[0].length);
+  // File lines are numbered; only a closing tag on its own line ends the envelope.
+  const envelope =
+    header[1] === "directory"
+      ? /^<entries>\r?\n([\s\S]*?)\r?\n<\/entries>(?=\r?\n|$)/.exec(body)
+      : /^<content>(?:\r?\n)?([\s\S]*?)\r?\n<\/content>(?=\r?\n|$)/.exec(body);
+  // OpenCode can append instructions after the envelope; keep that suffix verbatim.
+  return envelope === null ? output : envelope[1] + body.slice(envelope[0].length);
 }
 
 export function openCodeToolTurnItem(
@@ -142,6 +157,8 @@ export function openCodeToolTurnItem(
     }
     case "dynamic_tool": {
       const readPath = recordString(input, "filePath", "path", "file");
+      const cleanedOutput =
+        tool.name === "read" && output !== undefined ? nativeReadOutput(output) : output;
       return {
         ...base,
         title:
@@ -151,7 +168,7 @@ export function openCodeToolTurnItem(
         type: "dynamic_tool",
         toolName: tool.name,
         input,
-        ...(output === undefined ? {} : { output }),
+        ...(cleanedOutput === undefined ? {} : { output: cleanedOutput }),
       };
     }
   }

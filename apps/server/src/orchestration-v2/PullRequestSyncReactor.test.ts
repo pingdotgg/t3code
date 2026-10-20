@@ -643,6 +643,7 @@ describe("PullRequestSyncReactor", () => {
         yield* TestClock.setTime(Date.parse(NOW));
         const fixture = yield* makeHarness({
           snapshot: makeSnapshot([makeThread("one", { pullRequests: [makeLink(42)] })]),
+          summary: (input) => Effect.succeed(makeSummary(input, { updatedAt: NOW })),
         });
 
         yield* Effect.gen(function* () {
@@ -656,6 +657,86 @@ describe("PullRequestSyncReactor", () => {
           assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 2);
           assert.strictEqual((yield* Ref.get(fixture.stackCalls)).length, 1);
           assert.strictEqual((yield* Ref.get(fixture.syncCommands)).length, 1);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect.each([
+    {
+      change: "ghe.com token rotation",
+      host: "avatars.example.ghe.com",
+      nextPath: "/u/1?token=new&v=4&s=40&format=png",
+      expectedSyncs: 1,
+    },
+    {
+      change: "avatar version",
+      host: "avatars.example.ghe.com",
+      nextPath: "/u/1?token=old&v=5&s=40&format=png",
+      expectedSyncs: 2,
+    },
+    {
+      change: "avatar size",
+      host: "avatars.example.ghe.com",
+      nextPath: "/u/1?token=old&v=4&s=80&format=png",
+      expectedSyncs: 2,
+    },
+    {
+      change: "another avatar query parameter",
+      host: "avatars.example.ghe.com",
+      nextPath: "/u/1?token=old&v=4&s=40&format=webp",
+      expectedSyncs: 2,
+    },
+    {
+      change: "avatar path",
+      host: "avatars.example.ghe.com",
+      nextPath: "/u/2?token=old&v=4&s=40&format=png",
+      expectedSyncs: 2,
+    },
+    {
+      change: "token outside ghe.com",
+      host: "avatars.example.com",
+      nextPath: "/u/1?token=new&v=4&s=40&format=png",
+      expectedSyncs: 2,
+    },
+  ])("syncs avatar changes selectively: $change", ({ host, nextPath, expectedSyncs }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const avatarUrl = yield* Ref.make(`https://${host}/u/1?token=old&v=4&s=40&format=png`);
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([makeThread("one", { pullRequests: [makeLink(42)] })]),
+          summary: (input) =>
+            Ref.get(avatarUrl).pipe(
+              Effect.map((avatarUrl) =>
+                makeSummary(input, {
+                  updatedAt: NOW,
+                  author: { login: "octocat", name: null, avatarUrl },
+                }),
+              ),
+            ),
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* startAndSweep(fixture);
+          const firstSweep = yield* Ref.get(fixture.syncCommands);
+          assert.strictEqual(firstSweep.length, 1);
+          assert.strictEqual(firstSweep[0]?.snapshot.author?.avatarUrl, yield* Ref.get(avatarUrl));
+          yield* Ref.update(fixture.snapshots, (snapshot) => applySync(snapshot, firstSweep));
+
+          yield* Ref.set(avatarUrl, `https://${host}${nextPath}`);
+          yield* sweepAgain(fixture, reactor);
+
+          assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 2);
+          assert.strictEqual((yield* Ref.get(fixture.stackCalls)).length, expectedSyncs);
+          const commands = yield* Ref.get(fixture.syncCommands);
+          assert.strictEqual(commands.length, expectedSyncs);
+          if (expectedSyncs === 2) {
+            assert.strictEqual(
+              commands.at(-1)?.snapshot.author?.avatarUrl,
+              yield* Ref.get(avatarUrl),
+            );
+          }
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
@@ -850,6 +931,39 @@ describe("PullRequestSyncReactor", () => {
           yield* sweepAgain(fixture, reactor);
           assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 2);
           assert.strictEqual((yield* Ref.get(fixture.syncCommands)).at(-1)?.snapshot.state, "open");
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("reads a quiet open pull request every five minutes until it changes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const updatedAt = yield* Ref.make("2026-08-27T00:00:00.000Z");
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([makeThread("quiet", { pullRequests: [makeLink(5)] })]),
+          summary: (input) =>
+            Ref.get(updatedAt).pipe(Effect.map((updatedAt) => makeSummary(input, { updatedAt }))),
+        });
+        yield* Effect.gen(function* () {
+          const reactor = yield* startAndSweep(fixture);
+          const applySyncs = Effect.flatMap(Ref.get(fixture.syncCommands), (commands) =>
+            Ref.update(fixture.snapshots, (snapshot) => applySync(snapshot, commands)),
+          );
+          yield* applySyncs;
+          const reads = Ref.get(fixture.summaryCalls).pipe(Effect.map((calls) => calls.length));
+          assert.strictEqual(yield* reads, 1);
+          for (let index = 0; index < 4; index += 1) yield* sweepAgain(fixture, reactor);
+          assert.strictEqual(yield* reads, 1);
+
+          // Someone comments: the five-minute read sees it, and the next sweep reads it again.
+          yield* Ref.set(updatedAt, "2026-08-28T12:04:00.000Z");
+          yield* sweepAgain(fixture, reactor);
+          assert.strictEqual(yield* reads, 2);
+          yield* applySyncs;
+          yield* sweepAgain(fixture, reactor);
+          assert.strictEqual(yield* reads, 3);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
@@ -1116,13 +1230,15 @@ describe("PullRequestSyncReactor", () => {
         yield* TestClock.setTime(Date.parse(NOW));
         const fixture = yield* makeHarness({
           snapshot: makeSnapshot([
-            makeThread("first", { pullRequests: [makeLink(7, { state: "open" })] }),
-            makeThread("second", { pullRequests: [makeLink(8, { state: "open" })] }),
+            makeThread("first", { pullRequests: [makeLink(7, { state: "open", updatedAt: NOW })] }),
+            makeThread("second", {
+              pullRequests: [makeLink(8, { state: "open", updatedAt: NOW })],
+            }),
             makeThread("third", {
               pullRequests: [
                 makeLink(
                   9,
-                  { state: "open" },
+                  { state: "open", updatedAt: NOW },
                   { host: "forge.example", url: "https://forge.example/owner/repository/pulls/9" },
                 ),
               ],

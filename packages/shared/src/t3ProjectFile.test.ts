@@ -82,10 +82,13 @@ describe("T3ProjectFileFromJson", () => {
 });
 
 describe("parseT3ProjectFile", () => {
-  it("returns the decoded file for valid contents", () => {
-    expect(parseT3ProjectFile('{ "defaultThreadEnvMode": "worktree" }')).toEqual({
-      defaultThreadEnvMode: "worktree",
-    });
+  it("reads project defaults from JSONC with a URL in a block comment", () => {
+    expect(
+      parseT3ProjectFile(`{
+        /* See https://t3.codes/schema/t3.json */
+        "defaultThreadEnvMode": "worktree"
+      }`),
+    ).toEqual({ defaultThreadEnvMode: "worktree" });
   });
 
   it("returns null for malformed or invalid contents", () => {

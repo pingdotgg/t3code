@@ -256,101 +256,50 @@ describe("transitionFirstRunGateState", () => {
     },
   );
 
-  it("keeps recovery visible while evidence remains pending", () => {
-    const state = { decision: "pending", stalled: true } as const;
+  it.each([
+    { decision: "pending", stalled: true },
+    { decision: "wizard", stalled: false },
+  ] as const)("retains $decision while evidence remains pending", (state) => {
     expect(transitionFirstRunGateState(state, { type: "evidence", decision: "pending" })).toBe(
       state,
     );
   });
 
-  it("allows authoritative wizard evidence to replace an app decision", () => {
-    expect(
-      transitionFirstRunGateState(
-        { decision: "app", stalled: false },
-        { type: "evidence", decision: "wizard" },
-      ),
-    ).toEqual({ decision: "wizard", stalled: false });
-  });
+  it.each([
+    { previous: "app", workspaceFresh: true, decision: "wizard" },
+    { previous: "wizard", workspaceFresh: false, decision: "app" },
+  ] as const)(
+    "updates $previous to $decision when authoritative workspace evidence changes",
+    ({ previous, workspaceFresh, decision }) => {
+      const evidence = resolveFirstRunDecision({ ...freshWorkspace, workspaceFresh });
+      expect(
+        transitionFirstRunGateState(
+          { decision: previous, stalled: false },
+          { type: "evidence", decision: evidence.decision },
+        ),
+      ).toEqual({ decision, stalled: false });
+    },
+  );
+
+  it.each(["pending", "app", "wizard"] as const)(
+    "preserves state identity for unchanged %s evidence",
+    (decision) => {
+      const state = { decision, stalled: false };
+      expect(transitionFirstRunGateState(state, { type: "evidence", decision })).toBe(state);
+    },
+  );
 });
 
 describe("resolveHostedFirstRunDecision", () => {
   it("keeps the shell hidden until client settings are hydrated", () => {
-    expect(
-      resolveHostedFirstRunDecision({
-        hydrated: false,
-        completed: false,
-        catalogReady: true,
-        environmentCount: 0,
-      }),
-    ).toEqual({
+    expect(resolveHostedFirstRunDecision(false)).toEqual({
       decision: "pending",
       persistCompletion: false,
     });
   });
 
-  it("waits for the saved environment catalog before judging a hosted install", () => {
-    expect(
-      resolveHostedFirstRunDecision({
-        hydrated: true,
-        completed: false,
-        catalogReady: false,
-        environmentCount: 0,
-      }),
-    ).toEqual({
-      decision: "pending",
-      persistCompletion: false,
-    });
-  });
-
-  it("opens onboarding when a hosted install has no saved environments", () => {
-    expect(
-      resolveHostedFirstRunDecision({
-        hydrated: true,
-        completed: false,
-        catalogReady: true,
-        environmentCount: 0,
-      }),
-    ).toEqual({
-      decision: "wizard",
-      persistCompletion: false,
-    });
-  });
-
-  it("keeps Connections reachable for a remote-only desktop predating onboarding", () => {
-    expect(
-      resolveHostedFirstRunDecision({
-        hydrated: true,
-        completed: false,
-        catalogReady: true,
-        environmentCount: 0,
-        localEnvironmentDisabled: true,
-      }),
-    ).toEqual({ decision: "app", persistCompletion: true });
-  });
-
-  it("backfills onboarding for a hosted install with saved environments", () => {
-    expect(
-      resolveHostedFirstRunDecision({
-        hydrated: true,
-        completed: false,
-        catalogReady: true,
-        environmentCount: 1,
-      }),
-    ).toEqual({
-      decision: "app",
-      persistCompletion: true,
-    });
-  });
-
-  it("opens the app immediately after hosted onboarding is complete", () => {
-    expect(
-      resolveHostedFirstRunDecision({
-        hydrated: true,
-        completed: true,
-        catalogReady: false,
-        environmentCount: 0,
-      }),
-    ).toEqual({
+  it("opens the app without setup, even with no saved computers", () => {
+    expect(resolveHostedFirstRunDecision(true)).toEqual({
       decision: "app",
       persistCompletion: false,
     });
@@ -370,6 +319,17 @@ const bootstrapThread = {
   latestRun: null,
   latestUserMessageAt: null,
   runtime: null,
+};
+
+const freshBootstrap = {
+  primaryEnvironmentId,
+  serverCwd: "/projects/current",
+  bootstrapProjectId: bootstrapProject.id,
+  bootstrapThreadId: bootstrapThread.id,
+  bootstrapProjectCreated: true,
+  bootstrapThreadCreated: true,
+  projects: [bootstrapProject],
+  threads: [bootstrapThread],
 };
 
 describe("isFreshFirstRunWorkspace", () => {
@@ -445,8 +405,7 @@ describe("isFreshFirstRunWorkspace", () => {
   it("rejects projects from another environment even when their paths match", () => {
     expect(
       isFreshFirstRunWorkspace({
-        primaryEnvironmentId,
-        serverCwd: "/projects/current",
+        ...freshBootstrap,
         projects: [{ ...bootstrapProject, environmentId: "remote-environment" }],
         threads: [],
       }),
@@ -456,8 +415,7 @@ describe("isFreshFirstRunWorkspace", () => {
   it("rejects threads from another environment", () => {
     expect(
       isFreshFirstRunWorkspace({
-        primaryEnvironmentId,
-        serverCwd: "/projects/current",
+        ...freshBootstrap,
         projects: [bootstrapProject],
         threads: [{ ...bootstrapThread, environmentId: "remote-environment" }],
       }),
@@ -467,8 +425,7 @@ describe("isFreshFirstRunWorkspace", () => {
   it("rejects a thread that does not belong to the bootstrap project", () => {
     expect(
       isFreshFirstRunWorkspace({
-        primaryEnvironmentId,
-        serverCwd: "/projects/current",
+        ...freshBootstrap,
         projects: [bootstrapProject],
         threads: [{ ...bootstrapThread, projectId: "another-project" }],
       }),
@@ -478,8 +435,7 @@ describe("isFreshFirstRunWorkspace", () => {
   it("rejects a thread when there is no bootstrap project", () => {
     expect(
       isFreshFirstRunWorkspace({
-        primaryEnvironmentId,
-        serverCwd: "/projects/current",
+        ...freshBootstrap,
         projects: [],
         threads: [bootstrapThread],
       }),
@@ -489,8 +445,7 @@ describe("isFreshFirstRunWorkspace", () => {
   it("rejects a bootstrap thread that already has a user message", () => {
     expect(
       isFreshFirstRunWorkspace({
-        primaryEnvironmentId,
-        serverCwd: "/projects/current",
+        ...freshBootstrap,
         projects: [bootstrapProject],
         threads: [
           {
@@ -505,8 +460,7 @@ describe("isFreshFirstRunWorkspace", () => {
   it("rejects a bootstrap thread that has started a turn", () => {
     expect(
       isFreshFirstRunWorkspace({
-        primaryEnvironmentId,
-        serverCwd: "/projects/current",
+        ...freshBootstrap,
         projects: [bootstrapProject],
         threads: [{ ...bootstrapThread, latestRun: { id: "first-run" } }],
       }),
@@ -516,8 +470,7 @@ describe("isFreshFirstRunWorkspace", () => {
   it("rejects a bootstrap thread that has a provider session", () => {
     expect(
       isFreshFirstRunWorkspace({
-        primaryEnvironmentId,
-        serverCwd: "/projects/current",
+        ...freshBootstrap,
         projects: [bootstrapProject],
         threads: [{ ...bootstrapThread, runtime: { status: "ready" } }],
       }),

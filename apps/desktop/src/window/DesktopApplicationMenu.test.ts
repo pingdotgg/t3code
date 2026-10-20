@@ -247,13 +247,13 @@ describe("DesktopApplicationMenu", () => {
     }),
   );
 
-  it.effect("routes View menu zoom to the main window instead of zoom roles", () =>
+  it.effect("registers macOS command-plus once and routes it through main-window zoom", () =>
     Effect.gen(function* () {
       const selectedAction = yield* Deferred.make<string>();
       const applicationMenuTemplate =
         yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
 
-      yield* configureMenu(selectedAction, applicationMenuTemplate);
+      yield* configureMenu(selectedAction, applicationMenuTemplate, { platform: "darwin" });
 
       const template = yield* Deferred.await(applicationMenuTemplate);
       const viewMenu = template.find((item) => item.label === "View");
@@ -268,9 +268,17 @@ describe("DesktopApplicationMenu", () => {
         ),
       );
 
-      const zoomIn = viewMenu.submenu.find((item) => item.label === "Zoom In");
+      const shiftedEqual = viewMenu.submenu.filter(
+        (item) => item.accelerator === "CmdOrCtrl+Shift+=",
+      );
+      assert.lengthOf(shiftedEqual, 1);
+      assert.lengthOf(
+        viewMenu.submenu.filter((item) => item.accelerator === "CmdOrCtrl+numadd"),
+        1,
+      );
+      const zoomIn = shiftedEqual[0];
       assert.isDefined(zoomIn);
-      assert.equal(zoomIn.accelerator, "CmdOrCtrl+=");
+      assert.isFalse(zoomIn.visible);
       if (typeof zoomIn.click !== "function") {
         throw new Error("Expected Zoom In menu item to have a click handler.");
       }

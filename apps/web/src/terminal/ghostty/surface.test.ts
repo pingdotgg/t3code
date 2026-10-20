@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import * as appearanceFonts from "../../appearanceFonts";
 
 import { GhosttyTerminalCore, type GhosttyCell, type GhosttyRow } from "./core";
 import {
@@ -54,11 +55,13 @@ describe("GhosttyTerminalSurface visibility", () => {
         | "metaKey"
         | "shiftKey"
         | "isComposing"
+        | "repeat"
         | "keyCode"
         | "getModifierState"
       >
     > = {},
     type = "keydown",
+    target: EventTarget = surface.input,
   ) {
     const event = Object.assign(new Event(type, { cancelable: true }), {
       key,
@@ -68,11 +71,12 @@ describe("GhosttyTerminalSurface visibility", () => {
       metaKey: false,
       shiftKey: false,
       isComposing: false,
+      repeat: false,
       keyCode: 0,
       getModifierState: () => false,
       ...modifiers,
     });
-    surface.input.dispatchEvent(event);
+    target.dispatchEvent(event);
     return event;
   }
 
@@ -186,6 +190,7 @@ describe("GhosttyTerminalSurface visibility", () => {
     const onData = vi.fn<(data: string) => void>();
 
     return {
+      canvas,
       mount,
       frames,
       paint,
@@ -269,6 +274,161 @@ describe("GhosttyTerminalSurface visibility", () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+  });
+
+  it("holds the complete frame across split synchronized markers and a DPR change", async () => {
+    const harness = createHarness();
+    const surface = await harness.create();
+    surface.write("\x1b[?1049h\x1b[HOLD first\x1b[2;1HOLD second");
+    harness.flushFrame();
+    expect(harness.renderedSnapshot.rowData.slice(0, 2).map((row) => row.text)).toEqual([
+      "OLD first",
+      "OLD second",
+    ]);
+    const { width, height } = harness.canvas;
+    harness.snapshot.mockClear();
+    harness.paint.mockClear();
+
+    surface.write("\x1b[?20");
+    surface.write("26h\x1b[HNEW first\x1b[5n");
+    expect(harness.onData).toHaveBeenCalledWith("\x1b[0n");
+    harness.flushFrame();
+    window.devicePixelRatio = 2;
+    harness.resize();
+    vi.advanceTimersByTime(200);
+    surface.write("\x1b[2;1HNEW second\x1b[?2026");
+    harness.flushFrame();
+    expect(harness.snapshot).not.toHaveBeenCalled();
+    expect(harness.paint).not.toHaveBeenCalled();
+    expect([harness.canvas.width, harness.canvas.height]).toEqual([width, height]);
+
+    surface.write("l");
+    harness.flushFrame();
+    expect(harness.snapshot).toHaveBeenCalledTimes(1);
+    expect(harness.renderedSnapshot.rowData.slice(0, 2).map((row) => row.text)).toEqual([
+      "NEW first",
+      "NEW second",
+    ]);
+    expect([harness.canvas.width, harness.canvas.height]).toEqual([width * 2, height * 2]);
+    expect(
+      harness.paint.mock.calls
+        .filter(([operation]) => operation === "fillText")
+        .map(([, args]) => args[0]),
+    ).toEqual(expect.arrayContaining(["NEW first", "NEW second"]));
+    vi.advanceTimersByTime(1_000);
+    harness.flushFrame();
+    expect(harness.snapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it("recovers an unterminated synchronized update at 500ms despite later output", async () => {
+    const harness = createHarness();
+    const surface = await harness.create();
+    surface.write("before");
+    harness.flushFrame();
+    harness.snapshot.mockClear();
+    harness.paint.mockClear();
+    surface.write("\x1b[?2026h\rpartial");
+    vi.advanceTimersByTime(499);
+    surface.write(" frame");
+    harness.flushFrame();
+    expect(harness.snapshot).not.toHaveBeenCalled();
+    expect(harness.paint).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    harness.flushFrame();
+    expect(harness.snapshot).toHaveBeenCalledTimes(1);
+    expect(harness.renderedSnapshot.rowData[0]?.text).toBe("partial frame");
+    vi.advanceTimersByTime(1_000);
+    harness.flushFrame();
+    expect(harness.snapshot).toHaveBeenCalledTimes(1);
+    surface.write("!");
+    harness.flushFrame();
+    expect(harness.renderedSnapshot.rowData[0]?.text).toBe("partial frame!");
+  });
+
+  it("gives a synchronized group its own deadline when one write closes A and opens B", async () => {
+    const harness = createHarness();
+    const surface = await harness.create();
+    surface.write("old");
+    harness.flushFrame();
+    harness.snapshot.mockClear();
+    harness.paint.mockClear();
+    surface.write("\x1b[?2026h\rAAA");
+    vi.advanceTimersByTime(450);
+    surface.write("\x1b[?2026l\x1b[?2026h\rBBB");
+    vi.advanceTimersByTime(50);
+    harness.flushFrame();
+    expect(harness.snapshot).not.toHaveBeenCalled();
+    expect(harness.paint).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(449);
+    harness.flushFrame();
+    expect(harness.snapshot).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    harness.flushFrame();
+    expect(harness.snapshot).toHaveBeenCalledTimes(1);
+    expect(harness.renderedSnapshot.rowData[0]?.text).toBe("BBB");
+  });
+
+  it.each(["hide", "zero-size", "dispose"] as const)(
+    "cancels synchronized recovery on %s",
+    async (action) => {
+      const harness = createHarness();
+      const surface = await harness.create();
+      surface.write("old");
+      harness.flushFrame();
+      surface.write("\x1b[?2026h\rnew");
+      harness.snapshot.mockClear();
+      harness.paint.mockClear();
+      if (action === "hide") surface.setVisible(false);
+      else if (action === "zero-size") {
+        harness.mount.clientWidth = 0;
+        harness.resize();
+      } else surface.dispose();
+      vi.advanceTimersByTime(1_000);
+      harness.flushFrame();
+      expect(harness.snapshot).not.toHaveBeenCalled();
+      expect(harness.paint).not.toHaveBeenCalled();
+      if (action === "dispose") return;
+      if (action === "hide") surface.setVisible(true);
+      else {
+        harness.mount.clientWidth = 168;
+        harness.resize();
+      }
+      expect(harness.snapshot).not.toHaveBeenCalled();
+      surface.write("\x1b[?2026l");
+      harness.flushFrame();
+      expect(harness.renderedSnapshot.rowData[0]?.text).toBe("new");
+    },
+  );
+
+  it("replaces an open synchronized update on reset without a stale recovery paint", async () => {
+    const harness = createHarness();
+    const surface = await harness.create();
+    surface.write("\x1b[?2026hpartial");
+    harness.snapshot.mockClear();
+    surface.resetAndWrite("replacement");
+    harness.flushFrame();
+    expect(harness.snapshot).toHaveBeenCalledTimes(1);
+    expect(harness.renderedSnapshot.rowData[0]?.text).toBe("replacement");
+    vi.advanceTimersByTime(1_000);
+    harness.flushFrame();
+    expect(harness.snapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it("paints a grid resize immediately when Ghostty ends synchronized output", async () => {
+    const harness = createHarness();
+    const surface = await harness.create();
+    surface.write("old");
+    harness.flushFrame();
+    surface.write("\x1b[?2026h\rnew");
+    harness.snapshot.mockClear();
+    harness.mount.clientWidth = 176;
+    harness.resize();
+    expect(harness.snapshot).toHaveBeenCalledTimes(1);
+    expect(harness.canvas.width).toBe(176);
+    expect(harness.renderedSnapshot.rowData[0]?.text).toBe("new");
+    vi.advanceTimersByTime(1_000);
+    harness.flushFrame();
+    expect(harness.snapshot).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -418,6 +578,50 @@ describe("GhosttyTerminalSurface visibility", () => {
     key(surface, "PageUp", "PageUp", {}, "keyup");
     expect(harness.onData).toHaveBeenCalledTimes(2);
     expect(harness.onData.mock.calls[1]?.[0]).toContain(":3");
+  });
+
+  it("reports Kitty releases only for presses encoded by this surface", async () => {
+    const harness = createHarness();
+    const surface = await harness.create({ beforeKey: () => true });
+    surface.write("\x1b[>11u");
+
+    key(surface, "a", "KeyA");
+    key(surface, "a", "KeyA", {}, "keyup");
+    key(surface, "Control", "ControlLeft", { ctrlKey: true });
+    // App capture stops Ctrl+D before it reaches the terminal input.
+    key(surface, "d", "KeyD", { ctrlKey: true }, "keydown", window);
+    key(surface, "d", "KeyD", { ctrlKey: true }, "keyup");
+    key(surface, "Control", "ControlLeft", {}, "keyup");
+
+    expect(harness.onData.mock.calls.map(([data]) => data)).toEqual([
+      "\x1b[97u",
+      "\x1b[97;1:3u",
+      "\x1b[57442;5u",
+      "\x1b[57442;1:3u",
+    ]);
+  });
+
+  it("keeps a held Kitty press through focus changes and an app-consumed repeat", async () => {
+    const harness = createHarness();
+    let consumeRepeat = false;
+    const surface = await harness.create({ beforeKey: () => !consumeRepeat });
+    surface.write("\x1b[>11u");
+
+    key(surface, "a", "KeyA");
+    key(surface, "a", "KeyA", { repeat: true });
+    surface.input.dispatchEvent(new Event("blur"));
+    window.dispatchEvent(new Event("blur"));
+    window.dispatchEvent(new Event("focus"));
+    surface.input.dispatchEvent(new Event("focus"));
+    consumeRepeat = true;
+    key(surface, "a", "KeyA", { repeat: true });
+    key(surface, "a", "KeyA", {}, "keyup");
+
+    expect(harness.onData.mock.calls.map(([data]) => data)).toEqual([
+      "\x1b[97u",
+      "\x1b[97;1:2u",
+      "\x1b[97;1:3u",
+    ]);
   });
 
   it("honors host interception, IME candidates, and AltGr before local shortcuts", async () => {
@@ -1438,10 +1642,13 @@ describe("terminal font resolution", () => {
   });
 
   it("ignores proportional families the cell grid cannot lay out", () => {
-    // Node has no canvas, so the probe answers "monospace" and the
-    // family is kept; the guard is exercised in the browser instead.
-    const stack = terminalFontFamily("Helvetica Neue");
-    expect(stack.endsWith("monospace")).toBe(true);
+    const probe = vi.spyOn(appearanceFonts, "isMonospaceFamily").mockReturnValueOnce(false);
+    try {
+      expect(terminalFontFamily("Helvetica Neue")).toBe(DEFAULT_TERMINAL_FONT_FAMILY);
+      expect(probe).toHaveBeenCalledWith('"Helvetica Neue"');
+    } finally {
+      probe.mockRestore();
+    }
   });
 
   it("quotes families the canvas font shorthand would otherwise reject", () => {

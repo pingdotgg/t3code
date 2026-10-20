@@ -102,6 +102,17 @@ const appendRelayCredentialResponseHeaders = HttpEffect.appendPreResponseHandler
     ),
 );
 
+// T3 Code hosts never retry sooner than Retry-After, so during a Cloudflare
+// rate limit they wait out the pause instead of retrying into it.
+const appendCloudflareRetryAfter = (error: unknown) => {
+  const retryAfterMillis = ManagedEndpointProvider.cloudflareRetryAfterMillis(error);
+  if (retryAfterMillis === undefined) return Effect.void;
+  const seconds = String(Math.max(1, Math.ceil(retryAfterMillis / 1000)));
+  return HttpEffect.appendPreResponseHandler((_request, response) =>
+    Effect.succeed(HttpServerResponse.setHeader(response, "retry-after", seconds)),
+  );
+};
+
 const appendRelayDpopChallengeHeader = HttpEffect.appendPreResponseHandler((_request, response) =>
   Effect.succeed(
     response.status === 401
@@ -207,51 +218,68 @@ const relayRequestDeadline = <E, R>(
 
 const SENDER_TRACE_HEADER = /^(traceparent|tracestate|b3|x-b3-.*)$/i;
 
-export const traceRelayHttpRequest = <E, R>(
+// Where the request entered Cloudflare's network. The Worker runs near its
+// database, not at this edge, so these are the only way to split relay
+// latency by where users are.
+const annotateRelayEdgeLocation = Effect.gen(function* () {
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const cf: unknown = request.source instanceof Request ? Reflect.get(request.source, "cf") : null;
+  if (typeof cf !== "object" || cf === null) return;
+  const attributes: Record<string, string> = {};
+  for (const key of ["colo", "country", "continent"] as const) {
+    const value: unknown = Reflect.get(cf, key);
+    if (typeof value === "string" && value) attributes[`relay.edge.${key}`] = value;
+  }
+  yield* Effect.annotateCurrentSpan(attributes);
+});
+
+// The method-named server span is created below; this wrapper must not add another span.
+export const traceRelayHttpRequest = Effect.fnUntraced(function* <E, R>(
   httpEffect: Effect.Effect<
     HttpServerResponse.HttpServerResponse,
     E,
     HttpServerRequest.HttpServerRequest | R
   >,
-) =>
-  Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const traced = appendRelayTraceContextResponseHeader.pipe(
-      Effect.andThen(relayRequestDeadline(httpEffect)),
-    );
-    if (!isRelayHookPath(request.url)) {
-      return yield* HttpMiddleware.tracer(traced).pipe(
-        Effect.provideService(HttpMiddleware.TracerDisabledWhen, () => false),
-        // HttpMiddleware finalizes its span on the dispatcher; do not close a request-scoped exporter first.
-        Effect.ensuring(Effect.yieldNow),
-      );
-    }
-    // Hook URLs carry a secret token: the tracer and deadline log see a redacted
-    // request, while the route itself still receives the original. A webhook
-    // sender's trace context is dropped, so it cannot pick the trace our relay
-    // and environment spans land in.
-    const redacted = request.modify({
-      url: redactRelayHookUrl(request.url),
-      headers: Headers.removeMany(
-        request.headers,
-        Object.keys(request.headers).filter((name) => SENDER_TRACE_HEADER.test(name)),
-      ),
-    });
-    return yield* HttpMiddleware.tracer(
-      appendRelayTraceContextResponseHeader.pipe(
-        Effect.andThen(
-          relayRequestDeadline(
-            httpEffect.pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request)),
-            RELAY_HOOK_REQUEST_DEADLINE_MS,
-          ),
-        ),
-      ),
-    ).pipe(
-      Effect.provideService(HttpServerRequest.HttpServerRequest, redacted),
+) {
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const traced = annotateRelayEdgeLocation.pipe(
+    Effect.andThen(appendRelayTraceContextResponseHeader),
+    Effect.andThen(relayRequestDeadline(httpEffect)),
+  );
+  if (!isRelayHookPath(request.url)) {
+    return yield* HttpMiddleware.tracer(traced).pipe(
       Effect.provideService(HttpMiddleware.TracerDisabledWhen, () => false),
+      // HttpMiddleware finalizes its span on the dispatcher; do not close a request-scoped exporter first.
       Effect.ensuring(Effect.yieldNow),
     );
+  }
+  // Hook URLs carry a secret token: the tracer and deadline log see a redacted
+  // request, while the route itself still receives the original. A webhook
+  // sender's trace context is dropped, so it cannot pick the trace our relay
+  // and environment spans land in.
+  const redacted = request.modify({
+    url: redactRelayHookUrl(request.url),
+    headers: Headers.removeMany(
+      request.headers,
+      Object.keys(request.headers).filter((name) => SENDER_TRACE_HEADER.test(name)),
+    ),
   });
+  return yield* HttpMiddleware.tracer(
+    annotateRelayEdgeLocation.pipe(
+      Effect.andThen(appendRelayTraceContextResponseHeader),
+      Effect.andThen(
+        relayRequestDeadline(
+          httpEffect.pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request)),
+          RELAY_HOOK_REQUEST_DEADLINE_MS,
+        ),
+      ),
+    ),
+  ).pipe(
+    Effect.provideService(HttpServerRequest.HttpServerRequest, redacted),
+    Effect.provideService(HttpMiddleware.TracerDisabledWhen, () => false),
+    Effect.ensuring(Effect.yieldNow),
+  );
+});
 
 const layerWebhookHeaderRedaction = Layer.effect(
   Headers.CurrentRedactedNames,
@@ -676,6 +704,7 @@ export const recoverEnvironmentTunnelRecord = Effect.fn(
     userId: input.userId,
     environmentId: input.environmentId,
     origin: input.origin,
+    reuseReadyTunnel: true,
   });
   const recoveredTunnelId = recovered.runtime.tunnelId;
   if (
@@ -856,6 +885,7 @@ export const layerClientApi = HttpApiBuilder.group(
               cloudMintPublicKey: config.cloudMintPublicKey,
             };
           },
+          Effect.tapError(appendCloudflareRetryAfter),
           mapErrorTags({
             EnvironmentLinkProofExpired: (_error, traceId) =>
               new RelayEnvironmentLinkProofExpiredError({
@@ -874,10 +904,11 @@ export const layerClientApi = HttpApiBuilder.group(
                 reason: "managed_endpoint_not_configured",
                 traceId,
               }),
-            ManagedEndpointProvisioningFailed: (_error, traceId) =>
+            ManagedEndpointProvisioningFailed: (error, traceId) =>
               new RelayEnvironmentLinkUnavailableError({
                 code: "environment_link_unavailable",
                 reason: "managed_endpoint_provisioning_failed",
+                provisioningStage: error.stage,
                 traceId,
               }),
             ManagedEndpointOriginNotAllowed: (_error, traceId) =>
@@ -1147,8 +1178,9 @@ export const layerServerApi = HttpApiBuilder.group(
     const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
     const publishSignatures = yield* EnvironmentPublishSignatures.EnvironmentPublishSignatures;
     const heldHooks = yield* HeldHooks.HeldHooks;
-    const requireOwnEnvironment = (environmentId: string) =>
-      Effect.gen(function* () {
+    const requireOwnEnvironment =
+      /* Request instrumentation already owns the span; keep this helper in that context. */
+      Effect.fnUntraced(function* (environmentId: string) {
         const principal = yield* RelayEnvironmentPrincipal;
         if (principal.environmentId !== environmentId) {
           return yield* new HttpApiError.Unauthorized({});
@@ -1316,6 +1348,7 @@ export const layerServerApi = HttpApiBuilder.group(
               origin: payload.origin,
             });
           },
+          Effect.tapError(appendCloudflareRetryAfter),
           Effect.catchTags({
             ManagedEndpointOriginNotAllowed: () => Effect.fail(new HttpApiError.Unauthorized({})),
             ManagedEndpointProvisioningNotConfigured: () =>
@@ -1351,6 +1384,7 @@ export const layerServerApi = HttpApiBuilder.group(
               origin: payload.origin,
             });
           },
+          Effect.tapError(appendCloudflareRetryAfter),
           Effect.catchTags({
             ManagedEndpointOriginNotAllowed: () => Effect.fail(new HttpApiError.Unauthorized({})),
             ManagedEndpointProvisioningNotConfigured: () =>

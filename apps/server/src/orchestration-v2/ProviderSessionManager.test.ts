@@ -4447,6 +4447,127 @@ it.effect(
 );
 
 it.effect(
+  "ProviderSessionManagerV2 invalidates only errored threads and keeps reusable session errors cached",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const openCachedRuntime = Effect.fnUntraced(function* (
+          threadId: ThreadId,
+          sharedSessionId?: ProviderSessionId,
+        ) {
+          const providerSessionId =
+            sharedSessionId ??
+            (yield* idAllocator.allocate.providerSession({
+              providerInstanceId: modelSelection.instanceId,
+              threadId,
+            }));
+          yield* eventSink.write({
+            events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+          });
+          const runtime = yield* manager.open({
+            threadId,
+            providerSessionId,
+            modelSelection,
+            runtimePolicy,
+          });
+          const providerThread = makeProviderThread({
+            idAllocator,
+            threadId,
+            providerSessionId,
+            now,
+            nativeThreadId: String(threadId),
+          });
+          const resume = runtime.resumeThread({
+            providerThread,
+            threadId,
+            modelSelection,
+            runtimePolicy,
+          });
+          yield* resume;
+          yield* resume;
+          return { runtime, providerThread, resume };
+        });
+        const failed = yield* openCachedRuntime(ThreadId.make("idle-failed-runtime"));
+        const healthy = yield* openCachedRuntime(ThreadId.make("idle-healthy-runtime"));
+        const sibling = yield* openCachedRuntime(
+          ThreadId.make("idle-healthy-sibling"),
+          failed.runtime.providerSessionId,
+        );
+        assert.strictEqual(sibling.runtime, failed.runtime);
+        assert.equal((yield* Ref.get(state)).openCount, 2);
+        assert.equal((yield* Ref.get(state)).resumeCount, 3);
+
+        const queue = (yield* Ref.get(state)).eventQueues.get(
+          String(failed.runtime.providerSessionId),
+        );
+        assert.isDefined(queue);
+        const publish = Effect.fnUntraced(function* (
+          event: ProviderAdapter.ProviderAdapterV2Event,
+        ) {
+          const subscription = yield* failed.runtime.subscribeEvents!;
+          yield* Queue.offer(queue!, event);
+          // Observing the exact event ensures the manager has handled it before resuming.
+          assert.deepEqual(yield* subscription.events.pipe(Stream.runHead), Option.some(event));
+        });
+        const countRawResumes = Effect.fnUntraced(function* (cached: typeof failed) {
+          const before = (yield* Ref.get(state)).resumeCount;
+          yield* cached.resume;
+          return (yield* Ref.get(state)).resumeCount - before;
+        });
+        yield* publish({
+          type: "provider_thread.updated",
+          driver: CODEX_DRIVER,
+          providerThread: failed.providerThread,
+        });
+        yield* publish({
+          type: "provider_session.updated",
+          driver: CODEX_DRIVER,
+          providerSession: {
+            ...failed.runtime.providerSession,
+            status: "error",
+            lastError: "Reusable turn failure",
+          },
+        });
+        const afterSessionError = {
+          reusableThread: yield* countRawResumes(failed),
+          siblingThread: yield* countRawResumes(sibling),
+        };
+
+        yield* publish({
+          type: "provider_thread.updated",
+          driver: CODEX_DRIVER,
+          providerThread: { ...failed.providerThread, status: "error" },
+        });
+        const afterThreadError = {
+          healthyRuntime: yield* countRawResumes(healthy),
+          siblingThread: yield* countRawResumes(sibling),
+          failedThread: yield* countRawResumes(failed),
+          failedThreadAgain: yield* countRawResumes(failed),
+        };
+        assert.deepEqual(
+          { afterSessionError, afterThreadError },
+          {
+            afterSessionError: { reusableThread: 0, siblingThread: 0 },
+            afterThreadError: {
+              healthyRuntime: 0,
+              siblingThread: 0,
+              failedThread: 1,
+              failedThreadAgain: 0,
+            },
+          },
+        );
+      });
+
+      yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })));
+    }),
+);
+
+it.effect(
   "ProviderSessionManagerV2 re-attaching a thread waits for its in-flight unload, then reloads it",
   () =>
     Effect.gen(function* () {

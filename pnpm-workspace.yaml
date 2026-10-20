@@ -20,7 +20,7 @@ allowBuilds:
   node-pty: true
   # Ships N-API prebuilds; its install script only rebuilds from source.
   objc-js: false
-  "react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.15.tgz": true
+  "react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.15-fee84114.tgz": true
   sharp: true
   tsc-rs: true
   utf-8-validate: false
@@ -34,6 +34,9 @@ catalog:
   "@clerk/expo": 4.13.0
   "@clerk/react": 6.17.8
   "@clerk/shared": 4.40.0
+  # Must match the version alchemy depends on: the relay overrides its
+  # Cloudflare retry policy through this package's Retry service.
+  "@distilled.cloud/cloudflare": 1.0.0-rc.13
   "@effect/atom-react": 4.0.5
   "@effect/graphql-generator": 4.0.5
   "@effect/openapi-generator": 4.0.5
@@ -271,6 +274,9 @@ overrides:
   "expo-sharing>@expo/config-plugins": 58.0.9
   "expo-sharing>@expo/config-types": 58.0.3
   "@pierre/diffs>@shikijs/transformers": ^4.2.0
+  # Resolve below remark-math so Vite, Metro and Node use the same tokenizer.
+  "remark-math>micromark-extension-math": npm:micromark-extension-llm-math@3.1.0
+  micromark-extension-gfm-table: 2.1.1
   # Keep one copy of these native-binary packages. lightningcss ships 11 platform binaries per
   # version, and the workspaces' tailwindcss ^4 ranges drift into two 4.3.x copies of the family.
   "@tailwindcss/node": "catalog:"
@@ -314,8 +320,13 @@ packageExtensions:
       vite-plus: "catalog:"
 
 patchedDependencies:
+  react-native-image-viewing@0.2.2: patches/react-native-image-viewing@0.2.2.patch
+  mdast-util-math@3.0.0: patches/mdast-util-math@3.0.0.patch
+  micromark-extension-llm-math@3.1.0: patches/micromark-extension-llm-math@3.1.0.patch
+  micromark-extension-gfm-table@2.1.1: patches/micromark-extension-gfm-table@2.1.1.patch
   alchemy@2.0.0-beta.80: patches/alchemy@2.0.0-beta.80.patch
   expo-audio@58.0.9: patches/expo-audio@58.0.9.patch
+  expo-network@58.0.3: patches/expo-network@58.0.3.patch
   "@clerk/expo-native-components@0.2.0": patches/@clerk__expo-native-components@0.2.0.patch
   "@effect/vitest@4.0.5": patches/@effect__vitest@4.0.5.patch
   "@expo/metro-config@58.0.14": patches/@expo__metro-config@58.0.14.patch
@@ -337,6 +348,9 @@ patchedDependencies:
   # Android: a nested WebView hands a vertical drag to its scrolling parent at the page's edge.
   react-native-webview@14.0.1: patches/react-native-webview@14.0.1.patch
   "@expo/ui@58.0.20": patches/@expo__ui@58.0.20.patch
+  # Android: a Compose host that requests layout in a mount (a new screen's app bar) is laid out
+  # before that frame is drawn, instead of a frame later.
+  expo-modules-core@58.0.22: patches/expo-modules-core@58.0.22.patch
   # Android: Maven-resolved gradle plugins (expo-widgets) have no sourceDir; without this
   # skip, the fingerprint silently drops every Expo native module and OTAs reach stale binaries.
   "@expo/fingerprint@0.21.5": patches/@expo__fingerprint@0.21.5.patch

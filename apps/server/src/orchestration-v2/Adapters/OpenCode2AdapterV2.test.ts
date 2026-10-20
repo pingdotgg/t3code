@@ -518,6 +518,33 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect.each([
+    ["provider.quota", "usage_limit"],
+    ["provider.rate-limit", "usage_limit"],
+    ["provider", "provider_error"],
+  ] as const)("classifies a %s execution failure as %s", ([code, failureClass]) =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.failed", {
+          sessionID: SESSION,
+          error: { type: code, message: "Provider rejected the request" },
+        }),
+      ]);
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(turnInput(thread));
+      const ended = yield* Fiber.join(terminal);
+      assert.equal(ended?.status, "failed");
+      assert.deepEqual(ended?.failure, {
+        class: failureClass,
+        code,
+        message: "Provider rejected the request",
+        retryable: null,
+      });
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("ends the turn when its terminal event is one this build cannot decode", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
@@ -1064,6 +1091,94 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     returnedRunning("call-background"),
     event("session.execution.started", { sessionID: CHILD }),
   ];
+
+  it.effect("settles a background subagent that fails, so no work is left pending", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...launchedAndRunning,
+        // The parent turn ends, and the background child fails: it reports
+        // nothing back, so its call has to end with the failure.
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        event("session.execution.failed", {
+          sessionID: CHILD,
+          error: { type: "provider.quota", message: "Rate limit exceeded." },
+        }),
+      ]);
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(withLineage(thread));
+      yield* watch.until(
+        () => watch.calls.get("Sleep")?.status === "failed" && watch.state.roster?.length === 0,
+      );
+      assert.deepEqual(watch.state.roster, []);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("settles every call joined to a failed background subagent", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...launchedAndRunning,
+        // A second call joins the running child, so its turn answers for both.
+        ...callAgain({ background: true }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        event("session.execution.failed", {
+          sessionID: CHILD,
+          error: { type: "provider.quota", message: "Rate limit exceeded." },
+        }),
+      ]);
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(withLineage(thread));
+      yield* watch.until(
+        () =>
+          watch.calls.get("Sleep")?.status === "failed" &&
+          watch.calls.get("Again")?.status === "failed" &&
+          watch.state.roster?.length === 0,
+      );
+      assert.deepEqual(watch.state.roster, []);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("settles the background call a foreground call joined to a failed child", () =>
+    Effect.gen(function* () {
+      const again = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: "call-again" };
+      const { runtime, thread } = yield* resumed([
+        ...launchedAndRunning,
+        // A foreground call joins the running background child. It is only
+        // marked background once its own tool call returns, so the child can
+        // fail while this call is still the foreground one.
+        event("session.tool.input.started", { ...again, name: "subagent" }),
+        event("session.tool.called", {
+          ...again,
+          name: "subagent",
+          input: { description: "Again", prompt: "also this", sessionID: CHILD },
+          executed: false,
+        }),
+        event("session.tool.progress", {
+          ...again,
+          metadata: { sessionID: CHILD, status: "running" },
+        }),
+        out("session.update", { sessionID: CHILD, permissions: "<any>" }),
+        reply("session.update", null),
+        // The child fails while the joined call is still the foreground one.
+        event("session.execution.failed", {
+          sessionID: CHILD,
+          error: { type: "provider.quota", message: "Rate limit exceeded." },
+        }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(withLineage(thread));
+      yield* watch.until(
+        () =>
+          watch.calls.get("Sleep")?.status === "failed" &&
+          watch.calls.get("Again")?.status === "failed" &&
+          watch.state.roster?.length === 0,
+      );
+      assert.deepEqual(watch.state.roster, []);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+    }).pipe(Effect.scoped),
+  );
 
   it.effect("settles every call that joined a running subagent with its one report", () =>
     Effect.gen(function* () {
@@ -3215,6 +3330,50 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       );
       assert.deepEqual(statuses, ["pending", "cancelled"]);
       assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps thread-scoped T3 waits as dynamic tools through their lifecycle", () =>
+    Effect.gen(function* () {
+      const tool = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: "call-wait" };
+      const name = "t3-code-web_delegate_task";
+      const input = { task: "Review", mode: "wait" };
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.tool.input.started", { ...tool, name }),
+        event("session.tool.called", { ...tool, name, input, executed: true }),
+        event("session.tool.success", {
+          ...tool,
+          content: [{ type: "text", text: "Reviewed" }],
+          metadata: {},
+          executed: true,
+        }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      const items = (yield* Fiber.join(events)).flatMap((event) =>
+        event.type === "turn_item.updated" &&
+        event.turnItem.nativeItemRef?.nativeId?.endsWith(tool.id)
+          ? [event.turnItem]
+          : [],
+      );
+      assert.deepEqual(
+        items.map((item) => item.type),
+        ["dynamic_tool", "dynamic_tool", "dynamic_tool"],
+      );
+      assert.deepEqual(
+        items.map((item) => item.status),
+        ["running", "running", "completed"],
+      );
+      const last = items.at(-1);
+      assert.equal(last?.type === "dynamic_tool" ? last.toolName : null, name);
+      assert.deepEqual(last?.type === "dynamic_tool" ? last.input : null, input);
     }).pipe(Effect.scoped),
   );
 

@@ -37,6 +37,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
   startup: (
     stateDir: string,
   ) => Effect.Effect<ProcessRunner.ProcessRunOutput, ProcessRunner.ProcessRunError>,
+  avdOutput: ProcessRunner.ProcessRunOutput = processOutput(0),
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -79,7 +80,9 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     ),
     Effect.provideService(ProcessRunner.ProcessRunner, {
       run: (input) =>
-        input.args.includes("devices") ? startup(stateDir) : Effect.succeed(processOutput(0)),
+        input.args.includes("devices")
+          ? startup(stateDir)
+          : Effect.succeed(input.args.includes("-list-avds") ? avdOutput : processOutput(0)),
     }),
     Effect.provideService(
       HttpClient.HttpClient,
@@ -398,6 +401,22 @@ describe("Android SDK availability", () => {
   );
 });
 
+it.effect.each([
+  { reason: "timeout", timedOut: true },
+  { reason: "signal termination", timedOut: false },
+])("reports AVD enumeration $reason as a failed command", ({ timedOut }) =>
+  Effect.gen(function* () {
+    const { host } = yield* agentFixture(() => Effect.succeed(processOutput(0)), {
+      ...processOutput(0),
+      code: null,
+      timedOut,
+    });
+    const ready = yield* host.ensureReady(() => Effect.void);
+    const result = yield* ready.run("emulator", ["-list-avds"]);
+    expect(result.code).not.toBe(0);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("puts detected Android tools on the helper PATH without losing existing commands", () =>
   Effect.gen(function* () {
     const path = yield* Path.Path;
@@ -458,7 +477,73 @@ it.effect(
           Effect.provideService(FileSystem.FileSystem, FileSystem.makeNoop({})),
         );
       expect(missing.XDG_RUNTIME_DIR).toBeUndefined();
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.provideMerge(ProcessRunner.layer, NodeServices.layer)),
+    ),
+);
+
+it.effect.each([
+  {
+    name: "old SDK",
+    front: "emulated webcam<N> none",
+    back: "emulated virtualscene none",
+    code: 0,
+    extra: undefined,
+    expected: "-camera-front emulated -camera-back emulated",
+  },
+  {
+    name: "imagefile-capable SDK",
+    front: "emulated imagefile:<path> none",
+    back: "emulated imagefile:<path> none",
+    code: 0,
+    extra: undefined,
+    expected: undefined,
+  },
+  {
+    name: "user overrides",
+    front: "emulated none",
+    back: "emulated none",
+    code: 0,
+    extra: "-memory 4096 -camera-front none",
+    expected: "-camera-front emulated -camera-back emulated -memory 4096 -camera-front none",
+  },
+  {
+    name: "different camera capabilities",
+    front: "emulated none",
+    back: "emulated imagefile:<path> none",
+    code: 0,
+    extra: undefined,
+    expected: "-camera-front emulated",
+  },
+  {
+    name: "failed help probe",
+    front: "emulated none",
+    back: "emulated none",
+    code: 1,
+    extra: undefined,
+    expected: undefined,
+  },
+])("configures supported emulator cameras for $name", ({ front, back, code, extra, expected }) =>
+  Effect.gen(function* () {
+    const result = yield* LocalDeviceHost.__testing
+      .hubEnvironment({ ANDROID_HOME: "/sdk", EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS: extra })
+      .pipe(
+        Effect.provideService(HostProcess.Platform, "darwin"),
+        Effect.provideService(HostProcess.UserId, 1000),
+        Effect.provideService(ProcessRunner.ProcessRunner, {
+          run: (input) => {
+            expect(input.command).toBe("/sdk/emulator/emulator");
+            expect(input.args[0]).toMatch(/^-help-camera-(front|back)$/);
+            return Effect.succeed(
+              processOutput(code, input.args[0] === "-help-camera-front" ? front : back),
+            );
+          },
+        }),
+        Effect.provide(NodeServices.layer),
+      );
+    expect(result.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS).toBe(expected);
+  }),
 );
 
 it.live("limits hub discovery to Android unless the host is a Mac", () =>
@@ -499,6 +584,56 @@ http.createServer((req,res)=>res.end('ok')).listen(Number(args[args.indexOf('--p
     });
     expect((yield* hubArguments("linux")).slice(-2)).toEqual(["--platform", "android"]);
     expect(yield* hubArguments("darwin")).not.toContain("--platform");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("keeps local Android and iOS available without ffmpeg", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-ffmpeg-" });
+    yield* fs.makeDirectory(`${baseDir}/bin`);
+    yield* fs.writeFileString(`${baseDir}/bin/xcrun`, "#!/bin/sh\nexit 0\n");
+    yield* fs.chmod(`${baseDir}/bin/xcrun`, 0o755);
+    for (const [directory, tool] of [
+      ["platform-tools", "adb"],
+      ["emulator", "emulator"],
+      ["cmdline-tools/latest/bin", "avdmanager"],
+    ]) {
+      yield* fs.makeDirectory(`${baseDir}/sdk/${directory}`, { recursive: true });
+      yield* fs.writeFileString(`${baseDir}/sdk/${directory}/${tool}`, "");
+    }
+    const onTestHost = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      effect.pipe(
+        Effect.provideService(HostProcess.Environment, {
+          HOME: baseDir,
+          PATH: `${baseDir}/bin`,
+          ANDROID_HOME: `${baseDir}/sdk`,
+        }),
+        Effect.provideService(HostProcess.Platform, "darwin"),
+      );
+    const host = yield* LocalDeviceHost.make().pipe(
+      Effect.provide(Layer.mergeAll(ServerConfig.layerTest(baseDir, baseDir), NetService.layer)),
+      onTestHost,
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.die(new Error("Readiness must not make network requests"))),
+      ),
+      Effect.provideService(ProcessRunner.ProcessRunner, {
+        run: () => Effect.die("Platform availability must not probe emulator video"),
+      }),
+    );
+    expect((yield* onTestHost(host.summary)).platforms).toEqual([
+      { platform: "ios", available: true },
+      { platform: "android", available: true },
+    ]);
+    expect(yield* onTestHost(host.platformAvailability("android"))).toEqual({
+      platform: "android",
+      available: true,
+    });
+    expect(yield* onTestHost(host.platformAvailability("ios"))).toEqual({
+      platform: "ios",
+      available: true,
+    });
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 

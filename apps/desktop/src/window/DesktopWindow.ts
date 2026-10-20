@@ -13,6 +13,7 @@ import { type DesktopSnapShotEvent, DEFAULT_CLIENT_SETTINGS } from "@t3tools/con
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { makeComponentLogger } from "../app/DesktopObservability.ts";
+import * as DesktopState from "../app/DesktopState.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import { getDesktopUrl } from "../electron/ElectronProtocol.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
@@ -69,6 +70,7 @@ type WindowTitleBarOptions = Pick<
 
 type DesktopWindowRuntimeServices =
   | DesktopEnvironment.DesktopEnvironment
+  | DesktopState.DesktopState
   | DesktopAssets.DesktopAssets
   | DesktopAppSettings.DesktopAppSettings
   | DesktopClientSettings.DesktopClientSettings
@@ -174,12 +176,12 @@ export function resolveInitialMainWindowBounds(
   return DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE;
 }
 
-function buildConnectingSplashDataUrl(shouldUseDarkColors: boolean): string {
+function buildConnectingSplashDataUrl(shouldUseDarkColors: boolean, text: string): string {
   const background = getInitialWindowBackgroundColor(shouldUseDarkColors);
   const label = shouldUseDarkColors ? "#9ca3af" : "#6b7280";
   const accent = shouldUseDarkColors ? "#f8fafc" : "#1f2937";
   const track = shouldUseDarkColors ? "rgba(248,250,252,0.18)" : "rgba(31,41,55,0.18)";
-  const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>html,body{margin:0;height:100%}body{background:${background};color:${label};font-family:system-ui,-apple-system,'Segoe UI',sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;-webkit-user-select:none;user-select:none;-webkit-app-region:drag}.spinner{width:26px;height:26px;border:3px solid ${track};border-top-color:${accent};border-radius:50%;animation:spin .8s linear infinite}.label{font-size:13px}@keyframes spin{to{transform:rotate(360deg)}}</style></head><body><div class="spinner"></div><div class="label">Connecting to WSL…</div></body></html>`;
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>html,body{margin:0;height:100%}body{background:${background};color:${label};font-family:system-ui,-apple-system,'Segoe UI',sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;-webkit-user-select:none;user-select:none;-webkit-app-region:drag}.spinner{width:26px;height:26px;border:3px solid ${track};border-top-color:${accent};border-radius:50%;animation:spin .8s linear infinite}.label{font-size:13px}@keyframes spin{to{transform:rotate(360deg)}}</style></head><body><div class="spinner"></div><div class="label">${text}</div></body></html>`;
   return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 }
 
@@ -287,6 +289,7 @@ function bindFirstRevealTrigger(
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const desktopState = yield* DesktopState.DesktopState;
   const assets = yield* DesktopAssets.DesktopAssets;
   const electronMenu = yield* ElectronMenu.ElectronMenu;
   const electronShell = yield* ElectronShell.ElectronShell;
@@ -312,11 +315,7 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  // currentMainOrFirst / focusedMainOrFirst fall back to "any first window",
-  // which during WSL-only boot is the connecting splash. The splash is never
-  // registered via setMain, so it must be treated as "no real main window" --
-  // otherwise ensureMain/activate/dispatchMenuAction latch onto it and never
-  // open (or retry) the real main.
+  // Window lookups fall back to the first window, which may be the splash.
   const withoutSplash = (window: Option.Option<Electron.BrowserWindow>) =>
     Ref.get(splashWindowRef).pipe(
       Effect.map((splash) =>
@@ -345,9 +344,10 @@ export const make = Effect.gen(function* () {
   });
 
   const createWindow = Effect.fn("desktop.window.createWindow")(function* (): Effect.fn.Return<
-    Electron.BrowserWindow,
+    Option.Option<Electron.BrowserWindow>,
     DesktopWindowError
   > {
+    if (yield* Ref.get(desktopState.quitting)) return Option.none();
     yield* previewManager.getBrowserSession();
     const applicationUrl = getDesktopUrl(environment.isDevelopment);
     const iconPaths = yield* assets.iconPaths;
@@ -376,10 +376,11 @@ export const make = Effect.gen(function* () {
     if (persistedBounds !== null && initialBounds === DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE) {
       yield* logWindowWarning("saved main window bounds could not be restored; using defaults");
     }
+    if (yield* Ref.get(desktopState.quitting)) return Option.none();
     const window = yield* electronWindow.create({
       ...initialBounds,
-      minWidth: 840,
-      minHeight: 620,
+      minWidth: DesktopAppSettings.MIN_MAIN_WINDOW_SIZE.width,
+      minHeight: DesktopAppSettings.MIN_MAIN_WINDOW_SIZE.height,
       show: false,
       autoHideMenuBar: true,
       ...(environment.platform === "darwin" ? { disableAutoHideCursor: true } : {}),
@@ -404,6 +405,10 @@ export const make = Effect.gen(function* () {
         disableHtmlFullscreenWindowResize: true,
       },
     });
+    if (yield* Ref.get(desktopState.quitting)) {
+      yield* electronWindow.destroyAll;
+      return Option.none();
+    }
 
     yield* rendererHistory.register(window.webContents, { surface: "main" });
     if (environment.platform === "darwin") {
@@ -497,6 +502,10 @@ export const make = Effect.gen(function* () {
     flushMainWindowBounds = flushBoundsPersist;
 
     yield* previewManager.setMainWindow(window);
+    if (yield* Ref.get(desktopState.quitting)) {
+      yield* electronWindow.destroyAll;
+      return Option.none();
+    }
     window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
       if (
         typeof params.partition !== "string" ||
@@ -835,26 +844,35 @@ export const make = Effect.gen(function* () {
       void runPromise(electronWindow.clearMain(Option.some(window)));
     });
 
-    return window;
+    return Option.some(window);
   });
 
   const createMain = Effect.gen(function* () {
     const window = yield* createWindow();
-    yield* electronWindow.setMain(window);
-    yield* logWindowInfo("main window created");
+    if (Option.isSome(window)) {
+      yield* electronWindow.setMain(window.value);
+      yield* logWindowInfo("main window created");
+    }
     return window;
   }).pipe(Effect.withSpan("desktop.window.createMain"));
 
   const ensureMain = Effect.gen(function* () {
+    if (yield* Ref.get(desktopState.quitting)) return Option.none<Electron.BrowserWindow>();
     const existingWindow = yield* currentMainWindow;
     if (Option.isSome(existingWindow)) {
-      return existingWindow.value;
+      return existingWindow;
     }
     return yield* createMain;
   }).pipe(Effect.withSpan("desktop.window.ensureMain"));
 
+  const requireWindow = (window: Option.Option<Electron.BrowserWindow>) =>
+    Option.match(window, {
+      onNone: () => Effect.interrupt,
+      onSome: Effect.succeed,
+    });
+
   const revealOrCreateMain = Effect.gen(function* () {
-    const window = yield* ensureMain;
+    const window = yield* ensureMain.pipe(Effect.flatMap(requireWindow));
     yield* electronWindow.reveal(window);
     return window;
   }).pipe(Effect.withSpan("desktop.window.revealOrCreateMain"));
@@ -865,6 +883,7 @@ export const make = Effect.gen(function* () {
   });
 
   const createMainIfBackendReady = Effect.gen(function* () {
+    if (yield* Ref.get(desktopState.quitting)) return;
     if (yield* waitingForBackend) return;
     const existingWindow = yield* currentMainWindow;
     if (Option.isSome(existingWindow)) return;
@@ -872,12 +891,19 @@ export const make = Effect.gen(function* () {
   }).pipe(Effect.withSpan("desktop.window.createMainIfBackendReady"));
 
   const showConnectingSplash = Effect.gen(function* () {
+    if (yield* Ref.get(desktopState.quitting)) return;
     const existingSplash = yield* Ref.get(splashWindowRef);
     if (Option.isSome(existingSplash)) return;
     const existingWindow = yield* electronWindow.currentMainOrFirst;
     if (Option.isSome(existingWindow)) return;
 
     const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
+    if (yield* Ref.get(desktopState.quitting)) return;
+    const settings = yield* desktopSettings.get;
+    const text =
+      settings.wslOnly === true && settings.wslBackendEnabled === true
+        ? "Connecting to WSL…"
+        : "Starting T3 Code…";
     const splash = yield* electronWindow.create({
       width: 360,
       height: 220,
@@ -897,6 +923,10 @@ export const make = Effect.gen(function* () {
         sandbox: true,
       },
     });
+    if (yield* Ref.get(desktopState.quitting)) {
+      yield* electronWindow.destroyAll;
+      return;
+    }
     yield* rendererHistory.register(splash.webContents, { surface: "splash" });
     yield* Ref.set(splashWindowRef, Option.some(splash));
     splash.once("closed", () => {
@@ -907,7 +937,7 @@ export const make = Effect.gen(function* () {
         splash.show();
       }
     });
-    void splash.loadURL(buildConnectingSplashDataUrl(shouldUseDarkColors));
+    void splash.loadURL(buildConnectingSplashDataUrl(shouldUseDarkColors, text));
     yield* logWindowInfo("connecting splash shown");
   }).pipe(
     Effect.catch((error) =>
@@ -921,10 +951,12 @@ export const make = Effect.gen(function* () {
     payload: unknown,
     { reveal = true }: { readonly reveal?: boolean } = {},
   ) {
+    if (yield* Ref.get(desktopState.quitting)) return;
     const existingWindow = yield* reveal ? focusedMainWindow : electronWindow.main;
     if (Option.isNone(existingWindow) && (!reveal || (yield* waitingForBackend))) return;
-    const targetWindow = Option.isSome(existingWindow) ? existingWindow.value : yield* ensureMain;
-    if (targetWindow.isDestroyed()) return;
+    const window = Option.isSome(existingWindow) ? existingWindow : yield* ensureMain;
+    if (Option.isNone(window) || window.value.isDestroyed()) return;
+    const targetWindow = window.value;
     const send = Effect.sync(() => {
       if (!targetWindow.isDestroyed()) targetWindow.webContents.send(channel, payload);
     });
@@ -941,8 +973,8 @@ export const make = Effect.gen(function* () {
   });
 
   return DesktopWindow.of({
-    createMain,
-    ensureMain,
+    createMain: createMain.pipe(Effect.flatMap(requireWindow)),
+    ensureMain: ensureMain.pipe(Effect.flatMap(requireWindow)),
     revealOrCreateMain,
     prepareCaptureReveal: Effect.gen(function* () {
       const existingWindow = yield* currentMainWindow;
@@ -951,6 +983,7 @@ export const make = Effect.gen(function* () {
       }
     }),
     activate: Effect.gen(function* () {
+      if (yield* Ref.get(desktopState.quitting)) return;
       const existingWindow = yield* currentMainWindow;
       if (Option.isSome(existingWindow)) {
         yield* electronWindow.reveal(existingWindow.value);
@@ -994,7 +1027,7 @@ export const make = Effect.gen(function* () {
     }),
     zoomMain: Effect.fn("desktop.window.zoomMain")(function* (direction) {
       yield* Effect.annotateCurrentSpan({ direction });
-      const window = yield* focusedMainWindow;
+      const window = yield* electronWindow.main;
       if (Option.isNone(window) || window.value.isDestroyed()) {
         return;
       }

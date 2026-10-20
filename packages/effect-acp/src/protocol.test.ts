@@ -16,7 +16,7 @@ import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
-import { it, assert } from "@effect/vitest";
+import { it, assert, expect } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 import * as AcpSchema from "./schema.ts";
@@ -283,18 +283,18 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
       assert.equal(transformCalls, 1);
 
       const decodeFailed = events.find(({ stage }) => stage === "decode_failed");
-      assert.deepInclude(decodeFailed?.payload as object, {
+      expect(decodeFailed?.payload).toMatchObject({
         operation: "decode-notification-payload",
         method: "session/update",
-        issueSummary: "update.used missing",
+        issueSummary: expect.stringContaining("update.used missing"),
       });
       assert.lengthOf(
         events.filter(({ stage }) => stage === "decode_failed"),
         2,
       );
       assert.lengthOf(warnings, 1);
-      assert.deepInclude(warnings[0] as object, {
-        issueSummary: "update.used missing",
+      expect(warnings[0]).toMatchObject({
+        issueSummary: expect.stringContaining("update.used missing"),
       });
       assert.notInclude(encodeUnknownJsonString({ decodeFailed, warnings }), secret);
     }),

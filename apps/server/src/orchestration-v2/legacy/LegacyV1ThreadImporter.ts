@@ -361,9 +361,10 @@ const make = Effect.gen(function* () {
       ORDER BY created_at ASC, message_id ASC
     `;
 
-  const listShellMessages = (threadId: ThreadId) =>
-    Effect.gen(function* () {
-      const latest = yield* sql<LegacyMessageRow>`
+  const listShellMessages = Effect.fn("LegacyV1ThreadImporter.listShellMessages")(function* (
+    threadId: ThreadId,
+  ) {
+    const latest = yield* sql<LegacyMessageRow>`
         SELECT
           message.message_id,
           message.thread_id,
@@ -393,7 +394,7 @@ const make = Effect.gen(function* () {
         ORDER BY message.created_at DESC, message.message_id DESC
         LIMIT 1
       `;
-      const latestUser = yield* sql<LegacyMessageRow>`
+    const latestUser = yield* sql<LegacyMessageRow>`
         SELECT
           message.message_id,
           message.thread_id,
@@ -423,12 +424,12 @@ const make = Effect.gen(function* () {
         ORDER BY message.created_at DESC, message.message_id DESC
         LIMIT 1
       `;
-      return [latestUser[0], latest[0]].filter(
-        (message, index, selected): message is LegacyMessageRow =>
-          message !== undefined &&
-          selected.findIndex((candidate) => candidate?.message_id === message.message_id) === index,
-      );
-    });
+    return [latestUser[0], latest[0]].filter(
+      (message, index, selected): message is LegacyMessageRow =>
+        message !== undefined &&
+        selected.findIndex((candidate) => candidate?.message_id === message.message_id) === index,
+    );
+  });
 
   const reconcileShellsBase = Effect.gen(function* () {
     const now = DateTime.formatIso(yield* DateTime.now);

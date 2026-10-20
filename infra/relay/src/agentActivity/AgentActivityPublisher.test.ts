@@ -2,6 +2,7 @@ import type { RelayAgentActivityState, RelayDeliveryResult } from "@t3tools/cont
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as AgentActivityRows from "./AgentActivityRows.ts";
 import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
@@ -58,6 +59,7 @@ function makeLiveActivities(
   return {
     register: () => Effect.void,
     listTargets: () => Effect.succeed([]),
+    listIdleArmedTargets: () => Effect.succeed([]),
     markDelivery: () => Effect.void,
     markStartQueued: () => Effect.void,
     clearStartQueued: () => Effect.void,
@@ -265,6 +267,67 @@ describe("AgentActivityPublisher", () => {
           },
         ],
       });
+    });
+  });
+
+  it.effect("ends an idle card after finished work ages out without another publish", () => {
+    const sent: Array<Parameters<ApnsDeliveries.ApnsDeliveries["Service"]["sendForTarget"]>[0]> =
+      [];
+    let activeStates: ReadonlyArray<RelayAgentActivityState> = [state];
+    const endIdle = AgentActivityPublisher.AgentActivityPublisher.pipe(
+      Effect.flatMap((publisher) => publisher.endIdleLiveActivities),
+      Effect.provide(
+        layerPublisher.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(
+                AgentActivityRows.AgentActivityRows,
+                makeAgentActivityRows({ listForUser: () => Effect.sync(() => activeStates) }),
+              ),
+              Layer.succeed(EnvironmentLinks.EnvironmentLinks, makeEnvironmentLinks()),
+              Layer.succeed(
+                LiveActivities.LiveActivities,
+                makeLiveActivities({
+                  listIdleArmedTargets: () =>
+                    Effect.succeed([{ user_id: "dev:julius", device_id: "device-1" }]),
+                  listTargets: () =>
+                    Effect.succeed([
+                      { ...target("device-1"), activity_push_token: "activity-token" },
+                      target("device-2"),
+                    ]),
+                }),
+              ),
+              Layer.succeed(
+                ApnsDeliveries.ApnsDeliveries,
+                makeApnsDeliveries({
+                  sendForTarget: (input) =>
+                    Effect.sync(() => {
+                      sent.push(input);
+                      return null;
+                    }),
+                }),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      yield* TestClock.adjust("1 hour");
+      yield* endIdle;
+      expect(sent).toEqual([]);
+
+      activeStates = [{ ...state, phase: "completed", updatedAt: "1970-01-01T01:00:00.000Z" }];
+      yield* TestClock.adjust("15 minutes");
+      yield* endIdle;
+      expect(sent).toEqual([]);
+
+      yield* TestClock.adjust("5 minutes");
+      yield* endIdle;
+      expect(sent).toMatchObject([
+        { target: { device_id: "device-1" }, aggregate: null, replay: true },
+      ]);
     });
   });
 

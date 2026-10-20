@@ -1,17 +1,31 @@
 import { joinBackward, joinTextblockBackward, joinTextblockForward } from "@tiptap/pm/commands";
-import { Fragment, Mark, type Node as ProseMirrorNode, type ResolvedPos } from "@tiptap/pm/model";
+import {
+  Fragment,
+  Mark,
+  type MarkType,
+  type Node as ProseMirrorNode,
+  type ResolvedPos,
+} from "@tiptap/pm/model";
 import { Code } from "@tiptap/extension-code";
 import { Blockquote } from "@tiptap/extension-blockquote";
 import { CodeBlock } from "@tiptap/extension-code-block";
 import { Heading } from "@tiptap/extension-heading";
 import { HorizontalRule } from "@tiptap/extension-horizontal-rule";
-import { type Command, type Editor, mergeAttributes } from "@tiptap/core";
+import { Italic, starInputRegex, starPasteRegex } from "@tiptap/extension-italic";
+import {
+  type Command,
+  type Editor,
+  markInputRule,
+  markPasteRule,
+  mergeAttributes,
+} from "@tiptap/core";
 import { BulletList, ListItem, OrderedList } from "@tiptap/extension-list";
 import { TaskItem } from "@tiptap/extension-task-item";
 import { TaskList } from "@tiptap/extension-task-list";
 import {
   type EditorState,
   Plugin,
+  PluginKey,
   Selection,
   TextSelection,
   type Transaction,
@@ -21,6 +35,7 @@ import { splitPromptIntoComposerSegments } from "~/composer-editor-mentions";
 import { nextOrderedMarkerText } from "~/composer-list-continuation";
 import { parseInlineMarkdown, RICH_TEXT_DELIMITERS, type RichTextMark } from "~/composer-rich-text";
 import { collectInlineContextIds } from "~/lib/composerContextReferences";
+import { markdownMathRanges } from "@t3tools/shared/markdownMath";
 
 export type SkillMeta = { label: string; description: string | null };
 
@@ -40,6 +55,71 @@ const TIPTAP_TO_MARK: Record<string, RichTextMark> = {
   code: "code",
 };
 
+type CodePair = { from: number; to: number };
+
+const codePairKey = new PluginKey<CodePair[]>("typedBacktickPairs");
+
+// Input rules only see text before the caret, so filling an already typed
+// pair needs a separate exit handler. Only typed pairs opt into that handler.
+function codePairCaretPlugin(type: MarkType) {
+  return new Plugin<CodePair[]>({
+    key: codePairKey,
+    state: {
+      init: () => [],
+      apply(tr, pairs) {
+        const mapped = pairs.flatMap((pair) => {
+          const from = tr.mapping.mapResult(pair.from, 1);
+          const to = tr.mapping.mapResult(pair.to, -1);
+          return from.deleted || to.deleted ? [] : [{ from: from.pos, to: to.pos }];
+        });
+        const typed = tr.getMeta(codePairKey) as CodePair | undefined;
+        return typed ? [...mapped, typed] : mapped;
+      },
+    },
+    props: {
+      handleTextInput(view, from, to, text, insert) {
+        if (view.composing || from !== to || text !== "`") return false;
+        const $from = view.state.doc.resolve(from);
+        if (
+          !$from.parent.isTextblock ||
+          $from.parent.type.spec.code ||
+          !/(^|[^`])`$/.test($from.nodeBefore?.text ?? "")
+        ) {
+          return false;
+        }
+        view.dispatch(insert().setMeta(codePairKey, { from: from - 1, to: from + 1 }));
+        return true;
+      },
+    },
+    appendTransaction(transactions, oldState, state) {
+      if (!state.selection.empty || oldState.selection.from === state.selection.from) return null;
+      if (transactions.some((tr) => tr.docChanged)) return null;
+      const pair = codePairKey.getState(state)?.find(({ to }) => to === state.selection.from);
+      if (!pair) return null;
+      const $start = state.doc.resolve(pair.from);
+      const $end = state.selection.$from;
+      if (!$start.sameParent($end) || $start.parent.type.spec.code) return null;
+      if (
+        $start.nodeBefore?.text?.endsWith("`") ||
+        $end.nodeAfter?.text?.startsWith("`") ||
+        !/^`[^`]+`$/.test(state.doc.textBetween(pair.from, pair.to))
+      ) {
+        return null;
+      }
+      let plain = true;
+      state.doc.nodesBetween(pair.from, pair.to, (node) => {
+        if (node.isInline && (!node.isText || node.marks.length > 0)) plain = false;
+      });
+      if (!plain) return null;
+      const tr = state.tr.delete(pair.to - 1, pair.to).delete(pair.from, pair.from + 1);
+      tr.addMark(pair.from, pair.to - 2, type.create());
+      tr.setSelection(TextSelection.create(tr.doc, pair.to - 2));
+      tr.removeStoredMark(type);
+      return tr;
+    },
+  });
+}
+
 /**
  * Tiptap's code mark excludes every other mark, which rejects the `bold+code`
  * spans markdown like `**\`x\`**` parses into and drops the whole insert.
@@ -49,6 +129,23 @@ export const ComposerCodeExtension = Code.extend({
   // ArrowRight leaves code through the caret stops at styled edges, so the
   // stock exit (inserting a space at the end of a line) is not needed.
   exitable: false,
+  addProseMirrorPlugins() {
+    return [...(this.parent?.() ?? []), codePairCaretPlugin(this.type)];
+  },
+});
+
+/**
+ * The composer writes italic as `*text*`, so it keeps only the `*` shortcuts.
+ * Tiptap's `_text_` rules fire on the `_` in names like `node_modules` and
+ * italicize back to an earlier `_build`, even one inside a code span.
+ */
+export const ComposerItalicExtension = Italic.extend({
+  addInputRules() {
+    return [markInputRule({ find: starInputRegex, type: this.type })];
+  },
+  addPasteRules() {
+    return [markPasteRule({ find: starPasteRegex, type: this.type })];
+  },
 });
 
 /**
@@ -186,8 +283,18 @@ const ComposerListItemExtension = ListItem.extend({
       Delete: () => deleteAcrossList(this.editor),
     };
   },
+  // ProseMirror can reuse the parent list when only an item's marker changes.
+  // Item metadata lets CSS resize its gutter through CommonMark's nine-digit limit.
   renderHTML({ node, HTMLAttributes }) {
-    return ["li", mergeAttributes(HTMLAttributes, { "data-marker": node.attrs.marker }), 0];
+    const marker = String(node.attrs.marker);
+    return [
+      "li",
+      mergeAttributes(HTMLAttributes, {
+        "data-marker": marker,
+        "data-marker-width": Math.min(marker.length, 10),
+      }),
+      0,
+    ];
   },
 });
 
@@ -346,10 +453,11 @@ interface DocLine {
   inline: InlineJson[];
 }
 
+/** Null for a `$name` that is not one of the provider's skills: it stays editable text. */
 function atomJsonForSegment(
   segment: Exclude<ReturnType<typeof splitPromptIntoComposerSegments>[number], { type: "text" }>,
-  skillLabelFor: (name: string) => SkillMeta,
-): InlineJson {
+  skillLabelFor: (name: string) => SkillMeta | null,
+): InlineJson | null {
   if (segment.type === "mention") {
     return {
       type: "composer-mention",
@@ -358,6 +466,7 @@ function atomJsonForSegment(
   }
   if (segment.type === "skill") {
     const meta = skillLabelFor(segment.name);
+    if (!meta) return null;
     return {
       type: "composer-skill",
       attrs: {
@@ -448,7 +557,7 @@ function textJsonForSpan(text: string, marks: RichTextMark[]): Record<string, un
  */
 export function buildTiptapContent(
   value: string,
-  skillLabelFor: (name: string) => SkillMeta,
+  skillLabelFor: (name: string) => SkillMeta | null,
   options?: { styling?: boolean; blocks?: boolean; literalText?: boolean; literalLength?: number },
 ): Record<string, unknown>[] {
   if (options?.literalText) {
@@ -466,12 +575,34 @@ export function buildTiptapContent(
   const atoms: InlineJson[] = [];
   const atomSources: string[] = [];
   const literal = value.slice(0, options?.literalLength ?? 0);
-  const text = splitPromptIntoComposerSegments(value.slice(literal.length))
-    .map((segment) => {
-      if (segment.type === "text") return segment.text;
-      atoms.push(atomJsonForSegment(segment, skillLabelFor));
-      atomSources.push(segment.source);
-      return sentinel;
+  const remainder = value.slice(literal.length);
+  const formulas = markdownMathRanges(remainder);
+  let offset = 0;
+  const chunks: Array<{ text: string } | { source: string }> = [];
+  for (const formula of formulas) {
+    chunks.push({ text: remainder.slice(offset, formula.start) }, { source: formula.source });
+    offset = formula.end;
+  }
+  chunks.push({ text: remainder.slice(offset) });
+  // Math stays editable source. Shield its commands and Markdown-like markers
+  // from styling and context-chip parsing, then restore ordinary text nodes.
+  const text = chunks
+    .map((chunk) => {
+      if ("source" in chunk) {
+        atoms.push(textJsonForSpan(chunk.source, []));
+        atomSources.push(chunk.source);
+        return sentinel;
+      }
+      return splitPromptIntoComposerSegments(chunk.text)
+        .map((segment) => {
+          if (segment.type === "text") return segment.text;
+          const atom = atomJsonForSegment(segment, skillLabelFor);
+          if (!atom) return segment.source;
+          atoms.push(atom);
+          atomSources.push(segment.source);
+          return sentinel;
+        })
+        .join("");
     })
     .join("");
   let atomIndex = 0;
@@ -664,7 +795,7 @@ export function buildTiptapContent(
 
 export function buildDocJson(
   value: string,
-  skillLabelFor: (name: string) => SkillMeta,
+  skillLabelFor: (name: string) => SkillMeta | null,
   options?: { styling?: boolean; literalText?: boolean },
 ) {
   const content = buildTiptapContent(value, skillLabelFor, options);
@@ -677,15 +808,12 @@ export interface RichRun {
   /** Flat document offset (atoms count 1, markers excluded). */
   flatStart: number;
   docLen: number;
-  /** Collapsed cursor length (markers literal, tokens count 1). */
-  collapsedLen: number;
   /** Markdown length (tokens expand to their source). */
   mdLen: number;
   openLen: number;
   closeLen: number;
   pmPos: number;
   mdStart: number;
-  collapsedStart: number;
   nodeName?: string;
 }
 
@@ -716,7 +844,6 @@ interface RichAccumulator {
   runs: RichRun[];
   value: string;
   flat: number;
-  collapsed: number;
   md: number;
 }
 
@@ -727,17 +854,14 @@ function pushBreakRun(acc: RichAccumulator, position?: number): void {
     kind: "break",
     flatStart: acc.flat,
     docLen: 1,
-    collapsedLen: 1,
     mdLen: 1,
     openLen: 0,
     closeLen: 0,
     pmPos,
     mdStart: acc.md,
-    collapsedStart: acc.collapsed,
   });
   acc.value += "\n";
   acc.flat += 1;
-  acc.collapsed += 1;
   acc.md += 1;
 }
 
@@ -761,16 +885,13 @@ function pushBlankLineRun(acc: RichAccumulator, pmPos: number): void {
     kind: "prefix",
     flatStart: acc.flat,
     docLen: 0,
-    collapsedLen: 1,
     mdLen: 1,
     openLen: 0,
     closeLen: 0,
     pmPos,
     mdStart: acc.md,
-    collapsedStart: acc.collapsed,
   });
   acc.value += "\n";
-  acc.collapsed += 1;
   acc.md += 1;
 }
 
@@ -877,23 +998,19 @@ function appendInlineRuns(
     const source = child.isText ? child.text! : readAtomSource(child);
     const docLen = child.isText ? source.length : 1;
     const mdText = open + source + close;
-    const collapsedLen = open.length + docLen + close.length;
     acc.runs.push({
       kind: child.isText ? "text" : "token",
       flatStart: acc.flat,
       docLen,
-      collapsedLen,
       mdLen: mdText.length,
       openLen: open.length,
       closeLen: close.length,
       pmPos,
       mdStart: acc.md,
-      collapsedStart: acc.collapsed,
       ...(child.isText ? {} : { nodeName: child.type.name }),
     });
     acc.value += mdText;
     acc.flat += docLen;
-    acc.collapsed += collapsedLen;
     acc.md += mdText.length;
   });
   if (children.length === 0) {
@@ -901,13 +1018,11 @@ function appendInlineRuns(
       kind: "text",
       flatStart: acc.flat,
       docLen: 0,
-      collapsedLen: 0,
       mdLen: 0,
       openLen: 0,
       closeLen: 0,
       pmPos: contentStart,
       mdStart: acc.md,
-      collapsedStart: acc.collapsed,
     });
   }
 }
@@ -1096,16 +1211,13 @@ function walkList(list: ProseMirrorNode, listStart: number, acc: RichAccumulator
       kind: "prefix",
       flatStart: acc.flat,
       docLen: 0,
-      collapsedLen: prefix.length,
       mdLen: prefix.length,
       openLen: 0,
       closeLen: 0,
       pmPos: itemContentStart + 1,
       mdStart: acc.md,
-      collapsedStart: acc.collapsed,
     });
     acc.value += prefix;
-    acc.collapsed += prefix.length;
     acc.md += prefix.length;
     let childPos = itemContentStart;
     let firstBlock = true;
@@ -1123,12 +1235,6 @@ function walkList(list: ProseMirrorNode, listStart: number, acc: RichAccumulator
   });
 }
 
-/**
- * The code is literal text in the editor, but the draft store still counts a
- * chip's source in it as one cursor position, as it does everywhere. So the
- * run splits at each chip source, which spans its characters in the document
- * and one position in the collapsed space.
- */
 function appendCodeBlockRun(
   block: ProseMirrorNode,
   pmPos: number,
@@ -1136,37 +1242,20 @@ function appendCodeBlockRun(
   acc: RichAccumulator,
 ): void {
   const { open, content, close } = codeBlockSource(block, followed);
-  const pieces = content
-    ? splitPromptIntoComposerSegments(content).map((segment) =>
-        segment.type === "text"
-          ? { length: segment.text.length, collapsedLen: segment.text.length }
-          : { length: segment.source.length, collapsedLen: 1 },
-      )
-    : [{ length: 0, collapsedLen: 0 }];
-  let offset = 0;
-  pieces.forEach((piece, index) => {
-    const openLen = index === 0 ? open.length : 0;
-    const closeLen = index === pieces.length - 1 ? close.length : 0;
-    const collapsedLen = openLen + piece.collapsedLen + closeLen;
-    const mdLen = openLen + piece.length + closeLen;
-    acc.runs.push({
-      kind: "text",
-      flatStart: acc.flat,
-      docLen: piece.length,
-      collapsedLen,
-      mdLen,
-      openLen,
-      closeLen,
-      pmPos: pmPos + offset,
-      mdStart: acc.md,
-      collapsedStart: acc.collapsed,
-      nodeName: "codeBlock",
-    });
-    offset += piece.length;
-    acc.flat += piece.length;
-    acc.collapsed += collapsedLen;
-    acc.md += mdLen;
+  const mdLen = open.length + content.length + close.length;
+  acc.runs.push({
+    kind: "text",
+    flatStart: acc.flat,
+    docLen: content.length,
+    mdLen,
+    openLen: open.length,
+    closeLen: close.length,
+    pmPos,
+    mdStart: acc.md,
+    nodeName: "codeBlock",
   });
+  acc.flat += content.length;
+  acc.md += mdLen;
   acc.value += open + content + close;
 }
 
@@ -1182,16 +1271,13 @@ function walkBlockquote(quote: ProseMirrorNode, quoteStart: number, acc: RichAcc
       kind: "prefix",
       flatStart: acc.flat,
       docLen: 0,
-      collapsedLen: prefix.length,
       mdLen: prefix.length,
       openLen: 0,
       closeLen: 0,
       pmPos: childPos + 1,
       mdStart: acc.md,
-      collapsedStart: acc.collapsed,
     });
     acc.value += prefix;
-    acc.collapsed += prefix.length;
     acc.md += prefix.length;
     if (child.type.name === "paragraph") appendInlineRuns(child, childPos + 1, acc);
     childPos += child.nodeSize;
@@ -1221,7 +1307,7 @@ export function serializeSelection(doc: ProseMirrorNode, from: number, to: numbe
 }
 
 export function serializeEditorDoc(doc: ProseMirrorNode): RichDocMap {
-  const acc: RichAccumulator = { runs: [], value: "", flat: 0, collapsed: 0, md: 0 };
+  const acc: RichAccumulator = { runs: [], value: "", flat: 0, md: 0 };
   const blocks: ProseMirrorNode[] = [];
   doc.content.forEach((node) => {
     blocks.push(node);
@@ -1248,16 +1334,13 @@ export function serializeEditorDoc(doc: ProseMirrorNode): RichDocMap {
         kind: "prefix",
         flatStart: acc.flat,
         docLen: 0,
-        collapsedLen: prefix.length,
         mdLen: prefix.length,
         openLen: 0,
         closeLen: 0,
         pmPos: pmBlockStart + 1,
         mdStart: acc.md,
-        collapsedStart: acc.collapsed,
       });
       acc.value += prefix;
-      acc.collapsed += prefix.length;
       acc.md += prefix.length;
       appendInlineRuns(block, pmBlockStart + 1, acc);
     } else if (block.type.name === "horizontalRule") {
@@ -1267,16 +1350,13 @@ export function serializeEditorDoc(doc: ProseMirrorNode): RichDocMap {
         kind: "prefix",
         flatStart: acc.flat,
         docLen: 0,
-        collapsedLen: source.length,
         mdLen: source.length,
         openLen: 0,
         closeLen: 0,
         pmPos: pmBlockStart + block.nodeSize,
         mdStart: acc.md,
-        collapsedStart: acc.collapsed,
       });
       acc.value += source;
-      acc.collapsed += source.length;
       acc.md += source.length;
     } else if (block.type.name === "paragraph") {
       appendInlineRuns(block, pmBlockStart + 1, acc);
@@ -1292,12 +1372,64 @@ export function serializeEditorDoc(doc: ProseMirrorNode): RichDocMap {
   };
 }
 
-function lastRunEnd(map: RichDocMap, space: "collapsed" | "md"): number {
-  const last = map.runs[map.runs.length - 1];
-  if (!last) return 0;
-  return space === "collapsed"
-    ? last.collapsedStart + last.collapsedLen
-    : last.mdStart + last.mdLen;
+export interface SkillChipReplacement {
+  from: number;
+  to: number;
+  node: ProseMirrorNode;
+}
+
+/**
+ * Use the same Markdown token boundaries as draft restoration. Apply edits
+ * last-first so positions stay valid and unrelated citation nodes keep their keys.
+ */
+export function skillChipReplacements(
+  doc: ProseMirrorNode,
+  skillLabelFor: (name: string) => SkillMeta | null,
+): SkillChipReplacement[] {
+  const schema = doc.type.schema;
+  const skillType = schema.nodes["composer-skill"];
+  if (!skillType) return [];
+  const replacements: SkillChipReplacement[] = [];
+  doc.descendants((node, pos) => {
+    if (node.type !== skillType) return;
+    const name = typeof node.attrs.skillName === "string" ? node.attrs.skillName : "";
+    if (name && !skillLabelFor(name)) {
+      replacements.push({
+        from: pos,
+        to: pos + node.nodeSize,
+        node: schema.text(readAtomSource(node), node.marks),
+      });
+    }
+  });
+  const map = serializeEditorDoc(doc);
+  let end = 0;
+  for (const segment of splitPromptIntoComposerSegments(map.value)) {
+    const start = end;
+    end += segment.type === "text" ? segment.text.length : segment.source.length;
+    if (segment.type !== "skill") continue;
+    const meta = skillLabelFor(segment.name);
+    if (!meta) continue;
+    // Only text needs converting; an existing chip is a token run.
+    const run = map.runs.find(
+      (candidate) =>
+        candidate.kind === "text" &&
+        candidate.nodeName !== "codeBlock" &&
+        start >= candidate.mdStart + candidate.openLen &&
+        end <= candidate.mdStart + candidate.openLen + candidate.docLen,
+    );
+    if (!run) continue;
+    const from = run.pmPos + (start - run.mdStart - run.openLen);
+    replacements.push({
+      from,
+      to: from + segment.source.length,
+      node: skillType.create(
+        { skillName: segment.name, skillLabel: meta.label, skillDescription: meta.description },
+        null,
+        doc.nodeAt(from)?.marks,
+      ),
+    });
+  }
+  return replacements.sort((left, right) => right.from - left.from);
 }
 
 /**
@@ -1311,23 +1443,6 @@ function runOwnsOffset(run: RichRun, flatOffset: number): boolean {
   return flatOffset < end || (flatOffset === end && run.nodeName === "codeBlock");
 }
 
-export function flatToCollapsed(map: RichDocMap, flatOffset: number): number {
-  const bounded = Math.max(0, Math.min(flatOffset, map.docLength));
-  for (const run of map.runs) {
-    if (runOwnsOffset(run, bounded)) {
-      if (run.kind === "text" || run.kind === "token") {
-        const within = Math.min(
-          bounded - run.flatStart,
-          run.collapsedLen - run.openLen - run.closeLen,
-        );
-        return run.collapsedStart + run.openLen + within;
-      }
-      return run.collapsedStart + (bounded - run.flatStart);
-    }
-  }
-  return lastRunEnd(map, "collapsed");
-}
-
 export function flatToMarkdown(map: RichDocMap, flatOffset: number): number {
   const bounded = Math.max(0, Math.min(flatOffset, map.docLength));
   for (const run of map.runs) {
@@ -1338,21 +1453,24 @@ export function flatToMarkdown(map: RichDocMap, flatOffset: number): number {
       return run.mdStart + (bounded - run.flatStart);
     }
   }
-  return lastRunEnd(map, "md");
+  const last = map.runs[map.runs.length - 1];
+  return last ? last.mdStart + last.mdLen : 0;
 }
 
-export function collapsedToFlat(map: RichDocMap, collapsedOffset: number): number {
+export function markdownToFlat(map: RichDocMap, markdownOffset: number): number {
   for (const run of map.runs) {
-    if (collapsedOffset < run.collapsedStart + run.collapsedLen) {
+    if (markdownOffset < run.mdStart + run.mdLen) {
       if (run.kind === "prefix") return run.flatStart;
       if (run.kind === "text" || run.kind === "token") {
-        const within = collapsedOffset - run.collapsedStart;
-        const contentLen = run.collapsedLen - run.openLen - run.closeLen;
+        const within = markdownOffset - run.mdStart;
         if (within <= run.openLen) return run.flatStart;
-        if (within >= run.openLen + contentLen) return run.flatStart + run.docLen;
+        // A chip is one document position however long its source is.
+        if (run.kind === "token" || within >= run.openLen + run.docLen) {
+          return run.flatStart + run.docLen;
+        }
         return run.flatStart + (within - run.openLen);
       }
-      return run.flatStart + (collapsedOffset - run.collapsedStart);
+      return run.flatStart + (markdownOffset - run.mdStart);
     }
   }
   return map.docLength;

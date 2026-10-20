@@ -57,6 +57,7 @@ import * as ApnsClient from "./agentActivity/ApnsClient.ts";
 import * as ApnsProviderTokens from "./agentActivity/ApnsProviderTokens.ts";
 import * as ApnsDeliveryQueue from "./agentActivity/ApnsDeliveryQueue.ts";
 import * as ApnsDeliveries from "./agentActivity/ApnsDeliveries.ts";
+import * as CloudflareApiPause from "./environments/CloudflareApiPause.ts";
 import * as EnvironmentConnector from "./environments/EnvironmentConnector.ts";
 import * as EnvironmentLinker from "./environments/EnvironmentLinker.ts";
 import * as EnvironmentPublishSignatures from "./environments/EnvironmentPublishSignatures.ts";
@@ -291,6 +292,7 @@ export const layer = Api.make(
       Layer.provideMerge(EnvironmentCredentials.layer),
       Layer.provideMerge(
         Layer.mergeAll(
+          CloudflareApiPause.layer,
           EnvironmentLinks.layer,
           ManagedEndpointAllocations.layer,
           ManagedTunnelLimits.layer,
@@ -414,8 +416,16 @@ export const layer = Api.make(
                 : Effect.logWarning("Failed to clean up inactive managed tunnels", { cause }),
             ),
           ),
+          AgentActivityPublisher.AgentActivityPublisher.pipe(
+            Effect.flatMap((publisher) => publisher.endIdleLiveActivities),
+            Effect.catchCause((cause) =>
+              Cause.hasInterrupts(cause)
+                ? Effect.interrupt
+                : Effect.logWarning("Failed to end idle Live Activities", { cause }),
+            ),
+          ),
         ],
-        { concurrency: 2, discard: true },
+        { concurrency: 3, discard: true },
       ).pipe(
         Effect.withSpan("relay.cron.prune_expired_state"),
         Observability.withSchemaErrorSpanAttributes,

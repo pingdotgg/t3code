@@ -70,6 +70,10 @@ const mocks = vi.hoisted(() => {
   };
 });
 
+vi.mock("expo", () => ({
+  requireOptionalNativeModule: () => null,
+}));
+
 vi.mock("expo-secure-store", () => ({
   deleteItemAsync: mocks.deleteItemAsync,
   getItemAsync: mocks.getItemAsync,
@@ -89,6 +93,7 @@ vi.mock("expo-constants", () => ({
 }));
 
 vi.mock("react-native", () => ({
+  AppState: { currentState: "active" },
   Platform: {
     OS: "ios",
   },

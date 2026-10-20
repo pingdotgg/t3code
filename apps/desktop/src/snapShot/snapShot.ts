@@ -477,6 +477,8 @@ export function findAccessibleWindow<
     readonly sourceTitle?: string;
     readonly bounds: WindowBounds;
     readonly clientBounds?: WindowBounds | undefined;
+    readonly platform?: NodeJS.Platform;
+    readonly bundleId?: string | undefined;
   },
   matchMode: "screen-bounds" | "wayland" = "screen-bounds",
   options: { readonly allowUntitledUniqueBounds?: boolean } = {},
@@ -515,6 +517,8 @@ export function findAccessibleWindow<
     const activeMatches = matches.filter((window) => safeProperty(() => window.active) === true);
     if (activeMatches.length === 1) return activeMatches[0];
     if (matches.length > 1) return undefined;
+    const browserMatch = findBrowserTitleMatch(windows, titles, captured, matchMode, matchesBounds);
+    if (browserMatch) return browserMatch;
   }
   // GTK4/libadwaita often exposes the frame as an unnamed group. A PID-scoped
   // lookup can accept the one window whose bounds match; size-only guesses cannot.
@@ -523,6 +527,37 @@ export function findAccessibleWindow<
     (window) => normalizeTitle(window.name ?? "") === "" && matchesBounds(window),
   );
   return boundsMatches.length === 1 ? boundsMatches[0] : undefined;
+}
+
+// Chrome's macOS AX title can append the browser and profile to the captured page title.
+function findBrowserTitleMatch<T extends { readonly name?: string | null }>(
+  windows: readonly T[],
+  titles: ReadonlySet<string>,
+  captured: { readonly platform?: NodeJS.Platform; readonly bundleId?: string | undefined },
+  matchMode: "screen-bounds" | "wayland",
+  matchesBounds: (window: T) => boolean,
+): T | undefined {
+  if (captured.platform !== "darwin" || matchMode !== "screen-bounds") return undefined;
+  const browserName = /^com\.google\.Chrome(?:\.(?:beta|dev|canary))?$/.test(
+    captured.bundleId ?? "",
+  )
+    ? "Google Chrome"
+    : captured.bundleId === "org.chromium.Chromium"
+      ? "Chromium"
+      : undefined;
+  if (!browserName) return undefined;
+  const browserMatches = windows.filter((window) => {
+    if (!matchesBounds(window)) return false;
+    const name = window.name?.trim() ?? "";
+    return [...titles].some((title) => {
+      const prefix = `${title} - ${browserName}`;
+      return (
+        name === prefix ||
+        (name.startsWith(prefix) && /^ [–—-] \S.*$/u.test(name.slice(prefix.length)))
+      );
+    });
+  });
+  return browserMatches.length === 1 ? browserMatches[0] : undefined;
 }
 
 const ELECTRON_KEY_NAMES: Readonly<Record<string, string>> = {

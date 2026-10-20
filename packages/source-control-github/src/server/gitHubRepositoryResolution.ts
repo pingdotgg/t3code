@@ -13,9 +13,10 @@ export interface GitHubRepositoryLocator {
 export function parseFetchRemotes(
   remotes: string,
 ): ReadonlyArray<{ readonly name: string; readonly url: string }> {
+  // Partial clones append the promisor filter, e.g. `(fetch) [blob:none]`.
   return remotes
     .split("\n")
-    .map((line) => /^(\S+)\s+(\S+)\s+\(fetch\)$/u.exec(line.trim()))
+    .map((line) => /^(\S+)\s+(\S+)\s+\(fetch\)(?:\s+\[[^\]]+\])?$/u.exec(line.trim()))
     .filter((match): match is RegExpExecArray => match !== null)
     .map((match) => ({ name: match[1]!, url: match[2]! }));
 }

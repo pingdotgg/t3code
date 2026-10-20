@@ -16,6 +16,7 @@ import {
 import { PROJECT_FAVICON_EXTENSIONS } from "@t3tools/shared/projectFavicon";
 import { resolveEditorCommand } from "@t3tools/shared/editor";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { isRelayTracingEnabled } from "@t3tools/shared/otelEnvironment";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
@@ -71,6 +72,14 @@ export const getAppBranding = DesktopIpc.makeSyncIpcMethod({
   }),
 });
 
+export const getRelayTelemetryEnabled = DesktopIpc.makeSyncIpcMethod({
+  channel: IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL,
+  result: Schema.Boolean,
+  handler: Effect.fn("desktop.ipc.window.getRelayTelemetryEnabled")(function* () {
+    return isRelayTracingEnabled(yield* HostProcess.Environment);
+  }),
+});
+
 export const getSystemLocale = DesktopIpc.makeSyncIpcMethod({
   channel: IpcChannels.GET_SYSTEM_LOCALE_CHANNEL,
   result: Schema.String,
@@ -90,57 +99,68 @@ export const getWindowFullscreenState = DesktopIpc.makeSyncIpcMethod({
   }),
 });
 
+const readLocalEnvironmentBootstrapSnapshot = Effect.fn(
+  "desktop.ipc.window.getLocalEnvironmentBootstraps",
+)(function* () {
+  const pool = yield* DesktopBackendPool.DesktopBackendPool;
+  const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+  const instances = yield* pool.list;
+  const bootstraps: DesktopEnvironmentBootstrap[] = [];
+  for (const instance of instances) {
+    const isPrimary = instance.id === PRIMARY_LOCAL_ENVIRONMENT_ID;
+    const config = yield* instance.currentConfig;
+    const snapshot = yield* instance.snapshot;
+    if (Option.isNone(config) || Option.isSome(config.value.preflightFailure)) {
+      const fatalPreflight =
+        Option.isSome(config) &&
+        Option.isSome(config.value.preflightFailure) &&
+        config.value.preflightFailure.value.fatal;
+      const stoppedPreflight =
+        Option.isSome(config) &&
+        Option.isSome(config.value.preflightFailure) &&
+        (!snapshot.desiredRunning || !snapshot.restartScheduled);
+      if (isPrimary || fatalPreflight || stoppedPreflight) continue;
+      bootstraps.push({
+        id: instance.id,
+        label: yield* instance.label,
+        runningDistro: null,
+        httpBaseUrl: null,
+        wsBaseUrl: null,
+      });
+      continue;
+    }
+    const { bootstrap, httpBaseUrl } = config.value;
+    const runningDistro = config.value.runningDistro ?? null;
+    bootstraps.push({
+      id: instance.id,
+      label: runningDistro === null ? yield* instance.label : `WSL (${runningDistro})`,
+      runningDistro,
+      httpBaseUrl: httpBaseUrl.href,
+      wsBaseUrl: toWebSocketBaseUrl(httpBaseUrl),
+      // A backend launched with the desktop secret accepts whichever token the secret derives
+      // for the current window, so hand out that one rather than the token frozen into its
+      // launch config.
+      ...(bootstrap.desktopBootstrapSecret
+        ? { bootstrapToken: yield* configuration.currentBootstrapToken }
+        : bootstrap.desktopBootstrapToken
+          ? { bootstrapToken: bootstrap.desktopBootstrapToken }
+          : {}),
+    });
+  }
+  return bootstraps;
+});
+
 export const getLocalEnvironmentBootstraps = DesktopIpc.makeSyncIpcMethod({
   channel: IpcChannels.GET_LOCAL_ENVIRONMENT_BOOTSTRAPS_CHANNEL,
   result: Schema.Array(DesktopEnvironmentBootstrapSchema),
-  handler: Effect.fn("desktop.ipc.window.getLocalEnvironmentBootstraps")(function* () {
-    const pool = yield* DesktopBackendPool.DesktopBackendPool;
-    const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
-    const instances = yield* pool.list;
-    const bootstraps: DesktopEnvironmentBootstrap[] = [];
-    for (const instance of instances) {
-      const isPrimary = instance.id === PRIMARY_LOCAL_ENVIRONMENT_ID;
-      const config = yield* instance.currentConfig;
-      const snapshot = yield* instance.snapshot;
-      if (Option.isNone(config) || Option.isSome(config.value.preflightFailure)) {
-        const fatalPreflight =
-          Option.isSome(config) &&
-          Option.isSome(config.value.preflightFailure) &&
-          config.value.preflightFailure.value.fatal;
-        const stoppedPreflight =
-          Option.isSome(config) &&
-          Option.isSome(config.value.preflightFailure) &&
-          (!snapshot.desiredRunning || !snapshot.restartScheduled);
-        if (isPrimary || fatalPreflight || stoppedPreflight) continue;
-        bootstraps.push({
-          id: instance.id,
-          label: yield* instance.label,
-          runningDistro: null,
-          httpBaseUrl: null,
-          wsBaseUrl: null,
-        });
-        continue;
-      }
-      const { bootstrap, httpBaseUrl } = config.value;
-      const runningDistro = config.value.runningDistro ?? null;
-      bootstraps.push({
-        id: instance.id,
-        label: runningDistro === null ? yield* instance.label : `WSL (${runningDistro})`,
-        runningDistro,
-        httpBaseUrl: httpBaseUrl.href,
-        wsBaseUrl: toWebSocketBaseUrl(httpBaseUrl),
-        // A backend launched with the desktop secret accepts whichever token the secret derives
-        // for the current window, so hand out that one rather than the token frozen into its
-        // launch config.
-        ...(bootstrap.desktopBootstrapSecret
-          ? { bootstrapToken: yield* configuration.currentBootstrapToken }
-          : bootstrap.desktopBootstrapToken
-            ? { bootstrapToken: bootstrap.desktopBootstrapToken }
-            : {}),
-      });
-    }
-    return bootstraps;
-  }),
+  handler: readLocalEnvironmentBootstrapSnapshot,
+});
+
+export const readLocalEnvironmentBootstraps = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.GET_LOCAL_ENVIRONMENT_BOOTSTRAPS_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.Array(DesktopEnvironmentBootstrapSchema),
+  handler: readLocalEnvironmentBootstrapSnapshot,
 });
 
 function extractWslDistroFromEnvironmentId(envId: string): string | null {
@@ -349,6 +369,24 @@ export const pasteAsText = DesktopIpc.makeIpcMethod({
     ) {
       focused.paste();
     }
+  }),
+});
+
+export const revealWindow = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.REVEAL_WINDOW_CHANNEL,
+  payload: Schema.Undefined,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.window.revealWindow")(function* (_input, event) {
+    const electronWindow = yield* ElectronWindow.ElectronWindow;
+    const window = yield* electronWindow.main;
+    if (
+      event === undefined ||
+      Option.isNone(window) ||
+      window.value.webContents.id !== event.sender.id
+    ) {
+      return;
+    }
+    yield* electronWindow.reveal(window.value);
   }),
 });
 

@@ -5,7 +5,10 @@ import {
   type LimitPresentations,
 } from "@t3tools/shared/usageLimits";
 
+import type { WidgetTheme } from "./widgetTheme";
+
 export interface SubscriptionUsageSnapshot {
+  theme?: WidgetTheme;
   url?: string;
   checkedAt: number;
   providers: Array<{

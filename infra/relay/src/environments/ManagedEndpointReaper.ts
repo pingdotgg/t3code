@@ -110,19 +110,6 @@ function inactiveDaysAt(
   return (now.epochMilliseconds - timestamp.value.epochMilliseconds) / 86_400_000;
 }
 
-function isRateLimited(cause: unknown): boolean {
-  if (typeof cause !== "object" || cause === null) {
-    return false;
-  }
-  if ("_tag" in cause && cause._tag === "TooManyRequests") {
-    return true;
-  }
-  if ("status" in cause && cause.status === 429) {
-    return true;
-  }
-  return "cause" in cause && isRateLimited(cause.cause);
-}
-
 function rotatedPages(input: {
   readonly totalCount: number | undefined;
   readonly slot: number;
@@ -383,7 +370,7 @@ export const make = Effect.gen(function* () {
               legacy: candidate.legacy,
               cause: result.failure,
             });
-            if (isRateLimited(result.failure)) {
+            if (ManagedEndpointProvider.isCloudflareRateLimited(result.failure)) {
               stopDeleting = true;
               truncated = true;
             }

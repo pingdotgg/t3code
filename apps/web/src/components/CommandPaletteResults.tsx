@@ -1,7 +1,7 @@
 import { type ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { ChevronRightIcon } from "lucide-react";
-import { type RefObject, useState } from "react";
+import { type ReactNode, type RefObject, useState } from "react";
 import { cn } from "~/lib/utils";
 import { shortcutLabelForCommand } from "../keybindings";
 import {
@@ -150,12 +150,16 @@ export function CommandPaletteVirtualizedResults(props: CommandPaletteVirtualize
   );
 }
 
+export function CommandPaletteTitleIcon(props: { children: ReactNode }) {
+  return <span className="flex h-5 shrink-0 items-center self-start pt-0.5">{props.children}</span>;
+}
+
 function DisabledCommandPaletteResultRow(props: {
   item: CommandPaletteActionItem | CommandPaletteSubmenuItem;
 }) {
   return (
     <div className="flex min-h-8 select-none items-center gap-2 rounded-sm px-2 py-1.5 text-base opacity-64 sm:min-h-7 sm:text-sm">
-      {props.item.icon}
+      <CommandPaletteTitleIcon>{props.item.icon}</CommandPaletteTitleIcon>
       {props.item.description || props.item.threadContentMatch ? (
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="flex min-w-0 items-center gap-1.5 text-sm text-foreground">
@@ -205,7 +209,7 @@ function CommandPaletteResultRow(props: {
         props.onExecuteItem(props.item);
       }}
     >
-      {props.item.icon}
+      <CommandPaletteTitleIcon>{props.item.icon}</CommandPaletteTitleIcon>
       {props.item.description || props.item.threadContentMatch ? (
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="flex min-w-0 items-center gap-1.5 text-sm text-foreground">

@@ -109,37 +109,39 @@ export const makeCommandGate = Effect.gen(function* () {
   );
   yield* Effect.forkScoped(commandWorker);
 
+  const enqueueCommand = Effect.fn("serverRuntimeStartup.enqueueCommand")(function* <A, E>(
+    effect: Effect.Effect<A, E>,
+  ): Effect.fn.Return<A, E | ServerRuntimeStartupError> {
+    const readinessState = yield* Ref.get(commandReadinessState);
+    if (readinessState === "ready") {
+      return yield* effect;
+    }
+    if (readinessState !== "pending") {
+      return yield* readinessState;
+    }
+
+    const result = yield* Deferred.make<A, E | ServerRuntimeStartupError>();
+    yield* Queue.offer(commandQueue, {
+      run: Deferred.await(commandReady).pipe(
+        Effect.flatMap(() => effect),
+        Effect.exit,
+        Effect.flatMap((exit) => settleQueuedCommand(result, exit)),
+      ),
+    });
+    return yield* Deferred.await(result);
+  });
+
   return {
     awaitCommandReady: Deferred.await(commandReady),
     signalCommandReady: Effect.gen(function* () {
       yield* Ref.set(commandReadinessState, "ready");
       yield* Deferred.succeed(commandReady, undefined).pipe(Effect.orDie);
     }),
-    failCommandReady: (error) =>
-      Effect.gen(function* () {
-        yield* Ref.set(commandReadinessState, error);
-        yield* Deferred.fail(commandReady, error).pipe(Effect.orDie);
-      }),
-    enqueueCommand: <A, E>(effect: Effect.Effect<A, E>) =>
-      Effect.gen(function* () {
-        const readinessState = yield* Ref.get(commandReadinessState);
-        if (readinessState === "ready") {
-          return yield* effect;
-        }
-        if (readinessState !== "pending") {
-          return yield* readinessState;
-        }
-
-        const result = yield* Deferred.make<A, E | ServerRuntimeStartupError>();
-        yield* Queue.offer(commandQueue, {
-          run: Deferred.await(commandReady).pipe(
-            Effect.flatMap(() => effect),
-            Effect.exit,
-            Effect.flatMap((exit) => settleQueuedCommand(result, exit)),
-          ),
-        });
-        return yield* Deferred.await(result);
-      }),
+    failCommandReady: Effect.fn("serverRuntimeStartup.failCommandReady")(function* (error) {
+      yield* Ref.set(commandReadinessState, error);
+      yield* Deferred.fail(commandReady, error).pipe(Effect.orDie);
+    }),
+    enqueueCommand,
   } satisfies CommandGate;
 });
 
@@ -358,21 +360,22 @@ export const logBrowserAutoOpenUnavailable = Effect.logInfo("browser auto-open u
   hint: "Open the pairing URL above in your browser.",
 });
 
-export const maybeOpenBrowser = (target: string) =>
-  Effect.gen(function* () {
-    const serverConfig = yield* ServerConfig.ServerConfig;
-    if (serverConfig.noBrowser) {
-      return;
-    }
-    const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
+export const maybeOpenBrowser = Effect.fn("serverRuntimeStartup.maybeOpenBrowser")(function* (
+  target: string,
+) {
+  const serverConfig = yield* ServerConfig.ServerConfig;
+  if (serverConfig.noBrowser) {
+    return;
+  }
+  const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
 
-    yield* externalLauncher.launchBrowser(target).pipe(
-      // The target carries the pairing token, and a failed launch records its
-      // command line on the span, so this call stays out of traces.
-      Effect.withTracerEnabled(false),
-      Effect.catch(() => logBrowserAutoOpenUnavailable),
-    );
-  });
+  yield* externalLauncher.launchBrowser(target).pipe(
+    // The target carries the pairing token, and a failed launch records its
+    // command line on the span, so this call stays out of traces.
+    Effect.withTracerEnabled(false),
+    Effect.catch(() => logBrowserAutoOpenUnavailable),
+  );
+});
 
 const runStartupPhase = <A, E, R>(phase: string, effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
@@ -413,7 +416,9 @@ export const startEffectWorkerWithRelay = Effect.fn(
   );
 });
 
-export function runOrderedV2StartupPhases<
+export const runOrderedV2StartupPhases = Effect.fn(
+  "serverRuntimeStartup.runOrderedV2StartupPhases",
+)(function* <
   Import,
   Recovery,
   Bootstrap,
@@ -434,292 +439,286 @@ export function runOrderedV2StartupPhases<
   readonly startEffectWorker: Effect.Effect<void, WorkerError, WorkerContext>;
   readonly autoBootstrap: Effect.Effect<Bootstrap, BootstrapError, BootstrapContext>;
 }) {
-  return Effect.gen(function* () {
-    yield* input.importLegacyShells;
-    const recovery = yield* input.recover;
-    yield* input.recoverDelegatedTasks;
-    yield* input.startEffectWorker;
-    const bootstrap = yield* input.autoBootstrap;
-    return { recovery, bootstrap } as const;
-  });
-}
+  yield* input.importLegacyShells;
+  const recovery = yield* input.recover;
+  yield* input.recoverDelegatedTasks;
+  yield* input.startEffectWorker;
+  const bootstrap = yield* input.autoBootstrap;
+  return { recovery, bootstrap } as const;
+});
 
-const make = (options?: StartupOptions) =>
-  Effect.gen(function* () {
-    const serverConfig = yield* ServerConfig.ServerConfig;
-    const keybindings = yield* Keybindings.Keybindings;
-    const legacyV1ThreadImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
-    const providerRuntimeRecovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
-    const orchestrator = yield* Orchestrator.OrchestratorV2;
-    const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
-    const agentAwarenessRelay = yield* AgentAwarenessRelay.AgentAwarenessRelay;
-    const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
-    const serverSettings = yield* ServerSettings.ServerSettingsService;
-    const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
-    const crypto = yield* Crypto.Crypto;
-    const launcher = yield* ServiceLauncherClient.ServiceLauncherClient;
+const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: StartupOptions) {
+  const serverConfig = yield* ServerConfig.ServerConfig;
+  const keybindings = yield* Keybindings.Keybindings;
+  const legacyV1ThreadImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+  const providerRuntimeRecovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+  const agentAwarenessRelay = yield* AgentAwarenessRelay.AgentAwarenessRelay;
+  const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+  const crypto = yield* Crypto.Crypto;
+  const launcher = yield* ServiceLauncherClient.ServiceLauncherClient;
 
-    const commandGate = yield* makeCommandGate;
-    const httpListening = yield* Deferred.make<void>();
-    const effectWorkerFiber = yield* Ref.make<Fiber.Fiber<void, never> | null>(null);
+  const commandGate = yield* makeCommandGate;
+  const httpListening = yield* Deferred.make<void>();
+  const effectWorkerFiber = yield* Ref.make<Fiber.Fiber<void, never> | null>(null);
 
-    yield* Effect.addFinalizer(() =>
-      Effect.gen(function* () {
-        yield* commandGate.failCommandReady(
-          new ServerRuntimeStartupError({
-            mode: serverConfig.mode,
-            host: serverConfig.host ?? null,
-            port: serverConfig.port,
-            cause: "Server runtime is shutting down.",
-          }),
-        );
-        const workerFiber = yield* Ref.getAndSet(effectWorkerFiber, null);
-        if (workerFiber !== null) {
-          yield* Fiber.interrupt(workerFiber).pipe(Effect.ignore);
-        }
-        yield* providerRuntimeRecovery.prepareForShutdown.pipe(
-          Effect.ensuring(providerSessions.shutdown),
-        );
-        const reconciliation = yield* providerRuntimeRecovery.reconcile("shutdown");
-        yield* Effect.logInfo("V2 orchestration shutdown reconciliation completed", reconciliation);
-      }).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("V2 orchestration shutdown reconciliation failed", {
-            cause: Cause.pretty(cause),
+  yield* Effect.addFinalizer(() =>
+    Effect.gen(function* () {
+      yield* commandGate.failCommandReady(
+        new ServerRuntimeStartupError({
+          mode: serverConfig.mode,
+          host: serverConfig.host ?? null,
+          port: serverConfig.port,
+          cause: "Server runtime is shutting down.",
+        }),
+      );
+      const workerFiber = yield* Ref.getAndSet(effectWorkerFiber, null);
+      if (workerFiber !== null) {
+        yield* Fiber.interrupt(workerFiber).pipe(Effect.ignore);
+      }
+      yield* providerRuntimeRecovery.prepareForShutdown.pipe(
+        Effect.ensuring(providerSessions.shutdown),
+      );
+      const reconciliation = yield* providerRuntimeRecovery.reconcile("shutdown");
+      yield* Effect.logInfo("V2 orchestration shutdown reconciliation completed", reconciliation);
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("V2 orchestration shutdown reconciliation failed", {
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    ),
+  );
+
+  const startup = Effect.gen(function* () {
+    yield* Effect.logDebug("startup phase: starting keybindings runtime");
+    yield* runStartupPhase(
+      "keybindings.start",
+      keybindings.start.pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("failed to start keybindings runtime", {
+            path: error.configPath,
+            detail: error.detail,
+            cause: error.cause,
           }),
         ),
       ),
     );
 
-    const startup = Effect.gen(function* () {
-      yield* Effect.logDebug("startup phase: starting keybindings runtime");
-      yield* runStartupPhase(
-        "keybindings.start",
-        keybindings.start.pipe(
-          Effect.catch((error) =>
-            Effect.logWarning("failed to start keybindings runtime", {
-              path: error.configPath,
-              detail: error.detail,
-              cause: error.cause,
-            }),
-          ),
-        ),
-      );
-
-      yield* Effect.logDebug("startup phase: starting server settings runtime");
-      yield* runStartupPhase(
-        "settings.start",
-        serverSettings.start.pipe(
-          Effect.catch((error) =>
-            Effect.logWarning("failed to start server settings runtime", {
-              path: error.settingsPath,
-              operation: error.operation,
-              providerInstanceId: error.providerInstanceId,
-              environmentVariable: error.environmentVariable,
-              cause: error.cause,
-            }),
-          ),
-        ),
-      );
-
-      const welcomeBase = yield* resolveWelcomeBase;
-      const environment = yield* serverEnvironment.getDescriptor;
-      const legacyMigrationThreadCount = yield* legacyV1ThreadImporter.pendingThreadCount;
-      if (legacyMigrationThreadCount > 0) {
-        yield* lifecycleEvents.publish({
-          version: 1,
-          type: "legacyThreadMigration",
-          payload: {
-            status: "running",
-            totalThreadCount: legacyMigrationThreadCount,
-          },
-        });
-      }
-      const { recovery, bootstrap: bootstrapTargets } = yield* runOrderedV2StartupPhases({
-        importLegacyShells: runStartupPhase(
-          "orchestration-v2.legacy-v1.import-shells",
-          legacyV1ThreadImporter.reconcileShells.pipe(
-            Effect.tap((summary) =>
-              summary.importedThreadCount === 0
-                ? Effect.void
-                : Effect.logInfo("Imported legacy v1 thread shells", summary),
-            ),
-          ),
-        ),
-        recover: runStartupPhase("orchestration-v2.recovery", providerRuntimeRecovery.recover),
-        recoverDelegatedTasks: runStartupPhase(
-          "orchestration-v2.delegated-tasks.recover",
-          orchestrator.recoverDelegatedTasks,
-        ),
-        startEffectWorker: runStartupPhase(
-          "orchestration-v2.effect-worker.start",
-          startEffectWorkerWithRelay({
-            runWorker: EffectWorker.runDaemon,
-            startRelay: agentAwarenessRelay.start(),
-            workerFiberRef: effectWorkerFiber,
+    yield* Effect.logDebug("startup phase: starting server settings runtime");
+    yield* runStartupPhase(
+      "settings.start",
+      serverSettings.start.pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("failed to start server settings runtime", {
+            path: error.settingsPath,
+            operation: error.operation,
+            providerInstanceId: error.providerInstanceId,
+            environmentVariable: error.environmentVariable,
+            cause: error.cause,
           }),
         ),
-        autoBootstrap: (serverConfig.autoBootstrapProjectFromCwd
-          ? runStartupPhase(
-              "welcome.autobootstrap",
-              resolveAutoBootstrapWelcomeTargets.pipe(Effect.provideService(Crypto.Crypto, crypto)),
-            )
-          : Effect.succeed({})
-        ).pipe(Effect.map((targets): AutoBootstrapWelcomeTargets => targets)),
+      ),
+    );
+
+    const welcomeBase = yield* resolveWelcomeBase;
+    const environment = yield* serverEnvironment.getDescriptor;
+    const legacyMigrationThreadCount = yield* legacyV1ThreadImporter.pendingThreadCount;
+    if (legacyMigrationThreadCount > 0) {
+      yield* lifecycleEvents.publish({
+        version: 1,
+        type: "legacyThreadMigration",
+        payload: {
+          status: "running",
+          totalThreadCount: legacyMigrationThreadCount,
+        },
       });
-      yield* Effect.logInfo("V2 orchestration recovery completed", recovery);
-      // Runs after activation: the status check fetches every enabled project's
-      // remote, and awaiting it here held command readiness for that long.
-      yield* runStartupPhase(
-        "projects.auto-pull",
-        Effect.gen(function* () {
-          const projects = yield* (yield* ProjectStore.ProjectStoreV2).listShells();
-          const settings = yield* serverSettings.getSettings;
-          yield* autoPullProjects(projects, settings);
+    }
+    const { recovery, bootstrap: bootstrapTargets } = yield* runOrderedV2StartupPhases({
+      importLegacyShells: runStartupPhase(
+        "orchestration-v2.legacy-v1.import-shells",
+        legacyV1ThreadImporter.reconcileShells.pipe(
+          Effect.tap((summary) =>
+            summary.importedThreadCount === 0
+              ? Effect.void
+              : Effect.logInfo("Imported legacy v1 thread shells", summary),
+          ),
+        ),
+      ),
+      recover: runStartupPhase("orchestration-v2.recovery", providerRuntimeRecovery.recover),
+      recoverDelegatedTasks: runStartupPhase(
+        "orchestration-v2.delegated-tasks.recover",
+        orchestrator.recoverDelegatedTasks,
+      ),
+      startEffectWorker: runStartupPhase(
+        "orchestration-v2.effect-worker.start",
+        startEffectWorkerWithRelay({
+          runWorker: EffectWorker.runDaemon,
+          startRelay: agentAwarenessRelay.start(),
+          workerFiberRef: effectWorkerFiber,
         }),
-      ).pipe(
-        Effect.catch((cause) =>
-          Effect.logWarning("Failed to load projects for automatic pull", { cause }),
-        ),
-        forkParked,
-      );
+      ),
+      autoBootstrap: (serverConfig.autoBootstrapProjectFromCwd
+        ? runStartupPhase(
+            "welcome.autobootstrap",
+            resolveAutoBootstrapWelcomeTargets.pipe(Effect.provideService(Crypto.Crypto, crypto)),
+          )
+        : Effect.succeed({})
+      ).pipe(Effect.map((targets): AutoBootstrapWelcomeTargets => targets)),
+    });
+    yield* Effect.logInfo("V2 orchestration recovery completed", recovery);
+    // Runs after activation: the status check fetches every enabled project's
+    // remote, and awaiting it here held command readiness for that long.
+    yield* runStartupPhase(
+      "projects.auto-pull",
+      Effect.gen(function* () {
+        const projects = yield* (yield* ProjectStore.ProjectStoreV2).listShells();
+        const settings = yield* serverSettings.getSettings;
+        yield* autoPullProjects(projects, settings);
+      }),
+    ).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("Failed to load projects for automatic pull", { cause }),
+      ),
+      forkParked,
+    );
 
-      const importPendingTranscripts = legacyV1ThreadImporter.importPendingTranscripts.pipe(
-        Effect.tap((summary) =>
-          summary.importedThreadCount === 0
-            ? Effect.void
-            : Effect.logInfo("Hydrated legacy v1 thread transcripts", summary),
-        ),
-      );
-      yield* (
-        legacyMigrationThreadCount > 0
-          ? importPendingTranscripts.pipe(
-              Effect.tap(() =>
-                lifecycleEvents.publish({
-                  version: 1,
-                  type: "legacyThreadMigration",
-                  payload: {
-                    status: "complete",
-                    totalThreadCount: legacyMigrationThreadCount,
-                  },
-                }),
-              ),
-            )
-          : importPendingTranscripts
-      ).pipe(forkParked);
+    const importPendingTranscripts = legacyV1ThreadImporter.importPendingTranscripts.pipe(
+      Effect.tap((summary) =>
+        summary.importedThreadCount === 0
+          ? Effect.void
+          : Effect.logInfo("Hydrated legacy v1 thread transcripts", summary),
+      ),
+    );
+    yield* (
+      legacyMigrationThreadCount > 0
+        ? importPendingTranscripts.pipe(
+            Effect.tap(() =>
+              lifecycleEvents.publish({
+                version: 1,
+                type: "legacyThreadMigration",
+                payload: {
+                  status: "complete",
+                  totalThreadCount: legacyMigrationThreadCount,
+                },
+              }),
+            ),
+          )
+        : importPendingTranscripts
+    ).pipe(forkParked);
 
-      yield* forkParked(
-        Effect.gen(function* () {
-          yield* Effect.logDebug("startup phase: recording startup heartbeat");
-          yield* recordStartupHeartbeat.pipe(
-            Effect.withSpan("server.startup.heartbeat.record", {
-              attributes: { "startup.phase": "heartbeat.record" },
-            }),
-            Effect.ignoreCause({ log: true }),
+    yield* forkParked(
+      Effect.gen(function* () {
+        yield* Effect.logDebug("startup phase: recording startup heartbeat");
+        yield* recordStartupHeartbeat.pipe(
+          Effect.withSpan("server.startup.heartbeat.record", {
+            attributes: { "startup.phase": "heartbeat.record" },
+          }),
+          Effect.ignoreCause({ log: true }),
+        );
+        if (serverConfig.startupPresentation === "headless") {
+          yield* Effect.logDebug("startup phase: headless access info");
+          const accessInfo = yield* issueHeadlessServeAccessInfo();
+          yield* runStartupPhase(
+            "headless.output",
+            Console.log(formatHeadlessServeOutput(accessInfo)),
           );
-          if (serverConfig.startupPresentation === "headless") {
-            yield* Effect.logDebug("startup phase: headless access info");
-            const accessInfo = yield* issueHeadlessServeAccessInfo();
-            yield* runStartupPhase(
-              "headless.output",
-              Console.log(formatHeadlessServeOutput(accessInfo)),
-            );
-          } else {
-            yield* Effect.logDebug("startup phase: browser open check");
-            const startupBrowserTarget = yield* resolveStartupBrowserTarget;
-            if (serverConfig.mode !== "desktop") {
-              yield* announceStartupPairingUrl(startupBrowserTarget);
-            }
-            yield* runStartupPhase("browser.open", maybeOpenBrowser(startupBrowserTarget));
+        } else {
+          yield* Effect.logDebug("startup phase: browser open check");
+          const startupBrowserTarget = yield* resolveStartupBrowserTarget;
+          if (serverConfig.mode !== "desktop") {
+            yield* announceStartupPairingUrl(startupBrowserTarget);
           }
-        }),
-      );
+          yield* runStartupPhase("browser.open", maybeOpenBrowser(startupBrowserTarget));
+        }
+      }),
+    );
 
-      yield* Effect.logDebug("startup phase: waiting for http listener");
-      yield* runStartupPhase("http.wait", Deferred.await(httpListening));
-      yield* runStartupPhase(
-        "auxiliary-roots.parked",
-        options?.awaitAuxiliaryParked ?? Effect.void,
-      );
+    yield* Effect.logDebug("startup phase: waiting for http listener");
+    yield* runStartupPhase("http.wait", Deferred.await(httpListening));
+    yield* runStartupPhase("auxiliary-roots.parked", options?.awaitAuxiliaryParked ?? Effect.void);
 
-      const updateOutcome = yield* launcher.prepareTrial;
+    const updateOutcome = yield* launcher.prepareTrial;
 
-      yield* Effect.logDebug("startup phase: publishing welcome event", {
-        environmentId: environment.environmentId,
-        cwd: welcomeBase.cwd,
-        projectName: welcomeBase.projectName,
-        bootstrapProjectId: bootstrapTargets.bootstrapProjectId,
-        bootstrapThreadId: bootstrapTargets.bootstrapThreadId,
-      });
-      yield* runStartupPhase(
-        "welcome.publish",
-        lifecycleEvents.publish({
-          version: 1,
-          type: "welcome",
-          payload: {
-            environment,
-            ...welcomeBase,
-            ...bootstrapTargets,
-          },
-        }),
-      );
-
-      yield* options?.activate ?? Effect.void;
-      yield* Effect.logDebug("Accepting commands");
-      yield* commandGate.signalCommandReady;
-      yield* Effect.logDebug("startup phase: publishing ready event");
-      yield* runStartupPhase(
-        "ready.publish",
-        lifecycleEvents.publish({
-          version: 1,
-          type: "ready",
-          payload: {
-            at: DateTime.formatIso(yield* DateTime.now),
-            environment,
-            ...(updateOutcome === undefined ? {} : { updateOutcome }),
-          },
-        }),
-      );
-      yield* Effect.logDebug("startup phase: complete");
-      yield* flushCompileCache;
-    }).pipe(
-      Effect.withSpan("server.startup", {
-        kind: "server",
-        root: true,
-        attributes: {
-          "server.mode": serverConfig.mode,
-          "server.port": serverConfig.port,
-          "server.host": serverConfig.host ?? "default",
+    yield* Effect.logDebug("startup phase: publishing welcome event", {
+      environmentId: environment.environmentId,
+      cwd: welcomeBase.cwd,
+      projectName: welcomeBase.projectName,
+      bootstrapProjectId: bootstrapTargets.bootstrapProjectId,
+      bootstrapThreadId: bootstrapTargets.bootstrapThreadId,
+    });
+    yield* runStartupPhase(
+      "welcome.publish",
+      lifecycleEvents.publish({
+        version: 1,
+        type: "welcome",
+        payload: {
+          environment,
+          ...welcomeBase,
+          ...bootstrapTargets,
         },
       }),
     );
 
-    yield* Effect.forkScoped(
-      Effect.exit(startup).pipe(
-        Effect.flatMap((startupExit) => {
-          if (Exit.isSuccess(startupExit)) return Effect.void;
-          const error = new ServerRuntimeStartupError({
-            mode: serverConfig.mode,
-            host: serverConfig.host ?? null,
-            port: serverConfig.port,
-            cause: startupExit.cause,
-          });
-          return Effect.logError("server runtime startup failed", {
-            cause: Cause.pretty(startupExit.cause),
-          }).pipe(
-            Effect.andThen(commandGate.failCommandReady(error)),
-            Effect.andThen(options?.abort?.(error) ?? Effect.void),
-          );
-        }),
-      ),
+    yield* options?.activate ?? Effect.void;
+    yield* Effect.logDebug("Accepting commands");
+    yield* commandGate.signalCommandReady;
+    yield* Effect.logDebug("startup phase: publishing ready event");
+    yield* runStartupPhase(
+      "ready.publish",
+      lifecycleEvents.publish({
+        version: 1,
+        type: "ready",
+        payload: {
+          at: DateTime.formatIso(yield* DateTime.now),
+          environment,
+          ...(updateOutcome === undefined ? {} : { updateOutcome }),
+        },
+      }),
     );
+    yield* Effect.logDebug("startup phase: complete");
+    yield* flushCompileCache;
+  }).pipe(
+    Effect.withSpan("server.startup", {
+      kind: "server",
+      root: true,
+      attributes: {
+        "server.mode": serverConfig.mode,
+        "server.port": serverConfig.port,
+        "server.host": serverConfig.host ?? "default",
+      },
+    }),
+  );
 
-    return {
-      awaitCommandReady: commandGate.awaitCommandReady,
-      markHttpListening: Deferred.succeed(httpListening, undefined),
-      enqueueCommand: commandGate.enqueueCommand,
-    } satisfies ServerRuntimeStartup["Service"];
-  });
+  yield* Effect.forkScoped(
+    Effect.exit(startup).pipe(
+      Effect.flatMap((startupExit) => {
+        if (Exit.isSuccess(startupExit)) return Effect.void;
+        const error = new ServerRuntimeStartupError({
+          mode: serverConfig.mode,
+          host: serverConfig.host ?? null,
+          port: serverConfig.port,
+          cause: startupExit.cause,
+        });
+        return Effect.logError("server runtime startup failed", {
+          cause: Cause.pretty(startupExit.cause),
+        }).pipe(
+          Effect.andThen(commandGate.failCommandReady(error)),
+          Effect.andThen(options?.abort?.(error) ?? Effect.void),
+        );
+      }),
+    ),
+  );
+
+  return {
+    awaitCommandReady: commandGate.awaitCommandReady,
+    markHttpListening: Deferred.succeed(httpListening, undefined),
+    enqueueCommand: commandGate.enqueueCommand,
+  } satisfies ServerRuntimeStartup["Service"];
+});
 
 export const layerWithOptions = (options?: StartupOptions) =>
   Layer.effect(ServerRuntimeStartup, make(options));

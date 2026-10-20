@@ -236,14 +236,14 @@ const make = Effect.gen(function* () {
   const inbox = yield* HookInbox.HookInbox;
   const crypto = yield* Crypto.Crypto;
 
-  const signDeliveryProof = (input: {
-    readonly environmentId: string;
-    readonly deliveryId: string;
-    readonly receivedAt: string;
-    readonly hookId: string;
-    readonly jti: string;
-  }) =>
-    Effect.gen(function* () {
+  const signDeliveryProof = Effect.fn("HookForwarder.signDeliveryProof")(
+    function* (input: {
+      readonly environmentId: string;
+      readonly deliveryId: string;
+      readonly receivedAt: string;
+      readonly hookId: string;
+      readonly jti: string;
+    }) {
       const now = Math.floor((yield* Clock.currentTimeMillis) / 1_000);
       return yield* signRelayJwt({
         privateKey: Redacted.value(settings.cloudMintPrivateKey),
@@ -261,7 +261,9 @@ const make = Effect.gen(function* () {
           hookId: input.hookId,
         } satisfies RelayHookDeliveryProofPayload,
       });
-    }).pipe(Effect.orDie);
+    },
+    (effect, _input) => effect.pipe(Effect.orDie),
+  );
 
   const handle = Effect.fn("relay.hooks.forward")(function* (
     request: HttpServerRequest.HttpServerRequest,
@@ -354,37 +356,37 @@ const make = Effect.gen(function* () {
       headers: { ...forwardedHeaders(request.headers), [RELAY_HOOK_DELIVERY_HEADER]: proof },
       body: body.success,
     };
-    const holdOrFail = (status: 503 | 504, error: string) =>
-      Effect.gen(function* () {
-        if (!endpoint.holdWhileOffline) {
-          yield* outcome(error);
-          return errorResponse(status, error);
-        }
-        const stored = yield* inbox
-          .hold({
-            endpointKey: parsed.endpointKey,
-            baseUrl: endpoint.httpBaseUrl,
-            hook,
-          })
-          .pipe(
-            Effect.catch((cause) =>
-              Effect.logWarning("Could not hold webhook request", {
-                environmentId: endpoint.environmentId,
-                errorTag: cause._tag,
-              }).pipe(Effect.as(null)),
-            ),
-          );
-        if (stored === null) {
-          yield* outcome(error);
-          return errorResponse(status, error);
-        }
-        if (!stored) {
-          yield* outcome("inbox_full");
-          return errorResponse(503, "inbox_full");
-        }
-        yield* outcome("held");
-        return HttpServerResponse.jsonUnsafe({ queued: true }, { status: 202 });
-      });
+    // Keep offline outcomes on the enclosing relay.hooks.forward span.
+    const holdOrFail = Effect.fnUntraced(function* (status: 503 | 504, error: string) {
+      if (!endpoint.holdWhileOffline) {
+        yield* outcome(error);
+        return errorResponse(status, error);
+      }
+      const stored = yield* inbox
+        .hold({
+          endpointKey: parsed.endpointKey,
+          baseUrl: endpoint.httpBaseUrl,
+          hook,
+        })
+        .pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Could not hold webhook request", {
+              environmentId: endpoint.environmentId,
+              errorTag: cause._tag,
+            }).pipe(Effect.as(null)),
+          ),
+        );
+      if (stored === null) {
+        yield* outcome(error);
+        return errorResponse(status, error);
+      }
+      if (!stored) {
+        yield* outcome("inbox_full");
+        return errorResponse(503, "inbox_full");
+      }
+      yield* outcome("held");
+      return HttpServerResponse.jsonUnsafe({ queued: true }, { status: 202 });
+    });
 
     const upstream = yield* sendUpstream(endpoint.httpBaseUrl, hook).pipe(
       Effect.provideService(HttpClient.HttpClient, httpClient),

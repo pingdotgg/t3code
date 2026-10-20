@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- The synchronous shell probe runs real commands with isolated config files.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -8,6 +9,10 @@ import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -129,6 +134,54 @@ describe("readPathFromLaunchctl", () => {
 });
 
 describe("readEnvironmentFromLoginShell", () => {
+  // Opt in with an explicit binary, like the provider live probes; CI need not install Nu.
+  it.runIf(process.env.T3_TEST_NU_PATH !== undefined)(
+    "captures Nushell PATH and multiline values without external tools",
+    () => {
+      const shell = process.env.T3_TEST_NU_PATH!;
+      const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-nu-env-"));
+      try {
+        const toolPath = NodePath.join(home, "nu tools", "bin");
+        const extraToolPath = NodePath.join(home, "extra-tools", "bin");
+        NodeFS.mkdirSync(toolPath, { recursive: true });
+        NodeFS.mkdirSync(extraToolPath, { recursive: true });
+        const config = NodePath.join(home, "config.nu");
+        const envConfig = NodePath.join(home, "env.nu");
+        NodeFS.writeFileSync(envConfig, "");
+        NodeFS.writeFileSync(
+          config,
+          [
+            `$env.PATH = [${JSON.stringify(toolPath)}, "~/extra-tools/bin", "rel/dir", ""]`,
+            '$env.CUSTOM_VAR = "  first\\nsecond  "',
+            '$env.EMPTY_VAR = ""',
+            'print "startup noise"',
+          ].join("\n"),
+        );
+
+        expect(
+          readEnvironmentFromLoginShell(
+            shell,
+            ["MISSING_VAR", "PATH", "EMPTY_VAR", "CUSTOM_VAR"],
+            (file, args, options) =>
+              NodeChildProcess.execFileSync(
+                file,
+                ["--no-history", "--config", config, "--env-config", envConfig, ...args],
+                {
+                  ...options,
+                  env: { HOME: home, XDG_CONFIG_HOME: home, PATH: toolPath },
+                },
+              ),
+          ),
+        ).toEqual({
+          PATH: `${toolPath}:${extraToolPath}:rel/dir:`,
+          CUSTOM_VAR: "  first\nsecond  ",
+        });
+      } finally {
+        NodeFS.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("extracts multiple environment variables from a login shell command", () => {
     const execFile = vi.fn<
       (
@@ -176,7 +229,7 @@ describe("readEnvironmentFromLoginShell", () => {
     });
   });
 
-  it("preserves surrounding whitespace in captured values", () => {
+  it("preserves multiline values and surrounding whitespace", () => {
     const execFile = vi.fn<
       (
         file: string,
@@ -184,13 +237,15 @@ describe("readEnvironmentFromLoginShell", () => {
         options: { encoding: "utf8"; timeout: number },
       ) => string
     >(() =>
-      ["__T3CODE_ENV_CUSTOM_VAR_START__", "  padded value  ", "__T3CODE_ENV_CUSTOM_VAR_END__"].join(
-        "\n",
-      ),
+      [
+        "__T3CODE_ENV_CUSTOM_VAR_START__",
+        "  first\nsecond  ",
+        "__T3CODE_ENV_CUSTOM_VAR_END__",
+      ].join("\n"),
     );
 
     expect(readEnvironmentFromLoginShell("/bin/zsh", ["CUSTOM_VAR"], execFile)).toEqual({
-      CUSTOM_VAR: "  padded value  ",
+      CUSTOM_VAR: "  first\nsecond  ",
     });
   });
 });

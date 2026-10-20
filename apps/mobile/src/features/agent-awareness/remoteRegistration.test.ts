@@ -58,6 +58,7 @@ vi.mock("./androidNotifications", () => ({
 
 const secureStore = vi.hoisted(() => new Map<string, string>());
 const widgetMocks = vi.hoisted(() => ({
+  dismissEnded: vi.fn(),
   getInstances: vi.fn(() => []),
   start: vi.fn(() => ({})),
 }));
@@ -98,6 +99,7 @@ vi.mock("expo-widgets", () => ({
 }));
 
 vi.mock("./agentLiveActivity", () => ({
+  dismissEndedAgentLiveActivities: widgetMocks.dismissEnded,
   getAgentLiveActivities: widgetMocks.getInstances,
   startAgentLiveActivity: widgetMocks.start,
 }));
@@ -271,6 +273,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     widgetMocks.getInstances.mockReset();
     widgetMocks.getInstances.mockReturnValue([]);
     widgetMocks.start.mockClear();
+    widgetMocks.dismissEnded.mockReset();
     environmentConfigsMock.configs.clear();
   });
 
@@ -621,6 +624,75 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     },
   );
 
+  it.effect("dismisses ended Live Activities when the idle app returns to the foreground", () => {
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
+
+    return Effect.gen(function* () {
+      yield* runBackgroundOperations();
+      widgetMocks.dismissEnded.mockClear();
+
+      for (const listener of appStateMock.listeners) listener("background");
+      yield* runBackgroundOperations();
+      expect(widgetMocks.dismissEnded).not.toHaveBeenCalled();
+
+      for (const listener of appStateMock.listeners) listener("active");
+      yield* runBackgroundOperations();
+
+      expect(widgetMocks.dismissEnded).toHaveBeenCalledOnce();
+      expect(widgetMocks.start).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(layerRelayTest));
+  });
+
+  it.effect("still registers the active card when ended-card cleanup throws", () => {
+    const registrations: unknown[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init);
+      if (request.url.endsWith("/v1/client/dpop-token")) {
+        return Response.json({
+          access_token: "relay-dpop-token",
+          issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+          token_type: "DPoP",
+          expires_in: 300,
+          scope: "mobile:registration",
+        });
+      }
+      if (request.url.endsWith("/v1/mobile/live-activities")) {
+        registrations.push(await request.json());
+      }
+      return Response.json({ ok: true });
+    });
+    Constants.expoConfig!.extra = { relay: { url: "https://relay.example.test/" } };
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
+    const activity = {
+      getId: () => "activity-1",
+      getPushToken: vi.fn(() => Promise.resolve("activity-token")),
+      addPushTokenListener: vi.fn(),
+      end: vi.fn(),
+    };
+
+    return Effect.gen(function* () {
+      yield* runBackgroundOperations();
+      widgetMocks.dismissEnded.mockReset();
+      widgetMocks.dismissEnded.mockImplementation(() => {
+        throw new Error("Cannot find function dismissEnded");
+      });
+      widgetMocks.getInstances.mockReturnValue([activity] as never);
+
+      for (const listener of appStateMock.listeners) listener("active");
+      yield* runBackgroundOperations();
+
+      expect(widgetMocks.dismissEnded).toHaveBeenCalledOnce();
+      expect(registrations).toEqual([
+        { deviceId: "device-1", activityPushToken: "activity-token" },
+      ]);
+      expect(activity.end).not.toHaveBeenCalled();
+      expect(widgetMocks.start).not.toHaveBeenCalled();
+    }).pipe(
+      Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+      Effect.provide(layerRelayTest),
+    );
+  });
+
   it("ends local Live Activities and stops foreground reconciliation on cloud sign-out", () => {
     const end = vi.fn(() => Promise.resolve());
     const activity = {
@@ -636,6 +708,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     setAgentAwarenessRelayTokenProvider(null);
 
     expect(end).toHaveBeenCalledWith("immediate");
+    expect(widgetMocks.dismissEnded).toHaveBeenCalled();
     expect(appStateMock.listeners).toHaveLength(0);
   });
 

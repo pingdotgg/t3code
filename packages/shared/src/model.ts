@@ -213,6 +213,17 @@ function getReportedOptionValue(
   return getRawSelectionValueById(reportedSelection.options, id);
 }
 
+export function getProviderOptionStatedValue(
+  id: string,
+  selection?: ModelSelection | null,
+  reportedSelection?: ModelSelection | null,
+) {
+  return (
+    getRawSelectionValueById(selection?.options, id) ??
+    getReportedOptionValue(id, selection, reportedSelection)
+  );
+}
+
 export function getProviderOptionCurrentValue(
   descriptor: ProviderOptionDescriptor | null | undefined,
   selection?: ModelSelection | null,

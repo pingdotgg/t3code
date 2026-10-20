@@ -750,21 +750,21 @@ export const layer = Layer.effectContext(
           }),
           Effect.mapError((cause) => persistenceError("load-shell", cause)),
         ),
-      saveShell: (environmentId, snapshot) =>
-        Effect.gen(function* () {
+      saveShell: Effect.fn("storage.saveShell")(
+        function* (environmentId, snapshot) {
           const encoded = yield* encodeStoredShellSnapshot({
             schemaVersion: ORCHESTRATION_CACHE_SCHEMA_VERSION,
             environmentId,
             snapshot,
           }).pipe(Effect.mapError((cause) => persistenceError("save-shell", cause)));
           yield* writeDatabaseValue(database, SHELL_STORE_NAME, environmentId, encoded);
-        }).pipe(
-          Effect.mapError((cause) =>
-            cause._tag === "ConnectionPersistenceError"
-              ? cause
-              : persistenceError("save-shell", cause),
-          ),
+        },
+        Effect.mapError((cause) =>
+          cause._tag === "ConnectionPersistenceError"
+            ? cause
+            : persistenceError("save-shell", cause),
         ),
+      ),
       loadServerConfig: (environmentId) =>
         readDatabaseValue(database, SERVER_CONFIG_STORE_NAME, environmentId).pipe(
           Effect.flatMap((raw) => {
@@ -784,21 +784,21 @@ export const layer = Layer.effectContext(
               : persistenceError("load-server-config", cause),
           ),
         ),
-      saveServerConfig: (environmentId, config) =>
-        Effect.gen(function* () {
+      saveServerConfig: Effect.fn("storage.saveServerConfig")(
+        function* (environmentId, config) {
           const encoded = yield* encodeStoredServerConfig({
             schemaVersion: 1,
             environmentId,
             config,
           }).pipe(Effect.mapError((cause) => persistenceError("save-server-config", cause)));
           yield* writeDatabaseValue(database, SERVER_CONFIG_STORE_NAME, environmentId, encoded);
-        }).pipe(
-          Effect.mapError((cause) =>
-            cause._tag === "ConnectionPersistenceError"
-              ? cause
-              : persistenceError("save-server-config", cause),
-          ),
+        },
+        Effect.mapError((cause) =>
+          cause._tag === "ConnectionPersistenceError"
+            ? cause
+            : persistenceError("save-server-config", cause),
         ),
+      ),
       loadThread: (environmentId, threadId) =>
         readDatabaseValue(
           database,
@@ -827,8 +827,8 @@ export const layer = Layer.effectContext(
           }),
           Effect.mapError((cause) => persistenceError("load-thread", cause)),
         ),
-      saveThread: (environmentId, snapshot) =>
-        Effect.gen(function* () {
+      saveThread: Effect.fn("storage.saveThread")(
+        function* (environmentId, snapshot) {
           const encoded = yield* encodeStoredThreadSnapshot({
             schemaVersion: ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
             environmentId,
@@ -841,13 +841,13 @@ export const layer = Layer.effectContext(
             threadCacheKey(environmentId, snapshot.projection.thread.id),
             encoded,
           );
-        }).pipe(
-          Effect.mapError((cause) =>
-            cause._tag === "ConnectionPersistenceError"
-              ? cause
-              : persistenceError("save-thread", cause),
-          ),
+        },
+        Effect.mapError((cause) =>
+          cause._tag === "ConnectionPersistenceError"
+            ? cause
+            : persistenceError("save-thread", cause),
         ),
+      ),
       loadVcsRefs: (environmentId, cwd) =>
         readDatabaseValue(database, VCS_REFS_STORE_NAME, vcsRefsCacheKey(environmentId, cwd)).pipe(
           Effect.flatMap((raw) => {
@@ -869,8 +869,8 @@ export const layer = Layer.effectContext(
               : persistenceError("load-vcs-refs", cause),
           ),
         ),
-      saveVcsRefs: (environmentId, cwd, refs) =>
-        Effect.gen(function* () {
+      saveVcsRefs: Effect.fn("storage.saveVcsRefs")(
+        function* (environmentId, cwd, refs) {
           const encoded = yield* encodeStoredVcsRefs({
             schemaVersion: 1,
             environmentId,
@@ -883,13 +883,13 @@ export const layer = Layer.effectContext(
             vcsRefsCacheKey(environmentId, cwd),
             encoded,
           );
-        }).pipe(
-          Effect.mapError((cause) =>
-            cause._tag === "ConnectionPersistenceError"
-              ? cause
-              : persistenceError("save-vcs-refs", cause),
-          ),
+        },
+        Effect.mapError((cause) =>
+          cause._tag === "ConnectionPersistenceError"
+            ? cause
+            : persistenceError("save-vcs-refs", cause),
         ),
+      ),
       removeVcsRefs: (environmentId, cwd) =>
         removeDatabaseValue(
           database,

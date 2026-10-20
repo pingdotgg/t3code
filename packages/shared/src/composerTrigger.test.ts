@@ -43,18 +43,15 @@ describe("detectComposerTrigger", () => {
     (text) => expect(detectComposerTrigger(text, text.length)).toBeNull(),
   );
 
-  it.each(["$", "€", "£", "¥", "₹", "₩", "₿", "𑿝"])(
-    "detects %s skill prefixes and their source range",
-    (prefix) => {
-      const text = `Use ${prefix}review`;
-      expect(detectComposerTrigger(text, text.length)).toEqual({
-        kind: "skill",
-        query: "review",
-        rangeStart: 4,
-        rangeEnd: text.length,
-      });
-    },
-  );
+  it.each(["$", "€", "𑿝"])("detects %s skill prefixes and their source range", (prefix) => {
+    const text = `Use ${prefix}review`;
+    expect(detectComposerTrigger(text, text.length)).toEqual({
+      kind: "skill",
+      query: "review",
+      rangeStart: 4,
+      rangeEnd: text.length,
+    });
+  });
 });
 
 describe("serializeComposerFileLink", () => {

@@ -113,18 +113,37 @@ describe("runDeviceAction", () => {
           "acceleration",
           "9.81:0:0",
         ]);
-        const phone = makeReady();
+        // A device that refuses `wm size` keeps the portrait-native mapping.
+        const phone = makeReady((call) =>
+          call.args.join(" ").endsWith("shell wm size") ? { code: 1 } : {},
+        );
         yield* runDeviceAction(phone.ready, "android", {
           type: "setOrientation",
           deviceId: "R5CT1234",
           value: "landscape_right",
         });
-        expect(phone.calls).toEqual([
-          {
-            command: "adb",
-            args: ["-s", "R5CT1234", "shell", "cmd", "window", "user-rotation", "lock", "3"],
-          },
-        ]);
+        expect(phone.calls.at(-1)).toEqual({
+          command: "adb",
+          args: ["-s", "R5CT1234", "shell", "cmd", "window", "user-rotation", "lock", "3"],
+        });
+      }),
+  );
+
+  it.effect.each([
+    ["emulator-5554", "Physical size: 2560x1600", "portrait", "-9.81:0:0"],
+    ["emulator-5554", "Physical size: 2560x1600", "landscape_left", "0:9.81:0"],
+    ["R5CT1234", "Physical size: 2560x1600", "portrait", "3"],
+    ["R5CT1234", "Physical size: 2560x1600", "landscape_left", "0"],
+    ["R5CT1234", "Physical size: 1080x1920\nOverride size: 1920x1080", "portrait", "3"],
+  ] as const)(
+    "rotates from the natural orientation reported by wm size: %s %j %s",
+    ([deviceId, wmSize, value, expected]) =>
+      Effect.gen(function* () {
+        const { ready, calls } = makeReady((call) =>
+          call.args.join(" ").endsWith("shell wm size") ? { stdout: `${wmSize}\n` } : {},
+        );
+        yield* runDeviceAction(ready, "android", { type: "setOrientation", deviceId, value });
+        expect(calls.at(-1)?.args.at(-1)).toBe(expected);
       }),
   );
 

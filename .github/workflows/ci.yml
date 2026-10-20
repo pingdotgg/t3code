@@ -482,8 +482,6 @@ jobs:
             !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
           sparse-checkout-cone-mode: false
 
-      # A full install: a filtered one that misses the cache first saves its
-      # partial store under the shared lockfile key for every later job.
       - name: Setup Vite+
         uses: ./.github/actions/setup-ci-deps
 

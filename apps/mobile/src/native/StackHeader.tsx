@@ -1,5 +1,6 @@
 import { useNavigation, type ParamListBase } from "@react-navigation/native";
 import type {
+  NativeStackHeaderItemMenu,
   NativeStackNavigationOptions,
   NativeStackNavigationProp,
 } from "@react-navigation/native-stack";
@@ -19,6 +20,7 @@ export type AppNativeStackNavigationOptions = Omit<
   "headerTintColor" | "unstable_headerLeftItems" | "unstable_headerRightItems"
 > & {
   readonly nativeContentInsetHorizontally?: boolean;
+  readonly nativeSidebarFilter?: NativeStackHeaderItemMenu;
   readonly headerTintColor?: string | ColorValue;
   readonly unstable_headerCenterItems?: unknown;
   readonly unstable_headerLeftItems?: unknown;

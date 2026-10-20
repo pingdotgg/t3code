@@ -90,6 +90,10 @@ const emitStaleXAiPromptCompleteBeforeSecondHang =
 const emitOverlappingXAiPromptCompleteOutOfOrder =
   process.env.T3_ACP_EMIT_OVERLAPPING_XAI_PROMPT_COMPLETE_OUT_OF_ORDER === "1";
 const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
+const failPromptOrdinal = Number(process.env.T3_ACP_FAIL_PROMPT_ORDINAL);
+const compactionPromptOrdinals = new Set(
+  (process.env.T3_ACP_COMPACTION_PROMPT_ORDINALS ?? "").split(",").map(Number),
+);
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const failSetModeConfigOption = process.env.T3_ACP_FAIL_SET_MODE_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
@@ -1299,7 +1303,20 @@ const program = Effect.gen(function* () {
         yield* Effect.sleep(`${promptDelayMs} millis`);
       }
 
-      if (failPrompt) {
+      if (compactionPromptOrdinals.has(promptCount)) {
+        for (const status of ["in_progress", "completed"] as const) {
+          yield* agent.client.sessionUpdate({
+            sessionId: requestedSessionId,
+            update: {
+              sessionUpdate: "compaction_update",
+              compactionId: `compact-${promptCount}`,
+              status,
+            },
+          });
+        }
+      }
+
+      if (failPrompt || promptCount === failPromptOrdinal) {
         return yield* AcpError.AcpRequestError.internalError("Mock prompt failure");
       }
 

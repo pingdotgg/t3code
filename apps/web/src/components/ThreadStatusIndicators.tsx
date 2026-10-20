@@ -298,7 +298,7 @@ function PullRequestBadge({
         variant="glass"
         className="pointer-events-auto w-80 max-w-[calc(100vw-2rem)] text-left whitespace-normal"
       >
-        <div className="-mx-1">
+        <div className="-mx-1 max-h-[calc(var(--available-height)-0.5rem-2px)] overflow-y-auto overscroll-contain">
           {visibleThreadPullRequests(pullRequests).length > 0 ? (
             <ThreadPullRequestsMiniList
               pullRequests={pullRequests}
@@ -398,7 +398,7 @@ function ThreadPullRequestMiniListItem({
           href={url}
           target="_blank"
           rel="noopener noreferrer"
-          className="flex min-w-0 items-center gap-2 rounded-sm px-1 py-1 hover:bg-accent focus-visible:bg-accent focus-visible:outline-2 focus-visible:outline-ring"
+          className="flex min-w-0 items-center gap-2 rounded-sm px-1 py-1 hover:bg-accent focus-visible:bg-accent focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
           onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => onOpenPullRequest(event, url)}
         >
@@ -829,7 +829,7 @@ export function ThreadStatusLabel({
         >
           <span
             className={`size-[9px] rounded-full ${status.dotClass} ${
-              status.pulse ? "animate-status-pulse" : ""
+              status.pulse ? "motion-safe:animate-status-pulse" : ""
             }`}
           />
         </TooltipTrigger>
@@ -851,7 +851,7 @@ export function ThreadStatusLabel({
       >
         <span
           className={`h-1.5 w-1.5 rounded-full ${status.dotClass} ${
-            status.pulse ? "animate-status-pulse" : ""
+            status.pulse ? "motion-safe:animate-status-pulse" : ""
           }`}
         />
         <span className="hidden md:inline">{status.label}</span>

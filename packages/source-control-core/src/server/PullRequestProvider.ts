@@ -155,6 +155,11 @@ export interface ProviderListCursor {
    */
   readonly updatedBefore: string;
   readonly delivered: number;
+  /**
+   * Rows already handed over at `updatedBefore`. Timestamp-paged hosts can exclude these before
+   * applying their limit so a full page of tied updates does not repeat the same prefix.
+   */
+  readonly seenAt?: ReadonlyArray<number> | undefined;
 }
 
 export interface ProviderBatchedChangeRequest extends ProviderChangeRequest {

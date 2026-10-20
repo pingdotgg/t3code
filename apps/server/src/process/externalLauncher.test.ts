@@ -11,8 +11,10 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as Latch from "effect/Latch";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -29,6 +31,7 @@ import * as ExternalLauncher from "./externalLauncher.ts";
 const windowsHost = HostProcess.Platform.defaultValue() === "win32";
 
 interface MockSpawnResult {
+  readonly spawnError?: PlatformError.PlatformError;
   readonly exitCode?: number;
   readonly stdout?: string;
   readonly stall?: boolean;
@@ -69,15 +72,17 @@ const layerTest = (input: {
   const layerSpawner = Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make((command) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
         assert.equal(ChildProcess.isStandardCommand(command), true);
         if (!ChildProcess.isStandardCommand(command)) {
           throw new Error("Expected a standard command");
         }
         input.onSpawn?.(command);
+        const result = input.spawnResult?.(command);
+        if (result?.spawnError) return yield* result.spawnError;
         return makeMockDetachedHandle({
           ...(input.onUnref === undefined ? {} : { onUnref: input.onUnref }),
-          ...input.spawnResult?.(command),
+          ...result,
         });
       }),
     ),
@@ -460,16 +465,21 @@ it.effect("reveals a file in File Explorer through PowerShell on Windows", () =>
     const decodedCommand = Buffer.from(encodedCommand, "base64").toString("utf16le");
     assert.equal(
       decodedCommand,
-      "$ProgressPreference = 'SilentlyContinue'; Start-Process 'explorer.exe' -ArgumentList ('/select,\"' + 'C:\\workspace with spaces\\media\\author''s clip.mp4' + '\"')",
+      "$ProgressPreference = 'SilentlyContinue'; $folderVerb = (Get-ItemProperty -LiteralPath 'Registry::HKEY_CLASSES_ROOT\\Directory\\shell' -ErrorAction SilentlyContinue).'(default)'; if ($folderVerb -and $folderVerb -ne 'none') { Invoke-Item -LiteralPath 'C:\\workspace with spaces\\media' } else { Start-Process 'explorer.exe' -ArgumentList ('/select,\"' + 'C:\\workspace with spaces\\media\\author''s clip.mp4' + '\"') }",
     );
     assert.equal(spawned.options.shell, false);
     assert.equal(spawned.options.detached, false);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-for (const kind of ["browser", "reveal"] as const) {
+for (const { kind, folderVerb } of [
+  { kind: "browser", folderVerb: "none" },
+  { kind: "reveal", folderVerb: "none" },
+  { kind: "reveal", folderVerb: "" },
+  { kind: "reveal", folderVerb: "open" },
+] as const) {
   it.live.skipIf(!windowsHost)(
-    `completes a ${kind} launch through real PowerShell after the launcher scope closes`,
+    `completes a ${kind} launch through real PowerShell after the launcher scope closes (folder verb: ${folderVerb || "empty"})`,
     () =>
       Effect.gen(function* () {
         const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-reveal-smoke-"));
@@ -494,22 +504,28 @@ for (const kind of ["browser", "reveal"] as const) {
             );
           });
 
-          const target = "C:/workspace with spaces/media/author's clip.mp4";
+          const target = "C:/workspace with spaces/author's media/clip.mp4";
           yield* Effect.all(
             [
               Effect.gen(function* () {
                 const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
                 const recordingSpawner = ChildProcessSpawner.make((command) => {
                   assert.ok(ChildProcess.isStandardCommand(command));
+                  const recorderLiteral = `'${recorderPath.replaceAll("'", "''")}'`;
                   const source = Buffer.from(command.args.at(-1) ?? "", "base64")
                     .toString("utf16le")
-                    .replace("'explorer.exe'", `'${recorderPath.replaceAll("'", "''")}'`);
+                    .replace("'explorer.exe'", recorderLiteral);
+                  // Control the association without changing the host registry or opening its file manager.
+                  const handlers =
+                    kind === "reveal"
+                      ? `function Get-ItemProperty { [CmdletBinding()] param([string]$LiteralPath); if ($LiteralPath -ne 'Registry::HKEY_CLASSES_ROOT\\Directory\\shell') { throw 'Unexpected registry path' }; @{ '(default)' = '${folderVerb}' } }; function Invoke-Item { param([string]$LiteralPath); Start-Process ${recorderLiteral} -ArgumentList ('"' + $LiteralPath + '"') }; `
+                      : "";
                   return realSpawner.spawn(
                     ChildProcess.make(
                       command.command,
                       [
                         ...command.args.slice(0, -1),
-                        Buffer.from(source, "utf16le").toString("base64"),
+                        Buffer.from(handlers + source, "utf16le").toString("base64"),
                       ],
                       command.options,
                     ),
@@ -532,7 +548,11 @@ for (const kind of ["browser", "reveal"] as const) {
                 recorded.then((value) => {
                   assert.equal(
                     value,
-                    kind === "browser" ? "" : `/select,"${target.replaceAll("/", "\\")}"`,
+                    kind === "browser"
+                      ? ""
+                      : folderVerb === "open"
+                        ? `"C:\\workspace with spaces\\author's media"`
+                        : `/select,"${target.replaceAll("/", "\\")}"`,
                   );
                 }),
               ),
@@ -601,7 +621,7 @@ it.effect.skipIf(windowsHost)(
         const editors = yield* launcher.resolveAvailableEditors();
         yield* launcher.launchEditor({
           editor: "file-manager",
-          cwd: "/home/t3/workspace/media/clip.mp4",
+          cwd: "/home/t3/workspace [draft]/author's $media/clip|draft.mp4",
           reveal: true,
         });
         return { kind, editors };
@@ -630,7 +650,7 @@ it.effect.skipIf(windowsHost)(
       const decodedCommand = Buffer.from(encodedCommand, "base64").toString("utf16le");
       assert.equal(
         decodedCommand,
-        "$ProgressPreference = 'SilentlyContinue'; Start-Process 'explorer.exe' -ArgumentList ('/select,\"' + '\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\workspace\\media\\clip.mp4' + '\"')",
+        "$ProgressPreference = 'SilentlyContinue'; $folderVerb = (Get-ItemProperty -LiteralPath 'Registry::HKEY_CLASSES_ROOT\\Directory\\shell' -ErrorAction SilentlyContinue).'(default)'; if ($folderVerb -and $folderVerb -ne 'none') { Invoke-Item -LiteralPath '\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\workspace [draft]\\author''s $media' } else { Start-Process 'explorer.exe' -ArgumentList ('/select,\"' + '\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\workspace [draft]\\author''s $media\\clip|draft.mp4' + '\"') }",
       );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
@@ -793,7 +813,7 @@ it.effect.skipIf(windowsHost)(
         const launcher = yield* ExternalLauncher.ExternalLauncher;
         yield* launcher.launchEditor({
           editor: "file-manager",
-          cwd: '/home/t3/work "quoted"/clip.mp4',
+          cwd: '/home/t3/work/clip "quoted".mp4',
           reveal: true,
         });
       }).pipe(
@@ -813,8 +833,14 @@ it.effect.skipIf(windowsHost)(
       );
 
       assert.ok(spawned);
-      assert.equal(spawned.command, "explorer.exe");
-      assert.deepEqual(spawned.args, ['\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\work "quoted"']);
+      assert.equal(spawned.command, "powershell.exe");
+      assert.equal(spawned.options.detached, true);
+      assert.equal(spawned.options.shell, false);
+      const source = Buffer.from(spawned.args.at(-1) ?? "", "base64").toString("utf16le");
+      assert.equal(
+        source,
+        `Invoke-Item -LiteralPath '\\\\wsl.localhost\\Ubuntu-24.04\\home\\t3\\work'`,
+      );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
@@ -856,6 +882,138 @@ it.effect.skipIf(windowsHost)("reveals by opening the containing directory on Li
     assert.deepEqual(spawned.args, ["/workspace/media"]);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+for (const wsl of [false, true]) {
+  it.effect.skipIf(windowsHost)(
+    "selects a file over D-Bus on " + (wsl ? "WSLg without interop PowerShell" : "Linux"),
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+        for (const name of ["xdg-open", "xdg-mime", "gdbus", ...(wsl ? ["explorer.exe"] : [])]) {
+          const filePath = path.join(binDir, name);
+          yield* fileSystem.writeFileString(filePath, "#!/bin/sh\n");
+          yield* fileSystem.chmod(filePath, 0o755);
+        }
+        const target = "/workspace/media/a 'quoted' \"clip\" #100% ? é\\name.mp4";
+        const spawnedCommands: ChildProcess.StandardCommand[] = [];
+        yield* Effect.gen(function* () {
+          const launcher = yield* ExternalLauncher.ExternalLauncher;
+          yield* launcher.launchEditor({ editor: "file-manager", cwd: target, reveal: true });
+        }).pipe(
+          Effect.provide(
+            layerTest({
+              platform: "linux",
+              env: {
+                PATH: binDir,
+                WAYLAND_DISPLAY: "wayland-1",
+                ...(wsl
+                  ? { WSL_DISTRO_NAME: "Ubuntu-24.04", WSL_INTEROP: "/run/WSL/1_interop" }
+                  : {}),
+              },
+              onSpawn: (command) => spawnedCommands.push(command),
+              spawnResult: (command) =>
+                command.command === "xdg-mime"
+                  ? { stdout: "com.thisisgm.flea.desktop\n" }
+                  : undefined,
+            }),
+          ),
+        );
+
+        const reveal = spawnedCommands.find((command) => command.command === "gdbus");
+        assert.ok(reveal);
+        assert.deepEqual(reveal.args, [
+          "call",
+          "--session",
+          "--dest",
+          "org.freedesktop.FileManager1",
+          "--object-path",
+          "/org/freedesktop/FileManager1",
+          "--method",
+          "org.freedesktop.FileManager1.ShowItems",
+          "[\"file:///workspace/media/a%20'quoted'%20%22clip%22%20%23100%25%20%3F%20%C3%A9%5Cname.mp4\"]",
+          "",
+        ]);
+        assert.deepEqual(
+          spawnedCommands.filter((command) => command.command !== "xdg-mime"),
+          [reveal],
+        );
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+}
+
+for (const scenario of ["rejected", "spawn-error", "stalled"] as const) {
+  it.effect.skipIf(windowsHost)("opens the containing directory when D-Bus is " + scenario, () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+      for (const name of ["xdg-open", "xdg-mime", "gdbus"]) {
+        const filePath = path.join(binDir, name);
+        yield* fileSystem.writeFileString(filePath, "#!/bin/sh\n");
+        yield* fileSystem.chmod(filePath, 0o755);
+      }
+
+      const spawnedCommands: ChildProcess.StandardCommand[] = [];
+      const started = yield* Latch.make();
+      const launch = Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        yield* launcher.launchEditor({
+          editor: "file-manager",
+          cwd: "/workspace/media/linux-mini-v2.mp4",
+          reveal: true,
+        });
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            platform: "linux",
+            env: { PATH: binDir, DISPLAY: ":0" },
+            onSpawn: (command) => {
+              spawnedCommands.push(command);
+              if (command.command === "gdbus") started.openUnsafe();
+            },
+            spawnResult: (command) => {
+              if (command.command === "xdg-mime") return { stdout: "org.gnome.Nautilus.desktop\n" };
+              if (command.command !== "gdbus") return undefined;
+              if (scenario === "spawn-error") {
+                return {
+                  spawnError: new PlatformError.PlatformError(
+                    new PlatformError.SystemError({
+                      _tag: "NotFound",
+                      module: "ChildProcess",
+                      method: "spawn",
+                      pathOrDescriptor: "gdbus",
+                    }),
+                  ),
+                };
+              }
+              return { exitCode: 1, stall: scenario === "stalled" };
+            },
+          }),
+        ),
+      );
+      if (scenario === "stalled") {
+        const fiber = yield* launch.pipe(Effect.forkChild);
+        yield* started.await;
+        yield* TestClock.adjust("1999 millis");
+        assert.isUndefined(spawnedCommands.find((command) => command.command === "xdg-open"));
+        yield* TestClock.adjust("1 millis");
+        yield* Fiber.join(fiber);
+      } else {
+        yield* launch;
+      }
+
+      assert.deepEqual(
+        spawnedCommands
+          .filter((command) => command.command !== "xdg-mime")
+          .map((command) => command.command),
+        ["gdbus", "xdg-open"],
+      );
+      assert.deepEqual(spawnedCommands.at(-1)?.args, ["/workspace/media"]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+}
 
 it.effect.skipIf(windowsHost)(
   "does not advertise a Linux file manager without a graphical session",

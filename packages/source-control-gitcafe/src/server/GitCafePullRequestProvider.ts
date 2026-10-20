@@ -230,31 +230,22 @@ export const make = Effect.gen(function* () {
       Effect.flatMap((path) => read(operation, input, { path }, Json.GitCafePullDetail)),
     );
 
-  const readPages = <S extends Schema.Codec<Paged<unknown>, unknown, never, never>>(
-    operation: string,
-    input: Pick<ProviderRepositoryRef, "host">,
-    path: string,
-    schema: S,
-  ) =>
-    Effect.gen(function* () {
-      const items: Array<S["Type"]["items"][number]> = [];
-      let next: string | null = null;
-      for (let page = 0; page < MAX_PAGES; page++) {
-        const query = new URLSearchParams({ limit: String(PAGE_SIZE) });
-        if (next !== null) query.set("after", next);
-        const batch: S["Type"] = yield* read(
-          operation,
-          input,
-          { path: `${path}?${query}` },
-          schema,
-        );
-        items.push(...batch.items);
-        const previous: string | null = next;
-        next = batch.next;
-        if (next === null || next === previous || batch.items.length === 0) break;
-      }
-      return { items, next };
-    });
+  const readPages = Effect.fn("GitCafePullRequestProvider.readPages")(function* <
+    S extends Schema.Codec<Paged<unknown>, unknown, never, never>,
+  >(operation: string, input: Pick<ProviderRepositoryRef, "host">, path: string, schema: S) {
+    const items: Array<S["Type"]["items"][number]> = [];
+    let next: string | null = null;
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const query = new URLSearchParams({ limit: String(PAGE_SIZE) });
+      if (next !== null) query.set("after", next);
+      const batch: S["Type"] = yield* read(operation, input, { path: `${path}?${query}` }, schema);
+      items.push(...batch.items);
+      const previous: string | null = next;
+      next = batch.next;
+      if (next === null || next === previous || batch.items.length === 0) break;
+    }
+    return { items, next };
+  });
 
   const readComments = (operation: string, input: PullRef) =>
     pullPath(operation, input).pipe(

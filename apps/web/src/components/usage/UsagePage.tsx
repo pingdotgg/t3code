@@ -691,7 +691,6 @@ function UsageOverview({
       .slice(cursorInsertAt)
       .map((provider) => ({ kind: "usage" as const, provider })),
   ];
-  const timeValueColumnWidth = `${60 / (activeProviders.length + 2)}%`;
 
   return (
     <div aria-busy={loadingPartial} className="flex flex-col gap-6">
@@ -946,6 +945,7 @@ function UsageOverview({
                 breakdownModels.map((model, index) => {
                   const key = `${model.provider}:${model.model}`;
                   const value = metric === "tokens" ? model.totalTokens : model.costUsd;
+                  const hasBar = value > 0 && breakdownPeak > 0;
                   const share = modelShare(model, metric === "tokens" ? "tokens" : "cost");
                   const rowFigures = figureClass(loadingProviders.has(model.provider));
                   return (
@@ -958,23 +958,25 @@ function UsageOverview({
                         <button
                           type="button"
                           onClick={() => onSelectModel(key)}
-                          className="flex items-center gap-2 text-left text-foreground outline-none after:absolute after:inset-0"
+                          className={cn(
+                            "flex items-center gap-2 text-left text-foreground outline-none after:absolute after:inset-0",
+                            !hasBar && "py-1",
+                          )}
                         >
                           <ProviderMark provider={model.provider} className="size-3.5" />
                           {model.model}
                         </button>
-                        <div aria-hidden className={cn("mt-1.5 h-0.5 max-w-48", rowFigures)}>
-                          <div
-                            className="h-full rounded-full"
-                            style={{
-                              width:
-                                value > 0 && breakdownPeak > 0
-                                  ? `max(0.5rem, ${(value / breakdownPeak) * 100}%)`
-                                  : 0,
-                              backgroundColor: PROVIDER_PRESENTATION[model.provider].color,
-                            }}
-                          />
-                        </div>
+                        {hasBar ? (
+                          <div aria-hidden className={cn("mt-1.5 h-0.5 max-w-48", rowFigures)}>
+                            <div
+                              className="h-full rounded-full"
+                              style={{
+                                width: `max(0.5rem, ${(value / breakdownPeak) * 100}%)`,
+                                backgroundColor: PROVIDER_PRESENTATION[model.provider].color,
+                              }}
+                            />
+                          </div>
+                        ) : null}
                       </td>
                       <td className={cn("py-2.5 pl-6 text-foreground", rowFigures)}>
                         {isModelCostUnknown(model) ? (
@@ -996,80 +998,82 @@ function UsageOverview({
             </tbody>
           </table>
         ) : (
-          <table className="w-full table-fixed text-sm">
-            <colgroup>
-              <col className="w-2/5" />
-              {activeProviders.map((provider) => (
-                <col key={provider} style={{ width: timeValueColumnWidth }} />
-              ))}
-              <col style={{ width: timeValueColumnWidth }} />
-              <col style={{ width: timeValueColumnWidth }} />
-            </colgroup>
-            <thead>
-              <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                <th className="py-2 font-normal">{shownHourly ? "Hour" : "Day"}</th>
-                {activeProviders.map((provider) => (
-                  <th key={provider} className="py-2 text-right font-normal">
-                    {PROVIDER_PRESENTATION[provider].label}
-                  </th>
-                ))}
-                <th className="py-2 text-right font-normal">Total</th>
-                <th className="py-2 text-right font-normal">Tokens</th>
-              </tr>
-            </thead>
-            <tbody>
-              {breakdownPeriods.length === 0 ? (
-                <tr>
-                  <td
-                    colSpan={activeProviders.length + 3}
-                    className="py-6 text-center text-muted-foreground"
-                  >
-                    No activity in this window.
-                  </td>
+          <div
+            className="overflow-x-auto outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            role="region"
+            aria-label="Usage breakdown by time"
+            tabIndex={0}
+          >
+            <table className="w-full text-sm whitespace-nowrap">
+              <colgroup>
+                <col className="w-2/5" />
+              </colgroup>
+              <thead>
+                <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                  <th className="py-2 font-normal">{shownHourly ? "Hour" : "Day"}</th>
+                  {activeProviders.map((provider) => (
+                    <th key={provider} className="py-2 pl-4 text-right font-normal">
+                      {PROVIDER_PRESENTATION[provider].label}
+                    </th>
+                  ))}
+                  <th className="py-2 pl-4 text-right font-normal">Total</th>
+                  <th className="py-2 pl-4 text-right font-normal">Tokens</th>
                 </tr>
-              ) : (
-                breakdownPeriods.map((period) => (
-                  <tr
-                    key={"hourStart" in period ? period.hourStart : period.day}
-                    className="border-b border-border/50 transition-colors hover:bg-muted/50"
-                  >
-                    <td className="py-2 text-foreground">
-                      {"hourStart" in period
-                        ? formatHourShort(period.hourStart, shownWindow.timeZone, hour12)
-                        : formatDayShort(period.day)}
-                    </td>
-                    {activeProviders.map((provider) => (
-                      <td
-                        key={provider}
-                        className={cn(
-                          "py-2 text-right text-muted-foreground tabular-nums",
-                          figureClass(loadingProviders.has(provider)),
-                        )}
-                      >
-                        {formatUsd(period.byProvider.get(provider)?.costUsd ?? 0)}
-                      </td>
-                    ))}
+              </thead>
+              <tbody>
+                {breakdownPeriods.length === 0 ? (
+                  <tr>
                     <td
-                      className={cn(
-                        "py-2 text-right text-foreground tabular-nums",
-                        figureClass(loadingPartial),
-                      )}
+                      colSpan={activeProviders.length + 3}
+                      className="py-6 text-center text-muted-foreground"
                     >
-                      {formatUsd(period.costUsd)}
-                    </td>
-                    <td
-                      className={cn(
-                        "py-2 text-right text-muted-foreground tabular-nums",
-                        figureClass(loadingPartial),
-                      )}
-                    >
-                      {formatTokens(period.totalTokens)}
+                      No activity in this window.
                     </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                ) : (
+                  breakdownPeriods.map((period) => (
+                    <tr
+                      key={"hourStart" in period ? period.hourStart : period.day}
+                      className="border-b border-border/50 transition-colors hover:bg-muted/50"
+                    >
+                      <td className="py-2 text-foreground">
+                        {"hourStart" in period
+                          ? formatHourShort(period.hourStart, shownWindow.timeZone, hour12)
+                          : formatDayShort(period.day)}
+                      </td>
+                      {activeProviders.map((provider) => (
+                        <td
+                          key={provider}
+                          className={cn(
+                            "py-2 pl-4 text-right text-muted-foreground tabular-nums",
+                            figureClass(loadingProviders.has(provider)),
+                          )}
+                        >
+                          {formatUsd(period.byProvider.get(provider)?.costUsd ?? 0)}
+                        </td>
+                      ))}
+                      <td
+                        className={cn(
+                          "py-2 pl-4 text-right text-foreground tabular-nums",
+                          figureClass(loadingPartial),
+                        )}
+                      >
+                        {formatUsd(period.costUsd)}
+                      </td>
+                      <td
+                        className={cn(
+                          "py-2 pl-4 text-right text-muted-foreground tabular-nums",
+                          figureClass(loadingPartial),
+                        )}
+                      >
+                        {formatTokens(period.totalTokens)}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         )}
       </section>
     </div>

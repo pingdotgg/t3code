@@ -3,6 +3,7 @@ import { expect, it, vi } from "vite-plus/test";
 import { it as effectIt } from "@effect/vitest";
 import {
   CheckpointScopeId,
+  ContextTransferId,
   MessageId,
   NodeId,
   ProviderSessionId,
@@ -826,6 +827,125 @@ effectIt.effect("reads current startup state after waiting for the workspace lea
     expect(harness.open).not.toHaveBeenCalled();
     expect(harness.startRootRun).not.toHaveBeenCalled();
   }),
+);
+
+effectIt.effect.each([
+  { boundary: "policy resolution", nativeMode: "ensure", loss: "replaced" },
+  { boundary: "policy resolution", nativeMode: "ensure", loss: "interrupted" },
+  { boundary: "session opening", nativeMode: "ensure", loss: "replaced" },
+  { boundary: "session opening", nativeMode: "ensure", loss: "interrupted" },
+  { boundary: "session opening", nativeMode: "resume", loss: "replaced" },
+  { boundary: "session opening", nativeMode: "fork", loss: "replaced" },
+])(
+  "does not continue $nativeMode startup when $loss during $boundary",
+  ({ boundary, nativeMode, loss }) =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const gate = Deferred.succeed(entered, undefined).pipe(
+        Effect.andThen(Deferred.await(release)),
+      );
+      const harness = makeLocalCommandHarness({ text: "Continue" });
+      const projection = harness.projection();
+      const run = projection.runs[0]!;
+      const providerThread = projection.providerThreads[0]!;
+      if (nativeMode === "resume") {
+        harness.setProjection({
+          ...projection,
+          providerThreads: [
+            {
+              ...providerThread,
+              nativeThreadRef: {
+                driver: providerThread.driver,
+                nativeId: "existing",
+                strength: "strong",
+              },
+            },
+          ],
+        });
+      } else if (nativeMode === "fork") {
+        const sourceThreadId = ThreadId.make("fork-source");
+        harness.getThreadRecords.mockReturnValue(
+          Effect.succeed({
+            ...projection,
+            thread: { ...projection.thread, id: sourceThreadId },
+          }),
+        );
+        harness.setProjection({
+          ...projection,
+          contextTransfers: [
+            {
+              id: ContextTransferId.make("pending-fork"),
+              type: "fork",
+              sourceThreadId,
+              targetThreadId: projection.thread.id,
+              sourcePoint: { threadId: sourceThreadId, runId: run.id },
+              basePoint: null,
+              sourceProviderInstanceId: run.providerInstanceId,
+              targetProviderInstanceId: run.providerInstanceId,
+              targetRunId: run.id,
+              status: "pending",
+              resolution: null,
+              createdBy: "user",
+              error: null,
+              createdAt: projection.updatedAt,
+              updatedAt: projection.updatedAt,
+              consumedAt: null,
+            },
+          ],
+        });
+      }
+      const ensureThread = vi.fn(() => Effect.succeed(providerThread));
+      const resumeThread = vi.fn(() => Effect.succeed(providerThread));
+      const forkThread = vi.fn(() => Effect.succeed(providerThread));
+      harness.open.mockReturnValue(
+        (boundary === "session opening" ? gate : Effect.void).pipe(
+          Effect.as({
+            driver: providerThread.driver,
+            ensureThread,
+            resumeThread,
+            forkThread,
+          } as never),
+        ),
+      );
+      if (boundary === "policy resolution") {
+        harness.resolveRuntimePolicy.mockReturnValue(
+          gate.pipe(Effect.as({ cwd: "/tmp/native-account-command" } as never)),
+        );
+      }
+
+      const startup = yield* harness.start.pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(entered);
+      const current = harness.projection();
+      const replacementId = RunAttemptId.make("replacement-attempt");
+      const updated = {
+        ...current,
+        runs: current.runs.map((candidate) =>
+          loss === "replaced"
+            ? { ...candidate, activeAttemptId: replacementId }
+            : { ...candidate, status: "interrupted" as const, completedAt: current.updatedAt },
+        ),
+        attempts:
+          loss === "replaced"
+            ? [
+                ...current.attempts,
+                { ...current.attempts[0]!, id: replacementId, attemptOrdinal: 2 },
+              ]
+            : current.attempts,
+      };
+      harness.setProjection(updated);
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(startup);
+
+      expect(harness.open).toHaveBeenCalledTimes(boundary === "session opening" ? 1 : 0);
+      expect(ensureThread).not.toHaveBeenCalled();
+      expect(resumeThread).not.toHaveBeenCalled();
+      expect(forkThread).not.toHaveBeenCalled();
+      expect(harness.startRootRun).not.toHaveBeenCalled();
+      expect(harness.writeIfRunCurrent).not.toHaveBeenCalled();
+      expect(harness.events).toEqual([]);
+      expect(harness.projection()).toEqual(updated);
+    }),
 );
 
 effectIt.effect("starts another provider in the same checkout while a turn is pending", () =>

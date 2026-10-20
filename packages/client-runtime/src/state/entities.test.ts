@@ -26,7 +26,9 @@ import {
 } from "./models.ts";
 import { v2Projection, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import { deriveLatestThreadRun, deriveThreadRuntime } from "./threadExecution.ts";
+import { isThreadWorking } from "./threadInbox.ts";
 import { derivePendingThreadRequests } from "./threadRequests.ts";
+import { canSnooze, effectiveSnoozed } from "./threadSettled.ts";
 
 const environmentId = EnvironmentId.make("environment-v2");
 
@@ -109,6 +111,56 @@ describe("V2 client presentation", () => {
       status: "failed",
       lastError: "provider process exited",
     });
+  });
+
+  it("keeps async questions in Working until the run completes", () => {
+    const runId = RunId.make("run-async-question");
+    const running = {
+      ...v2ThreadShell,
+      snoozedAt: DateTime.makeUnsafe("2026-06-19T23:59:00.000Z"),
+      snoozedUntil: DateTime.makeUnsafe("2026-06-20T01:00:00.000Z"),
+      latestRunId: runId,
+      activeRunId: runId,
+      status: "running" as const,
+      pendingRuntimeRequest: {
+        id: RuntimeRequestId.make("request-async-question"),
+        kind: "user_input" as const,
+        createdAt: v2ThreadShell.updatedAt,
+        blocking: false,
+      },
+    };
+    const active = presentThreadShell(environmentId, running);
+    expect(active.hasPendingUserInput).toBe(false);
+    expect(isThreadWorking(active)).toBe(true);
+    expect(canSnooze(active, { now: "2026-06-20T00:05:00.000Z" })).toBe(false);
+
+    const completed = presentThreadShell(environmentId, {
+      ...running,
+      activeRunId: null,
+      status: "completed",
+    });
+    expect(completed.hasPendingUserInput).toBe(true);
+    expect(isThreadWorking(completed)).toBe(false);
+    expect(effectiveSnoozed(active, { now: "2026-06-20T00:05:00.000Z" })).toBe(false);
+  });
+
+  it("keeps blocking and legacy questions out of Working", () => {
+    for (const capability of [{ blocking: true }, {}]) {
+      const shell = presentThreadShell(environmentId, {
+        ...v2ThreadShell,
+        latestRunId: RunId.make("run-blocking-question"),
+        activeRunId: RunId.make("run-blocking-question"),
+        status: "running",
+        pendingRuntimeRequest: {
+          id: RuntimeRequestId.make("request-blocking-question"),
+          kind: "user_input",
+          createdAt: v2ThreadShell.updatedAt,
+          ...capability,
+        },
+      });
+      expect(shell.hasPendingUserInput).toBe(true);
+      expect(isThreadWorking(shell)).toBe(false);
+    }
   });
 
   it("preserves shell run timestamps for sidebar activity clocks", () => {

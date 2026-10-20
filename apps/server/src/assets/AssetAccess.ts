@@ -359,7 +359,10 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
       ),
     );
     if (!canonicalFile) {
-      return yield* new AssetWorkspaceAssetNotFoundError({ resource: input.resource });
+      return yield* new AssetWorkspaceAssetNotFoundError({
+        resource: input.resource,
+        checkedPath: input.requestedPath,
+      });
     }
     if (hostPreviewMimeTypeFromExtension(path.extname(canonicalFile)) === null) {
       return yield* new AssetPreviewTypeValidationError({ resource: input.resource });
@@ -385,7 +388,10 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
       ),
     );
     if (!opened) {
-      return yield* new AssetWorkspaceAssetNotFoundError({ resource: input.resource });
+      return yield* new AssetWorkspaceAssetNotFoundError({
+        resource: input.resource,
+        checkedPath: input.requestedPath,
+      });
     }
     return {
       claims: {
@@ -553,9 +559,12 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
     }
     case "draft-workspace-file": {
       const draftWorkspaceRoot = input.workspaceRoot ?? input.resource.cwd;
-      if (path.isAbsolute(input.resource.path)) {
+      const hostPath = input.resource.path.startsWith("~/")
+        ? expandHomePath(input.resource.path, yield* HostProcess.HomeDirectory)
+        : input.resource.path;
+      if (path.isAbsolute(hostPath)) {
         const finalized = yield* finalizeAbsoluteMediaFileAsset({
-          requestedPath: input.resource.path,
+          requestedPath: hostPath,
           resource: input.resource,
           expiresAt,
         });

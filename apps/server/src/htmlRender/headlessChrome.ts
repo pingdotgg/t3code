@@ -381,31 +381,30 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
     Effect.forkScoped,
   );
 
-  const send = <A>(
+  const send = Effect.fn("headlessChrome.send")(function* <A>(
     method: string,
     params: Record<string, unknown>,
     result: Schema.Decoder<A>,
     sessionId?: string,
-  ) =>
-    Effect.gen(function* () {
-      if (disconnected) return yield* disconnected;
-      const id = ++nextId;
-      const reply = yield* Deferred.make<unknown, BrowserFailure>();
-      pending.set(id, { method, reply });
-      const message = encodeCdpCommand({ id, method, params, ...(sessionId ? { sessionId } : {}) });
-      yield* Queue.offer(outgoing, new TextEncoder().encode(`${message}\0`));
-      return yield* Deferred.await(reply).pipe(
-        Effect.flatMap(Schema.decodeUnknownEffect(result)),
-        Effect.mapError((error) =>
-          error._tag === "HtmlRenderBrowserError"
-            ? error
-            : new HtmlRenderBrowserError({
-                reason: `${method} returned an unexpected result`,
-                cause: error,
-              }),
-        ),
-      );
-    });
+  ) {
+    if (disconnected) return yield* disconnected;
+    const id = ++nextId;
+    const reply = yield* Deferred.make<unknown, BrowserFailure>();
+    pending.set(id, { method, reply });
+    const message = encodeCdpCommand({ id, method, params, ...(sessionId ? { sessionId } : {}) });
+    yield* Queue.offer(outgoing, new TextEncoder().encode(`${message}\0`));
+    return yield* Deferred.await(reply).pipe(
+      Effect.flatMap(Schema.decodeUnknownEffect(result)),
+      Effect.mapError((error) =>
+        error._tag === "HtmlRenderBrowserError"
+          ? error
+          : new HtmlRenderBrowserError({
+              reason: `${method} returned an unexpected result`,
+              cause: error,
+            }),
+      ),
+    );
+  });
 
   const openPage = Effect.fnUntraced(function* (width: number) {
     const { targetId } = yield* send(

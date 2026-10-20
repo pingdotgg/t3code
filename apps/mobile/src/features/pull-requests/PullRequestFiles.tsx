@@ -1,4 +1,3 @@
-import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { PullRequestSectionHeading } from "./PullRequestSectionHeading";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import Animated from "react-native-reanimated";
@@ -256,19 +255,13 @@ export function usePullRequestFilesContent(props: {
     footer: (
       <>
         {result.nextCursor ? (
-          <Pressable
+          <Button
+            label={result.error ? "Retry loading files" : "Load more files"}
+            tone="secondary"
             onPress={result.error ? result.refresh : result.loadMore}
-            accessibilityRole="button"
-            className="min-h-11 items-center justify-center rounded-xl bg-grouped-card px-4 py-3"
-          >
-            {result.isPending ? (
-              <AppActivityIndicator />
-            ) : (
-              <Text className="text-sm font-t3-medium">
-                {result.error ? "Retry loading files" : "Load more files"}
-              </Text>
-            )}
-          </Pressable>
+            loading={result.isPending}
+            fullWidth
+          />
         ) : null}
         {viewed.error ? (
           <Text className="py-2 text-xs text-danger-foreground">{viewed.error}</Text>

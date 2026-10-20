@@ -1,4 +1,5 @@
 import {
+  DEFAULT_MODEL_BY_PROVIDER,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -520,8 +521,7 @@ describe("getDefaultProviderInstanceModel", () => {
       providers,
       ProviderInstanceId.make("claudeAgent"),
     );
-    expect(typeof resolved).toBe("string");
-    expect(resolved?.length).toBeGreaterThan(0);
+    expect(resolved).toBe(DEFAULT_MODEL_BY_PROVIDER[ProviderDriverKind.make("claudeAgent")]);
   });
 
   it("honors the instance's declared default before model-list order", () => {

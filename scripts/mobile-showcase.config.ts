@@ -12,7 +12,7 @@ export type { ShowcaseScene };
 export type ShowcaseAppearance = "light" | "dark";
 
 export const SHOWCASE_THEMES = MOBILE_THEME_IDS;
-export const DEFAULT_SHOWCASE_THEME = MOBILE_DEFAULT_THEME_ID;
+const DEFAULT_SHOWCASE_THEME = MOBILE_DEFAULT_THEME_ID;
 export type ShowcaseTheme = MobileThemeId;
 
 export interface ShowcaseStoreAssetSpec {

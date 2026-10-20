@@ -87,8 +87,9 @@ describe("filterDiscoveredSshHosts", () => {
     ]);
   });
 
-  it("matches case-insensitively", () => {
+  it("matches aliases and hostnames case-insensitively", () => {
     expect(filterDiscoveredSshHosts(suggestions, "PINOT")).toEqual([suggestions[1]]);
+    expect(filterDiscoveredSshHosts(hosts, "box.LOCAL")).toEqual(hosts);
   });
 
   it("returns an empty array when no hosts match", () => {

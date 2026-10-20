@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -499,6 +500,51 @@ describe("project query refresh", () => {
       expect(query.isNotFile).toBe(true);
       expect(query.readError?.failure).toBe("path_not_file");
       expect(query.data).toBeNull();
+    } finally {
+      unmount();
+      registry.dispose();
+      atomHooks.registry = null;
+    }
+  });
+
+  it("confirms files from reads and preserves that identity until a definitive folder result", () => {
+    const contents = file("# readme");
+    const success = AsyncResult.success(contents);
+    const failure = (kind: ProjectReadFileError["failure"], cached = false) =>
+      AsyncResult.failure(
+        Cause.fail(
+          new ProjectReadFileError({ cwd: "/repo", relativePath: "src/preview.ts", failure: kind }),
+        ),
+        { previousSuccess: cached ? Option.some(success) : Option.none() },
+      );
+    const states = [
+      ["initial read", AsyncResult.initial(true), false, false, null],
+      ["unknown path", failure("operation_failed"), false, false, null],
+      ["binary file", failure("binary_file"), true, false, null],
+      ["read success", success, true, false, contents],
+      ["pending refresh", AsyncResult.waiting(success), true, false, contents],
+      ["transient refresh failure", failure("operation_failed", true), true, false, contents],
+      ["became a folder", failure("path_not_file", true), false, true, contents],
+    ] as const;
+    const readAtom = Atom.make<
+      AsyncResult.AsyncResult<ProjectReadFileResult, ProjectReadFileError>
+    >(AsyncResult.initial(true));
+    const registry = AtomRegistry.make();
+    const unmount = registry.mount(readAtom);
+    projectMocks.readFile.mockReturnValue(readAtom);
+    projectMocks.optimisticFile.mockReturnValue(Atom.make(null));
+    atomHooks.registry = registry;
+
+    try {
+      for (const [label, result, isFile, isNotFile, data] of states) {
+        registry.set(readAtom, result);
+        reactHooks.beginRender();
+        const query = useProjectFileQuery(environmentId, "/repo", "src/preview.ts");
+        expect(query.isFile, label).toBe(isFile);
+        expect(query.isNotFile, label).toBe(isNotFile);
+        expect(query.data, label).toBe(data);
+        expect(query.isPending, label).toBe(result.waiting);
+      }
     } finally {
       unmount();
       registry.dispose();

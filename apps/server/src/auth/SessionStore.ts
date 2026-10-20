@@ -539,33 +539,34 @@ export const make = Effect.gen(function* () {
       sessionId,
     }).pipe(Effect.asVoid);
 
-  const loadActiveSession = (sessionId: AuthSessionId) =>
-    Effect.gen(function* () {
-      const row = yield* authSessions.getById({ sessionId });
-      if (Option.isNone(row) || row.value.revokedAt !== null) {
-        return Option.none<AuthClientSession>();
-      }
+  const loadActiveSession = Effect.fn("SessionStore.loadActiveSession")(function* (
+    sessionId: AuthSessionId,
+  ) {
+    const row = yield* authSessions.getById({ sessionId });
+    if (Option.isNone(row) || row.value.revokedAt !== null) {
+      return Option.none<AuthClientSession>();
+    }
 
-      const connectedSessions = yield* Ref.get(connectedSessionsRef);
-      const connected = connectedSessions.has(row.value.sessionId);
-      const now = yield* DateTime.now;
-      if (!connected && row.value.expiresAt.epochMilliseconds <= now.epochMilliseconds) {
-        return Option.none<AuthClientSession>();
-      }
-      return Option.some(
-        toAuthClientSession({
-          sessionId: row.value.sessionId,
-          subject: row.value.subject,
-          scopes: row.value.scopes,
-          method: row.value.method,
-          client: toClientMetadata(row.value.client),
-          issuedAt: row.value.issuedAt,
-          expiresAt: row.value.expiresAt,
-          lastConnectedAt: row.value.lastConnectedAt,
-          connected,
-        }),
-      );
-    });
+    const connectedSessions = yield* Ref.get(connectedSessionsRef);
+    const connected = connectedSessions.has(row.value.sessionId);
+    const now = yield* DateTime.now;
+    if (!connected && row.value.expiresAt.epochMilliseconds <= now.epochMilliseconds) {
+      return Option.none<AuthClientSession>();
+    }
+    return Option.some(
+      toAuthClientSession({
+        sessionId: row.value.sessionId,
+        subject: row.value.subject,
+        scopes: row.value.scopes,
+        method: row.value.method,
+        client: toClientMetadata(row.value.client),
+        issuedAt: row.value.issuedAt,
+        expiresAt: row.value.expiresAt,
+        lastConnectedAt: row.value.lastConnectedAt,
+        connected,
+      }),
+    );
+  });
 
   const markConnected: SessionStore["Service"]["markConnected"] = (sessionId) =>
     Ref.modify(connectedSessionsRef, (current) => {

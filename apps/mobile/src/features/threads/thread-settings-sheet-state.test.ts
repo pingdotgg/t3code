@@ -1,8 +1,16 @@
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 
 import { ProviderInstanceId, type ProviderOptionSelection } from "@t3tools/contracts";
+import { getProviderOptionDescriptors } from "@t3tools/shared/model";
 
 import type { ModelOption } from "../../lib/modelOptions";
+import { appAtomRegistry } from "../../state/atom-registry";
+import { modelOptionMemoryAtom } from "../../state/use-composer-drafts";
+import {
+  rememberModelOptions,
+  withRememberedModelOptions,
+} from "../../state/use-model-option-memory";
 import {
   canCommitPendingModel,
   favoritesFirst,
@@ -23,7 +31,30 @@ function modelOption(
     providerDriver: "codex",
     isDefault: false,
     isLegacy: false,
-    capabilities: null,
+    capabilities: {
+      optionDescriptors: [
+        {
+          id: "effort",
+          label: "Reasoning",
+          type: "select",
+          options: [
+            { id: "medium", label: "Medium", isDefault: true },
+            { id: "high", label: "High" },
+          ],
+          currentValue: "medium",
+        },
+        {
+          id: "serviceTier",
+          label: "Service Tier",
+          type: "select",
+          options: [
+            { id: "default", label: "Standard", isDefault: true },
+            { id: "priority", label: "Fast" },
+          ],
+          currentValue: "default",
+        },
+      ],
+    },
     selection: {
       instanceId: ProviderInstanceId.make("codex"),
       model,
@@ -31,6 +62,16 @@ function modelOption(
     },
   };
 }
+
+beforeEach(() => {
+  vi.useFakeTimers();
+});
+
+afterEach(() => {
+  vi.clearAllTimers();
+  vi.useRealTimers();
+  appAtomRegistry.set(modelOptionMemoryAtom, {});
+});
 
 describe("thread settings sheet state", () => {
   it("keeps favorites in catalog order ahead of other models", () => {
@@ -101,7 +142,8 @@ describe("thread settings sheet state", () => {
     ).toBeNull();
   });
 
-  it("preserves staged options when the highlighted model is pressed again", () => {
+  it("preserves in-progress edits when the staged model is pressed again", () => {
+    rememberModelOptions("codex", "gpt-next", [{ id: "effort", value: "medium" }]);
     const pending = modelOption("gpt-next", [{ id: "effort", value: "high" }]);
 
     expect(
@@ -109,20 +151,59 @@ describe("thread settings sheet state", () => {
         current: pending,
         pressed: modelOption("gpt-next"),
         pressedIsApplied: false,
-      }),
-    ).toBe(pending);
+        restoreSelection: withRememberedModelOptions,
+      })?.selection.options,
+    ).toEqual([{ id: "effort", value: "high" }]);
   });
 
-  it("stages a different model", () => {
+  it("previews remembered options before Save when switching models", () => {
+    const remembered = [
+      { id: "effort", value: "high" },
+      { id: "serviceTier", value: "priority" },
+    ];
+    rememberModelOptions("codex", "gpt-other", remembered);
     const pressed = modelOption("gpt-other");
 
-    expect(
-      pendingModelAfterPress({
-        current: modelOption("gpt-next"),
-        pressed,
-        pressedIsApplied: false,
-      }),
-    ).toBe(pressed);
+    const pending = pendingModelAfterPress({
+      current: modelOption("gpt-next"),
+      pressed,
+      pressedIsApplied: false,
+      restoreSelection: withRememberedModelOptions,
+    });
+
+    expect(pending?.selection).toEqual({ ...pressed.selection, options: remembered });
+    const preview = getProviderOptionDescriptors({
+      caps: pressed.capabilities!,
+      selections: pending?.selection.options,
+    });
+    expect(preview.map(({ id, currentValue }) => ({ id, value: currentValue }))).toEqual(
+      remembered,
+    );
+    expect(pending?.selection).toEqual(withRememberedModelOptions(pressed.selection));
+  });
+
+  it("keeps catalog defaults for scheduled-task picks even when options are remembered", () => {
+    rememberModelOptions("codex", "gpt-other", [
+      { id: "effort", value: "high" },
+      { id: "serviceTier", value: "priority" },
+    ]);
+    const pressed = modelOption("gpt-other");
+
+    const pending = pendingModelAfterPress({
+      current: modelOption("gpt-next"),
+      pressed,
+      pressedIsApplied: false,
+    });
+
+    expect(pending?.selection).toEqual(pressed.selection);
+    const preview = getProviderOptionDescriptors({
+      caps: pressed.capabilities!,
+      selections: pending?.selection.options,
+    });
+    expect(preview.map(({ id, currentValue }) => ({ id, value: currentValue }))).toEqual([
+      { id: "effort", value: "medium" },
+      { id: "serviceTier", value: "default" },
+    ]);
   });
 
   it("cannot select a hidden model exposed only for visibility management", () => {

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   normalizeProviderAccentColor,
+  providerAccentForegroundColor,
   providerInstanceInitials,
   resolveProviderInstanceDisplayName,
   shouldShowInstanceBadge,
@@ -86,6 +87,16 @@ describe("normalizeProviderAccentColor", () => {
   it("treats undefined and blank as unset", () => {
     expect(normalizeProviderAccentColor(undefined)).toBeUndefined();
     expect(normalizeProviderAccentColor("   ")).toBeUndefined();
+  });
+});
+
+describe("providerAccentForegroundColor", () => {
+  it.each([
+    ["#b5f23d", "#000000"],
+    ["#2563eb", "#ffffff"],
+    ["#777777", "#000000"],
+  ])("chooses the higher WCAG contrast foreground for %s", (accent, foreground) => {
+    expect(providerAccentForegroundColor(accent)).toBe(foreground);
   });
 });
 

@@ -1,4 +1,4 @@
-import { AuthProvidersManageScope } from "@t3tools/contracts";
+import { ACP_REGISTRY_MAX_AGENTS, AuthProvidersManageScope } from "@t3tools/contracts";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import {
   isAtomCommandInterrupted,
@@ -72,7 +72,9 @@ export function AcpRegistrySearchStep({
   const search = useEnvironmentQuery(
     serverEnvironment.searchAcpRegistry({
       environmentId,
-      input: { query: submittedQuery },
+      input: submittedQuery
+        ? { query: submittedQuery }
+        : { query: "", limit: ACP_REGISTRY_MAX_AGENTS },
     }),
   );
   const prepareAgent = useAtomCommand(serverEnvironment.prepareAcpRegistryAgent, {

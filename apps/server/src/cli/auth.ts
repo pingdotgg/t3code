@@ -23,29 +23,28 @@ import {
   resolveCliAuthConfig,
 } from "./config.ts";
 
-const runWithEnvironmentAuth = <A, E>(
+const runWithEnvironmentAuth = Effect.fn("auth.runWithEnvironmentAuth")(function* <A, E>(
   flags: CliAuthLocationFlags,
   run: (environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"]) => Effect.Effect<A, E>,
   options?: {
     readonly quietLogs?: boolean;
   },
-) =>
-  Effect.gen(function* () {
-    const logLevel = yield* GlobalFlag.LogLevel;
-    const config = yield* resolveCliAuthConfig(flags, logLevel);
-    const minimumLogLevel = options?.quietLogs ? "Error" : config.logLevel;
-    return yield* Effect.gen(function* () {
-      const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
-      return yield* run(environmentAuth);
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(EnvironmentAuth.layerRuntime).pipe(
-          Layer.provide(ServerConfig.layer(config)),
-          Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
-        ),
+) {
+  const logLevel = yield* GlobalFlag.LogLevel;
+  const config = yield* resolveCliAuthConfig(flags, logLevel);
+  const minimumLogLevel = options?.quietLogs ? "Error" : config.logLevel;
+  return yield* Effect.gen(function* () {
+    const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
+    return yield* run(environmentAuth);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(EnvironmentAuth.layerRuntime).pipe(
+        Layer.provide(ServerConfig.layer(config)),
+        Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
       ),
-    );
-  });
+    ),
+  );
+});
 
 const ttlFlag = Flag.String("ttl").pipe(
   Flag.withSchema(DurationFromString),

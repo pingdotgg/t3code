@@ -62,6 +62,99 @@ describe("settings search targets", () => {
     expect(target.classList.contains(PULSE)).toBe(false);
   });
 
+  it.each(["before", "after", "without animation"] as const)(
+    "fully reveals the row when the opening style clears: %s",
+    async (phase) => {
+      // Keep scrolling synchronous while the panel height transitions independently.
+      reduceMotion(true);
+      document.body.innerHTML = `
+        <div id="viewport" style="height: 200px; overflow: auto; overflow-anchor: none">
+          <div id="panel" data-slot="collapsible-panel" data-open data-starting-style
+            style="height: 0; overflow: hidden; transition: height 200ms linear">
+            <div style="height: 500px"></div>
+            <div id="legacy-sidebar" tabindex="-1" style="height: 40px">Legacy sidebar</div>
+            <div style="height: 60px"></div>
+          </div>
+        </div>`;
+      const viewport = document.getElementById("viewport")!;
+      const panel = document.getElementById("panel")!;
+      const target = document.getElementById("legacy-sidebar")!;
+
+      void panel.offsetHeight;
+      const animated = phase !== "without animation";
+      if (animated) {
+        panel.style.height = "600px";
+      } else {
+        panel.style.transition = "none";
+      }
+      const transition = panel.getAnimations()[0];
+      if (animated) {
+        expect(transition).toBeDefined();
+        transition!.pause();
+        transition!.currentTime = phase === "before" ? 0 : 100;
+        if (phase === "after") panel.removeAttribute("data-starting-style");
+      }
+
+      expect(scrollToSettingsTarget("legacy-sidebar")).toBe(true);
+      expect(document.activeElement).toBe(target);
+      const opened = animated
+        ? new Promise<void>((resolve) => {
+            panel.addEventListener("transitionend", () => resolve(), { once: true });
+          })
+        : Promise.resolve();
+      panel.style.height = "600px";
+      panel.removeAttribute("data-starting-style");
+      transition?.finish();
+      await opened;
+
+      const bounds = viewport.getBoundingClientRect();
+      const row = target.getBoundingClientRect();
+      expect(row.top).toBeGreaterThanOrEqual(bounds.top);
+      expect(row.bottom).toBeLessThanOrEqual(bounds.bottom);
+      expect(document.activeElement).toBe(target);
+    },
+  );
+
+  it("keeps the newer search destination visible when an earlier panel finishes opening", async () => {
+    reduceMotion(true);
+    document.body.innerHTML = `
+      <div id="viewport" style="height: 200px; overflow: auto; overflow-anchor: none">
+        <div id="new-target" tabindex="-1" style="height: 40px">New target</div>
+        <div style="height: 1000px"></div>
+        <div id="panel" data-slot="collapsible-panel" data-open data-starting-style
+          style="height: 0; overflow: hidden; transition: height 200ms linear">
+          <div style="height: 500px"></div>
+          <div id="legacy-sidebar" tabindex="-1" style="height: 40px">Legacy sidebar</div>
+          <div style="height: 60px"></div>
+        </div>
+      </div>`;
+    const panel = document.getElementById("panel")!;
+    void panel.offsetHeight;
+    panel.style.height = "600px";
+    const transition = panel.getAnimations()[0]!;
+    transition.pause();
+    transition.currentTime = 100;
+
+    scrollToSettingsTarget("legacy-sidebar");
+    panel.removeAttribute("data-starting-style");
+    scrollToSettingsTarget("new-target");
+    const opened = new Promise<void>((resolve) => {
+      panel.addEventListener("transitionend", () => resolve(), { once: true });
+    });
+    transition.finish();
+    await opened;
+
+    const viewport = document.getElementById("viewport")!;
+    const target = document.getElementById("new-target")!;
+    expect(target.getBoundingClientRect().top).toBeGreaterThanOrEqual(
+      viewport.getBoundingClientRect().top,
+    );
+    expect(target.getBoundingClientRect().bottom).toBeLessThanOrEqual(
+      viewport.getBoundingClientRect().bottom,
+    );
+    expect(document.activeElement).toBe(target);
+  });
+
   it("leaves not-yet-mounted destinations to their mount lifecycle", () => {
     expect(scrollToSettingsTarget("archive")).toBe(false);
   });

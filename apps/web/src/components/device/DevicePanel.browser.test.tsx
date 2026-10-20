@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import type { RightPanelSurface } from "~/rightPanelStore";
 
 import { DevicePanel } from "./DevicePanel";
+import "~/index.css";
 
 type CommandResult =
   | { _tag: "Success"; value: { hostId: string; deviceId: string } }
@@ -58,9 +59,10 @@ const deviceState: DeviceServiceState = {
   hubBasePath: "/api/device-hub",
   revision: 1,
 };
+let currentState = deviceState;
 vi.mock("~/state/device", () => ({
   deviceEnvironment: { list: "list", open: "open", close: "close" },
-  useDeviceState: () => ({ state: deviceState, loaded: true }),
+  useDeviceState: () => ({ state: currentState, loaded: true }),
 }));
 vi.mock("~/state/use-atom-command", () => ({
   useAtomCommand: (command: string) =>
@@ -77,14 +79,15 @@ vi.mock("~/rightPanelStore", () => ({
   },
 }));
 vi.mock("~/components/device/DeviceHostUpdates", () => ({ DeviceHostUpdates: () => null }));
-vi.mock("~/components/device/DeviceLoadingView", () => ({ DeviceLoadingView: () => null }));
 vi.mock("~/components/device/DeviceWorkspace", () => ({
   DeviceWorkspace: ({ onPowerOff }: { onPowerOff: () => void }) => (
     <button onClick={onPowerOff}>Power off</button>
   ),
 }));
 vi.mock("~/components/preview/PreviewPanelShell", () => ({
-  PreviewPanelShell: ({ children }: { children: ReactNode }) => children,
+  PreviewPanelShell: ({ children }: { children: ReactNode }) => (
+    <div className="flex h-full min-h-0 flex-col">{children}</div>
+  ),
 }));
 
 const threadA = {
@@ -142,8 +145,11 @@ const errors = () => container.querySelectorAll('[role="alert"]');
 
 beforeEach(() => {
   vi.resetAllMocks();
+  currentState = deviceState;
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   container = document.createElement("div");
+  container.style.width = "480px";
+  container.style.height = "800px";
   document.body.append(container);
   root = createRoot(container);
 });
@@ -151,6 +157,57 @@ afterEach(async () => {
   await act(() => root.unmount());
   container.remove();
   vi.unstubAllGlobals();
+});
+
+describe("DevicePanel notices", () => {
+  it("keeps discovery warnings dismissed until the diagnostic or environment changes", async () => {
+    currentState = {
+      ...deviceState,
+      hostStatusDetail: "Could not read simulator usage timestamps.",
+    };
+    await show(threadA);
+    expect(errors()).toHaveLength(1);
+    expect(startButton()?.disabled).toBe(false);
+    await click(container.querySelector('[aria-label="Dismiss device warning"]'));
+    expect(errors()).toHaveLength(0);
+    await show(threadA);
+    expect(errors()).toHaveLength(0);
+
+    currentState = { ...currentState, hostStatusDetail: "A different discovery warning." };
+    await show(threadA);
+    expect(errors()).toHaveLength(1);
+    await click(container.querySelector('[aria-label="Dismiss device warning"]'));
+    await show(otherEnvironment);
+    expect(errors()).toHaveLength(1);
+  });
+
+  it("keeps the loading content centered when discovery and boot notices arrive or are dismissed", async () => {
+    const pick = deferred();
+    mocks.open.mockReturnValue(pick.promise);
+    await show(threadA);
+    await click(startButton());
+    const loadingBounds = () =>
+      container
+        .querySelector('[aria-label="Step 1 of 2: open device"]')!
+        .parentElement!.getBoundingClientRect();
+    const before = loadingBounds();
+    const panel = container.getBoundingClientRect();
+    expect(before.height).toBeGreaterThan(0);
+    expect(before.top + before.height / 2).toBeCloseTo(panel.top + panel.height / 2, 0);
+
+    currentState = {
+      ...deviceState,
+      hostStatusDetail: "Could not read CoreSimulator plist.\n".repeat(8),
+      bootingDevices: [{ ...phone, threadId: threadA.threadId }],
+    };
+    await show(threadA);
+    expect(loadingBounds().top).toBe(before.top);
+    expect(loadingBounds().left).toBe(before.left);
+    await click(container.querySelector('[aria-label="Dismiss device warning"]'));
+    expect(loadingBounds().top).toBe(before.top);
+    expect(loadingBounds().left).toBe(before.left);
+    await act(async () => pick.settle(failed));
+  });
 });
 
 describe("DevicePanel thread switches", () => {

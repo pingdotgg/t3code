@@ -556,6 +556,82 @@ describe("Antigravity stderr compatibility", () => {
 });
 
 it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
+  const prepareSpawn = Effect.fn(function* (
+    bundles: ReadonlyArray<string>,
+    baseEnv: NodeJS.ProcessEnv = {},
+    platform: NodeJS.Platform = "linux",
+  ) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped();
+    const profile = yield* prepareAntigravityProfile({
+      profileDirectory: path.join(directory, "profile"),
+      userHome: path.join(directory, "home"),
+      runtimeExecutablePath: process.execPath,
+      platform,
+      baseEnv,
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, {
+        ...fs,
+        exists: (candidate) => Effect.succeed(bundles.includes(candidate)),
+      }),
+    );
+    return buildAntigravityAcpSpawnInput({
+      installation: { executablePath: "/release/acp", harnessPath: "/release/harness" },
+      profile,
+      cwd: directory,
+      baseEnv,
+    }).env;
+  });
+
+  // A Windows Node path cannot preflight the browser helper as a POSIX host.
+  const caTest = it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32");
+
+  caTest(
+    "launches Linux agents with the first available CA bundle, preferring absolute Nix paths",
+    () =>
+      Effect.gen(function* () {
+        const systemBundles = ["/etc/pki/tls/certs/ca-bundle.crt", "/etc/ssl/cert.pem"];
+        const nixBundle = "/nix/store/nss-cacert/etc/ssl/certs/ca-bundle.crt";
+        expect((yield* prepareSpawn(systemBundles))?.SSL_CERT_FILE).toBe(systemBundles[0]);
+        expect(
+          (yield* prepareSpawn([nixBundle, ...systemBundles], { NIX_SSL_CERT_FILE: nixBundle }))
+            ?.SSL_CERT_FILE,
+        ).toBe(nixBundle);
+        expect(
+          (yield* prepareSpawn(systemBundles, { NIX_SSL_CERT_FILE: nixBundle }))?.SSL_CERT_FILE,
+        ).toBe(systemBundles[0]);
+        expect(
+          (yield* prepareSpawn(["certs/local.pem", ...systemBundles], {
+            NIX_SSL_CERT_FILE: "certs/local.pem",
+          }))?.SSL_CERT_FILE,
+        ).toBe(systemBundles[0]);
+        expect((yield* prepareSpawn([]))?.SSL_CERT_FILE).toBeUndefined();
+      }),
+  );
+
+  caTest("preserves explicit certificate files and directories in Linux launches", () =>
+    Effect.gen(function* () {
+      const bundles = ["/etc/ssl/certs/ca-certificates.crt"];
+      expect(
+        (yield* prepareSpawn(bundles, { SSL_CERT_FILE: "/custom/ca.pem" }))?.SSL_CERT_FILE,
+      ).toBe("/custom/ca.pem");
+      const directoryEnv = yield* prepareSpawn(bundles, { SSL_CERT_DIR: "/custom/certs" });
+      expect(directoryEnv?.SSL_CERT_DIR).toBe("/custom/certs");
+      expect(directoryEnv?.SSL_CERT_FILE).toBeUndefined();
+    }),
+  );
+
+  caTest("leaves non-Linux certificate defaults unchanged even when a bundle exists", () =>
+    Effect.gen(function* () {
+      const bundle = "/etc/ssl/certs/ca-certificates.crt";
+      for (const platform of ["darwin", "win32"] as const) {
+        const env = yield* prepareSpawn([bundle], { NIX_SSL_CERT_FILE: bundle }, platform);
+        expect(env?.SSL_CERT_FILE).toBeUndefined();
+      }
+    }),
+  );
+
   it.effect("runs the browser helper with installed Node in standalone builds", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

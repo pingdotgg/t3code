@@ -324,8 +324,9 @@ export const make = Effect.gen(function* () {
             cause,
           }),
       }).pipe(Effect.orDie),
-    sendAll: (channel, ...args) =>
-      Effect.gen(function* () {
+    sendAll:
+      /* Window broadcasts run for streamed updates; avoid a span per broadcast. */
+      Effect.fnUntraced(function* (channel, ...args) {
         for (const window of yield* listWindows) {
           if (yield* isWindowDestroyed(window)) {
             continue;

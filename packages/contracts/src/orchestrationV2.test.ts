@@ -625,6 +625,20 @@ describe("orchestration V2 contracts", () => {
     expect(event.payload.id).toBe(RunId.make("run-1"));
   });
 
+  it("accepts a thread Stop without a client-resolved run", () => {
+    expect(
+      decodeOrchestrationV2Command({
+        type: "thread.stop",
+        commandId: "stop-thread",
+        threadId: "thread-1",
+      }),
+    ).toEqual({
+      type: "thread.stop",
+      commandId: "stop-thread",
+      threadId: "thread-1",
+    });
+  });
+
   it("decodes app-owned delegated task commands", () => {
     const command = decodeOrchestrationV2Command({
       type: "delegated_task.request",

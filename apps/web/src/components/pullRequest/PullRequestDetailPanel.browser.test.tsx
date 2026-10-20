@@ -13,21 +13,34 @@ import * as Cause from "effect/Cause";
 import { act, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
+import { selectActiveRightPanelSurface, useRightPanelStore } from "~/rightPanelStore";
+import { RightPanelSurfaceContent } from "../chat/RightPanelSurfaceContent";
 
 import "~/index.css";
 
-const { newThread, prepareThread, refresh, addToast, updateToast, checkoutState } = vi.hoisted(
-  () => ({
-    newThread: vi.fn(),
-    prepareThread: vi.fn(),
-    refresh: vi.fn(),
-    addToast: vi.fn(),
-    updateToast: vi.fn(),
-    checkoutState: { error: null as Error | null },
-  }),
-);
+const {
+  newThread,
+  prepareThread,
+  refresh,
+  update,
+  addToast,
+  updateToast,
+  checkoutState,
+  hostCommand,
+  queries,
+} = vi.hoisted(() => ({
+  hostCommand: vi.fn(),
+  queries: { diff: undefined as unknown },
+  newThread: vi.fn(),
+  prepareThread: vi.fn(),
+  refresh: vi.fn(),
+  update: vi.fn(),
+  addToast: vi.fn(),
+  updateToast: vi.fn(),
+  checkoutState: { error: null as Error | null },
+}));
 
 vi.mock(import("~/state/session"), async (original) => ({
   ...(await original()),
@@ -52,18 +65,22 @@ vi.mock(import("~/lib/sourceControlActions"), async (original) => ({
 }));
 vi.mock(import("~/state/use-atom-command"), async (original) => ({
   ...(await original()),
-  useAtomCommand: (() => vi.fn()) as never,
+  useAtomCommand: ((command: unknown) => (command === "update" ? update : hostCommand)) as never,
 }));
 vi.mock(import("~/state/pullRequests"), async (original) => {
   const actual = await original();
   const { Atom } = await import("effect/reactivity");
   const cannotWriteGuides = Atom.make(false);
+  const diff = Atom.make(null);
+  queries.diff = diff;
   return {
     ...actual,
     pullRequestEnvironment: {
       ...actual.pullRequestEnvironment,
       detail: (() => "detail") as never,
+      diff: (() => diff) as never,
       activity: (() => "activity") as never,
+      update: "update" as never,
       reviewGuide: (() => "review-guide") as never,
       generateReviewGuide: {
         ...actual.pullRequestEnvironment.generateReviewGuide,
@@ -75,7 +92,14 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
 vi.mock(import("~/state/query"), async (original) => ({
   ...(await original()),
   useEnvironmentQuery: ((query: unknown) => ({
-    data: query === "detail" ? detail : null,
+    data:
+      query === "detail"
+        ? (activityDetail ?? currentDetail)
+        : query === "activity"
+          ? activityDetail
+          : query === queries.diff
+            ? diff
+            : null,
     dataUpdatedAt: 0,
     failure: null,
     isPending: false,
@@ -94,66 +118,41 @@ vi.mock(import("~/state/usePullRequestStack"), async (original) => ({
     refresh,
   })) as never,
 }));
-// The real tabs load diffs, markdown and checks from the environment; these stand-ins
-// expose the actions they hand back to the panel and a tall scroller.
-vi.mock(import("./PullRequestSummaryTab"), async (original) => ({
-  ...(await original()),
-  PullRequestSummaryTab: (({
-    onFixFinding,
-    scrollerRef,
-  }: ComponentProps<typeof import("./PullRequestSummaryTab").PullRequestSummaryTab>) => (
-    <div ref={scrollerRef} data-testid="summary-scroller" className="h-full overflow-y-auto">
-      <button
-        type="button"
-        onClick={() =>
-          onFixFinding?.({
-            kind: "check",
-            check: { name: "Unit tests", status: "failure", description: "Test failed", url: null },
-          })
-        }
-      >
-        Fix check
-      </button>
-      <div data-testid="nested-scroller" className="h-40 overflow-y-auto">
-        <div className="h-[2000px]" />
-      </div>
-      <div className="h-[3000px]" />
-    </div>
-  )) as never,
-}));
-vi.mock(import("./PullRequestCodeTab"), async (original) => ({
-  ...(await original()),
-  default: (({
-    onAddToAgentSelection,
-    scrollerRef,
-  }: ComponentProps<typeof import("./PullRequestCodeTab").default>) => (
-    <div ref={scrollerRef} data-testid="code-scroller" className="h-full overflow-y-auto">
-      <button
-        type="button"
-        onClick={() =>
-          onAddToAgentSelection?.({
-            request: "Fix this line",
-            comment: {
-              id: "note-1",
-              sectionId: "file:a.ts",
-              sectionTitle: "a.ts",
-              filePath: "a.ts",
-              startIndex: 0,
-              endIndex: 0,
-              rangeLabel: "L1",
-              text: "Please fix",
-              diff: "+broken()",
-            },
-          })
-        }
-      >
-        Add to agent
-      </button>
-      <div className="h-[3000px]" />
-    </div>
-  )) as never,
-}));
-
+// Action and scroll tests use stand-ins; activity tests render the real Summary.
+vi.mock(import("./PullRequestSummaryTab"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    PullRequestSummaryTab: ((props: ComponentProps<typeof actual.PullRequestSummaryTab>) => {
+      if (activityDetail !== null) return <actual.PullRequestSummaryTab {...props} />;
+      const { onFixFinding, scrollerRef } = props;
+      return (
+        <div ref={scrollerRef} data-testid="summary-scroller" className="h-full overflow-y-auto">
+          <button
+            type="button"
+            onClick={() =>
+              onFixFinding?.({
+                kind: "check",
+                check: {
+                  name: "Unit tests",
+                  status: "failure",
+                  description: "Test failed",
+                  url: null,
+                },
+              })
+            }
+          >
+            Fix check
+          </button>
+          <div data-testid="nested-scroller" className="h-40 overflow-y-auto">
+            <div className="h-[2000px]" />
+          </div>
+          <div className="h-[3000px]" />
+        </div>
+      );
+    }) as never,
+  };
+});
 vi.mock(import("../ui/toast"), async (original) => {
   const actual = await original();
   return {
@@ -164,6 +163,7 @@ vi.mock(import("../ui/toast"), async (original) => {
 
 import { PullRequestDetailPanel } from "./PullRequestDetailPanel";
 import { pullRequestPanelContext } from "./pullRequestDetail.logic";
+import { usePullRequestReviewStore } from "./pullRequestReviewStore";
 
 const detail: PullRequestDetailView = {
   provider: SourceControlProviderKind.make("github"),
@@ -217,6 +217,25 @@ const detail: PullRequestDetailView = {
   },
 };
 
+let currentDetail = detail;
+let activityDetail: PullRequestDetailView | null = null;
+
+// Enough lines to exercise the panel's title folding with the real virtualized Code tab.
+const diff = {
+  patch: [
+    "diff --git a/a.ts b/a.ts",
+    "new file mode 100644",
+    "--- /dev/null",
+    "+++ b/a.ts",
+    "@@ -0,0 +1,100 @@",
+    "+broken()",
+    ...Array.from({ length: 99 }, (_, index) => `+// line ${index + 2}`),
+    "",
+  ].join("\n"),
+  truncated: false,
+  nextCursor: null,
+};
+
 const threadRef: ScopedThreadRef = {
   environmentId: EnvironmentId.make("env-1"),
   threadId: ThreadId.make("thread-1"),
@@ -255,8 +274,13 @@ function render(props: Partial<ComponentProps<typeof PullRequestDetailPanel>> = 
 }
 
 beforeEach(() => {
+  activityDetail = null;
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  currentDetail = detail;
   useComposerDraftStore.setState({ draftsByThreadKey: {} });
+  useRightPanelStore.setState({ byThreadKey: {} });
+  usePullRequestReviewStore.setState({ drafts: {}, summaries: {} });
+  hostCommand.mockReset();
   newThread
     .mockReset()
     .mockResolvedValue({ draftId: newDraftId, threadId: ThreadId.make("new-thread") });
@@ -267,6 +291,7 @@ beforeEach(() => {
     _tag: "Success",
     value: { branch: "feature", worktreePath: "/workspace/pr" },
   });
+  update.mockReset().mockResolvedValue({ _tag: "Success", value: undefined });
 });
 afterEach(async () => {
   for (const root of roots.splice(0)) await act(async () => root.unmount());
@@ -298,9 +323,57 @@ const unrelatedThread = {
 
 const tab = (name: string) => page.getByRole("button", { name, exact: true });
 
+const selectionDraft = () => page.getByRole("textbox", { name: "Comment on lines a.ts:1" });
+
+async function selectFirstLine() {
+  const line = page.getByText("broken()", { exact: true });
+  await expect.element(line).toBeVisible();
+  const host = line.element().getRootNode() as ShadowRoot;
+  const gutter = host.querySelector<HTMLElement>('[data-column-number="1"]')!;
+  await userEvent.click(gutter);
+}
+
+it.each([
+  { isComposing: true, keyCode: 13 },
+  { isComposing: false, keyCode: 229 },
+])("does not save the PR title during IME composition (%j)", async ({ isComposing, keyCode }) => {
+  await render();
+  await page.getByRole("button", { name: "Edit title" }).click();
+  const titleInput = page.getByRole("textbox", { name: "Pull request title" });
+  const title = "日本語のタイトル";
+  await titleInput.fill(title);
+  const pressEnter = (init: KeyboardEventInit) =>
+    act(async () => {
+      titleInput
+        .element()
+        .dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true, ...init }),
+        );
+    });
+
+  await pressEnter({ isComposing, keyCode });
+  expect(update).not.toHaveBeenCalled();
+  await expect.element(titleInput).toHaveValue(title);
+
+  await pressEnter({ keyCode: 13 });
+  expect(update).toHaveBeenCalledExactlyOnceWith({
+    environmentId: threadRef.environmentId,
+    input: { ...surface, title },
+  });
+  await expect.element(titleInput).not.toBeInTheDocument();
+});
+
 async function runAction(action: string) {
   if (action === "Add to agent") {
     await tab("Code").click();
+    await page.getByRole("button", { name: "Expand all files", exact: true }).click();
+    await selectFirstLine();
+    const draft = page.getByRole("textbox", { name: "Comment on lines a.ts:1" });
+    await expect.element(draft).toBeVisible();
+    expect(
+      page.getByRole("button", { name: "Add to review", exact: true }).elements(),
+    ).toHaveLength(0);
+    await draft.fill("Fix this line");
   }
   if (["Ask a question", "Explain this PR"].includes(action) || action.startsWith("Fix findings")) {
     await page.getByRole("button", { name: "More pull request actions" }).click();
@@ -337,6 +410,17 @@ describe.each([
     "Fix check",
     "Add to agent",
   ])("%s writes to the correct composer", async (action) => {
+    // Cover both a host without inline comments and an account that cannot write them.
+    currentDetail =
+      thread === stackThread
+        ? {
+            ...detail,
+            capabilities: {
+              ...detail.capabilities,
+              review: { ...detail.capabilities.review, inlineComment: true },
+            },
+          }
+        : { ...detail, viewerPermissions: { ...detail.viewerPermissions, comment: true } };
     if (target) useComposerDraftStore.getState().setPrompt(target, "Keep my draft");
     await renderPanel();
     await runAction(target ? action : action.replace("in this thread", "in a thread"));
@@ -352,8 +436,20 @@ describe.each([
     if (action === "Add to agent") {
       expect(draft()?.prompt).toContain("Fix this line");
       expect(draft()?.reviewComments).toEqual(
-        expect.arrayContaining([expect.objectContaining({ id: "note-1", diff: "+broken()" })]),
+        expect.arrayContaining([
+          expect.objectContaining({
+            filePath: "a.ts",
+            diff: expect.stringContaining("+broken()"),
+            startIndex: 0,
+            endIndex: 0,
+          }),
+        ]),
       );
+      expect(usePullRequestReviewStore.getState().drafts).toEqual({});
+      expect(hostCommand).not.toHaveBeenCalled();
+      await expect
+        .element(page.getByRole("textbox", { name: "Comment on lines a.ts:1" }))
+        .not.toBeInTheDocument();
     }
     if (target) {
       expect(draft()?.prompt).toContain("Keep my draft");
@@ -365,13 +461,72 @@ describe.each([
   });
 });
 
+it("offers both selection actions and queues a permitted host review locally", async () => {
+  currentDetail = {
+    ...detail,
+    capabilities: {
+      ...detail.capabilities,
+      review: { ...detail.capabilities.review, inlineComment: true },
+    },
+    viewerPermissions: { ...detail.viewerPermissions, comment: true },
+  };
+  await render({ composerDraftTarget: draftId, threadRef });
+  await tab("Code").click();
+  await page.getByRole("button", { name: "Expand all files", exact: true }).click();
+  await selectFirstLine();
+  const addToReview = page.getByRole("button", { name: "Add to review", exact: true });
+  await expect.element(addToReview).toBeVisible();
+  await expect
+    .element(page.getByRole("button", { name: "Add to agent", exact: true }))
+    .toBeVisible();
+  await selectionDraft().fill("Fix this line before merging");
+  await addToReview.click();
+  await expect.element(selectionDraft()).not.toBeInTheDocument();
+  expect(Object.values(usePullRequestReviewStore.getState().drafts).flat()).toEqual([
+    expect.objectContaining({ path: "a.ts", body: "Fix this line before merging" }),
+  ]);
+  expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.reviewComments ?? []).toEqual(
+    [],
+  );
+  expect(hostCommand).not.toHaveBeenCalled();
+});
+
+it("cancels an agent-only selection and submits a fresh one with the keyboard without a host review", async () => {
+  await render({ composerDraftTarget: draftId, threadRef });
+  await tab("Code").click();
+  await page.getByRole("button", { name: "Expand all files", exact: true }).click();
+  await selectFirstLine();
+  await selectionDraft().fill("Discard this request");
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect.element(selectionDraft()).not.toBeInTheDocument();
+  expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.reviewComments ?? []).toEqual(
+    [],
+  );
+  expect(usePullRequestReviewStore.getState().drafts).toEqual({});
+  expect(hostCommand).not.toHaveBeenCalled();
+
+  await selectFirstLine();
+  await expect.element(selectionDraft()).toHaveValue("");
+  await selectionDraft().fill("Fix this line");
+  await userEvent.keyboard("{Control>}{Enter}{/Control}");
+  await expect.element(selectionDraft()).not.toBeInTheDocument();
+  expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.prompt).toContain(
+    "Fix this line",
+  );
+  expect(usePullRequestReviewStore.getState().drafts).toEqual({});
+  expect(hostCommand).not.toHaveBeenCalled();
+});
+
 it("folds the title only for the active tab's own scroller", async () => {
   await render();
   const title = page.getByRole("heading", { level: 1, name: "Test pull request" });
   await expect.element(title).toBeVisible();
   const titleFold = () => title.element().closest("[inert]") !== null;
   const scrollTo = async (testId: string, top: number) => {
-    const scroller = page.getByTestId(testId).element() as HTMLElement;
+    const scroller =
+      testId === "code-scroller"
+        ? document.querySelector<HTMLElement>(".\\@container.overflow-auto")!
+        : (page.getByTestId(testId).element() as HTMLElement);
     await act(async () => {
       scroller.scrollTop = top;
       scroller.dispatchEvent(new Event("scroll"));
@@ -393,7 +548,8 @@ it("folds the title only for the active tab's own scroller", async () => {
   await vi.waitFor(() => expect(titleFold()).toBe(true));
 
   await tab("Code").click();
-  await expect.element(page.getByTestId("code-scroller")).toBeInTheDocument();
+  await page.getByRole("button", { name: "Expand all files", exact: true }).click();
+  await expect.element(page.getByText("broken()", { exact: true })).toBeVisible();
   await vi.waitFor(() => expect(titleFold()).toBe(false));
   await scrollTo("code-scroller", 600);
   await vi.waitFor(() => expect(titleFold()).toBe(true));
@@ -404,6 +560,131 @@ it("folds the title only for the active tab's own scroller", async () => {
   await vi.waitFor(() => expect(titleFold()).toBe(false));
   await tab("Code").click();
   await vi.waitFor(() => expect(titleFold()).toBe(true));
+});
+
+it("restores the selected PR tab when switching threads and remounting the right panel", async () => {
+  const otherThread = { ...threadRef, threadId: ThreadId.make("thread-2") };
+  useRightPanelStore.getState().openPullRequest(threadRef, surface);
+  useRightPanelStore.getState().openPullRequest(otherThread, surface);
+  const codeTab = () => page.getByRole("button", { name: "Expand all files", exact: true });
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  document.body.append(container);
+  const root = createRoot(container);
+  roots.push(root);
+  const show = (ref: ScopedThreadRef) => {
+    const selected = selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, ref);
+    return act(async () => {
+      root.render(
+        <RightPanelSurfaceContent
+          surface={selected}
+          activeSurfaceId={selected?.id ?? null}
+          threadRef={ref}
+          environmentId={ref.environmentId}
+          visible
+          composerDraftTarget={ref}
+          keybindings={[]}
+          configuredPreviewUrls={[]}
+          workspaceMutationId={null}
+          getShortcutContext={shortcutContext}
+          onSendAnnotation={() => {}}
+          onCloseSurface={() => {}}
+          terminal={{
+            launchContext: null,
+            focusRequestId: 0,
+            keybindings: [],
+            onAddTerminalContext: () => {},
+            onSplitTerminal: () => {},
+            onSplitTerminalVertical: () => {},
+            onNewTerminal: () => {},
+            onActiveTerminalChange: () => {},
+            onCloseTerminal: () => {},
+          }}
+          pullRequest={{
+            capabilityKnown: true,
+            supported: true,
+            projectId: detail.projectId,
+            pullRequests: [],
+            linkedPullRequest: null,
+            branchPullRequest: null,
+            onBack: undefined,
+          }}
+          files={{
+            projectName: null,
+            workspaceRoot: undefined,
+            availableEditors: [],
+            pendingSurfaceIds: new Set(),
+            onOpenFile: () => {},
+            onPendingChange: () => {},
+          }}
+        />,
+      );
+    });
+  };
+
+  await show(threadRef);
+  await expect.element(page.getByTestId("summary-scroller")).toBeVisible();
+  await tab("Code").click();
+  await expect.element(codeTab()).toBeVisible();
+  await show(otherThread);
+  await expect.element(page.getByTestId("summary-scroller")).toBeVisible();
+  await show(threadRef);
+  await expect.element(codeTab()).toBeVisible();
+
+  useRightPanelStore
+    .getState()
+    .openPullRequest(threadRef, { ...surface, projectId: "other-project" });
+  await show(threadRef);
+  await expect.element(page.getByTestId("summary-scroller")).toBeVisible();
+  useRightPanelStore.getState().openPullRequest(threadRef, surface);
+  await show(threadRef);
+  await expect.element(codeTab()).toBeVisible();
+
+  await act(async () => root.render(null));
+  useRightPanelStore.getState().openPullRequest(threadRef, { ...surface, url: detail.url });
+  await show(threadRef);
+  await expect.element(codeTab()).toBeVisible();
+  await tab("Summary").click();
+  await show(otherThread);
+  await show(threadRef);
+  await expect.element(page.getByTestId("summary-scroller")).toBeVisible();
+});
+
+it("stays collapsed at the bottom after native scroll clamping and reopens at the top", async () => {
+  await render();
+  const title = page.getByRole("heading", { level: 1, name: "Test pull request" });
+  await expect.element(title).toBeVisible();
+  const scroller = page.getByTestId("summary-scroller").element() as HTMLElement;
+  const content = scroller.lastElementChild as HTMLElement;
+  // Leave only a short scroll range so folding the header makes the browser clamp it.
+  content.style.height = `${scroller.clientHeight - 24}px`;
+  const expandedHeight = scroller.clientHeight;
+  const expandedBottom = scroller.scrollHeight - scroller.clientHeight;
+
+  await act(async () => {
+    const scrolled = new Promise<void>((resolve) =>
+      scroller.addEventListener("scroll", () => resolve(), { once: true }),
+    );
+    scroller.scrollTop = scroller.scrollHeight;
+    await scrolled;
+  });
+
+  await vi.waitFor(() => {
+    expect(title.element().closest("[inert]")).not.toBeNull();
+    expect(scroller.clientHeight).toBeGreaterThan(expandedHeight);
+    expect(scroller.scrollTop).toBeGreaterThan(0);
+    expect(scroller.scrollTop).toBeLessThan(expandedBottom);
+    expect(scroller.scrollTop).toBe(scroller.scrollHeight - scroller.clientHeight);
+  });
+
+  await act(async () => {
+    const scrolled = new Promise<void>((resolve) =>
+      scroller.addEventListener("scroll", () => resolve(), { once: true }),
+    );
+    scroller.scrollTop = 0;
+    await scrolled;
+  });
+  await vi.waitFor(() => expect(title.element().closest("[inert]")).toBeNull());
 });
 
 it("shows the current checkout recovery detail on the first failure and on retry", async () => {
@@ -433,4 +714,108 @@ it("shows the current checkout recovery detail on the first failure and on retry
     expect.stringContaining(first.detail),
     second.detail,
   ]);
+});
+
+it("keeps discussion counts and Timeline expansion in sync with activity refreshes", async () => {
+  activityDetail = {
+    ...detail,
+    provider: SourceControlProviderKind.make("gitlab"),
+    url: "https://gitlab.com/owner/repo/-/merge_requests/1",
+    comments: [],
+    commentCount: 0,
+    commentsTruncated: true,
+    reviewThreads: [
+      {
+        id: "discussion-1",
+        path: "src/index.ts",
+        line: 1,
+        side: "right",
+        isResolved: false,
+        isOutdated: false,
+        comments: [
+          {
+            id: "note-1",
+            author: detail.author,
+            body: "Discussion finding",
+            createdAt: "2026-09-01T00:01:00Z",
+            url: "https://gitlab.com/owner/repo/-/merge_requests/1#note_1",
+          },
+          {
+            id: "note-2",
+            author: detail.author,
+            body: "Discussion reply",
+            createdAt: "2026-09-01T00:02:00Z",
+            url: "https://gitlab.com/owner/repo/-/merge_requests/1#note_2",
+          },
+        ],
+      },
+    ],
+  };
+  await render({ reference: activityDetail });
+  await expect.element(page.getByText("Discussion finding", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Discussion reply", { exact: true })).toBeVisible();
+  expect
+    .soft(page.getByRole("button", { name: /^Comments \(/ }).element().textContent)
+    .toBe("Comments (2)");
+  const warning = page.getByText(/open it on the host to read the rest/).element().textContent;
+  expect.soft(warning).toMatch(/\b2\b/);
+  expect.soft(warning).not.toMatch(/most recent/i);
+
+  await tab("Timeline").click();
+  await expect.element(page.getByText("Discussion finding", { exact: true }).last()).toBeVisible();
+  await expect.element(page.getByText("Discussion reply", { exact: true }).last()).toBeVisible();
+  expect.soft(page.getByLabelText(/^[0-9]+ comments?$/).element().textContent).toBe("2");
+
+  const threadToggle = page.getByRole("button", { name: /^src\/index\.ts:1/ });
+  const expectThread = (expanded: boolean, status: string | null) => {
+    const toggle = threadToggle.element();
+    if (status) expect(toggle.textContent).toContain(status);
+    else expect(toggle.textContent).not.toMatch(/Resolved|Review dismissed/);
+    const visibleBody = (toggle.parentElement as HTMLElement).innerText;
+    expect({
+      expanded: toggle.getAttribute("aria-expanded"),
+      findingVisible: visibleBody.includes("Discussion finding"),
+      replyVisible: visibleBody.includes("Discussion reply"),
+    }).toEqual({
+      expanded: String(expanded),
+      findingVisible: expanded,
+      replyVisible: expanded,
+    });
+  };
+  const refreshActivity = async (isResolved: boolean, reviewState: string | null = null) => {
+    await tab("Code").click();
+    await expect
+      .element(page.getByRole("button", { name: "Expand all files", exact: true }))
+      .toBeVisible();
+    const current = activityDetail!;
+    activityDetail = {
+      ...current,
+      comments: current.reviewThreads.flatMap((thread) =>
+        thread.comments.map((comment) => ({
+          ...comment,
+          kind: "review-comment" as const,
+          path: thread.path,
+          reviewState,
+        })),
+      ),
+      reviewThreads: current.reviewThreads.map((thread) => ({ ...thread, isResolved })),
+    };
+    await tab("Timeline").click();
+  };
+
+  expectThread(true, null);
+  await refreshActivity(true);
+  expectThread(false, "Resolved");
+  await threadToggle.click();
+  expectThread(true, "Resolved");
+  await refreshActivity(true);
+  expectThread(true, "Resolved");
+  await threadToggle.click();
+  expectThread(false, "Resolved");
+  await refreshActivity(false);
+  expectThread(true, null);
+  await refreshActivity(false, "DISMISSED");
+  expectThread(false, "Review dismissed");
+  await refreshActivity(false);
+  expectThread(true, null);
 });

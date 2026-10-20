@@ -45,6 +45,7 @@
     "@tiptap/extension-code-block": "^3.31.3",
     "@tiptap/extension-heading": "^3.31.3",
     "@tiptap/extension-horizontal-rule": "^3.31.3",
+    "@tiptap/extension-italic": "^3.31.3",
     "@tiptap/extension-list": "^3.31.3",
     "@tiptap/extension-task-item": "^3.31.3",
     "@tiptap/extension-task-list": "^3.31.3",
@@ -61,6 +62,7 @@
     "jose": "catalog:",
     "jsonc-parser": "3.3.1",
     "jszip": "3.10.1",
+    "katex": "^0.16.47",
     "lucide": "^0.564.0",
     "lucide-react": "^0.564.0",
     "mermaid": "^11.17.2",
@@ -69,8 +71,11 @@
     "react-dom": "catalog:",
     "react-markdown": "^10.1.0",
     "remark-gfm": "catalog:",
+    "remark-math": "6.0.0",
+    "remark-parse": "catalog:",
     "tailwind-merge": "^3.4.0",
     "unbash": "^5.0.0",
+    "unified": "catalog:",
     "use-sync-external-store": "^1.6.0",
     "zustand": "^5.0.11"
   },
@@ -92,7 +97,6 @@
     "oxc-transform-react": "~0.152.0",
     "playwright": "1.60.0",
     "tailwindcss": "^4.0.0",
-    "unified": "catalog:",
     "vite": "catalog:",
     "vite-plus": "catalog:"
   }

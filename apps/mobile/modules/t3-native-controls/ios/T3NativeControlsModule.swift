@@ -167,6 +167,12 @@ public final class T3NativeControlsModule: Module {
     return bounds.width > bounds.height ? "landscape" : "portrait"
   }
 
+  @JS
+  @MainActor
+  func isProtectedDataAvailable() async -> Bool {
+    UIApplication.shared.isProtectedDataAvailable
+  }
+
   private func launchArgument(_ flag: String) -> String? {
     let arguments = ProcessInfo.processInfo.arguments
     guard

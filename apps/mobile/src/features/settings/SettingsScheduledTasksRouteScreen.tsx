@@ -1067,9 +1067,9 @@ function WebhookScheduleDetails({
           {resolved.note !== null ? (
             <Text className="text-sm text-foreground-muted">{resolved.note}</Text>
           ) : null}
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ disabled: disabled || rotating }}
+          <Button
+            label={rotating ? "Rotating…" : "Rotate URL"}
+            tone="danger"
             disabled={disabled || rotating}
             onPress={() =>
               Dialog.alert("Rotate URL?", "The current URL stops working immediately.", [
@@ -1092,12 +1092,8 @@ function WebhookScheduleDetails({
                 },
               ])
             }
-            className="min-h-11 justify-center active:opacity-70 disabled:opacity-50"
-          >
-            <Text className="text-base text-danger-foreground">
-              {rotating ? "Rotating…" : "Rotate URL"}
-            </Text>
-          </Pressable>
+            loading={rotating}
+          />
         </>
       )}
       {signatureConfigured ? (

@@ -646,7 +646,7 @@ describe("GitCafePullRequestProvider", () => {
       });
       assert.deepStrictEqual(
         detail.checks.map((check) => check.name),
-        ["early", "late"],
+        ["late", "early"],
       );
       assert.deepStrictEqual(
         detail.reviewers.map((reviewer) => reviewer.login),

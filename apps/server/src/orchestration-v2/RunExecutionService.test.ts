@@ -1,9 +1,11 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, vi } from "@effect/vitest";
 import {
   CheckpointScopeId,
   ChatAttachmentId,
   ChatFileAttachment,
   CommandId,
+  EnvironmentId,
   EventId,
   MessageId,
   NodeId,
@@ -32,10 +34,16 @@ import * as Exit from "effect/Exit";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import { HttpServer } from "effect/http";
+import * as NetAddress from "effect/net/NetAddress";
+import * as TestClock from "effect/testing/TestClock";
+
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -324,6 +332,141 @@ it("routes only enrolled workflow members after the root turn ends", () => {
     afterUnrelatedDescendant.ownedThreadIds.has(
       ThreadId.make("thread:late-child:unrelated-descendant"),
     ),
+  );
+});
+
+it("moves a child thread to the run that shows its subagent now", () => {
+  const threadId = ThreadId.make("thread:handoff");
+  const rootProviderTurnId = ProviderTurnId.make("provider-turn:handoff");
+  const identity: RunExecutionService.ProviderEventRouteIdentity = {
+    threadId,
+    runId: RunId.make("run:handoff:1"),
+    attemptId: RunAttemptId.make("attempt:handoff:1"),
+    providerThreadId: ProviderThreadId.make("provider-thread:handoff"),
+  };
+  const resumedChild = ThreadId.make("thread:handoff:resumed");
+  const siblingChild = ThreadId.make("thread:handoff:sibling");
+  const providerThreadOf = (childThreadId: ThreadId) =>
+    ProviderThreadId.make(`provider-thread:${childThreadId}`);
+  const subagent = (childThreadId: ThreadId, runId: RunId): OrchestrationV2Subagent => ({
+    id: NodeId.make(`node:${childThreadId}`),
+    threadId,
+    runId,
+    parentNodeId: NodeId.make("node:handoff"),
+    origin: "provider_native",
+    createdBy: "agent",
+    driver,
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    providerThreadId: providerThreadOf(childThreadId),
+    childThreadId,
+    nativeTaskRef: null,
+    prompt: "Work",
+    title: "Work",
+    model: null,
+    status: "running",
+    result: null,
+    startedAt: null,
+    completedAt: null,
+    updatedAt: DateTime.makeUnsafe(0),
+  });
+  const childMessage = (childThreadId: ThreadId) =>
+    ({
+      type: "message.updated",
+      driver,
+      message: {
+        id: MessageId.make(`message:${childThreadId}`),
+        threadId: childThreadId,
+        runId: null,
+      },
+    }) as ProviderAdapter.ProviderAdapterV2Event;
+  const childTurn = (childThreadId: ThreadId, ordinal: number) =>
+    ({
+      type: "provider_turn.updated",
+      driver,
+      providerTurn: {
+        id: ProviderTurnId.make(`provider-turn:${childThreadId}:${ordinal}`),
+        providerThreadId: providerThreadOf(childThreadId),
+        runAttemptId: null,
+        status: "running",
+      },
+    }) as ProviderAdapter.ProviderAdapterV2Event;
+  const ended = RunExecutionService.routeProviderEvent(
+    {
+      type: "turn.terminal",
+      driver,
+      providerThreadId: identity.providerThreadId,
+      providerTurnId: rootProviderTurnId,
+      runOrdinal: 1,
+      status: "completed",
+      failure: null,
+      threadDisposition: "reusable",
+    },
+    identity,
+    RunExecutionService.makeProviderEventRoutingState({
+      identity,
+      providerTurnId: rootProviderTurnId,
+      relatedThreadIds: [resumedChild, siblingChild],
+      relatedProviderThreadIds: [providerThreadOf(resumedChild), providerThreadOf(siblingChild)],
+    }),
+  )[1];
+  const [firstTurnAccepted, withChildTurn] = RunExecutionService.routeProviderEvent(
+    childTurn(resumedChild, 1),
+    identity,
+    ended,
+  );
+  assert.isTrue(firstTurnAccepted);
+  const [movedAccepted, afterMove] = RunExecutionService.routeProviderEvent(
+    {
+      type: "subagent.updated",
+      driver,
+      subagent: subagent(resumedChild, RunId.make("run:handoff:2")),
+    },
+    identity,
+    withChildTurn,
+  );
+  assert.isFalse(movedAccepted);
+  assert.isFalse(
+    RunExecutionService.routeProviderEvent(childMessage(resumedChild), identity, afterMove)[0],
+  );
+  assert.isTrue(
+    RunExecutionService.routeProviderEvent(childMessage(siblingChild), identity, afterMove)[0],
+  );
+  assert.isFalse(
+    RunExecutionService.routeProviderEvent(childTurn(resumedChild, 1), identity, afterMove)[0],
+  );
+  assert.isFalse(
+    RunExecutionService.routeProviderEvent(childTurn(resumedChild, 2), identity, afterMove)[0],
+  );
+  assert.isTrue(
+    RunExecutionService.routeProviderEvent(childTurn(siblingChild, 1), identity, afterMove)[0],
+  );
+  assert.isTrue(
+    RunExecutionService.routeProviderEvent(
+      { type: "subagent.updated", driver, subagent: subagent(siblingChild, identity.runId) },
+      identity,
+      afterMove,
+    )[0],
+  );
+  const resuming: RunExecutionService.ProviderEventRouteIdentity = {
+    ...identity,
+    runId: RunId.make("run:handoff:2"),
+    attemptId: RunAttemptId.make("attempt:handoff:2"),
+  };
+  const resumingState = RunExecutionService.makeProviderEventRoutingState({
+    identity: resuming,
+    providerTurnId: ProviderTurnId.make("provider-turn:handoff:2"),
+  });
+  assert.isFalse(
+    RunExecutionService.routeProviderEvent(childMessage(resumedChild), resuming, resumingState)[0],
+  );
+  const [moveAccepted, afterTake] = RunExecutionService.routeProviderEvent(
+    { type: "subagent.updated", driver, subagent: subagent(resumedChild, resuming.runId) },
+    resuming,
+    resumingState,
+  );
+  assert.isTrue(moveAccepted);
+  assert.isTrue(
+    RunExecutionService.routeProviderEvent(childMessage(resumedChild), resuming, afterTake)[0],
   );
 });
 
@@ -961,75 +1104,128 @@ it.effect(
     }).pipe(Effect.provide(layerRunExecutionTest)),
 );
 
+const layerMcpSessionRegistryTest = McpSessionRegistry.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      NodeServices.layer,
+      Layer.mock(HttpServer.HttpServer)({
+        address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 43123),
+      }),
+      Layer.mock(ServerEnvironment.ServerEnvironment)({
+        getEnvironmentId: Effect.succeed(EnvironmentId.make("environment:mcp-liveness")),
+      }),
+    ),
+  ),
+);
+
 it.effect("refreshes MCP credential liveness before calling the provider", () =>
   Effect.gen(function* () {
-    const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const order = yield* Ref.make<ReadonlyArray<string>>([]);
-    const threadId = ThreadId.make("thread:run-execution-mcp-liveness");
+    const key = "run-execution-mcp-liveness";
     const touchActiveMcpThread = vi
       .spyOn(McpSessionRegistry, "touchActiveMcpThread")
-      .mockImplementation((touchedThreadId) =>
-        Ref.update(order, (entries) => [...entries, `touch:${touchedThreadId}`]),
+      .mockImplementation((threadId) =>
+        Ref.update(order, (entries) => [...entries, `touch:${threadId}`]),
       );
 
-    yield* runExecution
-      .startRootRun({
-        commandId: CommandId.make("command:run-execution-mcp-liveness"),
-        appThread: { id: threadId } as OrchestrationV2AppThread,
-        providerSessionId: ProviderSessionId.make("session:run-execution-mcp-liveness"),
-        session: {
-          events: Stream.never,
-          startTurn: () => Ref.update(order, (entries) => [...entries, "start-turn"]),
-        } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime,
-        run: {
-          id: RunId.make("run:run-execution-mcp-liveness"),
-          threadId,
-          ordinal: 1,
-          providerInstanceId: ProviderInstanceId.make("codex"),
-        } as OrchestrationV2Run,
-        rootNode: {
-          id: NodeId.make("node:run-execution-mcp-liveness"),
-        } as OrchestrationV2ExecutionNode,
-        checkpointScope: {
-          id: CheckpointScopeId.make("checkpoint-scope:run-execution-mcp-liveness"),
-        } as OrchestrationV2CheckpointScope,
-        providerThread: {
-          id: ProviderThreadId.make("provider-thread:run-execution-mcp-liveness"),
-          driver,
-        } as OrchestrationV2ProviderThread,
-        attempt: {
-          id: RunAttemptId.make("attempt:run-execution-mcp-liveness"),
-          providerTurnId: null,
-        } as OrchestrationV2RunAttempt,
-        attemptId: RunAttemptId.make("attempt:run-execution-mcp-liveness"),
-        providerTurnOrdinal: 1,
-        message: {
-          messageId: MessageId.make("message:run-execution-mcp-liveness"),
-          text: "Keep the MCP credential alive.",
-          attachments: [],
-          createdBy: "user",
-          creationSource: "web",
-        },
-        modelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5.4",
-        },
-        runtimePolicy: {
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          cwd: process.cwd(),
-          approvalPolicy: "never",
-          sandboxPolicy: {
-            type: "readOnly",
-            access: { type: "fullAccess" },
-            networkAccess: false,
-          },
-        },
-      })
-      .pipe(Effect.ensuring(Effect.sync(() => touchActiveMcpThread.mockRestore())));
+    yield* captureRootRunTermination({
+      key,
+      shouldFinalizeRun: () => Effect.succeed(true),
+      startTurn: () => Ref.update(order, (entries) => [...entries, "start-turn"]),
+    }).pipe(Effect.ensuring(Effect.sync(() => touchActiveMcpThread.mockRestore())));
 
-    assert.deepEqual(yield* Ref.get(order), [`touch:${threadId}`, "start-turn"]);
-  }).pipe(Effect.provide(layerRunExecutionTest)),
+    assert.deepEqual(yield* Ref.get(order), [
+      `touch:${backgroundScenarioIds(key).threadId}`,
+      "start-turn",
+    ]);
+  }),
+);
+
+it.effect.each([
+  ["keeps the MCP credential alive for a 44-hour turn without MCP traffic", false],
+  ["expires the MCP credential at 44 hours when ingestion ended at 2 hours", true],
+] as const)("%s", ([, endEarly]) =>
+  Effect.gen(function* () {
+    const key = `mcp-liveness:${endEarly}`;
+    const { threadId } = backgroundScenarioIds(key);
+    const registry = yield* McpSessionRegistry.McpSessionRegistry;
+    const issued = yield* registry.issue({
+      threadId,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+    });
+    const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+    const started = yield* Deferred.make<void>();
+    const end = yield* Deferred.make<void>();
+    const run = yield* captureRootRunTermination({
+      key,
+      shouldFinalizeRun: () => Effect.succeed(true),
+      startTurn: () => Deferred.succeed(started, undefined).pipe(Effect.asVoid),
+      events: (ids) =>
+        Stream.fromEffect(Deferred.await(end)).pipe(
+          Stream.map(() => rootTerminalEvent(ids, "completed")),
+        ),
+    }).pipe(Effect.forkChild);
+
+    yield* Effect.gen(function* () {
+      yield* Deferred.await(started);
+      yield* TestClock.adjust("2 hours");
+      if (endEarly) {
+        yield* Deferred.succeed(end, undefined);
+        yield* Fiber.join(run);
+      }
+      yield* TestClock.adjust("42 hours");
+      assert.equal(
+        (yield* registry.resolve(token))?.thread.threadId,
+        endEarly ? undefined : threadId,
+      );
+    }).pipe(
+      Effect.ensuring(
+        Deferred.succeed(end, undefined).pipe(Effect.andThen(Fiber.join(run)), Effect.orDie),
+      ),
+    );
+  }).pipe(Effect.provide(layerMcpSessionRegistryTest)),
+);
+
+it.effect(
+  "does not renew an MCP credential after startup is interrupted during the app context read",
+  () =>
+    Effect.gen(function* () {
+      const key = "mcp-liveness:abandoned-startup";
+      const { threadId } = backgroundScenarioIds(key);
+      const registry = yield* McpSessionRegistry.McpSessionRegistry;
+      const issued = yield* registry.issue({
+        threadId,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+      });
+      const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+      const contextReadStarted = yield* Deferred.make<void>();
+      const end = yield* Deferred.make<void>();
+      const closed = yield* Deferred.make<void>();
+      const run = yield* captureRootRunTermination({
+        key,
+        shouldFinalizeRun: () => Effect.succeed(true),
+        appContext: Deferred.succeed(contextReadStarted, undefined).pipe(
+          Effect.andThen(Effect.never),
+        ),
+        events: (ids) =>
+          Stream.fromEffect(Deferred.await(end)).pipe(
+            Stream.map(() => rootTerminalEvent(ids, "completed")),
+          ),
+        onSubscriptionClose: Deferred.succeed(closed, undefined).pipe(Effect.asVoid),
+      }).pipe(Effect.interruptible, Effect.forkChild);
+
+      yield* Effect.gen(function* () {
+        yield* Deferred.await(contextReadStarted);
+        yield* Fiber.interrupt(run);
+        assert.isTrue(Exit.hasInterrupts(yield* Fiber.await(run)));
+        yield* TestClock.adjust("44 hours");
+        assert.isUndefined(yield* registry.resolve(token));
+      }).pipe(
+        Effect.ensuring(
+          Deferred.succeed(end, undefined).pipe(Effect.andThen(Deferred.await(closed))),
+        ),
+      );
+    }).pipe(Effect.provide(layerMcpSessionRegistryTest)),
 );
 
 it.effect("starts the provider when checkpoint baseline capture fails", () =>
@@ -1738,6 +1934,65 @@ it.effect("keeps ingesting a child thread's late background item completion", ()
       "turn_item:completed",
     ]);
   }),
+);
+
+it.effect.each([null, "run:nested-sdk"] as const)(
+  "releases a settled run when its live child transfers to another run (%s)",
+  (nestedRunId) =>
+    Effect.gen(function* () {
+      const consumed = yield* Deferred.make<void>();
+      const result = yield* Effect.raceFirst(
+        runBackgroundItemScenario(
+          "child-transfer-release",
+          (ids) => {
+            const running = subagentEvent(ids, "running");
+            if (running.type !== "subagent.updated") throw new Error("Missing subagent");
+            const linked = {
+              ...running,
+              subagent: {
+                ...running.subagent,
+                origin: "provider_native" as const,
+                childThreadId: ids.childThreadId,
+                providerThreadId: null,
+              },
+            };
+            return [
+              childThreadCreatedEvent(ids),
+              linked,
+              {
+                ...linked,
+                subagent: {
+                  ...linked.subagent,
+                  id: NodeId.make("node:child-transfer-release:nested"),
+                  threadId: ids.childThreadId,
+                  runId: nestedRunId === null ? null : RunId.make(nestedRunId),
+                  childThreadId: null,
+                },
+              },
+              childBackgroundTurnItemEvent(ids, "running", 1),
+              rootTerminalEvent(ids, "completed"),
+              { ...linked, subagent: { ...linked.subagent, runId: RunId.make("run:replacement") } },
+            ];
+          },
+          {
+            keepEventStreamOpen: true,
+            onEventsConsumed: Deferred.succeed(consumed, undefined).pipe(Effect.asVoid),
+          },
+        ).pipe(Effect.map(Option.some)),
+        Deferred.await(consumed).pipe(Effect.as(Option.none())),
+      );
+      assert.isTrue(
+        Option.isSome(result),
+        "the transferred child must release its prior subscription",
+      );
+      if (Option.isSome(result))
+        assert.deepEqual(result.value, [
+          "subagent:running",
+          "subagent:running",
+          "turn_item:running",
+          "root-finalized",
+        ]);
+    }),
 );
 
 it.effect("keeps ingesting until the last of several background items terminalizes", () =>
@@ -3863,6 +4118,7 @@ function captureRootRunTermination(input: {
   >;
   readonly startTurn?: ProviderAdapter.ProviderAdapterV2SessionRuntime["startTurn"];
   readonly refreshAfterTurn?: Effect.Effect<void>;
+  readonly onSubscriptionClose?: Effect.Effect<void>;
   readonly shouldStartProviderTurn?: RunExecutionService.RunExecutionServiceV2StartRootRunInput["shouldStartProviderTurn"];
   readonly appContext?: ReturnType<McpAppModelContext.McpAppModelContext["Service"]["forThread"]>;
 }) {
@@ -3984,7 +4240,9 @@ function captureRootRunTermination(input: {
                   : []),
                 rootTerminalEvent(ids, "interrupted"),
               ] satisfies ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>),
-            close: Deferred.succeed(ingestionDone, undefined),
+            close: Deferred.succeed(ingestionDone, undefined).pipe(
+              Effect.andThen(input.onSubscriptionClose ?? Effect.void),
+            ),
           }),
           startTurn: input.startTurn ?? (() => Effect.void),
         } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime,
@@ -4377,6 +4635,7 @@ function runBackgroundItemScenario(
       ReadonlyArray<{ readonly id: TurnItemId; readonly runId: RunId }>
     >;
     readonly onSubscribe?: Effect.Effect<void>;
+    readonly onEventsConsumed?: Effect.Effect<void>;
     readonly onFinalized?: (
       events: ReadonlyArray<OrchestrationV2DomainEvent>,
     ) => Effect.Effect<void>;
@@ -4444,7 +4703,11 @@ function runBackgroundItemScenario(
           events: Stream.empty,
           subscribeEvents: Effect.gen(function* () {
             yield* options?.onSubscribe ?? Effect.void;
-            const events = Stream.fromIterable(makeEvents(ids));
+            const events = Stream.fromIterable(makeEvents(ids)).pipe(
+              Stream.concat(
+                Stream.fromEffect(options?.onEventsConsumed ?? Effect.void).pipe(Stream.drain),
+              ),
+            );
             return {
               events:
                 options?.keepEventStreamOpen === true

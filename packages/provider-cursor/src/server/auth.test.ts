@@ -234,6 +234,8 @@ it.layer(NodeServices.layer)("CursorAuth", (it) => {
 
   it.effect("discards a credential rejected by verification and permits a fresh login", () =>
     Effect.gen(function* () {
+      const rejectionMessage =
+        "Cursor needs a paid plan to run in T3 Code. Upgrade this account or sign in with a different one.";
       let rejected = true;
       const harness = yield* makeHarness({
         onChanged: (signedIn) =>
@@ -242,7 +244,7 @@ it.layer(NodeServices.layer)("CursorAuth", (it) => {
                 new ProviderSetupError({
                   instanceId,
                   operation: "start",
-                  detail: "Could not verify the Cursor sign-in.",
+                  detail: rejectionMessage,
                 }),
               )
             : Effect.void,
@@ -250,7 +252,8 @@ it.layer(NodeServices.layer)("CursorAuth", (it) => {
       yield* harness.auth.controller.start(owner);
       yield* phase(harness.auth, "waiting");
       yield* Effect.sync(() => harness.complete.resolve());
-      yield* phase(harness.auth, "failed");
+      const failed = yield* phase(harness.auth, "failed");
+      expect(failed.message).toBe(rejectionMessage);
       expect(yield* Effect.promise(() => harness.store.load())).toBeUndefined();
       expect(yield* harness.auth.readApiKey).toBeUndefined();
       expect(Exit.isFailure(yield* Effect.exit(harness.auth.requireApiKey))).toBe(true);

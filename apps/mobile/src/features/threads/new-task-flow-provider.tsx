@@ -24,6 +24,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { sanitizeNewRefName } from "@t3tools/shared/git";
+import { threadContextsOutsideEnvironment } from "@t3tools/shared/composerContextReferences";
 import { resolveNewThreadEnvMode, resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import * as Arr from "effect/Array";
@@ -453,13 +454,17 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     canReadFiles && selectedProject !== null && selectedProject.workspaceRoot !== ""
       ? projectEnvironment.readFile({
           environmentId: selectedProject.environmentId,
-          input: { cwd: selectedProject.workspaceRoot, relativePath: T3_PROJECT_FILE_NAME },
+          input: {
+            cwd: selectedProject.workspaceRoot,
+            relativePath: T3_PROJECT_FILE_NAME,
+            allowMissing: true,
+          },
         })
       : null,
   );
   const t3ProjectFileData = t3ProjectFileQuery.data as ProjectReadFileResult | null;
   const t3ProjectFile =
-    t3ProjectFileData === null || t3ProjectFileData.truncated
+    t3ProjectFileData === null || t3ProjectFileData.exists === false || t3ProjectFileData.truncated
       ? null
       : parseT3ProjectFile(t3ProjectFileData.contents);
   const projectSettings = resolveProjectSettings(
@@ -955,6 +960,15 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         selectedProject.id,
       ) ?? selectedModel;
     if ((text.length === 0 && draft.attachments.length === 0) || !draftModelSelection) {
+      return null;
+    }
+    if (
+      threadContextsOutsideEnvironment({
+        text: draft.text,
+        records: draft.context?.records ?? [],
+        environmentId: selectedProject.environmentId,
+      }).length > 0
+    ) {
       return null;
     }
     const workspaceSelection = canChooseWorkspace ? draft.workspaceSelection : undefined;

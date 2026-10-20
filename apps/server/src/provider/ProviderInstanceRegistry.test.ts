@@ -666,6 +666,90 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       }),
   );
 
+  const makeClaudeCacheFixture = Effect.fnUntraced(function* (
+    state: "ready" | "signed-out" | "usage-failed",
+  ) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const fixtures = yield* makeTildeProviderFixtures();
+    const recovered = path.join(fixtures.claudeHomePath, "recovered");
+    const probeLog = path.join(fixtures.claudeHomePath, "probes.log");
+    const instanceId = ProviderInstanceId.make("claude_cache");
+    const { registry } = yield* makeProviderInstanceRegistry({
+      drivers: [ClaudeDriver],
+      configMap: {
+        [instanceId]: {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          enabled: true,
+          environment: [
+            { name: "T3_CLAUDE_PROBE_LOG", value: probeLog, sensitive: false },
+            ...(state === "ready"
+              ? []
+              : [
+                  {
+                    name:
+                      state === "signed-out"
+                        ? "T3_CLAUDE_LOGIN_MARKER"
+                        : "T3_CLAUDE_USAGE_FAILS_UNTIL",
+                    value: recovered,
+                    sensitive: false,
+                  },
+                ]),
+          ],
+          config: makeClaudeConfig({
+            enabled: true,
+            binaryPath: fixtures.claudeBinaryPath,
+            homePath: fixtures.claudeHomePath,
+          }),
+        },
+      },
+    });
+    const instance = yield* registry.getInstance(instanceId);
+    expect(instance).toBeDefined();
+    return {
+      refresh: instance!.snapshot.refresh,
+      recover: fs.writeFileString(recovered, ""),
+      probeLog: fs.readFileString(probeLog),
+    };
+  });
+
+  it.effect.skipIf(windowsHost)("reuses Claude's successful usage probe on refresh", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeClaudeCacheFixture("ready");
+      const first = yield* fixture.refresh;
+      const second = yield* fixture.refresh;
+      expect(first.usageLimits?.windows.map((window) => window.id)).toEqual(["five_hour"]);
+      expect(second.usageLimits).toEqual(first.usageLimits);
+      expect(yield* fixture.probeLog).toBe("probe\n");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  for (const state of ["signed-out", "usage-failed"] as const) {
+    it.effect.skipIf(windowsHost)(
+      state === "signed-out"
+        ? "shows Claude usage on the first refresh after signing back in"
+        : "retries Claude usage on the first refresh after a failed usage read",
+      () =>
+        Effect.gen(function* () {
+          const fixture = yield* makeClaudeCacheFixture(state);
+          const before = yield* fixture.refresh;
+          if (state === "signed-out") {
+            expect(before.auth.status).toBe("unauthenticated");
+            expect(before.usageLimits).toBeUndefined();
+          } else {
+            expect(before.auth.status).toBe("authenticated");
+            expect(before.usageLimits?.unavailable?.reason).toBe("probeFailed");
+          }
+
+          yield* fixture.recover;
+          const after = yield* fixture.refresh;
+          expect(after.auth.status).toBe("authenticated");
+          expect(after.usageLimits?.unavailable).toBeUndefined();
+          expect(after.usageLimits?.windows.map((window) => window.id)).toEqual(["five_hour"]);
+        }).pipe(Effect.provide(layerTest)),
+    );
+  }
+
   it.live(
     "shadows instances whose driver is not registered in this build without failing boot",
     () =>

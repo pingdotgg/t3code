@@ -3,7 +3,6 @@ import { assert, it } from "@effect/vitest";
 import {
   CheckpointId,
   CheckpointScopeId,
-  type OrchestrationV2ThreadProjection,
   ProjectId,
   ProviderInstanceId,
   ProviderSessionId,
@@ -25,7 +24,7 @@ import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { CheckpointServiceV2 } from "./CheckpointService.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import { ProjectionStoreV2 } from "./ProjectionStore.ts";
+import { ProjectionStoreV2, type ProjectionCheckpointRollbackContext } from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
@@ -94,15 +93,17 @@ it.effect.each([
         activeProviderThreadId: providerThreadId,
         modelSelection: { instanceId, model: "test" },
       },
-      providerThreads: [providerThread],
-      providerSessions: [],
+      providerThread,
+      providerSession: undefined,
       providerTurns: [],
-      nodes: [],
-      attempts: [],
-      checkpoints: [{ id: checkpointId, scopeId, status: "ready", appRunOrdinal: null }],
-      checkpointScopes: [{ id: scopeId, cwd }],
-      runs: [{ id: "later-run", ordinal: 1, status: "completed", rootNodeId: null }],
-    } as unknown as OrchestrationV2ThreadProjection;
+      rootNodes: [],
+      targetAttempt: undefined,
+      rolledBackAttemptIds: [],
+      staleCheckpoints: [],
+      checkpoint: { id: checkpointId, scopeId, status: "ready", appRunOrdinal: null },
+      scope: { id: scopeId, cwd },
+      runsToRollback: [{ id: "later-run", ordinal: 1, status: "completed", rootNodeId: null }],
+    } as unknown as ProjectionCheckpointRollbackContext;
     const layerTest = CheckpointRollbackService.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
@@ -116,7 +117,8 @@ it.effect.each([
             get: () => Effect.succeed(Option.some({ workspaceRoot: parent } as never)),
           }),
           Layer.mock(ProjectionStoreV2)({
-            getThreadRecords: () => Effect.succeed(projection),
+            getThread: () => Effect.succeed(projection.thread),
+            getCheckpointRollbackContext: () => Effect.succeed(projection),
             getShellSnapshot: () =>
               Effect.succeed({
                 schemaVersion: 1,

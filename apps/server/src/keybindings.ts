@@ -66,24 +66,23 @@ export const ResolvedKeybindingFromConfig = KeybindingRule.pipe(
           Effect.map((resolved) => resolved),
         ),
 
-      encode: (resolved) =>
-        Effect.gen(function* () {
-          const key = encodeShortcut(resolved.shortcut);
-          if (!key) {
-            return yield* Effect.fail(
-              new SchemaIssue.InvalidValue({
-                message: "Resolved shortcut cannot be encoded to key string",
-              }),
-            );
-          }
+      encode: Effect.fn("keybindings.encode")(function* (resolved) {
+        const key = encodeShortcut(resolved.shortcut);
+        if (!key) {
+          return yield* Effect.fail(
+            new SchemaIssue.InvalidValue({
+              message: "Resolved shortcut cannot be encoded to key string",
+            }),
+          );
+        }
 
-          const when = resolved.whenAst ? encodeWhenAst(resolved.whenAst) : undefined;
-          return {
-            key,
-            command: resolved.command,
-            when,
-          };
-        }),
+        const when = resolved.whenAst ? encodeWhenAst(resolved.whenAst) : undefined;
+        return {
+          key,
+          command: resolved.command,
+          when,
+        };
+      }),
     }),
   ),
 );
@@ -227,6 +226,13 @@ export class Keybindings extends Context.Service<
     readonly getSnapshot: Effect.Effect<KeybindingsConfigState, KeybindingsConfigError>;
 
     readonly streamChanges: Stream.Stream<KeybindingsChangeEvent>;
+
+    /** Acquire before reading a snapshot to buffer changes until the stream starts. */
+    readonly subscribeChanges: Effect.Effect<
+      Stream.Stream<KeybindingsChangeEvent>,
+      never,
+      Scope.Scope
+    >;
 
     /**
      * Writes config atomically and enforces the max rule count by truncating
@@ -639,6 +645,9 @@ const make = Effect.gen(function* () {
     getSnapshot: loadConfigStateFromCacheOrDisk,
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub);
+    },
+    get subscribeChanges() {
+      return PubSub.subscribe(changesPubSub).pipe(Effect.map(Stream.fromSubscription));
     },
     upsertKeybindingRule: (input) =>
       upsertSemaphore.withPermits(1)(

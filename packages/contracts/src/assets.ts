@@ -207,6 +207,8 @@ export class AssetWorkspaceAssetNotFoundError extends Schema.TaggedError<AssetWo
   "AssetWorkspaceAssetNotFoundError",
   {
     resource: AssetResource,
+    // Absolute path after home/workspace resolution; absent on older servers.
+    checkedPath: Schema.optionalKey(Schema.String),
   },
 ) {
   override get message(): string {

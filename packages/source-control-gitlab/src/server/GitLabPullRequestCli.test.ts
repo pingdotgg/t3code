@@ -374,56 +374,111 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("merges immediately rather than leaving auto-merge armed", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output("")));
-      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+  it.effect.each([
+    { action: "merge", autoMerge: "false", mergeMethod: "squash" },
+    { action: "enable-auto-merge", autoMerge: "true", mergeMethod: "squash" },
+    { action: "merge", autoMerge: "false", mergeMethod: "rebase" },
+    { action: "enable-auto-merge", autoMerge: "true", mergeMethod: "rebase" },
+  ] as const)(
+    "$action with $mergeMethod succeeds on a project requiring the current source SHA",
+    ({ action, autoMerge, mergeMethod }) =>
+      Effect.gen(function* () {
+        const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
-      yield* cli.runMergeRequestAction({
-        cwd: "/w",
-        repository: "acme/web",
-        number: 7,
-        action: "merge",
-        mergeMethod: "squash",
-      });
+        for (const headSha of ["first-head", "updated-head"]) {
+          let currentHeadSha = headSha;
+          mockedExecute.mockImplementation(({ cwd, args }) => {
+            if (args[0] === "mr" && args[1] === "rebase") {
+              return Effect.sync(() => {
+                currentHeadSha = `${headSha}-rebased`;
+                return output("");
+              });
+            }
+            if (args[0] === "api") {
+              return Effect.succeed(
+                output(
+                  mergeRequestJson({
+                    diff_refs: { base_sha: "base", head_sha: currentHeadSha, start_sha: "start" },
+                  }),
+                ),
+              );
+            }
+            if (args.includes("--rebase") || args[args.indexOf("--sha") + 1] !== currentHeadSha) {
+              return Effect.fail(
+                new GitLabCli.GitLabCliCommandError({
+                  operation: "execute",
+                  command: "glab",
+                  cwd,
+                  cause: new Error(
+                    args.includes("--rebase")
+                      ? "Merge must not combine --rebase with --sha: rebase changes the source HEAD"
+                      : "SHA must match the current source branch HEAD",
+                  ),
+                }),
+              );
+            }
+            return Effect.succeed(output(""));
+          });
 
-      expect(argsOfCall(0)).toEqual([
-        "mr",
-        "merge",
-        "7",
-        "--repo",
-        "acme/web",
-        "--auto-merge=false",
-        "--yes",
-        "--squash",
-      ]);
-    }),
+          yield* cli.runMergeRequestAction({
+            cwd: "/w",
+            repository: "acme/web",
+            number: 7,
+            action,
+            mergeMethod,
+          });
+
+          const callsPerAction = mergeMethod === "rebase" ? 3 : 2;
+          expect(
+            mockedExecute.mock.calls.slice(-callsPerAction).map(([input]) => input.args),
+          ).toEqual([
+            ...(mergeMethod === "rebase" ? [["mr", "rebase", "7", "--repo", "acme/web"]] : []),
+            ["api", "projects/acme%2Fweb/merge_requests/7"],
+            [
+              "mr",
+              "merge",
+              "7",
+              "--repo",
+              "acme/web",
+              `--auto-merge=${autoMerge}`,
+              "--yes",
+              ...(mergeMethod === "squash" ? ["--squash"] : []),
+              "--sha",
+              mergeMethod === "rebase" ? `${headSha}-rebased` : headSha,
+            ],
+          ]);
+        }
+        expect(mockedExecute).toHaveBeenCalledTimes(mergeMethod === "rebase" ? 6 : 4);
+      }),
   );
 
-  it.effect("arms auto-merge with the same strategy a merge would have used", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output("")));
-      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+  it.effect.each(["merge", "enable-auto-merge"] as const)(
+    "does not run %s when GitLab has no diff revisions",
+    (action) =>
+      Effect.gen(function* () {
+        mockedExecute.mockReturnValue(
+          Effect.succeed(output(mergeRequestJson({ diff_refs: null }))),
+        );
+        const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
-      yield* cli.runMergeRequestAction({
-        cwd: "/w",
-        repository: "acme/web",
-        number: 7,
-        action: "enable-auto-merge",
-        mergeMethod: "squash",
-      });
+        const result = yield* Effect.result(
+          cli.runMergeRequestAction({
+            cwd: "/w",
+            repository: "acme/web",
+            number: 7,
+            action,
+            mergeMethod: "squash",
+          }),
+        );
 
-      expect(argsOfCall(0)).toEqual([
-        "mr",
-        "merge",
-        "7",
-        "--repo",
-        "acme/web",
-        "--auto-merge=true",
-        "--yes",
-        "--squash",
-      ]);
-    }),
+        expect(mockedExecute.mock.calls.map(([input]) => input.args)).toEqual([
+          ["api", "projects/acme%2Fweb/merge_requests/7"],
+        ]);
+        expect(result).toMatchObject({
+          _tag: "Failure",
+          failure: { _tag: "GitLabDiffRefsUnavailableError" },
+        });
+      }),
   );
 
   it.effect("cancels an armed auto-merge through the API glab has no flag for", () =>

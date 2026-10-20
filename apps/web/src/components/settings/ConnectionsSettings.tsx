@@ -71,6 +71,7 @@ import {
   isQrShareableEndpoint,
   isWslSettingsRowVisible,
   missingTailscaleEndpointDescription,
+  resolveLocalVersionStatusLabel,
   selectQrEndpointOption,
   togglePairingScopeSelection,
 } from "./ConnectionsSettings.logic";
@@ -176,6 +177,7 @@ import {
 } from "~/state/desktopNetworkAccess";
 import { desktopSshHostsStateAtom, filterDiscoveredSshHosts } from "~/state/desktopSshHosts";
 import { desktopWslStateAtom, refreshDesktopWslState } from "~/state/desktopWslState";
+import { useDesktopUpdateState } from "~/state/desktopUpdate";
 import {
   type EnvironmentPresentation,
   useEnvironments,
@@ -2003,6 +2005,16 @@ function CloudRemoteEnvironmentRows({
   ) : null;
 }
 
+// Subscribes on its own so desktop download progress does not re-render the page.
+function LocalVersionStatusLabel() {
+  const updateState = useDesktopUpdateState();
+  return (
+    <span className="text-xs text-muted-foreground">
+      {resolveLocalVersionStatusLabel(updateState)}
+    </span>
+  );
+}
+
 export function ConnectionsSettings() {
   const desktopBridge = window.desktopBridge;
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -2075,7 +2087,7 @@ export function ConnectionsSettings() {
   const loadBalancingEnvironments = [
     ...(primaryEnvironment ? [primaryEnvironment] : []),
     ...savedEnvironments.filter((environment) => environment.entry.enabled),
-  ];
+  ].filter((environment) => environment.connection.phase !== "unsupported");
   const savedDesktopSshEnvironmentKeys = (() => {
     const keys = new Set<string>();
     for (const environment of savedEnvironments) {
@@ -2198,7 +2210,7 @@ export function ConnectionsSettings() {
     const address = formatDesktopSshTarget(target);
     return (
       !savedDesktopSshEnvironmentKeys.has(target.alias) &&
-      !savedDesktopSshEnvironmentKeys.has(address)
+      (target.source === "ssh-config" || !savedDesktopSshEnvironmentKeys.has(address))
     );
   });
   const filteredDiscoveredSshHosts = filterDiscoveredSshHosts(
@@ -3228,9 +3240,16 @@ export function ConnectionsSettings() {
                   Off
                 </SelectItem>
                 {desktopWslState.distros.length === 0 ? (
-                  <SelectItem hideIndicator value={BACKEND_VALUE_DEFAULT_WSL}>
-                    Default distro
-                  </SelectItem>
+                  <>
+                    <SelectItem hideIndicator value={BACKEND_VALUE_DEFAULT_WSL}>
+                      Default distro
+                    </SelectItem>
+                    {desktopWslState.distro !== null ? (
+                      <SelectItem hideIndicator value={desktopWslState.distro}>
+                        {desktopWslState.distro}
+                      </SelectItem>
+                    ) : null}
+                  </>
                 ) : (
                   desktopWslState.distros.map((distro) => (
                     <SelectItem hideIndicator key={distro.name} value={distro.name}>
@@ -3470,7 +3489,7 @@ export function ConnectionsSettings() {
                       }
                     />
                   ) : primaryServerUpdateState.status === "idle" && primaryServerConfig ? (
-                    <span className="text-xs text-muted-foreground">Up to date</span>
+                    <LocalVersionStatusLabel />
                   ) : undefined
                 }
               />

@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { DEFAULT_SERVER_SETTINGS, type ServerSettingsPatch } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
@@ -59,6 +58,21 @@ vi.mock("../../state/use-atom-command", () => ({
 vi.mock("../threads/thread-settings-options", () => ({ RUNTIME_MODE_CHOICES: [] }));
 vi.mock("../../components/ui/ScreenScrollView", () => ({ ScreenScrollView: Children }));
 vi.mock("../../components/ui/AppText", () => ({ AppText: Children }));
+vi.mock("../../components/ui/Button", () => ({
+  Button: ({
+    label,
+    disabled,
+    onPress,
+  }: {
+    label: string;
+    disabled?: boolean;
+    onPress: () => void;
+  }) => (
+    <button disabled={disabled} onClick={onPress}>
+      {label}
+    </button>
+  ),
+}));
 vi.mock("./components/SettingsScreen", () => ({ SettingsScreen: Children }));
 vi.mock("./components/SettingsEnvironmentFilterHeader", () => ({
   AndroidSettingsEnvironmentFilter: () => null,
@@ -272,15 +286,15 @@ describe.each([
     }));
     act(() => root.render(<Screen />));
 
-    await act(async () => button("Use environment defaults").click());
+    await act(async () => button("Use defaults").click());
 
     expectFailures();
     expect(button(label).getAttribute("aria-checked")).toBe("true");
-    expect(button("Use environment defaults").disabled).toBe(false);
+    expect(button("Use defaults").disabled).toBe(false);
 
     mocks.alert.mockClear();
     mocks.updateSettings.mockResolvedValue(AsyncResult.success(undefined));
-    await act(async () => button("Use environment defaults").click());
+    await act(async () => button("Use defaults").click());
     expect(mocks.updateSettings).toHaveBeenCalledTimes(6);
     expect(mocks.alert).not.toHaveBeenCalled();
     expect(button(label).getAttribute("aria-checked")).toBe("true");

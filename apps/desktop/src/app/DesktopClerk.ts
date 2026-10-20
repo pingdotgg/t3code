@@ -151,6 +151,20 @@ export const make = Effect.gen(function* () {
       const context = yield* Effect.context<ElectronWindow.ElectronWindow>();
       const runPromise = Effect.runPromiseWith(context);
 
+      // Clerk's bare scheme registration omits the app entry on unpackaged Windows.
+      // Development callbacks also need dev server environment this command cannot restore.
+      if (
+        !environment.isPackaged &&
+        !environment.isDevelopment &&
+        environment.platform === "win32"
+      ) {
+        yield* electronApp.setAsDefaultProtocolClient(
+          ElectronProtocol.getDesktopScheme(environment.isDevelopment),
+          process.execPath,
+          [environment.path.join(environment.dirname, "main.cjs")],
+        );
+      }
+
       const startProviderAuthHandoff = (value: string | undefined) => {
         if (!value) return false;
         const request = readCodexAuthHandoff(value, environment.isDevelopment);

@@ -55,7 +55,7 @@ import {
 } from "../lib/composerImages";
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
-import { buildThreadFeed } from "../lib/threadActivity";
+import { buildThreadFeed, createThreadFeedCache } from "../lib/threadActivity";
 import { acknowledgedThreadMessagesAtom } from "./acknowledged-thread-messages";
 import { appendPendingThreadMessages } from "../features/threads/pending-thread-feed";
 import { threadAllowsProviderSwitch } from "./thread-provider-switching";
@@ -245,6 +245,7 @@ export function useThreadComposerState() {
   // detail is usually present but empty during a worktree checkout, so this
   // cannot be an either/or with the loaded messages.
   const pendingCreationMessage = selectedThreadCreation?.message ?? null;
+  const [feedCache] = useState(createThreadFeedCache);
   const selectedThreadFeed = (() => {
     const pendingCreation =
       pendingCreationMessage !== null &&
@@ -255,6 +256,7 @@ export function useThreadComposerState() {
       anchoredMessages: pendingCreation,
       attempts: selectedThreadAttempts,
       nodes: selectedThreadNodes,
+      cache: feedCache,
     });
     const pendingAcknowledgments = acknowledgedMessages.filter(
       (message) =>
@@ -298,10 +300,13 @@ export function useThreadComposerState() {
   const selectedThreadQueueCount = selectedThreadQueuedMessages.length;
   const selectedThread = selectedThreadShell;
   const modelSelection = selectedDraft.modelSelection ?? selectedThread?.modelSelection ?? null;
+  const serverConfig = selectedEnvironmentRuntime?.serverConfig;
   const pendingHandoff = resolvePendingHandoff(
     selectedThreadProjection?.projection,
-    modelSelection,
-    selectedEnvironmentRuntime?.serverConfig?.providers ?? [],
+    isModelSelectionUnavailable(serverConfig, modelSelection, selectedThread?.projectId ?? null)
+      ? null
+      : modelSelection,
+    serverConfig?.providers ?? [],
   );
   const runtimeMode = selectedDraft.runtimeMode ?? selectedThread?.runtimeMode ?? null;
   const selectedProvider = selectedEnvironmentRuntime?.serverConfig?.providers.find(

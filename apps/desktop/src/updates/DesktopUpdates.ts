@@ -68,7 +68,16 @@ const UpdateInfo = Schema.Struct({
   // fail the decode and block the update state transition. The shape is
   // validated defensively in normalizeDesktopUpdateReleaseNotes.
   releaseNotes: Schema.optional(Schema.Unknown),
+  files: Schema.optional(Schema.Unknown),
 });
+
+const ReleaseFile = Schema.Struct({ url: Schema.String, sha512: Schema.String });
+type ReleaseFile = typeof ReleaseFile.Type;
+const ReleaseFiles = Schema.Array(ReleaseFile);
+
+const CachedDownloadInfo = Schema.fromJsonString(
+  Schema.Struct({ fileName: Schema.String, sha512: Schema.String }),
+);
 
 const DownloadProgressInfo = Schema.Struct({
   percent: Schema.Number,
@@ -83,6 +92,8 @@ const encodeInstallRecord = Schema.encodeEffect(DesktopUpdateInstallRecord);
 const decodeAppUpdateYmlConfig = Schema.decodeUnknownEffect(AppUpdateYmlConfig);
 const decodeUpdateInfo = Schema.decodeUnknownEffect(UpdateInfo);
 const decodeDownloadProgressInfo = Schema.decodeUnknownEffect(DownloadProgressInfo);
+const decodeReleaseFiles = Schema.decodeUnknownOption(ReleaseFiles);
+const decodeCachedDownloadInfo = Schema.decodeUnknownEffect(CachedDownloadInfo);
 
 const currentIsoTimestamp = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
@@ -273,13 +284,15 @@ function parseAppUpdateYml(raw: string): Effect.Effect<Option.Option<AppUpdateYm
 
 function createBaseUpdateState(
   channel: DesktopUpdateChannel,
-  enabled: boolean,
+  disabledReason: Option.Option<string>,
   environment: DesktopEnvironment.DesktopEnvironment["Service"],
 ): DesktopUpdateState {
+  const enabled = Option.isNone(disabledReason);
   return {
     ...createInitialDesktopUpdateState(environment.appVersion, environment.runtimeInfo, channel),
     enabled,
     status: enabled ? "idle" : "disabled",
+    message: Option.getOrNull(disabledReason),
   };
 }
 
@@ -331,6 +344,32 @@ function getAutoUpdateDisabledReason(args: {
 
 function isArm64HostRunningIntelBuild(runtimeInfo: DesktopRuntimeInfo): boolean {
   return runtimeInfo.hostArch === "arm64" && runtimeInfo.appArch === "x64";
+}
+
+// Match electron-updater 6.8.9's MacUpdater.filterFilesForArch and Provider.findFile
+// for T3's package feeds. Matching any artifact can trigger a different download.
+function selectUpdateFile(
+  files: ReadonlyArray<ReleaseFile>,
+  platform: NodeJS.Platform,
+  isDebPackage: boolean,
+  runtimeInfo: DesktopRuntimeInfo,
+): ReleaseFile | undefined {
+  let candidates = files;
+  if (platform === "darwin") {
+    const isArm64File = (file: ReleaseFile) => file.url.includes("arm64");
+    const preferArm64 = runtimeInfo.hostArch === "arm64" && files.some(isArm64File);
+    candidates = files.filter((file) => isArm64File(file) === preferArm64);
+  }
+  const extension =
+    platform === "darwin"
+      ? ".zip"
+      : platform === "win32"
+        ? ".exe"
+        : isDebPackage
+          ? ".deb"
+          : ".appimage";
+  const packageFiles = candidates.filter((file) => file.url.toLowerCase().endsWith(extension));
+  return packageFiles.find((file) => file.url.includes(runtimeInfo.appArch)) ?? packageFiles[0];
 }
 
 /** @public Service construction is part of the canonical Effect module API. */
@@ -451,6 +490,15 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const awaitIdleUpdateAction = Effect.scoped(
+    Effect.gen(function* () {
+      const completions = yield* PubSub.subscribe(finishedUpdateActions);
+      while (Option.isSome(yield* activeUpdateAction)) {
+        yield* PubSub.take(completions);
+      }
+    }),
+  );
+
   const applyAutoUpdaterChannel = Effect.fn("desktop.updates.applyAutoUpdaterChannel")(function* (
     channel: DesktopUpdateChannel,
   ) {
@@ -467,8 +515,6 @@ export const make = Effect.gen(function* () {
       fullChangelog: allowsPrerelease,
     });
   });
-
-  const shouldEnableAutoUpdates = resolveDisabledReason.pipe(Effect.map(Option.isNone));
 
   const checkForUpdates = Effect.fn("desktop.updates.checkForUpdates")(function* (
     reason: string,
@@ -631,10 +677,10 @@ export const make = Effect.gen(function* () {
     ),
   );
 
-  const baseUpdateState = (channel: DesktopUpdateChannel, enabled: boolean) =>
+  const baseUpdateState = (channel: DesktopUpdateChannel, disabledReason: Option.Option<string>) =>
     Ref.get(notAppliedVersionRef).pipe(
       Effect.map((notAppliedVersion) => ({
-        ...createBaseUpdateState(channel, enabled, environment),
+        ...createBaseUpdateState(channel, disabledReason, environment),
         ...Option.match(notAppliedVersion, {
           onNone: () => ({}),
           onSome: (version) => ({ notAppliedVersion: version }),
@@ -755,7 +801,7 @@ export const make = Effect.gen(function* () {
           yield* Ref.set(installRunningBackendsRef, runningInstances);
           yield* Effect.forEach(
             instances,
-            (instance) => instance.stop({ timeout: Duration.seconds(5) }),
+            (instance) => instance.stop({ timeout: Duration.seconds(45) }),
             { concurrency: "unbounded" },
           );
           yield* electronUpdater.quitAndInstall({
@@ -853,6 +899,44 @@ export const make = Effect.gen(function* () {
     );
   }).pipe(Effect.withSpan("desktop.updates.startPollers"));
 
+  const cachedDownloadSha512 = Effect.gen(function* () {
+    const pendingDirectory = yield* electronUpdater.pendingDownloadDirectory;
+    if (Option.isNone(pendingDirectory)) return Option.none<string>();
+    const info = yield* fileSystem
+      .readFileString(environment.path.join(pendingDirectory.value, "update-info.json"))
+      .pipe(Effect.flatMap(decodeCachedDownloadInfo));
+    const fileExists = yield* fileSystem.exists(
+      environment.path.join(pendingDirectory.value, info.fileName),
+    );
+    return fileExists ? Option.some(info.sha512) : Option.none<string>();
+  }).pipe(Effect.orElseSucceed(() => Option.none<string>()));
+
+  // downloadUpdate validates the cached bytes and restores install readiness.
+  // Only resume the selected artifact; a cache miss would start a network download.
+  const resumeCachedDownload = Effect.fn("desktop.updates.resumeCachedDownload")(function* (
+    version: string,
+    files: unknown,
+  ) {
+    const releaseFiles = decodeReleaseFiles(files);
+    if (Option.isNone(releaseFiles)) return;
+    const updateFile = selectUpdateFile(
+      releaseFiles.value,
+      environment.platform,
+      isDebPackage,
+      environment.runtimeInfo,
+    );
+    if (!updateFile) return;
+    const cachedSha512 = yield* cachedDownloadSha512;
+    if (Option.isNone(cachedSha512) || updateFile.sha512 !== cachedSha512.value) return;
+
+    // update-available arrives while its check still holds the action reservation.
+    yield* awaitIdleUpdateAction;
+    if (yield* Ref.get(desktopState.quitting)) return;
+    const state = yield* Ref.get(updateStateRef);
+    if (state.status !== "available" || state.availableVersion !== version) return;
+    yield* downloadAvailableUpdate;
+  });
+
   const handleUpdateAvailable = Effect.fn("desktop.updates.handleUpdateAvailable")(function* (
     raw: unknown,
   ) {
@@ -892,6 +976,9 @@ export const make = Effect.gen(function* () {
             releaseNoteGroups: releaseNotes.length,
             omittedReleaseCount,
           });
+          if (state.downloadedVersion !== info.version) {
+            yield* resumeCachedDownload(info.version, info.files);
+          }
         }),
       ),
       Effect.catchCause((cause) => {
@@ -1056,9 +1143,9 @@ export const make = Effect.gen(function* () {
       }
 
       const settings = yield* desktopSettings.get;
-      const enabled = yield* shouldEnableAutoUpdates;
-      yield* setState(yield* baseUpdateState(settings.updateChannel, enabled));
-      if (!enabled) {
+      const disabledReason = yield* resolveDisabledReason;
+      yield* setState(yield* baseUpdateState(settings.updateChannel, disabledReason));
+      if (Option.isSome(disabledReason)) {
         return;
       }
       yield* Ref.set(updaterConfiguredRef, true);
@@ -1127,10 +1214,10 @@ export const make = Effect.gen(function* () {
             ),
           );
 
-        const enabled = yield* shouldEnableAutoUpdates;
-        yield* setState(yield* baseUpdateState(nextChannel, enabled));
+        const disabledReason = yield* resolveDisabledReason;
+        yield* setState(yield* baseUpdateState(nextChannel, disabledReason));
 
-        if (!enabled || !(yield* Ref.get(updaterConfiguredRef))) {
+        if (Option.isSome(disabledReason) || !(yield* Ref.get(updaterConfiguredRef))) {
           return yield* Ref.get(updateStateRef);
         }
 

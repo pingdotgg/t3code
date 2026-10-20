@@ -117,14 +117,14 @@ describe("resolveNewTaskBranchLabel", () => {
     ).toBe("From main");
   });
 
-  it("labels a remote worktree base with From origin", () => {
+  it("labels a remote worktree base with a remote marker", () => {
     expect(
       resolveNewTaskBranchLabel({
         branchName: "main",
         startFromOrigin: true,
         workspaceMode: "worktree",
       }),
-    ).toBe("From origin/main");
+    ).toBe("From main (remote)");
   });
 
   it("prompts when no branch is available", () => {

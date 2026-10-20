@@ -45,6 +45,8 @@ export interface TranscriptParseResult {
    * segment: the next scan re-reads it once the writer finishes the line.
    */
   readonly tailRecords: readonly UsageRecord[];
+  /** Includes tentative tail diagnostics; position.state only includes committed lines. */
+  readonly malformedRecords: number;
   readonly position: TranscriptParsePosition;
   readonly resumed: boolean;
 }
@@ -306,10 +308,9 @@ export async function readTranscriptRecords<State>(
     // `resumeOffset` and the next scan replays the tail from it.
     const encodedState = encodeState === undefined ? null : encodeState(state);
     const tailRecords: UsageRecord[] = [];
-    finish(
-      decodeState === undefined ? state : Option.getOrThrow(decodeState(encodedState)),
-      tailRecords,
-    );
+    const tailState =
+      decodeState === undefined ? state : Option.getOrThrow(decodeState(encodedState));
+    finish(tailState, tailRecords);
 
     const guardLength = Math.min(GUARD_LENGTH, resumeOffset);
     let guardHash = 0;
@@ -322,6 +323,7 @@ export async function readTranscriptRecords<State>(
     return {
       records,
       tailRecords,
+      malformedRecords: format.readMalformedRecords?.(tailState) ?? 0,
       position: {
         resumeOffset,
         guardLength,

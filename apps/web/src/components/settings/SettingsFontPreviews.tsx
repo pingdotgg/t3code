@@ -1,15 +1,18 @@
+import type { ServerProviderSkill } from "@t3tools/contracts";
 import { preloadPatchFile } from "@pierre/diffs/ssr";
 import { useEffect, useRef, useState } from "react";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "../ComposerPromptEditor";
 import { EMPTY_COMPOSER_CONTEXT_RECORDS } from "../composerContextPresentation";
 import { terminalThemeFromApp } from "../ThreadTerminalDrawer";
-import { useTheme } from "../../hooks/useTheme";
+import { useRenderedAppearance, useTheme } from "../../hooks/useTheme";
 import { DISCONNECTED_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
 import { resolveDiffThemeName, type DiffThemeName } from "../../lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
 import { GhosttyTerminalSurface } from "~/terminal/ghostty/surface";
 
-const EMPTY_SKILLS: ReadonlyArray<never> = [];
+const PREVIEW_SKILLS: ReadonlyArray<ServerProviderSkill> = [
+  { name: "frontend-design", path: ".agents/skills/frontend-design/SKILL.md", enabled: true },
+];
 
 const PROMPT_PREVIEW_TEXT =
   "Use $frontend-design to fix the flaky test in " +
@@ -34,7 +37,7 @@ export function PromptFontPreview() {
         value={prompt}
         cursor={cursor}
         contextRecords={EMPTY_COMPOSER_CONTEXT_RECORDS}
-        skills={EMPTY_SKILLS}
+        skills={PREVIEW_SKILLS}
         disabled={false}
         placeholder={DISCONNECTED_COMPOSER_PLACEHOLDER}
         className="max-h-42 min-h-14"
@@ -110,7 +113,7 @@ function StaticDiffHtml({ html }: { html: string }) {
 }
 
 export function CodeFontPreview() {
-  const { resolvedTheme } = useTheme();
+  const resolvedTheme = useRenderedAppearance();
   const themeName = resolveDiffThemeName(resolvedTheme);
   const [htmlByFile, setHtmlByFile] = useState<readonly string[] | null>(null);
   useEffect(() => {

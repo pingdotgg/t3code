@@ -1,3 +1,4 @@
+import { Button } from "../../components/ui/Button";
 import {
   applyPullRequestDraftFilterChange,
   parsePullRequestQuery,
@@ -10,7 +11,6 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   Keyboard,
   Platform,
-  Pressable,
   RefreshControl,
   ScrollView,
   View,
@@ -70,7 +70,6 @@ export function PullRequestsScreen(
   const configs = useAtomValue(environmentServerConfigsAtom);
   const insets = useSafeAreaInsets();
   const [initialOffset] = useState(() => workspace.getScrollOffset("pullRequests"));
-  const [initialAnchor] = useState(() => workspace.getScrollAnchor("pullRequests"));
   const listRef = useRef<LegendListRef>(null);
   const tab = workspace.state.tabs.pullRequests;
   const maintainVisiblePosition = useMemo(
@@ -206,9 +205,6 @@ export function PullRequestsScreen(
         animated: false,
       });
   }, [tab.searchMode, tab.scrollOffset, insets.top]);
-  const initialIndex = initialAnchor
-    ? entries.findIndex((entry) => pullRequestKey(entry) === initialAnchor.key)
-    : -1;
 
   return (
     <View className={sidebar ? "flex-1 bg-drawer" : "flex-1 bg-screen"}>
@@ -233,19 +229,17 @@ export function PullRequestsScreen(
           />
         }
         alwaysBounceVertical
+        // Android flashes a list's scrollbar whenever it becomes visible, which was every return
+        // to this tab. The thread list shows none either.
+        showsVerticalScrollIndicator={Platform.OS !== "android"}
         recycleItems
         renderScrollComponent={Platform.OS === "ios" ? PullRequestScrollView : undefined}
         contentInsetAdjustmentBehavior="never"
         contentInset={Platform.OS === "ios" ? { top: insets.top } : undefined}
+        // A plain offset: LegendList adds the list header to an index-based restore, which
+        // landed every return one header lower.
         initialScrollOffset={
-          !initialAnchor && initialOffset > 0
-            ? initialOffset - (Platform.OS === "ios" ? insets.top : 0)
-            : undefined
-        }
-        initialScrollIndex={
-          initialIndex >= 0 && initialAnchor
-            ? { index: initialIndex, viewOffset: initialAnchor.viewOffset, viewPosition: 0 }
-            : undefined
+          initialOffset > 0 ? initialOffset - (Platform.OS === "ios" ? insets.top : 0) : undefined
         }
         contentInsetStartAdjustment={Platform.OS === "ios" ? insets.top : 0}
         contentContainerStyle={{
@@ -259,13 +253,6 @@ export function PullRequestsScreen(
               event.nativeEvent.contentOffset.y + (Platform.OS === "ios" ? insets.top : 0),
             ),
           );
-          const list = listRef.current?.getState();
-          const item = list ? entries[list.start] : undefined;
-          if (list && item)
-            workspace.recordScrollAnchor("pullRequests", {
-              key: pullRequestKey(item),
-              viewOffset: list.positionAtIndex(list.start) - event.nativeEvent.contentOffset.y,
-            });
         }}
         keyboardDismissMode="on-drag"
         keyboardShouldPersistTaps="handled"
@@ -273,6 +260,7 @@ export function PullRequestsScreen(
         ListHeaderComponent={
           <>
             <PullRequestListFilters
+              sidebar={sidebar}
               environments={environments.map((item) => ({
                 id: String(item.environmentId),
                 label: item.environmentLabel,
@@ -327,15 +315,14 @@ export function PullRequestsScreen(
               />
             </View>
           ) : result.loadMoreError ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Retry loading more pull requests"
-              onPress={() => void result.loadMore(true)}
-              className="items-center gap-2 px-8 py-4"
-            >
+            <View className="items-center gap-2 px-8 py-4">
               <Text className="text-xs text-foreground-muted">{result.loadMoreError}</Text>
-              <Text className="text-sm font-t3-medium text-link">Try again</Text>
-            </Pressable>
+              <Button
+                label="Try again"
+                accessibilityLabel="Retry loading more pull requests"
+                onPress={() => void result.loadMore(true)}
+              />
+            </View>
           ) : undefined
         }
         ListEmptyComponent={

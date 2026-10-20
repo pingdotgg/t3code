@@ -1,4 +1,9 @@
-import type { ComposerContextId, ComposerContextRecord } from "@t3tools/contracts";
+import {
+  type ComposerContextId,
+  type ComposerContextRecord,
+  EnvironmentId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -11,6 +16,7 @@ import {
   projectComposerContextForProvider,
   replaceComposerContextReferences,
   sanitizeComposerContextLabel,
+  threadContextsOutsideEnvironment,
   toComposerContextId,
   toKindScopedComposerContextId,
 } from "./composerContextReferences.ts";
@@ -298,6 +304,48 @@ describe("provider projection", () => {
     expect(projected).toContain('<context kind="terminal" id="ctx_t" unavailable="true"/>');
     expect(projected).not.toContain("another payload");
     expect(projected).not.toContain("boom");
+  });
+});
+
+describe("threadContextsOutsideEnvironment", () => {
+  it("returns only referenced foreign threads, ignoring local and removed references", () => {
+    const local = {
+      version: 1 as const,
+      kind: "thread" as const,
+      contextId: ctx("thread_local"),
+      label: "Local thread",
+      environmentId: EnvironmentId.make("env-local"),
+      threadId: ThreadId.make("local"),
+      title: "Local thread",
+    };
+    const foreign = {
+      ...local,
+      contextId: ctx("thread_foreign"),
+      environmentId: EnvironmentId.make("env-foreign"),
+      threadId: ThreadId.make("foreign"),
+    };
+    const removed = {
+      ...foreign,
+      contextId: ctx("thread_removed"),
+      threadId: ThreadId.make("removed"),
+    };
+    const records = [local, foreign, removed];
+    const localReference = "[Local](t3-context://v1/thread/thread_local)";
+
+    expect(
+      threadContextsOutsideEnvironment({
+        text: `${localReference} [Foreign](t3-context://v1/thread/thread_foreign)`,
+        records,
+        environmentId: local.environmentId,
+      }),
+    ).toEqual([foreign]);
+    expect(
+      threadContextsOutsideEnvironment({
+        text: localReference,
+        records,
+        environmentId: local.environmentId,
+      }),
+    ).toEqual([]);
   });
 });
 

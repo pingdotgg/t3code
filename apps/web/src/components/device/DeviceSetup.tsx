@@ -23,6 +23,11 @@ export const deviceHubDescription =
 export const agentDeviceDescription =
   "Allow new agent sessions in this environment to start and control local and remote devices, with required tools set up automatically.";
 
+export const isAndroidDiscoveryUncertain = (state: DeviceServiceState) =>
+  Object.values(state.hostStatuses).some(
+    (status) => status.status === "ready" && status.androidDiscoveryIncomplete,
+  );
+
 /**
  * `hostStatus` only tracks this machine. A machine without simulator tooling never
  * starts its own hub, so setup and the panel must also count remote device hosts.
@@ -38,7 +43,45 @@ export function deviceHubReadiness(state: DeviceServiceState) {
   return { ready, busy };
 }
 
+/** A ready host keeps its devices usable but may still carry a discovery warning. */
+export function deviceHostDiagnostics(
+  hosts: ReadonlyArray<Pick<DeviceServiceState["hosts"][number], "id" | "label">>,
+  hostStatuses: DeviceServiceState["hostStatuses"],
+) {
+  return hosts.flatMap((host) => {
+    const status = hostStatuses[host.id];
+    return status?.status === "ready" && status.detail
+      ? [{ hostId: host.id, label: host.label, detail: status.detail }]
+      : [];
+  });
+}
+
+export function DeviceHostDiagnostics(props: {
+  readonly hosts: ReadonlyArray<Pick<DeviceServiceState["hosts"][number], "id" | "label">>;
+  readonly hostStatuses: DeviceServiceState["hostStatuses"];
+  readonly className?: string;
+}) {
+  const diagnostics = deviceHostDiagnostics(props.hosts, props.hostStatuses);
+  if (diagnostics.length === 0) return null;
+  return (
+    <div role="status" className={cn("space-y-1 text-xs text-muted-foreground", props.className)}>
+      {diagnostics.map(({ hostId, label, detail }) => (
+        <p key={hostId} className="whitespace-pre-line break-words">
+          {label}: {detail}
+        </p>
+      ))}
+    </div>
+  );
+}
+
 export function platformSetupStatus(state: DeviceServiceState, platform: DevicePlatform) {
+  const hasDevices = state.devices.some((device) => device.platform === platform);
+  if (platform === "android" && !hasDevices && isAndroidDiscoveryUncertain(state)) {
+    return {
+      ready: false,
+      message: "The Android device list may be incomplete. Check the device host and try again.",
+    };
+  }
   const availabilities = state.hosts.flatMap((host) =>
     host.platforms
       .filter((candidate) => candidate.platform === platform)
@@ -58,7 +101,7 @@ export function platformSetupStatus(state: DeviceServiceState, platform: DeviceP
       state.hostStatuses[host.id]?.status === "ready" ||
       (host.kind === "local" && state.hostStatus === "ready"),
   );
-  if (readyHosts.length > 0 && !state.devices.some((device) => device.platform === platform)) {
+  if (readyHosts.length > 0 && !hasDevices) {
     return {
       ready: false,
       message:
@@ -265,6 +308,7 @@ function DevicePlatformSetup(props: {
     <div className="space-y-3">
       <PlatformStatus platform="iOS" status={platformSetupStatus(props.state, "ios")} />
       <PlatformStatus platform="Android" status={platformSetupStatus(props.state, "android")} />
+      <DeviceHostDiagnostics hosts={props.state.hosts} hostStatuses={props.state.hostStatuses} />
       <p className="text-xs text-muted-foreground">
         You can use either platform. Fixing a missing platform does not block the other one.
       </p>

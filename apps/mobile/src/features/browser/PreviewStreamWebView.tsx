@@ -1,3 +1,4 @@
+import { Button } from "../../components/ui/Button";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import * as Dialog from "../../components/ui/Dialog";
 import previewStreamScript from "@t3tools/mobile-preview-stream";
@@ -142,13 +143,9 @@ export function PreviewStreamWebView(
             {error || "Connecting to browser..."}
           </AppText>
           {error && (
-            <Pressable
-              accessibilityRole="button"
-              className="rounded-full border border-secondary-border bg-secondary px-6 py-3"
-              onPress={refresh}
-            >
-              <AppText className="text-secondary-foreground">Retry</AppText>
-            </Pressable>
+            <View className="items-center">
+              <Button label="Retry" tone="secondary" onPress={refresh} />
+            </View>
           )}
         </>
       )}
@@ -335,19 +332,14 @@ function PreviewStreamDocumentView({
             {previewStreamControlLabel(control)}
           </AppText>
           {control?.canOperate ? (
-            <Pressable
-              accessibilityRole="button"
+            <Button
+              label={control.controller === "you" ? "Release control" : "Take control"}
+              tone="secondary"
               disabled={control.controller === "another-viewer"}
-              accessibilityState={{ disabled: control.controller === "another-viewer" }}
-              className="rounded-full border border-secondary-border bg-secondary px-3 py-2"
               onPress={() =>
                 command({ type: control.controller === "you" ? "releaseControl" : "takeControl" })
               }
-            >
-              <AppText className="text-xs text-secondary-foreground">
-                {control.controller === "you" ? "Release control" : "Take control"}
-              </AppText>
-            </Pressable>
+            />
           ) : null}
         </View>
       ) : null}
@@ -445,22 +437,12 @@ function PreviewStreamDocumentView({
             The page asks for {fileChooser.multiple ? "files" : "a file"}.
           </AppText>
           <View className="flex-row justify-end gap-3">
-            <Pressable
-              accessibilityRole="button"
-              className="px-3 py-2"
-              onPress={() => answerFileChooser(false)}
-            >
-              <AppText className="text-secondary-foreground">Cancel</AppText>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              className="px-3 py-2"
+            <Button label="Cancel" tone="text" onPress={() => answerFileChooser(false)} />
+            <Button
+              label={`Choose ${fileChooser.multiple ? "files" : "file"}`}
+              tone="secondary"
               onPress={() => answerFileChooser(true)}
-            >
-              <AppText className="text-secondary-foreground">
-                Choose {fileChooser.multiple ? "files" : "file"}
-              </AppText>
-            </Pressable>
+            />
           </View>
         </View>
       ) : null}
@@ -480,16 +462,14 @@ function PreviewStreamDocumentView({
                 />
               ) : null}
               <View className="flex-row justify-end gap-3">
-                <Pressable
-                  accessibilityRole="button"
-                  className="px-3 py-2"
+                <Button
+                  label="Dismiss"
+                  tone="text"
                   onPress={() => command({ type: "dialog", accept: false })}
-                >
-                  <AppText className="text-secondary-foreground">Dismiss</AppText>
-                </Pressable>
-                <Pressable
-                  accessibilityRole="button"
-                  className="px-3 py-2"
+                />
+                <Button
+                  label="Accept"
+                  tone="secondary"
                   onPress={() =>
                     command({
                       type: "dialog",
@@ -497,9 +477,7 @@ function PreviewStreamDocumentView({
                       ...(control.dialog?.type === "prompt" ? { promptText } : {}),
                     })
                   }
-                >
-                  <AppText className="text-secondary-foreground">Accept</AppText>
-                </Pressable>
+                />
               </View>
             </>
           ) : (
@@ -537,15 +515,13 @@ function PreviewStreamDocumentView({
             </Pressable>
           ) : null}
           {status === "error" && !gone && !compact ? (
-            <Pressable
-              accessibilityRole="button"
-              className="rounded-full border border-secondary-border bg-secondary px-6 py-3"
-              onPress={onRetry}
-            >
-              <AppText className="text-secondary-foreground">
-                {hostSetup ? "Try again" : "Reconnect"}
-              </AppText>
-            </Pressable>
+            <View className="items-center">
+              <Button
+                label={hostSetup ? "Try again" : "Reconnect"}
+                tone="secondary"
+                onPress={onRetry}
+              />
+            </View>
           ) : null}
         </View>
       ) : null}

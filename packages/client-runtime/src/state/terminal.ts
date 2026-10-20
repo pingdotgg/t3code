@@ -73,6 +73,8 @@ export function createTerminalEnvironmentAtoms<R, E>(
       subscribe: (_input: null) =>
         subscribe(WS_METHODS.subscribeTerminalMetadata, {}).pipe(
           Stream.scan((): ReadonlyArray<TerminalSummary> => [], applyTerminalMetadataStreamEvent),
+          // The scan seed is not an authoritative empty server snapshot.
+          Stream.drop(1),
         ),
     }),
     open: createEnvironmentRpcCommand(runtime, {

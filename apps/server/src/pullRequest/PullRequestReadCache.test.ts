@@ -13,6 +13,7 @@ import * as Queue from "effect/Queue";
 import * as TestClock from "effect/testing/TestClock";
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
 import * as ServerConfig from "../config.ts";
+import { ServerActivation } from "../serverActivation.ts";
 import * as PullRequestReadCache from "./PullRequestReadCache.ts";
 
 const cacheLayer = (directory: string) =>
@@ -59,6 +60,96 @@ it.layer(NodeServices.layer)("PR filesystem cache", (it) => {
         [fresh!, revisions!, unrelated, prefixed].toSorted(),
       );
     }),
+  );
+
+  it.effect("shares one scoped prune loop across cache layer consumers", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const activation = yield* Deferred.make<void>();
+      let scans = 0;
+      const observedFs = FileSystem.FileSystem.of({
+        ...fs,
+        // An empty directory keeps every sweep synchronous under the test clock.
+        readDirectory: () =>
+          Effect.sync(() => {
+            scans++;
+            return [];
+          }),
+      });
+      const caches: Array<PullRequestReadCache.PullRequestReadCache["Service"]> = [];
+      const sharedLayer = PullRequestReadCache.layer.pipe(
+        Layer.provide(Layer.succeed(FileSystem.FileSystem, observedFs)),
+      );
+      const consumers = Array.from({ length: 6 }, () =>
+        Layer.effectDiscard(
+          Effect.gen(function* () {
+            caches.push(yield* PullRequestReadCache.PullRequestReadCache);
+          }),
+        ).pipe(Layer.provide(sharedLayer)),
+      );
+      const scanCounts: Array<number> = [];
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* Layer.build(Layer.mergeAll(consumers[0]!, ...consumers.slice(1)));
+          assert.strictEqual(caches.length, 6);
+          assert.strictEqual(new Set(caches).size, 1);
+          scanCounts.push(scans);
+          yield* Deferred.succeed(activation, undefined);
+          yield* TestClock.adjust(Duration.zero);
+          scanCounts.push(scans);
+          yield* TestClock.adjust("59 minutes");
+          scanCounts.push(scans);
+          yield* TestClock.adjust("1 minute");
+          scanCounts.push(scans);
+          yield* TestClock.adjust("1 hour");
+          scanCounts.push(scans);
+        }).pipe(Effect.provideService(ServerActivation, Deferred.await(activation))),
+      );
+      yield* TestClock.adjust("2 hours");
+      assert.deepStrictEqual([...scanCounts, scans], [0, 1, 1, 2, 3, 3]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-pr-cache-shared-" })),
+    ),
+  );
+
+  it.effect("uses memory without starting cleanup when the cache directory is unavailable", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { providerStatusCacheDir } = yield* ServerConfig.ServerConfig;
+      yield* fs.remove(providerStatusCacheDir, { recursive: true });
+      yield* fs.writeFileString(providerStatusCacheDir, "blocks the cache directory");
+      let scans = 0;
+      const observedFs = FileSystem.FileSystem.of({
+        ...fs,
+        readDirectory: () =>
+          Effect.sync(() => {
+            scans++;
+            return [];
+          }),
+      });
+      yield* Effect.gen(function* () {
+        const cache = yield* PullRequestReadCache.PullRequestReadCache;
+        let reads = 0;
+        const lookup = Effect.sync(() => String(++reads));
+        assert.strictEqual(yield* cache.get("summary", lookup, ["pr"]), "1");
+        assert.strictEqual(yield* cache.get("summary", lookup, ["pr"]), "1");
+        yield* cache.invalidate("pr");
+        assert.strictEqual(yield* cache.get("summary", lookup, ["pr"]), "2");
+        yield* TestClock.adjust("1 hour");
+        assert.strictEqual(scans, 0);
+      }).pipe(
+        Effect.provide(
+          PullRequestReadCache.layer.pipe(
+            Layer.provide(Layer.succeed(FileSystem.FileSystem, observedFs)),
+          ),
+        ),
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-pr-cache-fallback-" })),
+    ),
   );
 
   it.effect("sweeps the cache directory every hour once the layer is built", () =>

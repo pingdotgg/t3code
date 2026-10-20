@@ -20,6 +20,7 @@ export interface UsageRecord {
   readonly totals: UsageTokenTotals;
   readonly reportedCostUsd: number | null;
   readonly speed: UsageSpeed;
+  readonly unresolvedServiceTierTurnId?: string;
   readonly dedupeKey: string | null;
 }
 
@@ -62,6 +63,8 @@ export interface TranscriptUsageFormat<State> {
   readonly usageMarkers: readonly [string, ...string[]];
   parseLine(line: string, state: State): readonly UsageRecord[];
   parseProjected(projected: unknown, state: State): readonly UsageRecord[];
+  /** Cumulative malformed or inconsistent usage records, including skipped records. */
+  readMalformedRecords?(state: State): number;
   /**
    * Present for formats whose records depend on earlier lines. The state at a
    * resume point is persisted in the scan cache through `schema`, so a grown
@@ -116,6 +119,9 @@ export type ProviderUsageReader<Config, R> =
       readonly kind: "transcripts";
       readonly provider: UsageProviderKind;
       readonly format: TranscriptUsageFormat<unknown>;
+      readonly resolveServiceTiers?: (
+        records: readonly UsageRecord[],
+      ) => Effect.Effect<ReadonlyMap<UsageRecord, UsageSpeed>, never, R>;
       readonly directories: (
         instance: ProviderUsageInstance<Config>,
       ) => Effect.Effect<
