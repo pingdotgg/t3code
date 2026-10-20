@@ -277,11 +277,10 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     tailscaleServePort: flags.tailscaleServePort ?? Option.none(),
   } satisfies CliServerFlags;
   const bootstrapFd = Option.getOrUndefined(normalizedFlags.bootstrapFd) ?? env.bootstrapFd;
-  const bootstrapEnvelope =
+  const bootstrap =
     bootstrapFd !== undefined
       ? yield* readBootstrapEnvelope(DesktopBackendBootstrap, bootstrapFd)
-      : Option.none();
-  const bootstrap = Option.getOrUndefined(bootstrapEnvelope);
+      : undefined;
 
   const mode: ServerConfig.RuntimeMode = Option.getOrElse(
     resolveOptionPrecedence(

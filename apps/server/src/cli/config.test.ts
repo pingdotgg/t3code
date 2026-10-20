@@ -23,6 +23,7 @@ import * as NetService from "@t3tools/shared/Net";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { BootstrapFdStatError } from "../bootstrap.ts";
 import { deriveServerPaths } from "../config.ts";
 import { resolveServerConfig } from "./config.ts";
 
@@ -625,7 +626,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     }),
   );
 
-  it.effect("creates derived runtime directories during config resolution", () =>
+  it.effect("creates runtime directories with web defaults without a bootstrap fd", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -634,7 +635,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
 
       const resolved = yield* resolveServerConfig(
         {
-          mode: Option.some("desktop"),
+          mode: Option.none(),
           port: Option.some(4888),
           host: Option.none(),
           baseDir: Option.some(baseDir),
@@ -670,6 +671,10 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         expect(yield* fs.exists(directory)).toBe(true);
       }
       expect(resolved.cwd).toBe(path.resolve(customCwd));
+      expect(resolved.mode).toBe("web");
+      expect(resolved.noBrowser).toBe(false);
+      expect(resolved.autoBootstrapProjectFromCwd).toBe(true);
+      expect(resolved.desktopBootstrapToken).toBeUndefined();
     }),
   );
 
@@ -1165,6 +1170,44 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     tailscaleServeEnabled: Option.none<boolean>(),
     tailscaleServePort: Option.none<number>(),
   });
+
+  it.effect.each(["flag", "env"] as const)(
+    "rejects an unavailable bootstrap fd from %s before creating server state",
+    (source) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-bootstrap-required-" });
+        const baseDir = path.join(root, "server-home");
+        const fd = 2_147_483_647;
+
+        const result = yield* resolveServerConfig(
+          {
+            ...minimalWebFlags(baseDir),
+            mode: Option.none(),
+            bootstrapFd: source === "flag" ? Option.some(fd) : Option.none(),
+          },
+          Option.none(),
+        ).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              NetService.layer,
+              ConfigProvider.layer(
+                ConfigProvider.fromEnv({
+                  env: source === "env" ? { T3CODE_BOOTSTRAP_FD: String(fd) } : {},
+                }),
+              ),
+            ),
+          ),
+          Effect.result,
+        );
+
+        expect(yield* fs.exists(baseDir)).toBe(false);
+        assert(Result.isFailure(result));
+        assert.instanceOf(result.failure, BootstrapFdStatError);
+        assert.equal(result.failure.fd, fd);
+      }),
+  );
 
   it.effect(
     "resolves each signal's endpoint through T3CODE_OTLP_*_URL, an OTEL endpoint, the bootstrap envelope, and persisted Settings, in that order",
