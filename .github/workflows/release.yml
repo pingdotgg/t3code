@@ -659,6 +659,8 @@ jobs:
       resource_key: win32-x64
       cli_archive: true
 
+  # Windows arm64 runners have 4 vCPUs, and the packaging is mostly CPU-bound,
+  # so the build runs on Linux and only the native checks run on arm64.
   desktop_win_arm64:
     name: Desktop Windows arm64
     needs: [preflight, relay_public_config, build_bundle]
@@ -674,7 +676,8 @@ jobs:
       clerk_cli_oauth_client_id: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
       relay_url: ${{ needs.relay_public_config.outputs.relay_url }}
       label: Windows arm64
-      runner: windows-11-arm
+      runner: blacksmith-16vcpu-ubuntu-2404
+      verify_runner: windows-11-arm
       platform: win
       target: nsis
       arch: arm64

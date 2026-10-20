@@ -1,0 +1,15 @@
+diff --git a/out/targets/nsis/NsisTarget.js b/out/targets/nsis/NsisTarget.js
+index 8a3462b185b078a260483635e6d774e2ece6e269..105778c145ab63a26444179215c643a7f22148a0 100644
+--- a/out/targets/nsis/NsisTarget.js
++++ b/out/targets/nsis/NsisTarget.js
+@@ -366,7 +366,9 @@ class NsisTarget extends core_1.Target {
+         await this.executeMakensis(defines, commands, sharedHeader + (await this.computeFinalScript(script, false, archs)));
+         // http://forums.winamp.com/showthread.php?p=3078545
+         // TODO: remove workaround when wine is fully upgraded to 11
+-        if ((0, macosVersion_1.isMacOsCatalina)()) {
++        // T3 Code builds Windows installers on Linux without wine; read the
++        // uninstaller out of the stub the way macOS hosts already do.
++        if ((0, macosVersion_1.isMacOsCatalina)() || process.platform === "linux") {
+             try {
+                 await nsisUtil_1.UninstallerReader.exec(installerPath, uninstallerPath);
+             }
