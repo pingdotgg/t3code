@@ -15,6 +15,7 @@ import * as BootService from "./bootService.ts";
 import { pinnedRuntimePaths } from "./pinnedRuntime.ts";
 import {
   parseServiceState,
+  SERVICE_ENV_FILE,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_RESTART_PENDING_FILE,
   serviceStateHasPendingUpdate,
@@ -246,7 +247,18 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       ),
     );
   const service = yield* makeService();
-  return { service, makeService, fs, statePath, commands, invocations, timeouts, control, runtime };
+  return {
+    service,
+    makeService,
+    fs,
+    baseDir,
+    statePath,
+    commands,
+    invocations,
+    timeouts,
+    control,
+    runtime,
+  };
 });
 
 it.layer(NodeServices.layer)("boot service install", (it) => {
@@ -487,34 +499,48 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
-  it.effect("install with start=false rewrites the files and marks a restart pending", () =>
-    Effect.gen(function* () {
-      const { service, fs, statePath, commands, makeService } = yield* makeHarness();
-      yield* service.install();
-      commands.length = 0;
+  it.effect.each(["linux", "darwin"] as const)(
+    "install with start=false rewrites files, preserves service.env, and marks a restart pending on %s",
+    (platform) =>
+      Effect.gen(function* () {
+        const { service, fs, baseDir, statePath, commands, makeService } =
+          yield* makeHarness(platform);
+        const path = yield* Path.Path;
+        const envPath = path.join(baseDir, SERVICE_ENV_FILE);
+        const envBytes = new TextEncoder().encode(
+          '# user configuration\r\nT3CODE_TOKEN="literal $HOME # token"',
+        );
+        yield* fs.writeFile(envPath, envBytes);
+        yield* service.install();
+        expect(new Uint8Array(yield* fs.readFile(envPath))).toEqual(envBytes);
+        yield* service.install();
+        expect(new Uint8Array(yield* fs.readFile(envPath))).toEqual(envBytes);
+        commands.length = 0;
 
-      const newer = yield* makeService(undefined, "1.2.4");
-      const plan = yield* newer.install({ start: false });
+        const newer = yield* makeService(undefined, "1.2.4");
+        const plan = yield* newer.install({ start: false });
+        expect(new Uint8Array(yield* fs.readFile(envPath))).toEqual(envBytes);
 
-      expect(parseServiceState(yield* fs.readFileString(statePath))).toEqual({
-        protocol: SERVICE_LAUNCHER_PROTOCOL,
-        activeVersion: "1.2.4",
-      });
-      expect(yield* fs.readFileString(plan.unitPath)).toContain("versions/1.2.4/t3");
-      expect(
-        commands.filter(
-          (command) => command.startsWith("systemctl ") && !command.includes("show-environment"),
-        ),
-      ).toEqual([]);
-      const status = yield* newer.status;
-      expect(status.current).toBe(false);
-      expect(status.problems).toContain("restart-pending");
+        expect(parseServiceState(yield* fs.readFileString(statePath))).toEqual({
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.2.4",
+        });
+        expect(yield* fs.readFileString(plan.unitPath)).toContain("versions/1.2.4/t3");
+        expect(
+          commands.filter(
+            (command) =>
+              /^(systemctl|launchctl) /.test(command) && !command.includes("show-environment"),
+          ),
+        ).toEqual([]);
+        const status = yield* newer.status;
+        expect(status.current).toBe(false);
+        expect(status.problems).toContain("restart-pending");
 
-      commands.length = 0;
-      expect(yield* newer.restart).toBe("restarted");
-      expect((yield* newer.status).problems).not.toContain("restart-pending");
-      expect((yield* newer.status).current).toBe(true);
-    }),
+        commands.length = 0;
+        expect(yield* newer.restart).toBe("restarted");
+        expect((yield* newer.status).problems).not.toContain("restart-pending");
+        expect((yield* newer.status).current).toBe(true);
+      }),
   );
 
   it.effect("install with start=false keeps the marker when a later write fails", () =>
