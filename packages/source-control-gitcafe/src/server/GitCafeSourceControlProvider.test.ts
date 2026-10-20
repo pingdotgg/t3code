@@ -2,6 +2,7 @@ import { SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import { GitCommandError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -18,6 +19,7 @@ import * as GitCafeCredentials from "./GitCafeCredentials.ts";
 import * as GitCafeSourceControlProvider from "./GitCafeSourceControlProvider.ts";
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 const authAnswer = (input: { stdout?: unknown; stderr?: unknown; exitCode?: number }) => ({
   stdout: input.stdout === undefined ? "" : encodeJson(input.stdout),
@@ -28,6 +30,36 @@ const failure = (code: string, status: number | null) => ({
   schemaVersion: 1,
   error: { code, status, message: `Failure ${code}` },
 });
+
+/** Most calls touch no file; one that does fails the test. */
+const NoFiles = FileSystem.layerNoop({});
+
+/** A provider on git.cafe whose checkout has no remote and which may not run `cafe`. */
+const layerFor = (
+  client: HttpClient.HttpClient,
+  options: { readonly files?: Layer.Layer<FileSystem.FileSystem> } = {},
+) =>
+  Layer.merge(GitCafeApi.layer, options.files ?? NoFiles).pipe(
+    Layer.provideMerge(GitCafeCredentials.layer),
+    Layer.provideMerge(
+      TestSourceControlHost.layer({
+        git: {
+          resolvePrimaryRemoteName: () =>
+            Effect.fail(
+              new GitCommandError({
+                operation: "resolvePrimaryRemoteName",
+                command: "git remote",
+                cwd: "/repo",
+                detail: "No git remote is configured.",
+              }),
+            ),
+        },
+      }),
+    ),
+    Layer.provide(Layer.succeed(HostProcess.Environment, { CAFE_TOKEN: "env-token" })),
+    Layer.provide(Layer.succeed(HostProcess.WorkingDirectory, "/server")),
+    Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
+  );
 
 describe("GitCafeSourceControlProvider", () => {
   it("reads a signed-in account and keeps transient failures apart from sign-out", () => {
@@ -94,7 +126,7 @@ describe("GitCafeSourceControlProvider", () => {
       ]);
     }).pipe(
       Effect.provide(
-        GitCafeApi.layer.pipe(
+        Layer.merge(GitCafeApi.layer, NoFiles).pipe(
           Layer.provideMerge(GitCafeCredentials.layer),
           Layer.provideMerge(TestSourceControlHost.layer()),
           Layer.provide(
@@ -140,7 +172,7 @@ describe("GitCafeSourceControlProvider", () => {
         assert.deepStrictEqual(urls, ["https://git.cafe/api/repos/team/project"]);
       }).pipe(
         Effect.provide(
-          GitCafeApi.layer.pipe(
+          Layer.merge(GitCafeApi.layer, NoFiles).pipe(
             Layer.provideMerge(GitCafeCredentials.layer),
             Layer.provideMerge(
               TestSourceControlHost.layer({
@@ -222,7 +254,7 @@ describe("GitCafeSourceControlProvider", () => {
       assert.deepStrictEqual(remotes, [expected]);
     }).pipe(
       Effect.provide(
-        GitCafeApi.layer.pipe(
+        Layer.merge(GitCafeApi.layer, NoFiles).pipe(
           Layer.provideMerge(GitCafeCredentials.layer),
           Layer.provideMerge(
             TestSourceControlHost.layer({
@@ -246,22 +278,19 @@ describe("GitCafeSourceControlProvider", () => {
     );
   });
 
-  it.effect("waits for a created repository's admission before handing out its URLs", () => {
-    const urls: Array<string> = [];
-    const states = ["running", "complete"];
+  it.effect("creates a repository over REST and waits for its admission", () => {
+    const sent: Array<{ method: string; url: string; body: unknown }> = [];
     const client = HttpClient.make((request) => {
-      urls.push(request.url);
+      const body =
+        request.body._tag === "Uint8Array"
+          ? decodeJson(new TextDecoder().decode(request.body.body))
+          : undefined;
+      sent.push({ method: request.method, url: request.url, body });
+      const state = request.method === "POST" ? "running" : "complete";
       return Effect.succeed(
         HttpClientResponse.fromWeb(
           request,
-          new Response(
-            encodeJson({
-              repoId: "repo_1",
-              state: states.shift(),
-              owner: "team",
-              name: "project",
-            }),
-          ),
+          new Response(encodeJson({ repoId: "repo_1", state, owner: "team", name: "project" })),
         ),
       );
     });
@@ -276,51 +305,76 @@ describe("GitCafeSourceControlProvider", () => {
         url: "https://git.cafe/team/project",
         sshUrl: "ssh@git.cafe:team/project.git",
       });
-      assert.deepStrictEqual(urls, [
-        "https://git.cafe/api/orgs/team/admissions/repo_1",
-        "https://git.cafe/api/orgs/team/admissions/repo_1",
-      ]);
+      assert.deepStrictEqual(
+        sent.map((request) => `${request.method} ${request.url}`),
+        [
+          "POST https://git.cafe/api/orgs/team/repos",
+          "GET https://git.cafe/api/orgs/team/admissions/repo_1",
+        ],
+      );
+      const { requestKey, ...body } = sent[0]?.body as { requestKey: string };
+      assert.match(requestKey, /^[0-9a-f-]{36}$/u);
+      assert.deepStrictEqual(body, {
+        name: "project",
+        visibility: "private",
+        defaultBranch: "main",
+      });
+    }).pipe(Effect.provide(layerFor(client)));
+  });
+
+  it.effect("opens a pull request from a fork over REST with the body file's text", () => {
+    const sent: Array<{ method: string; url: string; body: unknown }> = [];
+    const client = HttpClient.make((request) => {
+      const body =
+        request.body._tag === "Uint8Array"
+          ? decodeJson(new TextDecoder().decode(request.body.body))
+          : undefined;
+      sent.push({ method: request.method, url: request.url, body });
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(
+            encodeJson(
+              request.method === "POST"
+                ? { number: 3 }
+                : { id: "repo_fork", name: "project", defaultBranch: "main" },
+            ),
+          ),
+        ),
+      );
+    });
+    return Effect.gen(function* () {
+      const provider = yield* GitCafeSourceControlProvider.make;
+      yield* provider.createChangeRequest({
+        cwd: "/repo",
+        target: { repository: "team/project", refName: "main" },
+        baseRefName: "main",
+        headSelector: "fork:feature",
+        title: "Add a thing",
+        bodyFile: "/tmp/body.md",
+      });
+      assert.deepStrictEqual(
+        sent.map((request) => `${request.method} ${request.url}`),
+        [
+          "GET https://git.cafe/api/repos/fork/project",
+          "POST https://git.cafe/api/repos/team/project/pulls",
+        ],
+      );
+      assert.deepStrictEqual(sent[1]?.body, {
+        repo: "repo_fork",
+        source: "feature",
+        target: "main",
+        title: "Add a thing",
+        description: "Body",
+      });
     }).pipe(
       Effect.provide(
-        GitCafeApi.layer.pipe(
-          Layer.provideMerge(GitCafeCredentials.layer),
-          Layer.provideMerge(
-            TestSourceControlHost.layer({
-              process: {
-                run: () =>
-                  Effect.succeed(
-                    TestSourceControlHost.processOutput(
-                      encodeJson({
-                        schemaVersion: 1,
-                        data: {
-                          resource: {
-                            repoId: "repo_1",
-                            state: "running",
-                            owner: "team",
-                            name: "project",
-                          },
-                        },
-                      }),
-                    ),
-                  ),
-              },
-              git: {
-                resolvePrimaryRemoteName: () =>
-                  Effect.fail(
-                    new GitCommandError({
-                      operation: "resolvePrimaryRemoteName",
-                      command: "git remote",
-                      cwd: "/repo",
-                      detail: "No git remote is configured.",
-                    }),
-                  ),
-              },
-            }),
-          ),
-          Layer.provide(Layer.succeed(HostProcess.Environment, { CAFE_TOKEN: "env-token" })),
-          Layer.provide(Layer.succeed(HostProcess.WorkingDirectory, "/server")),
-          Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
-        ),
+        layerFor(client, {
+          files: FileSystem.layerNoop({
+            readFileString: (path) =>
+              path === "/tmp/body.md" ? Effect.succeed("Body") : Effect.die(path),
+          }),
+        }),
       ),
     );
   });
