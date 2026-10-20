@@ -29,12 +29,15 @@ interface RegisteredTool {
 }
 
 type AgentStartHook = (
-  event: { systemPrompt: string },
+  event: {
+    systemPrompt: string;
+    systemPromptOptions?: { sections?: Record<string, string> | null; forceSystemPrompt?: string };
+  },
   ctx: {
     model?: { api: string };
     ui: { notify: (message: string, severity: string) => void };
   },
-) => Promise<{ systemPrompt: string }>;
+) => Promise<{ systemPrompt: string } | undefined>;
 
 export async function loadMcpBridge(
   options: {
