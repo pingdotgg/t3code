@@ -9,9 +9,11 @@ import {
   type ProviderInstanceId,
 } from "@t3tools/contracts";
 import { codexCallbackUrl } from "@t3tools/shared/codexAuthHandoff";
+import { hashTelemetryId } from "@t3tools/shared/telemetryId";
 import * as Clock from "effect/Clock";
 import * as Cause from "effect/Cause";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
+import { openAiUserId } from "../telemetry/Identify.ts";
 import * as Crypto from "effect/Crypto";
 import * as Exit from "effect/Exit";
 import { codexAuthCallbackPage, codexAuthReturnUrl } from "./CodexAuthCallbackPage.ts";
@@ -221,6 +223,18 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
         saved.sessions.find((session) => session.clientId === saved.activeClientId),
       ),
     ),
+    // The OpenAI account is the person, so it marks who owns this install.
+    Effect.tap((credentials) => {
+      const userId = Option.flatMap(credentials, (saved) =>
+        Option.flatMap(Option.fromUndefinedOr(saved.idToken), openAiUserId),
+      );
+      return Option.isSome(userId) && Option.isSome(analytics)
+        ? analytics.value.recordOwners(
+            [{ source: "openai", ownerId: hashTelemetryId(userId.value) }],
+            "server",
+          )
+        : Effect.void;
+    }),
   );
   const writeSessions = (saved: typeof Sessions.Type) =>
     encodeSessions(saved).pipe(

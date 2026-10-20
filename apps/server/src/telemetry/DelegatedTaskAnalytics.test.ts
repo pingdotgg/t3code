@@ -92,6 +92,7 @@ it.effect("records each delegated task's final outcome once, without ids or prom
                 record: (event, properties) =>
                   Effect.sync(() => void recorded.push({ event, properties })),
                 flush: Effect.void,
+                recordOwners: () => Effect.void,
               }),
             ),
           ),

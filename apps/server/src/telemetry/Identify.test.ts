@@ -10,6 +10,8 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as References from "effect/References";
 
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import { CLOUD_LINKED_USER_ID } from "../cloud/config.ts";
 import * as ServerConfig from "../config.ts";
 import * as Identify from "./Identify.ts";
 
@@ -39,28 +41,76 @@ const findIdentityLog = (
   errorTag: string,
 ) => logs.find((log) => log.annotations.source === source && log.annotations.errorTag === errorTag);
 
+const unsignedJwt = (claims: Readonly<Record<string, unknown>>) =>
+  ["e30", Buffer.from(JSON.stringify(claims)).toString("base64url"), "signature"].join(".");
+
+const layerIdentity = (prefix: string, logs?: CapturedLog[]) =>
+  Layer.provideMerge(
+    ServerSecretStore.layer,
+    ServerConfig.layerTest(process.cwd(), { prefix }),
+  ).pipe(
+    Layer.merge(
+      logs === undefined
+        ? Layer.empty
+        : Logger.layer([makeCaptureLogger(logs)], { mergeWithExisting: false }),
+    ),
+  );
+
+const writeHomeFile = Effect.fn("test.writeHomeFile")(function* (
+  homeDirectory: string,
+  relativePath: string,
+  contents: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const filePath = path.join(homeDirectory, relativePath);
+  yield* fileSystem.makeDirectory(path.dirname(filePath), { recursive: true });
+  yield* fileSystem.writeFileString(filePath, contents);
+  return filePath;
+});
+
 it.layer(NodeServices.layer)("telemetry identity", (it) => {
-  it.effect("uses the persisted anonymous id when provider identities are absent", () =>
+  it.effect("keeps the old distinct_id rule and a fixed install id as logins change", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
+      const homeDirectory = path.join(config.baseDir, "home");
       const anonymousId = "persisted-anonymous-id";
-
       yield* fileSystem.writeFileString(config.anonymousIdPath, anonymousId);
+      const installId = yield* sha256(anonymousId);
+      const identity = () => Identify.getTelemetryIdentityForHome(homeDirectory);
 
-      const identifier = yield* Identify.getTelemetryIdentifierForHome(
-        path.join(config.baseDir, "home"),
-      );
+      assert.deepEqual(yield* identity(), { distinctId: installId, installId });
 
-      assert.equal(identifier, yield* sha256(anonymousId));
-    }).pipe(
-      Effect.provide(
-        ServerConfig.layerTest(process.cwd(), {
-          prefix: "t3-telemetry-identify-anonymous-",
-        }),
-      ),
-    ),
+      yield* writeHomeFile(homeDirectory, ".claude.json", `{"userID":"claude-machine"}`);
+      assert.deepEqual(yield* identity(), {
+        distinctId: yield* sha256("claude-machine"),
+        installId,
+      });
+
+      yield* writeHomeFile(homeDirectory, ".codex/auth.json", `{"auth_mode":"apikey"}`);
+      assert.equal((yield* identity()).distinctId, yield* sha256("claude-machine"));
+
+      yield* writeHomeFile(homeDirectory, ".codex/auth.json", `{"tokens":{"account_id":"ws-1"}}`);
+      assert.deepEqual(yield* identity(), { distinctId: yield* sha256("ws-1"), installId });
+    }).pipe(Effect.provide(layerIdentity("t3-telemetry-identify-install-"))),
+  );
+
+  it.effect("keeps a provider distinct_id when the install id cannot be saved", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const homeDirectory = path.join(config.baseDir, "home");
+      yield* fileSystem.makeDirectory(config.anonymousIdPath);
+      yield* writeHomeFile(homeDirectory, ".claude.json", `{"userID":"claude-machine"}`);
+
+      assert.deepEqual(yield* Identify.getTelemetryIdentityForHome(homeDirectory), {
+        distinctId: yield* sha256("claude-machine"),
+        installId: null,
+      });
+    }).pipe(Effect.provide(layerIdentity("t3-telemetry-identify-noinstall-"))),
   );
 
   it.effect("leaves no torn anonymous id behind when its write fails midway", () =>
@@ -87,19 +137,77 @@ it.layer(NodeServices.layer)("telemetry identity", (it) => {
             ),
       });
 
-      const identifier = yield* Identify.getTelemetryIdentifierForHome(
+      const identity = yield* Identify.getTelemetryIdentityForHome(
         path.join(config.baseDir, "home"),
       ).pipe(Effect.provideService(FileSystem.FileSystem, tornWrites));
 
-      assert.isNull(identifier);
+      assert.deepEqual(identity, { distinctId: null, installId: null });
       assert.isFalse(yield* fileSystem.exists(config.anonymousIdPath));
-    }).pipe(
-      Effect.provide(
-        ServerConfig.layerTest(process.cwd(), {
-          prefix: "t3-telemetry-identify-torn-",
+    }).pipe(Effect.provide(layerIdentity("t3-telemetry-identify-torn-"))),
+  );
+
+  it.effect("does not overwrite the anonymous id path after a non-NotFound read failure", () => {
+    const logs: CapturedLog[] = [];
+
+    return Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fileSystem.makeDirectory(config.anonymousIdPath);
+
+      const identity = yield* Identify.getTelemetryIdentityForHome(
+        path.join(config.baseDir, "home"),
+      );
+      assert.deepEqual(identity, { distinctId: null, installId: null });
+      assert.deepEqual(yield* fileSystem.readDirectory(config.anonymousIdPath), []);
+
+      const readLog = findIdentityLog(logs, "anonymous", "TelemetryIdentityReadError");
+      assert.equal(readLog?.annotations.filePath, config.anonymousIdPath);
+      assert.notEqual(readLog?.annotations.platformReason, "NotFound");
+      assert.notProperty(readLog?.annotations ?? {}, "cause");
+      assert.isUndefined(
+        findIdentityLog(logs, "anonymous", "TelemetryAnonymousIdPersistenceError"),
+      );
+    }).pipe(Effect.provide(layerIdentity("t3-telemetry-identify-read-", logs)));
+  });
+
+  it.effect("reads the Connect account and each provider account as owners", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const secrets = yield* ServerSecretStore.ServerSecretStore;
+      const path = yield* Path.Path;
+      const homeDirectory = path.join(config.baseDir, "home");
+      yield* secrets.set(CLOUD_LINKED_USER_ID, new TextEncoder().encode("user_connect"));
+      yield* writeHomeFile(
+        homeDirectory,
+        ".codex/auth.json",
+        JSON.stringify({
+          tokens: {
+            account_id: "team-workspace",
+            id_token: unsignedJwt({
+              sub: "google-oauth2|login-method",
+              "https://api.openai.com/auth": { user_id: "user-openai-person" },
+            }),
+          },
         }),
-      ),
-    ),
+      );
+      yield* writeHomeFile(
+        homeDirectory,
+        ".claude.json",
+        JSON.stringify({
+          userID: "claude-machine",
+          oauthAccount: { accountUuid: "claude-person" },
+        }),
+      );
+
+      const owners = yield* Identify.getServerOwnersForHome(homeDirectory);
+
+      assert.deepEqual(owners, [
+        { source: "connect", ownerId: yield* sha256("user_connect") },
+        { source: "openai", ownerId: yield* sha256("user-openai-person") },
+        { source: "claude", ownerId: yield* sha256("claude-person") },
+      ]);
+    }).pipe(Effect.provide(layerIdentity("t3-telemetry-identify-owners-"))),
   );
 
   it.effect.each([
@@ -119,135 +227,60 @@ it.layer(NodeServices.layer)("telemetry identity", (it) => {
       secret: "private-personal-access-token",
       authJson: (secret: string) => `{"OPENAI_API_KEY":null,"personal_access_token":"${secret}"}`,
     },
-  ])("falls back quietly when Codex authenticates with $login", ({ secret, authJson }) => {
-    const logs: CapturedLog[] = [];
-    const logger = makeCaptureLogger(logs);
+  ])(
+    "adds no owner and logs nothing when Codex authenticates with $login",
+    ({ secret, authJson }) => {
+      const logs: CapturedLog[] = [];
 
-    return Effect.gen(function* () {
-      const config = yield* ServerConfig.ServerConfig;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const homeDirectory = path.join(config.baseDir, "home");
-      const codexAuthPath = path.join(homeDirectory, ".codex", "auth.json");
-      const anonymousId = "tokenless-codex-anonymous-id";
+      return Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const path = yield* Path.Path;
+        const homeDirectory = path.join(config.baseDir, "home");
+        yield* writeHomeFile(homeDirectory, ".codex/auth.json", authJson(secret));
 
-      yield* fileSystem.makeDirectory(path.dirname(codexAuthPath), { recursive: true });
-      yield* fileSystem.writeFileString(codexAuthPath, authJson(secret));
-      yield* fileSystem.writeFileString(config.anonymousIdPath, anonymousId);
+        assert.deepEqual(yield* Identify.getServerOwnersForHome(homeDirectory), []);
+        assert.deepEqual(logs, []);
+      }).pipe(Effect.provide(layerIdentity("t3-telemetry-identify-tokenless-", logs)));
+    },
+  );
 
-      const identifier = yield* Identify.getTelemetryIdentifierForHome(homeDirectory);
+  it.effect(
+    "warns about malformed Codex auth without its tokens and keeps the other owners",
+    () => {
+      const logs: CapturedLog[] = [];
 
-      assert.equal(identifier, yield* sha256(anonymousId));
-      assert.isUndefined(findIdentityLog(logs, "codex", "TelemetryIdentityDecodeError"));
-      assert.isUndefined(findIdentityLog(logs, "codex", "TelemetryIdentityReadError"));
-      const allLogs = logs
-        .map((log) =>
-          [String(log.message), ...Object.values(log.annotations).map(String)].join("\n"),
-        )
-        .join("\n");
-      assert.notInclude(allLogs, secret);
-    }).pipe(
-      Effect.provide(
-        Layer.merge(
-          ServerConfig.layerTest(process.cwd(), {
-            prefix: "t3-telemetry-identify-tokenless-",
-          }),
-          Logger.layer([logger], { mergeWithExisting: false }),
-        ),
-      ),
-    );
-  });
+      return Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const path = yield* Path.Path;
+        const homeDirectory = path.join(config.baseDir, "home");
+        const privateAccessToken = "private-codex-access-token";
+        const codexAuthPath = yield* writeHomeFile(
+          homeDirectory,
+          ".codex/auth.json",
+          `{"tokens":{"access_token":"${privateAccessToken}"}}`,
+        );
+        yield* writeHomeFile(
+          homeDirectory,
+          ".claude.json",
+          `{"oauthAccount":{"accountUuid":"claude-person"}}`,
+        );
 
-  it.effect("logs structured decode context and falls back from malformed Codex auth", () => {
-    const logs: CapturedLog[] = [];
-    const logger = makeCaptureLogger(logs);
-
-    return Effect.gen(function* () {
-      const config = yield* ServerConfig.ServerConfig;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const homeDirectory = path.join(config.baseDir, "home");
-      const codexAuthPath = path.join(homeDirectory, ".codex", "auth.json");
-      const anonymousId = "decode-fallback-anonymous-id";
-      const privateAccessToken = "private-codex-access-token";
-
-      yield* fileSystem.makeDirectory(path.dirname(codexAuthPath), { recursive: true });
-      yield* fileSystem.writeFileString(
-        codexAuthPath,
-        `{"tokens":{"access_token":"${privateAccessToken}"}}`,
-      );
-      yield* fileSystem.writeFileString(config.anonymousIdPath, anonymousId);
-
-      const identifier = yield* Identify.getTelemetryIdentifierForHome(homeDirectory);
-
-      assert.equal(identifier, yield* sha256(anonymousId));
-      const decodeLog = findIdentityLog(logs, "codex", "TelemetryIdentityDecodeError");
-      assert.isDefined(decodeLog);
-      assert.equal(
-        decodeLog?.message,
-        `Failed to decode codex telemetry identity at '${codexAuthPath}'.`,
-      );
-
-      assert.equal(decodeLog?.annotations.filePath, codexAuthPath);
-      assert.equal(decodeLog?.annotations.causeKind, "schema");
-      assert.notProperty(decodeLog?.annotations ?? {}, "cause");
-      const errorStack = decodeLog?.annotations.errorStack;
-      assert.isString(errorStack);
-      assert.include(errorStack, "Failed to decode codex telemetry identity");
-      const annotations = Object.values(decodeLog?.annotations ?? {})
-        .map(String)
-        .join("\n");
-      assert.notInclude(annotations, privateAccessToken);
-    }).pipe(
-      Effect.provide(
-        Layer.merge(
-          ServerConfig.layerTest(process.cwd(), {
-            prefix: "t3-telemetry-identify-decode-",
-          }),
-          Logger.layer([logger], { mergeWithExisting: false }),
-        ),
-      ),
-    );
-  });
-
-  it.effect("does not overwrite the anonymous id path after a non-NotFound read failure", () => {
-    const logs: CapturedLog[] = [];
-    const logger = makeCaptureLogger(logs);
-
-    return Effect.gen(function* () {
-      const config = yield* ServerConfig.ServerConfig;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const homeDirectory = path.join(config.baseDir, "home");
-
-      yield* fileSystem.makeDirectory(config.anonymousIdPath);
-
-      const identifier = yield* Identify.getTelemetryIdentifierForHome(homeDirectory);
-
-      assert.isNull(identifier);
-      assert.deepEqual(yield* fileSystem.readDirectory(config.anonymousIdPath), []);
-
-      const readLog = findIdentityLog(logs, "anonymous", "TelemetryIdentityReadError");
-      assert.isDefined(readLog);
-      assert.equal(readLog?.annotations.filePath, config.anonymousIdPath);
-      assert.equal(readLog?.annotations.causeKind, "platform");
-      assert.notEqual(readLog?.annotations.platformReason, "NotFound");
-      assert.notProperty(readLog?.annotations ?? {}, "cause");
-      const errorStack = readLog?.annotations.errorStack;
-      assert.isString(errorStack);
-      assert.include(errorStack, "Failed to read anonymous telemetry identity");
-      assert.isUndefined(
-        findIdentityLog(logs, "anonymous", "TelemetryAnonymousIdPersistenceError"),
-      );
-    }).pipe(
-      Effect.provide(
-        Layer.merge(
-          ServerConfig.layerTest(process.cwd(), {
-            prefix: "t3-telemetry-identify-read-",
-          }),
-          Logger.layer([logger], { mergeWithExisting: false }),
-        ),
-      ),
-    );
-  });
+        assert.deepEqual(yield* Identify.getServerOwnersForHome(homeDirectory), [
+          { source: "claude", ownerId: yield* sha256("claude-person") },
+        ]);
+        const decodeLog = findIdentityLog(logs, "codex", "TelemetryIdentityDecodeError");
+        assert.equal(
+          decodeLog?.message,
+          `Failed to decode codex telemetry identity at '${codexAuthPath}'.`,
+        );
+        assert.equal(decodeLog?.annotations.causeKind, "schema");
+        assert.notInclude(
+          Object.values(decodeLog?.annotations ?? {})
+            .map(String)
+            .join("\n"),
+          privateAccessToken,
+        );
+      }).pipe(Effect.provide(layerIdentity("t3-telemetry-identify-decode-", logs)));
+    },
+  );
 });
