@@ -81,6 +81,7 @@ interface PersistentThreadTerminalDrawerProps {
   threadRef: { environmentId: EnvironmentId; threadId: ThreadId };
   threadId: ThreadId;
   active: boolean;
+  composerHeight: number;
   launchContext: PersistentTerminalLaunchContext | null;
   focusRequestId: number;
   splitShortcutLabel: string | undefined;
@@ -95,6 +96,7 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
   threadRef,
   threadId,
   active,
+  composerHeight,
   launchContext,
   focusRequestId,
   splitShortcutLabel,
@@ -268,6 +270,7 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
           runtimeEnv={runtimeEnv}
           visible={visible}
           height={terminalUiState.terminalHeight}
+          composerHeight={composerHeight}
           // Known-session order is MRU and changes on focus; persisted store order keeps sidebar labels stable.
           terminalIds={canOperateTerminal ? terminalUiState.terminalIds : serverOrderedTerminalIds}
           activeTerminalId={terminalUiState.activeTerminalId}
