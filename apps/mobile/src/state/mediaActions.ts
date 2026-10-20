@@ -2,7 +2,10 @@ import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime
 import * as Dialog from "../components/ui/Dialog";
 import type { MediaActionsSource } from "../lib/mediaActionsSource";
 import { useNavigation } from "@react-navigation/native";
-import type { MediaActionId } from "@t3tools/client-runtime/media-actions";
+import {
+  formatFilePathForClipboard,
+  type MediaActionId,
+} from "@t3tools/client-runtime/media-actions";
 import {
   AuthFilesystemReadScope,
   type EnvironmentId,
@@ -108,16 +111,17 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
                 {
                   id: "copy-full-path" as const,
                   title: "Copy full path",
-                  run: () => copyTextWithHaptic(reference.path),
+                  run: () => copyTextWithHaptic(formatFilePathForClipboard(reference.path)),
                 },
               ]
             : []),
-          ...(relativePath
+          ...(relativePath && reference?.kind === "file"
             ? [
                 {
                   id: "copy-relative-path" as const,
                   title: "Copy relative path",
-                  run: () => copyTextWithHaptic(relativePath),
+                  run: () =>
+                    copyTextWithHaptic(formatFilePathForClipboard(relativePath, reference.path)),
                 },
               ]
             : []),
