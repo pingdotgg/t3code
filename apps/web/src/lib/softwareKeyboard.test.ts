@@ -2,15 +2,21 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import { createSoftwareKeyboardStore } from "./softwareKeyboard";
 
-function fixture(options: { native?: boolean; overlay?: boolean; desktop?: boolean } = {}) {
+function fixture(
+  options: { native?: boolean; overlay?: boolean; desktop?: boolean; coarse?: boolean } = {},
+) {
   const viewport = Object.assign(new EventTarget(), { width: 390, height: 844, scale: 1 });
   const keyboard = Object.assign(new EventTarget(), {
     boundingRect: { height: 0 },
     overlaysContent: options.overlay ?? false,
   });
   const win = {
+    innerWidth: 390,
     innerHeight: 844,
     visualViewport: viewport,
+    matchMedia: (query: string) => ({
+      matches: query === "(pointer: coarse)" && (options.coarse ?? true),
+    }),
     navigator: options.native ? { virtualKeyboard: keyboard } : {},
   };
   const store = createSoftwareKeyboardStore(win as unknown as Window, options.desktop ?? false);
@@ -96,7 +102,7 @@ describe("software keyboard detection", () => {
   });
 
   it("ignores window resizing even with a large height change", () => {
-    const { store, resize, win } = fixture();
+    const { store, resize, win } = fixture({ coarse: false });
     const unsubscribe = store.subscribe(() => {});
     win.innerHeight = 500;
     resize(500);
@@ -127,8 +133,45 @@ describe("software keyboard detection", () => {
   it("does not mistake rotation for an open keyboard", () => {
     const { store, resize, win } = fixture();
     const unsubscribe = store.subscribe(() => {});
-    win.innerHeight = 390;
+    Object.assign(win, { innerWidth: 844, innerHeight: 390 });
     resize(390, 844);
+    expect(store.getSnapshot()).toBe(false);
+    unsubscribe();
+  });
+
+  it("detects a keyboard that resizes the layout viewport with the visual viewport", () => {
+    const { store, resize, viewport, win } = fixture();
+    const layoutResize = (height: number, width = viewport.width, scale = 1) => {
+      win.innerHeight = height;
+      resize(height / scale, width, scale);
+    };
+    const unsubscribe = store.subscribe(() => {});
+
+    layoutResize(500);
+    expect(store.getSnapshot()).toBe(true);
+    layoutResize(480);
+    expect(store.getSnapshot()).toBe(true);
+    layoutResize(480, 195, 2);
+    expect(store.getSnapshot()).toBe(true);
+    layoutResize(844, 195, 2);
+    expect(store.getSnapshot()).toBe(false);
+    layoutResize(800, 390);
+    expect(store.getSnapshot()).toBe(false);
+    layoutResize(460);
+    expect(store.getSnapshot()).toBe(true);
+    layoutResize(800);
+    expect(store.getSnapshot()).toBe(false);
+    unsubscribe();
+  });
+
+  it("detects a layout-resizing keyboard that opened before subscribing", () => {
+    const { store, resize, win } = fixture();
+    win.innerHeight = 500;
+    resize(500);
+    const unsubscribe = store.subscribe(() => {});
+    expect(store.getSnapshot()).toBe(true);
+    win.innerHeight = 844;
+    resize(844);
     expect(store.getSnapshot()).toBe(false);
     unsubscribe();
   });

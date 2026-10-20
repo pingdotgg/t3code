@@ -3,7 +3,10 @@ type VirtualKeyboard = EventTarget & {
   readonly overlaysContent: boolean;
 };
 
-type KeyboardWindow = Pick<Window, "innerHeight" | "visualViewport"> & {
+type KeyboardWindow = Pick<
+  Window,
+  "innerWidth" | "innerHeight" | "visualViewport" | "matchMedia"
+> & {
   readonly navigator: Navigator & { readonly virtualKeyboard?: VirtualKeyboard };
 };
 
@@ -23,6 +26,19 @@ export function createSoftwareKeyboardStore(win: KeyboardWindow | undefined, isD
   const viewport = isDesktop ? undefined : win?.visualViewport;
   const keyboard = isDesktop ? undefined : win?.navigator.virtualKeyboard;
   let previous = viewport ? viewportSnapshot(viewport) : undefined;
+  // Our interactive-widget=resizes-content makes browsers that honor it (Firefox Android)
+  // shrink the layout viewport with the visual one, so compare against the tallest layout
+  // seen at this width. A fine pointer means a desktop window resize, not a keyboard.
+  const tracksLayout = viewport !== undefined && win?.matchMedia("(pointer: coarse)").matches;
+  let fullLayout = win ? { width: win.innerWidth, height: win.innerHeight } : undefined;
+
+  const layoutShrunkByKeyboard = () => {
+    if (!tracksLayout || !win || !fullLayout) return false;
+    if (fullLayout.width !== win.innerWidth || win.innerHeight > fullLayout.height) {
+      fullLayout = { width: win.innerWidth, height: win.innerHeight };
+    }
+    return fullLayout.height - win.innerHeight > KEYBOARD_THRESHOLD;
+  };
 
   const getSnapshot = () => {
     // Chromium can expose the API while withholding geometry outside overlay mode.
@@ -45,7 +61,9 @@ export function createSoftwareKeyboardStore(win: KeyboardWindow | undefined, isD
     const scaledHeightDifference = previous
       ? (previous.height - current.height) * current.scale
       : 0;
-    if (Math.abs(current.height - win.innerHeight / current.scale) <= 1) {
+    if (layoutShrunkByKeyboard()) {
+      viewportOpen = true;
+    } else if (Math.abs(current.height - win.innerHeight / current.scale) <= 1) {
       viewportOpen = false;
     } else if (
       !viewportOpen &&
@@ -64,7 +82,9 @@ export function createSoftwareKeyboardStore(win: KeyboardWindow | undefined, isD
       if (viewport) {
         previous = viewportSnapshot(viewport);
         // A composer can mount after the keyboard has already opened.
-        viewportOpen = win.innerHeight - previous.height * previous.scale > KEYBOARD_THRESHOLD;
+        viewportOpen =
+          layoutShrunkByKeyboard() ||
+          win.innerHeight - previous.height * previous.scale > KEYBOARD_THRESHOLD;
         viewport.addEventListener("resize", onViewportResize);
       }
       keyboard?.addEventListener("geometrychange", notify);
