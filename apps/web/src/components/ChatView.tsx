@@ -1423,7 +1423,6 @@ export default function ChatView(props: ChatViewProps) {
   const getTimelineScrollableNodeStable = useStableCallback(getTimelineScrollableNode);
   const [composerOverlayElement, setComposerOverlayElement] = useState<HTMLDivElement | null>(null);
   const [composerTimelineInset, setComposerTimelineInset] = useState(0);
-  const [composerOverlayHeight, setComposerOverlayHeight] = useState(0);
   const composerTimelineInsetRef = useRef(0);
   const [composerReservedHeight, setComposerReservedHeight] = useState(0);
   const composerReservedHeightRef = useRef(0);
@@ -4800,7 +4799,6 @@ export default function ChatView(props: ChatViewProps) {
   const publishComposerOverlayHeight = (height: number) => {
     const nextHeight = Math.ceil(height);
     if (nextHeight <= 0) return;
-    setComposerOverlayHeight(isDraftHeroState ? 0 : nextHeight);
     const isResting = overlayComposerIsResting({
       composerMounted: composerMountedRef.current,
       composerReportedResting: composerRestingRef.current,
@@ -8284,7 +8282,6 @@ export default function ChatView(props: ChatViewProps) {
                 onAnchorReady={onTimelineAnchorReadyStable}
                 onAnchorSizeChanged={onTimelineAnchorSizeChangedStable}
                 contentInsetEndAdjustment={composerTimelineInset}
-                composerOverlayHeight={isDraftHeroState ? 0 : composerOverlayHeight}
                 liveFollowEnabled={!paintOnlyDisplayedTimeline && timelineLiveFollowEnabled}
                 onIsAtEndChange={onIsAtEndChangeStable}
                 onContentOverflowChange={setTimelineOverflows}

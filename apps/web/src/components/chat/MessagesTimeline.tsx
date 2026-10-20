@@ -84,7 +84,6 @@ import {
   type KeyboardEvent,
   type MouseEvent,
   type ReactNode,
-  type CSSProperties,
 } from "react";
 import {
   LegendList,
@@ -508,7 +507,6 @@ interface MessagesTimelineProps {
   onAnchorReady: (messageId: MessageId, anchorIndex: number) => void;
   onAnchorSizeChanged: (messageId: MessageId, size: number) => void;
   contentInsetEndAdjustment: number;
-  composerOverlayHeight?: number;
   onIsAtEndChange: (isAtEnd: boolean) => void;
   /**
    * Off while the user is reading history; LegendList's own maintainScrollAtEnd
@@ -609,7 +607,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   onAnchorReady,
   onAnchorSizeChanged,
   contentInsetEndAdjustment,
-  composerOverlayHeight = 0,
   onIsAtEndChange,
   onContentOverflowChange,
   liveFollowEnabled,
@@ -1102,12 +1099,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
       {footer}
     </TimelineListFooter>
   );
-  const timelineMaskStyle =
-    composerOverlayHeight === 0
-      ? undefined
-      : ({
-          "--timeline-composer-overlay-height": `${composerOverlayHeight}px`,
-        } as CSSProperties);
 
   const measureContentOverflow = () =>
     timelineContentOverflowsViewport(listRef.current?.getState?.(), {
@@ -1522,60 +1513,52 @@ const ConversationTimeline = memo(function ConversationTimeline({
               onCite={onCiteAssistantText}
             />
           ) : null}
-          <div
+          <LegendList<MessagesTimelineRow>
+            ref={setTimelineList}
+            data={rows}
+            extraData={listExtraData}
+            keyExtractor={keyExtractor}
+            getItemType={getItemType}
+            renderItem={renderItem}
+            estimatedItemSize={90}
+            initialScrollAtEnd={
+              !findActive && citationRequest === null && rememberedPosition?.atEnd !== false
+            }
+            // Legend needs a data refresh to mount new pins without a scroll event.
+            dataVersion={readyCitationRequest?.key ?? listIdentityKey}
+            {...(alwaysRender ? { alwaysRender } : {})}
+            onLoad={handleListLoad}
+            {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
+            contentInsetEndAdjustment={anchoredEndSpace ? contentInsetEndAdjustment : 0}
+            maintainScrollAtEnd={
+              citationPositioning ||
+              (restoringThreadPosition && rememberedPosition?.atEnd === false) ||
+              anchoredEndSpace ||
+              !liveFollowEnabled ||
+              fullscreenAppRowId !== null ||
+              disclosureToggleSettling
+                ? false
+                : isWorking && !prefersReducedMotion && settlingListIdentity === null
+                  ? TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH
+                  : TIMELINE_MAINTAIN_SCROLL_AT_END
+            }
+            maintainVisibleContentPosition={
+              findActive ||
+              citationPositioning ||
+              (restoringThreadPosition && rememberedPosition?.atEnd === false)
+                ? false
+                : maintainVisibleContentPosition
+            }
+            maintainScrollAtEndThreshold={1}
+            onScroll={handleScroll}
+            onItemSizeChanged={handleItemSizeChanged}
             className={cn(
-              "h-full min-h-0",
-              composerOverlayHeight > 0 && "virtualized-scroll-fade timeline-scroll-bottom-fade",
+              "messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]",
+              topFadeEnabled && "topbar-scroll-fade",
             )}
-            style={timelineMaskStyle}
-          >
-            <LegendList<MessagesTimelineRow>
-              ref={setTimelineList}
-              data={rows}
-              extraData={listExtraData}
-              keyExtractor={keyExtractor}
-              getItemType={getItemType}
-              renderItem={renderItem}
-              estimatedItemSize={90}
-              initialScrollAtEnd={
-                !findActive && citationRequest === null && rememberedPosition?.atEnd !== false
-              }
-              // Legend needs a data refresh to mount new pins without a scroll event.
-              dataVersion={readyCitationRequest?.key ?? listIdentityKey}
-              {...(alwaysRender ? { alwaysRender } : {})}
-              onLoad={handleListLoad}
-              {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
-              contentInsetEndAdjustment={anchoredEndSpace ? contentInsetEndAdjustment : 0}
-              maintainScrollAtEnd={
-                citationPositioning ||
-                (restoringThreadPosition && rememberedPosition?.atEnd === false) ||
-                anchoredEndSpace ||
-                !liveFollowEnabled ||
-                fullscreenAppRowId !== null ||
-                disclosureToggleSettling
-                  ? false
-                  : isWorking && !prefersReducedMotion && settlingListIdentity === null
-                    ? TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH
-                    : TIMELINE_MAINTAIN_SCROLL_AT_END
-              }
-              maintainVisibleContentPosition={
-                findActive ||
-                citationPositioning ||
-                (restoringThreadPosition && rememberedPosition?.atEnd === false)
-                  ? false
-                  : maintainVisibleContentPosition
-              }
-              maintainScrollAtEndThreshold={1}
-              onScroll={handleScroll}
-              onItemSizeChanged={handleItemSizeChanged}
-              className={cn(
-                "messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]",
-                topFadeEnabled && "topbar-scroll-fade",
-              )}
-              ListHeaderComponent={listHeader}
-              ListFooterComponent={timelineListFooter}
-            />
-          </div>
+            ListHeaderComponent={listHeader}
+            ListFooterComponent={timelineListFooter}
+          />
           <TimelineMinimap
             items={minimapItems}
             hasPersistentGutter={minimapHasPersistentGutter}
