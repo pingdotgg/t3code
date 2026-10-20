@@ -367,6 +367,15 @@ const ProviderAdapterFailureReason = Schema.Literals([
   "attachment_unreadable",
 ]);
 export type ProviderAdapterFailureReason = typeof ProviderAdapterFailureReason.Type;
+export class ProviderAdapterSessionDetached extends Schema.TaggedError<ProviderAdapterSessionDetached>()(
+  "ProviderAdapterSessionDetached",
+  {
+    driver: ProviderDriverKind,
+    providerSessionId: ProviderSessionId,
+    threadId: ThreadId,
+    reason: Schema.Literal("workspace_changed"),
+  },
+) {}
 
 export class ProviderAdapterProtocolError extends Schema.TaggedError<ProviderAdapterProtocolError>()(
   "ProviderAdapterProtocolError",
@@ -398,6 +407,7 @@ export const ProviderAdapterV2Error = Schema.Union([
   ProviderAdapterInterruptError,
   ProviderAdapterRuntimeRequestResponseError,
   ProviderAdapterEventStreamError,
+  ProviderAdapterSessionDetached,
   ProviderAdapterProtocolError,
 ]);
 export type ProviderAdapterV2Error = typeof ProviderAdapterV2Error.Type;
@@ -556,9 +566,12 @@ export interface ProviderAdapterV2SessionRuntime {
   /**
    * Manager-owned runtimes expose a synchronous subscription so concurrent
    * provider threads receive independent copies of the process event stream.
+   * Run subscriptions supply their thread so detach ends only the moving thread's stream.
    * Adapter runtimes may omit this and expose only their single-consumer event stream.
    */
-  readonly subscribeEvents?: Effect.Effect<ProviderAdapterV2EventSubscription>;
+  readonly subscribeEvents?: (
+    threadId?: ThreadId,
+  ) => Effect.Effect<ProviderAdapterV2EventSubscription>;
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
   /**
    * When present, RunExecutionService uses only this probe (never the

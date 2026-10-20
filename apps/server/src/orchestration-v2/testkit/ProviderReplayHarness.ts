@@ -266,6 +266,7 @@ export function layerWithRegistry<Error>(
       SqlClient.SqlClient,
       MigrationError | PlatformError.PlatformError | SqlError
     >;
+    readonly mcpAppModelContextLayer?: Layer.Layer<McpAppModelContext.McpAppModelContext>;
     readonly runEffectWorker?: boolean;
     readonly runContinuationWorker?: boolean;
     readonly recoverOnStartup?: boolean;
@@ -379,7 +380,7 @@ export function layerWithRegistry<Error>(
   const layerRunExecutionServiceProvided = RunExecutionService.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        McpAppModelContext.layerEmpty,
+        options.mcpAppModelContextLayer ?? McpAppModelContext.layerEmpty,
         layerCheckpointServiceProvided,
         layerEventSinkProvided,
         IdAllocator.layer,

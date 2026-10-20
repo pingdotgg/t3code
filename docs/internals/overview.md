@@ -66,6 +66,10 @@ therefore means the intent committed, not that the provider, checkpoint, or othe
 finished. Keep external I/O out of command decisions and the database transaction. Effects tied to
 a lost provider process cannot simply replay; recovery retires them before admitting new work.
 
+A worktree handoff commits its workspace binding, continuation and detach effect together.
+The detach can execute immediately after commit; queuing the continuation afterward could let a
+delegated child publish its result before its follow-up work exists.
+
 Persisted events must remain decodable on replay. Changing a schema affects old environments at
 startup as well as live RPC traffic. Compatibility work must account for stored history, not just
 what the newest client sends.
