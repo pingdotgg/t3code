@@ -18,6 +18,7 @@ import { RefreshIcon } from "~/components/ui/refresh-icon";
 import {
   questionAttachmentDraftId,
   countQuestionAttachments,
+  trackOpenQuestionAttachmentDraft,
   useQuestionAttachmentPreparation,
   changeQuestionAttachmentPreparation,
 } from "../../questionAttachments";
@@ -153,7 +154,7 @@ import {
 import { ComposerActivityRow } from "./ComposerActivityStatus";
 import {
   reconcileAttachmentContextReferences,
-  type RetainedAttachmentContextPayloads,
+  useRetainedContextPayloads,
 } from "./composerContextUndo";
 import type { ThreadSyncPhase } from "../../threadSync";
 import { ComposerBanner } from "./ComposerBanner";
@@ -2041,6 +2042,33 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       : null;
   const attachmentDraftTarget = questionAttachmentTarget ?? composerDraftTarget;
   const attachmentDraft = useComposerThreadDraft(attachmentDraftTarget);
+  const questionTakesSnapShots =
+    supportsQuestionAttachments &&
+    activePendingProgress?.activeQuestion?.allowCustomAnswer !== false &&
+    !activePendingIsResponding;
+  const questionRequest = pendingUserInputs[0];
+  // Publish eligibility before async captures can observe a question the UI has already closed.
+  useLayoutEffect(() => {
+    if (!questionAttachmentTarget || !questionRequest || !questionTakesSnapShots) return;
+    return trackOpenQuestionAttachmentDraft(routeThreadRef, {
+      draftId: questionAttachmentTarget,
+      requestKeys: questionRequest.questions.map((question) =>
+        questionAttachmentDraftId(
+          environmentId,
+          activeThreadId!,
+          questionRequest.requestId,
+          question.id,
+        ),
+      ),
+    });
+  }, [
+    activeThreadId,
+    environmentId,
+    questionAttachmentTarget,
+    questionRequest,
+    questionTakesSnapShots,
+    routeThreadRef,
+  ]);
   const attachmentTargetKey = composerTargetKey(attachmentDraftTarget);
   // An import that finishes after a draft change must compare against the draft open *now*, not
   // the one captured in the closure that started it.
@@ -2079,7 +2107,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     pendingSnapShotIdSet,
     uncommittedSnapShotIds,
     standaloneComposerImages,
-  } = useComposerImageGroups(composerDraftTarget, composerImages, composerPreviewAnnotations);
+  } = useComposerImageGroups(attachmentDraftTarget, composerImages, composerPreviewAnnotations);
   const nonPersistedComposerImageIds = attachmentDraft.nonPersistedImageIds;
   const uploadsByImageId = useAttachmentUploadStore((state) => state.uploadsByImageId);
   const openPrLink = useOpenPrLink(routeThreadRef);
@@ -3556,20 +3584,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
   const expandComposerForEditorChangeStable = useStableCallback(expandComposerForEditorChange);
 
-  /**
-   * Payloads for chips the prompt no longer references. History undo restores the
-   * reference text but knows nothing about the draft records behind it, so a delete keeps its
-   * payload here and an undo puts it back rather than leaving a dangling chip.
-   */
-  const removedContextPayloadsRef = useRef<{
-    terminals: Map<string, TerminalContextDraft>;
-    reviewComments: Map<string, ReviewCommentContext>;
-    threads: Map<string, ThreadContextRecord>;
-  }>({ terminals: new Map(), reviewComments: new Map(), threads: new Map() });
-  const removedAttachmentContextPayloadsRef = useRef<RetainedAttachmentContextPayloads>({
-    files: new Map(),
-    previewAnnotations: new Map(),
-  });
+  const retainedContextPayloads = useRetainedContextPayloads(composerDraftTargetKey);
 
   const onPromptChange = (
     nextPrompt: string,
@@ -3604,7 +3619,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       promptHistoryPositionRef.current = null;
     }
     const referenced = new Set(contextIds);
-    const retained = removedContextPayloadsRef.current;
+    const retained = retainedContextPayloads;
 
     const liveTerminalIds = new Set<string>(
       composerTerminalContexts.map((context) => terminalContextReference(context).contextId),
@@ -3668,7 +3683,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       files: composerFiles,
       images: composerImages,
       previewAnnotations: composerPreviewAnnotations,
-      retained: removedAttachmentContextPayloadsRef.current,
+      retained: retainedContextPayloads,
     });
     for (const annotationId of attachmentChanges.annotationIdsToRemove) {
       removeComposerDraftPreviewAnnotation(composerDraftTarget, annotationId);
@@ -7125,6 +7140,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 ) : null}
                 <ComposerContextActionsContext value={composerContextActions}>
                   <ComposerPromptEditor
+                    draftKey={composerDraftTargetKey}
                     ariaLabel="Message"
                     suggestionListId={composerSuggestionListId}
                     activeSuggestionId={

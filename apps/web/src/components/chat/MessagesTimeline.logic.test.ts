@@ -35,6 +35,9 @@ import {
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
   resolveTimelineIsAtEnd,
+  isTimelineMinimapRowVisible,
+  resolveTimelineMinimapCurrentIndex,
+  resolveTimelineMinimapVisibleRange,
   resolveTimelineMinimapHasPersistentGutter,
   resolveTimelineMinimapHeightStyle,
   resolveTimelineMinimapHitStripWidth,
@@ -1281,7 +1284,7 @@ describe("deriveMessagesTimelineRows", () => {
     expect(assistantRows[1]?.assistantCopyStreaming).toBe(true);
   });
 
-  it("projects assistant diff summaries and user revert counts onto the affected rows", () => {
+  it("projects assistant diffs and rewinds the first visible run to thread start after a rewind", () => {
     const assistantTurnDiffSummary = {
       runId: "turn-1" as never,
       completedAt: "2026-01-01T00:00:30Z",
@@ -1328,6 +1331,7 @@ describe("deriveMessagesTimelineRows", () => {
       activeTurnStartedAt: null,
       turnDiffSummaries: [assistantTurnDiffSummary],
       supportsConversationRollback: true,
+      threadStartCheckpointReady: true,
     });
 
     const userRow = rows.find(
@@ -1339,7 +1343,7 @@ describe("deriveMessagesTimelineRows", () => {
         row.kind === "message" && row.message.role === "assistant",
     );
 
-    expect(userRow?.revertTurnCount).toBe(1);
+    expect(userRow?.revertTurnCount).toBe(0);
     expect(assistantRow?.assistantTurnDiffSummary).toBe(assistantTurnDiffSummary);
   });
 
@@ -4423,7 +4427,10 @@ describe("streaming v2 row projection", () => {
     ["Visible", "★ Insight\nKeep these line breaks"],
   ])("keeps row parity and history identity from %j to %j", (before, after) => {
     const initial = fixture(before);
-    const previous = deriveMessagesTimelineRowsWithState(initial.input);
+    const previous = deriveMessagesTimelineRowsWithState({
+      ...initial.input,
+      availableRevertTurnCounts: new Set([0]),
+    });
     Object.freeze(previous.rows);
     for (const row of previous.rows) Object.freeze(row);
     const timelineInput = {
@@ -4439,6 +4446,7 @@ describe("streaming v2 row projection", () => {
       timelineEntries: timeline.entries,
       latestRun: { ...initial.input.latestRun },
       turnDiffSummaries: initial.input.turnDiffSummaries.map((summary) => ({ ...summary })),
+      availableRevertTurnCounts: new Set([0]),
     };
     const next = deriveMessagesTimelineRowsWithState(input, previous);
     expect(next.rows).toEqual(
@@ -5631,6 +5639,64 @@ describe("shouldCollapseUserMessage", () => {
 });
 
 describe("timeline end and minimap geometry", () => {
+  it("highlights only visible rows inside the rendered buffer despite stale offscreen geometry", () => {
+    const range = resolveTimelineMinimapVisibleRange({
+      startBuffered: 9,
+      endBuffered: 12,
+      scroll: 1000,
+      scrollLength: 200,
+      // Both earlier and later unmounted rows retain coordinates inside the viewport.
+      positionAtIndex: (index) => (index < 9 || index > 12 ? 1050 : index * 100),
+      sizeAtIndex: () => 100,
+    });
+    expect(range).toEqual({ start: 10, end: 11 });
+    const rowIndices = [0, 9, 10, 11, 12, 20];
+    expect(
+      rowIndices.filter((index) => isTimelineMinimapRowVisible(index, range.start, range.end)),
+    ).toEqual([10, 11]);
+    expect(
+      resolveTimelineMinimapCurrentIndex({
+        visibleStart: range.start,
+        visibleEnd: range.end,
+        rowIndices,
+      }),
+    ).toBe(2);
+  });
+
+  it("refreshes the visible rows after scrolling and measurement within the same buffer", () => {
+    const state = {
+      startBuffered: 0,
+      endBuffered: 2,
+      scroll: 0,
+      scrollLength: 200,
+      positionAtIndex: (index: number) => [50, 150, 300][index],
+      sizeAtIndex: (): number | undefined => undefined,
+    };
+    expect(resolveTimelineMinimapVisibleRange(state)).toEqual({ start: 0, end: 1 });
+    const scrolled = { ...state, scroll: 100 };
+    expect(resolveTimelineMinimapVisibleRange(scrolled)).toEqual({ start: 1, end: 1 });
+    expect(resolveTimelineMinimapVisibleRange({ ...scrolled, sizeAtIndex: () => 100 })).toEqual({
+      start: 0,
+      end: 1,
+    });
+    expect(
+      resolveTimelineMinimapVisibleRange({ ...scrolled, scroll: 400, sizeAtIndex: () => 100 }),
+    ).toEqual({ start: null, end: null });
+  });
+
+  it("navigates from the first visible user message or the preceding turn when only its response is visible", () => {
+    const rowIndices = [0, 10, 20, 30, 40];
+    const currentIndex = (visibleStart: number | null, visibleEnd: number | null) =>
+      resolveTimelineMinimapCurrentIndex({ visibleStart, visibleEnd, rowIndices });
+
+    expect(currentIndex(19, 31)).toBe(2);
+    expect(currentIndex(21, 29)).toBe(2);
+    expect(currentIndex(41, 45)).toBe(4);
+    expect(currentIndex(0, 0)).toBe(0);
+    expect(currentIndex(null, null)).toBeNull();
+    expect(isTimelineMinimapRowVisible(20, null, null)).toBe(false);
+  });
+
   it("treats the follow re-arm band above the content bottom as the live edge", () => {
     expect(resolveTimelineIsAtEnd({ isAtEnd: true })).toBe(true);
     expect(resolveTimelineIsAtEnd(undefined)).toBeUndefined();

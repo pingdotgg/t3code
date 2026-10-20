@@ -9,6 +9,7 @@ import { describe, expect } from "vite-plus/test";
 
 import {
   bufferLiveStream,
+  bufferLatestLiveStream,
   makeLiveStreamBudget,
   replayAndBufferLiveEvents,
   type RetainedLiveItem,
@@ -74,6 +75,39 @@ it.effect("stops draining a slow subscriber when its unacknowledged tail fills",
 );
 
 type Event = { readonly sequence: number; readonly text: string; readonly threadId?: string };
+
+describe("bufferLatestLiveStream", () => {
+  it.effect.each(["items", "bytes"] as const)(
+    "counts an unacknowledged state against the %s limit when its replacement arrives",
+    (limit) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const releaseUpdate = yield* Deferred.make<void>();
+          const closed = yield* Deferred.make<void>();
+          const first = { sequence: 1, text: "é".repeat(20) };
+          const next = { ...first, sequence: 2 };
+          const pull = yield* Stream.toPull(
+            bufferLatestLiveStream(
+              Stream.concat(
+                Stream.succeed(first),
+                Stream.fromEffect(Deferred.await(releaseUpdate)).pipe(Stream.map(() => next)),
+              ).pipe(Stream.ensuring(Deferred.succeed(closed, undefined))),
+              () => "same-thread",
+              limit === "items"
+                ? { maxItems: 1 }
+                : { maxSerializedBytes: Buffer.byteLength(JSON.stringify(first)) },
+            ),
+          );
+          expect(yield* pull).toEqual([first]);
+          yield* Deferred.succeed(releaseUpdate, undefined);
+          yield* Deferred.await(closed);
+          const result = yield* pull.pipe(Effect.result);
+          expect(result._tag).toBe("Failure");
+          if (result._tag === "Failure") expect(result.failure._tag).toBe("LiveStreamBufferError");
+        }),
+      ),
+  );
+});
 
 describe("replayAndBufferLiveEvents", () => {
   it.effect.each(["high-water", "replay"] as const)(

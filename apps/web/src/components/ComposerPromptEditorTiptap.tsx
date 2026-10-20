@@ -45,6 +45,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
+  type RefObject,
 } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 
@@ -138,6 +139,7 @@ export interface ComposerPromptEditorHandle {
 }
 
 export interface ComposerPromptEditorProps {
+  draftKey?: string;
   value: string;
   cursor: number;
   richTextEnabled?: boolean;
@@ -775,6 +777,7 @@ function replaceSkillChips(
 }
 
 export function ComposerPromptEditorTiptap(props: ComposerPromptEditorProps) {
+  const restoreFocusRef = useRef(false);
   const { onChange: onPromptChange } = props;
   const [selection, setSelection] = useState<{
     value: string;
@@ -794,8 +797,9 @@ export function ComposerPromptEditorTiptap(props: ComposerPromptEditorProps) {
   // a caret inside unknown `$name` text, so retain the exact Markdown offset here.
   return (
     <ComposerPromptEditorTiptapInner
-      key={props.literalText ? "literal" : props.richTextEnabled ? "rich" : "plain"}
+      key={`${props.draftKey ?? ""}:${props.literalText ? "literal" : props.richTextEnabled ? "rich" : "plain"}`}
       {...props}
+      restoreFocusRef={restoreFocusRef}
       initialExpandedCursor={
         selection?.value === props.value && selection.cursor === props.cursor
           ? selection.expandedCursor
@@ -935,7 +939,10 @@ const RICH_TEXT_EXTENSIONS = createComposerExtensions(true);
 const PLAIN_TEXT_EXTENSIONS = createComposerExtensions(false);
 
 function ComposerPromptEditorTiptapInner(
-  props: ComposerPromptEditorProps & { initialExpandedCursor: number },
+  props: ComposerPromptEditorProps & {
+    initialExpandedCursor: number;
+    restoreFocusRef: RefObject<boolean>;
+  },
 ) {
   const {
     value,
@@ -965,6 +972,7 @@ function ComposerPromptEditorTiptapInner(
     onCitationDraftSave,
     onPaste,
     editorRef,
+    restoreFocusRef,
   } = props;
   const richText = !literalText && (richTextEnabled ?? false);
   const clampEditorCursor = (text: string, position: number) =>
@@ -1643,6 +1651,19 @@ function ComposerPromptEditorTiptapInner(
     );
     if (replacements.length > 0) replaceSkillChips(editor, replacements);
   }, [editor, literalText, skills]);
+
+  useLayoutEffect(() => {
+    if (!editor) return;
+    if (restoreFocusRef.current) {
+      restoreFocusRef.current = false;
+      editor.view.focus();
+      scrollTiptapCaretIntoView(editor);
+    }
+    return () => {
+      // Capture focus before the keyed editor's DOM is removed.
+      restoreFocusRef.current = editor.view.hasFocus();
+    };
+  }, [editor, restoreFocusRef]);
 
   const focusAt = (nextCursor: number, exactExpandedCursor?: number) => {
     if (!editor) return;

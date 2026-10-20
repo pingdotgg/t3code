@@ -161,6 +161,7 @@ class GitRefsRefreshCacheKey extends Data.Class<{
 interface GitRepositoryPaths {
   readonly gitCommonDir: string;
   readonly worktreeRoot: string | null;
+  readonly isAtRepositoryRoot: boolean | undefined;
   readonly currentBranch: string | null;
 }
 
@@ -1408,6 +1409,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               : path.resolve(cwd, worktreeRootOutput),
           )
         : null;
+    // Git reports physical roots, so resolve project aliases before comparing.
+    const isAtRepositoryRoot =
+      worktreeRoot === null
+        ? undefined
+        : yield* fileSystem.realPath(cwd).pipe(
+            Effect.map((physicalCwd) => path.relative(worktreeRoot, physicalCwd) === ""),
+            Effect.orElseSucceed(() => undefined),
+          );
     const currentBranchOutput = currentBranchResult.stdout.trim();
     const currentBranch =
       currentBranchResult.exitCode === 0 && currentBranchOutput.length > 0
@@ -1417,6 +1426,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return {
       gitCommonDir,
       worktreeRoot,
+      isAtRepositoryRoot,
       currentBranch,
     } satisfies GitRepositoryPaths;
   });
@@ -3381,7 +3391,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           [
             ...gitDirArgs,
             "for-each-ref",
-            "--format=%(refname)%09%(committerdate:unix)%09%(symref)",
+            "--format=%(refname)%09%(committerdate:unix)%09%(symref)%09%(upstream)",
             "refs/heads",
             "refs/remotes",
           ],
@@ -3450,7 +3460,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     for (const line of refsResult.stdout.split("\n")) {
       if (line.length === 0) continue;
-      const [fullRefName, lastCommitRaw, symbolicTarget] = line.split("\t");
+      const [fullRefName, lastCommitRaw, symbolicTarget, upstreamRef] = line.split("\t");
       if (!fullRefName || symbolicTarget) continue;
       const parsedLastCommit = Number.parseInt(lastCommitRaw ?? "0", 10);
       const lastCommit = Number.isFinite(parsedLastCommit) ? parsedLastCommit : 0;
@@ -3464,6 +3474,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             isRemote: false,
             isDefault: name === defaultBranch,
             worktreePath: worktreeMap.get(name) ?? null,
+            ...(upstreamRef ? { upstreamRef } : {}),
           },
           lastCommit,
         });
@@ -3660,6 +3671,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       });
 
       return {
+        ...(repositoryPaths.isAtRepositoryRoot === undefined
+          ? {}
+          : { isAtRepositoryRoot: repositoryPaths.isAtRepositoryRoot }),
         refs: [...refs.refs],
         isRepo: true,
         hasPrimaryRemote: snapshot.hasPrimaryRemote,

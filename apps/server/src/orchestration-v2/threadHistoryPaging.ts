@@ -482,9 +482,26 @@ export function buildBoundedThreadProjection(input: {
 }): BoundedProjectionResult {
   const policy = input.policy ?? THREAD_HISTORY_PAGE_POLICY;
   const threadId = input.projection.thread.id;
+  const runOrdinals = new Map(input.projection.runs.map((run) => [run.id, run.ordinal]));
+  let latestTodoList: (typeof input.projection.plans)[number] | undefined;
+  let latestTodoListOrdinal = -1;
+  for (const plan of input.projection.plans) {
+    const ordinal = plan.runId === null ? undefined : runOrdinals.get(plan.runId);
+    if (
+      plan.kind === "todo_list" &&
+      plan.status !== "superseded" &&
+      ordinal !== undefined &&
+      ordinal >= latestTodoListOrdinal
+    ) {
+      latestTodoList = plan;
+      latestTodoListOrdinal = ordinal;
+    }
+  }
   const controlProjection = {
     ...input.projection,
-    plans: input.projection.plans.filter((plan) => plan.status === "active"),
+    plans: input.projection.plans.filter(
+      (plan) => plan.status === "active" || plan.id === latestTodoList?.id,
+    ),
     contextHandoffs: input.projection.contextHandoffs.filter(
       (handoff) => handoff.status === "pending" || handoff.status === "ready",
     ),
@@ -506,7 +523,7 @@ export function buildBoundedThreadProjection(input: {
     turnItems: [],
     visibleTurnItems: [],
   });
-  // Control state (checkpoint file lists, an active plan) cannot be paged, so it may claim at most
+  // Control state (checkpoint file lists, the latest task list) cannot be paged, so it may claim at most
   // half the budget; past that the window would shrink to the one row every page admits.
   const windowBudget = Math.max(
     policy.maxEncodedBytes / 2,
@@ -548,9 +565,14 @@ export function buildBoundedThreadProjection(input: {
     turnItems.flatMap((item) => (item.type === "handoff" ? [String(item.contextHandoffId)] : [])),
   );
   const plans = input.projection.plans
-    .filter((plan) => plan.status === "active" || visiblePlanIds.has(String(plan.id)))
+    .filter(
+      (plan) =>
+        plan.status === "active" ||
+        plan.id === latestTodoList?.id ||
+        visiblePlanIds.has(String(plan.id)),
+    )
     .map((plan) =>
-      plan.status === "active"
+      plan.status === "active" || plan.id === latestTodoList?.id
         ? plan
         : plan.kind === "proposed_plan"
           ? { ...plan, markdown: "", detailInTurnItem: true as const }

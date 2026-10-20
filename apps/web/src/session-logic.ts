@@ -1,6 +1,7 @@
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import {
   type AssetResource,
+  type OrchestrationV2Checkpoint,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2PlanArtifact,
   type OrchestrationV2ProjectedTurnItem,
@@ -254,11 +255,22 @@ export function deriveActivePlanState(
   latestRunId: RunId | undefined,
 ): ActivePlanState | null {
   if (projection === null) return null;
-  const plans = projection.plans.filter((plan) => plan.kind === "todo_list");
+  const plans = projection.plans
+    .filter((plan) => plan.kind === "todo_list")
+    .filter((plan) => plan.status !== "superseded");
+  const runOrdinals = new Map<RunId | null, number>(
+    projection.runs.map((run) => [run.id, run.ordinal]),
+  );
   const plan =
-    [...plans].toReversed().find((candidate) => candidate.runId === latestRunId) ??
-    plans.at(-1) ??
-    null;
+    plans.findLast((candidate) => candidate.runId === latestRunId) ??
+    plans.reduce<(typeof plans)[number] | null>(
+      (latest, candidate) =>
+        latest === null ||
+        (runOrdinals.get(candidate.runId) ?? -1) >= (runOrdinals.get(latest.runId) ?? -1)
+          ? candidate
+          : latest,
+      null,
+    );
   if (plan === null || plan.steps.length === 0) return null;
   return {
     createdAt: planItemTime(projection, plan.id),
@@ -270,6 +282,37 @@ export function deriveActivePlanState(
       ...(durationMs === undefined ? {} : { durationMs }),
     })),
   };
+}
+
+// Claude's unfinished tasks belong to the provider session, not just the turn.
+export function selectComposerTasksPlan(
+  projection: OrchestrationV2ThreadProjection | null,
+  plan: ActivePlanState | null,
+  activeRunId: RunId | null,
+  activeRunSettled: boolean,
+): ActivePlanState | null {
+  if (projection === null || plan === null) return null;
+  if (activeRunId !== null && !activeRunSettled && plan.runId === activeRunId) return plan;
+  if (plan.steps.every((step) => step.status === "completed")) return null;
+  const planProviderThreadId = projection.runs.find(
+    (run) => run.id === plan.runId,
+  )?.providerThreadId;
+  if (planProviderThreadId === undefined || planProviderThreadId === null) return null;
+  const planDriver = projection.providerThreads.find(
+    (providerThread) => providerThread.id === planProviderThreadId,
+  )?.driver;
+  if (planDriver !== "claudeAgent") return null;
+  let latestStartedRun: OrchestrationV2ThreadProjection["runs"][number] | null = null;
+  for (const run of projection.runs) {
+    if (
+      run.startedAt !== null &&
+      run.providerThreadId !== null &&
+      (latestStartedRun === null || run.ordinal > latestStartedRun.ordinal)
+    ) {
+      latestStartedRun = run;
+    }
+  }
+  return latestStartedRun?.providerThreadId === planProviderThreadId ? plan : null;
 }
 
 function planItemTime(projection: OrchestrationV2ThreadProjection, planId: PlanId): string {
@@ -1011,28 +1054,72 @@ export function deriveTimelineEntriesFromVisibleTurnItemsWithState(
   };
 }
 
+// Run ordinals keep increasing after a rewind; only visible local runs define predecessors.
 export function deriveRevertTurnCountByUserMessageId(input: {
   readonly timelineEntries: ReadonlyArray<TimelineEntry>;
   readonly checkpoints: ReadonlyArray<ThreadCheckpointSummary>;
+  readonly threadStartCheckpointReady: boolean;
+  readonly availableRevertTurnCounts?: ReadonlySet<number> | undefined;
+  readonly unsettledRunId?: RunId | null;
 }): Map<ChatMessage["id"], number> {
-  const readyCheckpointByRunId = new Map<RunId, ThreadCheckpointSummary>();
+  const readyTurnCountByRunId = new Map<RunId, number>();
   for (const checkpoint of input.checkpoints) {
     if (checkpoint.status === "ready") {
-      readyCheckpointByRunId.set(checkpoint.runId, checkpoint);
+      readyTurnCountByRunId.set(checkpoint.runId, checkpoint.checkpointTurnCount);
     }
   }
+  const targetByRunId = new Map<RunId, number | undefined>();
   const byUserMessageId = new Map<ChatMessage["id"], number>();
+  let previousRunId: RunId | null = null;
   for (const entry of input.timelineEntries) {
-    if (entry.kind !== "message" || entry.message.role !== "user") continue;
-    if (entry.message.inputIntent !== "turn_start" && entry.message.inputIntent !== "queued_turn") {
-      continue;
+    // Inherited history belongs to the source thread, not our checkpoint scope.
+    if (entry.kind !== "message" && entry.kind !== "work") continue;
+    const projectedItem =
+      entry.kind === "message" ? entry.projectedItem : entry.entry.projectedItem;
+    if (projectedItem?.visibility === "inherited") continue;
+    const runId =
+      entry.kind === "message"
+        ? entry.message.runId
+        : entry.entry.itemType === "notification"
+          ? entry.entry.runId
+          : null;
+    if (runId == null) continue;
+    if (!targetByRunId.has(runId)) {
+      targetByRunId.set(
+        runId,
+        previousRunId === null
+          ? input.threadStartCheckpointReady
+            ? 0
+            : undefined
+          : readyTurnCountByRunId.get(previousRunId),
+      );
+      previousRunId = runId;
     }
-    if (entry.message.runId === null) continue;
-    const checkpoint = readyCheckpointByRunId.get(entry.message.runId);
-    if (checkpoint === undefined) continue;
-    byUserMessageId.set(entry.message.id, Math.max(0, checkpoint.checkpointTurnCount - 1));
+    if (entry.kind !== "message") continue;
+    const { message } = entry;
+    if (message.role !== "user" || message.runId === input.unsettledRunId) continue;
+    if (message.inputIntent !== "turn_start" && message.inputIntent !== "queued_turn") continue;
+    const target = targetByRunId.get(runId);
+    if (
+      target !== undefined &&
+      (input.availableRevertTurnCounts === undefined || input.availableRevertTurnCounts.has(target))
+    )
+      byUserMessageId.set(message.id, target);
   }
   return byUserMessageId;
+}
+
+export function findRevertCheckpoint(
+  checkpoints: ReadonlyArray<OrchestrationV2Checkpoint>,
+  turnCount: number,
+): OrchestrationV2Checkpoint | undefined {
+  return checkpoints.findLast(
+    (checkpoint) =>
+      checkpoint.status === "ready" &&
+      (turnCount === 0
+        ? checkpoint.ordinalWithinScope === 0 && checkpoint.appRunOrdinal === null
+        : checkpoint.appRunOrdinal === turnCount),
+  );
 }
 
 export function derivePhase(runtime: ThreadRuntimeSummary | null): SessionPhase {

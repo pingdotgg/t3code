@@ -1,10 +1,10 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { SourceControlProviderKind, VcsProcessExitError } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeV8 from "node:v8";
 import * as NodeVM from "node:vm";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
-import { assert, it } from "@effect/vitest";
+import { assert, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
@@ -34,6 +34,9 @@ import * as PullRequestFilesViewed from "../persistence/PullRequestFilesViewed.t
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
+import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
+import * as GitLabPullRequestCli from "@t3tools/source-control-gitlab/server/GitLabPullRequestCli";
+import * as GitLabPullRequestProvider from "@t3tools/source-control-gitlab/server/GitLabPullRequestProvider";
 import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
 import * as ForgejoPullRequestProvider from "@t3tools/source-control-forgejo/server/ForgejoPullRequestProvider";
 import * as BitbucketApi from "@t3tools/source-control-bitbucket/server/BitbucketApi";
@@ -7854,6 +7857,86 @@ it.effect.each([
       });
       assert.deepStrictEqual(calls, [expected]);
     }),
+);
+
+it.effect("pauses uncached GitLab activity after only the reactions endpoint is rate limited", () =>
+  Effect.gen(function* () {
+    let commandCalls = 0;
+    const provider = yield* GitLabPullRequestProvider.make.pipe(
+      Effect.provide(
+        GitLabPullRequestCli.layer.pipe(
+          Layer.provide(GitLabCli.layer),
+          Layer.provide(
+            TestSourceControlHost.layer({
+              process: {
+                run: (input) =>
+                  Effect.suspend(() => {
+                    commandCalls += 1;
+                    return input.args[1] === "graphql"
+                      ? Effect.fail(
+                          new VcsProcessExitError({
+                            operation: input.operation,
+                            command: input.command,
+                            cwd: input.cwd,
+                            exitCode: 1,
+                            detail: "API rate limit exceeded.",
+                            failureKind: "rate-limited",
+                          }),
+                        )
+                      : Effect.succeed(TestSourceControlHost.processOutput("[]"));
+                  }),
+              },
+            }),
+          ),
+        ),
+      ),
+    );
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "web",
+          workspaceRoot: "/repo",
+          repository: "acme/web",
+          provider: "gitlab",
+          host: "gitlab.example.test",
+        }),
+      ],
+      providers: [provider],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+
+    expect(yield* Effect.result(service.activity(reference))).toMatchObject({
+      _tag: "Failure",
+      failure: {
+        _tag: "PullRequestOperationError",
+        cause: {
+          _tag: "PullRequestProviderError",
+          reason: "rate-limited",
+          cause: { _tag: "GitLabCliRateLimitError" },
+        },
+      },
+    });
+    const firstCommandCalls = commandCalls;
+    assert.isAbove(firstCommandCalls, 0);
+
+    // A different merge request cannot reuse the first request's cached failure.
+    expect(yield* Effect.result(service.activity({ ...reference, number: 2 }))).toMatchObject({
+      _tag: "Failure",
+      failure: {
+        _tag: "PullRequestOperationError",
+        cause: {
+          _tag: "PullRequestProviderError",
+          reason: "rate-limited",
+          cause: {
+            _tag: "SourceControlRateLimitPausedError",
+            host: "gitlab.example.test",
+          },
+        },
+      },
+    });
+    assert.strictEqual(commandCalls, firstCommandCalls);
+  }),
 );
 
 it.effect("expands only files the change request changes, across every slice of its diff", () =>

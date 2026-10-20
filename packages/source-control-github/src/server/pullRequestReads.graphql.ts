@@ -83,6 +83,34 @@ export const CheckContext = Schema.Union([
 export type CheckContext = typeof CheckContext.Type
 
 /** A user is an individual's account on GitHub that owns repositories and can make new content. */
+export const ViewerUser = Schema.Struct({
+  /** Identifies the primary key from the database. */
+  databaseId: Schema.NullOr(Shared.Int),
+  /** The username used to login. */
+  login: Schema.String
+})
+export interface ViewerUser extends Schema.Struct.Type<typeof ViewerUser.fields> {}
+
+/** `query RoutingIdentityViewer` */
+export const RoutingIdentityViewer = GraphQL.query("RoutingIdentityViewer", {
+  document: {
+    variables: [],
+    selections: [
+      { name: "viewer", body: ["{databaseId login}"] }
+    ],
+    fragments: []
+  },
+  result: Schema.Struct({
+    /** The currently authenticated user. */
+    viewer: ViewerUser
+  })
+})
+export declare namespace RoutingIdentityViewer {
+  export type Variables = typeof RoutingIdentityViewer.variables.Type
+  export type Result = typeof RoutingIdentityViewer.result.Type
+}
+
+/** A user is an individual's account on GitHub that owns repositories and can make new content. */
 export const ActorAvatarsNodesUser = Schema.Struct({
   __typename: Schema.Literal("User"),
   /** The username used to login. */
@@ -425,10 +453,11 @@ export const PullRequestCore = GraphQL.query("PullRequestCore", {
       { name: "name", body: "String!" },
       { name: "number", body: "Int!" },
       { name: "headRef", body: "String!" },
-      { name: "required", body: "Boolean!" }
+      { name: "required", body: "Boolean!" },
+      { name: "requestedReviewers", body: "Int!" }
     ],
     selections: [
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed autoMergeAllowed viewerPermission pullRequest(number:$", "number", "){number title url body state isDraft mergeable mergeStateStatus reviewDecision additions deletions changedFiles createdAt updatedAt mergedAt closedAt headRefName baseRefName headRefOid isCrossRepository headRepositoryOwner{__typename login}headRepository{nameWithOwner viewerPermission}headRef{id}author{__typename login avatarUrl...on User{id name}}autoMergeRequest{mergeMethod}viewerCanUpdate viewerDidAuthor viewerCanUpdateBranch baseRef{compare(headRef:$", "headRef", "){behindBy}}reviewRequests(first:100){nodes{requestedReviewer{__typename...on User{login name}...on Bot{login}...on Team{slug combinedSlug teamName:name teamAvatarUrl:avatarUrl}}}}labels(first:100){nodes{name color}}commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){nodes{__typename...", "CheckContext", "}pageInfo{hasNextPage}}}}}}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed autoMergeAllowed viewerPermission pullRequest(number:$", "number", "){number title url body state isDraft mergeable mergeStateStatus reviewDecision additions deletions changedFiles createdAt updatedAt mergedAt closedAt headRefName baseRefName headRefOid isCrossRepository headRepositoryOwner{__typename login}headRepository{nameWithOwner viewerPermission}headRef{id}author{__typename login avatarUrl...on User{id name}}autoMergeRequest{mergeMethod}viewerCanUpdate viewerDidAuthor viewerCanUpdateBranch baseRef{compare(headRef:$", "headRef", "){behindBy}}reviewRequests(first:$", "requestedReviewers", "){nodes{requestedReviewer{__typename...on User{login name}...on Bot{login}...on Team{slug combinedSlug teamName:name teamAvatarUrl:avatarUrl}}}}labels(first:100){nodes{name color}}commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){nodes{__typename...", "CheckContext", "}pageInfo{hasNextPage}}}}}}}}"] }
     ],
     fragments: [
       { name: "CheckContext", body: ["on StatusCheckRollupContext{__typename...on StatusContext{context state targetUrl createdAt description isRequired(pullRequestNumber:$", "number", ")@include(if:$", "required", ")}...on CheckRun{name status conclusion startedAt completedAt detailsUrl isRequired(pullRequestNumber:$", "number", ")@include(if:$", "required", ")checkSuite{workflowRun{workflow{name}}}}}"] }
@@ -439,7 +468,8 @@ export const PullRequestCore = GraphQL.query("PullRequestCore", {
     name: Schema.String,
     number: Shared.Int,
     headRef: Schema.String,
-    required: Schema.Boolean
+    required: Schema.Boolean,
+    requestedReviewers: Shared.Int
   },
   result: Schema.Struct({
     /** Lookup a given repository by the owner and repository name. */
@@ -1493,4 +1523,4 @@ export declare namespace PullRequestSourceBranch {
 }
 
 /** Every operation in pullRequestReads.graphql. */
-export const PullRequestReadsGraphQLGroup = GraphQLGroup.make(ActorAvatars, PullRequestCore, PullRequestCheckContexts, PullRequestPreview, PullRequestActivity, PullRequestHeads, PullRequestNodeId, PullRequestSubject, ViewerPermissions, ReviewerCandidates, LabelCandidates, PullRequestFilesViewed, PullRequestMergeMessage, PullRequestActionState, PullRequestBranchToDelete, PullRequestSourceBranch)
+export const PullRequestReadsGraphQLGroup = GraphQLGroup.make(RoutingIdentityViewer, ActorAvatars, PullRequestCore, PullRequestCheckContexts, PullRequestPreview, PullRequestActivity, PullRequestHeads, PullRequestNodeId, PullRequestSubject, ViewerPermissions, ReviewerCandidates, LabelCandidates, PullRequestFilesViewed, PullRequestMergeMessage, PullRequestActionState, PullRequestBranchToDelete, PullRequestSourceBranch)

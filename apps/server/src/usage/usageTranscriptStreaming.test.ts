@@ -50,8 +50,8 @@ const claude = (id = "m1", output = 99) => ({
   },
 });
 const codex = [
-  { type: "session_meta", timestamp, payload: { id: "s1" } },
-  { type: "turn_context", timestamp, payload: { model: "gpt-5.6-sol" } },
+  { type: "session_meta", timestamp, payload: { id: "s1", model_provider: "openai" } },
+  { type: "turn_context", timestamp, payload: { model: "gpt-5.6-sol", turn_id: "initial-turn" } },
   {
     type: "event_msg",
     timestamp,
@@ -252,9 +252,14 @@ describe("large usage records", () => {
   it("preserves Codex model switches and duplicate suppression across streaming resumes", async () => {
     const path = NodePath.join(dir, "history.jsonl");
     const first = await scan(
-      codex.map((record) => ({ padding: content, ...record })),
+      codex.map((record) => ({ padding: "x".repeat(9 * 1024 * 1024), ...record })),
       "codex",
     );
+    expect(first.records[0]).toMatchObject({
+      sessionId: "s1",
+      model: "gpt-5.6-sol",
+      unresolvedServiceTierTurnId: "initial-turn",
+    });
     await NodeFSP.appendFile(
       path,
       [
@@ -281,6 +286,7 @@ describe("large usage records", () => {
       sessionId: "s1",
       totals: { outputTokens: 101 },
     });
+    expect(result?.records[0]).not.toHaveProperty("unresolvedServiceTierTurnId");
     const full = await readTranscriptRecords(path, "codex");
     expect([...first.records, ...result!.records]).toEqual(full?.records);
   });

@@ -197,10 +197,10 @@ const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean =>
     isAntigravity && provider.status === "warning" && provider.auth.status === "unknown";
   const isPendingInitialProbe =
     provider.enabled && !provider.installed && provider.status === "warning";
-  const didInstalledProviderProbeFail = provider.installed && provider.status === "error";
-  return (
-    isPendingAntigravityAuthentication || isPendingInitialProbe || didInstalledProviderProbeFail
-  );
+  const isIncompleteInstalledProbe =
+    provider.installed &&
+    (provider.status === "error" || (isCodex && provider.status === "warning"));
+  return isPendingAntigravityAuthentication || isPendingInitialProbe || isIncompleteInstalledProbe;
 };
 
 const shouldRetainMissingOpenCodeMetadata = (provider: ServerProvider): boolean =>

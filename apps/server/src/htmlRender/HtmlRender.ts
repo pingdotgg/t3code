@@ -1,4 +1,5 @@
 import type { ThreadId } from "@t3tools/contracts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   clampHtmlRenderHeight,
@@ -310,6 +311,7 @@ const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const config = yield* ServerConfig.ServerConfig;
   const previewBrowser = yield* PreviewBrowser.PreviewBrowser;
+  const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const services = yield* Effect.context<
     FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
   >();
@@ -404,19 +406,35 @@ const make = Effect.gen(function* () {
     if (attachmentId === null || filePath === null) {
       return yield* new HtmlRenderStoreError({ cause: new Error("Invalid thread id.") });
     }
-    const heights = yield* fileSystem.writeFileString(filePath, html).pipe(
-      Effect.mapError((cause) => new HtmlRenderStoreError({ cause })),
-      Effect.andThen(measure(html)),
-      // Only the returned reference lets thread deletion find the page, so a
-      // publish that fails or is interrupted before returning removes it.
-      Effect.onError(() => fileSystem.remove(filePath, { force: true }).pipe(Effect.ignore)),
-    );
-    return {
+    const baseReference: HtmlRenderReference = {
       attachmentId,
       title: input.title.trim().slice(0, HTML_RENDER_MAX_TITLE_LENGTH) || "HTML",
       height: clampHtmlRenderHeight(input.height),
-      ...(heights === undefined ? {} : { heights }),
-    } satisfies HtmlRenderReference;
+    };
+    return yield* fileSystem.writeFileString(filePath, html).pipe(
+      Effect.mapError((cause) => new HtmlRenderStoreError({ cause })),
+      Effect.uninterruptible,
+      Effect.andThen(measure(html)),
+      Effect.andThen((heights) => {
+        const reference: HtmlRenderReference = {
+          ...baseReference,
+          ...(heights === undefined ? {} : { heights }),
+        };
+        return mcpSessions
+          .recordHtmlRender(input.threadId, input, reference)
+          .pipe(Effect.as(reference));
+      }),
+      // An interrupted publish must leave neither an attachment nor a recoverable reference.
+      Effect.onError(() =>
+        Effect.all(
+          [
+            fileSystem.remove(filePath, { force: true }).pipe(Effect.ignore),
+            mcpSessions.takeHtmlRender(input.threadId, input, baseReference).pipe(Effect.ignore),
+          ],
+          { discard: true },
+        ),
+      ),
+    );
   });
 
   const preview = Effect.fn("HtmlRender.preview")(function* (input: {

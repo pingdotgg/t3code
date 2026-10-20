@@ -369,30 +369,63 @@ export function resolveTimelineMinimapIndexFromPointer(input: {
   return Math.max(0, Math.min(input.itemCount - 1, Math.round(progress * (input.itemCount - 1))));
 }
 
-export function resolveTimelineMinimapCurrentIndex(input: {
-  readonly scrollTop: number;
-  readonly scrollBottom: number;
-  readonly itemBounds: ReadonlyArray<{
-    readonly top: number | null;
-    readonly height: number | null;
-  }>;
-}): number | null {
-  let precedingIndex: number | null = null;
-
-  for (const [index, item] of input.itemBounds.entries()) {
-    if (item.top === null) {
-      continue;
-    }
-    const inView =
-      item.top < input.scrollBottom && item.top + Math.max(1, item.height ?? 1) > input.scrollTop;
-    if (inView) {
-      return index;
-    }
-    if (item.top <= input.scrollTop) {
-      precedingIndex = index;
+/** Recheck the rendered buffer: LegendList's unbuffered range can lag during scrolling. */
+export function resolveTimelineMinimapVisibleRange(state: {
+  readonly startBuffered: number | null | undefined;
+  readonly endBuffered: number | null | undefined;
+  readonly scroll: number;
+  readonly scrollLength: number;
+  readonly positionAtIndex: (index: number) => number | undefined;
+  readonly sizeAtIndex: (index: number) => number | undefined;
+}) {
+  let start: number | null = null;
+  let end: number | null = null;
+  if (state.startBuffered == null || state.endBuffered == null || state.startBuffered < 0) {
+    return { start, end };
+  }
+  const bottom = state.scroll + state.scrollLength;
+  for (let index = state.startBuffered; index <= state.endBuffered; index += 1) {
+    const top = state.positionAtIndex(index);
+    const height = state.sizeAtIndex(index);
+    if (
+      top != null &&
+      Number.isFinite(top) &&
+      top < bottom &&
+      top + Math.max(1, height != null && Number.isFinite(height) ? height : 1) > state.scroll
+    ) {
+      start ??= index;
+      end = index;
     }
   }
+  return { start, end };
+}
 
+export function isTimelineMinimapRowVisible(
+  rowIndex: number,
+  visibleStart: number | null | undefined,
+  visibleEnd: number | null | undefined,
+): boolean {
+  return (
+    visibleStart != null && visibleEnd != null && rowIndex >= visibleStart && rowIndex <= visibleEnd
+  );
+}
+
+export function resolveTimelineMinimapCurrentIndex(input: {
+  readonly visibleStart: number | null | undefined;
+  readonly visibleEnd: number | null | undefined;
+  readonly rowIndices: ReadonlyArray<number>;
+}): number | null {
+  if (input.visibleStart == null || input.visibleEnd == null) {
+    return null;
+  }
+  let precedingIndex: number | null = null;
+  for (const [index, rowIndex] of input.rowIndices.entries()) {
+    if (rowIndex >= input.visibleStart) {
+      // Prefer the first visible user message, otherwise the turn being read.
+      return rowIndex <= input.visibleEnd ? index : precedingIndex;
+    }
+    precedingIndex = index;
+  }
   return precedingIndex;
 }
 
@@ -1333,6 +1366,8 @@ export function deriveMessagesTimelineRows(input: {
   activeTurnStartedAt?: string | null;
   turnDiffSummaries: ReadonlyArray<TurnDiffSummary>;
   supportsConversationRollback: boolean;
+  threadStartCheckpointReady?: boolean;
+  availableRevertTurnCounts?: ReadonlySet<number> | undefined;
   liveAgentTaskIds?: ReadonlySet<string> | undefined;
   worktreeSetup?: WorktreeSetupSnapshot | null;
 }): MessagesTimelineRow[] {
@@ -1343,10 +1378,14 @@ export function deriveMessagesTimelineRows(input: {
       turnDiffSummaryByAssistantMessageId.set(summary.assistantMessageId, summary);
     }
   }
+  const unsettledRunId = deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null);
   const revertTurnCountByUserMessageId = input.supportsConversationRollback
     ? deriveRevertTurnCountByUserMessageId({
         timelineEntries: timelineEntries,
         checkpoints: input.turnDiffSummaries,
+        threadStartCheckpointReady: input.threadStartCheckpointReady === true,
+        unsettledRunId,
+        availableRevertTurnCounts: input.availableRevertTurnCounts,
       })
     : new Map<MessageId, number>();
   const nextRows: MessagesTimelineRow[] = [];
@@ -1354,7 +1393,6 @@ export function deriveMessagesTimelineRows(input: {
     timelineEntries.flatMap((entry) => (entry.kind === "message" ? [entry.message] : [])),
   );
   const terminalAssistantMessageIds = deriveTerminalAssistantMessageIds(timelineEntries);
-  const unsettledRunId = deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null);
   const failedRunIds = failedTimelineRunIds(timelineEntries, input.latestRun ?? null);
   const liveSubagentEntryIds = liveSubagentCardEntryIds(timelineEntries);
   const completeSupersededReplyIds = completeSupersededReplyEntryIds(timelineEntries);
@@ -2035,6 +2073,7 @@ function replaceStreamingMessageRows(
     expandedRunIds: previousExpandedRuns,
     expandedAttemptIds: previousExpandedAttempts,
     expandedWorkGroupIds: previousExpandedGroups,
+    availableRevertTurnCounts: previousAvailableRevertTurnCounts,
     ...previousContext
   } = previous.input;
   const {
@@ -2044,6 +2083,7 @@ function replaceStreamingMessageRows(
     expandedRunIds,
     expandedAttemptIds,
     expandedWorkGroupIds,
+    availableRevertTurnCounts,
     ...context
   } = input;
   // V2 shell and checkpoint selectors produce fresh summaries for each event.
@@ -2055,6 +2095,7 @@ function replaceStreamingMessageRows(
     !shallow(previousExpandedRuns, expandedRunIds) ||
     !shallow(previousExpandedAttempts, expandedAttemptIds) ||
     !shallow(previousExpandedGroups, expandedWorkGroupIds) ||
+    !shallow(previousAvailableRevertTurnCounts, availableRevertTurnCounts) ||
     !sameCheckpointSummaries(previousCheckpoints, turnDiffSummaries)
   ) {
     return null;

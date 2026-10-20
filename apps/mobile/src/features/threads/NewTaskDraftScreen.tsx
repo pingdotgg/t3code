@@ -71,6 +71,7 @@ import { ProviderIcon } from "../../components/ProviderIcon";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { hasProviderUsageLimits, isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
+import { threadContextsOutsideEnvironment } from "@t3tools/shared/composerContextReferences";
 import { COMPOSER_LAYOUT_TRANSITION, ComposerSurface } from "./ThreadComposer";
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
 import { useComposerCommandMenu } from "./use-composer-command-menu";
@@ -1246,6 +1247,22 @@ export function NewTaskDraftScreen(props: {
     const contextBlockReason = composerContextSendBlockReason(draft.context);
     if (contextBlockReason) {
       Dialog.alert("Too much context", contextBlockReason);
+      return;
+    }
+    const strandedThread = threadContextsOutsideEnvironment({
+      text: draft.text,
+      records: draft.context?.records ?? [],
+      environmentId: selectedProject.environmentId,
+    })[0];
+    if (strandedThread) {
+      const owner =
+        flow.environments.find(
+          (environment) => environment.environmentId === strandedThread.environmentId,
+        )?.environmentLabel ?? "its machine";
+      Dialog.alert(
+        "Attached thread unavailable",
+        `"${strandedThread.title}" is on another machine. Switch back to ${owner} or remove it from the draft.`,
+      );
       return;
     }
 
