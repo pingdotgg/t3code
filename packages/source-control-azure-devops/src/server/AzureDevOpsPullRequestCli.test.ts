@@ -61,6 +61,17 @@ const oneIteration = {
   ],
 };
 
+const buildPolicy = {
+  status: "rejected",
+  configuration: {
+    id: 12,
+    isEnabled: true,
+    isBlocking: true,
+    type: { id: "0609b952-1397-4640-95ec-e00a01b2c241" },
+    settings: { displayName: "Tests" },
+  },
+};
+
 function pullRequestRows(
   count: number,
   firstNumber: number,
@@ -447,6 +458,139 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
 
       expect(argsOfCall(0)).toContain("--reviewer");
     }),
+  );
+
+  it.effect("reads build checks after a full page of unrelated policies", () =>
+    Effect.gen(function* () {
+      const unrelated = {
+        ...buildPolicy,
+        configuration: { ...buildPolicy.configuration, type: { id: "reviewers" } },
+      };
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(JSON.stringify(Array.from({ length: 100 }, () => ({ ...unrelated })))),
+          ),
+        )
+        .mockReturnValueOnce(Effect.succeed(output(JSON.stringify([buildPolicy]))));
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+      const checks = yield* cli.listBuildChecks({ cwd: "/w", number: 42 });
+
+      assert.deepEqual(checks, [
+        {
+          name: "Tests (#12)",
+          status: "failure",
+          required: true,
+          description: null,
+          url: null,
+        },
+      ]);
+      assert.deepEqual(argsOfCall(0), [
+        "repos",
+        "pr",
+        "policy",
+        "list",
+        "--detect",
+        "true",
+        "--id",
+        "42",
+        "--top",
+        "100",
+        "--skip",
+        "0",
+        "--only-show-errors",
+        "--output",
+        "json",
+      ]);
+      expect(argsOfCall(1)).toContain("100");
+      assert.equal(argsOfCall(1)[argsOfCall(1).indexOf("--skip") + 1], "100");
+    }),
+  );
+
+  it.effect("rejects incomplete policy reads instead of returning a passing subset", () =>
+    Effect.gen(function* () {
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+      const passedPage = output(
+        JSON.stringify(Array.from({ length: 100 }, () => ({ ...buildPolicy, status: "approved" }))),
+      );
+      for (const unreadable of [
+        output("{}"),
+        output(""),
+        { ...output("[]"), stdoutTruncated: true },
+      ]) {
+        mockedExecute
+          .mockReturnValueOnce(Effect.succeed(passedPage))
+          .mockReturnValueOnce(Effect.succeed(unreadable));
+        const error = yield* Effect.flip(cli.listBuildChecks({ cwd: "/w", number: 42 }));
+        assert.equal(error._tag, "AzureDevOpsPullRequestReadError");
+      }
+      mockedExecute.mockReset();
+      mockedExecute.mockReturnValue(Effect.succeed(passedPage));
+      const bounded = yield* Effect.flip(cli.listBuildChecks({ cwd: "/w", number: 42 }));
+      assert.equal(bounded._tag, "AzureDevOpsPullRequestReadError");
+      assert.equal(mockedExecute.mock.calls.length, 10);
+    }),
+  );
+
+  it.effect(
+    "propagates build-read failures through detail with their provider failure reason",
+    () =>
+      Effect.gen(function* () {
+        const fields = {
+          operation: "execute" as const,
+          command: "az" as const,
+          cwd: "/w",
+          argumentCount: 16,
+          cause: "Policy read failed",
+        };
+        const failures = [
+          {
+            error: new AzureDevOpsCli.AzureDevOpsCliAuthenticationError(fields),
+            reason: "unauthenticated",
+          },
+          {
+            error: new AzureDevOpsCli.AzureDevOpsCliRateLimitError(fields),
+            reason: "rate-limited",
+          },
+          {
+            error: new AzureDevOpsCli.AzureDevOpsCliUnavailableError(fields),
+            reason: "missing-tool",
+          },
+          { error: new AzureDevOpsCli.AzureDevOpsCommandFailedError(fields), reason: "failed" },
+          {
+            error: new AzureDevOpsCli.AzureDevOpsPullRequestNotFoundError(fields),
+            reason: "not-found",
+          },
+        ];
+        const provider = yield* AzureDevOpsPullRequestProvider.make;
+        for (const { error, reason } of failures) {
+          mockedExecute
+            .mockReturnValueOnce(Effect.succeed(output(json(pullRequestRow))))
+            .mockReturnValueOnce(Effect.fail(error));
+          const failure = yield* Effect.flip(
+            provider.getChangeRequest({
+              cwd: "/w",
+              repository: "example/platform/web",
+              host: "dev.azure.com",
+              number: 42,
+            }),
+          );
+          assert.equal(failure.reason, reason);
+          assert.equal(failure.cause, error);
+        }
+        mockedExecute
+          .mockReturnValueOnce(Effect.succeed(output(json(pullRequestRow))))
+          .mockReturnValueOnce(Effect.succeed(output("{}")));
+        const unreadable = yield* Effect.flip(
+          provider.getChangeRequest({
+            cwd: "/w",
+            repository: "example/platform/web",
+            host: "dev.azure.com",
+            number: 42,
+          }),
+        );
+        assert.equal(unreadable.reason, "failed");
+      }),
   );
 
   it.effect("reads the signed-in account, which az reports as a bare value", () =>
