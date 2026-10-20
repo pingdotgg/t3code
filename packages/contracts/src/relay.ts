@@ -380,6 +380,24 @@ export const RelayEnvironmentEndpointUnavailableReason = Schema.Literals([
 export type RelayEnvironmentEndpointUnavailableReason =
   typeof RelayEnvironmentEndpointUnavailableReason.Type;
 
+/**
+ * Which part of the path from the relay to the environment failed. `tunnel_down`
+ * means Cloudflare has no live connector for the tunnel; `origin_unreachable`
+ * means the tunnel answered but T3 Code behind it did not. Optional on the wire
+ * so old relays and old clients keep working.
+ */
+export const RelayEnvironmentEndpointFailure = Schema.Literals([
+  "tunnel_down",
+  "origin_unreachable",
+  "dns",
+  "tls",
+  "refused",
+  "timeout",
+  "invalid_response",
+  "unknown",
+]);
+export type RelayEnvironmentEndpointFailure = typeof RelayEnvironmentEndpointFailure.Type;
+
 export const RelayAgentActivityPublishProofInvalidReason = Schema.Literals([
   "invalid_signature_or_payload",
   "replayed_nonce",
@@ -482,6 +500,8 @@ export class RelayEnvironmentEndpointUnavailableError extends Schema.TaggedError
   {
     code: Schema.Literal("environment_endpoint_unavailable"),
     reason: RelayEnvironmentEndpointUnavailableReason,
+    endpointFailure: Schema.optionalKey(RelayEnvironmentEndpointFailure),
+    endpointStatus: Schema.optionalKey(Schema.Number),
     traceId: TrimmedNonEmptyString,
   },
   { httpApiStatus: 502 },
@@ -829,6 +849,8 @@ export const RelayEnvironmentStatusResponse = Schema.Struct({
   checkedAt: TrimmedNonEmptyString,
   descriptor: Schema.optional(ExecutionEnvironmentDescriptor),
   error: Schema.optional(TrimmedNonEmptyString),
+  endpointFailure: Schema.optional(RelayEnvironmentEndpointFailure),
+  endpointStatus: Schema.optional(Schema.Number),
   offlineReason: Schema.optional(RelayEnvironmentOfflineReason),
   traceId: Schema.optional(TrimmedNonEmptyString),
 });

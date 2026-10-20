@@ -1,4 +1,5 @@
 import { EnvironmentId } from "@t3tools/contracts";
+import { RelayEnvironmentEndpointFailure } from "@t3tools/contracts/relay";
 import * as Schema from "effect/Schema";
 
 const ConnectionTargetBase = {
@@ -76,12 +77,40 @@ export const ConnectionBlockedReason = Schema.Literals([
 ]);
 export type ConnectionBlockedReason = typeof ConnectionBlockedReason.Type;
 
+/** A part of the path to an environment: this device, T3 Connect, the host's tunnel, or T3 Code on the host. */
+export const ConnectionHop = Schema.Literals(["device", "relay", "tunnel", "server"]);
+export type ConnectionHop = typeof ConnectionHop.Type;
+
+/** The relay's endpoint failures plus the causes the client can name from other errors. */
+export const ConnectionFailureCause = Schema.Literals([
+  ...RelayEnvironmentEndpointFailure.literals,
+  "clock_skew",
+  "not_linked",
+  "relay_error",
+  "tunnel_pending",
+  "tunnel_not_enabled",
+]);
+export type ConnectionFailureCause = typeof ConnectionFailureCause.Type;
+
+/**
+ * Where and why a failure happened, when the code that saw it knows. See
+ * `presentConnectionDiagnosis`. `via` names the route when the hop alone does
+ * not: T3 Code on the host can fail behind the tunnel or on a direct route.
+ */
+const ConnectionFailureFields = {
+  hop: Schema.optionalKey(ConnectionHop),
+  via: Schema.optionalKey(Schema.Literals(["relay", "direct"])),
+  failureCause: Schema.optionalKey(ConnectionFailureCause),
+  httpStatus: Schema.optionalKey(Schema.Number),
+};
+
 export class ConnectionTransientError extends Schema.TaggedError<ConnectionTransientError>()(
   "ConnectionTransientError",
   {
     reason: ConnectionTransientReason,
     detail: Schema.String,
     traceId: Schema.optionalKey(Schema.String),
+    ...ConnectionFailureFields,
   },
 ) {
   override get message(): string {
@@ -95,6 +124,7 @@ export class ConnectionBlockedError extends Schema.TaggedError<ConnectionBlocked
     reason: ConnectionBlockedReason,
     detail: Schema.String,
     traceId: Schema.optionalKey(Schema.String),
+    ...ConnectionFailureFields,
 
     serverUpdateRequired: Schema.optionalKey(Schema.Boolean),
   },

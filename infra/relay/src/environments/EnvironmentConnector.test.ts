@@ -827,6 +827,39 @@ describe("EnvironmentConnector", () => {
     }).pipe(Effect.provide(layerConnectorTest(execute)));
   });
 
+  it.effect("names a dead tunnel when Cloudflare has no connector for it", () => {
+    const execute = (request: HttpClientRequest.HttpClientRequest) =>
+      Effect.succeed(
+        HttpClientResponse.fromWeb(request, new Response("error code: 1033", { status: 530 })),
+      );
+
+    return Effect.gen(function* () {
+      const connector = yield* EnvironmentConnector.EnvironmentConnector;
+      const connect = yield* connector
+        .connect({
+          userId: "user_123",
+          environmentId: "env-connector-test",
+          clientProofKeyThumbprint: "client-proof-key-thumbprint",
+        })
+        .pipe(Effect.flip);
+      const status = yield* connector.status({
+        userId: "user_123",
+        environmentId: "env-connector-test",
+      });
+
+      expect(connect).toMatchObject({
+        _tag: "EnvironmentMintRequestFailed",
+        endpointFailure: "tunnel_down",
+        endpointStatus: 530,
+      });
+      expect(status).toMatchObject({
+        status: "offline",
+        endpointFailure: "tunnel_down",
+        endpointStatus: 530,
+      });
+    }).pipe(Effect.provide(layerConnectorTest(execute)));
+  });
+
   it.effect("times out hung managed endpoint mint requests", () => {
     let resolveRequestStarted: (() => void) | undefined;
     const requestStarted = new Promise<void>((resolve) => {
