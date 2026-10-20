@@ -89,12 +89,16 @@ index 5fcaa9f9a7d893817fee89b85186ee3936118e69..3effe838fa54495d165b81cc7501e72d
      const imageContainer = useRef(null);
      const imageDimensions = useImageDimensions(imageSrc);
      const [translate, scale] = getImageTransform(imageDimensions, SCREEN);
-@@ -31,7 +31,7 @@ const ImageItem = ({ imageSrc, onZoom, onRequestClose, onLongPress, delayLongPre
-                 scrollEnabled: !isZoomed,
+@@ -28,10 +28,10 @@ const ImageItem = ({ imageSrc, onZoom, onRequestClose, onLongPress, delayLongPre
+         onZoom(isZoomed);
+         if ((_a = imageContainer) === null || _a === void 0 ? void 0 : _a.current) {
+             imageContainer.current.setNativeProps({
+-                scrollEnabled: !isZoomed,
++                scrollEnabled: swipeToCloseEnabled && !isZoomed,
              });
          }
 -    }, [imageContainer]);
-+    }, [imageContainer, onZoom]);
++    }, [imageContainer, onZoom, swipeToCloseEnabled]);
      const onLongPressHandler = useCallback(() => {
          onLongPress(imageSrc);
      }, [imageSrc, onLongPress]);
@@ -272,3 +276,13 @@ index 99dcbc7efea4eba86a8bc2bad71dde73c8ebf1b4..3a374c0923879548ec3826a78be16f79
      let numberInitialTouches = 1;
      let initialTouches = [];
      let currentScale = initialScale;
+@@ -266,6 +266,9 @@ const usePanResponder = ({ initialScale, initialTranslate, onZoom, doubleTapToZo
+                 tmpTranslate = null;
+             }
+         },
++        // A gesture taken over mid-pinch must commit like a release, or pans stay
++        // gated on the pre-pinch scale while the image still shows zoomed.
++        onTerminate: () => handlers.onRelease(),
+     };
+     const panResponder = useMemo(() => createPanResponder(handlers), [handlers]);
+     return [panResponder.panHandlers, scaleValue, translateValue];
