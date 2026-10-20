@@ -443,6 +443,7 @@ it.layer(
         assert.strictEqual(status.auth.type, "chatgpt");
         assert.strictEqual(status.auth.label, "ChatGPT Pro 20x Subscription");
         assert.strictEqual(status.auth.email, "test@example.com");
+        assert.deepStrictEqual(status.setup, { canAuthenticate: false, canInstall: false });
         assert.deepStrictEqual(status.models, [
           {
             slug: "gpt-live-codex",
@@ -589,6 +590,7 @@ it.layer(
         assert.strictEqual(status.status, "error");
         assert.strictEqual(status.installed, false);
         assert.strictEqual(status.auth.status, "unknown");
+        assert.deepStrictEqual(status.setup, { canAuthenticate: false, canInstall: false });
         assert.include(status.message, binaryPath);
         assert.include(status.message, "Settings → Providers → Codex → Binary path on the server");
         assert.strictEqual(
@@ -3719,6 +3721,7 @@ it.layer(
           assert.notStrictEqual(ghost, undefined);
           assert.strictEqual(ghost?.driver, "ghostDriver");
           assert.strictEqual(ghost?.availability, "unavailable");
+          assert.strictEqual(Object.hasOwn(ghost ?? {}, "setup"), false);
           assert.match(ghost?.unavailableReason ?? "", /ghostDriver/);
         }).pipe(Effect.provide(runtimeServices));
       }),

@@ -131,7 +131,7 @@ export function CodexSetupSection(props: CodexSetupSectionProps) {
           ) : null
         }
       />
-    ) : props.mode === "existing" ? null : props.provider?.setup === undefined ? (
+    ) : props.mode === "existing" ? null : !props.provider?.setup?.canAuthenticate ? (
       props.presentation === "onboarding" ? (
         <CodexWelcomeCard
           title={props.displayName || props.provider?.displayName || "Codex"}

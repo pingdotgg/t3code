@@ -25,7 +25,8 @@ export const buildUnavailableProviderSnapshot = Effect.fn(
   const checkedAt = input.checkedAt ?? (yield* nowIso);
   const displayName = input.displayName?.trim() || (input.driverKind as string);
 
-  const base = buildServerProvider({
+  // No driver ran, so its setup capabilities are still unknown.
+  const { setup: _setup, ...base } = buildServerProvider({
     presentation: { displayName },
     enabled: false,
     checkedAt,
