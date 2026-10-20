@@ -17,6 +17,7 @@ import { assert, it } from "@effect/vitest";
 
 import { CheckpointRef, GitCommandError, VcsProcessExitError } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as ServerConfig from "../config.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -194,6 +195,54 @@ it.effect("checkpoint capture skips untracked nested repositories without a comm
       "nested\n",
     );
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+it.effect.skipIf(!symlinksSupported)(
+  "checkpoint capture writes its index into the real git dir when cwd is a symlinked subdirectory",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const liveRunner = yield* ProcessRunner.ProcessRunner;
+      const indexFiles: string[] = [];
+      const captureProcess = yield* VcsProcess.make.pipe(
+        Effect.provideService(ProcessRunner.ProcessRunner, {
+          run: (input) => {
+            const indexFile = input.env?.GIT_INDEX_FILE;
+            if (indexFile !== undefined) indexFiles.push(indexFile);
+            return liveRunner.run(input);
+          },
+        }),
+      );
+      const driver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+        Effect.provideService(VcsProcess.VcsProcess, captureProcess),
+      );
+      const sandbox = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-checkpoint-symlink-",
+      });
+      const repo = path.join(sandbox, "repo");
+      const subdir = path.join(repo, "sub", "dir");
+      const link = path.join(sandbox, "nest", "link");
+      yield* fileSystem.makeDirectory(subdir, { recursive: true });
+      yield* fileSystem.makeDirectory(path.dirname(link), { recursive: true });
+      yield* fileSystem.symlink(subdir, link);
+      const { git, checkpointRef } = yield* makeCheckpointFixture(driver, repo);
+      // Git returns ../../.git from the target; resolving it against the link reaches the decoy.
+      yield* git(["-C", sandbox, "init"]);
+      yield* fileSystem.writeFileString(path.join(subdir, "nested.txt"), "from-link\n");
+      const realCommonDir = yield* fileSystem.realPath(path.join(repo, ".git"));
+
+      yield* driver.checkpoints.captureCheckpoint({ cwd: link, checkpointRef });
+
+      assert.isTrue(indexFiles.length > 0);
+      for (const indexFile of indexFiles) {
+        assert.strictEqual(yield* fileSystem.realPath(path.dirname(indexFile)), realCommonDir);
+      }
+      assert.strictEqual(
+        (yield* git(["show", `${checkpointRef}:sub/dir/nested.txt`])).stdout,
+        "from-link\n",
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerGitCaptureContract)),
 );
 
 it.effect("checkpoint capture keeps the shared index a split index still uses", () =>

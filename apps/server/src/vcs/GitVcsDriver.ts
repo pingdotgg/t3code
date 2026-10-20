@@ -788,6 +788,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       }),
     );
 
+  // Git reports relative paths from the physical cwd, which can differ from a symlink.
   const resolveGitCommonDir = Effect.fn("GitVcsDriver.resolveGitCommonDir")(function* (
     cwd: string,
   ) {
@@ -797,7 +798,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       args: ["rev-parse", "--git-common-dir"],
     });
     const gitCommonDir = result.stdout.trim();
-    return path.isAbsolute(gitCommonDir) ? gitCommonDir : path.resolve(cwd, gitCommonDir);
+    if (path.isAbsolute(gitCommonDir)) return gitCommonDir;
+    const physicalCwd = yield* fileSystem.realPath(cwd).pipe(Effect.orElseSucceed(() => cwd));
+    return path.resolve(physicalCwd, gitCommonDir);
   });
 
   // Git renames loose objects and refs into place without fsync by default, so
