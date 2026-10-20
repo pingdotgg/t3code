@@ -48,13 +48,18 @@ describe("fileBreadcrumbs", () => {
     ]);
   });
 
-  it("builds home-relative breadcrumbs with navigable child folders", () => {
+  it("builds home-relative breadcrumbs with navigable folders", () => {
     expect(fileBreadcrumbs("t3code", "~/.claude/CLAUDE.md")).toEqual([
-      { label: "~", path: "~", kind: "directory" },
+      { label: "~", path: "~/", kind: "directory" },
       { label: ".claude", path: "~/.claude", kind: "directory" },
       { label: "CLAUDE.md", path: "~/.claude/CLAUDE.md", kind: "file" },
     ]);
+    expect(isListableHostFolder("~/")).toBe(true);
     expect(isListableHostFolder("~/.claude")).toBe(true);
+  });
+
+  it("keeps a project folder named ~ inside the project", () => {
+    expect(fileBreadcrumbs("t3code", "~").map((crumb) => crumb.path)).toEqual(["", "~"]);
   });
 });
 
@@ -69,6 +74,7 @@ describe("breadcrumbPathOf", () => {
     ["C:\\Users\\me\\", "C:\\Users\\me"],
     ["C:\\", "C:\\"],
     ["\\\\server\\share\\", "\\\\server\\share"],
+    ["~/", "~/"],
   ])("writes %j as its crumb names it", (path, expected) => {
     expect(breadcrumbPathOf(path)).toBe(expected);
   });
