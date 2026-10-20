@@ -36,6 +36,7 @@ const EXTRA_OWNERS = [
   // scripts/build-desktop-artifact.ts reads the GNOME extension manifest.
   [/^apps\/desktop\/gnome-extension\//, ["@t3tools/scripts"]],
   [/^native\/browser-secret\//, ["@t3tools/desktop"]],
+  [/^native\/kde-snap-shot\//, ["@t3tools/desktop"]],
   [/^native\/libghostty-vt\//, ["@t3tools/web"]],
 ];
 const RUST = /^native\/(resource-monitor|kde-snap-shot|hyprland-snap-shot)\//;
@@ -112,10 +113,10 @@ function ownersOf(file, packages) {
   // A manifest can change dependencies or versions other packages read.
   if (path.posix.basename(file) === "package.json") return null;
   if (RUNS_EVERYTHING.some((pattern) => pattern.test(file))) return null;
-  // scripts/build-desktop-artifact.test.ts reads the crates' sources.
-  if (RUST.test(file)) return ["@t3tools/scripts"];
-
   const extra = EXTRA_OWNERS.flatMap(([pattern, names]) => (pattern.test(file) ? names : []));
+  // scripts/build-desktop-artifact.test.ts reads the crates' sources.
+  if (RUST.test(file)) return ["@t3tools/scripts", ...extra];
+
   const owner = packages
     .filter((pkg) => file.startsWith(`${pkg.dir}/`))
     .sort((a, b) => b.dir.length - a.dir.length)[0];
