@@ -1,6 +1,7 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
@@ -141,7 +142,20 @@ export const make = ElectronUpdater.of({
     Effect.suspend(() => {
       const channel = autoUpdater.channel;
       return Effect.try({
-        try: () => autoUpdater.quitAndInstall(isSilent, isForceRunAfter),
+        try: () => {
+          // BaseUpdater reports synchronous install failures via events and returns normally.
+          let installError = Option.none<unknown>();
+          const onError = (cause: unknown) => {
+            installError = Option.some(cause);
+          };
+          autoUpdater.on("error", onError);
+          try {
+            autoUpdater.quitAndInstall(isSilent, isForceRunAfter);
+            if (Option.isSome(installError)) throw installError.value;
+          } finally {
+            autoUpdater.removeListener("error", onError);
+          }
+        },
         catch: (cause) =>
           new ElectronUpdaterQuitAndInstallError({
             channel,

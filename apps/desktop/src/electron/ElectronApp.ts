@@ -1,8 +1,11 @@
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as Electron from "electron";
 
@@ -98,8 +101,7 @@ const addScopedAppListener = <Args extends ReadonlyArray<unknown>>(
       }),
   ).pipe(Effect.asVoid);
 
-/** @public Service construction is part of the canonical Effect module API. */
-export const make = ElectronApp.of({
+const electronApp = ElectronApp.of({
   metadata: Effect.gen(function* () {
     const appVersion = yield* Effect.try({
       try: () => Electron.app.getVersion(),
@@ -210,4 +212,37 @@ export const make = ElectronApp.of({
   on: addScopedAppListener,
 });
 
-export const layer = Layer.succeed(ElectronApp, make);
+/** @public Service construction is part of the canonical Effect module API. */
+export const make = Effect.gen(function* () {
+  const platform = yield* HostProcess.Platform;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  if (platform !== "linux") return electronApp;
+
+  return ElectronApp.of({
+    ...electronApp,
+    // Electron's Linux relauncher sets irreversible no_new_privs, breaking pkexec updates.
+    // Keep stdin open until this process exits so the replacement can take its instance lock.
+    relaunch: (options) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const handle = yield* spawner.spawn(
+            ChildProcess.make(
+              "/bin/sh",
+              [
+                "-c",
+                'while read -r _; do :; done; exec "$@" </dev/null',
+                "t3code-relaunch",
+                options.execPath ?? process.execPath,
+                ...(options.args ?? process.argv.slice(1)),
+              ],
+              { detached: true, stdin: "pipe", stdout: "ignore", stderr: "ignore" },
+            ),
+          );
+          // Keeps the waiting shell alive when this scope closes.
+          yield* Effect.asVoid(handle.unref);
+        }),
+      ).pipe(Effect.catch(() => electronApp.relaunch(options))),
+  });
+});
+
+export const layer = Layer.effect(ElectronApp, make);
