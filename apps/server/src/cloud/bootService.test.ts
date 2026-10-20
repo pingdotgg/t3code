@@ -64,6 +64,23 @@ it("reads the served T3 home back out of a rendered unit or plist", () => {
   expect(BootService.bootServiceBaseDirOf("[Service]\nExecStart=/x\n")).toBeUndefined();
 });
 
+it.each([
+  ["a unit", '/home/theo/T3 "Data"/100%\\x', BootService.renderBootServiceUnit],
+  [
+    "a plist",
+    "/Users/theo/a&b <c>",
+    (plan: BootService.BootServicePlan) =>
+      BootService.renderBootServicePlist(plan, { homeDir: "/Users/theo", environmentPath: "" }),
+  ],
+] as const)("reads the launcher back out of %s", (_, baseDir, render) => {
+  const program = `${baseDir}/runtime/versions/1.2.3/t3`;
+  expect(
+    BootService.bootServiceProgramOf(
+      render({ program: [program, "__service-launcher"], baseDir, logPath: "/log", unitPath: "" }),
+    ),
+  ).toBe(program);
+});
+
 it("survives the kernel OOM-killing a greedy agent child", () => {
   const unit = BootService.renderBootServiceUnit(linuxPlan);
 
