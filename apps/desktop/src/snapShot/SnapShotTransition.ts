@@ -175,7 +175,7 @@ window.prepareCaptureTransition=async destination=>{
   const inner={width:Math.max(1,target.width-borderWidth*2),height:Math.max(1,target.height-borderWidth*2)};
   const sourceCenter={x:source.x+source.width/2,y:source.y+source.height/2},targetCenter={x:target.x+target.width/2,y:target.y+target.height/2};
   const initial="translate3d("+(sourceCenter.x-targetCenter.x)+"px,"+(sourceCenter.y-targetCenter.y)+"px,0) scale("+(source.width/target.width)+","+(source.height/target.height)+")";
-  const imageWidth=Math.max(1,snapshot.naturalWidth||source.width),imageHeight=Math.max(1,snapshot.naturalHeight||source.height),fit=Math.min(inner.width/imageWidth,inner.height/imageHeight);
+  const imageWidth=Math.max(1,snapshot.naturalWidth||source.width),imageHeight=Math.max(1,snapshot.naturalHeight||source.height),cover=Math.max(inner.width/imageWidth,inner.height/imageHeight);
   Object.assign(card.style,{left:target.x+"px",top:target.y+"px",width:target.width+"px",height:target.height+"px",borderRadius:destination.cornerRadius+"px",backgroundColor:destination.backgroundColor,boxShadow:"none"});
   Object.assign(content.style,{inset:borderWidth+"px",borderRadius:Math.max(0,destination.cornerRadius-borderWidth)+"px"});
   Object.assign(border.style,{borderWidth:borderWidth+"px",borderColor:destination.borderColor});
@@ -185,7 +185,7 @@ window.prepareCaptureTransition=async destination=>{
   const animations=[
     card.animate([{transform:initial},{transform:"translate3d(0,0,0) scale(1)"}],options),
     content.animate([{transform:"scale("+(target.width/inner.width)+","+(target.height/inner.height)+")"},{transform:"scale(1)"}],options),
-    snapshot.animate([{transform:"scale(1)"},{transform:"scale("+((imageWidth*fit)/inner.width)+","+((imageHeight*fit)/inner.height)+")"}],options),
+    snapshot.animate([{transform:"scale(1)"},{transform:"scale("+((imageWidth*cover)/inner.width)+","+((imageHeight*cover)/inner.height)+")"}],options),
     border.animate([{opacity:0},{opacity:1}],options),
     details.animate([{opacity:0},{opacity:1}],{delay:Math.max(0,destination.durationMs-125),duration:125,fill:"both",easing:"ease-in"})
   ];

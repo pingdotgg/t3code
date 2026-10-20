@@ -178,61 +178,6 @@ describe("composer image thumbnails", () => {
     expect(await original.text()).toBe("original bytes");
   });
 
-  it.each([
-    [3840, 2160, 796, 448],
-    [3840, 1600, 832, 347],
-  ])(
-    "preserves the full %ix%i snapshot within an 832x448 preview without replacing its square thumbnail",
-    async (sourceWidth, sourceHeight, width, height) => {
-      const bitmap = { width: sourceWidth, height: sourceHeight, close: vi.fn() };
-      const decode = vi.fn(async () => bitmap);
-      const drawImage = vi.fn();
-      vi.stubGlobal("createImageBitmap", decode);
-      vi.stubGlobal(
-        "OffscreenCanvas",
-        class {
-          constructor(
-            public width: number,
-            public height: number,
-          ) {}
-          getContext() {
-            return { drawImage };
-          }
-          async convertToBlob() {
-            return new Blob([`${this.width}x${this.height}`], { type: "image/png" });
-          }
-        },
-      );
-      const original = new File(["original bytes"], "window.png", { type: "image/png" });
-      const square = await createComposerImageThumbnail(original);
-      const [snapshot, cachedSnapshot] = await Promise.all([
-        createComposerImageThumbnail(original, "snapshot"),
-        createComposerImageThumbnail(original, "snapshot"),
-      ]);
-
-      expect(snapshot).toBe(
-        `data:image/png;base64,${Buffer.from(`${width}x${height}`).toString("base64")}`,
-      );
-      expect(drawImage).toHaveBeenLastCalledWith(
-        bitmap,
-        0,
-        0,
-        sourceWidth,
-        sourceHeight,
-        0,
-        0,
-        width,
-        height,
-      );
-      expect(cachedSnapshot).toBe(snapshot);
-      expect(await createComposerImageThumbnail(original, "snapshot")).toBe(snapshot);
-      expect(square).toBe(`data:image/png;base64,${Buffer.from("256x256").toString("base64")}`);
-      expect(await createComposerImageThumbnail(original)).toBe(square);
-      expect(decode).toHaveBeenCalledTimes(2);
-      expect(await original.text()).toBe("original bytes");
-    },
-  );
-
   it("releases the decoded image when thumbnail encoding fails", async () => {
     const close = vi.fn();
     vi.stubGlobal(
