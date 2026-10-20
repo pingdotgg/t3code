@@ -11,6 +11,7 @@ import {
   PositiveInt,
   ProjectId,
   RunId,
+  RuntimeRequestId,
   ScheduledTaskId,
   SecretRef,
   ThreadId,
@@ -22,7 +23,7 @@ import {
   ScheduledTaskSchedule,
   ScheduledTaskUpsertSchedule,
 } from "./scheduledTask.ts";
-import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
+import { ProviderInteractionMode, ProviderRequestKind, RuntimeMode } from "./providerPolicy.ts";
 import { PullRequestState } from "./pullRequest.ts";
 import {
   ThreadLinkedPullRequest,
@@ -176,7 +177,7 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   mode: Schema.optional(
     Schema.Literals(["async", "wait"]).annotate({
       description:
-        "Defaults to async. Use wait only when this turn needs the child's result before you can continue.",
+        "Defaults to async. Use wait only when this turn needs the child's result before you can continue. A blocking question or a pending approval in the child ends the wait early with the task still running.",
     }),
   ),
   timeoutMs: Schema.optional(Schema.Finite).annotate({
@@ -219,6 +220,12 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   hasPendingQuestion: Schema.Boolean.annotate({
     description:
       "Blocking question ends mode=wait. Pass threadId=childThreadId to t3_pending_request_list, t3_pending_request_read (with requestId) and t3_pending_request_respond, or ask the user; the task's completion still wakes this thread.",
+  }),
+  pendingApproval: Schema.NullOr(
+    Schema.Struct({ requestId: RuntimeRequestId, kind: ProviderRequestKind, runId: RunId }),
+  ).annotate({
+    description:
+      "Identity of the oldest pending live approval for this task's own unfinished work, or null. Ends mode=wait without cancelling the child; completion still wakes this thread. This grants no approval authority. Read the fresh full request in childThreadId before responding: the record can outlive its provider callback. Decisions remain with the child's existing approval holder; pending request tools answer questions only.",
   }),
   waitTimedOut: Schema.Boolean.annotate({
     description:

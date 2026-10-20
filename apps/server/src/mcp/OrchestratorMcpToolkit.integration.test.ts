@@ -9,11 +9,15 @@ import {
   IsoDateTime,
   isProviderNativeSubagentThread,
   MessageId,
+  NodeId,
+  RunId,
   type ModelSelection,
   type OrchestrationV2DelegatedCompletionDelivery,
+  type OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2RuntimeRequest,
   type OrchestrationV2ThreadProjection,
   OrchestratorMcpCreateThreadsResult,
   OrchestratorMcpDelegateTaskResult,
@@ -56,6 +60,7 @@ import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexA
 import { CodexOrchestratorReplayHarness } from "../orchestration-v2/Adapters/CodexAdapterV2.testkit.ts";
 import { threadShellFromProjection } from "../orchestration-v2/ProjectionStore.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
+import * as EffectWorker from "../orchestration-v2/EffectWorker.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
@@ -108,6 +113,7 @@ const cancellationPrompt = "Remain active until the parent cancels this delegate
 const createdThreadPrompt = "Complete the newly created ordinary thread.";
 const queuedFollowupPrompt = "Complete the queued follow-up and return the final result.";
 const queuedFollowupResult = "Queued delegated follow-up completed.";
+const approvalCompletionPrompt = "Finish the delegated work once its approval is decided.";
 
 const decodeCreateThreadsResult = Schema.decodeUnknownEffect(OrchestratorMcpCreateThreadsResult);
 const decodeDelegateTaskResult = Schema.decodeUnknownEffect(OrchestratorMcpDelegateTaskResult);
@@ -542,6 +548,8 @@ describe("orchestrator MCP toolkit", () => {
           const steerReceivedGates = new Map<string, Deferred.Deferred<void>>();
           const parentTerminalGates = new Map<ThreadId, Deferred.Deferred<void>>();
           const deliveryTerminalGates = new Map<ThreadId, Deferred.Deferred<void>>();
+          // Holds a delegated child whose thread id is not known until it starts.
+          const promptTerminalGates = new Map<string, Deferred.Deferred<void>>();
           const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
             makeDeterministicAdapter({
               instanceId: codexInstanceId,
@@ -557,7 +565,8 @@ describe("orchestrator MCP toolkit", () => {
                 turn.message.text.startsWith("Delegated task") ||
                 turn.message.text.startsWith("Delegated tasks")
                   ? deliveryTerminalGates.get(turn.threadId)
-                  : parentTerminalGates.get(turn.threadId),
+                  : (parentTerminalGates.get(turn.threadId) ??
+                    promptTerminalGates.get(turn.message.text)),
               response: (turn) => `Codex completed: ${turn.message.text}`,
             }),
             makeDeterministicAdapter({
@@ -578,6 +587,8 @@ describe("orchestrator MCP toolkit", () => {
               steerReceived: (steer) => steerReceivedGates.get(steer.message.text),
             }),
           ]);
+          const approvalParentId = ThreadId.make("thread:mcp-approval-parent");
+          const approvalOffered = yield* Deferred.make<void>();
           const continuationOffers = yield* Ref.make<
             ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
           >([]);
@@ -585,7 +596,13 @@ describe("orchestrator MCP toolkit", () => {
             ProviderContinuationRequests.ProviderContinuationRequests,
             {
               offer: (request) =>
-                Ref.update(continuationOffers, (existing) => [...existing, request]),
+                Ref.update(continuationOffers, (existing) => [...existing, request]).pipe(
+                  Effect.andThen(
+                    request.threadId === approvalParentId
+                      ? Deferred.succeed(approvalOffered, undefined)
+                      : Effect.void,
+                  ),
+                ),
               take: Effect.never,
             },
           );
@@ -2964,6 +2981,43 @@ describe("orchestrator MCP toolkit", () => {
               p.subagents.some((task) => task.id === question.id && task.status === "interrupted"),
             );
 
+            // Stop disposes delivery even if a live approval record survives it.
+            yield* (yield* EventSink.EventSinkV2).write({
+              events: [
+                {
+                  id: EventId.make("event:approval-after-stop"),
+                  type: "runtime-request.updated",
+                  threadId: question.childThreadId!,
+                  occurredAt: askedAt,
+                  payload: {
+                    id: RuntimeRequestId.make("request:approval-after-stop"),
+                    nodeId: asking.nodes.find((node) => node.runId === asking.runs[0]!.id)!.id,
+                    providerTurnId: null,
+                    nativeRequestRef: null,
+                    kind: "command",
+                    status: "pending",
+                    responseCapability: {
+                      type: "live",
+                      providerSessionId: asking.providerSessions[0]!.id,
+                    },
+                    createdAt: askedAt,
+                    resolvedAt: null,
+                  },
+                },
+              ],
+            });
+            expect(
+              (yield* invoke("task_status", { taskId: question.id })).structuredContent,
+            ).toMatchObject({
+              status: "interrupted",
+              pendingApproval: null,
+            });
+            expect(
+              (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+                (task) => task.id === question.id,
+              )?.completionDelivery,
+            ).toMatchObject({ state: "disposed" });
+
             const terminalUpgrade = yield* orchestrator.dispatch({
               type: "delegated_task.wake-policy",
               commandId: CommandId.make("command:mcp-parent:wake-policy-terminal"),
@@ -4010,6 +4064,296 @@ describe("orchestrator MCP toolkit", () => {
                 thirdFanoutDelivery.messageId,
               ]),
             );
+
+            // Keep completion delivery separate from the earlier fan-out cohorts.
+            const approvalParentGate = yield* Deferred.make<void>();
+            const approvalChildGate = yield* Deferred.make<void>();
+            parentTerminalGates.set(approvalParentId, approvalParentGate);
+            promptTerminalGates.set(approvalCompletionPrompt, approvalChildGate);
+            yield* Ref.set(continuationOffers, []);
+            const approvalStart = (yield* orchestrator.dispatch({
+              type: "thread.create",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("command:approval-parent:create"),
+              threadId: approvalParentId,
+              projectId,
+              title: "Approval parent",
+              modelSelection: codexSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: cwd,
+            })).sequence;
+            const awaitApprovalEvent = (
+              threadId: ThreadId,
+              matches: (event: OrchestrationV2DomainEvent) => boolean,
+            ) =>
+              orchestrator.streamStoredEventsFrom({ threadId, afterSequence: approvalStart }).pipe(
+                Stream.filter((stored) => matches(stored.event)),
+                Stream.runHead,
+                Effect.flatMap(
+                  Option.match({
+                    onNone: () => Effect.die("Approval scenario event stream ended."),
+                    onSome: () => Effect.void,
+                  }),
+                ),
+              );
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("command:approval-parent:start"),
+              threadId: approvalParentId,
+              messageId: MessageId.make("message:approval-parent:start"),
+              text: "Hold this parent while its child asks for approval.",
+              attachments: [],
+              modelSelection: codexSelection,
+              dispatchMode: { type: "start_immediately" },
+            });
+            yield* awaitApprovalEvent(
+              approvalParentId,
+              (event) =>
+                event.type === "provider-turn.updated" && event.payload.status === "running",
+            );
+            const approvalScope = {
+              ...invocation,
+              requestNamespace: "mcp-approval-parent",
+              thread: { ...invocation.thread!, threadId: approvalParentId },
+            };
+            const delegateApproval = invokeAs(approvalScope, "delegate_task", {
+              task: approvalCompletionPrompt,
+              title: "Approval completion",
+              target: { providerInstanceId: codexInstanceId, model: codexModel },
+              mode: "wait",
+              timeoutMs: 30_000,
+              clientRequestId: "delegate-approval-completion",
+            });
+            const approvalWait = yield* delegateApproval.pipe(Effect.forkChild);
+            yield* awaitApprovalEvent(
+              approvalParentId,
+              (event) => event.type === "subagent.updated" && event.payload.childThreadId !== null,
+            );
+            const approvalTask = (yield* orchestrator.getThreadProjection(approvalParentId))
+              .subagents[0]!;
+            const approvalChildId = approvalTask.childThreadId!;
+            yield* awaitApprovalEvent(
+              approvalChildId,
+              (event) =>
+                event.type === "provider-turn.updated" && event.payload.status === "running",
+            );
+            const approvalChild = yield* orchestrator.getThreadProjection(approvalChildId);
+            const approvalRun = approvalChild.runs[0]!;
+            const approvalNode = approvalChild.nodes.find((node) => node.runId === approvalRun.id)!;
+            const approvalAskedAt = yield* DateTime.now;
+            const approvalRequest = (
+              id: string,
+              overrides: Partial<OrchestrationV2RuntimeRequest> = {},
+            ): OrchestrationV2RuntimeRequest => ({
+              id: RuntimeRequestId.make(`request:approval:${id}`),
+              nodeId: approvalNode.id,
+              providerTurnId: null,
+              nativeRequestRef: null,
+              kind: "command",
+              status: "pending",
+              responseCapability: {
+                type: "live",
+                providerSessionId: approvalChild.providerSessions[0]!.id,
+              },
+              createdAt: approvalAskedAt,
+              resolvedAt: null,
+              ...overrides,
+            });
+            const eventSink = yield* EventSink.EventSinkV2;
+            let approvalEventId = 0;
+            const persistApprovalEvent = (event: OrchestrationV2DomainEvent) =>
+              eventSink.write({ events: [event] });
+            const persistRequest = (
+              request: OrchestrationV2RuntimeRequest,
+              threadId = approvalChildId,
+            ) =>
+              persistApprovalEvent({
+                id: EventId.make(`event:approval:${++approvalEventId}`),
+                type: "runtime-request.updated",
+                threadId,
+                occurredAt: approvalAskedAt,
+                payload: request,
+              });
+            const readApprovalStatus = () =>
+              invokeAs(approvalScope, "task_status", { taskId: approvalTask.id }).pipe(
+                Effect.flatMap((result) => decodeDelegateTaskResult(result.structuredContent)),
+                Effect.orDie,
+              );
+
+            // These durable records must not make the parent's wait return an approval.
+            for (const request of [
+              approvalRequest("resolved", { status: "resolved", resolvedAt: approvalAskedAt }),
+              approvalRequest("expired", { status: "expired", resolvedAt: approvalAskedAt }),
+              approvalRequest("cancelled", { status: "cancelled", resolvedAt: approvalAskedAt }),
+              approvalRequest("message", { responseCapability: { type: "message" } }),
+              approvalRequest("not-live", {
+                responseCapability: { type: "not_resumable", reason: "Session ended." },
+              }),
+              approvalRequest("question", {
+                kind: "user_input",
+                responseCapability: { type: "message" },
+              }),
+              approvalRequest("auth", { kind: "auth_refresh" }),
+              approvalRequest("tool", { kind: "dynamic_tool_call" }),
+              approvalRequest("missing-node", { nodeId: NodeId.make("node:missing-approval") }),
+            ]) {
+              yield* persistRequest(request);
+            }
+            expect((yield* readApprovalStatus()).pendingApproval).toBeNull();
+
+            // An unrelated untagged turn must not inherit the task's approval ownership.
+            const { delegatedTaskId: _, ...legacyRun } = approvalRun;
+            const foreignRun = {
+              ...legacyRun,
+              id: RunId.make("run:foreign-approval"),
+              ordinal: 2,
+            };
+            const foreignNode = {
+              ...approvalNode,
+              id: NodeId.make("node:foreign-approval"),
+              runId: foreignRun.id,
+            };
+            yield* eventSink.write({
+              events: [
+                {
+                  id: EventId.make("event:foreign-approval-run"),
+                  type: "run.updated",
+                  threadId: approvalChildId,
+                  occurredAt: approvalAskedAt,
+                  payload: foreignRun,
+                },
+                {
+                  id: EventId.make("event:foreign-approval-node"),
+                  type: "node.updated",
+                  threadId: approvalChildId,
+                  occurredAt: approvalAskedAt,
+                  payload: foreignNode,
+                },
+              ],
+            });
+            yield* persistRequest(approvalRequest("foreign", { nodeId: foreignNode.id }));
+            expect((yield* readApprovalStatus()).pendingApproval).toBeNull();
+
+            const liveApproval = approvalRequest("live");
+            yield* persistRequest(liveApproval);
+            const approvalResult = yield* decodeDelegateTaskResult(
+              (yield* Fiber.join(approvalWait)).structuredContent,
+            ).pipe(Effect.orDie);
+            const expectedApproval = {
+              requestId: liveApproval.id,
+              kind: "command",
+              runId: approvalRun.id,
+            };
+            expect(approvalResult).toMatchObject({
+              taskId: approvalTask.id,
+              status: "running",
+              hasPendingQuestion: false,
+              pendingApproval: expectedApproval,
+              waitTimedOut: false,
+            });
+            expect(approvalResult.pendingApproval).toEqual(expectedApproval);
+            // A retry sees the persisted approval in its initial snapshot.
+            expect((yield* delegateApproval).structuredContent).toMatchObject({
+              taskId: approvalTask.id,
+              status: "running",
+              pendingApproval: expectedApproval,
+              waitTimedOut: false,
+            });
+            const earlierApproval = approvalRequest("earlier", {
+              createdAt: DateTime.subtract(approvalAskedAt, { seconds: 1 }),
+            });
+            yield* persistRequest(earlierApproval);
+            expect((yield* readApprovalStatus()).pendingApproval?.requestId).toBe(
+              earlierApproval.id,
+            );
+            yield* persistRequest({
+              ...earlierApproval,
+              status: "resolved",
+              resolvedAt: approvalAskedAt,
+            });
+
+            // Legacy ownership falls back to the original run, never the other run.
+            yield* persistApprovalEvent({
+              id: EventId.make("event:approval-legacy"),
+              type: "run.updated",
+              threadId: approvalChildId,
+              occurredAt: approvalAskedAt,
+              payload: legacyRun,
+            });
+            expect((yield* readApprovalStatus()).pendingApproval).toEqual(expectedApproval);
+            yield* persistRequest({
+              ...liveApproval,
+              status: "resolved",
+              resolvedAt: approvalAskedAt,
+            });
+            expect((yield* readApprovalStatus()).pendingApproval).toBeNull();
+            // Finish the synthetic foreign run before releasing the real child.
+            yield* eventSink.write({
+              events: [
+                {
+                  id: EventId.make("event:approval-modern"),
+                  type: "run.updated",
+                  threadId: approvalChildId,
+                  occurredAt: approvalAskedAt,
+                  payload: approvalRun,
+                },
+                {
+                  id: EventId.make("event:foreign-approval-done"),
+                  type: "run.updated",
+                  threadId: approvalChildId,
+                  occurredAt: approvalAskedAt,
+                  payload: { ...foreignRun, status: "completed", completedAt: approvalAskedAt },
+                },
+              ],
+            });
+            yield* Deferred.succeed(approvalChildGate, undefined);
+            yield* awaitApprovalEvent(
+              approvalParentId,
+              (event) =>
+                event.type === "subagent.updated" &&
+                event.payload.id === approvalTask.id &&
+                event.payload.status === "completed",
+            );
+            const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+            yield* Deferred.await(approvalOffered);
+            yield* worker.drain();
+            const approvalCompletedTask = (yield* orchestrator.getThreadProjection(
+              approvalParentId,
+            )).subagents[0]!;
+            expect(approvalCompletedTask).toMatchObject({
+              status: "completed",
+              completionWake: "always",
+              result: `Codex completed: ${approvalCompletionPrompt}`,
+            });
+            const offers = (yield* Ref.get(continuationOffers)).filter(
+              (offer) => offer.threadId === approvalParentId,
+            );
+            expect(offers).toHaveLength(1);
+            const approvalParent = yield* orchestrator.getThreadProjection(approvalParentId);
+            const approvalDelivery = approvalParent.runs[0]!.delegatedCompletion?.delivery;
+            expect(approvalDelivery?.taskIds).toEqual([approvalTask.id]);
+            expect(offers[0]?.delegatedCompletion?.messageId).toBe(approvalDelivery?.messageId);
+            expect(yield* readApprovalStatus()).toMatchObject({
+              status: "completed",
+              summary: `Codex completed: ${approvalCompletionPrompt}`,
+              pendingApproval: null,
+              waitTimedOut: false,
+            });
+            // Durable live records may outlast a terminal run or a stopped/disposed task.
+            yield* persistRequest(approvalRequest("after-completion"));
+            expect((yield* readApprovalStatus()).pendingApproval).toBeNull();
+            yield* worker.drain();
+            expect(
+              (yield* Ref.get(continuationOffers)).filter(
+                (offer) => offer.threadId === approvalParentId,
+              ),
+            ).toHaveLength(1);
+            yield* Deferred.succeed(approvalParentGate, undefined);
           }).pipe(Effect.provide(layerTest));
         }),
       ),

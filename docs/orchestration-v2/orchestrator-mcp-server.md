@@ -263,7 +263,10 @@ the timeout expires. A wait timeout does not cancel the child; the result sets
 question also ends the wait with `hasPendingQuestion: true` and `waitTimedOut: false`.
 If `hasPendingQuestion`, pass `threadId=childThreadId` to `t3_pending_request_list`,
 `t3_pending_request_read` (with `requestId`) and `t3_pending_request_respond`, or ask
-the user; the task's completion still wakes this thread. Async questions and approvals
+the user; the task's completion still wakes this thread. A pending live approval for the
+task's own unfinished work also ends the wait. Its identity appears in `pendingApproval`;
+it grants no approval authority. Read the fresh full request in the child thread before
+responding, since the durable record can outlive its provider callback. Async questions
 do not end the wait.
 
 ```ts
@@ -284,6 +287,11 @@ type DelegateTaskResult = {
   latestTerminalSummary: string | null;
   latestTerminalResultContextTransferId: string | null;
   hasPendingQuestion: boolean;
+  pendingApproval: {
+    requestId: string;
+    kind: "command" | "file-read" | "file-change" | "mcp-elicitation" | "permission";
+    runId: string;
+  } | null;
   waitTimedOut: boolean;
 };
 ```
