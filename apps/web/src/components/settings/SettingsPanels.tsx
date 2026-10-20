@@ -595,6 +595,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip
       ? ["Composer context"]
       : []),
+    ...(settings.sharedPanelWidth !== DEFAULT_UNIFIED_SETTINGS.sharedPanelWidth
+      ? ["Shared panel width"]
+      : []),
     ...getChangedTypographySettingLabels(settings),
     ...(settings.diffFilesCollapsed !== DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed
       ? ["Default diff file state"]
@@ -726,6 +729,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       inAppNotificationsEnabled: DEFAULT_UNIFIED_SETTINGS.inAppNotificationsEnabled,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
       persistComposerContextStrip: DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip,
+      sharedPanelWidth: DEFAULT_UNIFIED_SETTINGS.sharedPanelWidth,
       diffFilesCollapsed: DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       diffLayout: DEFAULT_UNIFIED_SETTINGS.diffLayout,
@@ -1342,6 +1346,28 @@ export function AppearanceSettingsPanel() {
                 updateSettings({ persistComposerContextStrip: Boolean(checked) })
               }
               aria-label="Keep composer context visible in active threads"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("shared-panel-width")}
+          description="Use one right panel width in every thread. When off, each thread keeps its own width."
+          resetAction={
+            settings.sharedPanelWidth !== DEFAULT_UNIFIED_SETTINGS.sharedPanelWidth ? (
+              <SettingResetButton
+                label="shared panel width"
+                onClick={() =>
+                  updateSettings({ sharedPanelWidth: DEFAULT_UNIFIED_SETTINGS.sharedPanelWidth })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sharedPanelWidth}
+              onCheckedChange={(checked) => updateSettings({ sharedPanelWidth: Boolean(checked) })}
+              aria-label="Use the same right panel width in every thread"
             />
           }
         />

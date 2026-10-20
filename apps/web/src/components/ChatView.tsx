@@ -1667,7 +1667,10 @@ export default function ChatView(props: ChatViewProps) {
   const browserAvailable = isPreviewSupportedInRuntime() || activeEnvironmentServerBrowser;
   const previewPanelInlineSize = usePreviewPanelInlineSize(undefined, {
     container: workspaceLayoutElement,
-    widthStorageKey: `t3code:preview-panel-width:${activeThreadKey}`,
+    // `undefined` selects the hook's single app-wide key.
+    widthStorageKey: settings.sharedPanelWidth
+      ? undefined
+      : `t3code:preview-panel-width:${activeThreadKey}`,
   });
   const activeThreadShell = serverThread;
   const timelineThreadError =

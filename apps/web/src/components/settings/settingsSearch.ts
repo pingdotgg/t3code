@@ -299,6 +299,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/appearance",
   },
   {
+    id: "shared-panel-width",
+    title: "Shared panel width",
+    to: "/settings/appearance",
+    searchTerms: ["right side panel diff changes browser resize size every all threads"],
+  },
+  {
     id: "project-grouping",
     title: "Project grouping",
     to: "/settings/general",

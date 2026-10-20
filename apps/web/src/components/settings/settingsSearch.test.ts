@@ -331,6 +331,10 @@ describe("searchSettings", () => {
       id: "composer-context",
       to: "/settings/appearance",
     });
+    expect(searchSettings("panel width")[0]).toMatchObject({
+      id: "shared-panel-width",
+      to: "/settings/appearance",
+    });
     expect(searchSettings("environment identification")[0]).toMatchObject({
       id: "environment-identification",
       to: "/settings/appearance",
