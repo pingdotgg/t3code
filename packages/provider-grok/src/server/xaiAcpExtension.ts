@@ -275,7 +275,7 @@ export function isXAiMonitorTool(toolCall: AcpToolCallState): boolean {
  * while the process still runs. Like a monitor, it ends only with
  * `x.ai/task_completed` for that task id.
  */
-function xAiBackgroundShellTaskId(toolCall: AcpToolCallState): string | undefined {
+export function xAiBackgroundShellTaskId(toolCall: AcpToolCallState): string | undefined {
   const rawOutput = unknownRecord(toolCall.data.rawOutput);
   return nonEmptyString(rawOutput?.type) === "BackgroundTaskStarted"
     ? nonEmptyString(rawOutput?.task_id)
