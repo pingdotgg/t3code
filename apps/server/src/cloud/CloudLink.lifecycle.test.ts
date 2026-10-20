@@ -242,6 +242,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
     readonly respond?: () => Response;
     readonly address?: HttpServer.HttpServer["Service"]["address"];
     readonly respondEffect?: Effect.Effect<Response>;
+    readonly getExisting?: CliTokenManager.CloudCliTokenManager["Service"]["getExisting"];
   }
 
   const writeLauncherState = (update: ServiceUpdateRecord) =>
@@ -318,7 +319,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
           CliTokenManager.CloudCliTokenManager,
           CliTokenManager.CloudCliTokenManager.of({
             get: unusedSecretStoreOperation(),
-            getExisting: Effect.succeedSome(cliToken),
+            getExisting: harness.getExisting ?? Effect.succeedSome(cliToken),
             hasCredential: unusedSecretStoreOperation(),
             store: () => unusedSecretStoreOperation(),
             clear: unusedSecretStoreOperation(),
@@ -1335,6 +1336,45 @@ describe("releaseManagedTunnelOnShutdown", () => {
           ),
       }),
     );
+  });
+
+  it.effect("startup retries transient refresh failures but stops when login is required", () => {
+    const { store } = makeMemorySecretStore(managedLinkSecrets);
+    const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+    const applyConfigCalls: Array<unknown> = [];
+    const permanent = new CliTokenManager.CloudCliCredentialRefreshError({
+      cause: new Error("private-oauth-failure"),
+      status: 400,
+      oauthErrorCode: "invalid_grant",
+    });
+    let attempts = 0;
+    const getExisting = Effect.suspend(() => {
+      attempts++;
+      if (attempts > 2) return Effect.die("retried a permanent credential rejection");
+      return Effect.fail(
+        attempts === 2
+          ? permanent
+          : new CliTokenManager.CloudCliCredentialRefreshError({
+              cause: new Error("connection reset"),
+            }),
+      );
+    });
+
+    return Effect.gen(function* () {
+      const link = yield* CloudLink.CloudLink;
+      const registration = yield* retryManagedTunnelRegistration(
+        link.reconcileDesiredLinkIfStillDesired("http://127.0.0.1:3773"),
+        CloudLink.shouldRetryCloudLink,
+      ).pipe(Effect.flip, Effect.forkChild);
+      yield* TestClock.adjust("10 seconds");
+      const error = yield* Fiber.join(registration);
+      expect(attempts).toBe(2);
+      expect(error).toBe(permanent);
+      expect(error.message).toContain("t3 connect login");
+      expect(error.message).not.toContain("private");
+      expect(requests).toEqual([]);
+      expect(applyConfigCalls).toEqual([]);
+    }).pipe(provideReleaseHarness({ store, requests, applyConfigCalls, getExisting }));
   });
 
   it.effect("keeps a tunnel configuration replaced during recovery", () => {

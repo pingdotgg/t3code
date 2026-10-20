@@ -146,6 +146,21 @@ const OAuthErrorResponse = Schema.Struct({
   error: Schema.String,
   error_description: Schema.optional(Schema.String),
 });
+const OAuthRefreshErrorCode = Schema.Literals([
+  "invalid_grant",
+  "invalid_client",
+  "unauthorized_client",
+  "unsupported_grant_type",
+  "invalid_request",
+  "invalid_scope",
+  "access_denied",
+]);
+const decodeOAuthRefreshErrorResponse = Schema.decodeUnknownOption(
+  Schema.Struct({ error: OAuthRefreshErrorCode }),
+);
+
+const isPermanentRefreshStatus = (status: number): boolean =>
+  status >= 400 && status < 500 && status !== 408 && status !== 429;
 
 const DeviceAuthorizationResponse = Schema.Struct({
   device_code: Schema.String,
@@ -190,12 +205,26 @@ export class CloudCliCredentialRemovalError extends Schema.TaggedError<CloudCliC
 
 export class CloudCliCredentialRefreshError extends Schema.TaggedError<CloudCliCredentialRefreshError>()(
   "CloudCliCredentialRefreshError",
-  { cause: Schema.Defect() },
+  {
+    cause: Schema.Defect(),
+    status: Schema.optional(Schema.Number),
+    oauthErrorCode: Schema.optional(OAuthRefreshErrorCode),
+  },
 ) {
+  get requiresLogin(): boolean {
+    return this.status !== undefined && isPermanentRefreshStatus(this.status);
+  }
+
   override get message(): string {
-    return "Could not refresh the T3 Connect CLI credential.";
+    return this.requiresLogin
+      ? `Could not refresh the T3 Connect CLI credential${
+          this.oauthErrorCode === undefined ? "" : ` (OAuth error: ${this.oauthErrorCode})`
+        }. Run \`t3 connect login\` to authorize again.`
+      : "Could not refresh the T3 Connect CLI credential.";
   }
 }
+
+export const isCloudCliCredentialRefreshError = Schema.is(CloudCliCredentialRefreshError);
 
 export class CloudCliCredentialReadError extends Schema.TaggedError<CloudCliCredentialReadError>()(
   "CloudCliCredentialReadError",
@@ -289,11 +318,52 @@ const exchangeToken = Effect.fn("cloud.cli_token.exchange")(function* (
   params: Record<string, string>,
 ) {
   const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
+  const startedAt = yield* Clock.monotonicTimeNanos;
   return yield* HttpClientRequest.post(metadata.tokenEndpoint).pipe(
     HttpClientRequest.bodyUrlParams(params),
     httpClient.execute,
     Effect.flatMap((response) => readTokenResponse(response, params)),
     Effect.timeout(OAUTH_REQUEST_TIMEOUT),
+    Effect.catchTags({
+      HttpClientError: (cause) =>
+        Effect.gen(function* () {
+          const reason = cause.reason;
+          if (
+            params.grant_type !== "refresh_token" ||
+            reason._tag !== "StatusCodeError" ||
+            !isPermanentRefreshStatus(reason.response.status)
+          ) {
+            return yield* cause;
+          }
+          // Reading a rejection body shares the exchange budget without losing
+          // the known status when the body stalls or cannot be decoded.
+          const elapsed = Duration.toMillis(
+            Duration.nanos((yield* Clock.monotonicTimeNanos) - startedAt),
+          );
+          const body = yield* reason.response.json.pipe(
+            Effect.timeout(Math.max(0, Duration.toMillis(OAUTH_REQUEST_TIMEOUT) - elapsed)),
+            Effect.mapError(
+              (cause) =>
+                new CloudCliCredentialRefreshError({
+                  status: reason.response.status,
+                  cause: new HttpClientError.HttpClientError({
+                    reason: new HttpClientError.StatusCodeError({
+                      request: reason.request,
+                      response: reason.response,
+                      cause,
+                    }),
+                  }),
+                }),
+            ),
+          );
+          const diagnostic = decodeOAuthRefreshErrorResponse(body);
+          return yield* new CloudCliCredentialRefreshError({
+            cause,
+            status: reason.response.status,
+            ...(Option.isSome(diagnostic) ? { oauthErrorCode: diagnostic.value.error } : {}),
+          });
+        }),
+    }),
   );
 });
 
@@ -516,12 +586,26 @@ export const make = Effect.gen(function* () {
     if (token.value.expiresAtEpochMs - CLOUD_CLI_OAUTH_REFRESH_EARLY_MS > now) {
       return token;
     }
-    return Option.some(yield* refresh(token.value).pipe(Effect.flatMap(persist)));
+    return Option.some(
+      // The endpoint can rotate the refresh token before shutdown interrupts us.
+      // Keep the lock through persistence; the exchange still times out internally.
+      yield* refresh(token.value).pipe(Effect.flatMap(persist), Effect.uninterruptible),
+    );
   });
 
   const getExisting = semaphore.withPermits(1)(
     getExistingNoLock().pipe(
-      Effect.mapError((cause) => new CloudCliCredentialRefreshError({ cause })),
+      Effect.mapError((cause) =>
+        isCloudCliCredentialRefreshError(cause)
+          ? cause
+          : new CloudCliCredentialRefreshError({
+              cause,
+              ...(HttpClientError.isHttpClientError(cause) &&
+              cause.reason._tag === "StatusCodeError"
+                ? { status: cause.reason.response.status }
+                : {}),
+            }),
+      ),
       Effect.provide(services),
     ),
   );
