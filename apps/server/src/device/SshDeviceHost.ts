@@ -176,6 +176,7 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
         remoteCommandArgs: commandArgs(
           `cd "$HOME/.t3/device/hosts/${owner}" && exec ${[command, ...args].map(quoteRemoteArg).join(" ")}`,
         ),
+        keepErrorOutputTail: true,
         ...(options?.stdin === undefined ? {} : { stdin: options.stdin }),
         ...(options?.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
       }),

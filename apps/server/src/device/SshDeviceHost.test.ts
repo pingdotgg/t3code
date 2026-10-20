@@ -33,6 +33,7 @@ it.effect("preserves installed status after probes and cleans failed agent activ
         (forwarding ? tunnelArgs : commandArgs).push([...command.args]);
         if (forwarding) tunnelStdins.push(command.options.stdin);
         let output = "";
+        let exitCode = 0;
         if (forwarding) {
           if (failForward) {
             failForward = false;
@@ -77,13 +78,19 @@ it.effect("preserves installed status after probes and cleans failed agent activ
               ? { daemonPort: 1235, token: "fixture", entryPath: "/agent.mjs" }
               : {}),
           });
+          if (mode === "") {
+            output = `${"verbose-prefix ".repeat(400)}PANIC: emulator SDK is broken\n`;
+            exitCode = 1;
+          }
         }
         return ChildProcessSpawner.makeHandle({
           pid: ChildProcessSpawner.ProcessId(123),
           stdout: Stream.make(new TextEncoder().encode(output)),
           stderr: Stream.empty,
           all: Stream.empty,
-          exitCode: forwarding ? Effect.never : Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+          exitCode: forwarding
+            ? Effect.never
+            : Effect.succeed(ChildProcessSpawner.ExitCode(exitCode)),
           isRunning: Effect.succeed(forwarding),
           kill: () => Effect.void,
           stdin: Sink.drain,
@@ -124,6 +131,15 @@ it.effect("preserves installed status after probes and cleans failed agent activ
     expect(owners[0]).toMatch(/^[a-f0-9]{24}$/);
     expect(forwards).toBe(1);
     expect(modes.filter((mode) => mode === "start")).toHaveLength(2);
+    const ready = yield* host.current;
+    expect(ready).not.toBeNull();
+    if (ready) {
+      const failed = yield* ready.run("emulator", ["-list-avds"]);
+      expect(failed.code).toBe(1);
+      expect(failed.stdout).toMatch(/^\[truncated\]/);
+      expect(failed.stderr).toBe(failed.stdout.trim());
+      expect(failed.stderr).toMatch(/PANIC: emulator SDK is broken$/);
+    }
     yield* host.platformAvailability("ios");
     expect((yield* host.summary).hubInstalled).toBe(true);
     const failed = yield* host.ensureAgentReady(() => Effect.void).pipe(Effect.result);
