@@ -3003,6 +3003,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               if (threadInput.existingProviderThread?.nativeThreadRef != null) {
                 return yield* runtimeSession.resumeThread({
                   providerThread: threadInput.existingProviderThread,
+                  runtimePolicy: threadInput.runtimePolicy,
                 });
               }
               // No title: OpenCode generates one from the first prompt only when
@@ -3059,6 +3060,12 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 client.session.get({ sessionID: sessionId }),
               );
               const nativeSession = unwrapData("session.get", response);
+              const permission = openCodePermissionRules(
+                threadInput.runtimePolicy ?? input.runtimePolicy,
+              );
+              yield* sdkCall("session.update", { sessionID: sessionId, permission }, () =>
+                client.session.update({ sessionID: sessionId, permission }),
+              );
               const resumedAt = yield* DateTime.now;
               const providerThread = {
                 ...threadInput.providerThread,

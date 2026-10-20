@@ -241,6 +241,47 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
 });
 
 describe("OpenCodeAdapterV2", () => {
+  it.effect("reapplies runtime permissions when resuming a native session", () =>
+    Effect.gen(function* () {
+      const permissions: unknown[] = [];
+      const sessionId = "resume-permissions";
+      const harness = yield* makeOpenCodeRuntimeHarness(sessionId, sessionId, {
+        event: { subscribe: async () => ({ stream: asyncEventStream().stream }) },
+        session: {
+          create: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
+          get: async () => ({ data: { id: sessionId, time: { created: 1, updated: 2 } } }),
+          update: async (input: { permission?: unknown }) => {
+            permissions.push(input.permission);
+            return { data: { id: sessionId, time: { created: 1, updated: 2 } } };
+          },
+        },
+      });
+
+      yield* harness.runtime.ensureThread({
+        threadId: harness.threadId,
+        modelSelection: {
+          instanceId: harness.providerThread.providerInstanceId,
+          model: "anthropic/claude-sonnet",
+          options: [],
+        },
+        runtimePolicy: runtimePolicy("full-access", { cwd: "/workspace" }),
+        existingProviderThread: harness.providerThread,
+      });
+
+      assert.equal(permissions.length, 1);
+      assert.deepEqual(permissions[0], openCodePermissionRules(harness.policy));
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
+        ),
+      ),
+    ),
+  );
+
   it.effect.each(["completed", "failed", "unresolved", "unavailable", "reconnect"] as const)(
     "normalizes OpenCode step usage for %s turns",
     (ending) =>
