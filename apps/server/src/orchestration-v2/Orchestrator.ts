@@ -2430,6 +2430,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       worktreePath: command.worktreePath,
       activeProviderThreadId: null,
       pullRequests: [],
+      ...(command.linkOrigin === undefined ? {} : { linkOrigin: command.linkOrigin }),
       lineage: {
         parentThreadId: null,
         relationshipToParent: null,

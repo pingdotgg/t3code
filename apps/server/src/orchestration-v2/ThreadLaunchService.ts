@@ -9,6 +9,7 @@ import {
   type ModelSelection,
   type OrchestrationV2Actor,
   type OrchestrationV2CreationSource,
+  type OrchestrationV2LinkOrigin,
   type OrchestrationV2ProviderThreadNativeMetadata,
   type OrchestrationV2ThreadProjection,
   type ProviderDriverKind,
@@ -97,6 +98,8 @@ export interface ThreadLaunchInput {
   };
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
+  /** The linked environment this launch is for, if one asked for it. */
+  readonly linkOrigin?: OrchestrationV2LinkOrigin;
 }
 
 type PreparationInput = Pick<
@@ -923,6 +926,7 @@ const make = Effect.gen(function* () {
                 ...(input.importedNativeThread === undefined
                   ? {}
                   : { importedNativeThread: input.importedNativeThread }),
+                ...(input.linkOrigin === undefined ? {} : { linkOrigin: input.linkOrigin }),
                 createdBy: input.createdBy,
                 creationSource: input.creationSource,
               });

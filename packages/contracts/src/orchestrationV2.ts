@@ -36,6 +36,7 @@ import {
   TrimmedNonEmptyString,
   TurnItemId,
 } from "./baseSchemas.ts";
+import { AuthMcpClientAccess } from "./auth.ts";
 import { ChatAttachment } from "./chatAttachment.ts";
 import {
   OrchestrationGetFullThreadDiffInput,
@@ -92,6 +93,28 @@ const OrchestrationV2CreationFields = {
   createdBy: OrchestrationV2Actor,
   creationSource: OrchestrationV2CreationSource,
 } as const;
+
+/**
+ * The linked environment whose agent started this work here: the MCP client
+ * session it signed in with, that session's label, and the access it was
+ * paired with. Set when the thread is created and never changed; work derived
+ * from it carries the same origin.
+ */
+export const OrchestrationV2LinkOrigin = Schema.Struct({
+  sessionId: TrimmedNonEmptyString,
+  label: Schema.String,
+  access: Schema.optional(AuthMcpClientAccess),
+});
+export type OrchestrationV2LinkOrigin = typeof OrchestrationV2LinkOrigin.Type;
+
+/**
+ * Work from a link paired below full access may change only work from the same
+ * link. A full-access link's agents already run as this environment's user,
+ * so fencing T3's own tools would stop nothing they could not do anyway. An
+ * origin stamped before access was recorded stays fenced.
+ */
+export const linkOriginIsFenced = (origin: OrchestrationV2LinkOrigin) =>
+  origin.access !== "full-access";
 
 export const OrchestrationV2NativeRefStrength = Schema.Literals(["strong", "weak", "none"]);
 export type OrchestrationV2NativeRefStrength = typeof OrchestrationV2NativeRefStrength.Type;
@@ -385,6 +408,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   activeProviderThreadId: Schema.NullOr(ProviderThreadId),
   historyOrigin: Schema.optional(OrchestrationV2ThreadHistoryOrigin),
+  linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
   lineage: OrchestrationV2AppThreadLineage,
   forkedFrom: Schema.NullOr(
     Schema.Union([
@@ -1821,6 +1845,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   forkedFrom: Schema.NullOr(OrchestrationV2AppThread.fields.forkedFrom),
   activeProviderThreadId: Schema.NullOr(ProviderThreadId),
   historyOrigin: Schema.optional(OrchestrationV2ThreadHistoryOrigin),
+  linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
   latestRunId: Schema.NullOr(RunId),
   latestRunRequestedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   latestRunStartedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
@@ -2578,6 +2603,8 @@ export const OrchestrationV2Command = Schema.Union([
     interactionMode: ProviderInteractionMode,
     branch: Schema.NullOr(TrimmedNonEmptyString),
     worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+    /** Only the server sets this; a client's thread.create never carries one. */
+    linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
     importedNativeThread: Schema.optional(
       Schema.Struct({
         ref: Schema.Struct({
