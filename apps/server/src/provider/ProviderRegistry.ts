@@ -841,8 +841,8 @@ export const layer = Layer.effect(
         yield* Effect.yieldNow;
 
         yield* Effect.forEach(
-          newlyAdded,
-          ([, instance]) =>
+          instances,
+          (instance) =>
             Effect.gen(function* () {
               const source = buildSnapshotSource(instance);
               const provider = yield* source.getSnapshot;

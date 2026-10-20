@@ -8,8 +8,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   EnvironmentId,
   type ClaudeSettings,
-  type CodexSettings,
+  CodexSettings,
   ProviderDriverKind,
+  ProviderInstanceConfig,
   type ProviderInstanceConfigMap,
   ProviderInstanceId,
 } from "@t3tools/contracts";
@@ -21,8 +22,11 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as PubSub from "effect/PubSub";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
@@ -88,6 +92,9 @@ const layerBackgroundPolicyAlwaysRun = Layer.mock(BackgroundPolicy.BackgroundPol
   shouldRunScopeWork: () => Effect.succeed(true),
   shouldRunOpportunisticWork: Effect.succeed(true),
 });
+
+const decodeCodexSettings = Schema.decodeSync(CodexSettings);
+const decodeProviderInstanceConfig = Schema.decodeSync(ProviderInstanceConfig);
 
 const makeCodexConfig = (overrides: Partial<CodexSettings>): CodexSettings => ({
   enabled: false,
@@ -288,6 +295,114 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
 
       const unavailable = yield* registry.listUnavailable;
       expect(unavailable).toEqual([]);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.live("retains live instances for presentation edits but replaces runtime edits", () =>
+    Effect.gen(function* () {
+      let closed = 0;
+      const trackClose = Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          closed += 1;
+        }),
+      );
+      const trackingDriver: typeof CodexDriver = {
+        ...CodexDriver,
+        create: (input) => CodexDriver.create(input).pipe(Effect.tap(() => trackClose)),
+      };
+      const instanceId = ProviderInstanceId.make("codex_presentation");
+      const makeEntry = (
+        presentation: Pick<ProviderInstanceConfig, "displayName" | "accentColor">,
+      ) =>
+        decodeProviderInstanceConfig({
+          driver: ProviderDriverKind.make("codex"),
+          enabled: false,
+          environment: [{ name: "T3_PRESENTATION_TEST", value: "initial", sensitive: false }],
+          config: decodeCodexSettings(makeCodexConfig({ customModels: ["test-model"] })),
+          ...presentation,
+        });
+      const initialEntry = makeEntry({ displayName: "Personal", accentColor: "#123456" });
+      const { registry, mutator } = yield* makeProviderInstanceRegistry<
+        CodexDriverEnv | ClaudeDriverEnv
+      >({
+        drivers: [trackingDriver, ClaudeDriver],
+        configMap: { [instanceId]: initialEntry },
+      });
+      const original = yield* registry.getInstance(instanceId);
+      expect(original).toBeDefined();
+      const changes = yield* registry.subscribeChanges;
+
+      for (const presentation of [
+        { displayName: "Work", accentColor: "#123456" },
+        { displayName: "Work", accentColor: "#654321" },
+        { displayName: undefined, accentColor: "#654321" },
+        { displayName: undefined, accentColor: undefined },
+      ]) {
+        const entry = makeEntry(presentation);
+        expect(entry.config).not.toBe(initialEntry.config);
+        expect(entry.environment).not.toBe(initialEntry.environment);
+        yield* mutator.reconcile({ [instanceId]: entry });
+        const retained = yield* registry.getInstance(instanceId);
+        expect(retained).toBe(original);
+        expect(closed).toBe(0);
+        yield* PubSub.take(changes);
+
+        yield* Effect.gen(function* () {
+          const nextSnapshot = yield* Stream.toPull(retained!.snapshot.streamChanges);
+          // PubSub streams subscribe on their first pull, before refresh can publish.
+          const update = yield* nextSnapshot.pipe(Effect.forkChild({ startImmediately: true }));
+          const refreshed = yield* retained!.snapshot.refresh;
+          const [streamed] = yield* Fiber.join(update);
+          const snapshots = {
+            instance: retained!,
+            current: yield* retained!.snapshot.getSnapshot,
+            refreshed,
+            cwd: yield* retained!.snapshotForCwd!(process.cwd()),
+            streamed: streamed!,
+          };
+          expect(
+            Object.fromEntries(
+              Object.entries(snapshots).map(([path, value]) => [
+                path,
+                { displayName: value.displayName, accentColor: value.accentColor },
+              ]),
+            ),
+          ).toEqual(
+            Object.fromEntries(
+              Object.keys(snapshots).map((path) => [
+                path,
+                {
+                  ...presentation,
+                  displayName:
+                    path === "instance"
+                      ? presentation.displayName
+                      : (presentation.displayName ?? "Codex"),
+                },
+              ]),
+            ),
+          );
+        }).pipe(Effect.scoped);
+      }
+
+      let previous = original;
+      let entry = makeEntry({});
+      for (const patch of [
+        { config: makeCodexConfig({ customModels: ["runtime-change"] }) },
+        {
+          environment: [{ name: "T3_PRESENTATION_TEST", value: "changed", sensitive: false }],
+        },
+        { enabled: true },
+        { driver: ClaudeDriver.driverKind },
+      ]) {
+        entry = Object.assign({}, entry, patch);
+        const closedBefore = closed;
+        yield* mutator.reconcile({ [instanceId]: entry });
+        const replaced = yield* registry.getInstance(instanceId);
+        expect(replaced).toBeDefined();
+        expect(replaced).not.toBe(previous);
+        expect(closed).toBe(closedBefore + 1);
+        previous = replaced;
+      }
     }).pipe(Effect.provide(layerTest)),
   );
 

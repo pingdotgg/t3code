@@ -1891,7 +1891,7 @@ it.layer(
       );
     });
 
-    it.effect("does not run provider probes during layer construction", () =>
+    it.effect("syncs presentation changes without probing providers", () =>
       Effect.gen(function* () {
         const codexDriver = ProviderDriverKind.make("codex");
         const codexInstanceId = ProviderInstanceId.make("codex");
@@ -1910,6 +1910,8 @@ it.layer(
           skills: [],
         } as const satisfies ServerProvider;
         const refreshCalls = yield* Ref.make(0);
+        const currentProvider = yield* Ref.make<ServerProvider>(initialProvider);
+        const registryChanges = yield* PubSub.unbounded<void>();
         const instance = {
           instanceId: codexInstanceId,
           driverKind: codexDriver,
@@ -1927,7 +1929,7 @@ it.layer(
                   packageName: null,
                 }),
               ),
-            getSnapshot: Effect.succeed(initialProvider),
+            getSnapshot: Ref.get(currentProvider),
             refresh: Ref.update(refreshCalls, (count) => count + 1).pipe(
               Effect.andThen(Effect.never),
             ),
@@ -1944,8 +1946,8 @@ it.layer(
               Effect.succeed(instanceId === codexInstanceId ? instance : undefined),
             listInstances: Effect.succeed([instance]),
             listUnavailable: Effect.succeed([]),
-            streamChanges: Stream.empty,
-            subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+            streamChanges: Stream.fromPubSub(registryChanges),
+            subscribeChanges: PubSub.subscribe(registryChanges),
           },
         );
         const scope = yield* Scope.make();
@@ -1965,6 +1967,21 @@ it.layer(
           const registry = yield* ProviderRegistry.ProviderRegistry;
           assert.deepStrictEqual(yield* registry.getProviders, [initialProvider]);
           assert.strictEqual(yield* Ref.get(refreshCalls), 0);
+
+          const updates = yield* Stream.toPull(registry.streamChanges);
+          for (const provider of [
+            { ...initialProvider, displayName: "Work", accentColor: "#654321" },
+            initialProvider,
+          ]) {
+            // Start the subscription before notifying the registry watcher.
+            const update = yield* updates.pipe(Effect.forkChild({ startImmediately: true }));
+            yield* Ref.set(currentProvider, provider);
+            yield* PubSub.publish(registryChanges, undefined);
+            const [providers] = yield* Fiber.join(update);
+            assert.deepStrictEqual(providers, [provider]);
+            assert.deepStrictEqual(yield* registry.getProviders, [provider]);
+            assert.strictEqual(yield* Ref.get(refreshCalls), 0);
+          }
         }).pipe(Effect.provide(runtimeServices));
       }),
     );

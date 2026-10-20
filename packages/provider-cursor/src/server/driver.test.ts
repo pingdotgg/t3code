@@ -69,7 +69,7 @@ const layerTest = TestProviderHost.layer({ runBackgroundWork: false }).pipe(
 
 it.layer(layerTest)("CursorDriver", (it) => {
   it.effect(
-    "persists browser credentials, uses them for chat, and closes the SDK session on logout",
+    "uses the current name for browser sign-in, persists credentials for chat, and closes sessions on logout",
     () =>
       Effect.gen(function* () {
         const login = vi.spyOn(Cursor.auth, "login").mockImplementation(async (options) => {
@@ -99,9 +99,12 @@ it.layer(layerTest)("CursorDriver", (it) => {
             models.mockRestore();
           }),
         );
+        let displayName: string | undefined = "Personal Cursor";
         const input = {
           instanceId: ProviderInstanceId.make("cursor-browser-persisted"),
-          displayName: "Personal Cursor",
+          get displayName() {
+            return displayName;
+          },
           enabled: true,
           environment: [{ name: "CURSOR_API_KEY", value: "", sensitive: true }],
           config: CursorDriver.defaultConfig(),
@@ -126,11 +129,15 @@ it.layer(layerTest)("CursorDriver", (it) => {
           }),
         );
         expect((yield* instance.snapshot.refresh).auth.status).toBe("unauthenticated");
+        displayName = "Work Cursor";
         yield* instance.auth!.start("client");
         yield* instance.auth!.subscribe("client").pipe(
           Stream.filter((state) => state.phase === "succeeded"),
           Stream.runHead,
           Effect.map(Option.getOrThrow),
+        );
+        expect(login).toHaveBeenCalledWith(
+          expect.objectContaining({ apiKeyName: "T3 Code - Work Cursor" }),
         );
         expect(me).toHaveBeenCalledWith({ apiKey: "instance-browser-key" });
         expect(yield* instance.snapshot.getSnapshot).toMatchObject({
@@ -171,6 +178,16 @@ it.layer(layerTest)("CursorDriver", (it) => {
         ).toBe("Failure");
         expect(openedKeys).toEqual(["instance-browser-key"]);
         expect(closed).toBe(1);
+        displayName = undefined;
+        yield* instance.auth!.start("client");
+        yield* instance.auth!.subscribe("client").pipe(
+          Stream.filter((state) => state.phase === "succeeded"),
+          Stream.runHead,
+          Effect.map(Option.getOrThrow),
+        );
+        expect(login).toHaveBeenLastCalledWith(
+          expect.objectContaining({ apiKeyName: "T3 Code - Cursor" }),
+        );
       }).pipe(Effect.scoped),
   );
 

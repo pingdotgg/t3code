@@ -86,14 +86,8 @@ export const CursorDriver: ProviderDriver<
         ),
       ),
   },
-  create: Effect.fn("CursorDriver.create")(function* ({
-    instanceId,
-    displayName,
-    accentColor,
-    environment,
-    enabled,
-    config,
-  }) {
+  create: Effect.fn("CursorDriver.create")(function* (input) {
+    const { instanceId, displayName, accentColor, environment, enabled, config } = input;
     const host = yield* ProviderHost.ProviderHost;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -134,7 +128,9 @@ export const CursorDriver: ProviderDriver<
     );
     const auth = yield* makeCursorAuth({
       instanceId,
-      displayName: displayName ?? "Cursor",
+      get displayName() {
+        return input.displayName ?? "Cursor";
+      },
       enabled,
       ...(processEnv.CURSOR_API_KEY ? { apiKey: processEnv.CURSOR_API_KEY } : {}),
       store: credentials.store,
