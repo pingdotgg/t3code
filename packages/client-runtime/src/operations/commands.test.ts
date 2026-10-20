@@ -79,6 +79,7 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
   readonly projection?: OrchestrationV2ThreadProjection;
   readonly projectionRequests?: ThreadId[];
   readonly advertiseServerResolvedCommandContext?: boolean;
+  readonly advertiseThreadStop?: boolean;
 }) {
   const client = {
     [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
@@ -126,6 +127,7 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
       environment: {
         capabilities: {
           repositoryIdentity: true,
+          ...(input.advertiseThreadStop === true ? { threadStop: true } : {}),
           ...(input.advertiseServerResolvedCommandContext === false
             ? {}
             : { serverResolvedCommandContext: true }),
@@ -1049,6 +1051,34 @@ describe("V2 environment commands", () => {
       }).pipe(Effect.provide(layerTestCrypto)),
   );
 
+  it.effect("stops a thread without relying on background work in the history window", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const projectionRequests: ThreadId[] = [];
+      const supervisor = yield* makeSupervisor({
+        commands,
+        projects: [],
+        projectionRequests,
+        advertiseThreadStop: true,
+      });
+
+      const result = yield* interruptThreadTurn({
+        commandId: CommandId.make("stop-outside-history-window"),
+        threadId: v2ThreadId,
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(result).toEqual({ sequence: 1 });
+      expect(projectionRequests).toEqual([]);
+      expect(commands).toEqual([
+        {
+          type: "thread.stop",
+          commandId: "stop-outside-history-window",
+          threadId: v2ThreadId,
+        },
+      ]);
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
   it.effect("interrupts a known run without fetching the full projection", () =>
     Effect.gen(function* () {
       const commands: OrchestrationV2Command[] = [];
@@ -1057,6 +1087,7 @@ describe("V2 environment commands", () => {
         commands,
         projects: [],
         projectionRequests,
+        advertiseThreadStop: true,
       });
 
       yield* interruptThreadTurn({

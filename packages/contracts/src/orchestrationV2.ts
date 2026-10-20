@@ -2554,6 +2554,12 @@ export type OrchestrationV2StoredEventJson = typeof OrchestrationV2StoredEventJs
 
 export const OrchestrationV2Command = Schema.Union([
   Schema.Struct({
+    type: Schema.Literal("thread.stop"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    reason: Schema.optional(Schema.String),
+  }),
+  Schema.Struct({
     type: Schema.Literal("thread.create"),
     ...OrchestrationV2CreationFields,
     commandId: CommandId,
@@ -3035,12 +3041,6 @@ const OrchestrationV2InternalCommand = Schema.Union([
         }),
       }),
     ),
-  }),
-  Schema.Struct({
-    type: Schema.Literal("thread.stop"),
-    commandId: CommandId,
-    threadId: ThreadId,
-    reason: Schema.optional(Schema.String),
   }),
   /**
    * Internal so no client can mark a request saved without the value being
