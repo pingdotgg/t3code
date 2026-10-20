@@ -152,6 +152,21 @@ describe("device hub proxy", () => {
     expect(headers[0]).not.toHaveProperty("x-forwarded-proto");
   });
 
+  it("lets a viewer negotiate a WebRTC stream with read scope", async () => {
+    const { handler, requests, headers } = fixture([AuthOrchestrationReadScope]);
+    const offer = await handler(
+      new Request("http://t3.test/api/device-hub/vendor/serve-sim/helper/udid-1/webrtc/offer", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: '{"type":"offer"}',
+      }),
+    );
+    expect(offer.status).toBe(200);
+    await offer.text();
+    expect(requests).toEqual(["http://hub.test/vendor/serve-sim/helper/udid-1/webrtc/offer"]);
+    expect(headers[0]?.["content-type"]).toBe("application/json");
+  });
+
   it("never forwards the vendor shell endpoint", async () => {
     const { handler, requests } = fixture([AuthOrchestrationOperateScope]);
     expect(

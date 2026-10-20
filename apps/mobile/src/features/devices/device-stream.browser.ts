@@ -140,6 +140,10 @@ export function start(configuration: DeviceStreamConfiguration) {
         canvas.style.display = "none";
         image.style.display = "block";
       },
+      onCanvasVideo: () => {
+        image.style.display = "none";
+        canvas.style.display = "";
+      },
       onUnauthorized: unauthorized,
       onInputConnected: (connected) => {
         inputConnected = connected;

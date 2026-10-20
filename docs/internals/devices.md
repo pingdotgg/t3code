@@ -91,3 +91,10 @@ Simulators encode H.264 High 5.1. Hardware decoders on some machines and all
 headless browsers reject that profile, and WebCodecs is secure-context only, so
 the viewer probes `isConfigSupported` and falls back to the MJPEG endpoint on
 iOS. Android has no MJPEG; there the panel reports that it cannot decode.
+
+serve-sim can also be locked to WebRTC, as on EAS Simulator, and then refuses
+AVCC with a 409 naming the transport. The viewer still asks for AVCC first, so
+hubs that serve it pay nothing, and switches on that 409, or when its MJPEG
+image fails in a browser that has `RTCPeerConnection`. Offers are not trickled:
+serve-sim takes one offer with every candidate. The video element only feeds
+the same canvas sink, so the panel and the mobile WebView keep one surface.

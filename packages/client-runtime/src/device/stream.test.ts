@@ -923,3 +923,280 @@ it("reopens a stalled AVCC body without disconnecting input, then receives fresh
     vi.unstubAllGlobals();
   }
 });
+
+describe("WebRTC-only iOS devices", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  function webRtcFixture(options: {
+    webCodecs: boolean;
+    offerStatuses?: number[];
+    /** The fake peer's ICE gathering state; `gathering` never completes. */
+    iceGatheringState?: "complete" | "gathering";
+  }) {
+    vi.useFakeTimers();
+    if (options.webCodecs) {
+      vi.stubGlobal("VideoDecoder", vi.fn());
+      vi.stubGlobal("EncodedVideoChunk", vi.fn());
+    }
+    class FakeSocket {
+      static OPEN = 1;
+      readyState = 1;
+      binaryType = "";
+      onmessage: unknown = null;
+      onclose: unknown = null;
+      onerror: unknown = null;
+      send = vi.fn();
+      close = vi.fn();
+    }
+    vi.stubGlobal("WebSocket", FakeSocket);
+    const peers: FakePeer[] = [];
+    class FakePeer {
+      iceGatheringState = options.iceGatheringState ?? "complete";
+      connectionState = "new";
+      localDescription: { type: string; sdp: string } | null = null;
+      remoteDescription: unknown = null;
+      ontrack: ((event: { streams: unknown[]; track: unknown }) => void) | null = null;
+      onconnectionstatechange: (() => void) | null = null;
+      closed = false;
+      readonly config: unknown;
+      readonly codecPreferences = vi.fn();
+      constructor(config: unknown) {
+        this.config = config;
+        peers.push(this);
+      }
+      addTransceiver() {
+        return { setCodecPreferences: this.codecPreferences };
+      }
+      async createOffer() {
+        return { type: "offer", sdp: "v=0 offer" };
+      }
+      async setLocalDescription(description: { type: string; sdp: string }) {
+        this.localDescription = description;
+      }
+      async setRemoteDescription(description: unknown) {
+        this.remoteDescription = description;
+      }
+      addEventListener() {}
+      removeEventListener() {}
+      close() {
+        this.closed = true;
+      }
+    }
+    vi.stubGlobal("RTCPeerConnection", FakePeer);
+    vi.stubGlobal("RTCRtpReceiver", {
+      getCapabilities: () => ({ codecs: [{ mimeType: "video/VP8" }, { mimeType: "video/H264" }] }),
+    });
+    const frameCallbacks: Array<() => void> = [];
+    const video = {
+      muted: false,
+      playsInline: false,
+      srcObject: null as unknown,
+      videoWidth: 402,
+      videoHeight: 874,
+      style: { cssText: "" },
+      setAttribute: vi.fn(),
+      remove: vi.fn(),
+      play: vi.fn(() => Promise.resolve()),
+      requestVideoFrameCallback: vi.fn((callback: () => void) => {
+        frameCallbacks.push(callback);
+      }),
+    };
+    vi.stubGlobal("document", { createElement: () => video, body: { append: vi.fn() } });
+    const offerStatuses = [...(options.offerStatuses ?? [])];
+    const fetch = vi.fn((url: string) => {
+      const path = new URL(url).pathname;
+      if (path.endsWith("/stream.avcc"))
+        return Promise.resolve(
+          Response.json({ error: "stream_transport_locked", transport: "webrtc" }, { status: 409 }),
+        );
+      if (path.endsWith("/vendor/serve-sim/api"))
+        return Promise.resolve(
+          Response.json({
+            streamSettings: { transport: "webrtc", iceServers: [{ urls: ["stun:stun.test"] }] },
+          }),
+        );
+      if (path.endsWith("/webrtc/offer")) {
+        const status = offerStatuses.shift() ?? 200;
+        return Promise.resolve(
+          status === 200
+            ? Response.json({ type: "answer", sdp: "v=0 answer" })
+            : Response.json({ error: "webrtc_session_busy" }, { status }),
+        );
+      }
+      if (path.endsWith("/webrtc/close"))
+        return Promise.resolve(new Response(null, { status: 204 }));
+      return Promise.resolve(new Response("refused", { status: 409 }));
+    });
+    vi.stubGlobal("fetch", fetch);
+    const presented: Array<[unknown, number, number]> = [];
+    const events = {
+      onStatus: vi.fn(),
+      onScreen: vi.fn(),
+      onUnauthorized: vi.fn(),
+      onMjpegFallback: vi.fn(),
+      onCanvasVideo: vi.fn(),
+      onInputConnected: vi.fn(),
+    };
+    const client = createDeviceStreamClient(
+      {
+        platform: "ios",
+        deviceId: "udid-1",
+        preferMjpeg: !options.webCodecs,
+        access: {
+          httpBase: "https://environment.test/api/device-hub",
+          wsBase: "wss://environment.test/api/device-hub",
+          credentials: false,
+          query: { hostId: "eas" },
+        },
+      },
+      {
+        present: (source, width, height) => {
+          presented.push([source, width, height]);
+          return true;
+        },
+      },
+      events,
+    );
+    const requests = (suffix: string) =>
+      fetch.mock.calls.filter(([url]) => new URL(url).pathname.endsWith(suffix));
+    const bodyOf = (call: unknown[]) =>
+      JSON.parse(String((call[1] as RequestInit | undefined)?.body)) as Record<string, unknown>;
+    const settle = async () => {
+      for (let turn = 0; turn < 20; turn++) await vi.advanceTimersByTimeAsync(0);
+    };
+    return { client, peers, video, frameCallbacks, presented, events, requests, bodyOf, settle };
+  }
+
+  it("switches to WebRTC when serve-sim refuses AVCC and releases the session on stop", async () => {
+    const fixture = webRtcFixture({ webCodecs: true });
+    fixture.client.start();
+    await fixture.settle();
+    expect(fixture.peers).toHaveLength(1);
+    const peer = fixture.peers[0]!;
+    expect(peer.config).toEqual({
+      iceServers: [{ urls: ["stun:stun.test"] }],
+      iceTransportPolicy: "all",
+    });
+    expect(peer.codecPreferences).toHaveBeenCalledWith([
+      { mimeType: "video/H264" },
+      { mimeType: "video/VP8" },
+    ]);
+    const offers = fixture.requests("/helper/udid-1/webrtc/offer");
+    expect(offers).toHaveLength(1);
+    const offer = fixture.bodyOf(offers[0]!);
+    expect(offer).toMatchObject({ type: "offer", sdp: "v=0 offer", codec: "h264" });
+    expect(offer.sessionId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+    expect(peer.remoteDescription).toEqual({ type: "answer", sdp: "v=0 answer" });
+
+    peer.ontrack?.({ streams: [{}], track: {} });
+    fixture.frameCallbacks.shift()?.();
+    expect(fixture.presented).toEqual([[fixture.video, 402, 874]]);
+    expect(fixture.events.onStatus).toHaveBeenLastCalledWith("streaming", undefined);
+
+    fixture.client.stop();
+    expect(peer.closed).toBe(true);
+    expect(fixture.video.remove).toHaveBeenCalled();
+    const closes = fixture.requests("/helper/udid-1/webrtc/close");
+    expect(closes.map(fixture.bodyOf)).toEqual([{ sessionId: offer.sessionId }]);
+  });
+
+  it("reconnects a WebRTC feed that stops producing frames", async () => {
+    const fixture = webRtcFixture({ webCodecs: true });
+    fixture.client.start();
+    await fixture.settle();
+    const peer = fixture.peers[0]!;
+    peer.ontrack?.({ streams: [{}], track: {} });
+    fixture.frameCallbacks.shift()?.();
+    expect(fixture.events.onStatus).toHaveBeenLastCalledWith("streaming", undefined);
+    // Frames keep coming: nothing happens.
+    await vi.advanceTimersByTimeAsync(10_000);
+    fixture.frameCallbacks.shift()?.();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(fixture.peers).toHaveLength(1);
+    expect(peer.closed).toBe(false);
+    // Then none for the first-frame deadline (checked every 5 s): the feed
+    // reconnects through the usual retry path.
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(peer.closed).toBe(true);
+    expect(fixture.events.onStatus).toHaveBeenLastCalledWith(
+      "connecting",
+      "Device stream stalled. Reconnecting…",
+    );
+    await vi.advanceTimersByTimeAsync(1_000);
+    await fixture.settle();
+    expect(fixture.peers).toHaveLength(2);
+    expect(fixture.peers[1]!.remoteDescription).toEqual({ type: "answer", sdp: "v=0 answer" });
+    fixture.client.stop();
+  });
+
+  it("retries instead of offering when ICE gathering times out without a candidate", async () => {
+    const fixture = webRtcFixture({ webCodecs: true, iceGatheringState: "gathering" });
+    fixture.client.start();
+    await fixture.settle();
+    expect(fixture.peers).toHaveLength(1);
+    expect(fixture.requests("/helper/udid-1/webrtc/offer")).toHaveLength(0);
+    // The gathering deadline passes with no reflexive or relay candidate: no
+    // offer is sent, the attempt is retried with twice the deadline.
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(fixture.peers[0]!.closed).toBe(true);
+    expect(fixture.requests("/helper/udid-1/webrtc/offer")).toHaveLength(0);
+    expect(fixture.events.onStatus).toHaveBeenLastCalledWith(
+      "connecting",
+      "Device stream found no network candidates yet. Retrying…",
+    );
+    await vi.advanceTimersByTimeAsync(1_000);
+    await fixture.settle();
+    expect(fixture.peers).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(fixture.peers[1]!.closed).toBe(false);
+    // The second deadline, 4 s, is the bound: the offer goes as gathered.
+    await vi.advanceTimersByTimeAsync(3_000);
+    await fixture.settle();
+    expect(fixture.peers).toHaveLength(2);
+    expect(fixture.peers[1]!.closed).toBe(false);
+    expect(fixture.requests("/helper/udid-1/webrtc/offer")).toHaveLength(1);
+    fixture.client.stop();
+  });
+
+  it("retries a WebRTC offer while another viewer is negotiating", async () => {
+    const fixture = webRtcFixture({ webCodecs: true, offerStatuses: [409] });
+    fixture.client.start();
+    await fixture.settle();
+    expect(fixture.peers).toHaveLength(1);
+    expect(fixture.peers[0]!.closed).toBe(true);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await fixture.settle();
+    expect(fixture.peers).toHaveLength(2);
+    expect(fixture.peers[1]!.remoteDescription).toEqual({ type: "answer", sdp: "v=0 answer" });
+    fixture.client.stop();
+  });
+
+  it("moves an MJPEG viewer back to the canvas for a WebRTC-only device", async () => {
+    const fixture = webRtcFixture({ webCodecs: false });
+    const listeners: Record<string, () => void> = {};
+    const image = {
+      naturalWidth: 0,
+      naturalHeight: 0,
+      src: "",
+      addEventListener: (type: string, listener: () => void) => {
+        listeners[type] = listener;
+      },
+      removeEventListener: vi.fn(),
+      removeAttribute: vi.fn(),
+    };
+    fixture.client.start();
+    fixture.client.setMjpegImage(image as unknown as HTMLImageElement);
+    expect(fixture.events.onMjpegFallback).toHaveBeenCalledOnce();
+    listeners.error?.();
+    await fixture.settle();
+    expect(fixture.events.onCanvasVideo).toHaveBeenCalledOnce();
+    expect(fixture.peers).toHaveLength(1);
+    expect(fixture.requests("/helper/udid-1/webrtc/offer")).toHaveLength(1);
+    fixture.client.stop();
+  });
+});
