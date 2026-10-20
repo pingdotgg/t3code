@@ -17,7 +17,11 @@ import { useEffect, useRef } from "react";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useRemoveClonedProject } from "../hooks/useRemoveClonedProject";
 import { useEnvironments } from "../state/environments";
-import { useEnvironmentProjectClones } from "../state/projectClones";
+import {
+  isProjectCloneToastSilenced,
+  silenceProjectCloneToasts,
+  useEnvironmentProjectClones,
+} from "../state/projectClones";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { useAtomCommand } from "../state/use-atom-command";
 import { type DraftId, useComposerDraftStore } from "../composerDraftStore";
@@ -97,11 +101,20 @@ function EnvironmentCloneToasts({ environmentId }: { environmentId: EnvironmentI
         toastManager.close(current.toastId);
         toasts.current.delete(clone.projectId);
       };
+      const ref = { environmentId, projectId: clone.projectId };
       if (isViewingProjectDraft(clone.projectId)) {
+        silenceProjectCloneToasts(ref);
         closeToast();
         continue;
       }
       if (tracked?.renderedKey === key) continue;
+      if (
+        isProjectCloneToastSilenced(ref) &&
+        (clone.phase === "running" || clone.phase === "done")
+      ) {
+        closeToast();
+        continue;
+      }
 
       if (clone.phase === "running") {
         const options = stackedThreadToast({

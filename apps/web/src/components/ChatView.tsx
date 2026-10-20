@@ -378,6 +378,7 @@ import { vcsEnvironment } from "../state/vcs";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { useProjectClone } from "../state/projectClones";
 import { projectCloneDisplayName, projectCloneProgressSummary } from "@t3tools/contracts";
+import { dismissProjectFileCopy, useProjectFileCopy } from "../lib/addProjectToMachine";
 import {
   type EnvironmentPresentation,
   useEnvironmentProviders,
@@ -1895,15 +1896,26 @@ export default function ChatView(props: ChatViewProps) {
     }
   };
   const runProjectCloneActionStable = useStableCallback(runProjectCloneAction);
+  const activeProjectFileCopy = useProjectFileCopy(activeProjectRef);
   const projectCloneSendBlockReason =
-    activeProjectClone === null
-      ? null
-      : activeProjectClone.phase === "running"
-        ? "Cloning repository"
-        : activeProjectClone.phase === "done"
-          ? null
-          : "Repository not cloned";
+    activeProjectClone?.phase === "running"
+      ? "Cloning repository"
+      : activeProjectClone !== null && activeProjectClone.phase !== "done"
+        ? "Repository not cloned"
+        : activeProjectFileCopy?.phase === "copying"
+          ? "Copying files"
+          : null;
   const projectCloneBannerItem = (() => {
+    if (activeProjectFileCopy?.phase === "failed" && activeProjectRef) {
+      return {
+        id: `project-file-copy:${activeProjectRef.projectId}`,
+        variant: "error",
+        icon: <DownloadIcon />,
+        title: activeProjectFileCopy.title,
+        description: activeProjectFileCopy.failures.join("\n"),
+        onDismiss: () => dismissProjectFileCopy(activeProjectRef),
+      };
+    }
     if (!activeProjectClone || !activeProjectRef || activeProjectClone.phase === "done") {
       return null;
     }

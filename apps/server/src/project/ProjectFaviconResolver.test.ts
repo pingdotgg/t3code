@@ -74,6 +74,22 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
       }).pipe(Effect.provide(TestClock.layer())),
     );
 
+    it.effect("finds a favicon added after a cached miss once the workspace is invalidated", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+
+        // A clone's project exists while its folder is still empty.
+        expect(yield* resolver.resolvePath(cwd)).toBeNull();
+        yield* writeTextFile(cwd, "favicon.ico", "icon");
+        expect(yield* resolver.resolvePath(cwd)).toBeNull();
+
+        yield* resolver.invalidate(cwd);
+        expect(yield* resolver.resolvePath(cwd)).toBe(path.join(cwd, "favicon.ico"));
+      }),
+    );
+
     it.effect("falls back at once when a cached favicon is deleted", () =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
