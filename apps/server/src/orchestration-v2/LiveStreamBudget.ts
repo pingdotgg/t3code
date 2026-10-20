@@ -7,6 +7,7 @@ import * as Exit from "effect/Exit";
 import * as Queue from "effect/Queue";
 import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 export class LiveStreamBufferError extends Schema.TaggedError<LiveStreamBufferError>()(
@@ -251,6 +252,83 @@ export const bufferLiveStream = <A extends object, E, R>(
     Effect.gen(function* () {
       const budget = yield* makeLiveStreamBudget(limits);
       return budget.deliver(yield* retainLiveStream(source, budget));
+    }),
+  );
+
+/** Coalesce queued full states; delivered states stay charged until the next pull ACKs them. */
+export const bufferLatestLiveStream = <A extends { readonly sequence: number }, E, R>(
+  source: Stream.Stream<A, E, R>,
+  key: (value: A) => string,
+  limits?: LiveStreamLimits,
+) =>
+  Stream.unwrap(
+    Effect.gen(function* () {
+      const budget = yield* makeLiveStreamBudget(limits);
+      const ready = yield* Queue.bounded<void, E | LiveStreamBufferError | Cause.Done>(1);
+      const mutex = yield* Semaphore.make(1);
+      const pending = new Map<string, RetainedLiveItem<A>>();
+      let closed = false;
+      const close = (error?: LiveStreamBufferError) =>
+        mutex.withPermit(
+          Effect.gen(function* () {
+            if (closed) return;
+            closed = true;
+            budget.release(pending.values());
+            pending.clear();
+            if (error) yield* Queue.fail(ready, error);
+            yield* Queue.shutdown(ready);
+          }),
+        );
+      yield* Effect.addFinalizer(() => close());
+      yield* budget.failed.pipe(
+        Effect.catchTags({ LiveStreamBufferError: close }),
+        Effect.forkScoped,
+      );
+      yield* source.pipe(
+        Stream.runForEach((value) =>
+          mutex.withPermit(
+            Effect.gen(function* () {
+              yield* budget.check;
+              if (closed) return;
+              const identity = key(value);
+              const previous = pending.get(identity);
+              if (previous && previous.value.sequence >= value.sequence) return;
+              const wasEmpty = pending.size === 0;
+              const [item] = yield* budget.replace(previous ? [previous] : [], [value]);
+              pending.set(identity, item!);
+              // Only the empty-to-nonempty transition needs a wakeup; replacements
+              // must not leave another token after this batch has drained.
+              if (wasEmpty) yield* Queue.offer(ready, undefined);
+            }).pipe(Effect.uninterruptible),
+          ),
+        ),
+        Effect.raceFirst(budget.failed),
+        Effect.exit,
+        Effect.flatMap((exit) =>
+          Exit.isFailure(exit) ? Queue.failCause(ready, exit.cause) : Queue.end(ready),
+        ),
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      return budget.deliver(
+        Stream.fromPull(
+          Effect.succeed(
+            Queue.take(ready).pipe(
+              Effect.andThen(
+                mutex.withPermit(
+                  Effect.sync(() => {
+                    const items = Array.from(pending.values()).sort(
+                      (left, right) => left.value.sequence - right.value.sequence,
+                    );
+                    pending.clear();
+                    // Moving to delivery preserves the budget charge until ACK.
+                    return items as Arr.NonEmptyArray<RetainedLiveItem<A>>;
+                  }),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
     }),
   );
 

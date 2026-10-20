@@ -13,11 +13,42 @@ import {
   OrchestrationV2ThreadShell as ThreadShellSchema,
 } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import type * as Arr from "effect/Array";
+import type * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
+
+import { bufferLatestLiveStream } from "./LiveStreamBudget.ts";
+
+type ShellDelta = Extract<OrchestrationV2ShellStreamItem, { readonly sequence: number }>;
+
+/** Snapshots, synchronization, and enrichment markers must bypass full-state coalescing. */
+export const bufferShellLiveStream = <E, R>(
+  source: Stream.Stream<ShellDelta, E, R>,
+  limits?: { readonly maxItems?: number; readonly maxSerializedBytes?: number },
+) =>
+  bufferLatestLiveStream(
+    source,
+    (item) => {
+      switch (item.kind) {
+        case "project.updated":
+          return `project:${item.project.id}`;
+        case "project.removed":
+          return `project:${item.projectId}`;
+        case "thread.updated":
+          return `thread:${item.location}:${item.thread.id}`;
+        case "thread.removed":
+          return `thread:${item.location}:${item.threadId}`;
+      }
+    },
+    limits,
+  );
 
 export function buildActiveShellSnapshot(input: {
   readonly projects: ReadonlyArray<OrchestrationProjectShell>;
@@ -112,7 +143,58 @@ export function composeShellStreamWithEnrichment<A, E, R, A2, E2, R2, A3, E3, R3
   readonly tail: Stream.Stream<A2, E2, R2>;
   readonly enrichment: Stream.Stream<A3, E3, R3>;
 }): Stream.Stream<A | A2 | A3, E | E2 | E3, R | R2 | R3> {
-  return Stream.concat(input.initial, Stream.merge(input.tail, input.enrichment));
+  const merged = Stream.fromPull(
+    Effect.gen(function* () {
+      const output = yield* Queue.bounded<
+        {
+          readonly items: Arr.NonEmptyReadonlyArray<A2 | A3>;
+          readonly acknowledged?: Deferred.Deferred<void>;
+        },
+        E2 | E3 | Cause.Done
+      >(0);
+      yield* Effect.addFinalizer(() => Queue.shutdown(output));
+      let remaining = 2;
+      const drain = (effect: Effect.Effect<void, E2 | E3, R2 | R3>) =>
+        effect.pipe(
+          Effect.exit,
+          Effect.flatMap((exit) =>
+            Exit.isFailure(exit)
+              ? Queue.failCause(output, exit.cause)
+              : --remaining === 0
+                ? Queue.end(output)
+                : Effect.void,
+          ),
+          Effect.forkScoped,
+        );
+      yield* drain(
+        input.tail.pipe(
+          Stream.runForEachArray((items) =>
+            Effect.gen(function* () {
+              const acknowledged = yield* Deferred.make<void>();
+              yield* Queue.offer(output, { items, acknowledged });
+              yield* Deferred.await(acknowledged);
+            }),
+          ),
+        ),
+      );
+      // Keep draining the sliding enrichment subscription after each handoff,
+      // as Stream.merge does, while only the budgeted tail waits for an ACK.
+      yield* drain(
+        input.enrichment.pipe(Stream.runForEachArray((items) => Queue.offer(output, { items }))),
+      );
+      let previous: Deferred.Deferred<void> | undefined;
+      // Stream.merge pulls ahead after handing off each batch. Wait for the next
+      // downstream pull so shell delivery keeps that batch charged until its RPC ACK.
+      // @effect-diagnostics-next-line returnEffectInGen:off - Stream.fromPull needs the pull effect as its result.
+      return Effect.gen(function* () {
+        if (previous) yield* Deferred.succeed(previous, undefined);
+        const next = yield* Queue.take(output);
+        previous = next.acknowledged;
+        return next.items;
+      });
+    }),
+  ).pipe(Stream.scoped);
+  return Stream.concat(input.initial, merged);
 }
 
 const sameProjects = Schema.toEquivalence(Schema.Array(ProjectShellSchema));
@@ -275,7 +357,10 @@ export function coalesceStoredThreadEvents(
 export function shellStreamItemFromThreadShell(input: {
   readonly stored: Extract<ShellApplicationEvent, { readonly event: unknown }>;
   readonly shell: OrchestrationV2ThreadShell | null;
-}): Exclude<OrchestrationV2ShellStreamItem, { readonly kind: "snapshot" }> {
+}): Extract<
+  OrchestrationV2ShellStreamItem,
+  { readonly kind: "thread.updated" | "thread.removed" }
+> {
   if (input.shell !== null) {
     if (input.shell.archivedAt !== null) {
       return {
