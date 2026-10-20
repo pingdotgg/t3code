@@ -1,48 +1,42 @@
-import { act, useLayoutEffect } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { useLayoutEffect } from "react";
+import { describe, expect, it, vi } from "vite-plus/test";
 
+import { act, render } from "../test/render";
 import { usePanelNavigationSuppression } from "./panelAnimations";
 
-let root: Root;
-let pendingFrames: FrameRequestCallback[] = [];
-let observed: boolean[] = [];
-
-function SuppressionProbe({ navigationKey }: { navigationKey: string }) {
+function SuppressionProbe({
+  navigationKey,
+  observed,
+}: {
+  navigationKey: string;
+  observed: boolean[];
+}) {
   const suppressed = usePanelNavigationSuppression(navigationKey);
   useLayoutEffect(() => {
     observed.push(suppressed);
-  }, [suppressed]);
+  }, [observed, suppressed]);
   return null;
-}
-
-beforeEach(() => {
-  pendingFrames = [];
-  observed = [];
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  // Frames are stepped by hand so each assertion lands between two paints.
-  vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
-    pendingFrames.push(callback);
-    return pendingFrames.length;
-  });
-  vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
-  root = createRoot(document.createElement("div"));
-});
-
-afterEach(async () => {
-  await act(() => root.unmount());
-  vi.restoreAllMocks();
-  vi.unstubAllGlobals();
-});
-
-async function paintPendingFrame() {
-  const callback = pendingFrames.shift();
-  await act(() => callback?.(0));
 }
 
 describe("usePanelNavigationSuppression", () => {
   it("suppresses initial and navigated panel state until each route has painted", async () => {
-    await act(() => root.render(<SuppressionProbe navigationKey="/thread/one" />));
+    const pendingFrames: FrameRequestCallback[] = [];
+    const observed: boolean[] = [];
+    // Frames are stepped by hand so each assertion lands between two paints.
+    using _requestFrame = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback) => pendingFrames.push(callback));
+    using _cancelFrame = vi
+      .spyOn(window, "cancelAnimationFrame")
+      .mockImplementation(() => undefined);
+    const paintPendingFrame = async () => {
+      const callback = pendingFrames.shift();
+      await act(() => callback?.(0));
+    };
+
+    await using screen = await render(
+      <SuppressionProbe navigationKey="/thread/one" observed={observed} />,
+    );
     expect(observed.at(-1)).toBe(true);
 
     await paintPendingFrame();
@@ -50,7 +44,7 @@ describe("usePanelNavigationSuppression", () => {
     await paintPendingFrame();
     expect(observed.at(-1)).toBe(false);
 
-    await act(() => root.render(<SuppressionProbe navigationKey="/thread/two" />));
+    await screen.rerender(<SuppressionProbe navigationKey="/thread/two" observed={observed} />);
     expect(observed.at(-1)).toBe(true);
 
     await paintPendingFrame();

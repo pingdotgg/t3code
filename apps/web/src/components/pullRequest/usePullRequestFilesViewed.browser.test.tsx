@@ -1,3 +1,4 @@
+import { act, render, fakeTimers } from "../../../test/render";
 import {
   EnvironmentId,
   ProjectId,
@@ -6,9 +7,8 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
-import { act, StrictMode, useEffect } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { StrictMode, useEffect } from "react";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 const { host, setFilesViewed, toastAdd } = vi.hoisted(() => ({
   host: { data: null as unknown, refresh: vi.fn() },
@@ -57,51 +57,44 @@ function answer(state: "unviewed" | "viewed" | "dismissed"): PullRequestFilesVie
   };
 }
 
-let root: Root;
-let current: PullRequestFilesViewedView;
-
-function Surface() {
-  const view = usePullRequestFilesViewed({ environmentId, reference, enabled: true });
-  useEffect(() => {
-    current = view;
-  });
-  return null;
-}
-
-const view = () => current;
-const render = () =>
-  act(async () =>
-    root.render(
-      <StrictMode>
-        <Surface />
-      </StrictMode>,
-    ),
-  );
-
-async function reads(state: "unviewed" | "viewed" | "dismissed") {
-  host.data = answer(state);
-  await render();
-}
-
-beforeEach(async () => {
-  vi.useFakeTimers();
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+function setup() {
   host.data = answer("unviewed");
   host.refresh.mockReset();
   toastAdd.mockReset();
   setFilesViewed.mockReset().mockResolvedValue(AsyncResult.success(undefined));
-  root = createRoot(document.createElement("div"));
-  await render();
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  vi.useRealTimers();
-  vi.unstubAllGlobals();
-});
+}
+async function renderSurface() {
+  let current!: PullRequestFilesViewedView;
+  function Surface() {
+    const view = usePullRequestFilesViewed({ environmentId, reference, enabled: true });
+    useEffect(() => {
+      current = view;
+    });
+    return null;
+  }
+  const ui = () => (
+    <StrictMode>
+      <Surface />
+    </StrictMode>
+  );
+  const screen = await render(ui(), { router: false });
+  return {
+    view: () => current,
+    reads: async (state: "unviewed" | "viewed" | "dismissed") => {
+      host.data = answer(state);
+      await screen.rerender(ui());
+    },
+    rerender: () => screen.rerender(ui()),
+    [Symbol.asyncDispose]: () => screen[Symbol.asyncDispose](),
+  };
+}
 
 describe("a mark whose file was pushed to before the read that followed it", () => {
   it("gives way to the host and shows the file as changed", async () => {
+    setup();
+    using _timers = fakeTimers();
+    await using screen = await renderSurface();
+    const { view, reads } = screen;
     view().setViewed("a.ts", true);
     await act(async () => vi.advanceTimersByTimeAsync(500));
     expect(setFilesViewed).toHaveBeenCalledExactlyOnceWith({
@@ -117,6 +110,10 @@ describe("a mark whose file was pushed to before the read that followed it", () 
   });
 
   it("stays given way to on every later read, having nothing left to recover", async () => {
+    setup();
+    using _timers = fakeTimers();
+    await using screen = await renderSurface();
+    const { view, reads } = screen;
     view().setViewed("a.ts", true);
     await act(async () => vi.advanceTimersByTimeAsync(500));
     await reads("dismissed");
@@ -131,6 +128,10 @@ describe("a mark whose file was pushed to before the read that followed it", () 
 
 describe("a mark the host has not answered for yet", () => {
   it("holds the press while the write is still out", async () => {
+    setup();
+    using _timers = fakeTimers();
+    await using screen = await renderSurface();
+    const { view, reads } = screen;
     let land = (_result: unknown) => {};
     setFilesViewed.mockReturnValueOnce(new Promise((resolve) => (land = resolve)));
 
@@ -145,6 +146,10 @@ describe("a mark the host has not answered for yet", () => {
   });
 
   it("holds a press made since the read that would otherwise answer for it", async () => {
+    setup();
+    using _timers = fakeTimers();
+    await using screen = await renderSurface();
+    const { view, reads } = screen;
     view().setViewed("a.ts", true);
     await act(async () => vi.advanceTimersByTimeAsync(500));
 
@@ -158,22 +163,22 @@ describe("a mark the host has not answered for yet", () => {
 
 describe("a failed batch that the host partly applied", () => {
   it("refreshes the host and accepts the applied marks", async () => {
+    setup();
+    using _timers = fakeTimers();
+    await using screen = await renderSurface();
+    const { view } = screen;
     setFilesViewed.mockResolvedValueOnce(
       AsyncResult.failure(Cause.fail(new Error("partial batch"))),
     );
     host.refresh.mockImplementation(() => {
       host.data = answer("viewed");
-      root.render(
-        <StrictMode>
-          <Surface />
-        </StrictMode>,
-      );
     });
-    act(() => {
+    await act(() => {
       view().setViewed("a.ts", true);
       view().setViewed("b.ts", true);
     });
     await act(async () => vi.advanceTimersByTimeAsync(500));
+    await screen.rerender();
     expect(view().isViewed("a.ts")).toBe(true);
     expect(view().isViewed("b.ts")).toBe(false);
   });

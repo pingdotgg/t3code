@@ -1,8 +1,8 @@
 import { EnvironmentId, ThreadId, type TerminalSummary } from "@t3tools/contracts";
-import { act, useEffect } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { useEffect } from "react";
+import { expect, it, vi } from "vite-plus/test";
 
+import { render } from "../../test/render";
 import { useKnownTerminalSessions } from "./terminalSessions";
 
 const state = vi.hoisted(() => ({
@@ -23,8 +23,7 @@ vi.mock(import("./query"), async (original) => ({
       : { data: state.data, error: state.error }) as never,
 }));
 
-let root: Root;
-let current: ReturnType<typeof useKnownTerminalSessions>;
+type KnownSessions = ReturnType<typeof useKnownTerminalSessions>;
 const target = {
   environmentId: EnvironmentId.make("secondary"),
   threadId: ThreadId.make("thread"),
@@ -43,56 +42,55 @@ const terminal: TerminalSummary = {
   updatedAt: "2026-09-05T00:00:00.000Z",
 };
 
-function Probe() {
+function Probe({ onSessions }: { onSessions: (sessions: KnownSessions) => void }) {
   const sessions = useKnownTerminalSessions(target);
   useEffect(() => {
-    current = sessions;
-  }, [sessions]);
+    onSessions(sessions);
+  }, [onSessions, sessions]);
   return null;
 }
 
-function render() {
-  return act(() => root.render(<Probe />));
+function setup() {
+  Object.assign(state, { canRead: true, data: null, error: null });
+  let current: KnownSessions | undefined;
+  const onSessions = (sessions: KnownSessions) => {
+    current = sessions;
+  };
+  return {
+    get current() {
+      return current;
+    },
+    element: () => <Probe onSessions={onSessions} />,
+  };
 }
 
-beforeEach(() => {
-  state.canRead = true;
-  state.data = null;
-  state.error = null;
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  root = createRoot(document.createElement("div"));
-});
-
-afterEach(async () => {
-  await act(() => root.unmount());
-  vi.unstubAllGlobals();
-});
-
 it("distinguishes missing metadata from an authoritative empty list across scope changes", async () => {
-  await render();
-  expect(current).toBeNull();
+  const probe = setup();
+  await using screen = await render(probe.element());
+  expect(probe.current).toBeNull();
 
   state.data = [terminal];
-  await render();
-  expect(current?.[0]).toMatchObject({
+  await screen.rerender(probe.element());
+  expect(probe.current?.[0]).toMatchObject({
     target: { environmentId: "secondary", terminalId: "term-1" },
     state: { hasRunningSubprocess: true },
   });
 
   state.canRead = false;
-  await render();
-  expect(current).toBeNull();
+  await screen.rerender(probe.element());
+  expect(probe.current).toBeNull();
 
   state.canRead = true;
   state.data = [];
-  await render();
-  expect(current).toEqual([]);
+  await screen.rerender(probe.element());
+  expect(probe.current).toEqual([]);
 });
 
 it("does not reuse cached terminal metadata after a subscription failure", async () => {
+  const probe = setup();
   state.data = [terminal];
-  await render();
+  await using screen = await render(probe.element());
   state.error = "Access denied";
-  await render();
-  expect(current).toBeNull();
+  await screen.rerender(probe.element());
+  expect(probe.current).toBeNull();
 });

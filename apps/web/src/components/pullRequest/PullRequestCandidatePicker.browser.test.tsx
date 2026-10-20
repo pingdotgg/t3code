@@ -1,25 +1,8 @@
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { act, render } from "../../../test/render";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import { PullRequestCandidatePicker } from "./PullRequestCandidatePicker";
-
-let root: Root;
-let container: HTMLDivElement;
-
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
 
 describe("disabled candidate picker", () => {
   it.each(["keyboard", "pointer"])(
@@ -27,35 +10,33 @@ describe("disabled candidate picker", () => {
     async (input) => {
       const onOpenChange = vi.fn();
       const onSelect = vi.fn();
-      await act(async () => {
-        root.render(
-          <PullRequestCandidatePicker
-            icon="+"
-            label="Request reviewers"
-            allowed={false}
-            disabledReason="Only collaborators can request reviewers."
-            open={false}
-            onOpenChange={onOpenChange}
-            query=""
-            onQueryChange={() => {}}
-            searchLabel="Search reviewers"
-            isPending={false}
-            error={null}
-            candidates={["alex"]}
-            emptyLabel="No reviewers"
-            noMatchLabel="No matching reviewers"
-            errorLabel="Unable to load reviewers"
-            truncated={false}
-            truncatedLabel="More reviewers available"
-            candidateKey={(candidate) => candidate}
-            disabled={false}
-            onSelect={onSelect}
-          >
-            {(candidate) => candidate}
-          </PullRequestCandidatePicker>,
-        );
-      });
-      const trigger = container.querySelector<HTMLButtonElement>(
+      await using screen = await render(
+        <PullRequestCandidatePicker
+          icon="+"
+          label="Request reviewers"
+          allowed={false}
+          disabledReason="Only collaborators can request reviewers."
+          open={false}
+          onOpenChange={onOpenChange}
+          query=""
+          onQueryChange={() => {}}
+          searchLabel="Search reviewers"
+          isPending={false}
+          error={null}
+          candidates={["alex"]}
+          emptyLabel="No reviewers"
+          noMatchLabel="No matching reviewers"
+          errorLabel="Unable to load reviewers"
+          truncated={false}
+          truncatedLabel="More reviewers available"
+          candidateKey={(candidate) => candidate}
+          disabled={false}
+          onSelect={onSelect}
+        >
+          {(candidate) => candidate}
+        </PullRequestCandidatePicker>,
+      );
+      const trigger = screen.container.querySelector<HTMLButtonElement>(
         'button[aria-label="Request reviewers"]',
       )!;
       if (input === "keyboard") {

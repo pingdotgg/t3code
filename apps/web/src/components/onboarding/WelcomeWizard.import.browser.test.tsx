@@ -9,11 +9,10 @@ import {
   type AuthSessionState,
 } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 
 import "~/index.css";
+import { act, render } from "../../../test/render";
 
 type SessionResult = AsyncResult.AsyncResult<AuthSessionState, Error>;
 type Project = { id: ProjectId; environmentId: EnvironmentId; workspaceRoot: string };
@@ -136,7 +135,6 @@ import { WelcomeWizard } from "./WelcomeWizard";
 const primaryId = EnvironmentId.make("primary");
 const remoteId = EnvironmentId.make("remote");
 const permissionMessage = "This connection cannot import projects or thread history.";
-const roots: Root[] = [];
 
 function session(scopes: ReadonlyArray<AuthEnvironmentScope>): AuthSessionState {
   return {
@@ -217,12 +215,9 @@ function projectCheckboxes() {
 
 async function mountImport(remote = false) {
   state.selectedEnvironment = remote ? "remote" : "primary";
-  const container = document.createElement("div");
-  document.body.append(container);
-  const root = createRoot(container);
-  roots.push(root);
-  await act(async () =>
-    root.render(
+  await using stack = new AsyncDisposableStack();
+  const screen = stack.use(
+    await render(
       <RegistryContext.Provider value={appAtomRegistry}>
         <WelcomeWizard localAvailable={!remote} onDone={state.onDone} />
       </RegistryContext.Provider>,
@@ -231,9 +226,13 @@ async function mountImport(remote = false) {
   await click("Continue");
   await click("Continue");
   expect(pageText()).toContain("Import your projects");
+  stack.move();
+  return screen;
 }
 
-beforeEach(() => {
+// The mocked modules read `state`, so every test starts by replacing all of it.
+function setup() {
+  state.sessions.clear();
   for (const id of [primaryId, remoteId]) {
     state.sessions.set(
       id,
@@ -258,17 +257,12 @@ beforeEach(() => {
   state.onDone.mockReset();
   state.scan.mockReset();
   state.refreshScan.mockReset();
-});
-
-afterEach(async () => {
-  for (const root of roots.splice(0)) await act(async () => root.unmount());
-  document.body.replaceChildren();
-  state.sessions.clear();
-});
+}
 
 it("keeps scanning, choosing and skipping available to a paired read-only environment", async () => {
+  setup();
   setGrant(remoteId, false);
-  await mountImport(true);
+  await using _screen = await mountImport(true);
   expect(state.scan).toHaveBeenCalledWith(expect.objectContaining({ environmentId: remoteId }));
   expect(pageText()).toContain("/projects/first");
   expect(button("Import 2 projects").disabled).toBe(true);
@@ -281,8 +275,9 @@ it("keeps scanning, choosing and skipping available to a paired read-only enviro
 });
 
 it("waits for the selected grant and enables import when it arrives", async () => {
+  setup();
   appAtomRegistry.set(sessionAtom(primaryId), AsyncResult.initial());
-  await mountImport();
+  await using _screen = await mountImport();
   expect(button("Import 2 projects").disabled).toBe(true);
   await act(async () => setGrant(primaryId, true));
   await click("Import 2 projects");
@@ -292,7 +287,8 @@ it("waits for the selected grant and enables import when it arrives", async () =
 });
 
 it("preserves selections and denies a click that lands as the paired environment's grant is revoked", async () => {
-  await mountImport(true);
+  setup();
+  await using _screen = await mountImport(true);
   await act(async () => projectCheckboxes()[1]!.click());
   expect(projectCheckboxes()[1]!.getAttribute("aria-checked")).toBe("false");
   const importButton = button("Import 1 project");
@@ -320,12 +316,13 @@ it("preserves selections and denies a click that lands as the paired environment
 });
 
 it("rechecks after project creation and can retry its history without recreating the project", async () => {
+  setup();
   const creation = deferred<void>();
   state.createProject.mockImplementationOnce(async (input: CreateProjectInput) => {
     await creation.promise;
     return recordProject(input);
   });
-  await mountImport();
+  await using _screen = await mountImport();
   await click("Import 2 projects");
   expect(state.createProject).toHaveBeenCalledOnce();
   await act(async () => {
@@ -348,6 +345,7 @@ it("rechecks after project creation and can retry its history without recreating
 it.each([false, true])(
   "rechecks after history import before the next project write (existing: %s)",
   async (existing) => {
+    setup();
     if (existing) {
       const projectId = ProjectId.make("second-existing");
       state.candidates[1] = { ...state.candidates[1]!, projectId };
@@ -359,7 +357,7 @@ it.each([false, true])(
     state.importThreads.mockImplementationOnce(async () =>
       AsyncResult.success(await imported.promise),
     );
-    await mountImport();
+    await using _screen = await mountImport();
     await click("Import 2 projects");
     expect(state.createProject).toHaveBeenCalledOnce();
     expect(state.importThreads).toHaveBeenCalledOnce();
@@ -382,12 +380,13 @@ it.each([false, true])(
 );
 
 it("completes accepted imports when permission is revoked after the final server write", async () => {
+  setup();
   state.candidates = state.candidates.slice(0, 1);
   const imported = deferred<{ importedCount: number; skippedCount: number }>();
   state.importThreads.mockImplementationOnce(async () =>
     AsyncResult.success(await imported.promise),
   );
-  await mountImport();
+  await using _screen = await mountImport();
   await click("Import 1 project");
   await act(async () => {
     setGrant(primaryId, false);

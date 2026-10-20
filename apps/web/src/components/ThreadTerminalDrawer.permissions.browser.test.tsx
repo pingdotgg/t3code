@@ -7,9 +7,7 @@ import {
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { nextTerminalAttachSeedState } from "@t3tools/client-runtime/state/terminal";
 import { AsyncResult } from "effect/reactivity";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import type {
   GhosttyTerminalSurface,
   GhosttyTerminalSurfaceOptions,
@@ -82,6 +80,7 @@ vi.mock(import("../state/session"), async (original) => {
   };
 });
 
+import { act, render } from "../../test/render";
 import ThreadTerminalDrawer, { TerminalViewport } from "./ThreadTerminalDrawer";
 
 const threadRef = {
@@ -89,10 +88,8 @@ const threadRef = {
   threadId: ThreadId.make("thread"),
 };
 const session = { ...nextTerminalAttachSeedState(), status: "running" as const, version: 1 };
-let root: Root;
-let container: HTMLDivElement;
-
-beforeEach(() => {
+// The mocked modules read `state`, so every test starts by resetting all of it.
+function setup() {
   state.allowed = true;
   state.listeners.clear();
   state.resize.mockReset().mockResolvedValue(AsyncResult.success(undefined));
@@ -100,38 +97,26 @@ beforeEach(() => {
   // A surface can report its initial grid while asynchronous WASM setup is
   // pending. Keep that unrelated setup pending while exercising its callback.
   state.createSurface.mockReset().mockReturnValue(new Promise(() => undefined));
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-  vi.restoreAllMocks();
-});
+}
 
 it("rechecks the target terminal grant when a retained surface callback reports a resize", async () => {
-  await act(async () =>
-    root.render(
-      <TerminalViewport
-        advancedTypography={false}
-        threadRef={threadRef}
-        threadId={threadRef.threadId}
-        terminalId="terminal-1"
-        terminalLabel="Terminal 1"
-        cwd="/repo"
-        onSessionExited={state.otherCommand}
-        focusRequestId={0}
-        autoFocus={false}
-        visible={true}
-        resizeEpoch={0}
-        drawerHeight={200}
-        keybindings={[]}
-      />,
-    ),
+  setup();
+  await using _screen = await render(
+    <TerminalViewport
+      advancedTypography={false}
+      threadRef={threadRef}
+      threadId={threadRef.threadId}
+      terminalId="terminal-1"
+      terminalLabel="Terminal 1"
+      cwd="/repo"
+      onSessionExited={state.otherCommand}
+      focusRequestId={0}
+      autoFocus={false}
+      visible={true}
+      resizeEpoch={0}
+      drawerHeight={200}
+      keybindings={[]}
+    />,
   );
   expect(state.createSurface).toHaveBeenCalledOnce();
   const onResize = state.createSurface.mock.calls[0]![1].onResize;
@@ -157,6 +142,7 @@ it("rechecks the target terminal grant when a retained surface callback reports 
 });
 
 it("keeps held Kitty keys and the original surface through split, focus, and unsplit", async () => {
+  setup();
   const { GhosttyTerminalSurface } = await vi.importActual<
     typeof import("~/terminal/ghostty/surface")
   >("~/terminal/ghostty/surface");
@@ -180,78 +166,79 @@ it("keeps held Kitty keys and the original surface through split, focus, and uns
   };
   // ChatView installs its capture listener before the terminal mounts.
   window.addEventListener("keydown", consumeShortcut, { capture: true });
+  using _shortcut = {
+    [Symbol.dispose]: () =>
+      window.removeEventListener("keydown", consumeShortcut, { capture: true }),
+  };
   const composer = document.createElement("textarea");
   document.body.append(composer);
-  const render = async (terminalIds: string[]) => {
-    await act(async () =>
-      root.render(
-        <ThreadTerminalDrawer
-          threadRef={threadRef}
-          threadId={threadRef.threadId}
-          cwd="/repo"
-          height={280}
-          terminalIds={terminalIds}
-          activeTerminalId="original"
-          terminalGroups={[{ id: "group", terminalIds }]}
-          activeTerminalGroupId="group"
-          focusRequestId={0}
-          onSplitTerminal={state.otherCommand}
-          onSplitTerminalVertical={state.otherCommand}
-          onNewTerminal={state.otherCommand}
-          onActiveTerminalChange={state.otherCommand}
-          onCloseTerminal={state.otherCommand}
-          onHeightChange={state.otherCommand}
-          onAddTerminalContext={state.otherCommand}
-          keybindings={[]}
-        />,
-      ),
-    );
-    await act(async () => {
+  using _composer = { [Symbol.dispose]: () => composer.remove() };
+  const drawer = (terminalIds: string[]) => (
+    <ThreadTerminalDrawer
+      threadRef={threadRef}
+      threadId={threadRef.threadId}
+      cwd="/repo"
+      height={280}
+      terminalIds={terminalIds}
+      activeTerminalId="original"
+      terminalGroups={[{ id: "group", terminalIds }]}
+      activeTerminalGroupId="group"
+      focusRequestId={0}
+      onSplitTerminal={state.otherCommand}
+      onSplitTerminalVertical={state.otherCommand}
+      onNewTerminal={state.otherCommand}
+      onActiveTerminalChange={state.otherCommand}
+      onCloseTerminal={state.otherCommand}
+      onHeightChange={state.otherCommand}
+      onAddTerminalContext={state.otherCommand}
+      keybindings={[]}
+    />
+  );
+  const surfacesCreated = () =>
+    act(async () => {
       await Promise.all(state.createSurface.mock.results.map((result) => result.value));
     });
-  };
-  try {
-    await render(["original"]);
-    const original = await state.createSurface.mock.results[0]!.value;
-    const disposeOriginal = vi.spyOn(original, "dispose");
-    original.write("\x1b[>11u");
-    const key = (type: "keydown" | "keyup", init: KeyboardEventInit) =>
-      original.input.dispatchEvent(
-        new KeyboardEvent(type, { bubbles: true, cancelable: true, ...init }),
-      );
-    original.focus();
-    key("keydown", { key: "Control", code: "ControlLeft", ctrlKey: true });
-    key("keydown", { key: "d", code: "KeyD", ctrlKey: true });
-    await render(["original", "split"]);
-    expect(state.createSurface).toHaveBeenCalledTimes(2);
-    expect(container.querySelector("textarea")).toBe(original.input);
-    expect(disposeOriginal).not.toHaveBeenCalled();
-    const split = await state.createSurface.mock.results[1]!.value;
-    const disposeSplit = vi.spyOn(split, "dispose");
-    original.focus();
-    key("keyup", { key: "d", code: "KeyD", ctrlKey: true });
-    key("keyup", { key: "Control", code: "ControlLeft" });
+  await using screen = await render(drawer(["original"]));
+  const { container } = screen;
+  await surfacesCreated();
+  const original = await state.createSurface.mock.results[0]!.value;
+  const disposeOriginal = vi.spyOn(original, "dispose");
+  original.write("\x1b[>11u");
+  const key = (type: "keydown" | "keyup", init: KeyboardEventInit) =>
+    original.input.dispatchEvent(
+      new KeyboardEvent(type, { bubbles: true, cancelable: true, ...init }),
+    );
+  original.focus();
+  key("keydown", { key: "Control", code: "ControlLeft", ctrlKey: true });
+  key("keydown", { key: "d", code: "KeyD", ctrlKey: true });
+  await screen.rerender(drawer(["original", "split"]));
+  await surfacesCreated();
+  expect(state.createSurface).toHaveBeenCalledTimes(2);
+  expect(container.querySelector("textarea")).toBe(original.input);
+  expect(disposeOriginal).not.toHaveBeenCalled();
+  const split = await state.createSurface.mock.results[1]!.value;
+  const disposeSplit = vi.spyOn(split, "dispose");
+  original.focus();
+  key("keyup", { key: "d", code: "KeyD", ctrlKey: true });
+  key("keyup", { key: "Control", code: "ControlLeft" });
 
-    key("keydown", { key: "b", code: "KeyB" });
-    composer.focus();
-    original.focus();
-    key("keydown", { key: "b", code: "KeyB", repeat: true });
-    key("keyup", { key: "b", code: "KeyB" });
+  key("keydown", { key: "b", code: "KeyB" });
+  composer.focus();
+  original.focus();
+  key("keydown", { key: "b", code: "KeyB", repeat: true });
+  key("keyup", { key: "b", code: "KeyB" });
 
-    key("keydown", { key: "c", code: "KeyC" });
-    await render(["original"]);
-    expect(state.createSurface).toHaveBeenCalledTimes(2);
-    expect(container.querySelector("textarea")).toBe(original.input);
-    expect(disposeOriginal).not.toHaveBeenCalled();
-    expect(disposeSplit).toHaveBeenCalledOnce();
-    original.focus();
-    key("keyup", { key: "c", code: "KeyC" });
-    expect(output).toEqual([
-      ["\x1b[57442;5u", "\x1b[57442;1:3u", "\x1b[98u", "\x1b[98;1:3u", "\x1b[99u", "\x1b[99;1:3u"],
-      [],
-    ]);
-  } finally {
-    window.removeEventListener("keydown", consumeShortcut, { capture: true });
-    composer.remove();
-  }
+  key("keydown", { key: "c", code: "KeyC" });
+  await screen.rerender(drawer(["original"]));
+  await surfacesCreated();
+  expect(state.createSurface).toHaveBeenCalledTimes(2);
+  expect(container.querySelector("textarea")).toBe(original.input);
+  expect(disposeOriginal).not.toHaveBeenCalled();
+  expect(disposeSplit).toHaveBeenCalledOnce();
+  original.focus();
+  key("keyup", { key: "c", code: "KeyC" });
+  expect(output).toEqual([
+    ["\x1b[57442;5u", "\x1b[57442;1:3u", "\x1b[98u", "\x1b[98;1:3u", "\x1b[99u", "\x1b[99;1:3u"],
+    [],
+  ]);
 });

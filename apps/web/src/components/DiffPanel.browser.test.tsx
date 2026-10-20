@@ -12,10 +12,10 @@ import {
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import * as DateTime from "effect/DateTime";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
+
+import { act, render } from "../../test/render";
 
 vi.mock("../hooks/useThreadRouteTarget", () => ({
   useThreadRouteRef: () => threadRef,
@@ -112,65 +112,62 @@ const patchAtoms = Atom.family((path: string) =>
     path === "e.txt" ? AsyncResult.initial() : AsyncResult.success(loadedPatch(path)),
   ),
 );
-let registry: AtomRegistry.AtomRegistry;
-let container: HTMLDivElement;
-let root: Root;
-
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+function setup() {
   localStorage.setItem("t3code.diffFileTreeOpen", "true");
   useDiffPanelStore.setState({ byThreadKey: {}, branchBaseRefByThreadKey: {} });
-  registry = AtomRegistry.make();
-  container = document.createElement("div");
+  const registry = AtomRegistry.make();
+  return {
+    registry,
+    [Symbol.dispose]() {
+      registry.dispose();
+      localStorage.clear();
+    },
+  };
+}
+function renderPanel(registry: AtomRegistry.AtomRegistry) {
+  const container = document.createElement("div");
   container.style.cssText = "width: 1000px; height: 300px";
-  document.body.append(container);
-  root = createRoot(container);
-});
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  registry.dispose();
-  localStorage.clear();
-  vi.unstubAllGlobals();
-});
-async function render() {
-  await act(async () =>
-    root.render(
-      <RegistryContext.Provider value={registry}>
-        <DiffPanel
-          visible
-          mode="embedded"
-          composerDraftTarget={threadRef}
-          workspaceMutationId={null}
-        />
-      </RegistryContext.Provider>,
-    ),
+  return render(
+    <RegistryContext.Provider value={registry}>
+      <DiffPanel
+        visible
+        mode="embedded"
+        composerDraftTarget={threadRef}
+        workspaceMutationId={null}
+      />
+    </RegistryContext.Provider>,
+    { container },
   );
 }
 const toggle = (path: string, expanded: boolean) =>
   page.getByRole("button", { name: `${expanded ? "Collapse" : "Expand"} ${path}`, exact: true });
-const viewport = () => container.querySelector<HTMLElement>(".diff-render-surface")!;
+const viewport = (container: HTMLElement) =>
+  container.querySelector<HTMLElement>(".diff-render-surface")!;
 async function selectTurn(path?: string, turn = turns[0]!) {
   await act(async () => useDiffPanelStore.getState().selectTurn(threadRef, turn.runId, path));
 }
-async function expectRevealed(path: string) {
+async function expectRevealed(container: HTMLElement, path: string) {
   await expect.element(toggle(path, true)).toBeInTheDocument();
   await expect
     .poll(() => {
-      const bounds = viewport().getBoundingClientRect();
+      const bounds = viewport(container).getBoundingClientRect();
       const header = toggle(path, true).element().getBoundingClientRect();
-      return viewport().scrollTop > 0 && header.top >= bounds.top && header.bottom <= bounds.bottom;
+      return (
+        viewport(container).scrollTop > 0 &&
+        header.top >= bounds.top &&
+        header.bottom <= bounds.bottom
+      );
     })
     .toBe(true);
 }
-async function scrollToStart() {
+async function scrollToStart(container: HTMLElement) {
   await act(async () => {
-    viewport().scrollTop = 0;
-    viewport().dispatchEvent(new Event("scroll"));
+    viewport(container).scrollTop = 0;
+    viewport(container).dispatchEvent(new Event("scroll"));
     await new Promise(requestAnimationFrame);
   });
 }
-async function selectTreeFile(path: string) {
+async function selectTreeFile(container: HTMLElement, path: string) {
   const tree = container.querySelector("file-tree-container")!;
   const row = tree.shadowRoot!.querySelector<HTMLElement>(`[data-item-path="${path}"]`)!;
   await act(async () =>
@@ -181,30 +178,31 @@ async function selectTreeFile(path: string) {
 }
 
 it("reveals a delayed turn selection, preserves siblings, and repeats after scope changes", async () => {
+  using env = setup();
   await selectTurn("e.txt");
-  await render();
+  await using screen = await renderPanel(env.registry);
   await expect
     .element(page.getByRole("status", { name: "Loading checkpoint diff..." }))
     .toBeInTheDocument();
-  await act(async () => registry.set(checkpointAtom, paths.map(filePatch).join("")));
-  await expectRevealed("e.txt");
+  await act(async () => env.registry.set(checkpointAtom, paths.map(filePatch).join("")));
+  await expectRevealed(screen.container, "e.txt");
   await act(async () => useDiffPanelStore.getState().selectGitScope(threadRef, "branch"));
   await expect.element(toggle("a.txt", false)).toBeInTheDocument();
   await selectTurn("e.txt");
-  await expectRevealed("e.txt");
-  await scrollToStart();
+  await expectRevealed(screen.container, "e.txt");
+  await scrollToStart(screen.container);
   await toggle("a.txt", false).click();
   await selectTurn("b.txt");
   await expect.element(toggle("b.txt", true)).toBeInTheDocument();
   await toggle("b.txt", true).click();
   await selectTurn("e.txt");
-  await expectRevealed("e.txt");
-  await scrollToStart();
+  await expectRevealed(screen.container, "e.txt");
+  await scrollToStart(screen.container);
   await expect.element(toggle("a.txt", true)).toBeInTheDocument();
   await expect.element(toggle("b.txt", false)).toBeInTheDocument();
   await expect.element(toggle("c.txt", false)).toBeInTheDocument();
   await selectTurn("e.txt");
-  await expectRevealed("e.txt");
+  await expectRevealed(screen.container, "e.txt");
 
   await selectTurn(undefined, turns[1]!);
   await expect.element(toggle("a.txt", false)).toBeInTheDocument();
@@ -212,21 +210,22 @@ it("reveals a delayed turn selection, preserves siblings, and repeats after scop
 });
 
 it("waits for a lazy Git patch while preserving sibling choices and expanded defaults", async () => {
-  registry.set(collapsedAtom, false);
-  await render();
+  using env = setup();
+  env.registry.set(collapsedAtom, false);
+  await using screen = await renderPanel(env.registry);
   await toggle("b.txt", true).click();
-  await selectTreeFile("b.txt");
+  await selectTreeFile(screen.container, "b.txt");
   await expect.element(toggle("b.txt", true)).toBeInTheDocument();
   await toggle("b.txt", true).click();
-  await scrollToStart();
-  await selectTreeFile("e.txt");
-  expect(viewport().scrollTop).toBe(0);
+  await scrollToStart(screen.container);
+  await selectTreeFile(screen.container, "e.txt");
+  expect(viewport(screen.container).scrollTop).toBe(0);
   await expect.element(toggle("e.txt", true)).not.toBeInTheDocument();
   await act(async () =>
-    registry.set(patchAtoms("e.txt"), AsyncResult.success(loadedPatch("e.txt"))),
+    env.registry.set(patchAtoms("e.txt"), AsyncResult.success(loadedPatch("e.txt"))),
   );
-  await expectRevealed("e.txt");
-  await scrollToStart();
+  await expectRevealed(screen.container, "e.txt");
+  await scrollToStart(screen.container);
   await expect.element(toggle("a.txt", true)).toBeInTheDocument();
   await expect.element(toggle("b.txt", false)).toBeInTheDocument();
   await act(async () => useDiffPanelStore.getState().selectGitScope(threadRef, "unstaged"));

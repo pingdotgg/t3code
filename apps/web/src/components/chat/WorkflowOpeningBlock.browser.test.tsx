@@ -1,10 +1,9 @@
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
 import { EnvironmentId } from "@t3tools/contracts";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 
 import "~/index.css";
+import { act, render } from "../../../test/render";
 import { getSyntaxHighlighterPromise } from "../../lib/syntaxHighlighting";
 
 import { AppAtomRegistryProvider } from "../../rpc/atomRegistry";
@@ -63,76 +62,72 @@ function Find(props: { readonly container: HTMLElement | null; readonly query: s
   return null;
 }
 
-let root: Root;
-let host: HTMLElement;
-
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  host = document.createElement("div");
-  host.style.width = "720px";
-  document.body.append(host);
-  root = createRoot(host);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  host.remove();
-  CSS.highlights.clear();
-  vi.unstubAllGlobals();
-});
-
-async function render(script: string, query = "") {
-  await act(async () =>
-    root.render(
-      <AppAtomRegistryProvider>
-        <MarkdownFindContext value={query.length > 0}>
-          <div data-timeline-row-id="opening">
-            <WorkflowOpeningBlock
-              opening={opening(script)}
-              environmentId={EnvironmentId.make("environment-local")}
-              onOpenThread={() => undefined}
-            />
-          </div>
-        </MarkdownFindContext>
-        <Find container={host} query={query} />
-      </AppAtomRegistryProvider>,
-    ),
+async function renderOpening(script: string, query = "") {
+  const container = document.createElement("div");
+  container.style.width = "720px";
+  const block = (script: string, query: string) => (
+    <AppAtomRegistryProvider>
+      <MarkdownFindContext value={query.length > 0}>
+        <div data-timeline-row-id="opening">
+          <WorkflowOpeningBlock
+            opening={opening(script)}
+            environmentId={EnvironmentId.make("environment-local")}
+            onOpenThread={() => undefined}
+          />
+        </div>
+      </MarkdownFindContext>
+      <Find container={container} query={query} />
+    </AppAtomRegistryProvider>
   );
-  await act(async () => {
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-  });
+  const nextFrame = () =>
+    act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+  await using stack = new AsyncDisposableStack();
+  stack.defer(() => CSS.highlights.clear());
+  const screen = stack.use(await render(block(script, query), { container }));
+  await nextFrame();
+  const environment = stack.move();
+  return {
+    container,
+    rerender: async (script: string, query: string) => {
+      await screen.rerender(block(script, query));
+      await nextFrame();
+    },
+    [Symbol.asyncDispose]: () => environment.disposeAsync(),
+  };
 }
 
-const foldToggle = () =>
+const foldToggle = (host: HTMLElement) =>
   [...host.querySelectorAll("button")].find((button) =>
     /Show full script|Show less/.test(button.textContent ?? ""),
   );
 
 it("shows a short script as highlighted code with nothing to open", async () => {
-  await render(SHORT_SCRIPT);
-  await act(async () => {
-    await getSyntaxHighlighterPromise("javascript");
-  });
-  expect(host.querySelector('[data-language="javascript"]')?.textContent).toContain("SCRIPTONLY");
-  await vi.waitFor(() => expect(host.querySelector(".chat-markdown-shiki")).not.toBeNull());
-  expect(foldToggle()).toBeUndefined();
+  await using screen = await renderOpening(SHORT_SCRIPT);
+  await act(() => getSyntaxHighlighterPromise("javascript"));
+  expect(screen.container.querySelector('[data-language="javascript"]')?.textContent).toContain(
+    "SCRIPTONLY",
+  );
+  await vi.waitFor(() =>
+    expect(screen.container.querySelector(".chat-markdown-shiki")).not.toBeNull(),
+  );
+  expect(foldToggle(screen.container)).toBeUndefined();
 });
 
 it("folds a long script until it is opened", async () => {
-  await render(LONG_SCRIPT);
-  expect(foldToggle()?.getAttribute("aria-expanded")).toBe("false");
-  expect(host.querySelector("[data-thread-find-fold]")).not.toBeNull();
-  await act(async () => foldToggle()?.click());
-  expect(foldToggle()?.getAttribute("aria-expanded")).toBe("true");
-  expect(host.querySelector("[data-thread-find-fold]")).toBeNull();
+  await using screen = await renderOpening(LONG_SCRIPT);
+  expect(foldToggle(screen.container)?.getAttribute("aria-expanded")).toBe("false");
+  expect(screen.container.querySelector("[data-thread-find-fold]")).not.toBeNull();
+  await act(() => foldToggle(screen.container)?.click());
+  expect(foldToggle(screen.container)?.getAttribute("aria-expanded")).toBe("true");
+  expect(screen.container.querySelector("[data-thread-find-fold]")).toBeNull();
 });
 
 it("finds the workflow's name and opens a folded script on a match below the fold", async () => {
-  await render(LONG_SCRIPT, "repo-check");
+  await using screen = await renderOpening(LONG_SCRIPT, "repo-check");
   expect(CSS.highlights.get("t3-thread-find-active")?.size).toBe(1);
-  expect(foldToggle()?.getAttribute("aria-expanded")).toBe("false");
+  expect(foldToggle(screen.container)?.getAttribute("aria-expanded")).toBe("false");
 
-  await render(LONG_SCRIPT, "TAILONLY");
+  await screen.rerender(LONG_SCRIPT, "TAILONLY");
   expect(CSS.highlights.get("t3-thread-find-active")?.size).toBe(1);
-  expect(foldToggle()?.getAttribute("aria-expanded")).toBe("true");
+  expect(foldToggle(screen.container)?.getAttribute("aria-expanded")).toBe("true");
 });

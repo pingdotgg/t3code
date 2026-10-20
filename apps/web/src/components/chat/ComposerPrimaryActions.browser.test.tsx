@@ -1,7 +1,5 @@
 import "~/index.css";
 
-import { act } from "react";
-import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -13,52 +11,36 @@ vi.mock("../SidebarStageBackdrop", () => ({
   useSidebarStageBackdropVariant: () => null,
 }));
 
+import { render } from "../../../test/render";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 
 it("opens implementation actions with a mouse while the composer is resting", async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  const container = document.createElement("div");
-  document.body.append(container);
-  const root = createRoot(container);
   const onImplementPlanInNewThread = vi.fn();
+  await using _screen = await render(
+    <ComposerPrimaryActions
+      compact={false}
+      canOperateThread
+      pendingAction={null}
+      isRunning={false}
+      canInterrupt={false}
+      showPlanFollowUpPrompt
+      promptHasText={false}
+      isSendBusy={false}
+      sendDisabledReason={null}
+      isConnecting={false}
+      isEnvironmentUnavailable={false}
+      isPreparingWorktree={false}
+      hasSendableContent={false}
+      preserveComposerFocusOnPointerDown
+      onPreviousPendingQuestion={() => {}}
+      onInterrupt={() => {}}
+      onImplementPlanInNewThread={onImplementPlanInNewThread}
+    />,
+  );
 
-  try {
-    await act(async () => {
-      root.render(
-        <ComposerPrimaryActions
-          compact={false}
-          canOperateThread
-          pendingAction={null}
-          isRunning={false}
-          canInterrupt={false}
-          showPlanFollowUpPrompt
-          promptHasText={false}
-          isSendBusy={false}
-          sendDisabledReason={null}
-          isConnecting={false}
-          isEnvironmentUnavailable={false}
-          isPreparingWorktree={false}
-          hasSendableContent={false}
-          preserveComposerFocusOnPointerDown
-          onPreviousPendingQuestion={() => {}}
-          onInterrupt={() => {}}
-          onImplementPlanInNewThread={onImplementPlanInNewThread}
-        />,
-      );
-    });
-
-    await act(async () => {
-      await userEvent.click(page.getByRole("button", { name: "Implementation actions" }));
-    });
-    const item = page.getByRole("menuitem", { name: "Implement in a new thread" });
-    await expect.element(item).toBeVisible();
-    await act(async () => {
-      await userEvent.click(item);
-    });
-    expect(onImplementPlanInNewThread).toHaveBeenCalledTimes(1);
-  } finally {
-    await act(async () => root.unmount());
-    container.remove();
-    vi.unstubAllGlobals();
-  }
+  await userEvent.click(page.getByRole("button", { name: "Implementation actions" }));
+  const item = page.getByRole("menuitem", { name: "Implement in a new thread" });
+  await expect.element(item).toBeVisible();
+  await userEvent.click(item);
+  expect(onImplementPlanInNewThread).toHaveBeenCalledTimes(1);
 });

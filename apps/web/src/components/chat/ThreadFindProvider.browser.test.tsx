@@ -1,6 +1,5 @@
-import { act, createRef, useContext, useState, type ReactNode } from "react";
-import { createRoot } from "react-dom/client";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { createRef, useContext, useState } from "react";
+import { expect, it, vi } from "vite-plus/test";
 import {
   EnvironmentId,
   ThreadId,
@@ -12,6 +11,7 @@ import {
   ThreadFindTimelineContext,
   type ThreadFindControls,
 } from "./ThreadFindProvider";
+import { act, render as renderUi } from "../../../test/render";
 import type { ThreadFindBar } from "./ThreadFindBar";
 
 const query = vi.hoisted(() => ({
@@ -51,23 +51,13 @@ vi.mock("~/state/query", async () => {
 });
 vi.mock("../ui/toast", () => ({ toastManager: { add: vi.fn() } }));
 
-type Rendered = { update: (node: ReactNode) => void; unmount: () => void };
-function render(node: ReactNode): Rendered {
-  const root = createRoot(document.createElement("div"));
-  root.render(node);
-  return { update: (next) => root.render(next), unmount: () => root.unmount() };
+function setup() {
+  query.listeners.clear();
+  query.value = { data: null, isPending: false, error: null, refresh: vi.fn() };
 }
 
-let renderer: Rendered | undefined;
-afterEach(async () => {
-  if (renderer) await act(async () => renderer?.unmount());
-  renderer = undefined;
-  query.listeners.clear();
-  vi.unstubAllGlobals();
-});
-
 it("keeps navigation and pending responses out of the surrounding chat and unrelated children", async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  setup();
   const controls = createRef<ThreadFindControls>();
   const parentRender = vi.fn();
   const composerRender = vi.fn();
@@ -104,9 +94,7 @@ it("keeps navigation and pending responses out of the surrounding chat and unrel
     match: { entryId: "message", runId: null, occurrence: index },
   });
   query.value = { ...query.value, data: response(0), isPending: false };
-  await act(async () => {
-    renderer = render(<Chat />);
-  });
+  await using _screen = await renderUi(<Chat />);
   await act(async () => controls.current?.open());
   await act(async () => bar.onQueryChange("COD4"));
   const parentCount = parentRender.mock.calls.length;

@@ -1,6 +1,5 @@
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { act, render } from "../../../test/render";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   installCustomTheme,
@@ -41,8 +40,6 @@ import { ThemeEditorHost } from "./ThemeEditorHost";
 import { useThemeEditorStore } from "./themeEditorStore";
 
 type Field = "editingTheme" | "seedTheme";
-let root: Root;
-let container: HTMLDivElement;
 
 function install(id: string) {
   return installCustomTheme(
@@ -65,7 +62,7 @@ function open(field: Field, themeId: string) {
     }),
   );
 }
-async function shown(field: Field) {
+async function shown(container: HTMLElement, field: Field) {
   await vi.waitFor(() => expect(container.querySelector("dl")).not.toBeNull(), {
     timeout: 5_000,
   });
@@ -73,66 +70,71 @@ async function shown(field: Field) {
   return terms.find((term) => term.textContent === field)?.nextElementSibling?.textContent;
 }
 
-// The host lazy-loads the panel; load it once so the first test does not race the import.
-beforeAll(() => import("./ThemeEditorPanel"));
-
-beforeEach(async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+async function setup() {
+  await import("./ThemeEditorPanel");
+  const storage = new Map(Object.entries(localStorage));
+  const session = useThemeEditorStore.getState().session;
   localStorage.clear();
   invalidateCustomThemes();
   useThemeEditorStore.setState({ session: null });
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-  await act(async () => root.render(<ThemeEditorHost />));
-});
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  localStorage.clear();
-  invalidateCustomThemes();
-  vi.unstubAllGlobals();
-});
+  return {
+    [Symbol.dispose]() {
+      localStorage.clear();
+      for (const [key, value] of storage) localStorage.setItem(key, value);
+      invalidateCustomThemes();
+      useThemeEditorStore.setState({ session });
+    },
+  };
+}
 
 describe("ThemeEditorHost", () => {
   it.each(["editingTheme", "seedTheme"] as const)(
     "reopens the same %s with its saved colors",
     async (field) => {
+      using _state = await setup();
+      await using screen = await render(<ThemeEditorHost />);
+      const { container } = screen;
       const theme = install("saved-colors");
       await open(field, theme.id);
-      expect(await shown(field)).toBe("#1f6e4a");
+      expect(await shown(container, field)).toBe("#1f6e4a");
 
       await act(async () => useThemeEditorStore.getState().closeThemeEditor());
       expect(container.querySelector("dl")).toBeNull();
       updateCustomTheme({ ...theme, colors: { ...theme.colors, accent: "#7241b8" } });
       await open(field, theme.id);
 
-      expect(await shown(field)).toBe("#7241b8");
+      expect(await shown(container, field)).toBe("#7241b8");
     },
   );
 
   it.each(["editingTheme", "seedTheme"] as const)(
     "refreshes an open %s when the library changes",
     async (field) => {
+      using _state = await setup();
+      await using screen = await render(<ThemeEditorHost />);
+      const { container } = screen;
       const theme = install("updated-theme");
       await open(field, theme.id);
-      expect(await shown(field)).toBe("#1f6e4a");
+      expect(await shown(container, field)).toBe("#1f6e4a");
 
       await act(async () =>
         updateCustomTheme({ ...theme, colors: { ...theme.colors, accent: "#7241b8" } }),
       );
 
-      expect(await shown(field)).toBe("#7241b8");
+      expect(await shown(container, field)).toBe("#7241b8");
     },
   );
 
   it("does not keep editing a theme removed from the library", async () => {
+    using _state = await setup();
+    await using screen = await render(<ThemeEditorHost />);
+    const { container } = screen;
     const theme = install("removed-theme");
     await open("editingTheme", theme.id);
-    expect(await shown("editingTheme")).toBe("#1f6e4a");
+    expect(await shown(container, "editingTheme")).toBe("#1f6e4a");
 
     await act(async () => removeCustomTheme(theme.id));
 
-    expect(await shown("editingTheme")).toBe("none");
+    expect(await shown(container, "editingTheme")).toBe("none");
   });
 });

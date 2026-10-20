@@ -5,10 +5,10 @@ import {
   type AcpRegistrySearchInput,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
+
+import { act, fakeTimers, render } from "../../../test/render";
 
 const state = vi.hoisted(() => ({
   result: null as { readonly agents: ReadonlyArray<AcpRegistrySearchAgent> } | null,
@@ -69,31 +69,26 @@ const gemini: AcpRegistrySearchAgent = {
   integrity: "registry",
 };
 
-const roots: Root[] = [];
-let root: Root;
-
-function render(options?: {
+function step(options?: {
   readonly configured?: boolean;
   readonly onPrepared?: (agent: AcpRegistrySearchAgent) => void;
 }) {
-  return act(async () =>
-    root.render(
-      <AcpRegistrySearchStep
-        environmentId={environmentId}
-        providerInstances={
-          options?.configured
-            ? {
-                acpRegistry_gemini: {
-                  driver: ProviderDriverKind.make("acpRegistry"),
-                  config: { agentId: "gemini" },
-                },
-              }
-            : {}
-        }
-        onPrepared={options?.onPrepared ?? vi.fn()}
-        onManualConfiguration={vi.fn()}
-      />,
-    ),
+  return (
+    <AcpRegistrySearchStep
+      environmentId={environmentId}
+      providerInstances={
+        options?.configured
+          ? {
+              acpRegistry_gemini: {
+                driver: ProviderDriverKind.make("acpRegistry"),
+                config: { agentId: "gemini" },
+              },
+            }
+          : {}
+      }
+      onPrepared={options?.onPrepared ?? vi.fn()}
+      onManualConfiguration={vi.fn()}
+    />
   );
 }
 
@@ -109,7 +104,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-beforeEach(() => {
+function setup() {
   state.canManage = true;
   state.result = null;
   state.error = null;
@@ -120,19 +115,10 @@ beforeEach(() => {
     _tag: "Success",
     value: { agentId: "gemini", version: "1.2.3", distribution: "npx", prepared: true },
   });
-  const container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-  roots.push(root);
-});
-
-afterEach(async () => {
-  vi.useRealTimers();
-  for (const mounted of roots.splice(0)) await act(async () => mounted.unmount());
-  document.body.replaceChildren();
-});
+}
 
 it("shows the full catalog initially and after clearing a debounced search", async () => {
+  setup();
   const agents = Array.from({ length: 25 }, (_, index) => ({
     ...gemini,
     id: `gemini-${index}`,
@@ -146,11 +132,11 @@ it("shows the full catalog initially and after clearing a debounced search", asy
     };
   });
   const addButtons = () => page.getByRole("button", { name: /^Add Gemini CLI / }).elements();
-  await render();
+  await using _screen = await render(step());
   expect(addButtons()).toHaveLength(25);
   await expect.element(page.getByRole("button", { name: "Add Gemini CLI 25" })).toBeEnabled();
 
-  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  using _timers = fakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   await userEvent.fill(searchBox(), "  Gemini  ");
   await act(async () => vi.advanceTimersByTime(200));
   await userEvent.fill(searchBox(), "  Gemini CLI  ");
@@ -166,38 +152,40 @@ it("shows the full catalog initially and after clearing a debounced search", asy
 });
 
 it("shows the loading, error, and empty states", async () => {
+  setup();
   state.isPending = true;
-  await render();
+  await using screen = await render(step());
   await expect.element(page.getByText("Searching the registry...")).toBeVisible();
 
   state.isPending = false;
   state.error = "Registry unavailable.";
-  await render();
+  await screen.rerender(step());
   await expect.element(page.getByText("Registry unavailable.")).toBeVisible();
 
   state.error = null;
   state.result = { agents: [] };
-  await render();
+  await screen.rerender(step());
   await expect.element(page.getByText("No compatible agents found")).toBeVisible();
 });
 
 it("submits a typed query at once and refreshes when the same query is submitted again", async () => {
-  await render();
+  setup();
+  await using screen = await render(step());
   // A slow runner must not let the typing debounce submit the query before Enter does.
-  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  using _timers = fakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   await userEvent.fill(searchBox(), "Codex");
   await userEvent.keyboard("{Enter}");
   expect(lastQuery()).toBe("Codex");
   expect(state.refresh).not.toHaveBeenCalled();
 
   state.result = { agents: [gemini] };
-  await render();
+  await screen.rerender(step());
   await userEvent.click(searchBox());
   await userEvent.keyboard("{Enter}");
   expect(state.refresh).toHaveBeenCalledOnce();
 
   state.isPending = true;
-  await render();
+  await screen.rerender(step());
   await expect
     .element(page.getByRole("status").filter({ hasText: "Refreshing ACP Registry results." }))
     .toBeInTheDocument();
@@ -205,13 +193,14 @@ it("submits a typed query at once and refreshes when the same query is submitted
 });
 
 it("prepares a result before handing it back to the wizard", async () => {
+  setup();
   state.prepare.mockResolvedValueOnce({
     _tag: "Success",
     value: { agentId: "gemini", version: "2.0.0", distribution: "binary", prepared: true },
   });
   state.result = { agents: [gemini] };
   const onPrepared = vi.fn();
-  await render({ onPrepared });
+  await using _screen = await render(step({ onPrepared }));
 
   await page.getByRole("button", { name: "Add Gemini CLI" }).click();
 
@@ -226,10 +215,11 @@ it("prepares a result before handing it back to the wizard", async () => {
 });
 
 it("shows progress, locks the step while an agent prepares, and reports a failure", async () => {
+  setup();
   const pending = deferred<unknown>();
   state.prepare.mockReturnValueOnce(pending.promise);
   state.result = { agents: [{ ...gemini, distribution: "binary" }] };
-  await render();
+  await using _screen = await render(step());
 
   await page.getByRole("button", { name: "Add Gemini CLI" }).click();
   await expect.element(page.getByRole("button", { name: "Downloading Gemini CLI" })).toBeDisabled();
@@ -243,9 +233,10 @@ it("shows progress, locks the step while an agent prepares, and reports a failur
 });
 
 it("rechecks the grant before preparing an agent", async () => {
+  setup();
   state.result = { agents: [gemini] };
   const onPrepared = vi.fn();
-  await render({ onPrepared });
+  await using _screen = await render(step({ onPrepared }));
   state.canManage = false;
 
   await page.getByRole("button", { name: "Add Gemini CLI" }).click();
@@ -255,14 +246,15 @@ it("rechecks the grant before preparing an agent", async () => {
 });
 
 it("ignores prepare completion after unmount", async () => {
+  setup();
   const pending = deferred<unknown>();
   state.prepare.mockReturnValueOnce(pending.promise);
   state.result = { agents: [gemini] };
   const onPrepared = vi.fn();
-  await render({ onPrepared });
+  await using screen = await render(step({ onPrepared }));
 
   await page.getByRole("button", { name: "Add Gemini CLI" }).click();
-  await act(async () => root.unmount());
+  await screen.unmount();
   await act(async () =>
     pending.resolve({
       _tag: "Success",
@@ -274,8 +266,9 @@ it("ignores prepare completion after unmount", async () => {
 });
 
 it("shows an existing registry configuration as already added", async () => {
+  setup();
   state.result = { agents: [gemini] };
-  await render({ configured: true });
+  await using _screen = await render(step({ configured: true }));
   await expect
     .element(page.getByRole("button", { name: "Already added Gemini CLI" }))
     .toBeDisabled();

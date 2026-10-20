@@ -188,6 +188,12 @@ export default defineConfig({
         rules: { "t3code/prefer-effect-fn": "off" },
       },
       {
+        // Warns while the remaining web component tests move to apps/web/test/render.tsx.
+        // Raise to "error" once `vp lint` reports no t3code(require-disposable-render) warnings.
+        files: ["apps/web/**/*.test.tsx"],
+        rules: { "t3code/require-disposable-render": "warn" },
+      },
+      {
         files: ["apps/**/src/**", "packages/**/src/**"],
         excludeFiles: DOM_TEST_ENVIRONMENT_ALLOWLIST,
         rules: { "t3code/no-dom-test-environment": "error" },

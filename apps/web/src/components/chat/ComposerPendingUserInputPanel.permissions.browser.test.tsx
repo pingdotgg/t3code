@@ -1,6 +1,4 @@
 import { EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
-import { act } from "react";
-import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
 
 vi.mock(import("../ChatMarkdown"), async (importOriginal) => ({
@@ -8,13 +6,13 @@ vi.mock(import("../ChatMarkdown"), async (importOriginal) => ({
   default: (({ text }: { text: string }) => <p>{text}</p>) as never,
 }));
 
+import { act, fakeTimers, render } from "../../../test/render";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 
 const threadRef = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };
 
 it("cancels an answer's pending auto-submit on revocation and resumes after a new grant", async () => {
-  vi.useFakeTimers();
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  using _timers = fakeTimers();
   const onToggleOption = vi.fn();
   const onAdvance = vi.fn();
   const onDismiss = vi.fn();
@@ -47,39 +45,29 @@ it("cancels an answer's pending auto-submit on revocation and resumes after a ne
       onDismiss={onDismiss}
     />
   );
-  const container = document.createElement("div");
-  document.body.append(container);
-  const root = createRoot(container);
+  await using screen = await render(panel(false));
   // A disabled button swallows the click, as it would for a user.
   const chooseOption = () =>
-    [...container.querySelectorAll("button")]
+    [...screen.container.querySelectorAll("button")]
       .find((button) => button.textContent?.includes("Incremental"))!
       .click();
-  try {
-    await act(async () => root.render(panel(false)));
-    await act(async () => chooseOption());
-    expect(onToggleOption).toHaveBeenCalledWith("approach", "Incremental");
-    expect(onAdvance).not.toHaveBeenCalled();
+  await act(async () => chooseOption());
+  expect(onToggleOption).toHaveBeenCalledWith("approach", "Incremental");
+  expect(onAdvance).not.toHaveBeenCalled();
 
-    await act(async () => root.render(panel(true)));
-    await act(async () => {
-      chooseOption();
-      vi.runAllTimers();
-    });
-    expect(onToggleOption).toHaveBeenCalledTimes(1);
-    expect(onAdvance).not.toHaveBeenCalled();
+  await screen.rerender(panel(true));
+  await act(async () => {
+    chooseOption();
+    vi.runAllTimers();
+  });
+  expect(onToggleOption).toHaveBeenCalledTimes(1);
+  expect(onAdvance).not.toHaveBeenCalled();
 
-    await act(async () => root.render(panel(false)));
-    await act(async () => {
-      chooseOption();
-      vi.runAllTimers();
-    });
-    expect(onToggleOption).toHaveBeenCalledTimes(2);
-    expect(onAdvance).toHaveBeenCalledTimes(1);
-  } finally {
-    await act(async () => root.unmount());
-    container.remove();
-    vi.unstubAllGlobals();
-    vi.useRealTimers();
-  }
+  await screen.rerender(panel(false));
+  await act(async () => {
+    chooseOption();
+    vi.runAllTimers();
+  });
+  expect(onToggleOption).toHaveBeenCalledTimes(2);
+  expect(onAdvance).toHaveBeenCalledTimes(1);
 });

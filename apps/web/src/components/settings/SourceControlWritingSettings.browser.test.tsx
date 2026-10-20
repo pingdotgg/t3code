@@ -1,7 +1,7 @@
+import { render } from "../../../test/render";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
-import { act, StrictMode, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { StrictMode, type ReactNode } from "react";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import "../../index.css";
@@ -61,9 +61,6 @@ vi.mock(import("./settingsLayout"), async (original) => ({
 
 import { SourceControlWritingSettingsSection } from "./SourceControlWritingSettings";
 
-let root: Root;
-let container: HTMLDivElement;
-
 const resetButton = (label: string) =>
   page.getByRole("button", { name: `Reset ${label} to default` });
 const writeForAll = () => page.getByRole("button", { name: "Write custom instructions for all" });
@@ -73,17 +70,13 @@ const bulkEditor = () =>
     name: "Custom source control instructions for all selected environments",
   });
 
-async function render() {
-  await act(async () =>
-    root.render(
-      <StrictMode>
-        <SourceControlWritingSettingsSection />
-      </StrictMode>,
-    ),
-  );
-}
+const content = () => (
+  <StrictMode>
+    <SourceControlWritingSettingsSection />
+  </StrictMode>
+);
 
-beforeEach(async () => {
+async function setup() {
   state.styles = [
     {
       ...DEFAULT_UNIFIED_SETTINGS.sourceControlWritingStyle,
@@ -98,23 +91,17 @@ beforeEach(async () => {
       followChangeRequestTemplates: false,
     },
   ];
+  const screen = await render(content());
   state.updateSettings.mockReset().mockImplementation((patch) => {
     state.styles = state.styles.map((style) => ({ ...style, ...patch.sourceControlWritingStyle }));
-    void render();
+    void screen.rerender(content());
   });
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-  await render();
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-});
+  return screen;
+}
 
 describe("mixed source control instructions", () => {
   it("resets mixed template preferences without replacing each environment's instructions", async () => {
+    await using _screen = await setup();
     const initialInstructions = state.styles.map(({ mode, customInstructions }) => ({
       mode,
       customInstructions,
@@ -133,8 +120,9 @@ describe("mixed source control instructions", () => {
   });
 
   it("resets every environment even when the representative already has default instructions", async () => {
+    await using screen = await setup();
     state.styles[0] = { ...DEFAULT_UNIFIED_SETTINGS.sourceControlWritingStyle };
-    await render();
+    await screen.rerender(content());
 
     await userEvent.click(resetButton("source control writing style"));
 
@@ -151,6 +139,7 @@ describe("mixed source control instructions", () => {
   });
 
   it("does not write an untouched bulk draft", async () => {
+    await using _screen = await setup();
     const initialStyles = state.styles;
     await userEvent.click(writeForAll());
     await expect.element(bulkEditor()).toHaveValue("");
@@ -161,6 +150,7 @@ describe("mixed source control instructions", () => {
   });
 
   it("applies edited instructions to every selected environment", async () => {
+    await using _screen = await setup();
     await userEvent.click(writeForAll());
     await userEvent.fill(bulkEditor(), "  Keep titles concise.  ");
     await expect.element(applyToAll()).toBeEnabled();
@@ -175,6 +165,7 @@ describe("mixed source control instructions", () => {
   });
 
   it("allows an intentional clear after editing", async () => {
+    await using _screen = await setup();
     await userEvent.click(writeForAll());
     await userEvent.fill(bulkEditor(), "Temporary instructions");
     await userEvent.clear(bulkEditor());
@@ -186,6 +177,7 @@ describe("mixed source control instructions", () => {
   });
 
   it("shows the plain editor once instructions agree, even while templates differ", async () => {
+    await using _screen = await setup();
     await userEvent.click(writeForAll());
     await userEvent.fill(bulkEditor(), "Shared instructions");
     await userEvent.click(applyToAll());

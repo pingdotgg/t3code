@@ -4,11 +4,12 @@ import {
   type DeviceServiceState,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { act, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import type { ReactNode } from "react";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { RightPanelSurface } from "~/rightPanelStore";
+
+import { act, render } from "../../../test/render";
 
 import { DevicePanel } from "./DevicePanel";
 import "~/index.css";
@@ -120,22 +121,18 @@ const deferred = () => {
   return { promise, settle };
 };
 
-let root: Root;
 let container: HTMLDivElement;
 // Fixed key and a changing threadRef, as RightPanelSurfaceContent mounts it.
-const show = (threadRef: ScopedThreadRef, surface = picker) =>
-  act(async () =>
-    root.render(
-      <DevicePanel
-        key="device-panel"
-        mode="embedded"
-        threadRef={threadRef}
-        surface={surface}
-        visible
-        onDismissSetup={() => undefined}
-      />,
-    ),
-  );
+const devicePanel = (threadRef: ScopedThreadRef, surface = picker) => (
+  <DevicePanel
+    key="device-panel"
+    mode="embedded"
+    threadRef={threadRef}
+    surface={surface}
+    visible
+    onDismissSetup={() => undefined}
+  />
+);
 const startButton = () => container.querySelector<HTMLButtonElement>('[aria-label="Start Phone"]');
 const click = (button: HTMLButtonElement | null) =>
   act(async () => {
@@ -143,48 +140,42 @@ const click = (button: HTMLButtonElement | null) =>
   });
 const errors = () => container.querySelectorAll('[role="alert"]');
 
-beforeEach(() => {
+function setup() {
   vi.resetAllMocks();
   currentState = deviceState;
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   container = document.createElement("div");
   container.style.width = "480px";
   container.style.height = "800px";
-  document.body.append(container);
-  root = createRoot(container);
-});
-afterEach(async () => {
-  await act(() => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
+}
 
 describe("DevicePanel notices", () => {
   it("keeps discovery warnings dismissed until the diagnostic or environment changes", async () => {
+    setup();
     currentState = {
       ...deviceState,
       hostStatusDetail: "Could not read simulator usage timestamps.",
     };
-    await show(threadA);
+    await using screen = await render(devicePanel(threadA), { container });
     expect(errors()).toHaveLength(1);
     expect(startButton()?.disabled).toBe(false);
     await click(container.querySelector('[aria-label="Dismiss device warning"]'));
     expect(errors()).toHaveLength(0);
-    await show(threadA);
+    await screen.rerender(devicePanel(threadA));
     expect(errors()).toHaveLength(0);
 
     currentState = { ...currentState, hostStatusDetail: "A different discovery warning." };
-    await show(threadA);
+    await screen.rerender(devicePanel(threadA));
     expect(errors()).toHaveLength(1);
     await click(container.querySelector('[aria-label="Dismiss device warning"]'));
-    await show(otherEnvironment);
+    await screen.rerender(devicePanel(otherEnvironment));
     expect(errors()).toHaveLength(1);
   });
 
   it("keeps the loading content centered when discovery and boot notices arrive or are dismissed", async () => {
+    setup();
     const pick = deferred();
     mocks.open.mockReturnValue(pick.promise);
-    await show(threadA);
+    await using screen = await render(devicePanel(threadA), { container });
     await click(startButton());
     const loadingBounds = () =>
       container
@@ -200,7 +191,7 @@ describe("DevicePanel notices", () => {
       hostStatusDetail: "Could not read CoreSimulator plist.\n".repeat(8),
       bootingDevices: [{ ...phone, threadId: threadA.threadId }],
     };
-    await show(threadA);
+    await screen.rerender(devicePanel(threadA));
     expect(loadingBounds().top).toBe(before.top);
     expect(loadingBounds().left).toBe(before.left);
     await click(container.querySelector('[aria-label="Dismiss device warning"]'));
@@ -212,24 +203,25 @@ describe("DevicePanel notices", () => {
 
 describe("DevicePanel thread switches", () => {
   it.each(switches)("does not carry a pending or failed pick to %s", async (_, target) => {
+    setup();
     const pick = deferred();
     mocks.open.mockReturnValue(pick.promise);
-    await show(threadA);
+    await using screen = await render(devicePanel(threadA), { container });
     await click(startButton());
     expect(startButton()).toBeNull();
 
-    await show(target);
+    await screen.rerender(devicePanel(target));
     expect(startButton()?.disabled).toBe(false);
 
     await act(async () => pick.settle(failed));
     expect(errors()).toHaveLength(0);
     expect(mocks.openDevice).not.toHaveBeenCalled();
 
-    await show(threadA);
+    await screen.rerender(devicePanel(threadA));
     expect(startButton()?.disabled).toBe(false);
     expect(errors()).toHaveLength(1);
 
-    await show(target);
+    await screen.rerender(devicePanel(target));
     expect(startButton()?.disabled).toBe(false);
     expect(errors()).toHaveLength(0);
   });
@@ -252,12 +244,13 @@ describe("DevicePanel thread switches", () => {
   ] as const)(
     "applies a late %s to its starting thread after switching environments with the same thread id",
     async (_, surface, command, start, expectApplied) => {
+      setup();
       const late = deferred();
       command().mockReturnValue(late.promise);
-      await show(threadA, surface);
+      await using screen = await render(devicePanel(threadA, surface), { container });
       await start();
 
-      await show(otherEnvironment, surface);
+      await screen.rerender(devicePanel(otherEnvironment, surface));
       await act(async () => late.settle(opened));
 
       expectApplied();
@@ -265,21 +258,23 @@ describe("DevicePanel thread switches", () => {
   );
 
   it("keeps a late power-off error in the environment that started it", async () => {
+    setup();
     const powerOff = deferred();
     mocks.close.mockReturnValue(powerOff.promise);
-    await show(threadA, streaming);
+    await using screen = await render(devicePanel(threadA, streaming), { container });
     await click(container.querySelector("button"));
 
-    await show(otherEnvironment, streaming);
+    await screen.rerender(devicePanel(otherEnvironment, streaming));
     await act(async () => powerOff.settle(failed));
 
     expect(errors()).toHaveLength(0);
     expect(mocks.closeSurface).not.toHaveBeenCalled();
-    await show(threadA, streaming);
+    await screen.rerender(devicePanel(threadA, streaming));
     expect(errors()).toHaveLength(1);
   });
 
   it("keeps the latest pick pending across switches away and back", async () => {
+    setup();
     const first = deferred();
     const second = deferred();
     const latest = deferred();
@@ -287,11 +282,11 @@ describe("DevicePanel thread switches", () => {
       .mockReturnValueOnce(first.promise)
       .mockReturnValueOnce(second.promise)
       .mockReturnValueOnce(latest.promise);
-    await show(threadA);
+    await using screen = await render(devicePanel(threadA), { container });
     await click(startButton());
-    await show(threadB);
+    await screen.rerender(devicePanel(threadB));
     await click(startButton());
-    await show(threadA);
+    await screen.rerender(devicePanel(threadA));
     await click(startButton());
 
     await act(async () => first.settle(failed));

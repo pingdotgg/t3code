@@ -7,9 +7,9 @@ import {
   type DesktopPreviewBridge,
   type PreviewSessionSnapshot,
 } from "@t3tools/contracts";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
+
+import { act, fakeTimers, render } from "../../test/render";
 
 const mocks = vi.hoisted(() => ({
   getClientSettings: vi.fn<() => Promise<ClientSettings | null>>(),
@@ -73,10 +73,7 @@ const snapshot = (tabId: string, updatedAt: string): PreviewSessionSnapshot => (
   updatedAt,
 });
 
-let root: Root | undefined;
-let container: HTMLDivElement;
-
-beforeEach(() => {
+function setup(): Disposable {
   __resetClientSettingsPersistenceForTests();
   mocks.getClientSettings.mockReset().mockResolvedValue(DEFAULT_CLIENT_SETTINGS);
   mocks.setClientSettings.mockReset().mockResolvedValue(undefined);
@@ -88,26 +85,37 @@ beforeEach(() => {
     webPreferences: "contextIsolation=yes",
     preloadUrl: null,
   });
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  container = document.createElement("div");
-  document.body.append(container);
-});
+  return {
+    [Symbol.dispose]() {
+      resetPreviewStateForTests();
+      __resetClientSettingsPersistenceForTests();
+    },
+  };
+}
 
-afterEach(async () => {
-  vi.useFakeTimers();
-  await act(async () => root?.unmount());
-  root = undefined;
-  container.remove();
-  await vi.advanceTimersByTimeAsync(0);
-  vi.useRealTimers();
-  resetPreviewStateForTests();
-  __resetClientSettingsPersistenceForTests();
-  vi.restoreAllMocks();
-  vi.unstubAllGlobals();
-});
+async function renderHost() {
+  await using stack = new AsyncDisposableStack();
+  const screen = stack.use(
+    await render(
+      <AppAtomRegistryProvider>
+        <ElectronBrowserHost />
+      </AppAtomRegistryProvider>,
+    ),
+  );
+  // Unmounting releases each tab on a close timer; run it now so it never fires in a later test.
+  stack.defer(async () => {
+    using _timers = fakeTimers();
+    await screen.unmount();
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  await act(() => ensureClientSettingsHydrated());
+  const environment = stack.move();
+  return { container: screen.container, [Symbol.asyncDispose]: () => environment.disposeAsync() };
+}
 
 describe("ElectronBrowserHost", () => {
   it("never moves a tab's webview when the server reorders tabs by last update", async () => {
+    using _state = setup();
     reconcilePreviewServerSessions(threadRef, {
       sessions: [
         snapshot("tab_7", "2026-01-01T00:00:01.000Z"),
@@ -116,17 +124,9 @@ describe("ElectronBrowserHost", () => {
       serverEpoch: "server-a",
       revision: 1,
     });
-    root = createRoot(container);
-    await act(async () => {
-      root!.render(
-        <AppAtomRegistryProvider>
-          <ElectronBrowserHost />
-        </AppAtomRegistryProvider>,
-      );
-      await ensureClientSettingsHydrated();
-    });
+    await using screen = await renderHost();
 
-    const host = container.querySelector("[data-electron-browser-host]")!;
+    const host = screen.container.querySelector("[data-electron-browser-host]")!;
     const webviews = () => [...host.querySelectorAll("webview")];
     const before = webviews();
     expect(before.map((node) => node.getAttribute("data-preview-server-tab")).toSorted()).toEqual([

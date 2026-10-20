@@ -1,8 +1,8 @@
-import { act, useRef, useState } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { useRef, useState } from "react";
+import { expect, it } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
+import { act, render } from "../../../test/render";
 import { Dialog, DialogPopup } from "../ui/dialog";
 import { ComposerStashMenu } from "./ComposerStashMenu";
 
@@ -62,22 +62,6 @@ function Composer({ dialog = false }: { dialog?: boolean }) {
   );
 }
 
-let root: Root;
-let container: HTMLDivElement;
-
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
-
 const editor = () => page.getByRole("textbox", { name: "Message" });
 const stash = () => page.getByRole("list", { name: "Stashed prompts" });
 const restore = (prompt: string) =>
@@ -86,7 +70,7 @@ const press = (keys: string) => act(async () => userEvent.keyboard(keys));
 const focus = (element: Element) => act(async () => (element as HTMLElement).focus());
 
 it("leaves dialog, unrelated input and question button shortcuts alone while the stash is open", async () => {
-  await act(async () => root.render(<Composer dialog />));
+  await using _screen = await render(<Composer dialog />);
   const input = page.getByRole("textbox", { name: "Search commands" }).element();
   await focus(input);
 
@@ -128,7 +112,7 @@ it("leaves dialog, unrelated input and question button shortcuts alone while the
 });
 
 it("navigates, deletes and restores stashed prompts from the composer and drawer", async () => {
-  await act(async () => root.render(<Composer />));
+  await using _screen = await render(<Composer />);
   await focus(restore("first prompt").element());
   await press("{ArrowDown}");
   await expect.element(restore("second prompt")).toHaveFocus();

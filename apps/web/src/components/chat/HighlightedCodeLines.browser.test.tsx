@@ -1,15 +1,10 @@
 import { getSharedHighlighter } from "@pierre/diffs";
 import { toHtml } from "hast-util-to-html";
-import { act } from "react";
-import { createRoot } from "react-dom/client";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { expect, it } from "vite-plus/test";
 
+import { render as renderUi } from "../../../test/render";
 import { createIncrementalHighlightedDocument } from "../../lib/incrementalHighlighting";
 import { HighlightedCodeLines } from "./HighlightedCodeLines";
-
-afterEach(() => {
-  vi.unstubAllGlobals();
-});
 
 // React writes inline styles through CSSOM, so normalize Shiki's style strings the same way.
 function normalizedHtml(html: string) {
@@ -26,7 +21,6 @@ function normalizedHtml(html: string) {
 }
 
 it("streams Shiki HTML into the DOM, keeping finished lines mounted", async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const highlighter = await getSharedHighlighter({
     langs: ["typescript"],
     themes: ["pierre-dark", "pierre-light"],
@@ -36,12 +30,12 @@ it("streams Shiki HTML into the DOM, keeping finished lines mounted", async () =
     'const html = "<img src=x onerror=alert(1)>";\n\n/* multi\nline */\n\tconst x = 1;\n';
   for (const theme of ["pierre-dark", "pierre-light"] as const) {
     const highlight = createIncrementalHighlightedDocument(highlighter, "typescript", theme);
-    const container = document.createElement("div");
-    const root = createRoot(container);
+    await using screen = await renderUi(null);
+    const { container } = screen;
     let firstLine: Element | null = null;
     for (let end = 0; end <= code.length; end++) {
       const tree = highlight(code.slice(0, end));
-      await act(async () => root.render(<HighlightedCodeLines root={tree} />));
+      await screen.rerender(<HighlightedCodeLines root={tree} />);
       expect(normalizedHtml(container.innerHTML)).toBe(normalizedHtml(toHtml(tree)));
       if (end > code.indexOf("\n")) {
         firstLine ??= container.querySelector("code > .line");
@@ -49,6 +43,5 @@ it("streams Shiki HTML into the DOM, keeping finished lines mounted", async () =
       }
     }
     expect(container.querySelector("img")).toBeNull();
-    await act(async () => root.unmount());
   }
 });

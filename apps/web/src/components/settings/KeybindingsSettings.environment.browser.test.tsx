@@ -1,7 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
+
+import { act, render, type Screen } from "../../../test/render";
 
 const state = vi.hoisted(() => ({
   canOperate: false,
@@ -54,49 +54,39 @@ vi.mock(import("../../editorPreferences"), async (original) => ({
 
 import { KeybindingsSettingsPanel } from "./KeybindingsSettings";
 
-let root: Root;
-let container: HTMLDivElement;
+function setup() {
+  state.canOperate = false;
+  state.canWriteSettings = true;
+  state.connected = true;
+  state.openEditor.mockReset().mockResolvedValue({ _tag: "Success", value: undefined });
+}
 
-const render = () => act(async () => root.render(<KeybindingsSettingsPanel />));
-const openButton = () => {
-  const button = container.querySelector<HTMLButtonElement>(
+const renderPanel = () => render(<KeybindingsSettingsPanel />);
+const openButton = (screen: Screen) => {
+  const button = screen.container.querySelector<HTMLButtonElement>(
     'button[aria-label="Open keybindings.json"]',
   );
   expect(button).not.toBeNull();
   return button!;
 };
 
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  state.canOperate = false;
-  state.canWriteSettings = true;
-  state.connected = true;
-  state.openEditor.mockReset().mockResolvedValue({ _tag: "Success", value: undefined });
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
-
 describe("KeybindingsSettings editor permission", () => {
   it("rejects editor launches when settings writes are the only write grant", async () => {
-    await render();
-    expect(openButton().disabled).toBe(true);
-    await act(async () => openButton().click());
+    setup();
+    await using screen = await renderPanel();
+    expect(openButton(screen).disabled).toBe(true);
+    await act(async () => openButton(screen).click());
     expect(state.openEditor).not.toHaveBeenCalled();
   });
 
   it("opens the primary environment's file after operate is granted without settings writes", async () => {
+    setup();
     state.canWriteSettings = false;
-    await render();
+    await using screen = await renderPanel();
     state.canOperate = true;
-    await render();
-    expect(openButton().disabled).toBe(false);
-    await act(async () => openButton().click());
+    await screen.rerender(<KeybindingsSettingsPanel />);
+    expect(openButton(screen).disabled).toBe(false);
+    await act(async () => openButton(screen).click());
 
     expect(state.openEditor).toHaveBeenCalledWith({
       environmentId: "primary-settings",
@@ -105,30 +95,33 @@ describe("KeybindingsSettings editor permission", () => {
   });
 
   it("rejects a queued editor launch after operate is revoked", async () => {
+    setup();
     state.canOperate = true;
-    await render();
-    const button = openButton();
+    await using screen = await renderPanel();
+    const button = openButton(screen);
     state.canOperate = false;
     // The rendered button is still enabled; the click must recheck the live grant.
     await act(async () => button.click());
 
     expect(state.openEditor).not.toHaveBeenCalled();
-    await render();
-    expect(openButton().disabled).toBe(true);
+    await screen.rerender(<KeybindingsSettingsPanel />);
+    expect(openButton(screen).disabled).toBe(true);
   });
 });
 
 describe("KeybindingsSettings write notice", () => {
   it("asks for a connected environment when none is connected", async () => {
+    setup();
     state.connected = false;
-    await render();
-    expect(container.textContent).toContain("Connect an environment to change keybindings.");
+    await using screen = await renderPanel();
+    expect(screen.container.textContent).toContain("Connect an environment to change keybindings.");
   });
 
   it("names the permission when the connection cannot write settings", async () => {
+    setup();
     state.canWriteSettings = false;
-    await render();
-    expect(container.textContent).toContain(
+    await using screen = await renderPanel();
+    expect(screen.container.textContent).toContain(
       "This connection can view keybindings but cannot change them.",
     );
   });

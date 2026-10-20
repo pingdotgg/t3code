@@ -1,5 +1,4 @@
-import { act, cloneElement, type ReactElement, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import { cloneElement, type ReactElement, type ReactNode } from "react";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   EnvironmentId,
@@ -10,7 +9,7 @@ import {
   type OrchestrationV2ContextTransfer,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 
 import "~/index.css";
 
@@ -96,64 +95,10 @@ vi.mock(import("../ui/tooltip"), async () => {
   };
 });
 
+import { act, render as renderUi } from "../../../test/render";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
 
-let root: Root;
-let container: HTMLDivElement;
-let current: ReactElement;
-
-async function render(element: ReactElement) {
-  current = element;
-  await act(async () => root.render(element));
-}
-// The mocked hooks read `state` while rendering, so a new element picks up changes.
-const update = () => act(async () => root.render(cloneElement(current)));
-const click = (element: HTMLElement) => act(async () => element.click());
-const buttons = () => [...container.querySelectorAll("button")];
-const allByLabel = (label: string) =>
-  buttons().filter((button) => button.getAttribute("aria-label") === label);
-function byLabel(label: string) {
-  const matches = allByLabel(label);
-  if (matches.length !== 1)
-    throw new Error(`Expected one "${label}" button, got ${matches.length}`);
-  return matches[0]!;
-}
-const sectionToggles = (expanded: boolean) =>
-  buttons().filter(
-    (button) =>
-      button.getAttribute("aria-expanded") === String(expanded) &&
-      !button.hasAttribute("aria-label"),
-  );
-function sectionToggle(expanded: boolean) {
-  const [toggle] = sectionToggles(expanded);
-  if (!toggle) throw new Error(`No ${expanded ? "expanded" : "collapsed"} section toggle`);
-  return toggle;
-}
-const heading = () => container.querySelector("h3")?.textContent;
-const buttonsWithLabel = (matches: (label: string) => boolean) =>
-  buttons().filter((button) => matches(button.getAttribute("aria-label") ?? ""));
-// Joins rendered text nodes; `visibleOnly` drops screen-reader-only text.
-function textNodes(separator: string, visibleOnly = false) {
-  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-  const parts: string[] = [];
-  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    if (visibleOnly && node.parentElement?.closest(".sr-only")) continue;
-    parts.push(node.textContent ?? "");
-  }
-  return parts.join(separator);
-}
-
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
+async function setup() {
   state.shells = [];
   state.projects = [];
   state.configs.clear();
@@ -164,9 +109,73 @@ afterEach(async () => {
   state.toast.mockClear();
   state.projection = null;
   state.projections = null;
-});
 
+  await using stack = new AsyncDisposableStack();
+  const screen = stack.use(await renderUi(null));
+  const container = screen.container;
+  let current: ReactElement;
+
+  async function render(element: ReactElement) {
+    current = element;
+    await act(async () => screen.rerender(element));
+  }
+  // The mocked hooks read `state` while rendering, so a new element picks up changes.
+  const update = async () => await act(async () => screen.rerender(cloneElement(current)));
+  const click = async (element: HTMLElement) => await act(async () => element.click());
+  const buttons = () => [...container.querySelectorAll("button")];
+  const allByLabel = (label: string) =>
+    buttons().filter((button) => button.getAttribute("aria-label") === label);
+  function byLabel(label: string) {
+    const matches = allByLabel(label);
+    if (matches.length !== 1)
+      throw new Error(`Expected one "${label}" button, got ${matches.length}`);
+    return matches[0]!;
+  }
+  const sectionToggles = (expanded: boolean) =>
+    buttons().filter(
+      (button) =>
+        button.getAttribute("aria-expanded") === String(expanded) &&
+        !button.hasAttribute("aria-label"),
+    );
+  function sectionToggle(expanded: boolean) {
+    const [toggle] = sectionToggles(expanded);
+    if (!toggle) throw new Error(`No ${expanded ? "expanded" : "collapsed"} section toggle`);
+    return toggle;
+  }
+  const heading = () => container.querySelector("h3")?.textContent;
+  const buttonsWithLabel = (matches: (label: string) => boolean) =>
+    buttons().filter((button) => matches(button.getAttribute("aria-label") ?? ""));
+  // Joins rendered text nodes; `visibleOnly` drops screen-reader-only text.
+  function textNodes(separator: string, visibleOnly = false) {
+    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+    const parts: string[] = [];
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (visibleOnly && node.parentElement?.closest(".sr-only")) continue;
+      parts.push(node.textContent ?? "");
+    }
+    return parts.join(separator);
+  }
+
+  const environment = stack.move();
+  return {
+    container,
+    render,
+    update,
+    click,
+    buttons,
+    allByLabel,
+    byLabel,
+    sectionToggles,
+    sectionToggle,
+    heading,
+    buttonsWithLabel,
+    textNodes,
+    [Symbol.asyncDispose]: () => environment.disposeAsync(),
+  };
+}
 it("stops the entire native workflow through its parent without changing state before acknowledgement", async () => {
+  await using fixture = await setup();
+  const { render, click, byLabel, heading, buttonsWithLabel } = fixture;
   const coordinator = {
     id: "workflow",
     origin: "provider_native",
@@ -264,6 +273,8 @@ it.each([
   ["codex", "provider_native", "running"],
   ["claudeAgent", "app_owned", "running"],
 ])("does not offer workflow stop for %s %s %s", async (driver, origin, status) => {
+  await using fixture = await setup();
+  const { render, click, allByLabel, byLabel, sectionToggles } = fixture;
   state.projection = {
     thread: { id: "parent", lineage: { relationshipToParent: null } },
     runs: [],
@@ -300,6 +311,8 @@ it.each([
 });
 
 it("opens the correct chat for every workflow phase and unphased member", async () => {
+  await using fixture = await setup();
+  const { render, update, click, byLabel, buttonsWithLabel, textNodes } = fixture;
   state.showTooltips = true;
   state.configs.set("remote", {
     providers: [
@@ -433,6 +446,8 @@ it("opens the correct chat for every workflow phase and unphased member", async 
 });
 
 it("groups and counts a workflow by its run status instead of its coordinator chat", async () => {
+  await using fixture = await setup();
+  const { render, update, click, allByLabel, byLabel, sectionToggle, heading, textNodes } = fixture;
   state.showTooltips = true;
   const coordinator = {
     id: "workflow",
@@ -512,6 +527,8 @@ it.each([
 ])(
   "offers individual Stop for supported $origin $driver subagents with run $runId",
   async ({ driver, origin, runId, canStop }) => {
+    await using fixture = await setup();
+    const { render, update, click, allByLabel, byLabel } = fixture;
     const parent = {
       id: "parent",
       lineage: { relationshipToParent: null },
@@ -623,6 +640,9 @@ it.each([
 );
 
 it("shows the matching child agent details and refreshes them when the agent settles", async () => {
+  await using fixture = await setup();
+  const { render, update, click, buttons, sectionToggles, sectionToggle, heading, textNodes } =
+    fixture;
   const agent = {
     id: "agent-1",
     driver: "codex",
@@ -740,6 +760,8 @@ it("shows the matching child agent details and refreshes them when the agent set
 });
 
 it("keeps active supervisor status, progress, and task timing after its child turn ends", async () => {
+  await using fixture = await setup();
+  const { render, buttons, heading, textNodes, container } = fixture;
   using _now = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-09-16T12:05:15Z"));
   state.showTooltips = true;
   // The child request follows task creation by milliseconds, but finishing that
@@ -812,6 +834,8 @@ it("keeps active supervisor status, progress, and task timing after its child tu
 });
 
 it("shows readable models and only differing workspace details in agent tooltips", async () => {
+  await using fixture = await setup();
+  const { render, update, click, sectionToggle, textNodes } = fixture;
   state.showTooltips = true;
   const parent = {
     id: "parent",
@@ -1229,6 +1253,8 @@ it("shows readable models and only differing workspace details in agent tooltips
 });
 
 it("shows the parent's own visible status as parent and child activity change", async () => {
+  await using fixture = await setup();
+  const { render, update, textNodes } = fixture;
   const environmentId = EnvironmentId.make("test");
   const parent = {
     id: "parent",
@@ -1273,6 +1299,8 @@ it("shows the parent's own visible status as parent and child activity change", 
 });
 
 it("shows the native coordinator status from its member and gives follow-up activity precedence", async () => {
+  await using fixture = await setup();
+  const { render, update, buttons } = fixture;
   const environmentId = EnvironmentId.make("remote");
   const coordinator = {
     id: "coordinator",
@@ -1341,6 +1369,8 @@ it("shows the native coordinator status from its member and gives follow-up acti
 it.each(["source", "target"])(
   "shows transfer lifecycle states when viewing the %s thread",
   async (currentThreadId) => {
+    await using fixture = await setup();
+    const { render, update, textNodes } = fixture;
     const environmentId = EnvironmentId.make("test");
     const threads = ["source", "target"].map((id) => ({
       id,

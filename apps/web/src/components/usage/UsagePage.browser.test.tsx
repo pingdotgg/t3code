@@ -1,8 +1,7 @@
+import { render } from "../../../test/render";
 import { EnvironmentId, UsageDay, USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
 import { mergeUsage } from "@t3tools/shared/usageMerge";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
@@ -45,7 +44,7 @@ const environments = [
   },
 ];
 
-beforeEach(() => {
+function setup() {
   testState.useUsage.mockReturnValue({
     merged: mergeUsage([], USAGE_CONTRACT_VERSION),
     environments,
@@ -55,31 +54,11 @@ beforeEach(() => {
     isPartial: false,
     refresh: vi.fn(),
   });
-});
+  testState.navigate.mockClear();
+  testState.canGoBack = true;
+}
 
 describe("UsagePage Escape navigation", () => {
-  let renderer: Root;
-  let container: HTMLDivElement;
-  let back: ReturnType<typeof vi.spyOn>;
-
-  beforeEach(async () => {
-    back = vi.spyOn(window.history, "back").mockImplementation(() => {});
-    testState.navigate.mockClear();
-    testState.canGoBack = true;
-    container = document.createElement("div");
-    document.body.append(container);
-    renderer = createRoot(container);
-    await act(() => {
-      renderer.render(<UsagePage />);
-    });
-  });
-
-  afterEach(async () => {
-    await act(() => renderer.unmount());
-    container.remove();
-    back.mockRestore();
-  });
-
   // Playwright cannot press a repeating or composing key, so those cases dispatch the event.
   function escape(properties: { repeat?: boolean; isComposing?: boolean } = {}) {
     return new KeyboardEvent("keydown", {
@@ -91,14 +70,22 @@ describe("UsagePage Escape navigation", () => {
   }
 
   it("returns to the previous page on Escape", async () => {
+    setup();
+    using back = vi.spyOn(window.history, "back").mockImplementation(() => {});
+    await using _screen = await render(<UsagePage />);
+
     await userEvent.keyboard("{Escape}");
     expect(back).toHaveBeenCalledOnce();
     expect(testState.navigate).not.toHaveBeenCalled();
   });
 
   it("returns home when there is no previous app page", async () => {
+    setup();
+    using back = vi.spyOn(window.history, "back").mockImplementation(() => {});
+    await using screen = await render(<UsagePage />);
+
     testState.canGoBack = false;
-    await act(() => renderer.render(<UsagePage />));
+    await screen.rerender(<UsagePage />);
 
     await userEvent.keyboard("{Escape}");
     expect(testState.navigate).toHaveBeenCalledWith({ to: "/" });
@@ -106,6 +93,10 @@ describe("UsagePage Escape navigation", () => {
   });
 
   it("closes the environment menu before Escape navigates back", async () => {
+    setup();
+    using back = vi.spyOn(window.history, "back").mockImplementation(() => {});
+    await using screen = await render(<UsagePage />);
+    const { container } = screen;
     const trigger = container.querySelector<HTMLButtonElement>('[data-slot="menu-trigger"]')!;
     await userEvent.click(trigger);
     await expect.element(page.getByRole("menu")).toBeVisible();
@@ -119,9 +110,15 @@ describe("UsagePage Escape navigation", () => {
     expect(back).toHaveBeenCalledOnce();
   });
 
-  it.each([{ repeat: true }, { isComposing: true }])("ignores Escape with %j", (properties) => {
-    document.body.dispatchEvent(escape(properties));
-    expect(back).not.toHaveBeenCalled();
-    expect(testState.navigate).not.toHaveBeenCalled();
-  });
+  it.each([{ repeat: true }, { isComposing: true }])(
+    "ignores Escape with %j",
+    async (properties) => {
+      setup();
+      using back = vi.spyOn(window.history, "back").mockImplementation(() => {});
+      await using _screen = await render(<UsagePage />);
+      document.body.dispatchEvent(escape(properties));
+      expect(back).not.toHaveBeenCalled();
+      expect(testState.navigate).not.toHaveBeenCalled();
+    },
+  );
 });

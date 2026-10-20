@@ -1,24 +1,8 @@
-import { act, useState } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { act, render } from "../../../test/render";
+import { useState } from "react";
+import { describe, expect, it } from "vite-plus/test";
 
 import { Switch } from "./switch";
-
-let root: Root;
-let container: HTMLDivElement;
-
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
 
 function ControlledSwitch({
   initialChecked,
@@ -43,32 +27,20 @@ function ControlledSwitch({
   );
 }
 
-function switchRoot() {
-  const element = container.querySelector<HTMLElement>('[role="switch"]');
-  if (!element) throw new Error("Switch was not rendered");
-  return element;
-}
-
-async function clickSwitch() {
-  await act(async () => switchRoot().click());
-}
-
-async function renderSwitch(initialChecked: boolean, initialMixed = false) {
-  await act(async () => {
-    root.render(<ControlledSwitch {...{ initialChecked, initialMixed }} />);
-  });
-}
-
 describe("Switch accessibility", () => {
   it.each([
     { initialChecked: false, initialMixed: false, before: false, after: true },
     { initialChecked: true, initialMixed: false, before: true, after: false },
     { initialChecked: false, initialMixed: true, before: "mixed", after: true },
   ])("exposes $before before activation and $after after activation", async (state) => {
-    await renderSwitch(state.initialChecked, state.initialMixed);
+    await using screen = await render(
+      <ControlledSwitch initialChecked={state.initialChecked} initialMixed={state.initialMixed} />,
+    );
+    const { container } = screen;
+    const switchRoot = () => container.querySelector<HTMLElement>('[role="switch"]')!;
     expect(switchRoot().getAttribute("aria-checked")).toBe(String(state.before));
 
-    await clickSwitch();
+    await act(() => switchRoot().click());
 
     expect(switchRoot().getAttribute("aria-checked")).toBe(String(state.after));
     expect(container.querySelector<HTMLInputElement>('input[type="checkbox"]')?.checked).toBe(

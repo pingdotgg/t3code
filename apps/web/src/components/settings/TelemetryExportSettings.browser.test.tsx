@@ -1,7 +1,6 @@
+import { render } from "../../../test/render";
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 const { state, updateSettings } = vi.hoisted(() => ({
@@ -46,40 +45,29 @@ vi.mock(import("./useScopedSettings"), async (original) => ({
 
 import { TelemetryExportSettings } from "./TelemetryExportSettings";
 
-let root: Root;
-let container: HTMLDivElement;
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
+function setup() {
   updateSettings.mockClear();
-  vi.unstubAllGlobals();
-});
-
-const field = (id: string) => container.querySelector<HTMLInputElement>(`#${id}`)!;
-async function replace(id: string, value: string) {
-  await userEvent.clear(field(id));
-  await userEvent.type(field(id), value);
 }
 
 describe("TelemetryExportSettings", () => {
   it("does not resend a field the user restored after another client changed it", async () => {
+    setup();
     state.observability = {
       ...DEFAULT_SERVER_SETTINGS.observability,
       otlpTracesUrl: "http://old/v1/traces",
     };
-    await act(async () => root.render(<TelemetryExportSettings />));
+    await using screen = await render(<TelemetryExportSettings />);
 
+    const { container } = screen;
+    const field = (id: string) => container.querySelector<HTMLInputElement>(`#${id}`)!;
+    async function replace(id: string, value: string) {
+      await userEvent.clear(field(id));
+      await userEvent.type(field(id), value);
+    }
     await replace("otlpTracesUrl", "http://draft/v1/traces");
     await replace("otlpTracesUrl", "http://old/v1/traces");
     state.observability = { ...state.observability, otlpTracesUrl: "http://other/v1/traces" };
-    await act(async () => root.render(<TelemetryExportSettings />));
+    await screen.rerender(<TelemetryExportSettings />);
     await replace("otlpMetricsUrl", "http://new/v1/metrics");
     const save = [...container.querySelectorAll("button")].find(
       (button) => button.textContent === "Save",

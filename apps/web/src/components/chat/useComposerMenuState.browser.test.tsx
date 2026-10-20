@@ -1,10 +1,9 @@
-import { act, StrictMode, useLayoutEffect } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { StrictMode, useLayoutEffect } from "react";
+import { describe, expect, it, vi } from "vite-plus/test";
 
+import { act, render } from "../../../test/render";
 import { useComposerMenuState } from "./useComposerMenuState";
 
-let root: Root;
 let setOpen: ReturnType<typeof useComposerMenuState>[1];
 let committedOpen: boolean[];
 let closePopup = vi.fn<() => void>();
@@ -19,40 +18,30 @@ function MenuStateProbe({ hidden }: { hidden: boolean }) {
   return null;
 }
 
-async function renderMenu(hidden: boolean) {
-  await act(() => {
-    root.render(
-      <StrictMode>
-        <MenuStateProbe hidden={hidden} />
-      </StrictMode>,
-    );
-  });
-}
+const menu = (hidden: boolean) => (
+  <StrictMode>
+    <MenuStateProbe hidden={hidden} />
+  </StrictMode>
+);
 
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+function setup() {
   committedOpen = [];
   closePopup = vi.fn();
-  root = createRoot(document.createElement("div"));
-});
-
-afterEach(async () => {
-  await act(() => root.unmount());
-  vi.unstubAllGlobals();
-});
+}
 
 describe("useComposerMenuState", () => {
   it("closes an open popup when its trigger hides and does not reopen when it returns", async () => {
-    await renderMenu(false);
+    setup();
+    await using screen = await render(menu(false));
     await act(() => setOpen(true));
     expect(committedOpen.at(-1)).toBe(true);
 
-    await renderMenu(true);
+    await screen.rerender(menu(true));
     expect(committedOpen.at(-1)).toBe(false);
     expect(closePopup).toHaveBeenCalledTimes(1);
 
     const afterClose = committedOpen.length;
-    await renderMenu(false);
+    await screen.rerender(menu(false));
     expect(committedOpen).toHaveLength(afterClose);
     expect(committedOpen.at(-1)).toBe(false);
 
@@ -64,9 +53,10 @@ describe("useComposerMenuState", () => {
   });
 
   it("does not commit an open popup requested while its trigger is hidden", async () => {
-    await renderMenu(true);
+    setup();
+    await using screen = await render(menu(true));
     await act(() => setOpen(true));
-    await renderMenu(false);
+    await screen.rerender(menu(false));
 
     expect(committedOpen.every((open) => !open)).toBe(true);
     expect(closePopup).not.toHaveBeenCalled();

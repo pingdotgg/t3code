@@ -1,6 +1,4 @@
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 import { htmlRenderTheme, HTML_RENDER_DEFAULT_FONTS } from "@t3tools/shared/htmlRender";
 import { T3_CODE_DARK_THEME_COLORS } from "@t3tools/shared/themePalettes";
@@ -8,6 +6,7 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 import "~/index.css";
 
+import { act, render as renderUi } from "../../../test/render";
 import { HtmlRenderDialog } from "./HtmlRenderDialog";
 import { HtmlRenderFrame } from "./HtmlRenderFrame";
 
@@ -45,35 +44,22 @@ vi.mock(import("~/hooks/useHtmlRenderTheme"), async (original) => ({
     htmlRenderTheme(T3_CODE_DARK_THEME_COLORS, "dark", HTML_RENDER_DEFAULT_FONTS),
 }));
 
-let root: Root;
-let container: HTMLDivElement;
 const onClose = vi.fn();
 
-beforeEach(async () => {
+function setup() {
   refresh.mockReset();
   cachedUrl.lifeMs = 60 * 60_000;
   openLink.mockReset().mockResolvedValue(undefined);
   openChangeRequestLink.mockReset().mockReturnValue(false);
   showError.mockClear();
   onClose.mockClear();
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-  await act(() =>
-    root.render(
-      <HtmlRenderDialog
-        src="https://environment.test/page.html"
-        title="Diagram"
-        onClose={onClose}
-      />,
-    ),
-  );
-});
+}
 
-afterEach(async () => {
-  await act(() => root.unmount());
-  container.remove();
-});
+function renderDialog() {
+  return renderUi(
+    <HtmlRenderDialog src="https://environment.test/page.html" title="Diagram" onClose={onClose} />,
+  );
+}
 
 function button(label: string) {
   return page.getByRole("button", { name: label, exact: true });
@@ -85,6 +71,8 @@ async function click(label: string) {
 }
 
 it("zooms the loaded page within bounds and resets without reloading it", async () => {
+  setup();
+  await using _screen = await renderDialog();
   const frame = document.querySelector("iframe")!;
   const src = frame.src;
   for (let step = 0; step < 4; step += 1) await click("Zoom in");
@@ -101,6 +89,8 @@ it("zooms the loaded page within bounds and resets without reloading it", async 
 });
 
 it("closes with the close button or Escape", async () => {
+  setup();
+  await using _screen = await renderDialog();
   await click("Close");
   expect(onClose).toHaveBeenCalledOnce();
   onClose.mockClear();
@@ -109,23 +99,21 @@ it("closes with the close button or Escape", async () => {
 });
 
 async function renderInline() {
-  // Async so a URL minted at mount lands inside act.
-  await act(async () =>
-    root.render(
-      <HtmlRenderFrame
-        environmentId={EnvironmentId.make("environment")}
-        htmlRender={{ attachmentId: "html", title: "Diagram", height: 400 }}
-        threadRef={{
-          environmentId: EnvironmentId.make("environment"),
-          threadId: ThreadId.make("thread"),
-        }}
-      />,
-    ),
+  return renderUi(
+    <HtmlRenderFrame
+      environmentId={EnvironmentId.make("environment")}
+      htmlRender={{ attachmentId: "html", title: "Diagram", height: 400 }}
+      threadRef={{
+        environmentId: EnvironmentId.make("environment"),
+        threadId: ThreadId.make("thread"),
+      }}
+    />,
   );
 }
 
 it("offers only full screen and opens with the inline URL while keeping the inline page loaded", async () => {
-  await renderInline();
+  setup();
+  await using _screen = await renderInline();
   expect(document.querySelector('[aria-label="Open in panel"]')).toBeNull();
   const inlineFrame = document.querySelector("iframe")!;
   const originalSrc = inlineFrame.src;
@@ -148,12 +136,15 @@ it("offers only full screen and opens with the inline URL while keeping the inli
 async function renderInlineNearExpiry() {
   cachedUrl.lifeMs = 60_000;
   refresh.mockResolvedValueOnce("https://environment.test/inline.html");
-  await renderInline();
+  await using stack = new AsyncDisposableStack();
+  stack.use(await renderInline());
   expect(refresh).toHaveBeenCalledOnce();
+  return stack.move();
 }
 
 it("opens full screen with a fresh URL when the inline one is near expiry", async () => {
-  await renderInlineNearExpiry();
+  setup();
+  await using _screen = await renderInlineNearExpiry();
   refresh.mockResolvedValue("https://environment.test/renewed.html");
   await click("Open full screen");
   expect(refresh).toHaveBeenCalledTimes(2);
@@ -163,7 +154,8 @@ it("opens full screen with a fresh URL when the inline one is near expiry", asyn
 });
 
 it("routes links from the expanded page through its thread", async () => {
-  await renderInline();
+  setup();
+  await using _screen = await renderInline();
   openChangeRequestLink.mockReturnValue(true);
   await click("Open full screen");
   const frame = document.querySelector<HTMLIFrameElement>('[role="dialog"] iframe')!;
@@ -189,7 +181,8 @@ it("routes links from the expanded page through its thread", async () => {
 it.each([null, new Error("Disconnected")])(
   "reports an unavailable URL instead of opening a blank page: %s",
   async (failure) => {
-    await renderInlineNearExpiry();
+    setup();
+    await using _screen = await renderInlineNearExpiry();
     if (failure === null) refresh.mockResolvedValue(null);
     else refresh.mockRejectedValue(failure);
     await click("Open full screen");

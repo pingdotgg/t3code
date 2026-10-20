@@ -1,11 +1,10 @@
-import { act, useLayoutEffect } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { useLayoutEffect } from "react";
+import { describe, expect, it } from "vite-plus/test";
 
+import { act, render } from "../../../test/render";
 import { shouldUseRestingComposerLayout } from "../composerFooterLayout";
 import { useComposerFocusState } from "./useComposerFocusState";
 
-let root: Root;
 let composer: ReturnType<typeof useComposerFocusState>;
 let isResting: boolean;
 
@@ -25,19 +24,9 @@ function ComposerProbe() {
   return null;
 }
 
-beforeEach(async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  root = createRoot(document.createElement("div"));
-  await act(() => root.render(<ComposerProbe />));
-});
-
-afterEach(async () => {
-  await act(() => root.unmount());
-  vi.unstubAllGlobals();
-});
-
 describe("composer focus state", () => {
   it("stays expanded when the composer loses focus", async () => {
+    await using _screen = await render(<ComposerProbe />);
     await act(() => composer.setIsComposerFocused(true));
     expect(isResting).toBe(false);
 
@@ -46,6 +35,7 @@ describe("composer focus state", () => {
   });
 
   it("can collapse again on the next scroll after returning to the end", async () => {
+    await using _screen = await render(<ComposerProbe />);
     await act(() => composer.setIsComposerScrollCollapsed(true));
     expect(isResting).toBe(true);
 
@@ -57,6 +47,7 @@ describe("composer focus state", () => {
   });
 
   it("does not move focus into the composer when the timeline reaches the end", async () => {
+    await using _screen = await render(<ComposerProbe />);
     await act(() => composer.setIsComposerScrollCollapsed(true));
     await act(() => composer.restoreAfterTimelineReachedEnd());
     expect(isResting).toBe(false);

@@ -1,6 +1,6 @@
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
+
+import { render } from "../../test/render";
 
 type Session = {
   _tag: "Success" | "Failure";
@@ -37,12 +37,9 @@ vi.mock(import("./ui/toast"), async (original) => {
 });
 import { PermissionUpdateNotice } from "./PermissionUpdateNotice";
 
-let root: Root;
-let container: HTMLDivElement;
 const storageKey = () => `t3code:permission-update:v1:env-${state.id}`;
 
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+function setup(): Disposable {
   state.id++;
   state.session = {
     _tag: "Success",
@@ -50,15 +47,9 @@ beforeEach(() => {
     value: { authenticated: true, permissions: ["orchestration:operate"] },
   };
   vi.clearAllMocks();
-  container = document.createElement("div");
-  root = createRoot(container);
-});
-afterEach(async () => {
-  await act(async () => root.unmount());
-  localStorage.clear();
-  vi.unstubAllGlobals();
-});
-const render = () => act(async () => root.render(<PermissionUpdateNotice />));
+  return { [Symbol.dispose]: () => localStorage.clear() };
+}
+
 type Notice = {
   timeout: number;
   actionProps: { onClick: () => void };
@@ -67,7 +58,8 @@ type Notice = {
 const notice = () => state.add.mock.calls[0]![0] as Notice;
 
 it("keeps the notice visible and persists dismissal, with a route to pairing settings", async () => {
-  await render();
+  using _state = setup();
+  await using _screen = await render(<PermissionUpdateNotice />);
   expect(notice().timeout).toBe(0);
   expect(localStorage.getItem(storageKey())).toBeNull();
   notice().actionProps.onClick();
@@ -76,37 +68,41 @@ it("keeps the notice visible and persists dismissal, with a route to pairing set
   expect(localStorage.getItem(storageKey())).toBe("true");
 });
 it("does not repeat on session refresh or remount", async () => {
-  await render();
-  await act(async () => root.unmount());
-  root = createRoot(container);
+  using _state = setup();
+  await using screen = await render(<PermissionUpdateNotice />);
+  await screen.unmount();
   state.session = { ...state.session };
-  await render();
+  await using _remounted = await render(<PermissionUpdateNotice />);
   expect(state.add).toHaveBeenCalledTimes(1);
 });
 it("skips a notice dismissed on an earlier launch", async () => {
+  using _state = setup();
   localStorage.setItem(storageKey(), "true");
-  await render();
+  await using _screen = await render(<PermissionUpdateNotice />);
   expect(state.add).not.toHaveBeenCalled();
 });
 it("waits for a successful, settled session check", async () => {
+  using _state = setup();
   state.session._tag = "Failure";
-  await render();
+  await using screen = await render(<PermissionUpdateNotice />);
   expect(state.add).not.toHaveBeenCalled();
   state.session = { ...state.session, _tag: "Success", waiting: true };
-  await render();
+  await screen.rerender(<PermissionUpdateNotice />);
   expect(state.add).not.toHaveBeenCalled();
   state.session = { ...state.session, waiting: false };
-  await render();
+  await screen.rerender(<PermissionUpdateNotice />);
   expect(state.add).toHaveBeenCalledTimes(1);
 });
 it("does not warn for a granular grant", async () => {
+  using _state = setup();
   state.session.value.permissions.push("filesystem:read");
-  await render();
+  await using _screen = await render(<PermissionUpdateNotice />);
   expect(state.add).not.toHaveBeenCalled();
 });
 
 it("persists the secondary dismissal without relying on the toast close callback", async () => {
-  await render();
+  using _state = setup();
+  await using _screen = await render(<PermissionUpdateNotice />);
   notice().data.secondaryActionProps.onClick();
   expect(localStorage.getItem(storageKey())).toBe("true");
   expect(state.close).toHaveBeenCalledWith("notice");

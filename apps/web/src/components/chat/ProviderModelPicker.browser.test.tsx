@@ -6,13 +6,13 @@ import {
 } from "@t3tools/contracts";
 import { RegistryContext, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { Atom, AtomRegistry } from "effect/reactivity";
-import { act, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import type { ReactNode } from "react";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 
+import { act, render as renderUi } from "../../../test/render";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import type { ModelEsque } from "./providerIconUtils";
@@ -37,14 +37,6 @@ vi.mock(import("~/hooks/useSettings"), async (original) => ({
   },
 }));
 
-vi.mock(import("@tanstack/react-router"), async (original) => ({
-  ...(await original()),
-  useNavigate: () => vi.fn(),
-}));
-
-let pickerRoot: Root | undefined;
-let pickerRegistry: AtomRegistry.AtomRegistry | undefined;
-
 function providerEntry(instanceId: string, driver: string) {
   const provider: ServerProvider = {
     instanceId: ProviderInstanceId.make(instanceId),
@@ -62,25 +54,10 @@ function providerEntry(instanceId: string, driver: string) {
   return deriveProviderInstanceEntries([provider])[0]!;
 }
 
-afterEach(async () => {
-  if (pickerRoot) await act(async () => pickerRoot!.unmount());
-  pickerRoot = undefined;
-  pickerRegistry?.dispose();
-  pickerRegistry = undefined;
-  document.body.replaceChildren();
-  vi.unstubAllGlobals();
-});
-
 // Returns the trigger's visible text, which is what the user reads before opening the picker.
 async function triggerText(node: ReactNode) {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  const container = document.createElement("div");
-  document.body.append(container);
-  const root = createRoot(container);
-  await act(async () => root.render(node));
-  const text = container.querySelector("button")?.textContent ?? "";
-  await act(async () => root.unmount());
-  return text;
+  await using screen = await renderUi(node);
+  return screen.container.querySelector("button")?.textContent ?? "";
 }
 
 function renderPicker(input: {
@@ -112,16 +89,16 @@ async function click(target: Parameters<typeof userEvent.click>[0]) {
 }
 
 async function openLegacyPicker(activeModel: string) {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const entry = providerEntry("codex", "codex");
-  pickerRegistry = AtomRegistry.make();
+  await using stack = new AsyncDisposableStack();
+  const pickerRegistry = AtomRegistry.make();
+  stack.defer(() => pickerRegistry.dispose());
   pickerRegistry.set(favoritesAtom, [
     { provider: entry.instanceId, model: "current-favorite" },
     { provider: entry.instanceId, model: "legacy-favorite" },
   ]);
-  pickerRoot = createRoot(document.body.appendChild(document.createElement("div")));
-  await act(async () =>
-    pickerRoot!.render(
+  stack.use(
+    await renderUi(
       <RegistryContext.Provider value={pickerRegistry!}>
         <ProviderModelPicker
           environmentId={null}
@@ -149,11 +126,12 @@ async function openLegacyPicker(activeModel: string) {
   );
   await click(document.querySelector("button")!);
   await click(page.getByRole("button", { name: entry.displayName, exact: true }));
+  return stack.move();
 }
 
 describe("ProviderModelPicker", () => {
   it("hoists legacy favorites in provider order and returns an unfavorited model to legacy", async () => {
-    await openLegacyPicker("current");
+    await using _screen = await openLegacyPicker("current");
     const legacyFavorite = page.getByRole("option", { name: /Legacy favorite/ });
     const currentFavorite = page.getByRole("option", { name: /Current favorite/ });
     const current = page.getByRole("option", { name: /Current model/ });
@@ -183,7 +161,7 @@ describe("ProviderModelPicker", () => {
   });
 
   it("keeps unrelated legacy models collapsed when the active model is a favorite", async () => {
-    await openLegacyPicker("legacy-favorite");
+    await using _screen = await openLegacyPicker("legacy-favorite");
 
     await expect.element(page.getByRole("option", { name: /Legacy favorite/ })).toBeVisible();
     await expect

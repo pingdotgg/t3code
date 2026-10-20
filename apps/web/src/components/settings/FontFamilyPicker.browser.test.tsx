@@ -1,7 +1,7 @@
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
+
+import { act, render } from "../../../test/render";
 
 const families = vi.hoisted(() => {
   const families = [
@@ -26,24 +26,6 @@ vi.mock("../../appearanceFonts", () => ({
 
 import { discoverInstalledFonts, FontFamilyPicker } from "./FontFamilyPicker";
 
-let root: Root;
-let container: HTMLDivElement;
-
-beforeEach(async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-  await act(async () => discoverInstalledFonts());
-});
-
-afterEach(async () => {
-  await act(() => root.unmount());
-  container.remove();
-  vi.restoreAllMocks();
-  vi.unstubAllGlobals();
-});
-
 function highlightedOptions(): string[] {
   return [...document.querySelectorAll('[role="option"][data-highlighted]')].map(
     (option) => option.textContent ?? "",
@@ -53,16 +35,15 @@ function highlightedOptions(): string[] {
 describe("FontFamilyPicker", () => {
   it("highlights, moves through, and selects matches after filtering", async () => {
     const onSelect = vi.fn();
-    await act(async () =>
-      root.render(
-        <FontFamilyPicker
-          ariaLabel="Code font"
-          defaultFamily="Menlo"
-          selectedFamily=""
-          initialOpen
-          onSelect={onSelect}
-        />,
-      ),
+    await act(() => discoverInstalledFonts());
+    await using _screen = await render(
+      <FontFamilyPicker
+        ariaLabel="Code font"
+        defaultFamily="Menlo"
+        selectedFamily=""
+        initialOpen
+        onSelect={onSelect}
+      />,
     );
 
     const input = document.querySelector<HTMLInputElement>('input[placeholder="Search fonts…"]');

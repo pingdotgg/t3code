@@ -1,11 +1,10 @@
 import { RegistryContext } from "@effect/atom-react";
 import { EnvironmentId, type AssetCreateUrlResult, type ProjectEntry } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 
 import "~/index.css";
+import { act, render, stubGlobal } from "../../../test/render";
 
 type AssetResult = AsyncResult.AsyncResult<AssetCreateUrlResult, Error>;
 const state = vi.hoisted(() => ({
@@ -56,12 +55,8 @@ import {
   ProjectFaviconPickerDialog,
 } from "./ProjectFaviconPickerDialog";
 
-let root: Root;
-let container: HTMLDivElement;
-
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  Object.defineProperty(navigator, "platform", { configurable: true, get: () => "MacIntel" });
+function setup() {
+  const platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
   toast.mockClear();
   state.entries = [];
   state.assets.clear();
@@ -69,36 +64,26 @@ beforeEach(() => {
   state.createUrl
     .mockReset()
     .mockImplementation(({ input }) => state.assets.get(input.resource.path)!);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  Reflect.deleteProperty(navigator, "platform");
-  vi.unstubAllGlobals();
-});
+  return { [Symbol.dispose]: () => platform.mockRestore() };
+}
 
 async function renderPicker(onPickExternal?: () => Promise<string | null>) {
   const onOpenChange = vi.fn();
   const onSelect = vi.fn();
-  await act(async () =>
-    root.render(
-      <RegistryContext.Provider value={appAtomRegistry}>
-        <ProjectFaviconPickerDialog
-          cwd="/Users/me/project"
-          environmentId={EnvironmentId.make("local")}
-          onOpenChange={onOpenChange}
-          {...(onPickExternal ? { onPickExternal } : {})}
-          onSelect={onSelect}
-          open
-          projectName="Project"
-        />
-      </RegistryContext.Provider>,
-    ),
+  const screen = await render(
+    <RegistryContext.Provider value={appAtomRegistry}>
+      <ProjectFaviconPickerDialog
+        cwd="/Users/me/project"
+        environmentId={EnvironmentId.make("local")}
+        onOpenChange={onOpenChange}
+        {...(onPickExternal ? { onPickExternal } : {})}
+        onSelect={onSelect}
+        open
+        projectName="Project"
+      />
+    </RegistryContext.Provider>,
   );
-  return { onOpenChange, onSelect };
+  return Object.assign(screen, { onOpenChange, onSelect });
 }
 async function clickOpenInFinder() {
   const button = [...document.querySelectorAll("button")].find((element) =>
@@ -109,14 +94,15 @@ async function clickOpenInFinder() {
 }
 
 it("selects an image from the native file picker", async () => {
+  using _env = setup();
   const onPickExternal = vi.fn().mockResolvedValue("/Users/me/Pictures/icon.png");
-  const { onOpenChange, onSelect } = await renderPicker(onPickExternal);
+  await using screen = await renderPicker(onPickExternal);
 
   await clickOpenInFinder();
 
   expect(onPickExternal).toHaveBeenCalledTimes(1);
-  expect(onOpenChange).toHaveBeenCalledWith(false);
-  expect(onSelect).toHaveBeenCalledWith("/Users/me/Pictures/icon.png");
+  expect(screen.onOpenChange).toHaveBeenCalledWith(false);
+  expect(screen.onSelect).toHaveBeenCalledWith("/Users/me/Pictures/icon.png");
 });
 
 it("hides the native picker for WSL project paths", () => {
@@ -125,14 +111,13 @@ it("hides the native picker for WSL project paths", () => {
 });
 
 it("keeps the dialog open when the native picker fails", async () => {
-  const { onOpenChange, onSelect } = await renderPicker(
-    vi.fn().mockRejectedValue(new Error("picker failed")),
-  );
+  using _env = setup();
+  await using screen = await renderPicker(vi.fn().mockRejectedValue(new Error("picker failed")));
 
   await clickOpenInFinder();
 
-  expect(onOpenChange).not.toHaveBeenCalled();
-  expect(onSelect).not.toHaveBeenCalled();
+  expect(screen.onOpenChange).not.toHaveBeenCalled();
+  expect(screen.onSelect).not.toHaveBeenCalled();
   expect(toast).toHaveBeenCalledWith({
     type: "error",
     title: "Could not open image picker",
@@ -177,9 +162,10 @@ async function expectPreview(row: HTMLElement) {
 }
 
 it("loads previews asynchronously and only acquires offscreen images after scrolling", async () => {
+  using _env = setup();
   const paths = Array.from({ length: 40 }, (_, index) => `icons/icon-${index}.svg`);
   addFiles(paths);
-  const { onSelect } = await renderPicker();
+  await using screen = await renderPicker();
   const first = fileRow("icons/icon-0.svg");
   const last = fileRow("icons/icon-39.svg");
 
@@ -207,13 +193,14 @@ it("loads previews asynchronously and only acquires offscreen images after scrol
   await publishUrl("icons/icon-39.svg", imageUrl);
   await expectPreview(last);
   await act(async () => last.click());
-  expect(onSelect).toHaveBeenCalledWith("icons/icon-39.svg");
+  expect(screen.onSelect).toHaveBeenCalledWith("icons/icon-39.svg");
 });
 
 it("loads without IntersectionObserver and recovers a failed image when its URL changes", async () => {
-  vi.stubGlobal("IntersectionObserver", undefined);
+  using _env = setup();
+  using _observer = stubGlobal("IntersectionObserver", undefined);
   addFiles(["icons/logo.svg"]);
-  await renderPicker();
+  await using _screen = await renderPicker();
   const row = fileRow("icons/logo.svg");
 
   expect(state.createUrl).toHaveBeenCalledWith({
@@ -236,23 +223,25 @@ it("loads without IntersectionObserver and recovers a failed image when its URL 
 });
 
 it("keeps denied previews selectable with their file icon", async () => {
-  vi.stubGlobal("IntersectionObserver", undefined);
+  using _env = setup();
+  using _observer = stubGlobal("IntersectionObserver", undefined);
   state.canReadFiles = false;
   addFiles(["icons/private.svg"]);
-  const { onSelect } = await renderPicker();
+  await using screen = await renderPicker();
   const row = fileRow("icons/private.svg");
 
   await act(async () => row.click());
   expect(row.querySelector("img")).toBeNull();
   expect(row.querySelector("svg")).not.toBeNull();
   expect(state.createUrl).not.toHaveBeenCalled();
-  expect(onSelect).toHaveBeenCalledWith("icons/private.svg");
+  expect(screen.onSelect).toHaveBeenCalledWith("icons/private.svg");
 });
 
 it("keeps the file icon until the image load is acknowledged", async () => {
-  vi.stubGlobal("IntersectionObserver", undefined);
+  using _env = setup();
+  using _observer = stubGlobal("IntersectionObserver", undefined);
   addFiles(["icons/loading.svg"]);
-  await renderPicker();
+  await using _screen = await renderPicker();
   const row = fileRow("icons/loading.svg");
   // Hold the load notification so a fast data URL has the same UI state as a slow request.
   const holdLoad = (event: Event) => {

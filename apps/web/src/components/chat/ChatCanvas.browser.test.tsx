@@ -1,6 +1,7 @@
-import { act, useLayoutEffect } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { useLayoutEffect } from "react";
+import { expect, it, vi } from "vite-plus/test";
+
+import { act, render } from "../../../test/render";
 import { ChatCanvas } from "./ChatCanvas";
 import { useChatCanvas } from "./ChatCanvasContext";
 
@@ -12,8 +13,6 @@ vi.mock("../../lib/observeResize", () => ({
   },
 }));
 
-let root: Root;
-let container: HTMLDivElement;
 let fontSize = 16;
 let canvas: ReturnType<typeof useChatCanvas>;
 
@@ -35,76 +34,71 @@ function Preview({ x }: { x: number }) {
   return null;
 }
 
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+function mockLayout() {
+  const stack = new DisposableStack();
   fontSize = 16;
-  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1800);
-  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(1000);
-  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
-    this: HTMLElement,
-  ) {
-    if (this.hasAttribute("data-thread-find-bar")) {
-      const gap = 0.75 * fontSize;
-      return new DOMRect(
-        200 + 1800 - gap - 17.5 * fontSize,
-        100 + gap,
-        17.5 * fontSize,
-        2.25 * fontSize,
-      );
-    }
-    return new DOMRect(200, 100, 1800, 1000);
-  });
-  vi.spyOn(window, "getComputedStyle").mockReturnValue({
-    paddingLeft: "48px",
-    width: "736px",
-    minWidth: "640px",
-  } as CSSStyleDeclaration);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
+  stack.use(vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1800));
+  stack.use(vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(1000));
+  stack.use(
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (this.hasAttribute("data-thread-find-bar")) {
+        const gap = 0.75 * fontSize;
+        return new DOMRect(
+          200 + 1800 - gap - 17.5 * fontSize,
+          100 + gap,
+          17.5 * fontSize,
+          2.25 * fontSize,
+        );
+      }
+      return new DOMRect(200, 100, 1800, 1000);
+    }),
+  );
+  stack.use(
+    vi.spyOn(window, "getComputedStyle").mockReturnValue({
+      paddingLeft: "48px",
+      width: "736px",
+      minWidth: "640px",
+    } as CSSStyleDeclaration),
+  );
+  stack.defer(() => resize.callbacks.clear());
+  return stack;
+}
 
-afterEach(async () => {
-  await act(() => root.unmount());
-  container.remove();
-  resize.callbacks.clear();
-  vi.restoreAllMocks();
-  vi.unstubAllGlobals();
-});
-
-async function renderFind(open: boolean, previewX = 1548) {
-  await act(() =>
-    root.render(
-      <ChatCanvas composerOverlayElement={null} detailsCardTopInset={open ? 48 : 0}>
-        {open ? <div data-thread-find-bar /> : null}
-        <Preview x={previewX} />
-      </ChatCanvas>,
-    ),
+function find(open: boolean, previewX = 1548) {
+  return (
+    <ChatCanvas composerOverlayElement={null} detailsCardTopInset={open ? 48 : 0}>
+      {open ? <div data-thread-find-bar /> : null}
+      <Preview x={previewX} />
+    </ChatCanvas>
   );
 }
 
 it.each([16, 24])(
   "keeps a preview below Find and releases its space on close at a %spx root font",
   async (size) => {
+    using _layout = mockLayout();
     fontSize = size;
-    await renderFind(false);
+    await using screen = await render(find(false));
     expect(canvas?.layout.frame?.y).toBe(12);
 
-    await renderFind(true);
+    await screen.rerender(find(true));
     expect(canvas?.detailsCardTopInset).toBe(3 * size);
     expect(canvas?.layout.frame?.y).toBe(3 * size + 12);
 
-    await renderFind(false);
+    await screen.rerender(find(false));
     expect(canvas?.detailsCardTopInset).toBe(0);
     expect(canvas?.layout.frame?.y).toBe(12);
 
-    await renderFind(true);
+    await screen.rerender(find(true));
     expect(canvas?.layout.frame?.y).toBe(3 * size + 12);
   },
 );
 
 it("remeasures the open bar when its font size changes without resizing the canvas", async () => {
-  await renderFind(true, 1200);
+  using _layout = mockLayout();
+  await using _screen = await render(find(true, 1200));
   expect(canvas?.layout.frame?.y).toBe(12);
 
   fontSize = 24;

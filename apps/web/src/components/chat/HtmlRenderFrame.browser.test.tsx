@@ -1,6 +1,4 @@
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { EnvironmentId } from "@t3tools/contracts";
 import {
   htmlRenderTheme,
@@ -11,6 +9,7 @@ import { T3_CODE_DARK_THEME_COLORS } from "@t3tools/shared/themePalettes";
 
 import "~/index.css";
 
+import { render as renderUi } from "../../../test/render";
 import { HtmlRenderFrame } from "./HtmlRenderFrame";
 
 const page = vi.hoisted(() => ({ url: "" }));
@@ -29,33 +28,26 @@ vi.mock(import("~/hooks/useHtmlRenderTheme"), async (original) => ({
     htmlRenderTheme(T3_CODE_DARK_THEME_COLORS, "dark", HTML_RENDER_DEFAULT_FONTS),
 }));
 
-let root: Root | undefined;
-let container: HTMLDivElement | undefined;
-
-afterEach(async () => {
-  await act(() => root?.unmount());
-  container?.remove();
-  URL.revokeObjectURL(page.url);
-});
+function setup() {
+  page.url = "";
+}
 
 it("grows past the agent's height to fit the page the client lays out", async () => {
+  setup();
   page.url = URL.createObjectURL(
     new Blob([injectHtmlRenderBootstrap('<div style="height:2345px"></div>')], {
       type: "text/html",
     }),
   );
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-  await act(() =>
-    root!.render(
-      <HtmlRenderFrame
-        environmentId={EnvironmentId.make("environment-1")}
-        htmlRender={{ attachmentId: "html", title: "Tall page", height: 400 }}
-        threadRef={undefined}
-      />,
-    ),
+  using _url = { [Symbol.dispose]: () => URL.revokeObjectURL(page.url) };
+  await using screen = await renderUi(
+    <HtmlRenderFrame
+      environmentId={EnvironmentId.make("environment-1")}
+      htmlRender={{ attachmentId: "html", title: "Tall page", height: 400 }}
+      threadRef={undefined}
+    />,
   );
+  const { container } = screen;
 
   const box = container.firstElementChild as HTMLElement;
   await expect.poll(() => box.style.height).toBe("2345px");

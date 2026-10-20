@@ -1,6 +1,7 @@
-import { act, createElement, Profiler, useEffect, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { createElement, Profiler, useEffect, type ReactNode } from "react";
+import { describe, expect, it, vi } from "vite-plus/test";
+
+import { act, render } from "../../test/render";
 
 vi.mock("~/localApi", () => ({
   ensureLocalApi: () => ({
@@ -15,11 +16,12 @@ import {
   useClientSettings,
 } from "./useSettings";
 
-const renders = { meter: 0, grouping: 0 };
-const seen = { grouping: [] as unknown[] };
-let root: Root;
+interface Counts {
+  readonly renders: { meter: number; grouping: number };
+  readonly grouping: unknown[];
+}
 
-function counted(key: keyof typeof renders, child: ReactNode) {
+function counted(renders: Counts["renders"], key: keyof typeof renders, child: ReactNode) {
   return createElement(
     Profiler,
     {
@@ -37,43 +39,35 @@ function MeterReader() {
   return createElement("span", null, String(enabled));
 }
 
-function GroupingReader() {
+function GroupingReader({ seen }: { seen: unknown[] }) {
   const grouping = useClientSettings((settings) => ({
     mode: settings.sidebarProjectGroupingMode,
     overrides: settings.sidebarProjectGroupingOverrides,
   }));
   useEffect(() => {
-    seen.grouping.push(grouping);
+    seen.push(grouping);
   });
   return null;
 }
 
-beforeEach(async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+async function renderReaders() {
   await ensureClientSettingsHydrated();
-  renders.meter = 0;
-  renders.grouping = 0;
-  seen.grouping = [];
-  root = createRoot(document.createElement("div"));
-  await act(() =>
-    root.render(
-      createElement(
-        "div",
-        null,
-        counted("meter", createElement(MeterReader)),
-        counted("grouping", createElement(GroupingReader)),
-      ),
+  const counts: Counts = { renders: { meter: 0, grouping: 0 }, grouping: [] };
+  const screen = await render(
+    createElement(
+      "div",
+      null,
+      counted(counts.renders, "meter", createElement(MeterReader)),
+      counted(counts.renders, "grouping", createElement(GroupingReader, { seen: counts.grouping })),
     ),
   );
-});
-
-afterEach(async () => {
-  await act(() => root.unmount());
-  vi.unstubAllGlobals();
-});
+  return { ...counts, [Symbol.asyncDispose]: () => screen[Symbol.asyncDispose]() };
+}
 
 describe("useClientSettings(selector)", () => {
   it("re-renders only readers whose selected value changed", async () => {
+    await using readers = await renderReaders();
+    const { renders } = readers;
     const before = { ...renders };
 
     await act(() =>
@@ -87,11 +81,13 @@ describe("useClientSettings(selector)", () => {
   });
 
   it("keeps a structurally equal object selection", async () => {
+    await using readers = await renderReaders();
+    const { renders } = readers;
     const before = renders.grouping;
 
     await act(() => persistClientSettingsPatch({ sidebarProjectGroupingOverrides: {} }));
 
     expect(renders.grouping).toBe(before);
-    expect(new Set(seen.grouping).size).toBe(1);
+    expect(new Set(readers.grouping).size).toBe(1);
   });
 });

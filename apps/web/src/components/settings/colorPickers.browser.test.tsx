@@ -1,8 +1,9 @@
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
+import type { ReactNode } from "react";
+
+import { act, fakeTimers, render } from "../../../test/render";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { ThemeColorField } from "./ThemeColorPicker";
 
@@ -11,25 +12,16 @@ const SATURATION = "Accent color saturation";
 const BRIGHTNESS = "Accent color brightness";
 const PLANE = "Accent color saturation and brightness";
 
-let root: Root;
-let container: HTMLDivElement;
-
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+async function renderPicker(ui: ReactNode) {
+  await using stack = new AsyncDisposableStack();
   // Synthetic pointer ids are not active pointers, so the browser would reject capture.
-  vi.spyOn(HTMLElement.prototype, "setPointerCapture").mockImplementation(() => {});
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  vi.useRealTimers();
-  vi.restoreAllMocks();
-  vi.unstubAllGlobals();
-});
+  stack.use(vi.spyOn(HTMLElement.prototype, "setPointerCapture").mockImplementation(() => {}));
+  const screen = stack.use(await render(ui));
+  const environment = stack.move();
+  return Object.assign(screen, {
+    [Symbol.asyncDispose]: () => environment.disposeAsync(),
+  });
+}
 
 function byLabel<T extends HTMLElement = HTMLElement>(label: string) {
   const element = document.querySelector<T>(`[aria-label="${label}"]`);
@@ -77,32 +69,35 @@ const nextFrame = () =>
 
 async function renderAccent(value: string | undefined, commitDelayMs?: number) {
   const onCommit = vi.fn();
-  await act(async () =>
-    root.render(
-      <ProviderAccentColorPicker
-        displayName="Codex"
-        value={value}
-        onCommit={onCommit}
-        {...(commitDelayMs === undefined ? {} : { commitDelayMs })}
-      />,
-    ),
+  const screen = await renderPicker(
+    <ProviderAccentColorPicker
+      displayName="Codex"
+      value={value}
+      onCommit={onCommit}
+      {...(commitDelayMs === undefined ? {} : { commitDelayMs })}
+    />,
   );
   await open(`${value ? "Change" : "Add"} accent color for Codex`);
-  return onCommit;
+  return Object.assign(screen, { onCommit });
 }
 
 async function renderThemeField(value: string) {
   const onChange = vi.fn();
-  const render = (current: string) =>
-    root.render(<ThemeColorField role="accent" value={current} onChange={onChange} />);
-  await act(async () => render(value));
+  const field = (current: string) => (
+    <ThemeColorField role="accent" value={current} onChange={onChange} />
+  );
+  const screen = await renderPicker(field(value));
   await open("Choose Accent color color");
-  return { onChange, echo: (next: string) => act(async () => render(next)) };
+  return Object.assign(screen, {
+    onChange,
+    echo: (current: string) => screen.rerender(field(current)),
+  });
 }
 
 describe("provider accent color picker", () => {
   it("adjusts each color axis independently from the keyboard", async () => {
-    const onCommit = await renderAccent("#ff0000");
+    await using screen = await renderAccent("#ff0000");
+    const { onCommit } = screen;
 
     await press(HUE, "ArrowLeft");
     expect(slider(HUE).getAttribute("aria-valuenow")).toBe("359");
@@ -134,7 +129,8 @@ describe("provider accent color picker", () => {
   });
 
   it("supports Home/End and clamps each axis without changing the other", async () => {
-    const onCommit = await renderAccent("#ff0000");
+    await using screen = await renderAccent("#ff0000");
+    const { onCommit } = screen;
 
     await press(SATURATION, "Home");
     await press(SATURATION, "ArrowLeft");
@@ -156,7 +152,8 @@ describe("provider accent color picker", () => {
   });
 
   it("adds an accent only after choosing one and clears it back to no accent", async () => {
-    const onCommit = await renderAccent(undefined);
+    await using screen = await renderAccent(undefined);
+    const { onCommit } = screen;
     const clearButton = () =>
       [...document.querySelectorAll("button")].find((button) =>
         button.textContent?.includes("Clear color"),
@@ -174,8 +171,9 @@ describe("provider accent color picker", () => {
   });
 
   it("debounces commits and commits the pending color on unmount", async () => {
-    const onCommit = await renderAccent("#ff0000", 250);
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    await using screen = await renderAccent("#ff0000", 250);
+    const { onCommit } = screen;
+    using _timers = fakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 
     await press(HUE, "ArrowRight", true);
     await press(HUE, "ArrowRight", true);
@@ -184,17 +182,17 @@ describe("provider accent color picker", () => {
     expect(onCommit).toHaveBeenCalledExactlyOnceWith("#ff5500");
 
     await press(HUE, "ArrowRight", true);
-    await act(async () => root.unmount());
+    await screen.unmount();
     expect(onCommit).toHaveBeenLastCalledWith("#ff8000");
     await act(async () => vi.advanceTimersByTime(250));
     expect(onCommit).toHaveBeenCalledTimes(2);
-    root = createRoot(container);
   });
 });
 
 describe("theme color field", () => {
   it("batches native range changes into one commit per frame and keeps alpha", async () => {
-    const { onChange } = await renderThemeField("#ff000080");
+    await using screen = await renderThemeField("#ff000080");
+    const { onChange } = screen;
 
     // Both changes land in one task, so no animation frame can run between them.
     await act(async () => {
@@ -212,7 +210,8 @@ describe("theme color field", () => {
   });
 
   it("flushes the final drag color on release of the dragging pointer only", async () => {
-    const { onChange } = await renderThemeField("#ff000080");
+    await using screen = await renderThemeField("#ff000080");
+    const { onChange } = screen;
 
     // The drag runs in one task, so no animation frame can commit mid-drag.
     await act(async () => {
@@ -230,7 +229,8 @@ describe("theme color field", () => {
   });
 
   it("clamps out-of-bounds drags and flushes on cancellation and unmount", async () => {
-    const { onChange } = await renderThemeField("#ff000080");
+    await using screen = await renderThemeField("#ff000080");
+    const { onChange } = screen;
 
     await act(async () => {
       pointer(PLANE, "pointerdown", -0.5, -0.5);
@@ -240,14 +240,14 @@ describe("theme color field", () => {
 
     await act(async () => {
       pointer(PLANE, "pointerdown", 1.5, 1.5);
-      root.unmount();
+      await screen.unmount();
     });
     expect(onChange).toHaveBeenLastCalledWith("accent", "#00000080");
-    root = createRoot(container);
   });
 
   it("keeps the selected hue when a grey color is echoed back from theme settings", async () => {
-    const { onChange, echo } = await renderThemeField("#ff0000");
+    await using screen = await renderThemeField("#ff0000");
+    const { onChange, echo } = screen;
 
     await press(HUE, "ArrowRight", true);
     await act(async () => {

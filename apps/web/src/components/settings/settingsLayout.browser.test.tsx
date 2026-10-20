@@ -1,29 +1,29 @@
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { scrollToSettingsTarget } from "./settingsLayout";
 
 const PULSE = "settings-search-target-pulse";
 
-afterEach(() => {
-  document.body.replaceChildren();
-  vi.restoreAllMocks();
-});
-
 function mount(html: string) {
-  document.body.innerHTML = html;
-  return vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(() => {});
+  const container = document.createElement("div");
+  container.innerHTML = html;
+  document.body.append(container);
+  return { [Symbol.dispose]: () => container.remove() };
 }
 
 function reduceMotion(matches: boolean) {
-  vi.spyOn(window, "matchMedia").mockReturnValue({ matches } as MediaQueryList);
+  return vi.spyOn(window, "matchMedia").mockReturnValue({ matches } as MediaQueryList);
 }
 
 describe("settings search targets", () => {
   it("scrolls a section's header into view, focuses the section, and pulses until blur", () => {
-    reduceMotion(false);
-    const scrollIntoView = mount(
+    using _motion = reduceMotion(false);
+    using _fixture = mount(
       `<section id="providers" tabindex="-1"><h2>Providers</h2><p>Body</p></section>`,
     );
+    using scrollIntoView = vi
+      .spyOn(HTMLElement.prototype, "scrollIntoView")
+      .mockImplementation(() => {});
     const section = document.getElementById("providers")!;
 
     expect(scrollToSettingsTarget("providers")).toBe(true);
@@ -38,10 +38,11 @@ describe("settings search targets", () => {
   });
 
   it("restarts the pulse when the same destination is chosen again", () => {
-    reduceMotion(false);
-    mount(`<div id="word-wrap" tabindex="-1" class="${PULSE}"></div>`);
+    using _motion = reduceMotion(false);
+    using _fixture = mount(`<div id="word-wrap" tabindex="-1" class="${PULSE}"></div>`);
     const target = document.getElementById("word-wrap")!;
     const observer = new MutationObserver(() => {});
+    using _observer = { [Symbol.dispose]: () => observer.disconnect() };
     observer.observe(target, { attributeFilter: ["class"], attributeOldValue: true });
 
     scrollToSettingsTarget("word-wrap");
@@ -51,8 +52,11 @@ describe("settings search targets", () => {
   });
 
   it("does not animate the destination when reduced motion is requested", () => {
-    reduceMotion(true);
-    const scrollIntoView = mount(`<div id="word-wrap" tabindex="-1"></div>`);
+    using _motion = reduceMotion(true);
+    using _fixture = mount(`<div id="word-wrap" tabindex="-1"></div>`);
+    using scrollIntoView = vi
+      .spyOn(HTMLElement.prototype, "scrollIntoView")
+      .mockImplementation(() => {});
     const target = document.getElementById("word-wrap")!;
 
     expect(scrollToSettingsTarget("word-wrap")).toBe(true);
@@ -66,8 +70,8 @@ describe("settings search targets", () => {
     "fully reveals the row when the opening style clears: %s",
     async (phase) => {
       // Keep scrolling synchronous while the panel height transitions independently.
-      reduceMotion(true);
-      document.body.innerHTML = `
+      using _motion = reduceMotion(true);
+      using _fixture = mount(`
         <div id="viewport" style="height: 200px; overflow: auto; overflow-anchor: none">
           <div id="panel" data-slot="collapsible-panel" data-open data-starting-style
             style="height: 0; overflow: hidden; transition: height 200ms linear">
@@ -75,7 +79,7 @@ describe("settings search targets", () => {
             <div id="legacy-sidebar" tabindex="-1" style="height: 40px">Legacy sidebar</div>
             <div style="height: 60px"></div>
           </div>
-        </div>`;
+        </div>`);
       const viewport = document.getElementById("viewport")!;
       const panel = document.getElementById("panel")!;
       const target = document.getElementById("legacy-sidebar")!;
@@ -116,8 +120,8 @@ describe("settings search targets", () => {
   );
 
   it("keeps the newer search destination visible when an earlier panel finishes opening", async () => {
-    reduceMotion(true);
-    document.body.innerHTML = `
+    using _motion = reduceMotion(true);
+    using _fixture = mount(`
       <div id="viewport" style="height: 200px; overflow: auto; overflow-anchor: none">
         <div id="new-target" tabindex="-1" style="height: 40px">New target</div>
         <div style="height: 1000px"></div>
@@ -127,7 +131,7 @@ describe("settings search targets", () => {
           <div id="legacy-sidebar" tabindex="-1" style="height: 40px">Legacy sidebar</div>
           <div style="height: 60px"></div>
         </div>
-      </div>`;
+      </div>`);
     const panel = document.getElementById("panel")!;
     void panel.offsetHeight;
     panel.style.height = "600px";

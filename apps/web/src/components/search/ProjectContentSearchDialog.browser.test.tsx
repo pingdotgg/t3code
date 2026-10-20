@@ -1,8 +1,8 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { AuthFilesystemReadScope, EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
+
+import { act, render, type Screen } from "../../../test/render";
 
 const state = vi.hoisted(() => ({
   readScope: vi.fn(),
@@ -75,79 +75,69 @@ vi.mock(import("~/state/queries"), async (original) => {
 import { useRightPanelStore } from "~/rightPanelStore";
 import { ProjectContentSearchDialog } from "./ProjectContentSearchDialog";
 
-let root: Root;
-let container: HTMLDivElement;
-const onOpenChange = vi.fn();
-const openFile = vi.fn();
-
-beforeEach(() => {
+function setup() {
   state.access = { canReadFiles: true, isCheckingAccess: false };
   state.listeners.clear();
   state.readScope.mockReset().mockReturnValue(true);
-  openFile.mockClear();
-  onOpenChange.mockClear();
-  vi.spyOn(useRightPanelStore.getState(), "openFile").mockImplementation(openFile);
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-
-afterEach(async () => {
-  await act(() => root.unmount());
-  container.remove();
-  vi.restoreAllMocks();
-  vi.unstubAllGlobals();
-});
-
-const input = () => container.querySelector("input")!;
-const result = () => container.querySelector<HTMLButtonElement>("[data-content-search-result]");
-
-async function openSearch() {
-  await act(() => root.render(<ProjectContentSearchDialog onOpenChange={onOpenChange} />));
+  const openFile = vi.fn();
+  const onOpenChange = vi.fn();
+  const openFileSpy = vi
+    .spyOn(useRightPanelStore.getState(), "openFile")
+    .mockImplementation(openFile);
+  return { openFile, onOpenChange, [Symbol.dispose]: () => openFileSpy.mockRestore() };
 }
 
-async function type(text: string) {
+const input = (screen: Screen) => screen.container.querySelector("input")!;
+const result = (screen: Screen) =>
+  screen.container.querySelector<HTMLButtonElement>("[data-content-search-result]");
+
+function openSearch(onOpenChange: (open: boolean) => void) {
+  return render(<ProjectContentSearchDialog onOpenChange={onOpenChange} />);
+}
+
+async function type(screen: Screen, text: string) {
   await act(async () => {
     const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-    setValue.call(input(), text);
-    input().dispatchEvent(new Event("input", { bubbles: true }));
+    setValue.call(input(screen), text);
+    input(screen).dispatchEvent(new Event("input", { bubbles: true }));
   });
 }
 
 it("enables search after access resolves and opens a result in its own environment", async () => {
+  using env = setup();
   state.access = { canReadFiles: false, isCheckingAccess: true };
-  await openSearch();
-  expect(input().disabled).toBe(true);
-  expect(container.textContent).toContain("Checking file access…");
+  await using screen = await openSearch(env.onOpenChange);
+  expect(input(screen).disabled).toBe(true);
+  expect(screen.container.textContent).toContain("Checking file access…");
 
   await act(() => setAccess({ canReadFiles: true, isCheckingAccess: false }));
-  expect(input().disabled).toBe(false);
-  await type("match");
-  await act(async () => result()!.click());
+  expect(input(screen).disabled).toBe(false);
+  await type(screen, "match");
+  await act(async () => result(screen)!.click());
 
   expect(state.readScope).toHaveBeenCalledWith(target.environmentId, AuthFilesystemReadScope);
-  expect(openFile).toHaveBeenCalledWith(target.threadRef, "src/index.ts", 3);
-  expect(onOpenChange).toHaveBeenCalledWith(false);
+  expect(env.openFile).toHaveBeenCalledWith(target.threadRef, "src/index.ts", 3);
+  expect(env.onOpenChange).toHaveBeenCalledWith(false);
 });
 
 it.each(["pointer", "keyboard"])(
   "rechecks access before a retained %s action opens a result",
   async (action) => {
-    await openSearch();
-    await type("match");
+    using env = setup();
+    await using screen = await openSearch(env.onOpenChange);
+    await type(screen, "match");
 
     state.readScope.mockReturnValue(false);
     await act(async () => {
-      if (action === "pointer") result()!.click();
+      if (action === "pointer") result(screen)!.click();
       else
-        input().dispatchEvent(
+        input(screen).dispatchEvent(
           new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
         );
     });
 
     expect(state.readScope).toHaveBeenCalled();
-    expect(openFile).not.toHaveBeenCalled();
-    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(env.openFile).not.toHaveBeenCalled();
+    expect(env.onOpenChange).not.toHaveBeenCalled();
   },
 );

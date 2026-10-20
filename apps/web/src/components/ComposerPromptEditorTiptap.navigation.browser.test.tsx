@@ -1,52 +1,37 @@
 import type { Editor } from "@tiptap/core";
 import { TextSelection } from "@tiptap/pm/state";
-import { act, createRef } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { createRef } from "react";
+import { describe, expect, it, vi } from "vite-plus/test";
 
+import { act, render } from "../../test/render";
 import { serializeEditorDoc } from "~/composer-rich-text-doc";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
 
 const draft =
   "> **Assistant and reasoning text still save intermediate full snapshots**, using the existing 50 ms batching. Compaction still preserves their `turn-item.updated` events. [Code](/Users/yashsingh/p/projects/t3code/apps/server/src/orchestration-v2/ProjectionMaintenance.ts:235)";
 
-let root: Root;
-let container: HTMLDivElement;
-
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  vi.restoreAllMocks();
-  vi.unstubAllGlobals();
-});
-
-async function mountEditor(value: string, richTextEnabled = true) {
-  await act(async () =>
-    root.render(
-      <ComposerPromptEditor
-        editorRef={createRef<ComposerPromptEditorHandle>()}
-        value={value}
-        cursor={0}
-        richTextEnabled={richTextEnabled}
-        contextRecords={new Map()}
-        skills={[]}
-        disabled={false}
-        placeholder=""
-        onChange={() => {}}
-        onPaste={() => {}}
-      />,
-    ),
+async function mountEditor(value: string, richTextEnabled = true, container?: HTMLElement) {
+  const screen = await render(
+    <ComposerPromptEditor
+      editorRef={createRef<ComposerPromptEditorHandle>()}
+      value={value}
+      cursor={0}
+      richTextEnabled={richTextEnabled}
+      contextRecords={new Map()}
+      skills={[]}
+      disabled={false}
+      placeholder=""
+      onChange={() => {}}
+      onPaste={() => {}}
+    />,
+    container ? { container } : {},
   );
-  const element = container.querySelector<HTMLElement & { editor: Editor }>(".tiptap");
-  if (!element) throw new Error("Composer did not mount");
-  return element.editor;
+  const element = screen.container.querySelector<HTMLElement & { editor: Editor }>(".tiptap");
+  if (!element) {
+    await screen[Symbol.asyncDispose]();
+    throw new Error("Composer did not mount");
+  }
+  return Object.assign(screen, { editor: element.editor });
 }
 
 function press(editor: Editor, key: string, options: KeyboardEventInit = {}) {
@@ -57,7 +42,8 @@ function press(editor: Editor, key: string, options: KeyboardEventInit = {}) {
 }
 
 it("keeps Up before the opening bold marker in a quote, including while typing", async () => {
-  const editor = await mountEditor(draft);
+  await using screen = await mountEditor(draft);
+  const { editor } = screen;
   const position = editor.state.selection.from;
   await act(async () => {
     editor.view.focus();
@@ -77,7 +63,8 @@ it("keeps Up before the opening bold marker in a quote, including while typing",
 });
 
 it("keeps Down after a closing marker, including while typing", async () => {
-  const editor = await mountEditor("> **bold**");
+  await using screen = await mountEditor("> **bold**");
+  const { editor } = screen;
   await act(async () => {
     editor.view.dispatch(editor.state.tr.setSelection(TextSelection.atEnd(editor.state.doc)));
     expect(press(editor, "ArrowDown")).toBe(true);
@@ -88,7 +75,8 @@ it("keeps Down after a closing marker, including while typing", async () => {
 });
 
 it("leaves vertical navigation between paragraphs to the browser", async () => {
-  const editor = await mountEditor("**first**\n**second**");
+  await using screen = await mountEditor("**first**\n**second**");
+  const { editor } = screen;
   await act(async () => {
     const first = editor.state.doc.child(0);
     editor.commands.setTextSelection(first.nodeSize + 1);
@@ -101,7 +89,8 @@ it("leaves vertical navigation between paragraphs to the browser", async () => {
 it.each([{ shiftKey: true }, { altKey: true }, { ctrlKey: true }, { isComposing: true }])(
   "preserves modified Up behavior for %j",
   async (options) => {
-    const editor = await mountEditor(draft);
+    await using screen = await mountEditor(draft);
+    const { editor } = screen;
     await act(async () => {
       expect(press(editor, "ArrowUp", options)).toBe(false);
       editor.commands.insertContent("x");
@@ -111,10 +100,11 @@ it.each([{ shiftKey: true }, { altKey: true }, { ctrlKey: true }, { isComposing:
 );
 
 describe("macOS boundary navigation", () => {
-  beforeEach(() => {
-    vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  function macContainer() {
+    const container = document.createElement("div");
     container.style.width = "600px";
-  });
+    return container;
+  }
 
   const markdown = String.raw`Fixed the top padding to 16px and updated the offline index and ZIP.
 
@@ -129,7 +119,9 @@ The original Fall 2022, 2023, and 2024 sample exams also have circle-constrained
   it.each(["ArrowRight", "ArrowDown"])(
     "keeps Command-%s after the closing marker in the pasted draft",
     async (key) => {
-      const editor = await mountEditor(markdown);
+      using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+      await using screen = await mountEditor(markdown, true, macContainer());
+      const { editor } = screen;
       await act(async () => {
         editor.view.dispatch(editor.state.tr.setSelection(TextSelection.atEnd(editor.state.doc)));
         editor.view.focus();
@@ -156,7 +148,9 @@ The original Fall 2022, 2023, and 2024 sample exams also have circle-constrained
   it.each(["ArrowRight", "ArrowDown"])(
     "moves Command-%s from inside bold to outside its closing marker",
     async (key) => {
-      const editor = await mountEditor("**bold**");
+      using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+      await using screen = await mountEditor("**bold**", true, macContainer());
+      const { editor } = screen;
       await act(async () => {
         editor.commands.setTextSelection(3);
         editor.view.focus();
@@ -168,7 +162,9 @@ The original Fall 2022, 2023, and 2024 sample exams also have circle-constrained
   );
 
   it.each(["ArrowLeft", "ArrowUp"])("moves Command-%s before the opening marker", async (key) => {
-    const editor = await mountEditor("**bold**");
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+    await using screen = await mountEditor("**bold**", true, macContainer());
+    const { editor } = screen;
     await act(async () => {
       editor.commands.setTextSelection(3);
       editor.view.focus();
@@ -181,7 +177,9 @@ The original Fall 2022, 2023, and 2024 sample exams also have circle-constrained
   it.each(["ArrowRight", "ArrowDown"])(
     "extends Shift-Command-%s to the end without collapsing the selection",
     async (key) => {
-      const editor = await mountEditor("**bold**");
+      using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+      await using screen = await mountEditor("**bold**", true, macContainer());
+      const { editor } = screen;
       await act(async () => {
         editor.commands.setTextSelection(3);
         editor.view.focus();
@@ -195,8 +193,9 @@ The original Fall 2022, 2023, and 2024 sample exams also have circle-constrained
   );
 
   it("leaves Command-arrow navigation to the browser on other platforms", async () => {
-    vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
-    const editor = await mountEditor("**bold**");
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+    await using screen = await mountEditor("**bold**", true, macContainer());
+    const { editor } = screen;
     await act(async () => {
       editor.view.focus();
       expect(press(editor, "ArrowDown", { metaKey: true })).toBe(false);
@@ -205,7 +204,8 @@ The original Fall 2022, 2023, and 2024 sample exams also have circle-constrained
 });
 
 it("leaves literal Markdown navigation to the browser in plain mode", async () => {
-  const editor = await mountEditor(draft, false);
+  await using screen = await mountEditor(draft, false);
+  const { editor } = screen;
   await act(async () => {
     editor.commands.setTextSelection(5);
     expect(press(editor, "ArrowUp")).toBe(false);

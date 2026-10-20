@@ -1,64 +1,47 @@
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
+import { render, type Screen } from "../../../test/render";
 import { SecretInput } from "./SecretInput";
 
-let root: Root;
-let container: HTMLDivElement;
+const input = (screen: Screen) => screen.container.querySelector("input")!;
 
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
-
-const input = () => container.querySelector("input")!;
-
-async function edit(value: string) {
-  await userEvent.clear(input());
-  if (value) await userEvent.type(input(), value);
+async function edit(screen: Screen, value: string) {
+  await userEvent.clear(input(screen));
+  if (value) await userEvent.type(input(screen), value);
   await userEvent.click(document.body);
 }
 
 describe("SecretInput", () => {
   it("preserves a configured secret on empty edits and commits a replacement", async () => {
     const onCommit = vi.fn();
-    await act(async () => root.render(<SecretInput configured value="" onCommit={onCommit} />));
-    expect(input().type).toBe("password");
+    await using screen = await render(<SecretInput configured value="" onCommit={onCommit} />);
+    expect(input(screen).type).toBe("password");
 
-    await userEvent.click(input());
+    await userEvent.click(input(screen));
     await userEvent.click(document.body);
     expect(onCommit).not.toHaveBeenCalled();
 
-    await edit("replacement");
+    await edit(screen, "replacement");
     expect(onCommit).toHaveBeenCalledExactlyOnceWith("replacement");
-    expect(input().value).toBe("");
+    expect(input(screen).value).toBe("");
   });
 
   it("allows clearing an unsaved draft", async () => {
     const onCommit = vi.fn();
-    await act(async () => root.render(<SecretInput value="draft" onCommit={onCommit} />));
-    await edit("");
+    await using screen = await render(<SecretInput value="draft" onCommit={onCommit} />);
+    await edit(screen, "");
     expect(onCommit).toHaveBeenCalledExactlyOnceWith("");
   });
 
   it("keeps an in-progress replacement when settings refresh", async () => {
     const onCommit = vi.fn();
-    const render = () => root.render(<SecretInput configured value="" onCommit={onCommit} />);
-    await act(async () => render());
+    const ui = () => <SecretInput configured value="" onCommit={onCommit} />;
+    await using screen = await render(ui());
 
-    await userEvent.type(input(), "replacement");
-    await act(async () => render());
-    expect(input().value).toBe("replacement");
+    await userEvent.type(input(screen), "replacement");
+    await screen.rerender(ui());
+    expect(input(screen).value).toBe("replacement");
 
     await userEvent.keyboard("{Enter}");
     expect(onCommit).toHaveBeenCalledExactlyOnceWith("replacement");

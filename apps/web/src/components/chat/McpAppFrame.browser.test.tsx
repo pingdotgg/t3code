@@ -1,7 +1,5 @@
 import { EnvironmentId, ThreadId, TurnItemId } from "@t3tools/contracts";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
@@ -75,55 +73,38 @@ vi.mock(import("../../hooks/useHtmlRenderTheme"), async (original) => ({
   useHtmlRenderTheme: (() => ({ appearance: "light", variables: {} })) as never,
 }));
 
+import { render as renderUi } from "../../../test/render";
 import { McpAppFrame } from "./McpAppFrame";
 
-let root: Root | undefined;
-let skew = 0;
-let answers: string[] = [];
-let answered: (() => void) | undefined;
-const onProbe = (event: MessageEvent) => {
-  const probe = (event.data as { readonly probe?: unknown } | null)?.probe;
-  if (typeof probe !== "string") return;
-  answers.push(probe);
-  answered?.();
-};
-const nextAnswer = async (action: () => Promise<unknown>) => {
-  const seen = answers.length;
-  const answer = new Promise<string>((resolve) => {
-    answered = () => {
-      if (answers.length > seen) resolve(answers[seen]!);
-    };
-  });
-  await action();
-  return answer;
-};
-
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  answers = [];
-  answered = undefined;
-  skew = 0;
+function setup() {
+  let skew = 0;
   // Advance the host cooldown without manufacturing browser user activation.
   const now = performance.now.bind(performance);
-  vi.spyOn(performance, "now").mockImplementation(() => now() + skew);
+  const clock = vi.spyOn(performance, "now").mockImplementation(() => now() + skew);
+  const answers: string[] = [];
+  let answered: (() => void) | undefined;
+  const onProbe = (event: MessageEvent) => {
+    const probe = (event.data as { readonly probe?: unknown } | null)?.probe;
+    if (typeof probe !== "string") return;
+    answers.push(probe);
+    answered?.();
+  };
   window.addEventListener("message", onProbe);
-});
-afterEach(async () => {
-  window.removeEventListener("message", onProbe);
-  if (root !== undefined) await act(async () => root?.unmount());
-  root = undefined;
-  document.body.replaceChildren();
-  vi.restoreAllMocks();
-  vi.unstubAllGlobals();
-});
+  const nextAnswer = async (action: () => Promise<unknown>) => {
+    const seen = answers.length;
+    const answer = new Promise<string>((resolve) => {
+      answered = () => {
+        if (answers.length > seen) resolve(answers[seen]!);
+      };
+    });
+    await action();
+    return answer;
+  };
 
-const isFullscreen = () => document.querySelector("[data-mcp-app-fullscreen]") !== null;
+  const isFullscreen = () => document.querySelector("[data-mcp-app-fullscreen]") !== null;
 
-const renderApp = async () => {
-  const container = document.body.appendChild(document.createElement("div"));
-  root = createRoot(container);
-  await act(async () =>
-    root?.render(
+  const renderApp = async () => {
+    return renderUi(
       <McpAppFrame
         environmentId={EnvironmentId.make("env")}
         threadId={ThreadId.make("thread")}
@@ -133,25 +114,53 @@ const renderApp = async () => {
         app={{ attachmentId: "app", server: "srv", tool: "show", resourceUri: "ui://srv/app" }}
         onSendMessage={undefined}
       />,
-    ),
-  );
-};
+    );
+  };
 
-const retry = () =>
-  nextAnswer(async () => {
-    document.querySelector("iframe")!.contentWindow!.postMessage("retry", "*");
-  });
+  const retry = () =>
+    nextAnswer(async () => {
+      document.querySelector("iframe")!.contentWindow!.postMessage("retry", "*");
+    });
+
+  return {
+    renderApp,
+    nextAnswer,
+    retry,
+    isFullscreen,
+    advance: (ms: number) => {
+      skew += ms;
+    },
+    [Symbol.dispose]() {
+      window.removeEventListener("message", onProbe);
+      clock.mockRestore();
+    },
+  };
+}
 
 it("keeps load and idle retries inline even after the page-input cooldown", async () => {
-  expect(await nextAnswer(renderApp)).toBe("load:inline");
-  skew += 5_000;
+  using fixture = setup();
+  await using screens = new AsyncDisposableStack();
+  const { renderApp, nextAnswer, retry, isFullscreen, advance } = fixture;
+  expect(
+    await nextAnswer(async () => {
+      screens.use(await renderApp());
+    }),
+  ).toBe("load:inline");
+  advance(5_000);
   expect(await retry()).toBe("retry:inline");
   expect(await retry()).toBe("retry:inline");
   expect(isFullscreen()).toBe(false);
 });
 
 it("allows an app click immediately after loading on an idle page", async () => {
-  expect(await nextAnswer(renderApp)).toBe("load:inline");
+  using fixture = setup();
+  await using screens = new AsyncDisposableStack();
+  const { renderApp, nextAnswer, isFullscreen } = fixture;
+  expect(
+    await nextAnswer(async () => {
+      screens.use(await renderApp());
+    }),
+  ).toBe("load:inline");
   const appButton = page
     .frameLocator(page.getByTitle("srv app"))
     .getByRole("button", { name: "Open full screen" });
@@ -160,13 +169,17 @@ it("allows an app click immediately after loading on an idle page", async () => 
 });
 
 it("opens full screen only from a tap in the app, never from activation the page got elsewhere", async () => {
+  using fixture = setup();
+  await using screens = new AsyncDisposableStack();
+  const { renderApp, nextAnswer, isFullscreen, advance } = fixture;
   const appButton = page
     .frameLocator(page.getByTitle("srv app"))
     .getByRole("button", { name: "Open full screen" });
   const elsewhere = document.body.appendChild(document.createElement("button"));
+  using _elsewhere = { [Symbol.dispose]: () => elsewhere.remove() };
   elsewhere.textContent = "Elsewhere";
   const tapApp = async () => {
-    skew += 5_000;
+    advance(5_000);
     expect(await nextAnswer(() => userEvent.click(appButton))).toBe("tap:fullscreen");
     expect(isFullscreen()).toBe(true);
   };
@@ -174,7 +187,7 @@ it("opens full screen only from a tap in the app, never from activation the page
   // The click that opens a thread still activates the page as its app loads.
   const load = nextAnswer(async () => {
     await userEvent.click(elsewhere);
-    await renderApp();
+    screens.use(await renderApp());
   });
   expect(await load).toBe("load:inline");
   expect(isFullscreen()).toBe(false);
@@ -184,7 +197,7 @@ it("opens full screen only from a tap in the app, never from activation the page
   expect(await nextAnswer(() => userEvent.click(exit))).toBe("exit:inline");
   expect(isFullscreen()).toBe(false);
 
-  skew += 5_000;
+  advance(5_000);
   expect(await nextAnswer(() => userEvent.click(elsewhere))).toBe("blur:inline");
   expect(isFullscreen()).toBe(false);
 

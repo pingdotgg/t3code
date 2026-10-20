@@ -1,3 +1,4 @@
+import { act, render } from "../../../test/render";
 import {
   EnvironmentId,
   ProviderDriverKind,
@@ -6,9 +7,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import type { LimitPresentations } from "@t3tools/shared/usageLimits";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 // Real pointer clicks need the dialog's stacking styles to land above Base UI's modal overlay.
@@ -70,27 +69,12 @@ const presentations = (resetsAt: string | undefined, availableCount: number): Li
     ],
   ]);
 
-let root: Root;
-let container: HTMLDivElement;
-
-beforeEach(async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+function setup() {
   consume.mockReset();
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-  await act(() =>
-    root.render(
-      <UsageLimitsPooled presentations={presentations("2026-09-03T14:00:00Z", 1)} now={0} />,
-    ),
-  );
-});
-
-afterEach(async () => {
-  await act(() => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
+}
+const initial = () => (
+  <UsageLimitsPooled presentations={presentations("2026-09-03T14:00:00Z", 1)} now={0} />
+);
 
 async function click(label: string) {
   const button = Array.from(document.querySelectorAll("button")).find(
@@ -134,6 +118,8 @@ it.each([
     text: "Codex rejected the credit.",
   },
 ])("keeps pending feedback outside the closed popup until $label", async ({ result, text }) => {
+  setup();
+  await using _screen = await render(initial());
   let answer!: (result: unknown) => void;
   consume.mockReturnValue(new Promise((resolve) => (answer = resolve)));
   await click("Alpha:");
@@ -160,6 +146,9 @@ it.each([
 });
 
 it("omits an empty reset plate but keeps countdowns and banked credits visible", async () => {
+  setup();
+  await using screen = await render(initial());
+
   await page.viewport(1440, 900);
   const now = Date.parse("2026-09-03T11:00:00Z");
   const segment = page.getByRole("button", { name: /^Alpha:/ });
@@ -168,13 +157,13 @@ it("omits an empty reset plate but keeps countdowns and banked credits visible",
     segment.element().querySelector<HTMLSpanElement>('[class~="bg-background/85"]');
 
   await act(() =>
-    root.render(<UsageLimitsPooled presentations={presentations(undefined, 0)} now={now} />),
+    screen.rerender(<UsageLimitsPooled presentations={presentations(undefined, 0)} now={now} />),
   );
   await expect.element(segment.getByText("100%", { exact: true })).toBeVisible();
   expect(plate()).toBeNull();
 
   await act(() =>
-    root.render(
+    screen.rerender(
       <UsageLimitsPooled presentations={presentations("2026-09-03T14:00:00Z", 0)} now={now} />,
     ),
   );
@@ -182,13 +171,16 @@ it("omits an empty reset plate but keeps countdowns and banked credits visible",
   expect(plate()?.textContent).toBe("↻ 3h 0m");
 
   await act(() =>
-    root.render(<UsageLimitsPooled presentations={presentations(undefined, 1)} now={now} />),
+    screen.rerender(<UsageLimitsPooled presentations={presentations(undefined, 1)} now={now} />),
   );
   await expect.element(plate()).toBeVisible();
   expect(plate()?.textContent).toBe("1");
 });
 
 it("moves the one limit popover between windows on hover", async () => {
+  setup();
+  await using screen = await render(initial());
+  const { container } = screen;
   const [environmentId, presentation] = [...presentations("2026-09-03T14:00:00Z", 1)][0]!;
   const serverConfig = presentation.serverConfig!;
   const provider = serverConfig.providers[0]!;
@@ -217,7 +209,7 @@ it("moves the one limit popover between windows on hover", async () => {
   ]);
   // Room above the bars so the popover opens there instead of flipping over the next card.
   container.style.paddingTop = "20rem";
-  await act(() => root.render(<UsageLimitsPooled presentations={twoWindows} now={0} />));
+  await act(() => screen.rerender(<UsageLimitsPooled presentations={twoWindows} now={0} />));
   const segment = (label: string) =>
     Array.from(document.querySelectorAll("button")).find((node) =>
       node.getAttribute("aria-label")?.startsWith(label),
@@ -244,17 +236,20 @@ it("moves the one limit popover between windows on hover", async () => {
   await expect.poll(popups).toEqual([expect.stringContaining("Left60%")]);
 
   await expectDismissedInPlace(() =>
-    act(() => root.render(<UsageLimitsPooled presentations={new Map()} now={0} />)),
+    act(() => screen.rerender(<UsageLimitsPooled presentations={new Map()} now={0} />)),
   );
   await act(() => userEvent.hover(container, { position: { x: 4, y: 4 } }));
 
-  await act(() => root.render(<UsageLimitsPooled presentations={twoWindows} now={0} />));
+  await act(() => screen.rerender(<UsageLimitsPooled presentations={twoWindows} now={0} />));
   await expect.poll(popups).toEqual([]);
   await act(() => userEvent.click(segment("Alpha: 60%")));
   await expect.poll(popups).toEqual([expect.stringContaining("Left60%")]);
 });
 
 it("closes an open source-account popover when reset availability replaces its trigger", async () => {
+  setup();
+  await using screen = await render(initial());
+
   const [environmentId, presentation] = [...presentations("2026-09-03T14:00:00Z", 1)][0]!;
   const provider = presentation.serverConfig!.providers[0]!;
   const source = (nextCreditId?: string): LimitPresentations =>
@@ -291,18 +286,20 @@ it("closes an open source-account popover when reset availability replaces its t
       ],
     ]);
   const popup = () => document.querySelector('[data-slot="popover-popup"]');
-  await act(() => root.render(<UsageLimitsPooled presentations={source("credit-1")} now={0} />));
+  await act(() =>
+    screen.rerender(<UsageLimitsPooled presentations={source("credit-1")} now={0} />),
+  );
   await click("Alpha: 60%");
   await expect.poll(() => popup()?.textContent).toContain("Use reset");
 
   await expectDismissedInPlace(() =>
-    act(() => root.render(<UsageLimitsPooled presentations={source()} now={0} />)),
+    act(() => screen.rerender(<UsageLimitsPooled presentations={source()} now={0} />)),
   );
   await click("Alpha: 60%");
   await expect.poll(() => popup()?.textContent).toContain("Left60%");
 
   await expectDismissedInPlace(() =>
-    act(() => root.render(<UsageLimitsPooled presentations={source("credit-2")} now={0} />)),
+    act(() => screen.rerender(<UsageLimitsPooled presentations={source("credit-2")} now={0} />)),
   );
   await click("Alpha: 60%");
   await expect.poll(() => popup()?.textContent).toContain("Use reset");

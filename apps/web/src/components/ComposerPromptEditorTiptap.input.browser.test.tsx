@@ -10,9 +10,10 @@ import {
 import { userEvent } from "vite-plus/test/browser";
 import type { ServerProviderSkill } from "@t3tools/contracts";
 import type { Editor } from "@tiptap/core";
-import { act, createElement, createRef, useEffect, useState } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { createElement, createRef, useEffect, useState } from "react";
+import { describe, expect, it, vi } from "vite-plus/test";
+
+import { act, render } from "../../test/render";
 
 import { detectComposerTrigger } from "~/composer-logic";
 import { serializeEditorDoc } from "~/composer-rich-text-doc";
@@ -21,22 +22,6 @@ import {
   type ComposerPromptEditorHandle,
   type ComposerPromptEditorProps,
 } from "./ComposerPromptEditor";
-
-let root: Root;
-let container: HTMLDivElement;
-
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
 
 const babysit: ServerProviderSkill = {
   name: "babysit",
@@ -75,25 +60,37 @@ function Composer({
   );
 }
 
-async function mountEditor(
+function composer(
   value: string,
   richTextEnabled = true,
   skills: ReadonlyArray<ServerProviderSkill> = [],
   onChange?: ComposerPromptEditorProps["onChange"],
 ) {
-  await act(async () =>
-    root.render(
-      <Composer
-        value={value}
-        richTextEnabled={richTextEnabled}
-        skills={skills}
-        onChange={onChange}
-      />,
-    ),
+  return (
+    <Composer value={value} richTextEnabled={richTextEnabled} skills={skills} onChange={onChange} />
   );
+}
+
+function editorIn(container: HTMLElement) {
   const element = container.querySelector<HTMLElement & { editor: Editor }>(".tiptap");
   if (!element) throw new Error("Composer did not mount");
   return element.editor;
+}
+
+async function mountEditor(...props: Parameters<typeof composer>) {
+  await using stack = new AsyncDisposableStack();
+  const screen = stack.use(await render(composer(...props)));
+  const editor = editorIn(screen.container);
+  const environment = stack.move();
+  return Object.assign(screen, {
+    [Symbol.asyncDispose]: () => environment.disposeAsync(),
+    editor,
+    /** Rerenders the same composer with new props, as a parent would. */
+    update: async (...next: Parameters<typeof composer>) => {
+      await screen.rerender(composer(...next));
+      return editorIn(screen.container);
+    },
+  });
 }
 
 async function replaceDomText(editor: Editor, text: string, isComposing = false) {
@@ -140,7 +137,8 @@ it.each([
   { value: "clean _build and node", code: [] },
   { value: "clean `_build` and `node", code: ["_build"] },
 ])("keeps a typed underscore literal after $value", async ({ value, code }) => {
-  const editor = await mountEditor(value);
+  await using screen = await mountEditor(value);
+  const { editor } = screen;
   await act(async () => {
     editor.commands.focus("end");
     const { from, to } = editor.state.selection;
@@ -152,7 +150,8 @@ it.each([
 });
 
 it("still italicizes text when typing a closing asterisk", async () => {
-  const editor = await mountEditor("clean *build");
+  await using screen = await mountEditor("clean *build");
+  const { editor } = screen;
   await act(async () => {
     editor.commands.focus("end");
     const { from, to } = editor.state.selection;
@@ -166,7 +165,8 @@ it.each([false, true])(
   "composes an umlaut without wrapping the preedit text (rich text: %s)",
   async (richTextEnabled) => {
     // The middle dot stands in for the provisional text shown by the Compose key.
-    const editor = await mountEditor("·", richTextEnabled);
+    await using screen = await mountEditor("·", richTextEnabled);
+    const { editor } = screen;
     await act(async () => {
       editor.view.focus();
       editor.view.dom.dispatchEvent(new CompositionEvent("compositionstart"));
@@ -182,7 +182,8 @@ it.each([false, true])(
 );
 
 it("commits a composed quote without surrounding the preedit text", async () => {
-  const editor = await mountEditor("·");
+  await using screen = await mountEditor("·");
+  const { editor } = screen;
   await act(async () => {
     editor.view.focus();
     editor.view.dom.dispatchEvent(new CompositionEvent("compositionstart"));
@@ -193,7 +194,8 @@ it("commits a composed quote without surrounding the preedit text", async () => 
 });
 
 it("lets composition replace selected text without surrounding it", async () => {
-  const editor = await mountEditor("word");
+  await using screen = await mountEditor("word");
+  const { editor } = screen;
   await act(async () => {
     editor.commands.setTextSelection({ from: 1, to: 5 });
     editor.view.dom.dispatchEvent(new CompositionEvent("compositionstart"));
@@ -203,7 +205,8 @@ it("lets composition replace selected text without surrounding it", async () => 
 });
 
 it("replaces text outside the selected range without surrounding it", async () => {
-  const editor = await mountEditor("word");
+  await using screen = await mountEditor("word");
+  const { editor } = screen;
   await act(async () => {
     editor.commands.setTextSelection({ from: 1, to: 5 });
     typeText(editor, 2, 3, '"');
@@ -214,7 +217,8 @@ it("replaces text outside the selected range without surrounding it", async () =
 it.each([false, true])(
   "still surrounds selected text with quotes (rich text: %s)",
   async (richTextEnabled) => {
-    const editor = await mountEditor("word", richTextEnabled);
+    await using screen = await mountEditor("word", richTextEnabled);
+    const { editor } = screen;
     await act(async () => {
       editor.commands.setTextSelection({ from: 1, to: 5 });
       editor.view.focus();
@@ -226,7 +230,8 @@ it.each([false, true])(
 
 it("keeps unknown dollar names editable when restoring and pasting a draft", async () => {
   const value = "echo $HOME $PATH $anything $notaskill $20 $20k $babysit ";
-  const editor = await mountEditor(value, true, [babysit]);
+  await using screen = await mountEditor(value, true, [babysit]);
+  const { editor } = screen;
   expect(editor.state.doc.textContent).toBe(value.replace("$babysit", ""));
   expect(serializeEditorDoc(editor.state.doc).value).toBe(value);
   await act(async () => {
@@ -246,7 +251,13 @@ it("keeps unknown dollar names editable when restoring and pasting a draft", asy
 
 it("keeps skill queries active before whitespace and line breaks, suppressing only real chips", async () => {
   const onChange = vi.fn<ComposerPromptEditorProps["onChange"]>();
-  const editor = await mountEditor("use  now\nfirst \n$babysit tail", true, [babysit], onChange);
+  await using screen = await mountEditor(
+    "use  now\nfirst \n$babysit tail",
+    true,
+    [babysit],
+    onChange,
+  );
+  const { editor } = screen;
   const trigger = () => {
     const [value, , expandedCursor, suppressTrigger] = onChange.mock.lastCall!;
     return suppressTrigger ? null : detectComposerTrigger(value, expandedCursor);
@@ -284,16 +295,17 @@ it("keeps skill queries active before whitespace and line breaks, suppressing on
 
 it("keeps the caret inside unknown dollar text across rich and plain remounts", async () => {
   const value = "echo $HOME now";
-  let editor = await mountEditor(value);
+  await using screen = await mountEditor(value);
+  let { editor } = screen;
   await act(async () => {
     editor.commands.setTextSelection("echo $HO".length + 1);
   });
-  editor = await mountEditor(value, false);
+  editor = await screen.update(value, false);
   await act(async () => {
     editor.commands.insertContent("X");
   });
   expect(serializeEditorDoc(editor.state.doc).value).toBe("echo $HOXME now");
-  editor = await mountEditor(value, true);
+  editor = await screen.update(value, true);
   await act(async () => {
     editor.commands.insertContent("Y");
   });
@@ -304,18 +316,19 @@ it("reconciles provider skills and metadata without losing formatting, caret, or
   const value = "run **use $babysit now** then $HOME";
   const disabled = { ...babysit, enabled: false };
   const agentOnly = { ...babysit, userInvocable: false };
-  const editor = await mountEditor(value, true, [disabled]);
+  await using screen = await mountEditor(value, true, [disabled]);
+  const { editor } = screen;
   expect.soft(editor.state.doc.textContent).toBe("run use $babysit now then $HOME");
-  await mountEditor(value, true, [agentOnly]);
+  await screen.update(value, true, [agentOnly]);
   expect.soft(editor.state.doc.textContent).toBe("run use $babysit now then $HOME");
   await act(async () => {
     editor.commands.setTextSelection("run use $baby".length + 1);
   });
-  await mountEditor(value, true, [disabled, babysit]);
+  await screen.update(value, true, [disabled, babysit]);
   expect(editor.state.doc.textContent).toBe("run use  now then $HOME");
   const chip = serializeEditorDoc(editor.state.doc).runs.find((run) => run.kind === "token")!;
   expect(editor.state.selection.from).toBe(chip.pmPos + 1);
-  await mountEditor(value, true, [disabled]);
+  await screen.update(value, true, [disabled]);
   expect.soft(editor.state.doc.textContent).toBe("run use $babysit now then $HOME");
   expect(serializeEditorDoc(editor.state.doc).value).toBe(value);
   await act(async () => {
@@ -328,25 +341,25 @@ it("reconciles provider skills and metadata without losing formatting, caret, or
   expect(serializeEditorDoc(editor.state.doc).value).toBe(value);
   expect(editor.state.doc.textContent).toBe("run use $babysit now then $HOME");
 
-  await mountEditor(value, true, [babysit]);
+  await screen.update(value, true, [babysit]);
   await act(async () => {
     editor.commands.deleteRange({ from: chip.pmPos, to: chip.pmPos + 1 });
   });
-  await mountEditor(value, true, [agentOnly]);
+  await screen.update(value, true, [agentOnly]);
   await act(async () => {
     editor.commands.undo();
   });
   expect(editor.state.doc.textContent).toBe("run use $babysit now then $HOME");
   expect(serializeEditorDoc(editor.state.doc).value).toBe(value);
 
-  await mountEditor(value, true, [{ ...babysit, description: "Previous provider description" }]);
+  await screen.update(value, true, [{ ...babysit, description: "Previous provider description" }]);
   await act(async () => {
-    container
+    screen.container
       .querySelector<HTMLButtonElement>('[aria-label="Skill Babysit. Show details"]')!
       .click();
   });
   expect(document.body.textContent).toContain("Previous provider description");
-  await mountEditor(value, true, [
+  await screen.update(value, true, [
     { ...disabled, displayName: "Disabled Babysit" },
     {
       ...babysit,
@@ -354,11 +367,11 @@ it("reconciles provider skills and metadata without losing formatting, caret, or
       shortDescription: "  Current short description  ",
     },
   ]);
-  expect(container.textContent).toContain("Current Babysit");
+  expect(screen.container.textContent).toContain("Current Babysit");
   expect(document.body.textContent).toContain("Current short description");
   expect(document.body.textContent).not.toContain("Previous provider description");
-  await mountEditor(value, true, [{ ...babysit, displayName: "Current Babysit" }]);
-  expect(container.textContent).toContain("Current Babysit");
+  await screen.update(value, true, [{ ...babysit, displayName: "Current Babysit" }]);
+  expect(screen.container.textContent).toContain("Current Babysit");
   expect(document.body.textContent).not.toContain("Current short description");
   expect(document.body.textContent).toContain("No description is available for this skill.");
   expect(document.body.textContent).not.toContain("Previous provider description");
@@ -431,18 +444,14 @@ describe("composer context undo lifetime", () => {
       return createElement(ComposerPromptEditor, editorProps);
     }
 
-    const render = async (targetKey: string) => {
-      await act(async () => root.render(createElement(Composer, { targetKey })));
-    };
-    const editor = () => {
-      const element = container.querySelector<HTMLElement & { editor: Editor }>(".tiptap");
-      if (!element) throw new Error("Composer did not mount");
-      return element.editor;
-    };
-    await render("a");
-    return {
+    await using stack = new AsyncDisposableStack();
+    const screen = stack.use(await render(createElement(Composer, { targetKey: "a" })));
+    const editor = () => editorIn(screen.container);
+    const environment = stack.move();
+    return Object.assign(screen, {
+      [Symbol.asyncDispose]: () => environment.disposeAsync(),
       initialValue,
-      render,
+      show: (targetKey: string) => screen.rerender(createElement(Composer, { targetKey })),
       editor,
       draft: () => current,
       retained: () => retained,
@@ -459,11 +468,11 @@ describe("composer context undo lifetime", () => {
           editor().commands.undo();
         });
       },
-    };
+    });
   }
 
   it("preserves typing focus across draft switches without taking focus from another control", async () => {
-    const composer = await mountComposer("Draft B");
+    await using composer = await mountComposer("Draft B");
     const previousEditor = composer.editor();
     await act(async () => {
       previousEditor.commands.setTextSelection(previousEditor.state.doc.content.size - 1);
@@ -471,7 +480,7 @@ describe("composer context undo lifetime", () => {
     });
     expect(document.activeElement).toBe(previousEditor.view.dom);
 
-    await composer.render("b");
+    await composer.show("b");
     const nextEditor = composer.editor();
     expect(nextEditor).not.toBe(previousEditor);
     expect(document.activeElement).toBe(nextEditor.view.dom);
@@ -479,48 +488,47 @@ describe("composer context undo lifetime", () => {
     expect(composer.draft().value).toBe("xDraft B");
 
     const button = document.createElement("button");
-    container.append(button);
+    composer.container.append(button);
     button.focus();
-    await composer.render("a");
+    await composer.show("a");
     expect(document.activeElement).toBe(button);
     expect(composer.draft().value).toBe(composer.initialValue);
   });
 
   it("restores a deleted chip and its file bytes on same-draft undo, then releases them on unmount", async () => {
-    const composer = await mountComposer();
+    await using composer = await mountComposer();
     await composer.deleteDraft();
     expect(composer.draft()).toEqual({ value: "", files: [] });
     const retained = composer.retained();
     expect(retained.files.get(fileContextReference(file).contextId)?.file).toBe(file.file);
 
-    await composer.render("a");
+    await composer.show("a");
     await composer.undo();
     expect(serializeEditorDoc(composer.editor().state.doc).value).toBe(composer.initialValue);
     expect(composer.draft()).toEqual({ value: composer.initialValue, files: [file] });
     expect(composer.draft().files[0]?.file).toBe(file.file);
 
     await composer.deleteDraft();
-    await act(async () => root.unmount());
+    await composer.unmount();
     expect(retained.files.size).toBe(0);
-    root = createRoot(container);
   });
 
   it.each(["", "Draft B"])(
     "releases deleted payloads and prevents undo into the previous draft when switching to %j",
     async (destinationValue) => {
-      const composer = await mountComposer(destinationValue);
+      await using composer = await mountComposer(destinationValue);
       await composer.deleteDraft();
       expect(composer.draft()).toEqual({ value: "", files: [] });
       const retained = composer.retained();
       expect(retained.files.get(fileContextReference(file).contextId)?.file).toBe(file.file);
 
-      await composer.render("b");
+      await composer.show("b");
       expect(retained.files.size).toBe(0);
       await composer.undo();
       expect(serializeEditorDoc(composer.editor().state.doc).value).toBe(destinationValue);
       expect(composer.draft()).toEqual({ value: destinationValue, files: [] });
 
-      await composer.render("a");
+      await composer.show("a");
       await composer.undo();
       expect(serializeEditorDoc(composer.editor().state.doc).value).toBe("");
       expect(composer.draft()).toEqual({ value: "", files: [] });

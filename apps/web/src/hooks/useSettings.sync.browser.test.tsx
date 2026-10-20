@@ -9,9 +9,9 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
+
+import { act, render } from "../../test/render";
 
 type SessionResult = AsyncResult.AsyncResult<AuthSessionState, Error>;
 const state = vi.hoisted(() => ({
@@ -67,34 +67,28 @@ const session = (scopes: ReadonlyArray<AuthEnvironmentScope>): AuthSessionState 
     sessionCookieName: "t3_session",
   },
 });
-let root: Root;
-let container: HTMLDivElement;
-let handlers: Array<() => void> = [];
-
-function SettingsEditor() {
+function SettingsEditor({ handlers }: { handlers: Array<() => void> }) {
   const updateSettings = useUpdatePrimarySettings();
   const save = () => void updateSettings(patch);
   handlers.push(save);
   return <button onClick={save}>Save shared setting</button>;
 }
 
-function saveSharedSettings() {
-  container.querySelector("button")!.click();
-}
-
 async function mountEditor() {
-  await act(() =>
-    root.render(
-      <RegistryContext.Provider value={appAtomRegistry}>
-        <SettingsEditor />
-      </RegistryContext.Provider>,
-    ),
+  const handlers: Array<() => void> = [];
+  const screen = await render(
+    <RegistryContext.Provider value={appAtomRegistry}>
+      <SettingsEditor handlers={handlers} />
+    </RegistryContext.Provider>,
   );
+  return {
+    handlers,
+    saveSharedSettings: () => screen.container.querySelector("button")!.click(),
+    [Symbol.asyncDispose]: () => screen[Symbol.asyncDispose](),
+  };
 }
 
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  handlers = [];
+function setup() {
   state.sessions.clear();
   state.sessions.set(
     primaryId,
@@ -113,19 +107,11 @@ beforeEach(() => {
   state.persist.mockReset();
   state.persist.mockResolvedValue(AsyncResult.success(DEFAULT_SERVER_SETTINGS));
   state.toast.mockReset();
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-
-afterEach(async () => {
-  await act(() => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
+}
 
 describe("shared settings writes", () => {
   it("waits for the remaining target before reporting a partial save", async () => {
+    setup();
     let finishRemote = () => {};
     const remote = new Promise((resolve) => {
       finishRemote = () => resolve(AsyncResult.success(DEFAULT_SERVER_SETTINGS));
@@ -134,8 +120,8 @@ describe("shared settings writes", () => {
       AsyncResult.failure(Cause.fail(new Error("Permission denied"))),
     );
     state.persist.mockReturnValueOnce(remote);
-    await mountEditor();
-    await act(async () => saveSharedSettings());
+    await using editor = await mountEditor();
+    await act(async () => editor.saveSharedSettings());
     expect(state.toast).not.toHaveBeenCalled();
     await act(async () => finishRemote());
     expect(state.toast).toHaveBeenCalledExactlyOnceWith({
@@ -146,12 +132,13 @@ describe("shared settings writes", () => {
   });
 
   it("keeps a single-target failure specific to that environment", async () => {
+    setup();
     appAtomRegistry.set(state.sessions.get(remoteId)!, AsyncResult.success(session([])));
     state.persist.mockResolvedValueOnce(
       AsyncResult.failure(Cause.fail(new Error("Permission denied"))),
     );
-    await mountEditor();
-    await act(async () => saveSharedSettings());
+    await using editor = await mountEditor();
+    await act(async () => editor.saveSharedSettings());
     expect(state.toast).toHaveBeenCalledExactlyOnceWith({
       type: "error",
       title: "Setting not saved",
@@ -160,12 +147,13 @@ describe("shared settings writes", () => {
   });
 
   it("names the failed environment when a server rejects a save after the grant check", async () => {
+    setup();
     state.persist.mockResolvedValueOnce(AsyncResult.success(DEFAULT_SERVER_SETTINGS));
     state.persist.mockResolvedValueOnce(
       AsyncResult.failure(Cause.fail(new Error("Permission denied"))),
     );
-    await mountEditor();
-    await act(async () => saveSharedSettings());
+    await using editor = await mountEditor();
+    await act(async () => editor.saveSharedSettings());
     expect(state.toast).toHaveBeenCalledExactlyOnceWith({
       type: "error",
       title: "Setting saved on some environments",
@@ -174,8 +162,9 @@ describe("shared settings writes", () => {
   });
 
   it("dispatches to the primary and connected remote before the remote grant finishes loading", async () => {
-    await mountEditor();
-    saveSharedSettings();
+    setup();
+    await using editor = await mountEditor();
+    editor.saveSharedSettings();
 
     expect(state.persist.mock.calls).toEqual([
       [{ environmentId: primaryId, input: { patch } }],
@@ -192,9 +181,10 @@ describe("shared settings writes", () => {
       () => AsyncResult.failure<AuthSessionState, Error>(Cause.fail(new Error("session rejected"))),
     ],
   ] as const)("skips a remote whose grant is %s", async (_label, result) => {
+    setup();
     appAtomRegistry.set(state.sessions.get(remoteId)!, result());
-    await mountEditor();
-    saveSharedSettings();
+    await using editor = await mountEditor();
+    editor.saveSharedSettings();
 
     expect(state.persist).toHaveBeenCalledExactlyOnceWith({
       environmentId: primaryId,
@@ -205,11 +195,12 @@ describe("shared settings writes", () => {
   it.each(["disconnected", "unsupported"] as const)(
     "skips a %s remote even with a cold grant",
     async (condition) => {
+      setup();
       const remote = state.environments[1]!;
       if (condition === "disconnected") remote.connection.phase = "disconnected";
       else remote.serverConfig.environment.capabilities.threadAutoSettlement = false;
-      await mountEditor();
-      saveSharedSettings();
+      await using editor = await mountEditor();
+      editor.saveSharedSettings();
 
       expect(state.persist).toHaveBeenCalledExactlyOnceWith({
         environmentId: primaryId,
@@ -221,13 +212,14 @@ describe("shared settings writes", () => {
   it.each(["primary", "hosted"] as const)(
     "rechecks a cold remote grant that resolves to denied after the %s handler renders",
     async (mode) => {
+      setup();
       if (mode === "hosted") {
         state.environments = state.environments.filter(
           (environment) => environment.environmentId !== primaryId,
         );
       }
-      await mountEditor();
-      const previousUpdate = handlers.at(-1)!;
+      await using editor = await mountEditor();
+      const previousUpdate = editor.handlers.at(-1)!;
       await act(() => {
         appAtomRegistry.set(state.sessions.get(remoteId)!, AsyncResult.success(session([])));
       });

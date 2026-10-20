@@ -1,8 +1,7 @@
 import { EnvironmentId } from "@t3tools/contracts";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
+import { act, fakeTimers, render } from "../../test/render";
 import { useThreadSearch } from "./queries";
 
 const searchResults = vi.hoisted(() => ({
@@ -24,33 +23,23 @@ function Probe(props: { query: string; onResult: (result: ThreadSearch) => void 
 }
 
 describe("useThreadSearch", () => {
-  let root: Root;
-  beforeEach(() => {
-    vi.useFakeTimers();
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-    root = createRoot(document.createElement("div"));
-  });
-  afterEach(() => {
-    act(() => root.unmount());
-    vi.unstubAllGlobals();
-    vi.useRealTimers();
-  });
-
-  it("keeps the settled query and matches stable while typing, then reports the settled query", () => {
+  it("keeps the settled query and matches stable while typing, then reports the settled query", async () => {
+    using _timers = fakeTimers();
     const results: ThreadSearch[] = [];
-    const render = (query: string) => {
-      const element = <Probe query={query} onResult={(result) => results.push(result)} />;
-      act(() => root.render(element));
-      return results.at(-1)!;
-    };
-
-    render("");
-    const typing = ["li", "lin", "link "].map(render);
+    const probe = (query: string) => (
+      <Probe query={query} onResult={(result) => results.push(result)} />
+    );
+    await using screen = await render(probe(""));
+    const typing: ThreadSearch[] = [];
+    for (const query of ["li", "lin", "link "]) {
+      await screen.rerender(probe(query));
+      typing.push(results.at(-1)!);
+    }
     expect(typing.map((result) => result.query)).toEqual(["", "", ""]);
     expect(new Set(typing.map((result) => result.matches)).size).toBe(1);
     expect(typing.every((result) => result.isPending)).toBe(true);
 
-    act(() => {
+    await act(() => {
       vi.advanceTimersByTime(200);
     });
     const settled = results.at(-1)!;

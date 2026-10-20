@@ -14,9 +14,8 @@ import {
   decodeComposerContextFragment,
 } from "@t3tools/shared/composerContextClipboard";
 import type { LegendListRef } from "@legendapp/list/react";
-import { act, createRef, Profiler, useState, type ComponentProps, type ReactElement } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { createRef, Profiler, useState, type ComponentProps, type ReactElement } from "react";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
@@ -24,6 +23,7 @@ import "~/index.css";
 import { serverEnvironment } from "../../state/server";
 import { PullRequestLinkPreview } from "../pullRequest/PullRequestLinkPreview";
 import { Tooltip, TooltipPopup, TooltipScrollDismissArea, TooltipTrigger } from "../ui/tooltip";
+import { act, render } from "../../../test/render";
 import { MessagesTimeline, remarkThoughtPreview } from "./MessagesTimeline";
 import { parseMarkdownWithMath } from "@t3tools/shared/markdownMath";
 import { readTimelinePosition } from "./timelineScrollAnchoring";
@@ -51,10 +51,7 @@ type Entry = TimelineProps["timelineEntries"][number];
 
 // The timeline remembers scroll position and open disclosures per thread key,
 // so every render gets a fresh thread.
-let threadCount = 0;
-
 function baseProps(): Omit<TimelineProps, "timelineEntries"> {
-  threadCount += 1;
   return {
     isWorking: false,
     activeTurnInProgress: false,
@@ -62,7 +59,7 @@ function baseProps(): Omit<TimelineProps, "timelineEntries"> {
     latestRun: null,
     turnDiffSummaries: [],
     runs: [],
-    routeThreadKey: `environment-local:thread-${threadCount}`,
+    routeThreadKey: `environment-local:thread-${Math.random().toString(36).slice(2)}`,
     onOpenTurnDiff: () => {},
     onOpenThread: () => {},
     onForkFromRun: async () => {},
@@ -152,27 +149,24 @@ function longText(tail = "deep hidden detail only after expand") {
   ).join("\n");
 }
 
-const roots: Root[] = [];
-let container: HTMLDivElement;
-
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-});
-
-afterEach(async () => {
-  for (const root of roots.splice(0)) await act(async () => root.unmount());
-  window.getSelection()?.removeAllRanges();
-  document.body.replaceChildren();
-  vi.unstubAllGlobals();
-});
-
 async function renderElement(element: ReactElement) {
-  container = document.body.appendChild(document.createElement("div"));
+  const container = document.createElement("div");
   container.style.cssText = "height: 1200px; width: 900px; display: flex; flex-direction: column;";
-  const root = createRoot(container);
-  roots.push(root);
-  await act(async () => root.render(element));
-  return container;
+  const screen = await render(element, { container });
+  const buttons = (name: string | RegExp) =>
+    [...container.querySelectorAll<HTMLElement>("button, [role=button]")].filter((button) => {
+      const label = button.getAttribute("aria-label") ?? button.textContent ?? "";
+      return typeof name === "string" ? label === name : name.test(label);
+    });
+  return Object.assign(screen, {
+    text: () => container.textContent ?? "",
+    buttons,
+    button: (name: string | RegExp) => {
+      const [match] = buttons(name);
+      if (!match) throw new Error(`Missing button: ${String(name)}`);
+      return match;
+    },
+  });
 }
 
 function renderTimeline(entries: ReadonlyArray<Entry>, props: Partial<TimelineProps> = {}) {
@@ -197,23 +191,6 @@ async function copyRange(range: Range) {
   }
 }
 
-function text() {
-  return container.textContent ?? "";
-}
-
-function buttons(name: string | RegExp) {
-  return [...container.querySelectorAll<HTMLElement>("button, [role=button]")].filter((button) => {
-    const label = button.getAttribute("aria-label") ?? button.textContent ?? "";
-    return typeof name === "string" ? label === name : name.test(label);
-  });
-}
-
-function button(name: string | RegExp) {
-  const [match] = buttons(name);
-  if (!match) throw new Error(`Missing button: ${String(name)}`);
-  return match;
-}
-
 async function click(element: HTMLElement) {
   await act(async () => element.click());
 }
@@ -224,7 +201,7 @@ describe("MessagesTimeline work rows", () => {
     ["Space", " "],
   ])("opens a nested diff with %s without collapsing the tool row", async (_name, key) => {
     const onOpenTurnDiff = vi.fn();
-    await renderTimeline(
+    await using screen = await renderTimeline(
       [
         work("file-change-1", {
           label: "Updated src/index.ts",
@@ -236,7 +213,7 @@ describe("MessagesTimeline work rows", () => {
       ],
       { onOpenTurnDiff },
     );
-    const row = container.querySelector<HTMLElement>('[data-v2-item-type="file_change"]')!;
+    const row = screen.container.querySelector<HTMLElement>('[data-v2-item-type="file_change"]')!;
     const press = async (target: HTMLElement) => {
       await act(async () => {
         target.focus();
@@ -246,7 +223,7 @@ describe("MessagesTimeline work rows", () => {
     expect(row.getAttribute("aria-expanded")).toBe("false");
     await press(row);
     expect(row.getAttribute("aria-expanded")).toBe("true");
-    const openDiff = button("Open diff");
+    const openDiff = screen.button("Open diff");
     await press(openDiff);
     expect(onOpenTurnDiff).toHaveBeenCalledWith("run-1", "src/index.ts");
     expect(onOpenTurnDiff).toHaveBeenCalledTimes(1);
@@ -256,7 +233,7 @@ describe("MessagesTimeline work rows", () => {
   });
 
   it("shows dynamic tool input without cached output when the row is expanded", async () => {
-    await renderTimeline([
+    await using screen = await renderTimeline([
       work("tool-with-cached-output", {
         label: "Example tool",
         toolTitle: "Example tool",
@@ -269,15 +246,15 @@ describe("MessagesTimeline work rows", () => {
         },
       }),
     ]);
-    await click(button("Example tool"));
-    expect(text()).toContain("KEEP_TOOL_INPUT");
-    expect(text()).not.toContain("RAW_CACHED_TOOL_OUTPUT");
-    await click(button("Example tool"));
-    await vi.waitFor(() => expect(text()).not.toContain("KEEP_TOOL_INPUT"));
+    await click(screen.button("Example tool"));
+    expect(screen.text()).toContain("KEEP_TOOL_INPUT");
+    expect(screen.text()).not.toContain("RAW_CACHED_TOOL_OUTPUT");
+    await click(screen.button("Example tool"));
+    await vi.waitFor(() => expect(screen.text()).not.toContain("KEEP_TOOL_INPUT"));
   });
 
   it("expands and collapses a tool call through its header", async () => {
-    await renderTimeline([
+    await using screen = await renderTimeline([
       work("work-standalone", {
         toolCallId: "call-standalone",
         label: "Run lint",
@@ -287,7 +264,7 @@ describe("MessagesTimeline work rows", () => {
         toolLifecycleStatus: "completed",
       }),
     ]);
-    const header = () => container.querySelector<HTMLElement>("[aria-expanded]")!;
+    const header = () => screen.container.querySelector<HTMLElement>("[aria-expanded]")!;
     expect(header().getAttribute("aria-expanded")).toBe("false");
     await click(header());
     expect(header().getAttribute("aria-expanded")).toBe("true");
@@ -296,7 +273,7 @@ describe("MessagesTimeline work rows", () => {
   });
 
   it("leads an unanswered question row with the question text", async () => {
-    await renderTimeline([
+    await using screen = await renderTimeline([
       work("question-work", {
         label: "User input requested",
         tone: "tool",
@@ -308,16 +285,16 @@ describe("MessagesTimeline work rows", () => {
         },
       }),
     ]);
-    const toggle = button("Which repository?");
+    const toggle = screen.button("Which repository?");
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    const before = text().match(/Which repository\?/g)?.length ?? 0;
+    const before = screen.text().match(/Which repository\?/g)?.length ?? 0;
     expect(before).toBeGreaterThan(0);
     await click(toggle);
-    expect(text().match(/Which repository\?/g)?.length).toBe(before + 1);
+    expect(screen.text().match(/Which repository\?/g)?.length).toBe(before + 1);
   });
 
   it("collapses settled tool runs behind a generated summary and names a failure", async () => {
-    await renderTimeline([
+    await using screen = await renderTimeline([
       work("work-1", {
         label: "Ran command",
         command: "vp lint",
@@ -333,15 +310,15 @@ describe("MessagesTimeline work rows", () => {
         toolLifecycleStatus: "failed",
       }),
     ]);
-    const summary = button(/^Ran 2 commands/);
+    const summary = screen.button(/^Ran 2 commands/);
     expect(summary.getAttribute("aria-label")).toContain("tool call failed");
-    expect(text()).not.toContain("vp lint");
+    expect(screen.text()).not.toContain("vp lint");
     await click(summary);
-    await vi.waitFor(() => expect(text()).toContain("vp lint"));
+    await vi.waitFor(() => expect(screen.text()).toContain("vp lint"));
   });
 
   it("keeps mixed work logs neutral after a later tool call succeeds", async () => {
-    await renderTimeline([
+    await using screen = await renderTimeline([
       work("work-failed", {
         label: "Run search",
         tone: "tool",
@@ -356,11 +333,11 @@ describe("MessagesTimeline work rows", () => {
         toolLifecycleStatus: "completed",
       }),
     ]);
-    expect(button("Ran 2 commands and received 1 update")).toBeDefined();
+    expect(screen.button("Ran 2 commands and received 1 update")).toBeDefined();
   });
 
   it("marks a failed tool inside an expanded work log", async () => {
-    await renderTimeline([
+    await using screen = await renderTimeline([
       work("work-info", { label: "Status updated", tone: "info" }),
       work("work-1", {
         label: "Glob",
@@ -369,19 +346,21 @@ describe("MessagesTimeline work rows", () => {
         detail: "No files found",
       }),
     ]);
-    await click(button(/^Received 1 update/));
+    await click(screen.button(/^Received 1 update/));
     await vi.waitFor(() =>
-      expect(container.querySelector('[aria-label="Tool call failed"]')).not.toBeNull(),
+      expect(screen.container.querySelector('[aria-label="Tool call failed"]')).not.toBeNull(),
     );
   });
 
   it("renders context compaction entries in the normal work log", async () => {
-    await renderTimeline([work("work-1", { label: "Context compacted", tone: "info" })]);
-    expect(text()).toContain("Context compacted");
+    await using screen = await renderTimeline([
+      work("work-1", { label: "Context compacted", tone: "info" }),
+    ]);
+    expect(screen.text()).toContain("Context compacted");
   });
 
   it("formats changed file paths from the workspace root", async () => {
-    await renderTimeline(
+    await using screen = await renderTimeline(
       [
         work("context-info", { label: "Session started", tone: "info" }),
         work("work-1", {
@@ -394,9 +373,11 @@ describe("MessagesTimeline work rows", () => {
       ],
       { workspaceRoot: "C:/Users/mike/dev-stuff/t3code" },
     );
-    await click(button(/^Received 1 update/));
-    await vi.waitFor(() => expect(text()).toContain("t3code/apps/web/src/session-logic.ts"));
-    expect(text()).not.toContain("C:/Users/mike/dev-stuff/t3code/apps/web/src/session-logic.ts");
+    await click(screen.button(/^Received 1 update/));
+    await vi.waitFor(() => expect(screen.text()).toContain("t3code/apps/web/src/session-logic.ts"));
+    expect(screen.text()).not.toContain(
+      "C:/Users/mike/dev-stuff/t3code/apps/web/src/session-logic.ts",
+    );
   });
 
   it("renders T3 MCP dynamic tools with their pretty name", async () => {
@@ -407,7 +388,7 @@ describe("MessagesTimeline work rows", () => {
       input: { threadId: "thread-child" },
       output: { messages: [] },
     };
-    await renderTimeline([
+    await using screen = await renderTimeline([
       work("context-info", { label: "Session started", tone: "info" }),
       work(item.id, {
         runId: null,
@@ -421,9 +402,9 @@ describe("MessagesTimeline work rows", () => {
         projectedItem: v2Item("dynamic_tool", item),
       }),
     ]);
-    await click(button(/^Received 1 update/));
-    await vi.waitFor(() => expect(text()).toContain("Read a T3 thread"));
-    expect(text()).not.toContain("mcp__t3-code__t3_thread_read");
+    await click(screen.button(/^Received 1 update/));
+    await vi.waitFor(() => expect(screen.text()).toContain("Read a T3 thread"));
+    expect(screen.text()).not.toContain("mcp__t3-code__t3_thread_read");
   });
 
   it("keeps a provider retry collapsed in the work log", async () => {
@@ -439,7 +420,7 @@ describe("MessagesTimeline work rows", () => {
       },
       retry: { attempt: 2, maxAttempts: 5, retryDelayMs: null },
     };
-    await renderTimeline(
+    await using screen = await renderTimeline(
       [
         work("provider-error", {
           runId: "run-1",
@@ -462,8 +443,8 @@ describe("MessagesTimeline work rows", () => {
         },
       },
     );
-    expect(text()).toContain("Retrying provider (2/5)");
-    expect(text()).not.toContain("Structured details");
+    expect(screen.text()).toContain("Retrying provider (2/5)");
+    expect(screen.text()).not.toContain("Structured details");
   });
 
   it.each([
@@ -481,7 +462,7 @@ describe("MessagesTimeline work rows", () => {
   ] as const)(
     "shows plain text for a V2 reasoning preview: %s",
     async (markdown, expected, strongCount) => {
-      await renderTimeline([
+      await using screen = await renderTimeline([
         work("reasoning-preview", {
           label: markdown,
           detail: markdown,
@@ -490,15 +471,16 @@ describe("MessagesTimeline work rows", () => {
           toolLifecycleStatus: "completed",
         }),
       ]);
-      const row = () => container.querySelector<HTMLElement>("[role=button][aria-expanded]")!;
+      const row = () =>
+        screen.container.querySelector<HTMLElement>("[role=button][aria-expanded]")!;
       const preview = () => row().textContent!.replace(/\s+/g, " ");
       expect(preview()).toContain(expected);
-      expect(container.querySelectorAll("strong")).toHaveLength(0);
+      expect(screen.container.querySelectorAll("strong")).toHaveLength(0);
       await click(row());
-      expect(container.querySelectorAll("strong")).toHaveLength(strongCount);
+      expect(screen.container.querySelectorAll("strong")).toHaveLength(strongCount);
       await click(row());
       expect(preview()).toContain(expected);
-      await vi.waitFor(() => expect(container.querySelectorAll("strong")).toHaveLength(0));
+      await vi.waitFor(() => expect(screen.container.querySelectorAll("strong")).toHaveLength(0));
     },
   );
 });
@@ -515,12 +497,15 @@ describe("MessagesTimeline messages", () => {
     async ({ role, selection, findExpanded }) => {
       const code = "flowchart LR\n    A[Select message] --> B[Copy Markdown]";
       const source = `\`\`\`mermaid\n${code}\n\`\`\``;
-      await renderTimeline([message(`Before diagram.\n\n${source}\n\nAfter diagram.`, { role })], {
-        findExpanded,
-      });
+      await using screen = await renderTimeline(
+        [message(`Before diagram.\n\n${source}\n\nAfter diagram.`, { role })],
+        {
+          findExpanded,
+        },
+      );
       const diagram = await vi.waitFor(
         () => {
-          const svg = container.querySelector('[aria-label="Expand diagram"] svg');
+          const svg = screen.container.querySelector('[aria-label="Expand diagram"] svg');
           expect(svg).not.toBeNull();
           return svg!;
         },
@@ -529,7 +514,7 @@ describe("MessagesTimeline messages", () => {
       const range = document.createRange();
       let expected = source;
       if (selection === "across") {
-        const paragraphs = [...container.querySelectorAll("p")];
+        const paragraphs = [...screen.container.querySelectorAll("p")];
         const before = paragraphs.find((p) => p.textContent === "Before diagram.")!.firstChild!;
         const after = paragraphs.find((p) => p.textContent === "After diagram.")!.firstChild!;
         range.setStart(before, 2);
@@ -543,8 +528,8 @@ describe("MessagesTimeline messages", () => {
         range.setStart(labelText, 2);
         range.setEnd(labelText, 5);
       } else {
-        await click(button("Show code"));
-        const code = container.querySelector("pre code")!;
+        await click(screen.button("Show code"));
+        const code = screen.container.querySelector("pre code")!;
         const firstToken = document.createTreeWalker(code, NodeFilter.SHOW_TEXT).nextNode()!;
         range.setStart(firstToken, 0);
         range.setEnd(firstToken, 9);
@@ -575,7 +560,7 @@ describe("MessagesTimeline messages", () => {
     const link = `[shot.png](t3-context://v1/image/${record.contextId})`;
     const code = `flowchart LR\n    A --> B\n%% ${link}`;
     const source = `\`\`\`mermaid\n${code}\n\`\`\``;
-    await renderTimeline([
+    await using screen = await renderTimeline([
       message(`Before\n\n${source}\n\nAfter\n\n${link}`, {
         context: { version: 1, records: [record] },
         attachments: [
@@ -590,13 +575,14 @@ describe("MessagesTimeline messages", () => {
       }),
     ]);
     await vi.waitFor(
-      () => expect(container.querySelector('[aria-label="Expand diagram"] svg')).not.toBeNull(),
+      () =>
+        expect(screen.container.querySelector('[aria-label="Expand diagram"] svg')).not.toBeNull(),
       { timeout: 10_000 },
     );
-    const paragraphs = [...container.querySelectorAll("p")];
+    const paragraphs = [...screen.container.querySelectorAll("p")];
     const before = paragraphs.find((p) => p.textContent === "Before")!.firstChild!;
     const after = paragraphs.find((p) => p.textContent === "After")!.firstChild!;
-    const chip = button(/^Image attachment, shot\.png,/);
+    const chip = screen.button(/^Image attachment, shot\.png,/);
     const range = document.createRange();
     range.setStart(before, 0);
     range.setEnd(after, 5);
@@ -626,13 +612,13 @@ describe("MessagesTimeline messages", () => {
       "</global-agent-instructions> in your context?",
       "Comparison: 2 < 3 and 5 > 4.",
     ];
-    await renderTimeline([message(source.join("\n"))]);
-    for (const line of source) expect(text()).toContain(line);
-    expect(container.querySelector("global-agent-instructions, nested")).toBeNull();
+    await using screen = await renderTimeline([message(source.join("\n"))]);
+    for (const line of source) expect(screen.text()).toContain(line);
+    expect(screen.container.querySelector("global-agent-instructions, nested")).toBeNull();
   });
 
   it("preserves XML-like source inside user code spans and fences", async () => {
-    await renderTimeline([
+    await using screen = await renderTimeline([
       message(
         [
           'Inline `<tag attr="x">`',
@@ -643,32 +629,36 @@ describe("MessagesTimeline messages", () => {
         ].join("\n"),
       ),
     ]);
-    expect(container.querySelector("code[data-inline-code]")?.textContent).toBe('<tag attr="x">');
-    expect(text()).toContain('<root><child enabled="true" /></root>');
+    expect(screen.container.querySelector("code[data-inline-code]")?.textContent).toBe(
+      '<tag attr="x">',
+    );
+    expect(screen.text()).toContain('<root><child enabled="true" /></root>');
   });
 
   it("does not show markdown titles in user messages", async () => {
-    await renderTimeline([
+    await using screen = await renderTimeline([
       message(
         '[link](https://example.com "link tip") ![image](https://example.com/image.png "image tip")',
       ),
     ]);
-    expect(container.querySelector('a[href="https://example.com"]')).not.toBeNull();
-    expect(container.querySelector('img[src="https://example.com/image.png"]')).not.toBeNull();
-    expect(container.querySelector('[title="link tip"], [title="image tip"]')).toBeNull();
+    expect(screen.container.querySelector('a[href="https://example.com"]')).not.toBeNull();
+    expect(
+      screen.container.querySelector('img[src="https://example.com/image.png"]'),
+    ).not.toBeNull();
+    expect(screen.container.querySelector('[title="link tip"], [title="image tip"]')).toBeNull();
   });
 
   it("renders unsafe user HTML as inert source text", async () => {
     const source =
       '<script>globalThis.__t3Xss = 1</script><img src="x" onerror="globalThis.__t3Xss = 2">';
-    await renderTimeline([message(source)]);
-    expect(text()).toContain(source);
-    expect(container.querySelector("script, img")).toBeNull();
+    await using screen = await renderTimeline([message(source)]);
+    expect(screen.text()).toContain(source);
+    expect(screen.container.querySelector("script, img")).toBeNull();
     expect((globalThis as { __t3Xss?: number }).__t3Xss).toBeUndefined();
   });
 
   it("renders sanitized raw HTML in assistant messages", async () => {
-    await renderTimeline([
+    await using screen = await renderTimeline([
       message(
         [
           '<details onclick="globalThis.__t3Xss = 1">',
@@ -681,48 +671,53 @@ describe("MessagesTimeline messages", () => {
         { role: "assistant" },
       ),
     ]);
-    expect(container.querySelector("[data-markdown-details]")?.textContent).toContain(
+    expect(screen.container.querySelector("[data-markdown-details]")?.textContent).toContain(
       "Safe details",
     );
-    expect(text()).not.toContain("<details");
-    expect(container.querySelector("script, [onclick], [onerror]")).toBeNull();
-    expect(container.innerHTML).not.toContain("javascript:");
-    await click(button("Safe details"));
+    expect(screen.text()).not.toContain("<details");
+    expect(screen.container.querySelector("script, [onclick], [onerror]")).toBeNull();
+    expect(screen.container.innerHTML).not.toContain("javascript:");
+    await click(screen.button("Safe details"));
     expect((globalThis as { __t3Xss?: number }).__t3Xss).toBeUndefined();
   });
 
   it("collapses long user messages behind a toggle and keeps their copy button", async () => {
-    await renderTimeline([message(longText())]);
-    const toggle = button("Show full message");
+    await using screen = await renderTimeline([message(longText())]);
+    const toggle = screen.button("Show full message");
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    expect(buttons("Copy message")).toHaveLength(1);
+    expect(screen.buttons("Copy message")).toHaveLength(1);
     await click(toggle);
-    expect(button("Show less").getAttribute("aria-expanded")).toBe("true");
+    expect(screen.button("Show less").getAttribute("aria-expanded")).toBe("true");
   });
 
   it("does not offer a collapse toggle for short user messages", async () => {
-    await renderTimeline([message("Short prompt.")]);
-    expect(buttons(/Show full message|Show less/)).toHaveLength(0);
+    await using screen = await renderTimeline([message("Short prompt.")]);
+    expect(screen.buttons(/Show full message|Show less/)).toHaveLength(0);
   });
 
   it("identifies user-role messages sent by another agent", async () => {
-    await renderTimeline([
-      message("Review this area", { createdBy: "agent", creationSource: "provider" }),
-    ]);
-    expect(text()).toContain("Sent by another agent");
-    await act(async () => roots.pop()!.unmount());
-    await renderTimeline([message("Review this area")]);
-    expect(text()).not.toContain("Sent by another agent");
+    {
+      await using screen = await renderTimeline([
+        message("Review this area", { createdBy: "agent", creationSource: "provider" }),
+      ]);
+      expect(screen.text()).toContain("Sent by another agent");
+    }
+    await using screen = await renderTimeline([message("Review this area")]);
+    expect(screen.text()).not.toContain("Sent by another agent");
   });
 
   it("shows steer intent ahead of committed user messages", async () => {
-    await renderTimeline([message("Adjust the current turn", { inputIntent: "steer" })]);
-    expect(text().indexOf("Steer")).toBeGreaterThanOrEqual(0);
-    expect(text().indexOf("Steer")).toBeLessThan(text().indexOf("Adjust the current turn"));
+    await using screen = await renderTimeline([
+      message("Adjust the current turn", { inputIntent: "steer" }),
+    ]);
+    expect(screen.text().indexOf("Steer")).toBeGreaterThanOrEqual(0);
+    expect(screen.text().indexOf("Steer")).toBeLessThan(
+      screen.text().indexOf("Adjust the current turn"),
+    );
   });
 
   it("renders inline terminal labels as chips", async () => {
-    await renderTimeline([
+    await using screen = await renderTimeline([
       message(
         [
           longText("yoo what's @terminal-1:1-5 mean"),
@@ -735,14 +730,14 @@ describe("MessagesTimeline messages", () => {
         ].join("\n"),
       ),
     ]);
-    expect(text()).toContain("Terminal 1 lines 1-5");
-    expect(text()).toContain("yoo what's");
-    expect(text()).not.toContain("terminal_context");
-    expect(buttons("Show full message")).toHaveLength(1);
+    expect(screen.text()).toContain("Terminal 1 lines 1-5");
+    expect(screen.text()).toContain("yoo what's");
+    expect(screen.text()).not.toContain("terminal_context");
+    expect(screen.buttons("Show full message")).toHaveLength(1);
   });
 
   it("renders chips for standalone element-pick context messages", async () => {
-    await renderTimeline([
+    await using screen = await renderTimeline([
       message(
         [
           "<element_context>",
@@ -756,12 +751,12 @@ describe("MessagesTimeline messages", () => {
         ].join("\n"),
       ),
     ]);
-    expect(text()).toContain("SubmitButton");
-    expect(text()).not.toContain("element_context");
+    expect(screen.text()).toContain("SubmitButton");
+    expect(screen.text()).not.toContain("element_context");
   });
 
   it("renders review comment contexts as structured cards instead of raw tags", async () => {
-    await renderTimeline([
+    await using screen = await renderTimeline([
       message(
         [
           '<review_comment sectionId="turn:2" sectionTitle="Turn 2" filePath="apps/web/src/lib/contextWindow.test.ts" startIndex="3" endIndex="14" rangeLabel="+47 to +58">',
@@ -775,12 +770,12 @@ describe("MessagesTimeline messages", () => {
         ].join("\n"),
       ),
     ]);
-    expect(text()).toContain("contextWindow.test.ts L47 to L58");
-    expect(text()).not.toContain("review_comment");
+    expect(screen.text()).toContain("contextWindow.test.ts L47 to L58");
+    expect(screen.text()).not.toContain("review_comment");
   });
 
   it("renders file review comments as source code", async () => {
-    await renderTimeline([
+    await using screen = await renderTimeline([
       message(
         [
           '<review_comment sectionId="file:docs/plan.md" sectionTitle="File comment" filePath="docs/plan.md" startIndex="0" endIndex="1" rangeLabel="L1 to L2">',
@@ -793,8 +788,8 @@ describe("MessagesTimeline messages", () => {
         ].join("\n"),
       ),
     ]);
-    expect(text()).toContain("plan.md L1 to L2");
-    expect(text()).not.toContain("review_comment");
+    expect(screen.text()).toContain("plan.md L1 to L2");
+    expect(screen.text()).not.toContain("review_comment");
   });
 
   it("collapses superseded attempt output behind a disclosure", async () => {
@@ -808,7 +803,7 @@ describe("MessagesTimeline messages", () => {
         status,
         completedAt: null,
       }) as never;
-    await renderTimeline(
+    await using screen = await renderTimeline(
       [
         {
           ...message(
@@ -831,17 +826,17 @@ describe("MessagesTimeline messages", () => {
         latestRun: { runId, status: "running", startedAt: CREATED_AT, completedAt: null },
       },
     );
-    expect(text()).toContain("Current response remains visible");
-    expect(text()).not.toContain("Partial response from the old attempt");
-    const disclosure = button(/Superseded attempt/);
+    expect(screen.text()).toContain("Current response remains visible");
+    expect(screen.text()).not.toContain("Partial response from the old attempt");
+    const disclosure = screen.button(/Superseded attempt/);
     expect(disclosure.textContent).toContain("Cut off by a steer");
     await click(disclosure);
-    expect(text()).toContain("Partial response from the old attempt");
+    expect(screen.text()).toContain("Partial response from the old attempt");
   });
 
   it("forks from a completed assistant response", async () => {
     const onForkFromRun = vi.fn(async () => {});
-    await renderTimeline(
+    await using screen = await renderTimeline(
       [
         {
           ...message("Done", { role: "assistant", runId: RunId.make("run-1") }, "assistant-1"),
@@ -855,7 +850,7 @@ describe("MessagesTimeline messages", () => {
       ],
       { onForkFromRun },
     );
-    await click(button("Fork from this response"));
+    await click(screen.button("Fork from this response"));
     expect(onForkFromRun).toHaveBeenCalledWith({ sourceThreadId: "thread-1", runId: "run-1" });
   });
 
@@ -863,7 +858,7 @@ describe("MessagesTimeline messages", () => {
     const assistantMessageId = MessageId.make("assistant-with-files");
     const runId = RunId.make("run-with-files");
     const onOpenTurnDiff = vi.fn();
-    await renderTimeline(
+    await using screen = await renderTimeline(
       [message("Updated the fixture.", { role: "assistant", runId }, assistantMessageId)],
       {
         onOpenTurnDiff,
@@ -881,8 +876,8 @@ describe("MessagesTimeline messages", () => {
         ],
       },
     );
-    expect(text()).toContain("1 changed file");
-    await click(button("Open diff"));
+    expect(screen.text()).toContain("1 changed file");
+    await click(screen.button("Open diff"));
     expect(onOpenTurnDiff).toHaveBeenCalledWith(runId, "README.md");
   });
 });
@@ -902,31 +897,33 @@ describe("MessagesTimeline attachments", () => {
     });
 
   it("offers preview and download actions for PDF attachments", async () => {
-    await renderTimeline([
+    await using screen = await renderTimeline([
       withAttachment({
         id: "attachment-report-pdf",
         previewUrl: "https://environment.test/api/assets/report.pdf",
       }),
     ]);
-    expect(buttons("Preview report.pdf")).toHaveLength(1);
-    expect(buttons("Download report.pdf")).toHaveLength(1);
-    expect(container.querySelector('img[alt="report.pdf"]')).toBeNull();
+    expect(screen.buttons("Preview report.pdf")).toHaveLength(1);
+    expect(screen.buttons("Download report.pdf")).toHaveLength(1);
+    expect(screen.container.querySelector('img[alt="report.pdf"]')).toBeNull();
   });
 
   it("does not create a download URL before the download is requested", async () => {
-    await renderTimeline([withAttachment({ id: "attachment-report-pdf" })]);
-    expect(buttons("Download report.pdf")).toHaveLength(1);
-    expect(container.querySelector("a[href]")).toBeNull();
+    await using screen = await renderTimeline([withAttachment({ id: "attachment-report-pdf" })]);
+    expect(screen.buttons("Download report.pdf")).toHaveLength(1);
+    expect(screen.container.querySelector("a[href]")).toBeNull();
   });
 
   it("does not download an optimistic file before the server supplies its attachment ID", async () => {
-    await renderTimeline([withAttachment({ id: "composer-local-report", downloadable: false })]);
-    expect(text()).toContain("report.pdf");
-    expect(buttons("Download report.pdf")).toHaveLength(0);
+    await using screen = await renderTimeline([
+      withAttachment({ id: "composer-local-report", downloadable: false }),
+    ]);
+    expect(screen.text()).toContain("report.pdf");
+    expect(screen.buttons("Download report.pdf")).toHaveLength(0);
   });
 
   it("renders unknown attachment types as inert rows instead of crashing", async () => {
-    await renderTimeline([
+    await using screen = await renderTimeline([
       withAttachment({
         type: "recording",
         id: "attachment-voice-memo",
@@ -934,9 +931,9 @@ describe("MessagesTimeline attachments", () => {
         mimeType: "audio/ogg",
       }),
     ]);
-    expect(text()).toContain("voice-memo.ogg");
-    expect(buttons("Download voice-memo.ogg")).toHaveLength(0);
-    expect(container.querySelector("a[href], img")).toBeNull();
+    expect(screen.text()).toContain("voice-memo.ogg");
+    expect(screen.buttons("Download voice-memo.ogg")).toHaveLength(0);
+    expect(screen.container.querySelector("a[href], img")).toBeNull();
   });
 
   it("shows SnapShot window details only after the preview resolves", async () => {
@@ -960,13 +957,14 @@ describe("MessagesTimeline attachments", () => {
           },
         ] as never,
       });
-    await renderTimeline([snapShot()]);
-    expect(text()).toContain("screenshot.png");
-    expect(text()).not.toContain("t3code — Tests");
-    await act(async () => roots.pop()!.unmount());
-    await renderTimeline([snapShot("data:image/png;base64,iVBORw0KGgo=")]);
-    expect(text()).toContain("Terminal");
-    expect(text()).toContain("t3code — Tests");
+    {
+      await using screen = await renderTimeline([snapShot()]);
+      expect(screen.text()).toContain("screenshot.png");
+      expect(screen.text()).not.toContain("t3code — Tests");
+    }
+    await using screen = await renderTimeline([snapShot("data:image/png;base64,iVBORw0KGgo=")]);
+    expect(screen.text()).toContain("Terminal");
+    expect(screen.text()).toContain("t3code — Tests");
   });
 });
 
@@ -984,33 +982,33 @@ describe("MessagesTimeline history and thread links", () => {
         message("Investigation complete.", { role: "assistant", runId }, "citation-answer"),
       ],
     };
-    await renderElement(<MessagesTimeline {...props} />);
+    await using screen = await renderElement(<MessagesTimeline {...props} />);
     const source = () =>
-      container.querySelector<HTMLElement>('[data-assistant-citation-source="citation-source"]');
-    await vi.waitFor(() => expect(text()).toContain("Investigation complete."));
-    expect(buttons(/^Worked/)).toHaveLength(1);
+      screen.container.querySelector<HTMLElement>(
+        '[data-assistant-citation-source="citation-source"]',
+      );
+    await vi.waitFor(() => expect(screen.text()).toContain("Investigation complete."));
+    expect(screen.buttons(/^Worked/)).toHaveLength(1);
     expect(source()).toBeNull();
 
-    await act(async () =>
-      roots.at(-1)!.render(
-        <MessagesTimeline
-          {...props}
-          citationRequest={{
-            key: "open-citation",
-            citation: {
-              version: 1,
-              environmentId: ENVIRONMENT_ID,
-              threadId: ThreadId.make(`thread-${threadCount}`),
-              messageId: MessageId.make("citation-source"),
-              text: quote,
-              start: 0,
-              end: quote.length,
-              prefix: "",
-              suffix: "",
-            },
-          }}
-        />,
-      ),
+    await screen.rerender(
+      <MessagesTimeline
+        {...props}
+        citationRequest={{
+          key: "open-citation",
+          citation: {
+            version: 1,
+            environmentId: ENVIRONMENT_ID,
+            threadId: ThreadId.make(props.routeThreadKey.slice("environment-local:".length)),
+            messageId: MessageId.make("citation-source"),
+            text: quote,
+            start: 0,
+            end: quote.length,
+            prefix: "",
+            suffix: "",
+          },
+        }}
+      />,
     );
 
     await vi.waitFor(() => {
@@ -1019,7 +1017,9 @@ describe("MessagesTimeline history and thread links", () => {
       expect(highlight).toBeDefined();
       const range = [...highlight!][0] as Range;
       expect(range.toString()).toBe(quote);
-      const viewport = container.querySelector<HTMLElement>("[data-assistant-citation-viewport]")!;
+      const viewport = screen.container.querySelector<HTMLElement>(
+        "[data-assistant-citation-viewport]",
+      )!;
       const bounds = range.getBoundingClientRect();
       expect(bounds.height).toBeGreaterThan(0);
       expect(bounds.top).toBeGreaterThanOrEqual(viewport.getBoundingClientRect().top);
@@ -1029,7 +1029,7 @@ describe("MessagesTimeline history and thread links", () => {
 
   it("loads earlier turns from a control ahead of the bounded timeline", async () => {
     const onLoadEarlier = vi.fn();
-    await renderTimeline([message("Recent activity")], {
+    await using screen = await renderTimeline([message("Recent activity")], {
       historyControls: {
         hasMoreHistory: true,
         loading: false,
@@ -1037,14 +1037,16 @@ describe("MessagesTimeline history and thread links", () => {
         onLoadEarlier,
       },
     });
-    expect(text()).toContain("Earlier activity could not be loaded.");
-    expect(text().indexOf("Load earlier turns")).toBeLessThan(text().indexOf("Recent activity"));
-    await click(button("Load earlier turns"));
+    expect(screen.text()).toContain("Earlier activity could not be loaded.");
+    expect(screen.text().indexOf("Load earlier turns")).toBeLessThan(
+      screen.text().indexOf("Recent activity"),
+    );
+    await click(screen.button("Load earlier turns"));
     expect(onLoadEarlier).toHaveBeenCalledOnce();
   });
 
   it("keeps an empty bounded timeline busy while earlier history loads", async () => {
-    await renderTimeline([], {
+    await using screen = await renderTimeline([], {
       historyControls: {
         hasMoreHistory: true,
         loading: true,
@@ -1052,21 +1054,21 @@ describe("MessagesTimeline history and thread links", () => {
         onLoadEarlier: () => {},
       },
     });
-    expect(text()).toContain("Loading earlier turns…");
-    expect(button("Load earlier turns")).toHaveProperty("disabled", true);
-    expect(text()).not.toContain("Send a message to start the conversation.");
+    expect(screen.text()).toContain("Loading earlier turns…");
+    expect(screen.button("Load earlier turns")).toHaveProperty("disabled", true);
+    expect(screen.text()).not.toContain("Send a message to start the conversation.");
   });
 
   it("opens the parent thread from the top of an empty subagent timeline", async () => {
     const onOpenThread = vi.fn();
-    await renderTimeline([], {
+    await using screen = await renderTimeline([], {
       onOpenThread,
       parentThreadLink: { threadId: ThreadId.make("thread-parent"), title: "Architecture audit" },
     });
-    expect(text()).toContain("Subagent of");
-    expect(text()).toContain("Architecture audit");
-    expect(text()).not.toContain("Send a message to start the conversation");
-    await click(button("Open parent thread"));
+    expect(screen.text()).toContain("Subagent of");
+    expect(screen.text()).toContain("Architecture audit");
+    expect(screen.text()).not.toContain("Send a message to start the conversation");
+    await click(screen.button("Open parent thread"));
     expect(onOpenThread).toHaveBeenCalledWith("thread-parent");
   });
 
@@ -1079,37 +1081,31 @@ describe("MessagesTimeline history and thread links", () => {
         `message-${index}`,
       ),
     );
-    await renderTimeline([], {
+    await using screen = await renderTimeline([], {
       ...props,
       routeThreadKey: `${props.routeThreadKey}-loading`,
       hideEmptyPlaceholder: true,
     });
 
     // Each row is much taller than LegendList's estimate.
-    await act(async () =>
-      roots.at(-1)!.render(<MessagesTimeline {...props} timelineEntries={entries} />),
-    );
+    await screen.rerender(<MessagesTimeline {...props} timelineEntries={entries} />);
     const viewport = props.listRef.current!.getScrollableNode();
     await vi.waitFor(() => {
       expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight);
-      expect(text()).toContain("Paragraph 11.59");
+      expect(screen.text()).toContain("Paragraph 11.59");
       expect(
         viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop,
       ).toBeLessThanOrEqual(1);
     });
 
     const otherThreadKey = `${props.routeThreadKey}-other`;
-    await act(async () =>
-      roots
-        .at(-1)!
-        .render(
-          <MessagesTimeline
-            {...props}
-            routeThreadKey={otherThreadKey}
-            timelineEntries={entries}
-            liveFollowEnabled={false}
-          />,
-        ),
+    await screen.rerender(
+      <MessagesTimeline
+        {...props}
+        routeThreadKey={otherThreadKey}
+        timelineEntries={entries}
+        liveFollowEnabled={false}
+      />,
     );
     await vi.waitFor(() =>
       expect(
@@ -1125,11 +1121,9 @@ describe("MessagesTimeline history and thread links", () => {
       );
     });
 
-    await act(async () =>
-      roots.at(-1)!.render(<MessagesTimeline {...props} timelineEntries={entries} />),
-    );
+    await screen.rerender(<MessagesTimeline {...props} timelineEntries={entries} />);
     await vi.waitFor(() => {
-      expect(text()).toContain("Paragraph 11.59");
+      expect(screen.text()).toContain("Paragraph 11.59");
       expect(
         viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop,
       ).toBeLessThanOrEqual(1);
@@ -1137,7 +1131,7 @@ describe("MessagesTimeline history and thread links", () => {
   });
 
   it("does not render the transient V2 interruption request", async () => {
-    await renderTimeline([
+    await using screen = await renderTimeline([
       {
         id: "interrupt-request",
         kind: "event",
@@ -1148,13 +1142,13 @@ describe("MessagesTimeline history and thread links", () => {
         }),
       } as Entry,
     ]);
-    expect(text()).not.toContain("Interrupt requested");
-    expect(text()).not.toContain("Waiting for the provider to stop.");
+    expect(screen.text()).not.toContain("Interrupt requested");
+    expect(screen.text()).not.toContain("Waiting for the provider to stop.");
   });
 
   it("opens created threads from a lean row", async () => {
     const onOpenThread = vi.fn();
-    await renderTimeline(
+    await using screen = await renderTimeline(
       [
         {
           id: "thread-created",
@@ -1174,9 +1168,9 @@ describe("MessagesTimeline history and thread links", () => {
       ],
       { onOpenThread },
     );
-    expect(text()).toContain("Claude research thread");
-    expect(text()).not.toContain("Work Log");
-    await click(button("Open Claude research thread"));
+    expect(screen.text()).toContain("Claude research thread");
+    expect(screen.text()).not.toContain("Work Log");
+    await click(screen.button("Open Claude research thread"));
     expect(onOpenThread).toHaveBeenCalledWith("thread-2");
   });
 
@@ -1217,50 +1211,52 @@ describe("MessagesTimeline history and thread links", () => {
           ...fields,
         }),
       }) as Entry;
-    const show = async (entry: Entry, props: Partial<TimelineProps> = {}) => {
-      for (const root of roots.splice(0)) await act(async () => root.unmount());
-      await renderElement(
+    const show = (entry: Entry, props: Partial<TimelineProps> = {}) =>
+      renderElement(
         <RegistryProvider
           initialValues={[[serverEnvironment.providersValueAtom(ENVIRONMENT_ID), providers]]}
         >
           <MessagesTimeline {...baseProps()} timelineEntries={[entry]} {...props} />
         </RegistryProvider>,
       );
-    };
 
-    await show(
-      handoff({
-        fromModelSelections: [{ instanceId: "codex_personal", model: "gpt-5.6-sol" }],
-        toModel: "claude-fable-5",
-      }),
-    );
-    expect(text()).toContain("Context handoff");
-    expect(text()).toContain("GPT 5.6 Sol");
-    expect(text()).toContain("Claude Fable 5");
-    expect(text()).not.toContain("Full conversation context");
+    {
+      await using screen = await show(
+        handoff({
+          fromModelSelections: [{ instanceId: "codex_personal", model: "gpt-5.6-sol" }],
+          toModel: "claude-fable-5",
+        }),
+      );
+      expect(screen.text()).toContain("Context handoff");
+      expect(screen.text()).toContain("GPT 5.6 Sol");
+      expect(screen.text()).toContain("Claude Fable 5");
+      expect(screen.text()).not.toContain("Full conversation context");
+    }
 
-    await show(handoff({}), {
-      runs: [
-        {
-          id: "run-1",
-          ordinal: 1,
-          providerInstanceId: "codex_personal",
-          modelSelection: { instanceId: "codex_personal", model: "gpt-5.6-sol" },
-        },
-        {
-          id: "run-2",
-          ordinal: 2,
-          providerInstanceId: "claudeAgent",
-          modelSelection: { instanceId: "claudeAgent", model: "claude-fable-5" },
-        },
-      ] as never,
-    });
-    expect(text()).toContain("GPT 5.6 Sol");
-    expect(text()).toContain("Claude Fable 5");
+    {
+      await using screen = await show(handoff({}), {
+        runs: [
+          {
+            id: "run-1",
+            ordinal: 1,
+            providerInstanceId: "codex_personal",
+            modelSelection: { instanceId: "codex_personal", model: "gpt-5.6-sol" },
+          },
+          {
+            id: "run-2",
+            ordinal: 2,
+            providerInstanceId: "claudeAgent",
+            modelSelection: { instanceId: "claudeAgent", model: "claude-fable-5" },
+          },
+        ] as never,
+      });
+      expect(screen.text()).toContain("GPT 5.6 Sol");
+      expect(screen.text()).toContain("Claude Fable 5");
+    }
 
-    await show(handoff({}));
-    expect(text()).toContain("Codex Personal");
-    expect(text()).not.toContain("Full conversation context");
+    await using screen = await show(handoff({}));
+    expect(screen.text()).toContain("Codex Personal");
+    expect(screen.text()).not.toContain("Full conversation context");
   });
 });
 
@@ -1310,7 +1306,7 @@ describe("MessagesTimeline subagents", () => {
     "shows $count $status subagents with '$preview', grouping only multiple agents",
     async ({ status, progress, result, preview, count }) => {
       const onOpenThread = vi.fn();
-      await renderTimeline(
+      await using screen = await renderTimeline(
         Array.from(
           { length: count },
           (_, index) =>
@@ -1339,25 +1335,25 @@ describe("MessagesTimeline subagents", () => {
         ),
         { onOpenThread },
       );
-      const children = () => buttons("Open Package audit");
+      const children = () => screen.buttons("Open Package audit");
       // A settled run folds its work behind a "Worked for" summary.
-      const fold = buttons(/^Worked for/)[0];
+      const fold = screen.buttons(/^Worked for/)[0];
       if (fold) await click(fold);
       if (count > 1) {
         expect(children()).toHaveLength(0);
-        await click(button(`${count} subagents`));
+        await click(screen.button(`${count} subagents`));
       } else {
-        expect(buttons(`${count} subagents`)).toHaveLength(0);
+        expect(screen.buttons(`${count} subagents`)).toHaveLength(0);
       }
       expect(children()).toHaveLength(count);
-      expect(text()).toContain(preview);
-      expect(text()).not.toContain("Inspect the package");
-      if (result?.trim() && result !== preview) expect(text()).not.toContain(result);
-      if (progress && progress !== preview) expect(text()).not.toContain(progress);
+      expect(screen.text()).toContain(preview);
+      expect(screen.text()).not.toContain("Inspect the package");
+      if (result?.trim() && result !== preview) expect(screen.text()).not.toContain(result);
+      if (progress && progress !== preview) expect(screen.text()).not.toContain(progress);
       await click(children()[0]!);
       expect(onOpenThread).toHaveBeenCalledWith("thread-subagent-1");
       if (count > 1) {
-        await click(button(`${count} subagents`));
+        await click(screen.button(`${count} subagents`));
         await vi.waitFor(() => expect(children()).toHaveLength(0));
       }
     },
@@ -1384,7 +1380,7 @@ describe("timeline tooltip scroll dismissal", () => {
         <TooltipPopup>https://example.com</TooltipPopup>
       </Tooltip>
     );
-    await renderElement(
+    const screen = await renderElement(
       <>
         <TooltipScrollDismissArea>
           <div data-testid="scrollable" className="h-[100px] overflow-auto">
@@ -1395,10 +1391,10 @@ describe("timeline tooltip scroll dismissal", () => {
         {outside ? tooltip : null}
       </>,
     );
-    return {
-      trigger: container.querySelector<HTMLButtonElement>("button")!,
-      scrollable: container.querySelector<HTMLElement>('[data-testid="scrollable"]')!,
-    };
+    return Object.assign(screen, {
+      trigger: screen.container.querySelector<HTMLButtonElement>("button")!,
+      scrollable: screen.container.querySelector<HTMLElement>('[data-testid="scrollable"]')!,
+    });
   }
 
   async function scroll(scrollable: HTMLElement) {
@@ -1411,7 +1407,8 @@ describe("timeline tooltip scroll dismissal", () => {
   it.each([false, true])(
     "closes a hovered tooltip on scroll but keeps a focused one (pull request=%s)",
     async (pullRequest) => {
-      const { trigger, scrollable } = await renderTooltip(pullRequest, false);
+      await using screen = await renderTooltip(pullRequest, false);
+      const { trigger, scrollable } = screen;
       await userEvent.hover(trigger);
       await vi.waitFor(() => expect(openPopup()).toBe("https://example.com"));
       await scroll(scrollable);
@@ -1428,7 +1425,8 @@ describe("timeline tooltip scroll dismissal", () => {
   );
 
   it("leaves tooltips outside the timeline open when it scrolls", async () => {
-    const { trigger, scrollable } = await renderTooltip(false, true);
+    await using screen = await renderTooltip(false, true);
+    const { trigger, scrollable } = screen;
     await userEvent.hover(trigger);
     await vi.waitFor(() => expect(openPopup()).toBe("https://example.com"));
     await scroll(scrollable);
@@ -1436,7 +1434,8 @@ describe("timeline tooltip scroll dismissal", () => {
   });
 
   it("keeps a hovered tooltip open on a wheel that does not scroll", async () => {
-    const { trigger, scrollable } = await renderTooltip(false, false);
+    await using screen = await renderTooltip(false, false);
+    const { trigger, scrollable } = screen;
     await userEvent.hover(trigger);
     await vi.waitFor(() => expect(openPopup()).toBe("https://example.com"));
     await act(async () => {
@@ -1486,7 +1485,7 @@ describe("MessagesTimeline scroll position", () => {
         <MessagesTimeline {...props} timelineEntries={entries} />
       </Profiler>
     );
-    await renderElement(timeline(long));
+    await using screen = await renderElement(timeline(long));
     const viewport = await waitForList(props);
     await act(async () => {
       viewport.scrollTop = 0;
@@ -1494,13 +1493,13 @@ describe("MessagesTimeline scroll position", () => {
     });
 
     maxNestedCommits = 0;
-    await act(async () => roots.at(-1)!.render(timeline([...short, ...long])));
+    await screen.rerender(timeline([...short, ...long]));
     await vi.waitFor(async () => {
       await act(async () => {
         viewport.scrollTop = 0;
         viewport.dispatchEvent(new Event("scroll"));
       });
-      expect(text()).toContain("Short reply 0");
+      expect(screen.text()).toContain("Short reply 0");
     });
     expect(maxNestedCommits).toBeLessThan(8);
   });
@@ -1520,14 +1519,16 @@ describe("MessagesTimeline scroll position", () => {
         </div>
       );
     }
-    await renderElement(<Chat />);
-    const viewport = await waitForList(props);
-    await vi.waitFor(() => expect(readTimelinePosition(props.routeThreadKey)?.atEnd).toBe(true));
+    let offset: number;
+    {
+      await using _chat = await renderElement(<Chat />);
+      const viewport = await waitForList(props);
+      await vi.waitFor(() => expect(readTimelinePosition(props.routeThreadKey)?.atEnd).toBe(true));
 
-    await userEvent.wheel(viewport, { delta: { y: -600 } });
-    await vi.waitFor(() => expect(readTimelinePosition(props.routeThreadKey)?.atEnd).toBe(false));
-    const offset = viewport.scrollTop;
-    await act(async () => roots.pop()!.unmount());
+      await userEvent.wheel(viewport, { delta: { y: -600 } });
+      await vi.waitFor(() => expect(readTimelinePosition(props.routeThreadKey)?.atEnd).toBe(false));
+      offset = viewport.scrollTop;
+    }
     expect(readTimelinePosition(props.routeThreadKey)).toMatchObject({
       atEnd: false,
       scrollOffset: offset,
@@ -1536,19 +1537,19 @@ describe("MessagesTimeline scroll position", () => {
     const timeline = (routeThreadKey: string) => (
       <MessagesTimeline {...props} routeThreadKey={routeThreadKey} timelineEntries={tallEntries} />
     );
-    await renderElement(timeline(props.routeThreadKey));
+    await using screen = await renderElement(timeline(props.routeThreadKey));
     const reopenedViewport = await waitForList(props);
     await vi.waitFor(() =>
       expect(Math.abs(reopenedViewport.scrollTop - offset)).toBeLessThanOrEqual(1),
     );
 
-    await act(async () => roots.at(-1)!.render(timeline(`${props.routeThreadKey}-other`)));
+    await screen.rerender(timeline(`${props.routeThreadKey}-other`));
     await vi.waitFor(() =>
       expect(
         reopenedViewport.scrollHeight - reopenedViewport.clientHeight - reopenedViewport.scrollTop,
       ).toBeLessThanOrEqual(1),
     );
-    await act(async () => roots.at(-1)!.render(timeline(props.routeThreadKey)));
+    await screen.rerender(timeline(props.routeThreadKey));
     await vi.waitFor(() =>
       expect(Math.abs(reopenedViewport.scrollTop - offset)).toBeLessThanOrEqual(1),
     );
@@ -1578,16 +1579,16 @@ describe("MessagesTimeline scroll position", () => {
         </>
       );
     }
-    await renderElement(<Thread />);
-    const composerState = () => container.querySelector("output")!.textContent;
+    await using screen = await renderElement(<Thread />);
+    const composerState = () => screen.container.querySelector("output")!.textContent;
     const viewport = await waitForList(props);
-    await click(button("Collapse"));
-    const toggle = () => button("Command output");
+    await click(screen.button("Collapse"));
+    const toggle = () => screen.button("Command output");
     await click(toggle());
     await click(toggle());
     await vi.waitFor(() => expect(composerState()).toBe("resting"));
 
-    await click(button("Collapse"));
+    await click(screen.button("Collapse"));
     await userEvent.wheel(viewport, { delta: { y: -2000 } });
     await click(toggle());
     await click(toggle());
@@ -1600,11 +1601,14 @@ describe("MessagesTimeline send anchor", () => {
   it("reports the anchored sent message once it is laid out", async () => {
     const onAnchorReady = vi.fn();
     const sent = message("Newest prompt.", {}, "message-2");
-    await renderTimeline([message("Earlier reply.", { role: "assistant" }), sent], {
-      anchorMessageId: MessageId.make("message-2"),
-      onAnchorReady,
-      contentInsetEndAdjustment: 144,
-    });
+    await using _screen = await renderTimeline(
+      [message("Earlier reply.", { role: "assistant" }), sent],
+      {
+        anchorMessageId: MessageId.make("message-2"),
+        onAnchorReady,
+        contentInsetEndAdjustment: 144,
+      },
+    );
     await vi.waitFor(() =>
       expect(onAnchorReady).toHaveBeenCalledWith(MessageId.make("message-2"), 1),
     );
@@ -1612,10 +1616,13 @@ describe("MessagesTimeline send anchor", () => {
 
   it("does not anchor a follow-up user message that is not the newest turn", async () => {
     const onAnchorReady = vi.fn();
-    await renderTimeline([message("First prompt."), message("Newest prompt.", {}, "message-2")], {
-      anchorMessageId: MessageId.make("message-2"),
-      onAnchorReady,
-    });
+    await using _screen = await renderTimeline(
+      [message("First prompt."), message("Newest prompt.", {}, "message-2")],
+      {
+        anchorMessageId: MessageId.make("message-2"),
+        onAnchorReady,
+      },
+    );
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     expect(onAnchorReady).not.toHaveBeenCalled();
   });

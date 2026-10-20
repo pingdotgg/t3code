@@ -1,48 +1,30 @@
 import { RuntimeRequestId, type ProviderApprovalOption } from "@t3tools/contracts";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
+import { act, render } from "../../../test/render";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 
-let root: Root;
-let container: HTMLDivElement;
-const onRespond = vi.fn(async () => undefined);
-
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  onRespond.mockClear();
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  document.body.replaceChildren();
-  vi.unstubAllGlobals();
-});
-
-async function render(options?: ReadonlyArray<ProviderApprovalOption>) {
-  await act(async () =>
-    root.render(
-      <ComposerPendingApprovalActions
-        requestId={RuntimeRequestId.make("approval-1")}
-        canRespond
-        isResponding={false}
-        options={options}
-        onRespondToApproval={onRespond}
-      />,
-    ),
+function renderActions(
+  onRespond: () => Promise<undefined>,
+  options?: ReadonlyArray<ProviderApprovalOption>,
+) {
+  return render(
+    <ComposerPendingApprovalActions
+      requestId={RuntimeRequestId.make("approval-1")}
+      canRespond
+      isResponding={false}
+      options={options}
+      onRespondToApproval={onRespond}
+    />,
   );
 }
 
-const rowLabels = () =>
+const rowLabels = (container: HTMLElement) =>
   [...container.querySelectorAll("button")]
     .map((button) => button.textContent?.trim())
     .filter(Boolean);
 
-async function openMore() {
+async function openMore(container: HTMLElement) {
   await act(async () =>
     container.querySelector<HTMLElement>('[aria-label="More approval options"]')!.click(),
   );
@@ -51,10 +33,11 @@ async function openMore() {
 
 describe("ComposerPendingApprovalActions", () => {
   it("keeps the main decisions in the row and sends a secondary decision from the menu", async () => {
-    await render();
-    expect(rowLabels()).toEqual(["Decline", "Approve"]);
+    const onRespond = vi.fn(async () => undefined);
+    await using screen = await renderActions(onRespond);
+    expect(rowLabels(screen.container)).toEqual(["Decline", "Approve"]);
 
-    const items = await openMore();
+    const items = await openMore(screen.container);
     expect(items.map((item) => item.textContent?.trim())).toEqual([
       "Cancel",
       "Always allow this session",
@@ -64,18 +47,19 @@ describe("ComposerPendingApprovalActions", () => {
   });
 
   it("keeps provider labels, including secondary ones, where the user can find them", async () => {
-    await render([
+    const onRespond = vi.fn(async () => undefined);
+    await using screen = await renderActions(onRespond, [
       { decision: "decline", label: "Deny" },
       { decision: "acceptAlways", label: "Always allow Safari" },
       { decision: "accept", label: "Allow once" },
     ]);
-    expect(rowLabels()).toEqual(["Deny", "Allow once"]);
-    expect((await openMore()).map((item) => item.textContent?.trim())).toEqual([
+    expect(rowLabels(screen.container)).toEqual(["Deny", "Allow once"]);
+    expect((await openMore(screen.container)).map((item) => item.textContent?.trim())).toEqual([
       "Always allow Safari",
     ]);
 
     await act(async () =>
-      [...container.querySelectorAll("button")]
+      [...screen.container.querySelectorAll("button")]
         .find((button) => button.textContent?.trim() === "Allow once")!
         .click(),
     );

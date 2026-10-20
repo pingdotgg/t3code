@@ -1,8 +1,8 @@
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import type { Atom } from "effect/reactivity";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
+
+import { act, render, stubGlobal } from "../../../test/render";
 
 const state = vi.hoisted(() => ({
   projects: [] as never[],
@@ -87,44 +87,43 @@ const pullRequestView = {
   },
 };
 
-let root: Root;
+function setup() {
+  vi.clearAllMocks();
+  state.projects = [];
+  appAtomRegistry.set(discoverySettled, false);
+}
 
 /** Mounts the coordinator behind a desktop bridge that hands over `urls` once the renderer is ready. */
 async function mount(...urls: string[]) {
   let deliver: ((url: string) => void) | undefined;
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("desktopBridge", {
-    getClientSettings: async () => null,
-    webLinks: {
-      onOpen: (listener: (url: string) => void) => {
-        deliver = listener;
-        return () => undefined;
+  await using stack = new AsyncDisposableStack();
+  stack.use(
+    stubGlobal("desktopBridge", {
+      getClientSettings: async () => null,
+      webLinks: {
+        onOpen: (listener: (url: string) => void) => {
+          deliver = listener;
+          return () => undefined;
+        },
+        setReady: async (ready: boolean) => {
+          if (ready) for (const url of urls.splice(0)) deliver?.(url);
+        },
       },
-      setReady: async (ready: boolean) => {
-        if (ready) for (const url of urls.splice(0)) deliver?.(url);
-      },
-    },
-  });
-  root = createRoot(document.createElement("div"));
-  await act(async () =>
-    root.render(
+    }),
+  );
+  stack.use(
+    await render(
       <AppAtomRegistryProvider>
         <DesktopWebLinkCoordinator />
       </AppAtomRegistryProvider>,
     ),
   );
+  return stack.move();
 }
 
-afterEach(async () => {
-  await act(async () => root.unmount());
-  vi.unstubAllGlobals();
-  vi.clearAllMocks();
-  state.projects = [];
-  appAtomRegistry.set(discoverySettled, false);
-});
-
 it("holds a launch PR link until project discovery settles, then opens the PR view", async () => {
-  await mount(pullRequestUrl);
+  setup();
+  await using _coordinator = await mount(pullRequestUrl);
   expect(state.navigate).not.toHaveBeenCalled();
   expect(state.openScratchProject).not.toHaveBeenCalled();
 
@@ -141,7 +140,8 @@ it("holds a launch PR link until project discovery settles, then opens the PR vi
 });
 
 it("opens an ordinary link in the browser while a PR link is still held", async () => {
-  await mount(pullRequestUrl, "https://example.com/docs");
+  setup();
+  await using _coordinator = await mount(pullRequestUrl, "https://example.com/docs");
   expect(state.openScratchProject).toHaveBeenCalledOnce();
   expect(state.navigate).not.toHaveBeenCalled();
 });

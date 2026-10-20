@@ -2,9 +2,9 @@ import type { Discovery } from "@t3tools/client-runtime/relay";
 import { EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
+
+import { act, render } from "../../test/render";
 
 type DiscoveredEnvironments = Discovery.RelayEnvironmentDiscoveryState["environments"];
 type Availability = "checking" | "online";
@@ -83,11 +83,7 @@ async function publish(environments: DiscoveredEnvironments) {
 const registeredIds = () =>
   discovery.register.mock.calls.map(([registration]) => registration.target.environmentId);
 
-let root: Root;
-let container: HTMLDivElement;
-
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+function setup() {
   discovery.listeners.clear();
   discovery.state = {
     environments: new Map(),
@@ -96,21 +92,13 @@ beforeEach(() => {
     error: Option.none(),
   };
   discovery.register.mockReset().mockResolvedValue(AsyncResult.success(undefined));
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
+}
 
 // The first added computer replaces this screen with the app, so every
 // registration has to start in the same pass, after all health checks finish.
 it("adds every linked computer only after discovery finishes checking them", async () => {
-  await act(async () => root.render(<T3ConnectSteps />));
+  setup();
+  await using _screen = await render(<T3ConnectSteps />);
 
   await publish(linked({ [laptopId]: "checking", [desktopId]: "checking" }));
   await publish(linked({ [laptopId]: "online", [desktopId]: "checking" }));

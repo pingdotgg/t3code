@@ -12,9 +12,10 @@ import * as Effect from "effect/Effect";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { AtomRegistry } from "effect/reactivity";
-import { act, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import type { ReactNode } from "react";
+import { expect, it, vi } from "vite-plus/test";
+
+import { act, render } from "../../test/render";
 
 const mint = vi.hoisted(() => vi.fn<() => Promise<AssetCreateUrlResult>>());
 const remoteOpen = vi.hoisted(() => ({
@@ -87,9 +88,6 @@ vi.mock(import("../remoteOpen"), async (original) => ({
 import ChatMarkdown from "./ChatMarkdown";
 import { toastManager } from "./ui/toast";
 
-const roots: Root[] = [];
-let registry: AtomRegistry.AtomRegistry;
-
 const imageUrl = (version: string) =>
   `data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>#${version}`;
 const assetResult = (version: string): AssetCreateUrlResult => ({
@@ -97,22 +95,15 @@ const assetResult = (version: string): AssetCreateUrlResult => ({
   expiresAt: 1,
 });
 
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  registry = AtomRegistry.make();
+function setup() {
   mint.mockReset().mockResolvedValue(assetResult("updated"));
-});
-afterEach(async () => {
-  for (const root of roots.splice(0)) await act(async () => root.unmount());
-  registry.dispose();
-  document.body.replaceChildren();
   remoteOpen.isResolved = true;
   remoteOpen.state.mode = "local-exec";
   remoteOpen.label = "media-host";
   remoteOpen.httpBaseUrl = "https://host.test";
-  vi.restoreAllMocks();
-  vi.unstubAllGlobals();
-});
+  const registry = AtomRegistry.make();
+  return { registry, [Symbol.dispose]: () => registry.dispose() };
+}
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -124,27 +115,21 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function createTestRoot() {
-  const container = document.body.appendChild(document.createElement("div"));
-  const root = createRoot(container);
-  roots.push(root);
-  return {
-    container,
-    render: (children: ReactNode) =>
-      act(async () => {
-        root.render(
-          <RegistryContext.Provider value={registry}>{children}</RegistryContext.Provider>,
-        );
-      }),
-  };
+async function renderInRegistry(registry: AtomRegistry.AtomRegistry, ui: ReactNode) {
+  const wrap = (node: ReactNode) => (
+    <RegistryContext.Provider value={registry}>{node}</RegistryContext.Provider>
+  );
+  const screen = await render(wrap(ui));
+  return Object.assign(screen, { update: (node: ReactNode) => screen.rerender(wrap(node)) });
 }
 
 it("opens host media through server authorization before the client grant loads", async () => {
+  using env = setup();
   mint.mockResolvedValue({ relativeUrl: "/api/assets/image.png", expiresAt: 1 });
   const expanded = deferred<unknown>();
   const onImageExpand = vi.fn(expanded.resolve);
-  const { container, render } = createTestRoot();
-  await render(
+  await using screen = await renderInRegistry(
+    env.registry,
     <ChatMarkdown
       cwd="/repo"
       threadRef={{
@@ -155,7 +140,7 @@ it("opens host media through server authorization before the client grant loads"
       onImageExpand={onImageExpand}
     />,
   );
-  const link = container.querySelector<HTMLAnchorElement>('a[href="/tmp/image.png"]');
+  const link = screen.container.querySelector<HTMLAnchorElement>('a[href="/tmp/image.png"]');
   expect(link).not.toBeNull();
   await act(async () => link!.click());
   expect(await expanded.promise).toMatchObject({
@@ -190,6 +175,7 @@ it.each([
     description: "Only images, videos, audio, HTML, and PDF files can be previewed.",
   },
 ])("reports the media failure for $name", async (scenario) => {
+  using env = setup();
   const lookup = deferred<AssetCreateUrlResult>();
   const started = deferred<void>();
   const reported = deferred<Parameters<typeof toastManager.add>[0]>();
@@ -197,17 +183,16 @@ it.each([
     started.resolve();
     return lookup.promise;
   });
-  vi.spyOn(toastManager, "add").mockImplementation((toast) => {
+  using _toast = vi.spyOn(toastManager, "add").mockImplementation((toast) => {
     reported.resolve(toast);
     return "media-toast";
   });
   remoteOpen.isResolved = false;
-  const { container, render } = createTestRoot();
   const content = (
     <ChatMarkdown cwd="/repo" threadRef={threadRef} text="[Open image](~/Downloads/image.png)" />
   );
-  await render(content);
-  const link = container.querySelector<HTMLAnchorElement>('a[href="~/Downloads/image.png"]');
+  await using screen = await renderInRegistry(env.registry, content);
+  const link = screen.container.querySelector<HTMLAnchorElement>('a[href="~/Downloads/image.png"]');
   expect(link).not.toBeNull();
   await act(async () => {
     link!.click();
@@ -218,7 +203,7 @@ it.each([
   remoteOpen.state.mode = scenario.local ? "local-exec" : "remote-unavailable";
   remoteOpen.httpBaseUrl = scenario.local ? "http://localhost:3773" : "https://host.test";
   remoteOpen.label = "settled-host";
-  await render(content);
+  await screen.update(content);
   const resource = {
     _tag: "media-file" as const,
     path: "~/Downloads/image.png",
@@ -258,33 +243,33 @@ function renderedImage(container: HTMLElement) {
 }
 
 it("ordinary chat keeps its embedded asset URL across renders and reopening", async () => {
-  const { container, render } = createTestRoot();
-  await render(markdown());
-  expect(renderedImage(container)).toBe(imageUrl("updated"));
+  using env = setup();
+  await using screen = await renderInRegistry(env.registry, markdown());
+  expect(renderedImage(screen.container)).toBe(imageUrl("updated"));
   mint.mockResolvedValue(assetResult("changed"));
 
-  await render(markdown());
-  await render(null);
-  await render(markdown());
+  await screen.update(markdown());
+  await screen.update(null);
+  await screen.update(markdown());
 
-  expect(renderedImage(container)).toBe(imageUrl("updated"));
+  expect(renderedImage(screen.container)).toBe(imageUrl("updated"));
   expect(mint).toHaveBeenCalledTimes(1);
 });
 
 it.each(["URL", "failure"] as const)(
   "reopening a file preview with no workspace mutation replaces its cached %s",
   async (cached) => {
+    using env = setup();
     if (cached === "failure") mint.mockRejectedValueOnce(new Error("Image missing"));
     else mint.mockResolvedValueOnce(assetResult("stale"));
-    const { container, render } = createTestRoot();
-    await render(markdown(null));
-    expect(renderedImage(container)).toBe(cached === "URL" ? imageUrl("stale") : undefined);
-    await render(null);
+    await using screen = await renderInRegistry(env.registry, markdown(null));
+    expect(renderedImage(screen.container)).toBe(cached === "URL" ? imageUrl("stale") : undefined);
+    await screen.update(null);
 
     mint.mockResolvedValue(assetResult("updated"));
-    await render(markdown(null));
+    await screen.update(markdown(null));
 
-    expect(renderedImage(container)).toBe(imageUrl("updated"));
+    expect(renderedImage(screen.container)).toBe(imageUrl("updated"));
     expect(mint).toHaveBeenCalledTimes(2);
   },
 );
@@ -292,21 +277,22 @@ it.each(["URL", "failure"] as const)(
 it.each(["initial", "refresh"] as const)(
   "shows the latest workspace edit after a pending %s asset request settles",
   async (request) => {
+    using env = setup();
     let resolvePending!: (value: AssetCreateUrlResult) => void;
     const pending = new Promise<AssetCreateUrlResult>((resolve) => {
       resolvePending = resolve;
     });
-    const { container, render } = createTestRoot();
+    await using screen = await renderInRegistry(env.registry, null);
     if (request === "refresh") {
-      await render(markdown("m0"));
-      expect(renderedImage(container)).toBe(imageUrl("updated"));
+      await screen.update(markdown("m0"));
+      expect(renderedImage(screen.container)).toBe(imageUrl("updated"));
     }
 
     mint.mockReturnValueOnce(pending).mockResolvedValue(assetResult("latest"));
-    await render(markdown("m1"));
+    await screen.update(markdown("m1"));
     const callsBeforeEdits = mint.mock.calls.length;
-    await render(markdown("m2"));
-    await render(markdown("m3"));
+    await screen.update(markdown("m2"));
+    await screen.update(markdown("m3"));
     expect(mint).toHaveBeenCalledTimes(callsBeforeEdits);
 
     await act(async () => {
@@ -314,9 +300,9 @@ it.each(["initial", "refresh"] as const)(
       await pending;
     });
 
-    expect(renderedImage(container)).toBe(imageUrl("latest"));
+    expect(renderedImage(screen.container)).toBe(imageUrl("latest"));
     expect(mint).toHaveBeenCalledTimes(callsBeforeEdits + 1);
-    await render(markdown("m3"));
+    await screen.update(markdown("m3"));
     expect(mint).toHaveBeenCalledTimes(callsBeforeEdits + 1);
   },
 );

@@ -6,9 +6,9 @@ import {
   type AuthSessionState,
 } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
+
+import { act, render } from "../../test/render";
 
 type SessionResult = AsyncResult.AsyncResult<AuthSessionState, Error>;
 const state = vi.hoisted(() => ({
@@ -40,8 +40,6 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { KeybindingsConfigWarning } from "./KeybindingsConfigWarning";
 
 const environmentId = EnvironmentId.make("warning-environment");
-let root: Root;
-let container: HTMLDivElement;
 const session = (scopes: readonly AuthEnvironmentScope[]): AuthSessionState => ({
   authenticated: true,
   scopes,
@@ -54,10 +52,8 @@ const session = (scopes: readonly AuthEnvironmentScope[]): AuthSessionState => (
 });
 const setScopes = (scopes: readonly AuthEnvironmentScope[]) =>
   appAtomRegistry.set(state.sessions.get(environmentId)!, AsyncResult.success(session(scopes)));
-const button = () => container.querySelector("button")!;
 
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+function setup(): Disposable {
   localStorage.setItem("t3code:last-editor", JSON.stringify("vscode"));
   state.sessions.set(
     environmentId,
@@ -67,33 +63,28 @@ beforeEach(() => {
   );
   state.run.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.toast.mockReset();
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  localStorage.clear();
-  state.sessions.clear();
-  vi.unstubAllGlobals();
-});
+  return {
+    [Symbol.dispose]() {
+      localStorage.clear();
+      state.sessions.clear();
+    },
+  };
+}
 
 it("updates a visible warning on revocation and blocks a click that raced it until regrant", async () => {
-  await act(async () =>
-    root.render(
-      <RegistryContext.Provider value={appAtomRegistry}>
-        <KeybindingsConfigWarning
-          environmentId={environmentId}
-          configPath="/t3/keybindings.json"
-          availableEditors={["vscode"]}
-          message="Invalid shortcut"
-        />
-      </RegistryContext.Provider>,
-    ),
+  using _state = setup();
+  await using screen = await render(
+    <RegistryContext.Provider value={appAtomRegistry}>
+      <KeybindingsConfigWarning
+        environmentId={environmentId}
+        configPath="/t3/keybindings.json"
+        availableEditors={["vscode"]}
+        message="Invalid shortcut"
+      />
+    </RegistryContext.Provider>,
   );
-  expect(container.textContent).toContain("Invalid shortcut");
+  const button = () => screen.container.querySelector("button")!;
+  expect(screen.container.textContent).toContain("Invalid shortcut");
   expect(button().disabled).toBe(false);
 
   // The click lands before React re-renders the revoked grant.

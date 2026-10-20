@@ -1,6 +1,6 @@
-import { act, useState, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { act, render } from "../../../test/render";
+import { useState, type ReactNode } from "react";
+import { expect, it, vi } from "vite-plus/test";
 import type { SettingsScopeSearch } from "./settingsScope";
 
 interface ScopeState {
@@ -85,28 +85,13 @@ function StatefulContent() {
   );
 }
 
-let root: Root;
-let container: HTMLDivElement;
 const Layout = Route.options.component!;
 await Layout.preload?.();
 
-async function render(scope: ScopeState) {
+function setup(pathname: string, scope: ScopeState) {
+  state.pathname = pathname;
   state.scope = scope;
-  await act(async () => root.render(<Layout />));
 }
-function retainedValue() {
-  return container.querySelector('button[aria-label="Retained value"]')?.textContent ?? null;
-}
-
-beforeEach(() => {
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-});
 
 const first = { search: { machine: "first", project: "one" }, environmentId: "first" };
 const otherProject = { search: { machine: "first", project: "two" }, environmentId: "first" };
@@ -126,14 +111,18 @@ it.each([
   ["/settings/diagnostics", "a disconnect", "0", first, disconnected],
   ["/settings/keybindings", "another project", "0", first, otherProject],
 ])("%s after %s shows %s", async (pathname, _change, expected, before, after) => {
-  state.pathname = pathname;
-  await render(before);
+  setup(pathname, before);
+  await using screen = await render(<Layout />);
+  const { container } = screen;
+  const retainedValue = () =>
+    container.querySelector('button[aria-label="Retained value"]')?.textContent ?? null;
   await act(async () =>
     container.querySelector<HTMLButtonElement>('button[aria-label="Retained value"]')?.click(),
   );
   expect(retainedValue()).toBe("1");
 
-  await render(after);
+  state.scope = after;
+  await screen.rerender(<Layout />);
 
   expect(retainedValue()).toBe(expected);
 });

@@ -4,14 +4,14 @@ import {
   type ThreadPullRequestLink,
   type VcsStatusResult,
 } from "@t3tools/contracts";
-import { act, type MouseEvent } from "react";
-import { createRoot } from "react-dom/client";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import type { MouseEvent } from "react";
+import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import "../index.css";
 import { Button } from "./ui/button";
 
+import { act, render } from "../../test/render";
 import { AppAtomRegistryProvider } from "../rpc/atomRegistry";
 import { makeThreadFixture } from "../test-fixtures";
 
@@ -86,17 +86,12 @@ vi.mock(import("../state/pullRequests"), async (importOriginal) => {
 });
 import { ThreadPullRequestBadgeControl, ThreadRowLeadingStatus } from "./ThreadStatusIndicators";
 
-afterEach(() => {
-  vi.unstubAllGlobals();
-});
-
 // The lease overscans 160px around a 20px viewport, a 340px band. With 45px rows the band
 // covers exactly 8 rows at each scroll position below.
 const ROW_HEIGHT = 45;
 const SPACER = 1000;
 
 it("leases only visible palette results while retaining observed and cached PR badges", async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const threads = Array.from({ length: 128 }, (_, index) =>
     makeThreadFixture({
       id: ThreadId.make(`palette-thread-${index}`),
@@ -113,12 +108,9 @@ it("leases only visible palette results while retaining observed and cached PR b
             },
     }),
   );
-  const container = document.createElement("div");
-  document.body.append(container);
-  const root = createRoot(container);
   state.queries.length = 0;
   const viewport = () =>
-    container.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')!;
+    screen.container.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')!;
   const scrollTo = async (top: number) => {
     await act(async () => {
       viewport().scrollTop = top;
@@ -126,68 +118,63 @@ it("leases only visible palette results while retaining observed and cached PR b
     });
   };
   const badgeCount = () =>
-    [...container.querySelectorAll("[aria-label]")].filter((node) =>
+    [...screen.container.querySelectorAll("[aria-label]")].filter((node) =>
       node.getAttribute("aria-label")!.startsWith("PR #"),
     ).length;
-  try {
-    await act(async () =>
-      root.render(
-        <AppAtomRegistryProvider>
-          <div data-slot="scroll-area-viewport" style={{ height: 20, overflowY: "auto" }}>
-            <div style={{ height: SPACER }} />
-            {threads.map((thread, index) => (
-              <div key={thread.id} style={{ height: ROW_HEIGHT, overflow: "hidden" }}>
-                <ThreadRowLeadingStatus
-                  thread={thread}
-                  snapshot={
-                    index === 126
-                      ? {
-                          branch: "feature/test",
-                          sourceControlProvider: undefined,
-                          pr: {
-                            number: 126,
-                            title: "Cached badge",
-                            url: "https://github.com/example/repo/pull/126",
-                            baseRef: "main",
-                            headRef: "feature/test",
-                            state: "open",
-                          },
-                        }
-                      : undefined
-                  }
-                />
-                {thread.title}
-              </div>
-            ))}
+  await using screen = await render(
+    <AppAtomRegistryProvider>
+      <div data-slot="scroll-area-viewport" style={{ height: 20, overflowY: "auto" }}>
+        <div style={{ height: SPACER }} />
+        {threads.map((thread, index) => (
+          <div key={thread.id} style={{ height: ROW_HEIGHT, overflow: "hidden" }}>
+            <ThreadRowLeadingStatus
+              thread={thread}
+              snapshot={
+                index === 126
+                  ? {
+                      branch: "feature/test",
+                      sourceControlProvider: undefined,
+                      pr: {
+                        number: 126,
+                        title: "Cached badge",
+                        url: "https://github.com/example/repo/pull/126",
+                        baseRef: "main",
+                        headRef: "feature/test",
+                        state: "open",
+                      },
+                    }
+                  : undefined
+              }
+            />
+            {thread.title}
           </div>
-        </AppAtomRegistryProvider>,
-      ),
-    );
-    await scrollTo(0);
-    expect(state.queries).toEqual([]);
-    expect(badgeCount()).toBe(1);
+        ))}
+      </div>
+    </AppAtomRegistryProvider>,
+  );
+  await scrollTo(0);
+  expect(state.queries).toEqual([]);
+  expect(badgeCount()).toBe(1);
 
-    // Band [1000, 1340]: rows 0..7.
-    await scrollTo(SPACER + 160);
-    expect(state.queries).toHaveLength(8);
-    expect(state.queries.filter((key) => key.startsWith("vcs:"))).toHaveLength(4);
-    expect(state.queries.filter((key) => key.startsWith("pr:"))).toHaveLength(4);
-    expect(badgeCount()).toBe(9);
+  // Band [1000, 1340]: rows 0..7.
+  await scrollTo(SPACER + 160);
+  expect(state.queries).toHaveLength(8);
+  expect(state.queries.filter((key) => key.startsWith("vcs:"))).toHaveLength(4);
+  expect(state.queries.filter((key) => key.startsWith("pr:"))).toHaveLength(4);
+  expect(badgeCount()).toBe(9);
 
-    // Band [1370, 1710]: rows 8..15.
-    await scrollTo(SPACER + 8 * ROW_HEIGHT + 10 + 160);
-    expect(state.queries).toHaveLength(16);
-    expect(badgeCount()).toBe(17);
-  } finally {
-    await act(async () => root.unmount());
-    container.remove();
-  }
+  // Band [1370, 1710]: rows 8..15.
+  await scrollTo(SPACER + 8 * ROW_HEIGHT + 10 + 160);
+  expect(state.queries).toHaveLength(16);
+  expect(badgeCount()).toBe(17);
 });
 
 it("keeps a long PR hover list in the viewport and lets the last row be selected", async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const previousViewport = { width: window.innerWidth, height: window.innerHeight };
   await page.viewport(800, 480);
+  await using _viewport = {
+    [Symbol.asyncDispose]: () => page.viewport(previousViewport.width, previousViewport.height),
+  };
   const pullRequests = Array.from({ length: 40 }, (_, index): ThreadPullRequestLink => ({
     host: "github.com",
     repository: "example/repo",
@@ -199,50 +186,39 @@ it("keeps a long PR hover list in the viewport and lets the last row be selected
     stack: null,
   }));
   const onOpenPullRequest = vi.fn((event: MouseEvent<HTMLElement>) => event.preventDefault());
-  const container = document.createElement("div");
-  document.body.append(container);
-  const root = createRoot(container);
-  try {
-    await act(async () =>
-      root.render(
-        <div style={{ position: "fixed", top: 220, left: 300 }}>
-          <ThreadPullRequestBadgeControl
-            render={<Button size="xs" />}
-            badge={{ kind: "pull-request", others: 39, state: "open" }}
-            pullRequests={pullRequests}
-            number={1}
-            url={pullRequests[0]!.url}
-            status={null}
-            onOpenList={() => {}}
-            onOpenPullRequest={onOpenPullRequest}
-          />
-        </div>,
-      ),
-    );
-    await act(() => userEvent.hover(container.querySelector("button")!));
-    const popup = () => document.querySelector<HTMLElement>('[data-slot="tooltip-popup"]')!;
-    await expect.poll(() => popup()?.querySelectorAll("a").length).toBe(40);
-    await expect.poll(() => popup().getBoundingClientRect().top).toBeGreaterThanOrEqual(0);
-    await expect
-      .poll(() => popup().getBoundingClientRect().bottom)
-      .toBeLessThanOrEqual(window.innerHeight);
+  await using screen = await render(
+    <div style={{ position: "fixed", top: 220, left: 300 }}>
+      <ThreadPullRequestBadgeControl
+        render={<Button size="xs" />}
+        badge={{ kind: "pull-request", others: 39, state: "open" }}
+        pullRequests={pullRequests}
+        number={1}
+        url={pullRequests[0]!.url}
+        status={null}
+        onOpenList={() => {}}
+        onOpenPullRequest={onOpenPullRequest}
+      />
+    </div>,
+  );
+  await act(() => userEvent.hover(screen.container.querySelector("button")!));
+  const popup = () => document.querySelector<HTMLElement>('[data-slot="tooltip-popup"]')!;
+  await expect.poll(() => popup()?.querySelectorAll("a").length).toBe(40);
+  await expect.poll(() => popup().getBoundingClientRect().top).toBeGreaterThanOrEqual(0);
+  await expect
+    .poll(() => popup().getBoundingClientRect().bottom)
+    .toBeLessThanOrEqual(window.innerHeight);
 
-    const lastRow = popup().querySelector<HTMLAnchorElement>("li:last-child a")!;
-    expect(lastRow.getBoundingClientRect().top).toBeGreaterThan(
-      popup().getBoundingClientRect().bottom,
-    );
-    await act(() => userEvent.wheel(popup(), { delta: { y: 10_000 } }));
-    await expect
-      .poll(() => lastRow.getBoundingClientRect().bottom)
-      .toBeLessThanOrEqual(popup().getBoundingClientRect().bottom);
-    expect(lastRow.getBoundingClientRect().top).toBeGreaterThanOrEqual(
-      popup().getBoundingClientRect().top,
-    );
-    await act(() => userEvent.click(lastRow));
-    expect(onOpenPullRequest).toHaveBeenCalledExactlyOnceWith(expect.anything(), lastRow.href);
-  } finally {
-    await act(async () => root.unmount());
-    container.remove();
-    await page.viewport(previousViewport.width, previousViewport.height);
-  }
+  const lastRow = popup().querySelector<HTMLAnchorElement>("li:last-child a")!;
+  expect(lastRow.getBoundingClientRect().top).toBeGreaterThan(
+    popup().getBoundingClientRect().bottom,
+  );
+  await act(() => userEvent.wheel(popup(), { delta: { y: 10_000 } }));
+  await expect
+    .poll(() => lastRow.getBoundingClientRect().bottom)
+    .toBeLessThanOrEqual(popup().getBoundingClientRect().bottom);
+  expect(lastRow.getBoundingClientRect().top).toBeGreaterThanOrEqual(
+    popup().getBoundingClientRect().top,
+  );
+  await act(() => userEvent.click(lastRow));
+  expect(onOpenPullRequest).toHaveBeenCalledExactlyOnceWith(expect.anything(), lastRow.href);
 });

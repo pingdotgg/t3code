@@ -1,7 +1,7 @@
-import { act, useLayoutEffect } from "react";
-import { createRoot } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { useLayoutEffect } from "react";
+import { describe, expect, it } from "vite-plus/test";
 
+import { render } from "../../../test/render";
 import { ComposerHandleContext, type ComposerHandleRef } from "../../composerHandleContext";
 import {
   isInsideCollapsedComposerControls,
@@ -10,17 +10,10 @@ import {
   useComposerMenuProps,
 } from "./composerEventScope";
 
-function elementInside(html: string) {
-  const host = document.createElement("div");
-  host.innerHTML = html;
-  document.body.append(host);
+function elementInside(html: string, host = document.createElement("div")) {
+  host.insertAdjacentHTML("beforeend", html);
   return host.querySelector("[data-target]")!;
 }
-
-afterEach(() => {
-  document.body.replaceChildren();
-  vi.unstubAllGlobals();
-});
 
 describe("composer menu focus", () => {
   it.each([
@@ -32,14 +25,14 @@ describe("composer menu focus", () => {
     ["an unmounted menu", null, true],
     ["another control", "<input data-target />", false],
   ])("closes while focus is on %s", async (_label, html, shouldFocusComposer) => {
-    const editor = document.createElement("textarea");
-    document.body.append(editor);
-    const focused = html === null ? null : (elementInside(html) as HTMLElement);
+    const host = document.body.appendChild(document.createElement("div"));
+    using _host = { [Symbol.dispose]: () => host.remove() };
+    const editor = host.appendChild(document.createElement("textarea"));
+    const focused = html === null ? null : (elementInside(html, host) as HTMLElement);
     focused?.focus();
     const composerRef = {
       current: { focusAtEnd: () => editor.focus() },
     } as unknown as ComposerHandleRef;
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     let menuProps: ReturnType<typeof useComposerMenuProps> | undefined;
     function Probe() {
       const props = useComposerMenuProps();
@@ -48,20 +41,13 @@ describe("composer menu focus", () => {
       }, [props]);
       return null;
     }
-    const root = createRoot(document.createElement("div"));
-    await act(async () =>
-      root.render(
-        <ComposerHandleContext value={composerRef}>
-          <Probe />
-        </ComposerHandleContext>,
-      ),
+    await using _screen = await render(
+      <ComposerHandleContext value={composerRef}>
+        <Probe />
+      </ComposerHandleContext>,
     );
-    try {
-      expect(menuProps?.finalFocus?.()).toBe(false);
-      expect(document.activeElement).toBe(shouldFocusComposer ? editor : focused);
-    } finally {
-      await act(async () => root.unmount());
-    }
+    expect(menuProps?.finalFocus?.()).toBe(false);
+    expect(document.activeElement).toBe(shouldFocusComposer ? editor : focused);
   });
 });
 

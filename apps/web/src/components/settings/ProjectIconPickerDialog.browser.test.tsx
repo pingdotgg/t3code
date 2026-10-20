@@ -1,26 +1,9 @@
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
+import { act, render } from "../../../test/render";
 import { deriveProjectIdentity } from "../../projectIdentity";
 import { ProjectIconPickerDialog } from "./ProjectIconPickerDialog";
-
-let root: Root;
-let container: HTMLDivElement;
-
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
 
 function button(name: string) {
   return vi.waitFor(() => {
@@ -41,23 +24,22 @@ async function click(name: string) {
 async function openPicker() {
   const onSelect = vi.fn();
   const onOpenChange = vi.fn();
-  await act(async () =>
-    root.render(
-      <ProjectIconPickerDialog
-        current={null}
-        projectName="Test"
-        open
-        onOpenChange={onOpenChange}
-        onSelect={onSelect}
-      />,
-    ),
+  const screen = await render(
+    <ProjectIconPickerDialog
+      current={null}
+      projectName="Test"
+      open
+      onOpenChange={onOpenChange}
+      onSelect={onSelect}
+    />,
   );
-  return { onSelect, onOpenChange };
+  return Object.assign(screen, { onSelect, onOpenChange });
 }
 
 describe("ProjectIconPickerDialog", () => {
   it("starts an automatic project on icons in its derived color and saves the picked icon", async () => {
-    const { onSelect, onOpenChange } = await openPicker();
+    await using screen = await openPicker();
+    const { onSelect, onOpenChange } = screen;
     const { color } = deriveProjectIdentity("Test");
     expect((await button("Icons")).getAttribute("aria-pressed")).toBe("true");
     expect(
@@ -73,7 +55,8 @@ describe("ProjectIconPickerDialog", () => {
   });
 
   it("saves a monogram only once the letters are letters or numbers", async () => {
-    const { onSelect } = await openPicker();
+    await using screen = await openPicker();
+    const { onSelect } = screen;
     await click("Monogram");
     const letters = await vi.waitFor(() => {
       const input = document.querySelector<HTMLInputElement>("#project-monogram");

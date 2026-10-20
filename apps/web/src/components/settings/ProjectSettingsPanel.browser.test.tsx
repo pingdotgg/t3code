@@ -24,11 +24,10 @@ import {
 } from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
+import { act, render, type Screen } from "../../../test/render";
 import type { Project } from "../../types";
 
 type SessionResult = AsyncResult.AsyncResult<AuthSessionState, Error>;
@@ -164,15 +163,8 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-let root: Root;
-let container: HTMLDivElement;
-
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+function setup() {
   vi.clearAllMocks();
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
   state.sessions.clear();
   for (const id of [primaryId, remoteId])
     state.sessions.set(id, Atom.make<SessionResult>(writable()).pipe(Atom.keepAlive));
@@ -209,13 +201,7 @@ beforeEach(() => {
   state.delete.mockResolvedValue(AsyncResult.success(undefined));
   state.confirm.mockResolvedValue(true);
   useComposerDraftStore.setState({ clearProjectDraftThreadId: state.clearDraft });
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
+}
 
 function projectKey() {
   return buildSidebarProjectSnapshots({
@@ -255,15 +241,19 @@ async function mountPanel(search: Omit<SettingsScopeSearch, "project"> = {}) {
     history: createMemoryHistory({ initialEntries: [`/settings/projects?${query}`] }),
   });
   await router.load();
-  await act(async () =>
-    root.render(
+  // The panel's own route tree validates settings search params, which the default router lacks.
+  await using stack = new AsyncDisposableStack();
+  const screen = stack.use(
+    await render(
       <RegistryContext.Provider value={appAtomRegistry}>
         <RouterProvider router={router} />
       </RegistryContext.Provider>,
+      { router: false },
     ),
   );
-  await vi.waitFor(() => expect(nameInput()).not.toBeNull());
-  return router;
+  await vi.waitFor(() => expect(nameInput(screen)).not.toBeNull());
+  stack.move();
+  return { ...screen, router };
 }
 
 async function mountSettings(search: SettingsScopeSearch) {
@@ -288,21 +278,21 @@ async function mountSettings(search: SettingsScopeSearch) {
     }),
   });
   await router.load();
-  await act(async () =>
-    root.render(
-      <RegistryContext.Provider value={appAtomRegistry}>
-        <RouterProvider router={router} />
-      </RegistryContext.Provider>,
-    ),
+  const screen = await render(
+    <RegistryContext.Provider value={appAtomRegistry}>
+      <RouterProvider router={router} />
+    </RegistryContext.Provider>,
+    { router: false },
   );
-  return router;
+  return { ...screen, router };
 }
 
-const nameInput = () => container.querySelector<HTMLInputElement>('[aria-label="Project name"]')!;
-const removeCheckout = (root: string) =>
-  container.querySelector<HTMLButtonElement>(`[aria-label="Remove checkout ${root}"]`)!;
-const removeAll = () =>
-  [...container.querySelectorAll("button")].find((button) =>
+const nameInput = (screen: Screen) =>
+  screen.container.querySelector<HTMLInputElement>('[aria-label="Project name"]')!;
+const removeCheckout = (screen: Screen, root: string) =>
+  screen.container.querySelector<HTMLButtonElement>(`[aria-label="Remove checkout ${root}"]`)!;
+const removeAll = (screen: Screen) =>
+  [...screen.container.querySelectorAll("button")].find((button) =>
     button.textContent?.includes("Remove all entries"),
   )!;
 
@@ -310,27 +300,29 @@ async function grant(id: EnvironmentId, result: SessionResult) {
   await act(async () => appAtomRegistry.set(state.sessions.get(id)!, result));
 }
 
-async function rename(title: string) {
-  await userEvent.fill(nameInput(), title);
+async function rename(screen: Screen, title: string) {
+  await userEvent.fill(nameInput(screen), title);
   await userEvent.keyboard("{Enter}");
 }
 
 describe("project settings permissions", () => {
   it("disables shared edits when any member lacks project access", async () => {
+    setup();
     await grant(remoteId, AsyncResult.success(session([AuthSettingsWriteScope])));
-    await mountPanel();
+    await using screen = await mountPanel();
 
-    expect(nameInput().disabled).toBe(true);
-    expect(removeAll().disabled).toBe(true);
-    expect(container.textContent).toContain(
+    expect(nameInput(screen).disabled).toBe(true);
+    expect(removeAll(screen).disabled).toBe(true);
+    expect(screen.container.textContent).toContain(
       "Shared settings require permission to change every checkout in this group.",
     );
     expect(state.update).not.toHaveBeenCalled();
   });
 
   it("renames every member when all have project access without settings access", async () => {
-    await mountPanel();
-    await rename("Renamed");
+    setup();
+    await using screen = await mountPanel();
+    await rename(screen, "Renamed");
     expect(state.update.mock.calls.map(([request]) => request.environmentId)).toEqual([
       primaryId,
       remoteId,
@@ -339,10 +331,11 @@ describe("project settings permissions", () => {
   });
 
   it("stops before the next member if its grant is revoked during an earlier update", async () => {
+    setup();
     const firstUpdate = deferred<AsyncResult.Success<void>>();
     state.update.mockReturnValueOnce(firstUpdate.promise);
-    await mountPanel();
-    await rename("Renamed");
+    await using screen = await mountPanel();
+    await rename(screen, "Renamed");
     expect(state.update).toHaveBeenCalledOnce();
 
     await grant(remoteId, AsyncResult.success(session([])));
@@ -355,19 +348,21 @@ describe("project settings permissions", () => {
   });
 
   it("disables removal for a checkout whose project grant is missing", async () => {
+    setup();
     await grant(remoteId, AsyncResult.success(session([])));
-    await mountPanel();
-    expect(removeCheckout("/work/remote").disabled).toBe(true);
-    expect(removeCheckout("/work/primary").disabled).toBe(false);
+    await using screen = await mountPanel();
+    expect(removeCheckout(screen, "/work/remote").disabled).toBe(true);
+    expect(removeCheckout(screen, "/work/primary").disabled).toBe(false);
   });
 
   it("removes a writable checkout while removal of the mixed group stays denied", async () => {
+    setup();
     await grant(remoteId, AsyncResult.success(session([])));
-    const router = await mountPanel();
-    const initialHref = router.state.location.href;
-    expect(removeAll().disabled).toBe(true);
+    await using screen = await mountPanel();
+    const initialHref = screen.router.state.location.href;
+    expect(removeAll(screen).disabled).toBe(true);
 
-    await userEvent.click(removeCheckout("/work/primary"));
+    await userEvent.click(removeCheckout(screen, "/work/primary"));
     await vi.waitFor(() => expect(state.delete).toHaveBeenCalledOnce());
     expect(state.delete).toHaveBeenCalledWith({
       environmentId: primaryId,
@@ -375,14 +370,15 @@ describe("project settings permissions", () => {
     });
     await vi.waitFor(() => expect(state.releaseUploads).toHaveBeenCalledOnce());
     expect(state.clearDraft).toHaveBeenCalledOnce();
-    expect(router.state.location.href).toBe(initialHref);
+    expect(screen.router.state.location.href).toBe(initialHref);
   });
 
   it("rechecks every removal target after confirmation before deleting or clearing drafts", async () => {
+    setup();
     const confirmed = deferred<boolean>();
     state.confirm.mockReturnValueOnce(confirmed.promise);
-    await mountPanel();
-    await userEvent.click(removeAll());
+    await using screen = await mountPanel();
+    await userEvent.click(removeAll(screen));
     expect(state.confirm).toHaveBeenCalledOnce();
 
     await grant(remoteId, AsyncResult.success(session([])));
@@ -396,16 +392,17 @@ describe("project settings permissions", () => {
   });
 
   it("does not save an edit whose grant was revoked mid-edit, and recovers when restored", async () => {
-    await mountPanel();
-    await userEvent.fill(nameInput(), "Renamed");
+    setup();
+    await using screen = await mountPanel();
+    await userEvent.fill(nameInput(screen), "Renamed");
     await grant(remoteId, AsyncResult.success(session([])));
-    await act(async () => nameInput().blur());
+    await act(async () => nameInput(screen).blur());
     expect(state.update).not.toHaveBeenCalled();
-    expect(nameInput().disabled).toBe(true);
+    expect(nameInput(screen).disabled).toBe(true);
 
     await grant(remoteId, writable());
-    expect(nameInput().disabled).toBe(false);
-    await rename("Renamed");
+    expect(nameInput(screen).disabled).toBe(false);
+    await rename(screen, "Renamed");
     expect(state.projects.map((project) => project.title)).toEqual(["Renamed", "Renamed"]);
   });
 
@@ -420,11 +417,12 @@ describe("project settings permissions", () => {
   ] as const)(
     "uses the current grant while a member's session is %s",
     async (_state, result, allowed) => {
+      setup();
       await grant(remoteId, result());
-      await mountPanel();
-      expect(nameInput().disabled).toBe(!allowed);
+      await using screen = await mountPanel();
+      expect(nameInput(screen).disabled).toBe(!allowed);
       if (!allowed) return;
-      await rename("Renamed");
+      await rename(screen, "Renamed");
       expect(state.update).toHaveBeenCalledTimes(2);
     },
   );
@@ -432,9 +430,10 @@ describe("project settings permissions", () => {
 
 describe("project settings scope", () => {
   it("offers project checkout environments while keeping unselected and unknown projects recoverable", async () => {
+    setup();
     state.projects = state.projects.filter((project) => project.environmentId === primaryId);
     const key = projectKey();
-    const router = await mountSettings({});
+    await using screen = await mountSettings({});
     const environmentMenu = () => page.getByRole("button", { name: /^Environment scope:/ });
     const primaryOption = () => page.getByRole("menuitemradio", { name: /^primary/ });
     const remoteOption = () => page.getByRole("menuitemradio", { name: /^remote/ });
@@ -445,7 +444,7 @@ describe("project settings scope", () => {
     await act(async () => userEvent.keyboard("{Escape}"));
 
     await act(async () =>
-      router.navigate({ to: "/settings/projects", search: () => ({ project: key }) }),
+      screen.router.navigate({ to: "/settings/projects", search: () => ({ project: key }) }),
     );
     await expect.element(page.getByRole("textbox", { name: "Project name" })).toBeVisible();
     await act(async () => userEvent.click(environmentMenu()));
@@ -454,14 +453,17 @@ describe("project settings scope", () => {
     await act(async () => userEvent.keyboard("{Escape}"));
 
     await act(async () =>
-      router.navigate({ to: "/settings/projects", search: () => ({ project: "removed-project" }) }),
+      screen.router.navigate({
+        to: "/settings/projects",
+        search: () => ({ project: "removed-project" }),
+      }),
     );
     await act(async () => userEvent.click(environmentMenu()));
     await expect.element(primaryOption()).toBeVisible();
     await expect.element(remoteOption()).toBeVisible();
     await act(async () => userEvent.click(remoteOption()));
     await vi.waitFor(() =>
-      expect(router.state.location.search).toEqual({
+      expect(screen.router.state.location.search).toEqual({
         project: "removed-project",
         machine: remoteId,
       }),
@@ -475,9 +477,10 @@ describe("project settings scope", () => {
       "This checkout is no longer available in the selected project and environment.",
     ],
   ])("recovers a stale environment link with checkout %s", async (checkout, message) => {
+    setup();
     state.projects = state.projects.filter((project) => project.environmentId === primaryId);
     const key = projectKey();
-    const router = await mountSettings({
+    await using screen = await mountSettings({
       project: key,
       machine: remoteId,
       ...(checkout ? { checkout } : {}),
@@ -495,7 +498,7 @@ describe("project settings scope", () => {
     await expect
       .element(page.getByRole("textbox", { name: "Project name" }))
       .toHaveValue("Shared repo");
-    expect(router.state.location.search).toEqual({ project: key });
+    expect(screen.router.state.location.search).toEqual({ project: key });
     await expect
       .element(page.getByRole("button", { name: "Environment scope: All environments" }))
       .toBeVisible();
@@ -507,16 +510,17 @@ describe("project settings scope", () => {
 });
 
 it("returns to the project overview after removal, clearing the selection but keeping the environment", async () => {
+  setup();
   state.projects = [state.projects[1]!];
-  const router = await mountPanel({ machine: remoteId, checkout: "remote:/work/remote" });
-  const removeProject = [...container.querySelectorAll("button")].find(
+  await using screen = await mountPanel({ machine: remoteId, checkout: "remote:/work/remote" });
+  const removeProject = [...screen.container.querySelectorAll("button")].find(
     (button) => button.textContent === "Remove project",
   )!;
 
   await act(async () => userEvent.click(removeProject));
 
   await vi.waitFor(() => {
-    expect(router.state.location.pathname).toBe("/settings/projects");
-    expect(router.state.location.search).toEqual({ machine: remoteId });
+    expect(screen.router.state.location.pathname).toBe("/settings/projects");
+    expect(screen.router.state.location.search).toEqual({ machine: remoteId });
   });
 });

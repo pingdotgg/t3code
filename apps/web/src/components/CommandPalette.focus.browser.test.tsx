@@ -1,13 +1,14 @@
-import { act, useImperativeHandle, useRef } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { useImperativeHandle, useRef, type ReactNode } from "react";
+import { describe, expect, it, vi } from "vite-plus/test";
+import { act, fakeTimers, render } from "../../test/render";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { CommandPalette } from "./CommandPalette";
 import { useComposerHandleContext } from "../composerHandleContext";
 import { openCommandPalette } from "../commandPaletteBus";
 import { primaryServerKeybindingsAtom } from "../state/server";
 
-vi.mock("@tanstack/react-router", () => ({
+vi.mock("@tanstack/react-router", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tanstack/react-router")>()),
   useNavigate: () => vi.fn(),
   useParams: () => null,
   useLocation: () => "/settings",
@@ -66,26 +67,20 @@ vi.mock("./settings/useAvailableSettingsSearchItems", () => ({
   useAvailableSettingsSearchItems: () => [],
 }));
 
-let root: Root;
-let container: HTMLDivElement;
-
-beforeEach(() => {
-  vi.useFakeTimers();
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-
-afterEach(async () => {
-  await act(async () => {
-    root.unmount();
-    await vi.runOnlyPendingTimersAsync();
+// Navigation hooks are mocked above, and the test router would load on the fake clock too.
+async function renderPalette(children: ReactNode) {
+  await using stack = new AsyncDisposableStack();
+  stack.use(fakeTimers());
+  // Runs after unmount, so timers the palette leaves behind fire on the fake clock.
+  stack.defer(async () => {
+    await act(() => vi.runOnlyPendingTimersAsync());
   });
-  container.remove();
-  vi.unstubAllGlobals();
-  vi.useRealTimers();
-});
+  const screen = stack.use(
+    await render(<CommandPalette>{children}</CommandPalette>, { router: false }),
+  );
+  const environment = stack.move();
+  return Object.assign(screen, { [Symbol.asyncDispose]: () => environment.disposeAsync() });
+}
 
 async function flushFocus() {
   await act(() => vi.advanceTimersByTimeAsync(0));
@@ -120,14 +115,8 @@ function Composer() {
 
 describe("command palette focus restoration", () => {
   it("returns to the previously focused Settings field when no composer is mounted", async () => {
-    await act(() =>
-      root.render(
-        <CommandPalette>
-          <input aria-label="Settings field" />
-        </CommandPalette>,
-      ),
-    );
-    const field = container.querySelector("input")!;
+    await using screen = await renderPalette(<input aria-label="Settings field" />);
+    const field = screen.container.querySelector("input")!;
     await act(() => field.focus());
     await act(() => openCommandPalette());
     await flushFocus();
@@ -137,14 +126,8 @@ describe("command palette focus restoration", () => {
   });
 
   it("focuses the replacement command input after leaving the file picker", async () => {
-    await act(() =>
-      root.render(
-        <CommandPalette>
-          <input aria-label="Settings field" />
-        </CommandPalette>,
-      ),
-    );
-    const field = container.querySelector("input")!;
+    await using screen = await renderPalette(<input aria-label="Settings field" />);
+    const field = screen.container.querySelector("input")!;
     await act(() => field.focus());
     await act(() =>
       field.dispatchEvent(
@@ -175,20 +158,18 @@ describe("command palette focus restoration", () => {
   });
 
   it("focuses the mounted composer at the end instead of the previous field", async () => {
-    await act(() =>
-      root.render(
-        <CommandPalette>
-          <input aria-label="Previous field" />
-          <Composer />
-        </CommandPalette>,
-      ),
+    await using screen = await renderPalette(
+      <>
+        <input aria-label="Previous field" />
+        <Composer />
+      </>,
     );
-    await act(() => container.querySelector("input")!.focus());
+    await act(() => screen.container.querySelector("input")!.focus());
     await act(() => openCommandPalette());
     await flushFocus();
     expect(document.activeElement?.closest("[data-command-palette]")).not.toBeNull();
     await dismissPalette();
-    const composer = container.querySelector("textarea")!;
+    const composer = screen.container.querySelector("textarea")!;
     expect(document.activeElement).toBe(composer);
     expect(composer.selectionStart).toBe(composer.value.length);
   });

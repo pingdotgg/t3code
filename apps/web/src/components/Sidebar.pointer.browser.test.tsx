@@ -1,7 +1,7 @@
 import type { SensorProps } from "@dnd-kit/core";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { act, StrictMode } from "react";
-import { createRoot } from "react-dom/client";
+import { describe, expect, it, vi } from "vite-plus/test";
+import { StrictMode } from "react";
+import { fakeTimers, render } from "../../test/render";
 import { SidebarDragLifecycle, SidebarPointerSensor } from "./Sidebar.pointer";
 
 const sensors: SidebarPointerSensor[] = [];
@@ -42,24 +42,23 @@ function gesture(
   return { sensor, onFinish, ...callbacks };
 }
 
-beforeEach(() => {
-  vi.useFakeTimers();
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+function setup() {
+  const stack = new DisposableStack();
+  stack.use(fakeTimers());
   hidden = false;
-  vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden);
-});
-afterEach(() => {
-  for (const sensor of sensors.splice(0)) sensor.cancel();
-  // Cancelled sensors keep suppressing clicks on the shared document until the next press.
-  document.dispatchEvent(pointer("pointerdown"));
-  vi.runAllTimers();
-  vi.useRealTimers();
-  vi.restoreAllMocks();
-  vi.unstubAllGlobals();
-});
+  stack.use(vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden));
+  stack.defer(() => {
+    for (const sensor of sensors.splice(0)) sensor.cancel();
+    // Cancelled sensors keep suppressing clicks on the shared document until the next press.
+    document.dispatchEvent(pointer("pointerdown"));
+    vi.runAllTimers();
+  });
+  return stack;
+}
 
 describe("sidebar pointer lifecycle", () => {
   it("keeps a click idle and starts only after the drag threshold", () => {
+    using _environment = setup();
     const click = gesture();
     document.dispatchEvent(pointer("pointermove", { clientY: 16 }));
     expect(click.onStart).not.toHaveBeenCalled();
@@ -77,6 +76,7 @@ describe("sidebar pointer lifecycle", () => {
   });
 
   it("moves to the pointer on the move that starts the drag", () => {
+    using _environment = setup();
     const drag = gesture();
     document.dispatchEvent(pointer("pointermove", { clientY: 90 }));
     expect(drag.onStart).toHaveBeenCalledExactlyOnceWith({ x: 10, y: 10 });
@@ -98,6 +98,7 @@ describe("sidebar pointer lifecycle", () => {
   };
   for (const [name, interrupt] of Object.entries(interruptions)) {
     it.each([false, true])(`cancels on ${name}, started=%s, and ignores late events`, (started) => {
+      using _environment = setup();
       const drag = gesture();
       if (started) document.dispatchEvent(pointer("pointermove", { clientY: 20 }));
       interrupt();
@@ -120,6 +121,7 @@ describe("sidebar pointer lifecycle", () => {
   }
 
   it("hands claimed moves and drops to the context handlers and cancels the sort", () => {
+    using _environment = setup();
     const onMove = vi.fn((point: { x: number; y: number }) => point.x > 50);
     const onDrop = vi.fn((point: { x: number; y: number }) => point.x > 50);
     const drag = gesture({ onMove, onDrop });
@@ -143,6 +145,7 @@ describe("sidebar pointer lifecycle", () => {
   });
 
   it("drops context when a zero-button move precedes pointerup", () => {
+    using _environment = setup();
     const onDrop = vi.fn((point: { x: number; y: number }) => point.x > 50);
     const drag = gesture({ onMove: (point) => point.x > 50, onDrop });
     document.dispatchEvent(pointer("pointermove", { clientY: 20 }));
@@ -160,6 +163,7 @@ describe("sidebar pointer lifecycle", () => {
   });
 
   it("cancels a missed sidebar release without committing a reorder", () => {
+    using _environment = setup();
     const onDrop = vi.fn((point: { x: number; y: number }) => point.x > 50);
     const drag = gesture({ onMove: (point) => point.x > 50, onDrop });
     document.dispatchEvent(pointer("pointermove", { clientX: 90, clientY: 30 }));
@@ -173,6 +177,7 @@ describe("sidebar pointer lifecycle", () => {
   });
 
   it("does not drop context when the button is released before activation", () => {
+    using _environment = setup();
     const onDrop = vi.fn(() => true);
     const drag = gesture({ onDrop });
     document.dispatchEvent(pointer("pointermove", { buttons: 0, clientX: 90, clientY: 30 }));
@@ -185,6 +190,7 @@ describe("sidebar pointer lifecycle", () => {
   });
 
   it("resumes reordering when a context drag returns to the sidebar", () => {
+    using _environment = setup();
     const drag = gesture({
       onMove: (point) => point.x > 50,
       onDrop: (point) => point.x > 50,
@@ -204,6 +210,7 @@ describe("sidebar pointer lifecycle", () => {
   });
 
   it.each([false, true])("suppresses a cancelled release click, started=%s", (started) => {
+    using _environment = setup();
     const drag = gesture();
     if (started) document.dispatchEvent(pointer("pointermove", { clientY: 20 }));
     drag.sensor.cancel();
@@ -220,6 +227,7 @@ describe("sidebar pointer lifecycle", () => {
   });
 
   it.each([false, true])("allows a fresh click after an outside release, started=%s", (started) => {
+    using _environment = setup();
     const drag = gesture();
     if (started) document.dispatchEvent(pointer("pointermove", { clientY: 20 }));
     drag.sensor.cancel();
@@ -231,6 +239,7 @@ describe("sidebar pointer lifecycle", () => {
   });
 
   it("does not move after cancellation during activation", () => {
+    using _environment = setup();
     const drag = gesture();
     drag.onStart.mockImplementation(() => drag.sensor.cancel());
     document.dispatchEvent(pointer("pointermove", { clientY: 20 }));
@@ -240,6 +249,7 @@ describe("sidebar pointer lifecycle", () => {
   });
 
   it("ignores events from other pointers", () => {
+    using _environment = setup();
     const drag = gesture();
     document.dispatchEvent(pointer("pointermove", { pointerId: 2, buttons: 0, clientY: 100 }));
     document.dispatchEvent(pointer("pointercancel", { pointerId: 2 }));
@@ -250,19 +260,17 @@ describe("sidebar pointer lifecycle", () => {
     expect(drag.onStart).toHaveBeenCalledOnce();
   });
 
-  it.each([false, true])("cancels when search unmounts the list, started=%s", (started) => {
-    const root = createRoot(document.createElement("div"));
+  it.each([false, true])("cancels when search unmounts the list, started=%s", async (started) => {
+    using _environment = setup();
     let drag: ReturnType<typeof gesture> | undefined;
-    act(() =>
-      root.render(
-        <StrictMode>
-          <SidebarDragLifecycle onUnmount={() => drag?.sensor.cancel()} />
-        </StrictMode>,
-      ),
+    await using screen = await render(
+      <StrictMode>
+        <SidebarDragLifecycle onUnmount={() => drag?.sensor.cancel()} />
+      </StrictMode>,
     );
     drag = gesture();
     if (started) document.dispatchEvent(pointer("pointermove", { clientY: 20 }));
-    act(() => root.unmount());
+    await screen.unmount();
     document.dispatchEvent(pointer("pointermove", { clientY: 100 }));
     document.dispatchEvent(pointer("pointerup", { buttons: 0 }));
     expect(drag.onStart).toHaveBeenCalledTimes(started ? 1 : 0);
@@ -272,6 +280,7 @@ describe("sidebar pointer lifecycle", () => {
   });
 
   it("detaches a cancelled sensor before a replacement gesture starts", () => {
+    using _environment = setup();
     const previous = gesture();
     document.dispatchEvent(pointer("pointermove", { clientY: 20 }));
     previous.sensor.cancel();

@@ -1,12 +1,11 @@
+import { act, render } from "../../../test/render";
 import {
   DEFAULT_CLIENT_SETTINGS,
   type ClientSettingsPatch,
   type DesktopSnapShotState,
 } from "@t3tools/contracts";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
 import { userEvent } from "vite-plus/test/browser";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 
 const bridge = vi.hoisted(() => ({
   getSnapShotState: vi.fn<() => Promise<DesktopSnapShotState>>(),
@@ -62,39 +61,49 @@ import { readSnapShotSetupResume } from "../../lib/snapShotSetupResume";
 import { SnapShotSettings } from "./SnapShotSettings";
 
 let state: DesktopSnapShotState;
-let root: Root;
-let container: HTMLDivElement;
-
 async function mount() {
-  root = createRoot(container);
-  await act(async () => root.render(<SnapShotSettings />));
+  await using stack = new AsyncDisposableStack();
+  const screen = stack.use(await render(<SnapShotSettings />));
+  const { container } = screen;
   await vi.waitFor(() => expect(bridge.getSnapShotState).toHaveBeenCalled());
   await act(async () => {});
-}
-const dialog = () => document.querySelector<HTMLElement>('[role="dialog"]');
-const scope = () => dialog() ?? container;
-function button(label: string, within: ParentNode = scope()) {
-  return (
-    [...within.querySelectorAll("button")].find(
-      (element) => element.textContent?.trim() === label,
-    ) ?? null
-  );
-}
-async function click(label: string) {
-  const target = button(label);
-  expect(target, `button ${label}`).not.toBeNull();
-  await act(async () => target!.click());
-}
-const recorder = () => scope().querySelector<HTMLButtonElement>("[data-keybinding-capture]")!;
-const toggle = (label: string) =>
-  container.querySelector<HTMLButtonElement>(`[role="switch"][aria-label="${label}"]`)!;
-const stepTitle = () => dialog()?.querySelector("h3")?.textContent;
+  const dialog = () => document.querySelector<HTMLElement>('[role="dialog"]');
+  const scope = () => dialog() ?? container;
+  function button(label: string, within: ParentNode = scope()) {
+    return (
+      [...within.querySelectorAll("button")].find(
+        (element) => element.textContent?.trim() === label,
+      ) ?? null
+    );
+  }
+  async function click(label: string) {
+    const target = button(label);
+    expect(target, `button ${label}`).not.toBeNull();
+    await act(async () => target!.click());
+  }
+  const recorder = () => scope().querySelector<HTMLButtonElement>("[data-keybinding-capture]")!;
+  const toggle = (label: string) =>
+    container.querySelector<HTMLButtonElement>(`[role="switch"][aria-label="${label}"]`)!;
+  const stepTitle = () => dialog()?.querySelector("h3")?.textContent;
 
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const environment = stack.move();
+  return {
+    ...screen,
+    dialog,
+    button,
+    click,
+    recorder,
+    toggle,
+    stepTitle,
+    [Symbol.asyncDispose]: () => environment.disposeAsync(),
+  };
+}
+
+function setup() {
   vi.clearAllMocks();
+  const storage = new Map(Object.entries(localStorage));
   localStorage.clear();
-  Object.defineProperty(navigator, "platform", { configurable: true, get: () => "Linux" });
+
   settingsStore.current = { ...DEFAULT_CLIENT_SETTINGS, snapShotEnabled: true };
   state = {
     mode: "portal",
@@ -115,22 +124,22 @@ beforeEach(() => {
     state = { ...state, shortcut: patch.snapShotShortcut ?? state.shortcut };
     settingsStore.set({ ...settingsStore.current, ...patch });
   });
-  container = document.createElement("div");
-  document.body.append(container);
-});
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  localStorage.clear();
-  Reflect.deleteProperty(navigator, "platform");
-  vi.unstubAllGlobals();
-});
+  return {
+    [Symbol.dispose]() {
+      localStorage.clear();
+      for (const [key, value] of storage) localStorage.setItem(key, value);
+    },
+  };
+}
 
 it.each(["niri", "hyprland"] as const)(
   "reopens %s setup at Shortcut without reading config or expanding Settings",
   async (desktop) => {
+    using _state = setup();
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux");
     state = { ...state, linuxBackend: desktop };
-    await mount();
+    await using screen = await mount();
+    const { container, dialog, button, click, stepTitle } = screen;
     expect(dialog()).toBeNull();
     expect(button("Review changes", container)).toBeNull();
     await click("Change shortcut");
@@ -146,7 +155,10 @@ it.each(["niri", "hyprland"] as const)(
 );
 
 it("returns to Access if the Hyprland helper needs attention before changing keys", async () => {
-  await mount();
+  using _state = setup();
+  using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux");
+  await using screen = await mount();
+  const { button, click, stepTitle } = screen;
   state = { ...state, hyprlandHelper: { status: "not-installed", message: "Install helper" } };
   await click("Change shortcut");
   expect(stepTitle()).toBe("Allow snapshots");
@@ -157,6 +169,8 @@ it("returns to Access if the Hyprland helper needs attention before changing key
 it.each(["direct", "gnome-extension", "kde"] as const)(
   "keeps %s shortcut recording and saving inline",
   async (backend) => {
+    using _state = setup();
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux");
     state = {
       ...state,
       mode: backend === "direct" ? "direct" : "portal",
@@ -165,7 +179,8 @@ it.each(["direct", "gnome-extension", "kde"] as const)(
       shortcutLabel: backend === "direct" ? undefined : "Press <Shift><Control>2",
       shortcutMessage: backend === "direct" ? null : "Desktop shortcut: Press <Shift><Control>2",
     };
-    await mount();
+    await using screen = await mount();
+    const { container, dialog, click, recorder } = screen;
     if (backend !== "direct") {
       expect(recorder().getAttribute("aria-label")).toBe(
         "Record snapshot shortcut, currently Ctrl+Shift+2",
@@ -188,9 +203,12 @@ it.each(["direct", "gnome-extension", "kde"] as const)(
 );
 
 it("turns capture on directly on Windows without opening setup", async () => {
+  using _state = setup();
+  using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux");
   settingsStore.current = { ...settingsStore.current, snapShotEnabled: false };
   state = { ...state, mode: "direct", linuxBackend: undefined, windows: true };
-  await mount();
+  await using screen = await mount();
+  const { dialog, button, toggle } = screen;
   await act(async () => toggle("Enable snapshots").click());
   expect(settingsStore.update).toHaveBeenCalledWith({ snapShotEnabled: true });
   expect(toggle("Enable snapshots").getAttribute("aria-checked")).toBe("true");
@@ -199,6 +217,8 @@ it("turns capture on directly on Windows without opening setup", async () => {
 });
 
 it("keeps the approved desktop shortcut when recording is cancelled in setup", async () => {
+  using _state = setup();
+  using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux");
   state = {
     ...state,
     linuxBackend: "gnome-extension",
@@ -206,7 +226,8 @@ it("keeps the approved desktop shortcut when recording is cancelled in setup", a
     shortcutRegistered: true,
     shortcutLabel: "Press <Control><Alt>8",
   };
-  await mount();
+  await using screen = await mount();
+  const { dialog, click, recorder } = screen;
   await click("Manage capture");
   expect(dialog()).not.toBeNull();
   expect(recorder().getAttribute("aria-label")).toBe(
@@ -245,8 +266,11 @@ function usePortalShortcut(shortcutCanRetry: boolean) {
 }
 
 it("keeps older portal shortcuts editable without offering unsupported permissions", async () => {
+  using _state = setup();
+  using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux");
   usePortalShortcut(false);
-  await mount();
+  await using screen = await mount();
+  const { button, recorder } = screen;
   expect(button("Shortcut permissions")).toBeNull();
   expect(bridge.setupSnapShot).not.toHaveBeenCalled();
   await act(async () => userEvent.click(recorder()));
@@ -254,9 +278,12 @@ it("keeps older portal shortcuts editable without offering unsupported permissio
 });
 
 it("shows permission errors once in a toast and allows retrying", async () => {
+  using _state = setup();
+  using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux");
   usePortalShortcut(true);
   bridge.setupSnapShot.mockRejectedValueOnce(new Error("The desktop service disconnected."));
-  await mount();
+  await using screen = await mount();
+  const { container, click } = screen;
   await click("Shortcut permissions");
   expect(toast).toHaveBeenCalledExactlyOnceWith({
     type: "error",
@@ -270,9 +297,12 @@ it("shows permission errors once in a toast and allows retrying", async () => {
 });
 
 it("keeps a failed preference unchanged and reports the save error in a toast", async () => {
+  using _state = setup();
+  using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux");
   usePortalShortcut(true);
   settingsStore.update.mockRejectedValueOnce(new Error("The settings file is read-only."));
-  await mount();
+  await using screen = await mount();
+  const { toggle } = screen;
   const flash = () => toggle("Flash captured window");
   expect(flash().getAttribute("aria-checked")).toBe("true");
   await act(async () => flash().click());
@@ -288,9 +318,12 @@ it("keeps a failed preference unchanged and reports the save error in a toast", 
 });
 
 it("keeps setup errors in the wizard and does not toast them after closing it", async () => {
+  using _state = setup();
+  using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux");
   usePortalShortcut(true);
   state = { ...state, shortcutRegistered: false };
-  await mount();
+  await using screen = await mount();
+  const { dialog, click, stepTitle } = screen;
   await click("Manage capture");
   expect(stepTitle()).toBe("Choose your shortcut");
   bridge.setupSnapShot.mockRejectedValueOnce(new Error("The desktop service disconnected."));
@@ -322,8 +355,11 @@ function useMacPermissions(granted: boolean) {
 it.each([false, true])(
   "resumes macOS permission setup after restart and clears it on close, completed=%s",
   async (completed) => {
+    using _state = setup();
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux");
     useMacPermissions(false);
-    await mount();
+    await using screen = await mount();
+    let { dialog, button, click, toggle, stepTitle } = screen;
     await act(async () => toggle("Enable snapshots").click());
     expect(stepTitle()).toBe("Allow snapshots");
     bridge.setupSnapShot.mockImplementationOnce(async () => {
@@ -333,10 +369,11 @@ it.each([false, true])(
     expect(bridge.setupSnapShot).toHaveBeenCalledWith("allow-screen-recording");
 
     // macOS quits the app from its permission prompt; the next launch resumes setup.
-    await act(async () => root.unmount());
+    await screen.unmount();
     state = { ...state, shortcutRegistered: true };
     state = { ...state, macPermissions: { screenRecording: true, accessibility: true } };
-    await mount();
+    await using resumed = await mount();
+    ({ dialog, button, click, toggle, stepTitle } = resumed);
     expect(stepTitle()).toBe("Allow snapshots");
     expect(button("Finish later")).not.toBeNull();
     if (completed) {
@@ -352,8 +389,11 @@ it.each([false, true])(
 );
 
 it("requires a successful macOS test capture before enabling and allows retry", async () => {
+  using _state = setup();
+  using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux");
   useMacPermissions(true);
-  await mount();
+  await using screen = await mount();
+  const { dialog, click, toggle, stepTitle } = screen;
   await act(async () => toggle("Enable snapshots").click());
   bridge.setupSnapShot.mockRejectedValueOnce(new Error("Capture was denied"));
   await click("Test capture and continue");

@@ -1,7 +1,7 @@
+import { useEffect } from "react";
+import { act, render } from "../../../test/render";
 import { DEFAULT_UNIFIED_SETTINGS, type UnifiedSettings } from "@t3tools/contracts";
-import { act, useEffect } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   settings: null as UnifiedSettings | null,
@@ -37,30 +37,28 @@ vi.mock(import("../../localApi"), async (original) => ({
 
 import { useSettingsRestore } from "./SettingsPanels";
 
-let root: Root;
-let restore: ReturnType<typeof useSettingsRestore>;
-
-function Probe() {
-  const result = useSettingsRestore();
-  useEffect(() => {
-    restore = result;
-  });
-  return null;
+async function renderRestore() {
+  let restore!: ReturnType<typeof useSettingsRestore>;
+  function Probe() {
+    const result = useSettingsRestore();
+    useEffect(() => {
+      restore = result;
+    });
+    return null;
+  }
+  const screen = await render(<Probe />);
+  return {
+    ...screen,
+    get restore() {
+      return restore;
+    },
+  };
 }
-
-beforeEach(async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+function setup() {
   vi.clearAllMocks();
   state.settings = { ...DEFAULT_UNIFIED_SETTINGS };
   state.confirm.mockResolvedValue(true);
-  root = createRoot(document.createElement("div"));
-});
-afterEach(async () => {
-  await act(async () => root.unmount());
-  vi.unstubAllGlobals();
-});
-
-const render = () => act(async () => root.render(<Probe />));
+}
 
 describe("restoring V2 settings", () => {
   it.each([
@@ -68,8 +66,10 @@ describe("restoring V2 settings", () => {
     ["autoResumeLimitedThreads", "Auto-resume limited threads"],
     ["snoozeLimitedThreads", "Snooze limited threads"],
   ] as const)("restores %s when it is the only changed setting", async (key, label) => {
+    setup();
     state.settings = { ...DEFAULT_UNIFIED_SETTINGS, [key]: true };
-    await render();
+    await using screen = await renderRestore();
+    const { restore } = screen;
 
     expect(restore.changedSettingLabels).toEqual([label]);
     await act(() => restore.restoreDefaults());
@@ -80,9 +80,11 @@ describe("restoring V2 settings", () => {
   });
 
   it("does not reset settings after cancellation", async () => {
+    setup();
     state.settings = { ...DEFAULT_UNIFIED_SETTINGS, autoResumeLimitedThreads: true };
     state.confirm.mockResolvedValue(false);
-    await render();
+    await using screen = await renderRestore();
+    const { restore } = screen;
 
     await act(() => restore.restoreDefaults());
 
