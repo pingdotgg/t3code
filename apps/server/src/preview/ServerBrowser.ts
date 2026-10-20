@@ -985,6 +985,8 @@ const make = Effect.gen(function* () {
       if (navigation !== null && !tab.closing) {
         settleAbortedNavigation(tab, navigation, download.url(), offered);
       }
+      // saveAs copies the artifact; cached profile contexts otherwise retain the original.
+      await download.delete().catch(constVoid);
     }
   };
 
