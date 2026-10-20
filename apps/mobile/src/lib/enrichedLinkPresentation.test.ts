@@ -3,6 +3,7 @@ import type { ComposerContextId, ReviewCommentContextRecord } from "@t3tools/con
 import {
   enrichedContextLinkPresentation,
   enrichedLinkVariantPattern,
+  enrichedSkillInstructionsPath,
   enrichedSkillLinkRegex,
   enrichedSkillReference,
   ENRICHED_INLINE_FILE_LINK_REGEX,
@@ -54,6 +55,25 @@ describe("Enriched link presentation", () => {
       expect(regex.test(`${sigil}${sigil}check`)).toBe(false);
     },
   );
+  it("opens skill instructions only for filesystem paths", () => {
+    expect(
+      enrichedSkillInstructionsPath({
+        name: "ketchup",
+        path: "/home/me/.claude/skills/ketchup/SKILL.md",
+      }),
+    ).toBe("/home/me/.claude/skills/ketchup/SKILL.md");
+    expect(
+      enrichedSkillInstructionsPath({ name: "review", path: "C:\\skills\\review\\SKILL.md" }),
+    ).toBe("C:\\skills\\review\\SKILL.md");
+    expect(
+      enrichedSkillInstructionsPath({
+        name: "workspace-skill",
+        path: "acp://skill/workspace-skill",
+      }),
+    ).toBeUndefined();
+    expect(enrichedSkillInstructionsPath({ name: "bare" })).toBeUndefined();
+  });
+
   it("matches only the complete URL, including literal regex metacharacters", () => {
     const url = "file:///workspace/app[1].tsx?line=3+4";
     const pattern = new RegExp(enrichedLinkVariantPattern(url));

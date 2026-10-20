@@ -25,6 +25,7 @@ export interface NativeMarkdownTextStyle {
 export interface SelectableMarkdownSkill {
   readonly name: string;
   readonly displayName?: string | null;
+  readonly path?: string;
 }
 
 export interface MarkdownImageRequest {
