@@ -184,7 +184,6 @@ describe("code-view worker lifecycle", () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     // Pins the pool at two workers whatever machine runs the suite.
     Object.defineProperty(navigator, "hardwareConcurrency", { configurable: true, value: 2 });
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const initialize = WorkerPoolManager.prototype.initialize;
     vi.spyOn(WorkerPoolManager.prototype, "initialize").mockImplementation(function (
       this: WorkerPoolManager,
@@ -197,6 +196,7 @@ describe("code-view worker lifecycle", () => {
   });
 
   afterEach(async () => {
+    if (!vi.isFakeTimers()) vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     await unmountAll();
     await vi.runOnlyPendingTimersAsync();
     vi.useRealTimers();
@@ -228,6 +228,9 @@ describe("code-view worker lifecycle", () => {
     expect(pool.getFileResultCache(files[1]!)).toBeDefined();
     await vi.waitFor(() => expect(codeFile("answer.ts")).toContain("answer"));
 
+    // Worker startup uses real time. Only advance the clock once highlighting
+    // has finished, so idle expiry cannot also expire a worker startup timer.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     await view.render(renderViews(1));
     expect(pool.getStats().totalWorkers).toBe(2);
     expect(testState.terminations).toBe(0);
@@ -249,6 +252,7 @@ describe("code-view worker lifecycle", () => {
     expect(pool.getStats().totalWorkers).toBe(0);
     expect(testState.terminations).toBe(2);
 
+    vi.useRealTimers();
     await view.render(renderViews(1));
     const reopenedPool = [...testState.pools.keys()][1]!;
     await act(async () => testState.pools.get(reopenedPool));
@@ -277,6 +281,7 @@ describe("code-view worker lifecycle", () => {
   });
 
   it("keeps an initializing pool until its last view closes and ignores late responses", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     testState.holdInitialization = true;
     const held = new Promise<void>((resolve) => {
       testState.onInitializationHeld = resolve;
