@@ -1,6 +1,6 @@
 // @effect-diagnostics globalTimers:off
 // The SDK owns process shutdown; native deadlines cover initialize before an Effect resource exists.
-// @effect-diagnostics-next-line nodeBuiltinImport:off -- FileSystem.realPath is Node's JS realpath; museWorkspaceRoot needs the native one.
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- FileSystem.realPath is Node's JS realpath; museCanonicalPath needs the native one.
 import * as NodeFSP from "node:fs/promises";
 
 import {
@@ -69,14 +69,27 @@ export function museVerbatimPath(path: string): string {
 }
 
 /**
- * On Windows Muse rejects anything but the verbatim canonical path, true case
- * and long names included, so resolve with the native realpath, which unlike
- * FileSystem.realPath fixes case and expands 8.3 names. Muse itself still
- * starts in the plain path: the `muse.cmd` launcher runs under cmd.exe, which
- * cannot use a verbatim directory.
+ * A path in the canonical form Muse reports and requires: symlinks resolved
+ * and, on case-insensitive filesystems, the case that is on disk. The
+ * promises realpath is Node's native one, which fixes case (and expands
+ * Windows 8.3 names); FileSystem.realPath is the JS one, which keeps the case
+ * it is given, so `…/EEVEE` survives it when the directory is `eevee` and
+ * Muse then rejects the root. An unresolvable path is returned unchanged.
+ */
+export const museCanonicalPath = Effect.fn("museCanonicalPath")(function* (path: string) {
+  return yield* Effect.tryPromise(() => NodeFSP.realpath(path)).pipe(
+    Effect.orElseSucceed(() => path),
+  );
+});
+
+/**
+ * A workspace root in the form `turn/start` accepts: the canonical path, in
+ * verbatim form on Windows, where Muse rejects anything else. Muse itself
+ * still starts in the plain path: the `muse.cmd` launcher runs under cmd.exe,
+ * which cannot use a verbatim directory.
  */
 export const museWorkspaceRoot = Effect.fn("museWorkspaceRoot")(function* (path: string) {
-  if ((yield* HostProcess.Platform) !== "win32") return path;
+  if ((yield* HostProcess.Platform) !== "win32") return yield* museCanonicalPath(path);
   const canonical = yield* Effect.tryPromise(() => NodeFSP.realpath(path)).pipe(
     // A verbatim path takes `/` literally, so an unresolved root needs Windows separators.
     Effect.orElseSucceed(() => path.replaceAll("/", "\\")),

@@ -420,7 +420,7 @@ describe("Muse workspace root", () => {
     expect(museVerbatimPath("\\\\?\\C:\\repo")).toBe("\\\\?\\C:\\repo");
   });
 
-  it.effect("leaves the root alone off Windows", () =>
+  it.effect("keeps a root it cannot resolve off Windows", () =>
     Effect.gen(function* () {
       expect(yield* museWorkspaceRoot("/workspace/repo")).toBe("/workspace/repo");
     }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
@@ -440,7 +440,21 @@ describe("Muse workspace root", () => {
     }).pipe(Effect.provideService(HostProcess.Platform, "win32")),
   );
 
-  // FileSystem.realPath keeps the case it is given; Muse rejects a root whose case differs from the disk's.
+  // FileSystem.realPath keeps the case it is given; Muse rejects a root whose case
+  // differs from the disk's, and APFS is case-insensitive just like NTFS.
+  it.effect("fixes the case of a macOS root natively", () =>
+    Effect.gen(function* () {
+      if ((yield* HostProcess.Platform) !== "darwin") return;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const created = yield* fs.makeTempDirectoryScoped({ prefix: "MuseRoot-" });
+      // Only a case-insensitive volume resolves the miscased path; skip on a case-sensitive one.
+      if (!(yield* fs.exists(created.toUpperCase()))) return;
+      const root = yield* museWorkspaceRoot(created.toUpperCase());
+      expect(path.basename(root)).toBe(path.basename(created));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("fixes the case of a Windows root natively", () =>
     Effect.gen(function* () {
       if ((yield* HostProcess.Platform) !== "win32") return;
