@@ -31,6 +31,8 @@ import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as PreviewManager from "../../../preview/Manager.ts";
 import * as SourceControlRepositoryService from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
+import * as JjVcsDriver from "../../../vcs/JjVcsDriver.ts";
+import * as VcsDriverRegistry from "../../../vcs/VcsDriverRegistry.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
@@ -52,6 +54,17 @@ const layerStubServices = Layer.mergeAll(
   Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
   Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({}),
   Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+  Layer.mock(JjVcsDriver.JjVcsDriver)({
+    capabilities: {
+      kind: "jj",
+      supportsWorktrees: false,
+      supportsBookmarks: true,
+      supportsAtomicSnapshot: true,
+      supportsPushDefaultRemote: false,
+      ignoreClassifier: "git-compatible-fallback",
+    },
+  }),
+  Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({}),
   Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
   Layer.mock(PreviewManager.PreviewManager)({}),
   Layer.mock(ServerSecretStore.ServerSecretStore)({}),

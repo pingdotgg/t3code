@@ -448,6 +448,21 @@ const make = Effect.gen(function* () {
             },
           )
           .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
+        if (
+          !(yield* git
+            .validateWorkspace(project.workspaceRoot, worktree.worktree.path)
+            .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId))))
+        ) {
+          // An unverified path must not be removed as a failed workspace.
+          createdWorktreePath = null;
+          return yield* mapError(
+            input,
+            "provision-worktree",
+            threadId,
+          )(
+            "Jujutsu isolation requires a separate native workspace; no workspace was provisioned.",
+          );
+        }
         worktreePath = worktree.worktree.path;
         branch = worktree.worktree.refName;
         createdWorktreePath = worktreePath;
@@ -842,6 +857,21 @@ const make = Effect.gen(function* () {
         commandId: input.commandId,
         instanceId: input.modelSelection.instanceId,
       });
+      // Accepted launches replay without rechecking repository support.
+      if (
+        Option.isNone(launchReceipt) ||
+        launchReceipt.value.status !== "accepted" ||
+        launchReceipt.value.commandType !== "thread.create"
+      ) {
+        // The jj-only facade stays dormant until activation and adds no Git subprocesses.
+        yield* git
+          .providerCwd(
+            input.workspaceStrategy.type === "existing_worktree"
+              ? input.workspaceStrategy.worktreePath
+              : project.workspaceRoot,
+          )
+          .pipe(Effect.mapError(mapError(input, "resolve-project")));
+      }
       return yield* Effect.gen(function* () {
         // A retried launch has no client-supplied id to replay against, so
         // recover the thread id its accepted create was recorded under before

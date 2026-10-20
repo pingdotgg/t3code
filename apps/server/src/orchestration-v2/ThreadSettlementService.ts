@@ -23,6 +23,7 @@ import * as GitManager from "../git/GitManager.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as ProjectStore from "./ProjectStore.ts";
@@ -294,6 +295,7 @@ export const make = Effect.gen(function* () {
   const projectStore = yield* ProjectStore.ProjectStoreV2;
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const git = yield* GitManager.GitManager;
+  const workflow = yield* GitWorkflowService.GitWorkflowService;
   const pullRequests = yield* PullRequestService.PullRequestService;
   const crypto = yield* Crypto.Crypto;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -369,6 +371,7 @@ export const make = Effect.gen(function* () {
       .filter((thread) => thread !== null)
       .filter((thread) => visibleThreadPullRequests(thread.pullRequests ?? []).length === 0);
     const lookupCwdByThreadId = new Map<string, string>();
+    const failedCheckoutThreadIds = new Set<ThreadId>();
     yield* Effect.forEach(
       lookupCandidates,
       (thread) =>
@@ -378,13 +381,22 @@ export const make = Effect.gen(function* () {
           const worktreeExists =
             thread.worktreePath !== null &&
             (yield* fileSystem.exists(thread.worktreePath).pipe(Effect.orElseSucceed(() => false)));
-          lookupCwdByThreadId.set(
-            thread.id,
+          const checkoutCwd =
             worktreeExists && thread.worktreePath !== null
               ? thread.worktreePath
-              : project.workspaceRoot,
-          );
-        }),
+              : project.workspaceRoot;
+          const cwd = yield* workflow.providerCwd(checkoutCwd);
+          lookupCwdByThreadId.set(thread.id, cwd);
+        }).pipe(
+          Effect.catchCauseIf(
+            (cause) => !Cause.hasInterruptsOnly(cause),
+            (cause) =>
+              Effect.logWarning("automatic thread settlement checkout lookup failed", {
+                threadId: thread.id,
+                cause: Cause.pretty(cause),
+              }).pipe(Effect.tap(() => Effect.sync(() => failedCheckoutThreadIds.add(thread.id)))),
+          ),
+        ),
       { concurrency: 8, discard: true },
     );
     if (mergedPullRequest !== null) {
@@ -416,7 +428,10 @@ export const make = Effect.gen(function* () {
         cwd === undefined ? ["missing-project", thread.id] : ["branch", cwd, thread.branch],
       );
     };
-    const groups = Map.groupBy(lookupCandidates, lookupKey);
+    const groups = Map.groupBy(
+      lookupCandidates.filter((thread) => !failedCheckoutThreadIds.has(thread.id)),
+      lookupKey,
+    );
 
     const wouldSettle = Effect.fn("ThreadSettlementServiceV2.wouldSettle")(function* (
       group: ReadonlyArray<(typeof lookupCandidates)[number]>,
