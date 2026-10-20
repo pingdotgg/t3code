@@ -431,6 +431,18 @@ function DeviceHostList({
                 ))}
               </div>
               <p className="truncate text-xs text-muted-foreground">{host.target}</p>
+              {results
+                .filter(
+                  (result) =>
+                    result.status?.status === "ready" && result.status.androidDiscoveryIncomplete,
+                )
+                .map((result) => (
+                  <p key={result.environmentId} role="status" className="mt-1 text-xs text-warning">
+                    {compact ? `${result.label}: ` : ""}
+                    {result.status?.detail ??
+                      "The Android device list may be incomplete. Refresh devices to try again."}
+                  </p>
+                ))}
               {compact ? (
                 <Collapsible>
                   <div className="min-w-0 text-xs [--inline-button-white-space:normal]">

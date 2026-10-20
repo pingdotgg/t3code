@@ -842,6 +842,83 @@ it.effect.each([
     }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
 );
 
+it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
+  "retains hub inventory on %s when AVD enumeration fails and recovers on retry",
+  (hostId) =>
+    Effect.gen(function* () {
+      let enumeration = { code: 1, stdout: "private stdout", stderr: "private stderr" };
+      const ready: DeviceHost.DeviceHostReady = {
+        nodePath: process.execPath,
+        hub: { origin: "http://device.test" },
+        helpers: { serveSimAxSettings: null, serveSimCli: null },
+        run: () => Effect.sync(() => enumeration),
+      };
+      const host: DeviceHost.DeviceHost["Service"] = {
+        id: hostId,
+        summary: Effect.succeed({
+          id: hostId,
+          kind: hostId === LOCAL_DEVICE_HOST_ID ? "local" : "ssh",
+          label: "Test device host",
+          platforms: [{ platform: "android", available: true }],
+          hubInstalled: true,
+          agentDeviceInstalled: false,
+        }),
+        platformAvailability: (platform) => Effect.succeed({ platform, available: true }),
+        ensureReady: () => Effect.succeed(ready),
+        ensureAgentReady: () => Effect.die("Agent access is not used in this test"),
+        current: Effect.succeed(ready),
+        stop: Effect.void,
+        stopAgent: Effect.void,
+      };
+      const hubDevices = [
+        { id: "iphone", name: "iPhone", platform: "ios", physical: false },
+        { id: "phone", name: "Pixel", platform: "android", physical: true },
+        { id: "emulator-5554", name: "Running_AVD", platform: "android", physical: false },
+      ].map((device) => ({ ...device, booted: true, version: "test" }));
+      const http = HttpClient.make((request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            Response.json({ simulators: hubDevices.slice(0, 1), emulators: hubDevices.slice(1) }),
+          ),
+        ),
+      );
+      const service = yield* DeviceService.makeWithHosts(new Map([[hostId, host]])).pipe(
+        Effect.provide(NodeCrypto.layer),
+        Effect.provideService(HttpClient.HttpClient, http),
+      );
+
+      const incomplete = yield* service.list;
+      expect(incomplete.devices).toEqual(hubDevices.map((device) => ({ ...device, hostId })));
+      expect(incomplete.hostStatuses[hostId]).toEqual({
+        status: "ready",
+        androidDiscoveryIncomplete: true,
+        detail:
+          "Could not list Android virtual devices (emulator -list-avds, exit code 1). Discovered devices remain available.",
+      });
+      if (hostId === LOCAL_DEVICE_HOST_ID) {
+        expect(incomplete.hostStatusDetail).toBe(incomplete.hostStatuses[hostId]?.detail);
+      }
+
+      enumeration = { code: 0, stdout: "Running_AVD\r\nStopped_AVD\nStopped_AVD\n", stderr: "" };
+      const recovered = yield* service.retryHost(hostId);
+      expect(recovered.devices).toEqual([
+        ...hubDevices.map((device) => ({ ...device, hostId })),
+        {
+          hostId,
+          id: "Stopped_AVD",
+          name: "Stopped_AVD",
+          platform: "android",
+          version: "Android",
+          booted: false,
+          physical: false,
+        },
+      ]);
+      expect(recovered.hostStatuses[hostId]).toEqual({ status: "ready" });
+      if (hostId === LOCAL_DEVICE_HOST_ID) expect(recovered.hostStatusDetail).toBeUndefined();
+    }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
+);
+
 it.effect("retry keeps device and agent consent unchanged", () =>
   Effect.gen(function* () {
     const { service, starts, agentStarts } = yield* fixture();

@@ -37,6 +37,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
   startup: (
     stateDir: string,
   ) => Effect.Effect<ProcessRunner.ProcessRunOutput, ProcessRunner.ProcessRunError>,
+  avdOutput: ProcessRunner.ProcessRunOutput = processOutput(0),
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -79,7 +80,9 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     ),
     Effect.provideService(ProcessRunner.ProcessRunner, {
       run: (input) =>
-        input.args.includes("devices") ? startup(stateDir) : Effect.succeed(processOutput(0)),
+        input.args.includes("devices")
+          ? startup(stateDir)
+          : Effect.succeed(input.args.includes("-list-avds") ? avdOutput : processOutput(0)),
     }),
     Effect.provideService(
       HttpClient.HttpClient,
@@ -397,6 +400,22 @@ describe("Android SDK availability", () => {
     }),
   );
 });
+
+it.effect.each([
+  { reason: "timeout", timedOut: true },
+  { reason: "signal termination", timedOut: false },
+])("reports AVD enumeration $reason as a failed command", ({ timedOut }) =>
+  Effect.gen(function* () {
+    const { host } = yield* agentFixture(() => Effect.succeed(processOutput(0)), {
+      ...processOutput(0),
+      code: null,
+      timedOut,
+    });
+    const ready = yield* host.ensureReady(() => Effect.void);
+    const result = yield* ready.run("emulator", ["-list-avds"]);
+    expect(result.code).not.toBe(0);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
 
 it.effect("puts detected Android tools on the helper PATH without losing existing commands", () =>
   Effect.gen(function* () {
