@@ -65,22 +65,26 @@ public final class T3NativeControlsModule: Module {
     }
 
     AsyncFunction("pickInstalledFont") { (selectedName: String?, promise: Promise) in
-      guard self.fontPresentation == nil,
-        let presenter = self.appContext?.utilities?.currentViewController()
-      else {
-        promise.reject("ERR_FONT_PICKER", "Cannot present the font picker right now.")
-        return
+      MainActor.assumeIsolated {
+        guard self.fontPresentation == nil,
+          let presenter = self.appContext?.utilities?.currentViewController()
+        else {
+          promise.reject("ERR_FONT_PICKER", "Cannot present the font picker right now.")
+          return
+        }
+        let presentation = T3FontPickerPresentation { [weak self] result in
+          self?.fontPresentation = nil
+          promise.resolve(result)
+        }
+        self.fontPresentation = presentation
+        presentation.present(from: presenter, selectedName: selectedName)
       }
-      let presentation = T3FontPickerPresentation { [weak self] result in
-        self?.fontPresentation = nil
-        promise.resolve(result)
-      }
-      self.fontPresentation = presentation
-      presentation.present(from: presenter, selectedName: selectedName)
     }.runOnQueue(.main)
 
     AsyncFunction("resolveInstalledFonts") { (names: [String], promise: Promise) in
-      T3InstalledFonts.resolve(names) { promise.resolve($0) }
+      MainActor.assumeIsolated {
+        T3InstalledFonts.resolve(names) { promise.resolve($0) }
+      }
     }.runOnQueue(.main)
 
     AsyncFunction("presentVideo") { (url: URL, title: String, sourceIdentifier: String, identifier: String, promise: Promise) in
