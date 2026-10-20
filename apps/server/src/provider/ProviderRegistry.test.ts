@@ -45,6 +45,8 @@ import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
 import * as ModelManifest from "./ModelManifest.ts";
+import * as ProviderMaintenanceRunner from "./providerMaintenanceRunner.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { applyProviderCompatibility } from "./providerCompatibility.ts";
 import * as ResetCreditCoordinator from "./resetCreditCoordinator.ts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
@@ -68,7 +70,10 @@ import type {
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 import { ProviderDriverError } from "./Errors.ts";
-import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
+import {
+  makeManualOnlyProviderMaintenanceCapabilities,
+  makeProviderMaintenanceCapabilities,
+} from "@t3tools/provider-core/server/maintenanceResolver";
 const decodeServerProvider = Schema.decodeSync(ServerProvider);
 const encodeServerProvider = Schema.encodeSync(ServerProvider);
 const decodeServerSettings = Schema.decodeSync(ServerSettings);
@@ -399,6 +404,7 @@ const awaitPersistedProvider = (
   );
 
 const layerTestNodeServices = Layer.mergeAll(
+  ProviderLatestVersions.layer,
   NodeServices.layer,
   Layer.mock(CodexInstallation.CodexInstallation)({
     managedDirectory: "unused-managed-installation",
@@ -1943,6 +1949,271 @@ it.layer(
           const registry = yield* ProviderRegistry.ProviderRegistry;
           assert.deepStrictEqual(yield* registry.getProviders, [initialProvider]);
           assert.strictEqual(yield* Ref.get(refreshCalls), 0);
+        }).pipe(Effect.provide(runtimeServices));
+      }),
+    );
+
+    const updateScenarios = [
+      "healthy",
+      "unauthenticated",
+      "sibling defects",
+      "selected defect",
+      "selected disabled",
+    ] as const;
+    it.effect.each(updateScenarios)("refreshes account caches after update (%s)", (scenario) =>
+      Effect.gen(function* () {
+        const driver = ProviderDriverKind.make("example");
+        const packageName = "@example/provider";
+        const manifestRefreshes = yield* Ref.make(0);
+        const events: string[] = [];
+        const manifest = {
+          version: 1,
+          currentModels: {},
+          compatibility: [{ driver, t3CodeRange: ">=0.0.42", ranges: [] }],
+        } satisfies ModelManifest.ModelManifestData;
+        const makeInstance = (
+          id: string,
+          config: { binaryPath: string; home: string; model: string },
+          enabled = true,
+          driverKind = driver,
+        ): ProviderInstance => {
+          const instanceId = ProviderInstanceId.make(id);
+          const provider = {
+            instanceId,
+            driver: driverKind,
+            status: scenario === "unauthenticated" ? "error" : "ready",
+            enabled,
+            installed: true,
+            auth: {
+              status:
+                scenario === "unauthenticated" || scenario === "selected defect"
+                  ? "unauthenticated"
+                  : "authenticated",
+              label: config.home,
+            },
+            checkedAt: "2026-06-10T00:00:00.000Z",
+            version: scenario === "selected defect" && id === "personal" ? "2.0.0" : "1.0.0",
+            models: [],
+            slashCommands: [],
+            skills: [],
+          } as const satisfies ServerProvider;
+          let cached = true;
+          return {
+            instanceId,
+            driverKind,
+            continuationIdentity: { driverKind, continuationKey: config.home },
+            displayName: undefined,
+            enabled,
+            snapshot: {
+              resolveMaintenance: () =>
+                Effect.sync(() => {
+                  if (id === "broken-maintenance" && events.includes("update")) {
+                    throw new Error("Sibling maintenance failed");
+                  }
+                  return makeProviderMaintenanceCapabilities({
+                    provider: driverKind,
+                    packageName: scenario === "selected defect" ? null : packageName,
+                    updateExecutable: config.binaryPath,
+                    updateArgs: ["update"],
+                    env: { PROVIDER_HOME: config.home },
+                    updateLockKey: config.binaryPath,
+                    latestVersion: scenario === "selected defect" ? null : "2.0.0",
+                  });
+                }),
+              getSnapshot: Effect.succeed(provider),
+              refresh: Effect.sync(() => {
+                events.push(`probe:${id}`);
+                if (
+                  id === "broken-discovery" ||
+                  (scenario === "selected defect" && id === "personal")
+                ) {
+                  throw new Error("Provider discovery failed");
+                }
+                return cached
+                  ? provider
+                  : {
+                      ...provider,
+                      version: "2.0.0",
+                      models: [
+                        {
+                          slug: config.model,
+                          name: config.model,
+                          isCustom: false,
+                          capabilities: createModelCapabilities({ optionDescriptors: [] }),
+                        },
+                      ],
+                    };
+              }),
+              streamChanges: Stream.empty,
+              applyUsageLimits: () => Effect.void,
+            },
+            invalidateCaches: Effect.sync(() => {
+              cached = false;
+              events.push(`invalidate:${id}`);
+            }),
+            orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+            textGeneration: {} as ProviderInstance["textGeneration"],
+          };
+        };
+        const instances = [
+          makeInstance(
+            "personal",
+            { binaryPath: "/personal/agent", home: "/personal", model: "personal-model" },
+            scenario !== "selected disabled",
+          ),
+          makeInstance("work", { binaryPath: "/work/agent", home: "/work", model: "work-model" }),
+          ...(scenario === "sibling defects"
+            ? ["broken-maintenance", "broken-discovery"].map((id) =>
+                makeInstance(id, { binaryPath: `/${id}/agent`, home: `/${id}`, model: id }),
+              )
+            : []),
+          makeInstance(
+            "disabled",
+            { binaryPath: "/disabled/agent", home: "/disabled", model: "disabled-model" },
+            false,
+          ),
+          makeInstance(
+            "unrelated",
+            { binaryPath: "/other/agent", home: "/other", model: "other-model" },
+            true,
+            ProviderDriverKind.make("other"),
+          ),
+        ];
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const runtimeServices = yield* Layer.build(
+          ProviderMaintenanceRunner.layer.pipe(
+            Layer.provideMerge(ProviderRegistry.layer),
+            Layer.provideMerge(
+              Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+                getInstance: (instanceId) =>
+                  Effect.succeed(instances.find((instance) => instance.instanceId === instanceId)),
+                listInstances: Effect.succeed(instances),
+                listUnavailable: Effect.succeed([]),
+                streamChanges: Stream.empty,
+                subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+              }),
+            ),
+            Layer.provideMerge(
+              Layer.succeed(ModelManifest.ModelManifest, {
+                current: Effect.succeed(manifest),
+                refresh: Effect.succeed(manifest),
+                forceRefresh: Ref.update(manifestRefreshes, (count) => count + 1).pipe(
+                  Effect.as(manifest),
+                ),
+                refreshInBackground: Effect.void,
+              }),
+            ),
+            Layer.provideMerge(
+              Layer.effect(
+                ProviderLatestVersions.ProviderLatestVersions,
+                ProviderLatestVersions.make([
+                  [packageName, "1.0.0"],
+                  ["unrelated-package", "1.0.0"],
+                ]),
+              ),
+            ),
+            Layer.provideMerge(Layer.succeed(HostProcess.Platform, "linux")),
+            Layer.provideMerge(
+              Layer.succeed(
+                ChildProcessSpawner.ChildProcessSpawner,
+                ChildProcessSpawner.make((command) =>
+                  Effect.sync(() => {
+                    assert.strictEqual(command._tag, "StandardCommand");
+                    if (command._tag !== "StandardCommand") throw new Error("Unexpected pipeline");
+                    assert.strictEqual(command.command, "/personal/agent");
+                    assert.deepStrictEqual(command.args, ["update"]);
+                    assert.strictEqual(command.options.env?.PROVIDER_HOME, "/personal");
+                    events.push("update");
+                    return mockHandle({ stdout: "updated", stderr: "", code: 0 });
+                  }),
+                ),
+              ),
+            ),
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), {
+                prefix: "t3-provider-registry-update-caches-",
+              }),
+            ),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ).pipe(Scope.provide(scope));
+
+        yield* Effect.gen(function* () {
+          const runner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
+          const registry = yield* ProviderRegistry.ProviderRegistry;
+          const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
+          const before = yield* registry.getProviders;
+          if (scenario === "selected defect") {
+            const selected = before.find((p) => p.instanceId === "personal");
+            assert.strictEqual(selected?.version, "2.0.0");
+            assert.strictEqual(selected?.status, "ready");
+            assert.strictEqual(selected?.auth.status, "unauthenticated");
+            assert.strictEqual(selected?.versionAdvisory, undefined);
+          }
+          const result = yield* runner.updateProvider({
+            provider: driver,
+            instanceId: ProviderInstanceId.make("personal"),
+          });
+          assert.strictEqual(
+            result.providers.find((p) => p.instanceId === "personal")?.updateState?.status,
+            scenario === "selected defect" ? "unchanged" : "succeeded",
+          );
+          assert.deepStrictEqual(
+            events.filter((event) => event === "update"),
+            ["update"],
+          );
+          assert.strictEqual(events[0], "update");
+          assert.deepStrictEqual(
+            events.filter((event) => event.startsWith("probe:")).toSorted(),
+            [
+              "probe:personal",
+              "probe:work",
+              ...(scenario === "sibling defects" ? ["probe:broken-discovery"] : []),
+            ].toSorted(),
+          );
+          for (const id of ["personal", "work"]) {
+            assert.isBelow(events.indexOf(`invalidate:${id}`), events.indexOf(`probe:${id}`));
+            assert.include(events, `invalidate:${id}`);
+            const provider = result.providers.find((p) => p.instanceId === id);
+            assert.deepStrictEqual(
+              provider?.models.map((model) => model.slug),
+              scenario === "selected defect" && id === "personal" ? [] : [`${id}-model`],
+            );
+            assert.strictEqual(provider?.auth.label, `/${id}`);
+            if (scenario === "unauthenticated") {
+              assert.strictEqual(provider?.status, "error");
+              assert.strictEqual(provider?.auth.status, "unauthenticated");
+              assert.strictEqual(provider?.version, "2.0.0");
+            }
+          }
+          for (const id of scenario === "sibling defects"
+            ? ["broken-maintenance", "broken-discovery"]
+            : scenario === "selected defect"
+              ? ["personal"]
+              : []) {
+            assert.strictEqual(result.providers.find((p) => p.instanceId === id)?.status, "error");
+          }
+          assert.isAtLeast(yield* Ref.get(manifestRefreshes), 1);
+          assert.strictEqual(
+            yield* latestVersions.cached(packageName, Effect.succeed("2.0.0")),
+            scenario === "selected defect" ? "1.0.0" : "2.0.0",
+          );
+          assert.strictEqual(
+            yield* latestVersions.cached("unrelated-package", Effect.succeed("2.0.0")),
+            "1.0.0",
+          );
+          assert.strictEqual(
+            result.providers.find((p) => p.instanceId === "work")?.updateState,
+            undefined,
+          );
+          for (const id of ["disabled", "unrelated"]) {
+            assert.notInclude(events, `invalidate:${id}`);
+            assert.deepStrictEqual(
+              result.providers.find((p) => p.instanceId === id),
+              before.find((p) => p.instanceId === id),
+            );
+          }
         }).pipe(Effect.provide(runtimeServices));
       }),
     );
