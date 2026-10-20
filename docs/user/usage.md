@@ -80,9 +80,17 @@ the dialog.
 
 **Usage → Limits** pools every subscription account it can see per provider, so with several Codex
 or Claude accounts across your environments and hubs you read one number per window rather than a
-list. Each window card shows how much of the pool is left and a bar with one segment per account,
-kept in the same column across windows. Accounts are ordered by their next 5-hour refill, soonest
-first. For an account with no weekly quota left, this is when its session becomes usable again.
+list. Each window card shows how much of the pool is left and a bar with one segment per account.
+Pooled amounts are estimates based on reported plan labels, not guaranteed quotas. Recognized
+Codex Plus, Pro 5x, and Pro 20x plans use a 1:5:20 ratio for session and weekly windows. Recognized
+Claude Pro, Max 5x, and Max 20x plans use the same ratio for sessions; Claude weekly and
+model-specific windows count accounts equally. If any account reporting a window has an unknown
+capacity, that entire window counts accounts equally. Accounts missing a window do not affect
+its pooled amounts or disable weighting. Segment widths follow each window's weights, so widths
+can vary between windows while account order stays the same.
+
+Accounts are ordered by their next 5-hour refill, soonest first. For an account with no weekly
+quota left, this is when its session becomes usable again.
 The first available window is used when no account reports a 5-hour limit. A gap means the
 account does not report that window. When the provider reports reset times, the card also says
 when the next reset lands and how much it hands back. The hatched

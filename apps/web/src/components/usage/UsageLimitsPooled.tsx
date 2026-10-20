@@ -493,7 +493,11 @@ function PoolBar({
     <div className="@container/pool min-w-0">
       <div
         className="grid gap-x-1 gap-y-1"
-        style={{ gridTemplateColumns: `repeat(${pool.columns.length}, minmax(0, 1fr))` }}
+        style={{
+          gridTemplateColumns: pool.columns
+            .map((member) => `minmax(0, ${member.weight}fr)`)
+            .join(" "),
+        }}
       >
         {pool.columns.map((member, position) =>
           member.window ? (

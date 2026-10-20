@@ -210,7 +210,11 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     accounts.set(key, {
       ...previous,
       displayName: previous.displayName ?? next.displayName,
-      plan: previous.plan ?? next.plan,
+      // The hub's generic Claude label carries no tier information.
+      plan:
+        winner.driver === "claudeAgent" && winner.plan === "Claude Subscription"
+          ? ((fresher ? previous.plan : next.plan) ?? winner.plan)
+          : winner.plan,
       accentColor: previous.accentColor ?? next.accentColor,
       environments,
       sourceLabel: environments.length > 0 ? null : (previous.sourceLabel ?? next.sourceLabel),
@@ -322,7 +326,9 @@ export interface LimitPoolWindow {
   readonly label: string;
   readonly members: readonly LimitPoolMember[];
   readonly columns: ReadonlyArray<
-    LimitPoolMember | { readonly account: LimitAccount; readonly window: null }
+    (LimitPoolMember | { readonly account: LimitAccount; readonly window: null }) & {
+      readonly weight: number;
+    }
   >;
   readonly remainingPercent: number;
   readonly usedPercent: number;
@@ -404,6 +410,22 @@ function accountSortName(account: LimitAccount): string {
   return (account.displayName ?? account.email ?? account.key).toLowerCase();
 }
 
+function planCapacity(account: LimitAccount, kind: ServerProviderUsageWindow["kind"]) {
+  if (account.driver === "codex" && (kind === "session" || kind === "weekly")) {
+    if (account.plan === "ChatGPT Plus Subscription") return 1;
+    const match = account.plan?.match(/^ChatGPT Pro (5|20)x Subscription$/);
+    return match ? Number(match[1]) : undefined;
+  }
+  // Claude's published Max multipliers describe session allowance only.
+  if (account.driver === "claudeAgent" && kind === "session") {
+    const plan = account.plan?.replace(/^Claude (.+) Subscription$/, "$1");
+    if (plan === "Pro") return 1;
+    const match = plan?.match(/^Max (5|20)x$/);
+    return match ? Number(match[1]) : undefined;
+  }
+  return undefined;
+}
+
 /**
  * Codex ids are slots, not allowances: a weekly-only plan reports its weekly
  * window as `primary`, other plans as `secondary`. Its windows pool by kind;
@@ -472,21 +494,38 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
       else byKey.set(key, [member]);
     }
   }
-  const pools = [...byKey].map(([key, members]): LimitPoolWindow => {
+  const pools = [...byKey].map(([key, reportedMembers]): LimitPoolWindow => {
+    const first = reportedMembers[0]!.window;
+    // An unknown reporting capacity makes the whole window incomparable by plan.
+    const weighted = reportedMembers.every(
+      (member) => planCapacity(member.account, first.kind) !== undefined,
+    );
+    const weightOf = (account: LimitAccount) =>
+      weighted ? (planCapacity(account, first.kind) ?? 1) : 1;
+    const members = reportedMembers.map((member) => ({
+      ...member,
+      weight: weightOf(member.account),
+    }));
     const memberByAccount = new Map(members.map((member) => [member.account.key, member]));
-    const first = members[0]!.window;
+    const totalWeight = members.reduce((sum, m) => sum + m.weight, 0);
+    const usedPercent =
+      members.reduce((sum, m) => sum + m.window.usedPercent * m.weight, 0) / totalWeight;
     const id = members[0]!.account.driver === "codex" ? key : first.id;
-    const usedPercent = members.reduce((sum, m) => sum + m.window.usedPercent, 0) / members.length;
     // Pace compares spend against the clock, so it is judged only over the
     // members that have a clock; a window with no reset would otherwise
     // count as spend with no time elapsed and skew the verdict.
     const timed = members.flatMap((m) => {
       const share = elapsedShare(m.window, now);
-      return share === null ? [] : [{ used: m.window.usedPercent, elapsed: share }];
+      return share === null
+        ? []
+        : [{ used: m.window.usedPercent, elapsed: share, weight: m.weight }];
     });
-    const timedUsed = timed.reduce((sum, t) => sum + t.used, 0) / timed.length;
+    const timedWeight = timed.reduce((sum, t) => sum + t.weight, 0);
+    const timedUsed = timed.reduce((sum, t) => sum + t.used * t.weight, 0) / timedWeight;
     const meanElapsed =
-      timed.length > 0 ? timed.reduce((sum, t) => sum + t.elapsed, 0) / timed.length : null;
+      timed.length > 0
+        ? timed.reduce((sum, t) => sum + t.elapsed * t.weight, 0) / timedWeight
+        : null;
     const resets = members
       .flatMap((member) => {
         const at = resetMillis(member.window);
@@ -496,7 +535,7 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
               {
                 member,
                 at,
-                restoresPercent: Math.round(member.refillPercent / members.length),
+                restoresPercent: Math.round((member.refillPercent * member.weight) / totalWeight),
               },
             ];
       })
@@ -507,7 +546,8 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
       label: first.label,
       members,
       columns: accounts.map(
-        (account) => memberByAccount.get(account.key) ?? { account, window: null },
+        (account) =>
+          memberByAccount.get(account.key) ?? { account, window: null, weight: weightOf(account) },
       ),
       usedPercent: Math.round(usedPercent),
       remainingPercent: Math.round(100 - usedPercent),
