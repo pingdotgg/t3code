@@ -6279,7 +6279,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   function taskToolFrames(
     tool: TaskToolCall,
     nextUuid: () => string,
-    options?: { parentToolUseId?: string; isError?: boolean; extraToolResult?: boolean },
+    options?: {
+      parentToolUseId?: string;
+      isError?: boolean;
+      extraToolResult?: boolean;
+      nonExecutionKind?: string;
+    },
   ): ReadonlyArray<SDKMessage> {
     const uuid = nextUuid();
     const toolUseId = `tool-${uuid}`;
@@ -6314,15 +6319,28 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             {
               type: "tool_result",
               tool_use_id: toolUseId,
-              content: "Task tool finished.",
-              is_error: options?.isError ?? false,
+              content:
+                parentToolUseId !== null && tool.name === "TaskCreate"
+                  ? `Task #${tool.output.task.id} created successfully: ${tool.output.task.subject}`
+                  : parentToolUseId !== null && tool.name === "TaskUpdate"
+                    ? tool.output.success
+                      ? `Updated task #${tool.output.taskId} ${tool.output.updatedFields.join(", ")}`
+                      : tool.output.error
+                    : "Task tool finished.",
+              ...(options?.isError === undefined ? {} : { is_error: options.isError }),
             },
             ...(options?.extraToolResult
               ? [{ type: "tool_result", tool_use_id: "unrelated-tool", content: "ok" }]
               : []),
           ],
         },
-        tool_use_result: tool.output,
+        // Like real Claude, subagent results carry only the text, no `tool_use_result`.
+        ...(parentToolUseId === null ? { tool_use_result: tool.output } : {}),
+        ...(options?.nonExecutionKind === undefined
+          ? {}
+          : {
+              tool_result_meta: [{ id: toolUseId, non_execution_kind: options.nonExecutionKind }],
+            }),
         parent_tool_use_id: parentToolUseId,
         uuid: nextUuid(),
         session_id: WAKE_NATIVE_SESSION,
@@ -6361,7 +6379,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       });
       const call = Effect.fnUntraced(function* (
         tool: TaskToolCall,
-        options?: { parentToolUseId?: string; isError?: boolean; extraToolResult?: boolean },
+        options?: Parameters<typeof taskToolFrames>[2],
       ) {
         for (const frame of taskToolFrames(tool, nextUuid, options)) {
           yield* harness.offerAndWait(frame);
@@ -6377,7 +6395,22 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         harness.events.flatMap((event) =>
           event.type === "plan.updated" && event.plan.kind === "todo_list" ? [event.plan] : [],
         );
-      return { configDir, startTurn, call, finishTurn, plans };
+      // Registers a running subagent so frames carrying its tool_use_id as
+      // parent_tool_use_id are processed instead of held for an unknown owner.
+      const launchSubagent = (toolUseId: string) =>
+        harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: `task-${toolUseId}`,
+            tool_use_id: toolUseId,
+            description: "Work on tasks",
+            task_type: "local_agent",
+            uuid: nextUuid(),
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+      return { configDir, startTurn, call, launchSubagent, finishTurn, plans };
     });
 
   const makeTaskToolHarness = makeTaskToolHarnessWithOptions();
@@ -6691,20 +6724,74 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("keeps subagent TaskCreate, TaskUpdate and TaskList out of the main plan", () =>
+  it.effect("applies subagent task tools to the parent turn's shared task list", () =>
     Effect.gen(function* () {
       const harness = yield* makeTaskToolHarness;
       yield* harness.startTurn();
       yield* harness.call(createTask("1", "Main task"));
+      yield* harness.launchSubagent("tool-parent-agent");
       const child = { parentToolUseId: "tool-parent-agent" };
-      yield* harness.call(createTask("2", "Child task"), child);
       yield* harness.call(updateTask({ taskId: "1", status: "completed" }), child);
-      yield* harness.call({ name: "TaskList", input: {}, output: { tasks: [] } }, child);
-      yield* harness.call(updateTask({ taskId: "1", status: "in_progress" }));
+      yield* harness.call(createTask("2", "Child task"), child);
+      yield* harness.call(
+        {
+          name: "TaskUpdate",
+          input: { taskId: "2", status: "completed" },
+          output: {
+            success: false,
+            taskId: "2",
+            updatedFields: [],
+            error: "Tests must pass before completing.",
+          },
+        },
+        child,
+      );
+      yield* harness.call(updateTask({ taskId: "2", status: "in_progress" }), {
+        ...child,
+        isError: true,
+      });
+      // A cancelled call never ran, even without `is_error`.
+      yield* harness.call(updateTask({ taskId: "2", status: "completed" }), {
+        ...child,
+        nonExecutionKind: "cancelled",
+      });
       yield* harness.finishTurn();
-      assert.lengthOf(harness.plans(), 2);
+      const plans = harness.plans();
+      assert.lengthOf(plans, 3);
+      assert.equal(new Set(plans.map((plan) => plan.id)).size, 1);
+      assert.deepEqual(plans.at(-1)?.steps, [
+        { id: "task-1", text: "Main task", status: "completed" },
+        { id: "task-2", text: "Child task", status: "pending" },
+      ]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("recovers persisted tasks when a subagent's TaskList comes first", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const harness = yield* makeTaskToolHarness;
+      const tasksDir = `${harness.configDir}/tasks/${WAKE_NATIVE_SESSION}`;
+      yield* fs.makeDirectory(tasksDir, { recursive: true });
+      yield* fs.writeFileString(
+        `${tasksDir}/1.json`,
+        JSON.stringify({ id: "1", subject: "Inspect", status: "pending", blockedBy: [] }),
+      );
+
+      yield* harness.startTurn();
+      yield* harness.launchSubagent("tool-parent-agent");
+      yield* harness.call(
+        { name: "TaskList", input: {}, output: { tasks: [] } },
+        { parentToolUseId: "tool-parent-agent" },
+      );
+      yield* harness.call(updateTask({ taskId: "1", status: "completed" }));
+      yield* harness.finishTurn();
       assert.deepEqual(harness.plans().at(-1)?.steps, [
-        { id: "task-1", text: "Main task", status: "running" },
+        { id: "task-1", text: "Inspect", status: "completed" },
       ]);
     }).pipe(
       Effect.scoped,

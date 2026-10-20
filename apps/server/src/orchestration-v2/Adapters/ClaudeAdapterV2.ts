@@ -3606,12 +3606,20 @@ function applyClaudeTaskTool(
   }
   if (toolName === "TaskCreate") {
     const created = claudeTaskField(result, "task");
-    const id = claudeTaskString(created, "id");
-    const text = claudeTaskString(created, "subject") ?? claudeTaskString(input, "subject");
+    const fromText = claudeCreatedTaskFromText(result);
+    const id = claudeTaskString(created, "id") ?? fromText?.id;
+    const text =
+      claudeTaskString(created, "subject") ??
+      fromText?.subject ??
+      claudeTaskString(input, "subject");
     if (id === undefined || text === undefined) return undefined;
     return new Map(tasks).set(id, { text, status: "pending" });
   }
-  if (toolName !== "TaskUpdate" || claudeTaskField(result, "success") === false) {
+  if (
+    toolName !== "TaskUpdate" ||
+    claudeTaskField(result, "success") === false ||
+    (typeof result === "string" && !result.startsWith("Updated task #"))
+  ) {
     return undefined;
   }
   const id = claudeTaskString(input, "taskId") ?? claudeTaskString(result, "taskId");
@@ -3627,6 +3635,16 @@ function applyClaudeTaskTool(
   const status = claudeTaskStatus(nativeStatus) ?? task.status;
   if (text === task.text && status === task.status) return undefined;
   return new Map(tasks).set(id, { text, status });
+}
+
+// Subagent results carry no structured `tool_use_result`, only the text
+// "Task #3 created successfully: <subject>".
+function claudeCreatedTaskFromText(
+  result: unknown,
+): { readonly id: string; readonly subject: string } | undefined {
+  const match =
+    typeof result === "string" ? /^Task #(\S+) created successfully: (.+)$/s.exec(result) : null;
+  return match === null ? undefined : { id: match[1]!, subject: match[2]!.trim() };
 }
 
 const CLAUDE_TASK_TOOL_NAMES = new Set(["TaskCreate", "TaskUpdate", "TaskList"]);
@@ -8141,17 +8159,26 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               output,
               completedAt: yield* DateTime.now,
             });
+            // Subagents write to the session's shared task store, so their
+            // task tools update the parent turn's list. Failed or never-run
+            // calls changed nothing.
             if (
-              parentToolUseId === null &&
+              claudeToolNonExecutionKind(message, toolResult.tool_use_id) === undefined &&
               !isClaudeToolResultError(toolResult) &&
               CLAUDE_TASK_TOOL_NAMES.has(toolCall.toolName)
             ) {
               const taskLists = yield* Ref.get(taskListsByNativeThread);
               const knownTaskList = taskLists.get(liveQuery.nativeThreadId);
-              // TaskList already supplies a snapshot. Mutations need Claude's persisted
-              // list once; afterward the cache also records an unavailable store.
+              const outputValue = claudeNativeToolOutputValue(output);
+              // A structured TaskList already supplies a snapshot. Anything else, including
+              // a subagent's text-only TaskList, needs Claude's persisted list once;
+              // afterward the cache also records an unavailable store.
               const storedTaskList =
-                !taskLists.has(liveQuery.nativeThreadId) && toolCall.toolName !== "TaskList"
+                !taskLists.has(liveQuery.nativeThreadId) &&
+                !(
+                  toolCall.toolName === "TaskList" &&
+                  Array.isArray(claudeTaskField(outputValue, "tasks"))
+                )
                   ? yield* readClaudeTaskList({
                       environment: adapterOptions.environment,
                       cwd: context.input.runtimePolicy.cwd,
@@ -8166,7 +8193,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   knownTaskList ?? storedTaskList ?? new Map(),
                   toolCall.toolName,
                   claudeNativeToolInputValue(toolCall.input),
-                  claudeNativeToolOutputValue(output),
+                  outputValue,
                 ) ?? storedTaskList;
               yield* Ref.set(
                 taskListsByNativeThread,
