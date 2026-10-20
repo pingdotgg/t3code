@@ -64,3 +64,12 @@ restart before T3 Code can see configuration changes.
 
 Existing threads keep their selected model and options even when it disappears
 from the catalog. If OpenCode rejects that model, select an available one and retry.
+
+## Large model catalogs
+
+OpenCode lists every model from each connected provider, so an OpenRouter key can add
+hundreds. Agents that hand work to another provider or model read the same list. To keep
+them to the models you use, favorite those models in the model picker and turn on
+**Favorite models only for agents** under **Settings > Providers > Advanced** (on mobile,
+**Agent behavior > Delegation**). Providers without favorites are left out. You can still
+pick any model yourself, and an agent can still use a model you name.

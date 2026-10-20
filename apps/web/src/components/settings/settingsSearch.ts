@@ -665,6 +665,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     macProviderSettingsOnly: true,
   },
   {
+    id: "delegation-favorites-only",
+    title: "Favorite models only for agents",
+    to: "/settings/providers",
+    searchTerms: [
+      "delegate delegation subagent child task orchestrator mcp model list catalog openrouter starred",
+    ],
+    providerSettingsOnly: true,
+  },
+  {
     id: "provider-health-check-interval",
     title: "Health check interval",
     to: "/settings/providers",

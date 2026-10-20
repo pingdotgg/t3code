@@ -15,6 +15,7 @@ import {
   RunId,
   ThreadId,
   type OrchestrationV2ThreadProjection,
+  type ModelSelection,
   type ServerProvider,
 } from "@t3tools/contracts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
@@ -1045,7 +1046,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
   );
 
-  it.effect("leaves models the user hid out of the capability catalog", () =>
+  const favoritesCatalog = (settings: Parameters<typeof ServerSettings.layerTest>[0]) =>
     Effect.gen(function* () {
       const codex = providerSnapshot({
         instanceId: codexInstanceId,
@@ -1057,11 +1058,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadRecords: () => Effect.succeed(parentProjection([])),
         }),
-        ServerSettings.layerTest({
-          providerModelPreferences: {
-            [codexInstanceId]: { hiddenModels: ["gpt-5.4-mini", "my-model"], modelOrder: [] },
-          },
-        }),
+        ServerSettings.layerTest(settings),
         providerRegistryLayer([
           {
             ...codex,
@@ -1071,21 +1068,336 @@ describe("OrchestratorMcpService provider resolution", () => {
               { slug: "my-model", name: "Mine", isCustom: true, capabilities: null },
             ],
           },
+          providerSnapshot({
+            instanceId: antigravityInstanceId,
+            driver: ProviderDriverKind.make("antigravity"),
+            model: "ant-model",
+          }),
         ]),
-        adapterRegistryLayer([codexInstanceId]),
+        adapterRegistryLayer([codexInstanceId, antigravityInstanceId]),
         Layer.mock(ProjectService.ProjectService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
-
-      yield* Effect.gen(function* () {
+      return yield* Effect.gen(function* () {
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
         const capabilities = yield* service.capabilities(scope);
-        assert.deepEqual(
-          capabilities.providers[0]?.models.map((model) => model.id),
-          ["gpt-5.4", "my-model"],
+        return capabilities.providers.map(
+          (provider): readonly [ProviderInstanceId, ReadonlyArray<string>] => [
+            provider.providerInstanceId,
+            provider.models.map((model) => model.id),
+          ],
         );
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+    });
+
+  it.effect.each<{
+    readonly name: string;
+    readonly settings: Parameters<typeof ServerSettings.layerTest>[0];
+    readonly catalog: ReadonlyArray<readonly [ProviderInstanceId, ReadonlyArray<string>]>;
+  }>([
+    {
+      name: "leaves models the user hid out",
+      settings: {
+        providerModelPreferences: {
+          [codexInstanceId]: { hiddenModels: ["gpt-5.4-mini", "my-model"], modelOrder: [] },
+        },
+      },
+      catalog: [
+        [codexInstanceId, ["gpt-5.4", "my-model"]],
+        [antigravityInstanceId, ["ant-model"]],
+      ],
+    },
+    {
+      name: "lists only favorites and drops providers without any",
+      settings: {
+        delegationFavoritesOnly: true,
+        favorites: [{ provider: codexInstanceId, model: "gpt-5.4-mini" }],
+        providerModelPreferences: {
+          [codexInstanceId]: { hiddenModels: ["gpt-5.4-mini"], modelOrder: [] },
+        },
+      },
+      catalog: [[codexInstanceId, ["gpt-5.4-mini"]]],
+    },
+    {
+      name: "lists the full catalog while favorites are unmigrated",
+      settings: { delegationFavoritesOnly: true, favorites: null },
+      catalog: [
+        [codexInstanceId, ["gpt-5.4", "gpt-5.4-mini", "my-model"]],
+        [antigravityInstanceId, ["ant-model"]],
+      ],
+    },
+  ])("capability catalog $name", ({ settings, catalog }) =>
+    Effect.gen(function* () {
+      assert.deepEqual(yield* favoritesCatalog(settings), catalog);
+    }),
+  );
+
+  const secondAntigravityInstanceId = ProviderInstanceId.make("antigravity_second");
+
+  const delegateToAntigravityWithoutModel = (input: {
+    readonly settings: Parameters<typeof ServerSettings.layerTest>[0];
+    readonly target?: OrchestratorMcpTarget;
+    readonly hasReceipt?: boolean;
+    readonly antigravityModels?: ServerProvider["models"];
+    readonly via?: "createThreads";
+  }) =>
+    Effect.gen(function* () {
+      const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
+      const task = {
+        id: taskId,
+        threadId: parentThreadId,
+        runId: parentRunId,
+        parentNodeId,
+        origin: "app_owned",
+        createdBy: "agent",
+        driver: ProviderDriverKind.make("antigravity"),
+        providerInstanceId: antigravityInstanceId,
+        providerThreadId: null,
+        childThreadId,
+        nativeTaskRef: null,
+        prompt: "Summarize the diff.",
+        title: null,
+        model: "ant-fav",
+        status: "running",
+        result: null,
+        startedAt: null,
+        completedAt: null,
+      };
+      let delegated = false;
+      const antigravity = providerSnapshot({
+        instanceId: antigravityInstanceId,
+        driver: ProviderDriverKind.make("antigravity"),
+        model: "ant-model",
+      });
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          hasReceipt: () => Effect.succeed(input.hasReceipt === true),
+          assertProviderInstanceEnabled: () => Effect.void,
+          isProviderInstanceEnabledForProject: () => Effect.succeed(true),
+          getThreadShell: () =>
+            Effect.succeed({
+              ...childProjection.thread,
+              modelSelection: { instanceId: antigravityInstanceId, model: "ant-fav" },
+            } as unknown as OrchestrationV2ThreadShell),
+          getThreadRecords: (threadId) =>
+            Effect.succeed(
+              threadId === parentThreadId
+                ? parentProjection(delegated ? [task] : [])
+                : ({
+                    ...childProjection,
+                    thread: {
+                      ...childProjection.thread,
+                      modelSelection: { instanceId: antigravityInstanceId, model: "ant-fav" },
+                    },
+                  } as unknown as OrchestrationV2ThreadProjection),
+            ),
+          dispatch: (command) =>
+            Ref.update(dispatched, (commands) => [...commands, command]).pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  delegated = true;
+                }),
+              ),
+              Effect.as({
+                sequence: 1,
+                storedEvents: [
+                  {
+                    sequence: 1,
+                    commandId: null,
+                    event: { type: "subagent.updated", payload: task },
+                  },
+                ],
+              } as never),
+            ),
+        }),
+        ServerSettings.layerTest(input.settings),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([
+            providerSnapshot({
+              instanceId: codexInstanceId,
+              driver: ProviderDriverKind.make("codex"),
+              model: "gpt-5.4",
+            }),
+            {
+              ...antigravity,
+              models: input.antigravityModels ?? [
+                ...antigravity.models,
+                { slug: "ant-fav", name: "Favorite", isCustom: false, capabilities: null },
+              ],
+            },
+            providerSnapshot({
+              instanceId: secondAntigravityInstanceId,
+              driver: ProviderDriverKind.make("antigravity"),
+              model: "ant-second",
+            }),
+          ]),
+        }),
+        adapterRegistryLayer([codexInstanceId, antigravityInstanceId, secondAntigravityInstanceId]),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      return yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const target = input.target ?? { providerInstanceId: antigravityInstanceId };
+        const outcome = yield* input.via === "createThreads"
+          ? service
+              .createThreads(scope, {
+                threads: [{ prompt: "Summarize the diff.", target }],
+                clientRequestId: "create-without-model-1",
+              })
+              .pipe(Effect.result)
+          : service
+              .delegateTask(scope, {
+                task: "Summarize the diff.",
+                target,
+                mode: "async",
+                clientRequestId: "delegate-without-model-1",
+              })
+              .pipe(Effect.result);
+        const commands = yield* Ref.get(dispatched);
+        return {
+          failureCode: outcome._tag === "Failure" ? outcome.failure.code : null,
+          selections: commands.flatMap((command) => {
+            const selection = (command as { modelSelection?: ModelSelection }).modelSelection;
+            return selection === undefined ? [] : [selection];
+          }),
+        };
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+    });
+
+  const reasoningEffort = (values: ReadonlyArray<string>) => ({
+    optionDescriptors: [
+      {
+        id: "reasoningEffort",
+        label: "Reasoning",
+        type: "select" as const,
+        options: values.map((value) => ({ id: value, label: value })),
+      },
+    ],
+  });
+
+  it.effect.each<{
+    readonly name: string;
+    readonly input: Parameters<typeof delegateToAntigravityWithoutModel>[0];
+    readonly outcome: Effect.Success<ReturnType<typeof delegateToAntigravityWithoutModel>>;
+  }>([
+    {
+      name: "resolves a driverKind target to a capable instance",
+      input: { settings: {}, target: { driverKind: ProviderDriverKind.make("antigravity") } },
+      outcome: {
+        failureCode: null,
+        selections: [{ instanceId: antigravityInstanceId, model: "ant-model" }],
+      },
+    },
+    {
+      name: "falls back to the target provider's first favorite",
+      input: {
+        settings: {
+          delegationFavoritesOnly: true,
+          favorites: [{ provider: antigravityInstanceId, model: "ant-fav" }],
+        },
+      },
+      outcome: {
+        failureCode: null,
+        selections: [{ instanceId: antigravityInstanceId, model: "ant-fav" }],
+      },
+    },
+    {
+      name: "refuses to guess a model for a provider without favorites",
+      input: {
+        settings: {
+          delegationFavoritesOnly: true,
+          favorites: [{ provider: codexInstanceId, model: "gpt-5.4" }],
+        },
+      },
+      outcome: { failureCode: "model_unavailable", selections: [] },
+    },
+    {
+      name: "picks the driver instance that has a favorite",
+      input: {
+        settings: {
+          delegationFavoritesOnly: true,
+          favorites: [{ provider: secondAntigravityInstanceId, model: "ant-second" }],
+        },
+        target: { driverKind: ProviderDriverKind.make("antigravity") },
+      },
+      outcome: {
+        failureCode: null,
+        selections: [{ instanceId: secondAntigravityInstanceId, model: "ant-second" }],
+      },
+    },
+    {
+      name: "keeps driver instance order for an explicit model",
+      input: {
+        settings: { delegationFavoritesOnly: true, favorites: [] },
+        target: { driverKind: ProviderDriverKind.make("antigravity"), model: "custom" },
+        antigravityModels: [],
+      },
+      outcome: {
+        failureCode: null,
+        selections: [{ instanceId: antigravityInstanceId, model: "custom" }],
+      },
+    },
+    {
+      // Resolving again would refuse both the missing favorite and the options,
+      // which only fit the favorite the accepted call chose.
+      name: "replays an accepted delegation that current favorites would refuse",
+      input: {
+        settings: { delegationFavoritesOnly: true, favorites: [] },
+        target: {
+          providerInstanceId: antigravityInstanceId,
+          options: [{ id: "reasoningEffort", value: "xhigh" }],
+        },
+        hasReceipt: true,
+        antigravityModels: [
+          {
+            slug: "ant-model",
+            name: "First",
+            isCustom: false,
+            capabilities: reasoningEffort(["low"]),
+          },
+          {
+            slug: "ant-fav",
+            name: "Favorite",
+            isCustom: false,
+            capabilities: reasoningEffort(["xhigh"]),
+          },
+        ],
+      },
+      outcome: {
+        failureCode: null,
+        selections: [
+          {
+            instanceId: antigravityInstanceId,
+            model: "ant-model",
+            options: [{ id: "reasoningEffort", value: "xhigh" }],
+          },
+        ],
+      },
+    },
+    {
+      // The create only replays its receipt, and the thread exists with the favorite
+      // it got, so its prompt follows that model.
+      name: "replays created threads that current favorites would refuse",
+      input: {
+        settings: { delegationFavoritesOnly: true, favorites: [] },
+        hasReceipt: true,
+        via: "createThreads",
+      },
+      outcome: {
+        failureCode: null,
+        selections: [
+          { instanceId: antigravityInstanceId, model: "ant-model" },
+          { instanceId: antigravityInstanceId, model: "ant-fav" },
+        ],
+      },
+    },
+  ])("delegation $name", ({ input, outcome }) =>
+    Effect.gen(function* () {
+      assert.deepEqual(yield* delegateToAntigravityWithoutModel(input), outcome);
     }),
   );
 
@@ -1266,102 +1578,6 @@ describe("OrchestratorMcpService provider resolution", () => {
           assert.equal(request.modelSelection.model, "ant-model");
         }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
       }),
-  );
-
-  it.effect("resolves a driverKind target to a capable Antigravity instance", () =>
-    Effect.gen(function* () {
-      const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
-      const task = {
-        id: taskId,
-        threadId: parentThreadId,
-        runId: parentRunId,
-        parentNodeId,
-        origin: "app_owned",
-        createdBy: "agent",
-        driver: ProviderDriverKind.make("antigravity"),
-        providerInstanceId: antigravityInstanceId,
-        providerThreadId: null,
-        childThreadId,
-        nativeTaskRef: null,
-        prompt: "Summarize the diff.",
-        title: null,
-        model: "ant-model",
-        status: "running",
-        result: null,
-        startedAt: null,
-        completedAt: null,
-      };
-      let delegated = false;
-      const layerDependencies = Layer.mergeAll(
-        NodeServices.layer,
-        Layer.mock(ThreadManagementService.ThreadManagementService)({
-          hasReceipt: () => Effect.succeed(false),
-          assertProviderInstanceEnabled: () => Effect.void,
-          isProviderInstanceEnabledForProject: () => Effect.succeed(true),
-          getThreadRecords: (threadId) =>
-            Effect.succeed(
-              threadId === parentThreadId
-                ? parentProjection(delegated ? [task] : [])
-                : childProjection,
-            ),
-          dispatch: (command) =>
-            Ref.update(dispatched, (commands) => [...commands, command]).pipe(
-              Effect.andThen(
-                Effect.sync(() => {
-                  delegated = true;
-                }),
-              ),
-              Effect.as({
-                sequence: 1,
-                storedEvents: [
-                  {
-                    sequence: 1,
-                    commandId: null,
-                    event: { type: "subagent.updated", payload: task },
-                  },
-                ],
-              } as never),
-            ),
-        }),
-        ServerSettings.layerTest(),
-        Layer.mock(ProviderRegistry.ProviderRegistry)({
-          getProviders: Effect.succeed([
-            providerSnapshot({
-              instanceId: codexInstanceId,
-              driver: ProviderDriverKind.make("codex"),
-              model: "gpt-5.4",
-            }),
-            providerSnapshot({
-              instanceId: antigravityInstanceId,
-              driver: ProviderDriverKind.make("antigravity"),
-              model: "ant-model",
-            }),
-          ]),
-        }),
-        adapterRegistryLayer([codexInstanceId, antigravityInstanceId]),
-        Layer.mock(ProjectService.ProjectService)({}),
-        Layer.mock(SecretRequests.SecretRequests)({}),
-        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-      );
-
-      yield* Effect.gen(function* () {
-        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-        const result = yield* service.delegateTask(scope, {
-          task: "Summarize the diff.",
-          target: { driverKind: ProviderDriverKind.make("antigravity") },
-          mode: "async",
-          clientRequestId: "delegate-antigravity-driver-1",
-        });
-        assert.equal(result.status, "running");
-        const commands = yield* Ref.get(dispatched);
-        assert.equal(commands.length, 1);
-        const request = commands[0] as {
-          modelSelection: { instanceId: string; model: string };
-        };
-        assert.equal(request.modelSelection.instanceId, antigravityInstanceId);
-        assert.equal(request.modelSelection.model, "ant-model");
-      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
-    }),
   );
 
   it.effect("rejects delegation to a provider without a registered adapter", () =>

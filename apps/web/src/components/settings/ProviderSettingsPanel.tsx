@@ -92,6 +92,7 @@ import {
   NumberFieldInput,
 } from "../ui/number-field";
 import { ScrollArea } from "../ui/scroll-area";
+import { Switch } from "../ui/switch";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { stackedThreadToast, toastManager } from "../ui/toast";
@@ -358,6 +359,7 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
     } else if (
       !target.scoped &&
       (searchTargetId === searchableSetting("provider-health-check-interval").id ||
+        searchTargetId === searchableSetting("delegation-favorites-only").id ||
         searchTargetId === searchableSetting("usage-providers").id) &&
       !selectedEnvironmentCanRenderSettings &&
       searchableEnvironmentId !== undefined
@@ -1105,6 +1107,36 @@ export function EnvironmentProviderSettings({
       />
 
       <SettingsSection title="Advanced">
+        <SettingsRow
+          {...searchableSetting("delegation-favorites-only")}
+          description="Agents choosing a model for subagents or new threads only see your favorite models. Providers without favorites are left out."
+          resetAction={
+            canWriteSettings &&
+            settings.delegationFavoritesOnly !==
+              DEFAULT_UNIFIED_SETTINGS.delegationFavoritesOnly ? (
+              <SettingResetButton
+                label="favorite models only for agents"
+                onClick={() =>
+                  void updateModelPreferences({
+                    delegationFavoritesOnly: DEFAULT_UNIFIED_SETTINGS.delegationFavoritesOnly,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.delegationFavoritesOnly}
+              disabled={!canWriteSettings}
+              aria-label="Favorite models only for agents"
+              // Saved with model preferences so favorites still held only by this
+              // client reach the server in the same write.
+              onCheckedChange={(checked) =>
+                void updateModelPreferences({ delegationFavoritesOnly: checked })
+              }
+            />
+          }
+        />
         <SettingsRow
           id={searchableSetting("provider-health-check-interval").id}
           title={

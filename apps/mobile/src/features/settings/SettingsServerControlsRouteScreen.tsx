@@ -13,11 +13,14 @@ import {
   PROJECT_SCOPED_SERVER_SETTING_KEYS,
   type ProjectScopedServerSettingKey,
 } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
+import { AsyncResult } from "effect/reactivity";
 import { useRef, useState } from "react";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { RUNTIME_MODE_CHOICES } from "../threads/thread-settings-options";
+import { mobilePreferencesAtom } from "../../state/preferences";
 import { SettingsScreen } from "./components/SettingsScreen";
 import {
   AndroidSettingsEnvironmentFilter,
@@ -171,6 +174,10 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
   const isMixed = (key: keyof ServerSettings) =>
     reference === null ||
     displayTargets.some((entry) => entry.settings[key] !== reference.settings[key]);
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const legacyFavorites = AsyncResult.isSuccess(preferences)
+    ? (preferences.value.modelFavorites ?? [])
+    : [];
   const writeSettings = useSettingsWriter();
   const write = (patch: ServerSettingsPatch) => {
     if (writeInFlight.current) {
@@ -427,6 +434,29 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       value={uniform("enableAgentBrowserAccess")}
                       disabled={disabledFor("enableAgentBrowserAccess")}
                       onValueChange={(value) => write({ enableAgentBrowserAccess: value })}
+                    />
+                  </SettingsSection>
+                  <SettingsSection title="Delegation">
+                    <SettingsSwitchRow
+                      icon="star.fill"
+                      label="Favorite models only"
+                      subtitle={
+                        projectSelected
+                          ? "Environment-wide setting. Select All projects to change it."
+                          : "Agents choosing a model for subagents or new threads only see your favorite models."
+                      }
+                      value={uniform("delegationFavoritesOnly")}
+                      disabled={disabledFor("delegationFavoritesOnly")}
+                      // The server applies the migration only where favorites are still
+                      // unset, so favorites saved only on this device take effect too.
+                      onValueChange={(value) =>
+                        write({
+                          delegationFavoritesOnly: value,
+                          ...(legacyFavorites.length > 0
+                            ? { migrateModelPreferences: { favorites: legacyFavorites } }
+                            : {}),
+                        })
+                      }
                     />
                   </SettingsSection>
                 </>
