@@ -2,12 +2,17 @@ import {
   DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER,
   EnvironmentId,
   ThreadId,
+  PreviewCaptureFailure,
+  type DesktopPreviewBridge,
+  type DesktopPreviewScreenshotArtifact,
+  type PreviewCaptureFailureEncoded,
 } from "@t3tools/contracts";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "vite-plus/test";
 
 import { ensureClientSettingsHydrated } from "~/hooks/useSettings";
 
 const {
+  captureScreenshot,
   clientSettings,
   events,
   getDisplayMedia,
@@ -19,6 +24,7 @@ const {
 } = vi.hoisted(() => {
   const events: string[] = [];
   return {
+    captureScreenshot: vi.fn<DesktopPreviewBridge["captureScreenshot"]>(),
     clientSettings: { browserRecordingFrameRate: 30 as 30 | 60 },
     events,
     getDisplayMedia: vi.fn(),
@@ -36,26 +42,37 @@ const {
       sizeBytes: 0,
       createdAt: "2026-06-26T00:00:00.000Z",
     })),
-    startScreencast: vi.fn(async (_tabId: string) => {
+    startScreencast: vi.fn<DesktopPreviewBridge["recording"]["startScreencast"]>(async (_tabId) => {
       events.push("start-screencast");
     }),
     stopScreencast: vi.fn(async () => undefined),
   };
 });
 
-vi.mock("~/components/preview/previewBridge", () => ({
-  previewBridge: {
-    recording: {
-      onFrame: vi.fn(),
-      save,
-      startScreencast: async (tabId: string) => {
-        await startScreencast(tabId);
-        requestDisplayMediaCapture(tabId);
+vi.mock(import("~/components/preview/previewBridge"), async (original) => {
+  vi.stubGlobal("window", {
+    desktopBridge: {
+      preview: {
+        captureScreenshot,
+        recording: {
+          onFrame: vi.fn(),
+          save,
+          startScreencast: async (tabId: string) => {
+            const result = await startScreencast(tabId);
+            if (result === undefined) requestDisplayMediaCapture(tabId);
+            return result;
+          },
+          stopScreencast,
+        },
       },
-      stopScreencast,
     },
-  },
-}));
+  });
+  try {
+    return await original();
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
 
 vi.mock("~/rpc/atomRegistry", () => ({
   appAtomRegistry: { set: registrySet },
@@ -81,6 +98,7 @@ import {
   stopBrowserRecordingForUpload,
 } from "./browserRecording";
 import { useBrowserSurfaceStore } from "./browserSurfaceStore";
+import { previewBridge } from "~/components/preview/previewBridge";
 import { previewRuntimeTabId } from "./previewRuntimeTabId";
 
 class FakeMediaRecorder {
@@ -163,6 +181,43 @@ describe("browser recording", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  it("decodes screenshot failures and preserves successful capture types and artifacts", async () => {
+    expectTypeOf<ReturnType<DesktopPreviewBridge["captureScreenshot"]>>().toEqualTypeOf<
+      Promise<DesktopPreviewScreenshotArtifact | PreviewCaptureFailureEncoded>
+    >();
+    expectTypeOf<ReturnType<DesktopPreviewBridge["recording"]["startScreencast"]>>().toEqualTypeOf<
+      Promise<void | PreviewCaptureFailureEncoded>
+    >();
+    expectTypeOf<
+      ReturnType<NonNullable<typeof previewBridge>["captureScreenshot"]>
+    >().toEqualTypeOf<Promise<DesktopPreviewScreenshotArtifact>>();
+    expectTypeOf<
+      ReturnType<NonNullable<typeof previewBridge>["recording"]["startScreencast"]>
+    >().toEqualTypeOf<Promise<void>>();
+    captureScreenshot.mockResolvedValueOnce({
+      _tag: "PreviewCaptureFailure",
+      reason: "capture-timeout",
+      stage: "capture-page",
+    });
+    await expect(previewBridge!.captureScreenshot("capture-tab")).rejects.toMatchObject({
+      reason: "capture-timeout",
+      stage: "capture-page",
+      message: expect.stringContaining("timed out during capture-page"),
+    });
+
+    const artifact: DesktopPreviewScreenshotArtifact = {
+      id: "screenshot-test",
+      tabId: "capture-tab",
+      path: "/tmp/capture.png",
+      mimeType: "image/png",
+      sizeBytes: 100,
+      createdAt: "2026-06-26T00:00:00.000Z",
+    };
+    captureScreenshot.mockResolvedValueOnce(artifact);
+    expect(await previewBridge!.captureScreenshot("capture-tab")).toBe(artifact);
+    expect(captureScreenshot).toHaveBeenNthCalledWith(2, "capture-tab");
   });
 
   it("starts recording for a visible tab", async () => {
@@ -334,11 +389,13 @@ describe("browser recording", () => {
     });
 
     await startBrowserRecording("recording-tab");
-    FakeMediaRecorder.stopError = new Error("stop failed");
+    const cleanupCause = new DOMException("Could not start video source", "NotReadableError");
+    FakeMediaRecorder.stopError = cleanupCause;
 
     await expect(stopBrowserRecording("recording-tab")).rejects.toMatchObject({
       operation: "cleanup",
       tabId: "recording-tab",
+      message: "Browser recording operation cleanup failed for tab recording-tab.",
     });
     expect(stopTrack).toHaveBeenCalledOnce();
   });
@@ -395,15 +452,74 @@ describe("browser recording", () => {
   });
 
   it("releases the native capture lease when stream acquisition fails", async () => {
-    getDisplayMedia.mockRejectedValueOnce(new Error("capture failed"));
+    const cause = new Error("capture failed");
+    cause.name = "NotReadableError";
+    getDisplayMedia.mockRejectedValueOnce(cause);
 
     await expect(startBrowserRecording("recording-tab")).rejects.toMatchObject({
       operation: "capture-media-stream",
       tabId: "recording-tab",
+      cause,
+      message: "Browser recording operation capture-media-stream failed for tab recording-tab.",
     });
 
     expect(stopScreencast).toHaveBeenCalledWith("recording-tab");
     expect(events.at(-1)).toBe("clear");
+  });
+
+  it.each([false, true])(
+    "explains real video-source rejection and permits retry when cleanup fails: %s",
+    async (cleanupFails) => {
+      const cause = new DOMException("Could not start video source", "NotReadableError");
+      const cleanupCause = new Error("native stop failed");
+      getDisplayMedia.mockRejectedValueOnce(cause);
+      if (cleanupFails) stopScreencast.mockRejectedValueOnce(cleanupCause);
+
+      const error = await startBrowserRecording("recording-tab").catch(
+        (failure: unknown) => failure,
+      );
+      expect(error).toMatchObject({
+        _tag: "BrowserRecordingOperationError",
+        operation: "capture-media-stream",
+        tabId: "recording-tab",
+        message:
+          "Unable to start the preview video source. Make sure the capture host is unlocked " +
+          "and its display is on, then retry. NotReadableError: Could not start video source",
+        cause: cleanupFails ? { cause, errors: [cause, cleanupCause] } : cause,
+      });
+      expect(stopScreencast).toHaveBeenCalledWith("recording-tab");
+      expect(FakeMediaRecorder.instances).toHaveLength(0);
+      expect(save).not.toHaveBeenCalled();
+      expect(readActiveBrowserRecordingTabIds()).toEqual(new Set());
+      expect(useBrowserSurfaceStore.getState().activityByTabId["recording-tab"]).toBeUndefined();
+
+      await startBrowserRecording("recording-tab");
+      await stopBrowserRecording("recording-tab");
+      expect(getDisplayMedia).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("reports a native arm diagnostic immediately and frees the tab for a retry", async () => {
+    startScreencast.mockResolvedValueOnce({
+      _tag: "PreviewCaptureFailure",
+      reason: "renderer-unavailable",
+      stage: "recording-start",
+    });
+
+    await expect(startBrowserRecording("recording-tab")).rejects.toMatchObject({
+      _tag: "BrowserRecordingOperationError",
+      operation: "start-screencast",
+      tabId: "recording-tab",
+      cause: expect.any(PreviewCaptureFailure),
+      message: "The preview renderer is unavailable. Reopen the preview tab before retrying.",
+    });
+    expect(getDisplayMedia).not.toHaveBeenCalled();
+    expect(readActiveBrowserRecordingTabIds()).toEqual(new Set());
+    expect(useBrowserSurfaceStore.getState().activityByTabId["recording-tab"]).toBeUndefined();
+
+    await startBrowserRecording("recording-tab");
+    await stopBrowserRecording("recording-tab");
+    expect(getDisplayMedia).toHaveBeenCalledOnce();
   });
 
   it("times out stalled stream acquisition and stops a late stream", async () => {

@@ -43,7 +43,7 @@ vi.mock(import("~/components/preview/previewBridge"), async (original) => ({
     closeTab: mocks.closeTab,
     registerWebview: mocks.registerWebview,
     getPreviewConfig: mocks.getPreviewConfig,
-  } as unknown as DesktopPreviewBridge,
+  } as never,
 }));
 
 vi.mock(import("~/components/preview/usePreviewBridge"), async (original) => ({
