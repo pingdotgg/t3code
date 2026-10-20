@@ -32,10 +32,13 @@ import * as Layer from "effect/Layer";
 import * as Scheduler from "effect/Scheduler";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
+import * as SqlClient from "effect/sql/SqlClient";
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as Sqlite from "../persistence/Sqlite.ts";
+import * as CodexUsageHistory from "./CodexUsageHistory.ts";
 import * as CursorAccountReader from "@t3tools/provider-cursor/server/CursorAccountReader";
 import * as CursorKeychain from "@t3tools/provider-cursor/server/CursorKeychain";
 import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsageAccounts";
@@ -265,6 +268,191 @@ const writeCursorLogin = (home: string) =>
 function cursorSource(summary: { readonly sources: readonly UsageSource[] }) {
   return summary.sources.find((source) => source.fingerprint.provider === "cursor");
 }
+
+const seedCodexHistory = (input: {
+  id: string;
+  nativeTurnId?: string;
+  sessionId?: string;
+  model?: string;
+  options?: readonly { id: string; value: string | boolean }[];
+}) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const { id } = input;
+    const selection = {
+      instanceId: "codex",
+      model: input.model ?? "gpt-6-astra",
+      options: input.options ?? [{ id: "serviceTier", value: "priority" }],
+    };
+    const run = {
+      id: `run-${id}`,
+      activeAttemptId: `attempt-${id}`,
+      status: "running",
+      modelSelection: selection,
+    };
+    yield* sql`INSERT INTO orchestration_v2_projection_run_attempts ${sql.insert({
+      attempt_id: run.activeAttemptId,
+      thread_id: `thread-${id}`,
+      run_id: run.id,
+      attempt_ordinal: 1,
+      root_node_id: `node-${id}`,
+      provider: "codex",
+      provider_thread_id: `provider-thread-${id}`,
+      provider_turn_id: `turn-${id}`,
+      status: "completed",
+      payload_json: encodeUnknownJsonString({ nativeThreadId: input.sessionId ?? "session" }),
+    })}`;
+    yield* sql`INSERT INTO orchestration_v2_projection_provider_turns ${sql.insert({
+      provider_turn_id: `turn-${id}`,
+      thread_id: `thread-${id}`,
+      provider_thread_id: `provider-thread-${id}`,
+      node_id: `node-${id}`,
+      run_attempt_id: run.activeAttemptId,
+      ordinal: 1,
+      status: "completed",
+      payload_json: encodeUnknownJsonString({
+        nativeTurnRef: { driver: "codex", nativeId: input.nativeTurnId ?? id, strength: "strong" },
+      }),
+    })}`;
+    const changedSelection = {
+      ...selection,
+      options: [{ id: "serviceTier", value: "ultrafast" }],
+    };
+    // These selections disagree so reading the current projection or the wrong event is visible.
+    yield* sql`INSERT INTO orchestration_v2_projection_runs ${sql.insert({
+      run_id: run.id,
+      thread_id: `thread-${id}`,
+      ordinal: 1,
+      provider: "codex",
+      provider_thread_id: `provider-thread-${id}`,
+      status: "completed",
+      requested_at: "2026-08-01T10:00:00Z",
+      payload_json: encodeUnknownJsonString({
+        ...run,
+        status: "completed",
+        modelSelection: { ...selection, options: [] },
+      }),
+    })}`;
+    for (const [index, payload] of [
+      { ...run, activeAttemptId: "earlier-attempt", modelSelection: changedSelection },
+      { ...run, status: "queued", modelSelection: changedSelection },
+      run,
+      { ...run, modelSelection: changedSelection },
+    ].entries()) {
+      yield* sql`INSERT INTO orchestration_events ${sql.insert({
+        event_id: `event-${id}-${index}`,
+        aggregate_kind: "thread",
+        stream_id: `thread-${id}`,
+        stream_version: index + 1,
+        event_type: "run.updated",
+        occurred_at: "2026-08-01T10:00:00Z",
+        actor_kind: "system",
+        metadata_json: "{}",
+        application_event_version: 2,
+        payload_json: encodeUnknownJsonString(payload),
+      })}`;
+    }
+  });
+
+describe("Codex usage history", () => {
+  const historyLayer = CodexUsageHistory.layer.pipe(Layer.provideMerge(Sqlite.layerMemory));
+  const request = (nativeTurnId: string) => ({
+    sessionId: "session",
+    nativeTurnId,
+    model: "gpt-6-astra",
+  });
+
+  it.effect("resolves a batch from each attempt's first running selection", () =>
+    Effect.gen(function* () {
+      yield* seedCodexHistory({ id: "fast" });
+      yield* seedCodexHistory({
+        id: "ultrafast",
+        options: [{ id: "serviceTier", value: "ultrafast" }],
+      });
+      yield* seedCodexHistory({ id: "legacy-option", options: [{ id: "fastMode", value: true }] });
+      yield* seedCodexHistory({ id: "standard", options: [] });
+      const requests = ["fast", "ultrafast", "legacy-option", "standard", "fast"].map(request);
+      const history = yield* CodexUsageHistory.CodexUsageHistory;
+      const resolved = yield* history.resolve(requests);
+      assert.strictEqual(resolved.size, requests.length);
+      assert.deepStrictEqual(
+        requests.map((item) => resolved.get(item)),
+        ["fast", "ultrafast", "fast", "standard", "fast"],
+      );
+    }).pipe(Effect.provide(historyLayer)),
+  );
+
+  it.effect("leaves ambiguous, mismatched, and missing V2 evidence unresolved", () =>
+    Effect.gen(function* () {
+      for (const id of [
+        "valid",
+        "duplicate-model",
+        "duplicate-session",
+        "imported",
+        "v1-event",
+        "queued",
+        "missing-selection",
+      ]) {
+        yield* seedCodexHistory({ id });
+      }
+      yield* seedCodexHistory({
+        id: "second-model",
+        nativeTurnId: "duplicate-model",
+        model: "other-model",
+      });
+      yield* seedCodexHistory({
+        id: "second-session",
+        nativeTurnId: "duplicate-session",
+        sessionId: "other-session",
+      });
+      yield* seedCodexHistory({ id: "wrong-model", model: "other-model" });
+      yield* seedCodexHistory({ id: "wrong-session", sessionId: "other-session" });
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE orchestration_v2_projection_provider_turns
+        SET run_attempt_id = NULL WHERE provider_turn_id = 'turn-imported'`;
+      yield* sql`DELETE FROM orchestration_v2_projection_run_attempts WHERE attempt_id = 'attempt-imported'`;
+      yield* sql`UPDATE orchestration_events SET application_event_version = 1
+        WHERE stream_id = 'thread-v1-event'`;
+      yield* sql`UPDATE orchestration_events
+        SET payload_json = json_set(payload_json, '$.status', 'queued')
+        WHERE stream_id = 'thread-queued'`;
+      yield* sql`UPDATE orchestration_events
+        SET payload_json = json_remove(payload_json, '$.modelSelection')
+        WHERE event_id = 'event-missing-selection-2'`;
+      const requests = [
+        "valid",
+        "duplicate-model",
+        "duplicate-session",
+        "wrong-model",
+        "wrong-session",
+        "missing-turn",
+        "imported",
+        "v1-event",
+        "queued",
+        "missing-selection",
+      ].map(request);
+      const history = yield* CodexUsageHistory.CodexUsageHistory;
+      const resolved = yield* history.resolve(requests);
+      assert.deepStrictEqual([...resolved], [[requests[0], "fast"]]);
+    }).pipe(Effect.provide(historyLayer)),
+  );
+
+  it.effect(
+    "reports SQL failures through the typed channel and can resolve again after repair",
+    () =>
+      Effect.gen(function* () {
+        yield* seedCodexHistory({ id: "retry" });
+        const history = yield* CodexUsageHistory.CodexUsageHistory;
+        const sql = yield* SqlClient.SqlClient;
+        const input = request("retry");
+        yield* sql`ALTER TABLE orchestration_events RENAME TO unavailable_events`;
+        const error = yield* Effect.flip(history.resolve([input]));
+        assert.instanceOf(error, CodexUsageHistory.CodexUsageHistoryReadError);
+        yield* sql`ALTER TABLE unavailable_events RENAME TO orchestration_events`;
+        assert.strictEqual((yield* history.resolve([input])).get(input), "fast");
+      }).pipe(Effect.provide(historyLayer)),
+  );
+});
 
 describe("UsageService", () => {
   it.live(
