@@ -220,6 +220,11 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
 
   const hasProviderStatusDemand = Effect.gen(function* () {
     const state = yield* Ref.get(snapshotStateRef);
+    // A disabled instance has nothing to probe; a periodic check would only
+    // republish a snapshot that differs in checkedAt.
+    if (!state.snapshot.enabled) {
+      return false;
+    }
     const instanceId = state.snapshot.instanceId;
     const [genericDemand, instanceDemand] = yield* Effect.all([
       host.shouldRunBackgroundWork({ type: "provider-status" }),
