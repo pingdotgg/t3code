@@ -23,6 +23,7 @@ import { readPreviewAnnotationTheme } from "./annotationTheme";
 import { useBrowserDefaults } from "./browserDefaults";
 import { useBrowserPointerStore } from "./browserPointerStore";
 import { HostedBrowserWebview } from "./HostedBrowserWebview";
+import { installDesktopScreenshotActivity } from "./desktopScreenshotActivity";
 import { openUrlInPreview } from "./openFileInPreview";
 import { rendersServerTabNatively } from "./previewRuntime";
 import { previewRuntimeTabId } from "./previewRuntimeTabId";
@@ -95,6 +96,14 @@ export function ElectronBrowserHost() {
     return preview.onPointerEvent((event) => {
       useBrowserPointerStore.getState().apply(event);
     });
+  }, []);
+
+  const isHostedTab = useEffectEvent((tabId: string) =>
+    sessions.some((session) => session.runtimeTabId === tabId),
+  );
+  useEffect(() => {
+    if (!isElectron) return;
+    return installDesktopScreenshotActivity(isHostedTab);
   }, []);
 
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: true });

@@ -1,6 +1,10 @@
 import { it as effectIt } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
-import { DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER } from "@t3tools/contracts";
+import {
+  DesktopBrowserEvent,
+  DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER,
+  DESKTOP_PREVIEW_SCREENSHOT_ACTIVITY,
+} from "@t3tools/contracts";
 import type {
   DesktopPreviewRecordingFrame,
   DesktopPreviewRecordingInputEvent,
@@ -16,6 +20,7 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -410,6 +415,100 @@ const makeTestPreviewWebContents = (
     capturePage,
   } as unknown as TestPreviewWebContents;
 };
+
+const decodeBrowserEvent = Schema.decodeUnknownSync(Schema.fromJsonString(DesktopBrowserEvent));
+
+const setupAgentScreenshot = Effect.fnUntraced(function* () {
+  const manager = yield* PreviewManager.PreviewManager;
+  const host = yield* DesktopBrowserHost.DesktopBrowserHost;
+  const serverTab = { threadId: "thread-capture", tabId: "server-capture" };
+  const replies = yield* Queue.unbounded<string>();
+  const attached = yield* Queue.unbounded<void>();
+  yield* host.events.pipe(
+    Stream.runForEach((line) => {
+      const event = decodeBrowserEvent(new TextDecoder().decode(line));
+      if (event.type === "attached") return Queue.offer(attached, undefined);
+      return event.type === "cdp" ? Queue.offer(replies, event.message) : Effect.void;
+    }),
+    Effect.forkScoped,
+  );
+  const preparing = Promise.withResolvers<void>();
+  const ready = Promise.withResolvers<boolean>();
+  const copying = Promise.withResolvers<void>();
+  const copy = Promise.withResolvers<TestCapturedPreviewImage>();
+  const capture = Promise.withResolvers<{ data: string }>();
+  const leases = new Set<string>();
+  const hostWebContents = makeTestHostWebContents();
+  hostWebContents.executeJavaScript.mockImplementation(async (script: string) => {
+    let acquiring = false;
+    const prepared = new Function("globalThis", `return ${script}`)({
+      [DESKTOP_PREVIEW_SCREENSHOT_ACTIVITY]: (_tabId: string, token: string, active: boolean) => {
+        if (active) {
+          acquiring = true;
+          leases.add(token);
+          preparing.resolve();
+        } else {
+          leases.delete(token);
+        }
+        return true;
+      },
+    });
+    return acquiring ? ready.promise : prepared;
+  });
+  const capturePage = vi.fn(() => {
+    copying.resolve();
+    return copy.promise;
+  });
+  const wc = Object.assign(makeTestPreviewWebContents(capturePage, 42, hostWebContents), {
+    isDevToolsOpened: () => false,
+    getUserAgent: () => "Electron",
+    loadURL: vi.fn(async () => {}),
+  });
+  vi.mocked(wc.debugger.sendCommand).mockImplementation(async (method: string) =>
+    method === "Page.captureScreenshot" ? capture.promise : {},
+  );
+  fromId.mockReturnValue(wc);
+  const setBackgroundThrottling = vi.fn();
+  yield* manager.setMainWindow({
+    isDestroyed: () => false,
+    once: vi.fn(),
+    webContents: Object.assign(hostWebContents, { setBackgroundThrottling }),
+  } as never);
+  yield* manager.createTab("tab_capture", { serverTab });
+  yield* manager.registerWebview("tab_capture", wc.id);
+  yield* Queue.take(attached);
+  const send = (id: number) =>
+    host.handleCommandLine(
+      JSON.stringify({
+        type: "cdp",
+        ...serverTab,
+        message: JSON.stringify({
+          id,
+          method: "Page.captureScreenshot",
+          params: { format: "png" },
+          sessionId: "t3-preview-page",
+        }),
+      }),
+    );
+  return {
+    manager,
+    host,
+    wc,
+    serverTab,
+    replies,
+    attached,
+    preparing,
+    ready,
+    copying,
+    copy,
+    capture,
+    leases,
+    hostWebContents,
+    capturePage,
+    setBackgroundThrottling,
+    send,
+  };
+});
 
 const setupRecordingRaceTabs = (manager: PreviewManager.PreviewManager["Service"]) =>
   Effect.gen(function* () {
@@ -3009,6 +3108,180 @@ describe("PreviewManager", () => {
         expect(host.session.setDisplayMediaRequestHandler).not.toHaveBeenCalled();
       }),
     ),
+  );
+
+  effectIt.effect.each(["preparing", "capturing"] as const)(
+    "keeps agent capture ownership across navigation while %s and a later guest replacement",
+    (phase) =>
+      Effect.gen(function* () {
+        const {
+          manager,
+          wc,
+          replies,
+          attached,
+          preparing,
+          ready,
+          copying,
+          copy,
+          capture,
+          leases,
+          hostWebContents,
+          capturePage,
+          setBackgroundThrottling,
+          send,
+        } = yield* setupAgentScreenshot();
+        yield* send(1);
+        yield* TestClock.adjust(0);
+        yield* Effect.promise(() => preparing.promise);
+        expect(setBackgroundThrottling).toHaveBeenLastCalledWith(false);
+        if (phase === "capturing") {
+          ready.resolve(true);
+          yield* Effect.promise(() => copying.promise);
+        }
+        yield* manager.navigate("tab_capture", "https://example.com/next");
+        expect(leases.size).toBe(1);
+        ready.resolve(true);
+        yield* Effect.promise(() => copying.promise);
+        capture.resolve({ data: "fresh-frame" });
+        expect(JSON.parse(yield* Queue.take(replies))).toMatchObject({
+          id: 1,
+          result: { data: "fresh-frame" },
+        });
+        expect(leases.size).toBe(0);
+        expect(capturePage).toHaveBeenCalledExactlyOnceWith(undefined, { stayHidden: true });
+        expect(setBackgroundThrottling).toHaveBeenLastCalledWith(true);
+        const replacement = Object.assign(
+          makeTestPreviewWebContents(capturePage, 43, hostWebContents),
+          {
+            isDevToolsOpened: () => false,
+            getUserAgent: () => "Electron",
+          },
+        );
+        vi.mocked(replacement.debugger.sendCommand).mockResolvedValue({
+          data: "replacement-frame",
+        });
+        fromId.mockImplementation((id) => (id === replacement.id ? replacement : wc));
+        yield* manager.registerWebview("tab_capture", replacement.id);
+        yield* Queue.take(attached);
+        yield* send(2);
+        expect(JSON.parse(yield* Queue.take(replies))).toMatchObject({
+          id: 2,
+          result: { data: "replacement-frame" },
+        });
+        expect(leases.size).toBe(0);
+        const copies = capturePage.mock.calls.length;
+        copy.resolve({
+          toJPEG: () => Buffer.from("unused"),
+          getSize: () => ({ width: 800, height: 600 }),
+        });
+        yield* TestClock.adjust(100);
+        expect(capturePage).toHaveBeenCalledTimes(copies);
+      }).pipe(Effect.provide(managerLayer()), Effect.scoped),
+  );
+
+  effectIt.effect(
+    "expires queued agent screenshots before starting their renderer preparation",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* setupAgentScreenshot();
+        const release = Promise.withResolvers<boolean>();
+        h.hostWebContents.executeJavaScript
+          .mockImplementationOnce(async () => {
+            h.preparing.resolve();
+            return h.ready.promise;
+          })
+          .mockImplementation(async () => release.promise);
+        yield* h.send(1);
+        yield* Effect.promise(() => h.preparing.promise);
+        yield* h.send(2);
+        yield* TestClock.adjust("4 seconds");
+        const replies = [
+          JSON.parse(yield* Queue.take(h.replies)),
+          JSON.parse(yield* Queue.take(h.replies)),
+        ];
+        expect(replies.map((reply) => reply.id).sort()).toEqual([1, 2]);
+        expect(replies.every((reply) => reply.error)).toBe(true);
+        expect(h.hostWebContents.executeJavaScript).toHaveBeenCalledTimes(2);
+        expect(h.wc.debugger.sendCommand).not.toHaveBeenCalledWith(
+          "Page.captureScreenshot",
+          expect.anything(),
+        );
+        expect(h.capturePage).not.toHaveBeenCalled();
+        h.ready.resolve(true);
+        release.resolve(true);
+        yield* TestClock.adjust(0);
+        expect(h.hostWebContents.executeJavaScript).toHaveBeenCalledTimes(2);
+        expect(h.setBackgroundThrottling).toHaveBeenLastCalledWith(true);
+      }).pipe(Effect.provide(managerLayer()), Effect.scoped),
+  );
+
+  effectIt.effect("preserves native screenshot errors through the Manager and CDP relay", () =>
+    Effect.gen(function* () {
+      const h = yield* setupAgentScreenshot();
+      h.ready.resolve(true);
+      yield* h.send(1);
+      yield* Effect.promise(() => h.copying.promise);
+      h.capture.reject(new Error("compositor unavailable"));
+      expect(JSON.parse(yield* Queue.take(h.replies))).toMatchObject({
+        id: 1,
+        error: { code: -32000, message: "compositor unavailable" },
+      });
+      expect(h.leases.size).toBe(0);
+      expect(h.wc.setBackgroundThrottling).not.toHaveBeenCalled();
+      expect(h.setBackgroundThrottling).toHaveBeenLastCalledWith(true);
+      h.copy.resolve({
+        toJPEG: () => Buffer.from("unused"),
+        getSize: () => ({ width: 800, height: 600 }),
+      });
+      yield* TestClock.adjust(100);
+      expect(h.capturePage).toHaveBeenCalledTimes(1);
+    }).pipe(Effect.provide(managerLayer()), Effect.scoped),
+  );
+
+  effectIt.effect.each(["preparing", "capturing"] as const)(
+    "cancels a replaced guest while %s and ignores its late completion",
+    (phase) =>
+      Effect.gen(function* () {
+        const h = yield* setupAgentScreenshot();
+        yield* h.send(1);
+        yield* Effect.promise(() => h.preparing.promise);
+        if (phase === "capturing") {
+          h.ready.resolve(true);
+          yield* Effect.promise(() => h.copying.promise);
+        }
+        const replacement = Object.assign(
+          makeTestPreviewWebContents(h.capturePage, 43, h.hostWebContents),
+          {
+            isDevToolsOpened: () => false,
+            getUserAgent: () => "Electron",
+          },
+        );
+        vi.mocked(replacement.debugger.sendCommand).mockResolvedValue({
+          data: "replacement-frame",
+        });
+        fromId.mockImplementation((id) => (id === replacement.id ? replacement : h.wc));
+        yield* h.manager.registerWebview("tab_capture", replacement.id);
+        yield* Queue.take(h.attached);
+        expect(h.leases.size).toBe(0);
+        expect(replacement.setBackgroundThrottling).not.toHaveBeenCalled();
+        h.ready.resolve(true);
+        h.capture.resolve({ data: "late-old-frame" });
+        h.copy.resolve({
+          toJPEG: () => Buffer.from("unused"),
+          getSize: () => ({ width: 800, height: 600 }),
+        });
+        yield* TestClock.adjust(100);
+        expect(yield* Queue.poll(h.replies)).toEqual(Option.none());
+        expect(h.capturePage).toHaveBeenCalledTimes(phase === "capturing" ? 1 : 0);
+        yield* h.send(2);
+        expect(JSON.parse(yield* Queue.take(h.replies))).toMatchObject({
+          id: 2,
+          result: { data: "replacement-frame" },
+        });
+        expect(h.leases.size).toBe(0);
+        expect(h.wc.setBackgroundThrottling).not.toHaveBeenCalled();
+        expect(h.setBackgroundThrottling).toHaveBeenLastCalledWith(true);
+      }).pipe(Effect.provide(managerLayer()), Effect.scoped),
   );
 
   effectIt.effect("tells the server when a tab it renders natively closes", () =>

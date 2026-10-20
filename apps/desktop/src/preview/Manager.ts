@@ -65,6 +65,7 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import { MENU_ACTION_CHANNEL, PREVIEW_PICTURE_IN_PICTURE_FRAME_CHANNEL } from "../ipc/channels.ts";
 import * as DesktopBrowserHost from "./DesktopBrowserHost.ts";
+import { captureFreshScreenshot } from "./ScreenshotCapture.ts";
 import * as PreviewPasskeys from "./Passkeys.ts";
 import * as BrowserSession from "./BrowserSession.ts";
 import {
@@ -391,7 +392,7 @@ interface ManagedListeners {
   readonly webContents: Electron.WebContents;
 }
 
-type FrameCaptureConsumer = "picture-in-picture" | "recording";
+type FrameCaptureConsumer = "picture-in-picture" | "recording" | "screenshot";
 
 interface FrameCaptureSession {
   readonly recordingInputOptions?: RecordingInputOptions;
@@ -556,6 +557,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const path = yield* Path.Path;
   const crypto = yield* Crypto.Crypto;
   const parentScope = yield* Scope.Scope;
+  const runCapture = Effect.runPromiseWith(yield* Effect.context<never>());
   const browserHost = yield* DesktopBrowserHost.DesktopBrowserHost;
   const passkeys = yield* PreviewPasskeys.PreviewPasskeys;
   const context = yield* Effect.context<never>();
@@ -737,7 +739,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   ) {
     yield* SynchronizedRef.modifyEffect(frameCaptureSessionsRef, (sessions) => {
       const current = sessions.get(tabId);
-      if (!current || current.unthrottledWebContentsIds.has(wc.id)) {
+      if (
+        !current ||
+        ![...current.consumers].some((consumer) => consumer !== "screenshot") ||
+        current.unthrottledWebContentsIds.has(wc.id)
+      ) {
         return Effect.succeed([undefined, sessions] as const);
       }
       return setFrameCaptureWebContentsBackgroundThrottling(wc, false).pipe(
@@ -2024,6 +2030,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         audible: current?.audible ?? false,
         controller: current?.controller ?? "none",
         ...(current?.favicon ? { favicon: current.favicon } : {}),
+        ...(current?.serverTab ? { serverTab: current.serverTab } : {}),
         updatedAt,
       };
       return [
@@ -2387,7 +2394,42 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       }
       if (afterAttach.serverTab) {
         yield* listenForAgentPointers;
-        browserHost.attach(afterAttach.serverTab, { webContents: wc, debugger: control.debugger });
+        browserHost.attach(afterAttach.serverTab, {
+          webContents: wc,
+          debugger: control.debugger,
+          captureScreenshot: (params, signal) =>
+            runCapture(
+              Effect.acquireUseRelease(
+                Effect.forkIn(
+                  control.semaphore
+                    .withPermit(
+                      Effect.scoped(
+                        Effect.gen(function* () {
+                          yield* Effect.acquireRelease(startFrameCapture(tabId, "screenshot"), () =>
+                            stopFrameCapture(tabId, "screenshot").pipe(Effect.ignore),
+                          );
+                          const token = yield* crypto.randomUUIDv4();
+                          return yield* captureFreshScreenshot(
+                            wc,
+                            control.debugger,
+                            params,
+                            tabId,
+                            token,
+                          );
+                        }),
+                      ),
+                    )
+                    .pipe(Effect.timeout("3 seconds")),
+                  control.scope,
+                ),
+                Fiber.join,
+                Fiber.interrupt,
+              ),
+              { signal },
+            ).catch((error: unknown) => {
+              throw Cause.isUnknownError(error) ? error.cause : error;
+            }),
+        });
       }
       if (afterAttach.colorScheme !== "system") {
         yield* attemptPromise({ operation: "applyColorScheme", tabId, webContentsId: wc.id }, () =>
@@ -2710,7 +2752,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             if (current.consumers.has(consumer)) {
               return [false, sessions] as const;
             }
-            if (!current.unthrottledWebContentsIds.has(wc.id)) {
+            if (consumer !== "screenshot" && !current.unthrottledWebContentsIds.has(wc.id)) {
               yield* setFrameCaptureWebContentsBackgroundThrottling(wc, false);
             }
             let scope = current.scope;
@@ -2725,7 +2767,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
                   ...current,
                   scope,
                   consumers: new Set([...current.consumers, consumer]),
-                  unthrottledWebContentsIds: new Set([...current.unthrottledWebContentsIds, wc.id]),
+                  unthrottledWebContentsIds: new Set([
+                    ...current.unthrottledWebContentsIds,
+                    ...(consumer !== "screenshot" ? [wc.id] : []),
+                  ]),
                 });
               }),
             ] as const;
@@ -2733,13 +2778,16 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           if (sessions.size === 0) {
             yield* setFrameCaptureBackgroundThrottling(false);
           }
-          yield* setFrameCaptureWebContentsBackgroundThrottling(wc, false).pipe(
-            Effect.onError(() =>
-              sessions.size === 0
-                ? setFrameCaptureBackgroundThrottling(true).pipe(Effect.ignore)
-                : Effect.void,
-            ),
-          );
+          // Still captures need host presentation without a guest visibility override.
+          if (consumer !== "screenshot") {
+            yield* setFrameCaptureWebContentsBackgroundThrottling(wc, false).pipe(
+              Effect.onError(() =>
+                sessions.size === 0
+                  ? setFrameCaptureBackgroundThrottling(true).pipe(Effect.ignore)
+                  : Effect.void,
+              ),
+            );
+          }
           const scope =
             consumer === "picture-in-picture" ? yield* Scope.fork(parentScope, "sequential") : null;
           if (scope !== null) {
@@ -2751,7 +2799,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               copy.set(tabId, {
                 scope,
                 consumers: new Set([consumer]),
-                unthrottledWebContentsIds: new Set([wc.id]),
+                unthrottledWebContentsIds: new Set(consumer !== "screenshot" ? [wc.id] : []),
                 lastPictureInPictureFingerprint: null,
               });
             }),

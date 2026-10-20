@@ -35,6 +35,10 @@ export interface DesktopBrowserTabKey {
 export interface DesktopBrowserTabDebugger {
   readonly webContents: Electron.WebContents;
   readonly debugger: Electron.Debugger;
+  readonly captureScreenshot: (
+    params: Record<string, unknown>,
+    signal: AbortSignal,
+  ) => Promise<unknown>;
 }
 
 const keyOf = ({ threadId, tabId }: DesktopBrowserTabKey) => `${threadId}\u0000${tabId}`;
@@ -43,6 +47,7 @@ interface AttachedTab {
   readonly key: DesktopBrowserTabKey;
   readonly debuggee: DesktopBrowserTabDebugger;
   relay: CdpRelayConnection | null;
+  readonly captures: Set<AbortController>;
   downloadDirectory: string | null;
   pendingDownloadGuid: string | null;
   agentInputAt: number;
@@ -84,15 +89,29 @@ export const make = Effect.gen(function* () {
   const tabs = new Map<string, AttachedTab>();
   const emit = (event: DesktopBrowserEventType) => runFork(PubSub.publish(outbox, event));
 
+  const resetRelay = (tab: AttachedTab) => {
+    tab.relay = null;
+    for (const controller of tab.captures) controller.abort();
+    tab.captures.clear();
+  };
+
   const relayFor = (tab: AttachedTab) => {
     if (tab.relay) return tab.relay;
     const { webContents, debugger: debuggee } = tab.debuggee;
     const relay: CdpRelayConnection = createCdpRelayConnection(
       {
-        send: (method, params, sessionId) =>
-          sessionId === undefined
+        send: (method, params, sessionId) => {
+          if (method === "Page.captureScreenshot" && sessionId === undefined) {
+            const controller = new AbortController();
+            tab.captures.add(controller);
+            return tab.debuggee.captureScreenshot(params, controller.signal).finally(() => {
+              tab.captures.delete(controller);
+            });
+          }
+          return sessionId === undefined
             ? sendPageCommand(webContents, debuggee, method, params)
-            : debuggee.sendCommand(method, params, sessionId),
+            : debuggee.sendCommand(method, params, sessionId);
+        },
         targetId: () =>
           debuggee
             .sendCommand("Target.getTargetInfo")
@@ -133,6 +152,7 @@ export const make = Effect.gen(function* () {
     const tab = tabs.get(id);
     if (!tab) return;
     tabs.delete(id);
+    resetRelay(tab);
     tab.debuggee.debugger.off("message", tab.onMessage);
     emit({ type: "detached", ...key });
   };
@@ -145,6 +165,7 @@ export const make = Effect.gen(function* () {
       key,
       debuggee,
       relay: null,
+      captures: new Set(),
       downloadDirectory: null,
       pendingDownloadGuid: null,
       agentInputAt: Number.NEGATIVE_INFINITY,
@@ -173,7 +194,7 @@ export const make = Effect.gen(function* () {
         return;
       }
       if (command.value.type === "release") {
-        tab.relay = null;
+        resetRelay(tab);
         return;
       }
       if (AGENT_INPUT_COMMAND.test(command.value.message)) tab.agentInputAt = performance.now();
@@ -189,7 +210,7 @@ export const make = Effect.gen(function* () {
     Effect.forEach(
       [...tabs.values()],
       (tab) => {
-        tab.relay = null;
+        resetRelay(tab);
         return PubSub.publish(outbox, { type: "attached", ...tab.key });
       },
       { discard: true },

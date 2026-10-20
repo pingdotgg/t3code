@@ -38,6 +38,8 @@ const makeDebuggee = () => {
     tab: {
       webContents: webContents as unknown as Electron.WebContents,
       debugger: debuggee as unknown as Electron.Debugger,
+      captureScreenshot: (_params: Record<string, unknown>, _signal: AbortSignal) =>
+        debuggee.sendCommand("Page.captureScreenshot"),
     },
     emit: (method: string, params: unknown) => emitter.emit("message", {}, method, params, ""),
     release: () => pending.splice(0).forEach((resolve) => resolve()),
@@ -52,6 +54,43 @@ const takeEvents = (host: DesktopBrowserHost.DesktopBrowserHost["Service"], coun
   );
 
 describe("DesktopBrowserHost", () => {
+  it.effect.each(["release", "detach", "reconnect"] as const)(
+    "interrupts pending screenshots on %s",
+    (reset) =>
+      Effect.gen(function* () {
+        const host = yield* DesktopBrowserHost.make;
+        const debuggee = makeDebuggee();
+        const signals: AbortSignal[] = [];
+        debuggee.tab.captureScreenshot = (_params, signal) => {
+          signals.push(signal);
+          return new Promise((_resolve, reject) => {
+            signal.addEventListener("abort", () => reject(new Error("capture aborted")), {
+              once: true,
+            });
+          });
+        };
+        host.attach(key, debuggee.tab);
+        yield* host.handleCommandLine(
+          encodeJson({
+            type: "cdp",
+            ...key,
+            message: encodeJson({
+              id: 1,
+              method: "Page.captureScreenshot",
+              sessionId: "t3-preview-page",
+            }),
+          }),
+        );
+        expect(signals).toHaveLength(1);
+        expect(signals[0]?.aborted).toBe(false);
+        if (reset === "release")
+          yield* host.handleCommandLine(encodeJson({ type: "release", ...key }));
+        else if (reset === "detach") host.detach(key);
+        else yield* takeEvents(host, 1);
+        expect(signals[0]?.aborted).toBe(true);
+      }),
+  );
+
   it.effect("announces tabs already attached to a backend that starts later", () =>
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.make;
