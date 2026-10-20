@@ -1,6 +1,7 @@
 import type { ProjectReadFileResult } from "@t3tools/contracts";
 import { EnvironmentId } from "@t3tools/contracts";
-import { AsyncResult } from "effect/reactivity";
+import * as Effect from "effect/Effect";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 const registryTasks = vi.hoisted(() => new Set<() => void>());
@@ -19,6 +20,7 @@ vi.mock("~/rpc/atomRegistry", async () => {
   };
 });
 
+import { readT3ProjectFile } from "~/lib/t3ProjectFileDefaults";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { projectEnvironment } from "~/state/projects";
 import { FileSaveCoordinator } from "./fileSaveCoordinator";
@@ -189,5 +191,50 @@ describe("project files queries", () => {
     expect(
       confirmProjectFileQueryData(environmentId, "/repo", "convex.json", '{"nodeVersion":"22"}'),
     ).toBe(true);
+  });
+});
+
+describe("optional project defaults queries", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    appAtomRegistry.reset();
+    drainRegistryTasks();
+  });
+
+  it("falls back when an active file read remains pending at the three-second deadline", async () => {
+    const deadline = new AbortController();
+    vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+    let markReadStarted!: () => void;
+    const readStarted = new Promise<void>((resolve) => {
+      markReadStarted = resolve;
+    });
+    vi.spyOn(projectEnvironment, "readFile").mockReturnValue(
+      Atom.make(Effect.sync(markReadStarted).pipe(Effect.andThen(Effect.never))),
+    );
+
+    const reading = readT3ProjectFile(environmentId, "/repo");
+    await readStarted;
+    deadline.abort();
+
+    await expect(reading).resolves.toBeNull();
+    expect(AbortSignal.timeout).toHaveBeenCalledWith(3_000);
+  });
+
+  it("returns parsed project defaults when the file read finishes", async () => {
+    const contents = '{"defaultThreadEnvMode":"worktree"}';
+    vi.spyOn(projectEnvironment, "readFile").mockReturnValue(
+      Atom.make(
+        Effect.succeed({
+          relativePath: "t3.json",
+          contents,
+          byteLength: contents.length,
+          truncated: false,
+        } satisfies ProjectReadFileResult),
+      ),
+    );
+
+    await expect(readT3ProjectFile(environmentId, "/repo")).resolves.toMatchObject({
+      defaultThreadEnvMode: "worktree",
+    });
   });
 });

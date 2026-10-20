@@ -15,7 +15,12 @@ export async function readT3ProjectFile(
   const result = await executeAtomQuery(
     appAtomRegistry,
     getProjectFileQueryAtom(environmentId, workspaceRoot, T3_PROJECT_FILE_NAME),
-    { reportDefect: false, reportFailure: false },
+    {
+      reportDefect: false,
+      reportFailure: false,
+      // A connection lost mid-read must not leave draft creation waiting.
+      signal: AbortSignal.timeout(3_000),
+    },
   );
   const data = resolveProjectFileQueryData(
     environmentId,
