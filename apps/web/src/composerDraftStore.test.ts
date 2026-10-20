@@ -1,3 +1,14 @@
+import { PrimaryConnectionTarget } from "@t3tools/client-runtime/connection";
+import { createEnvironmentThreadShellAtoms } from "@t3tools/client-runtime/state/threads";
+import {
+  applyShellStreamEvent,
+  createEnvironmentSnapshotAtom,
+  type EnvironmentShellState,
+  type EnvironmentShellStatus,
+} from "@t3tools/client-runtime/state/shell";
+import { makeThreadProjectionFixture } from "./test-fixtures";
+import * as Option from "effect/Option";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import {
   scopedProjectKey,
   scopedThreadKey,
@@ -5,8 +16,11 @@ import {
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
 import * as Schema from "effect/Schema";
+import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import {
   defaultInstanceIdForDriver,
+  DEFAULT_MODEL,
+  DEFAULT_MODEL_BY_PROVIDER,
   EnvironmentId,
   MessageId,
   ProjectId,
@@ -14,6 +28,8 @@ import {
   ProviderInstanceId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ThreadId,
+  type OrchestrationV2ThreadShell,
+  type OrchestrationV2ShellSnapshot,
   type ModelSelection,
   type PreviewAnnotationPayload,
   type ProviderOptionSelection,
@@ -59,10 +75,12 @@ function selectionsByProvider(
   }
   return result;
 }
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 
 import {
   COMPOSER_DRAFT_STORAGE_KEY,
+  subscribeComposerDraftModelReconciliation,
+  deriveEffectiveComposerModelState,
   clearComposerDraftsEnvironment,
   composerDraftHasUserContent,
   beginBackgroundDraftSubmissionByRef,
@@ -1971,6 +1989,113 @@ describe("composerDraftStore project draft thread mapping", () => {
   });
 });
 
+function modelReconciliationHarness(
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  initialStatus: EnvironmentShellStatus = "live",
+) {
+  const tasks: Array<() => void> = [];
+  const registry = AtomRegistry.make({
+    scheduleTask: (task) => {
+      tasks.push(task);
+      return () => {};
+    },
+  });
+  onTestFinished(() => registry.dispose());
+  const flush = () => {
+    for (let task = tasks.shift(); task !== undefined; task = tasks.shift()) task();
+  };
+  const selectedThreadId = ThreadId.make("another-selected-thread");
+  const thread: OrchestrationV2ThreadShell = {
+    ...makeThreadProjectionFixture().thread,
+    latestRunId: null,
+    activeRunId: null,
+    status: "idle",
+    pendingRuntimeRequest: null,
+    latestVisibleMessage: null,
+    latestUserMessageAt: null,
+    hasActionableProposedPlan: false,
+    itemCount: 0,
+    visibleItemCount: 0,
+  };
+  const initialSnapshot: OrchestrationV2ShellSnapshot = {
+    schemaVersion: 1,
+    snapshotSequence: 0,
+    projects: [],
+    archivedThreads: [],
+    threads: [
+      { ...thread, id: threadId },
+      { ...thread, id: selectedThreadId },
+    ],
+  };
+  const shellStateAtom = Atom.make<EnvironmentShellState>({
+    snapshot: Option.some(initialSnapshot),
+    status: initialStatus,
+    error: Option.none(),
+  });
+  const shellResultAtom = Atom.map(shellStateAtom, AsyncResult.success);
+  const snapshotAtom = createEnvironmentSnapshotAtom(() => shellResultAtom)(environmentId);
+  const catalogValueAtom = Atom.make({
+    isReady: true,
+    entries: new Map([
+      [
+        environmentId,
+        {
+          target: new PrimaryConnectionTarget({
+            environmentId,
+            label: "Environment",
+            httpBaseUrl: "https://example.test",
+            wsBaseUrl: "wss://example.test",
+          }),
+          profile: Option.none(),
+          enabled: true,
+        },
+      ],
+    ]),
+  });
+  const shells = createEnvironmentThreadShellAtoms({
+    catalogValueAtom,
+    snapshotAtom: () => snapshotAtom,
+  });
+  const selectedShell = shells.threadShellAtom({ environmentId, threadId: selectedThreadId });
+  onTestFinished(registry.mount(selectedShell));
+  onTestFinished(
+    subscribeComposerDraftModelReconciliation({
+      registry,
+      threadShellAtom: shells.threadShellAtom,
+      threadRefsAtom: shells.threadRefsAtom,
+      shellStateAtom: () => shellResultAtom,
+    }),
+  );
+  flush();
+  return {
+    flush,
+    setStatus(status: EnvironmentShellStatus) {
+      registry.set(shellStateAtom, { ...registry.get(shellStateAtom), status });
+      flush();
+    },
+    update(changes: Partial<OrchestrationV2ThreadShell>, status?: EnvironmentShellStatus) {
+      const state = registry.get(shellStateAtom);
+      const snapshot = Option.getOrThrow(state.snapshot);
+      registry.set(shellStateAtom, {
+        ...state,
+        status: status ?? state.status,
+        snapshot: Option.some(
+          applyShellStreamEvent(snapshot, {
+            kind: "thread.updated",
+            location: "active",
+            sequence: snapshot.snapshotSequence + 1,
+            thread: { ...snapshot.threads[0]!, ...changes },
+          }),
+        ),
+      });
+      flush();
+      expect(registry.get(selectedShell)?.id).toBe(selectedThreadId);
+    },
+    model: () => registry.get(shells.threadShellAtom({ environmentId, threadId }))!.modelSelection,
+  };
+}
+
 describe("composerDraftStore modelSelection", () => {
   const threadId = ThreadId.make("thread-model-options");
   const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
@@ -1997,6 +2122,125 @@ describe("composerDraftStore modelSelection", () => {
         fastMode: true,
       }),
     );
+  });
+
+  it("retains a pick matching cached state until the live shell confirms it", () => {
+    const h = modelReconciliationHarness(TEST_ENVIRONMENT_ID, threadId, "cached");
+    const pick = h.model();
+    useComposerDraftStore.getState().setModelSelection(threadRef, pick, { explicit: true });
+    h.flush();
+    const before = draftFor(threadId, TEST_ENVIRONMENT_ID);
+    expect(before?.modelSelectionByProvider[pick.instanceId]).toEqual(pick);
+
+    for (const status of ["empty", "synchronizing", "cached"] as const) {
+      h.setStatus(status);
+      expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toEqual(before);
+    }
+    h.update({ modelSelection: { ...pick, model: "remote-model" } }, "live");
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toEqual(before);
+    h.update({ modelSelection: pick }, "synchronizing");
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toEqual(before);
+    h.setStatus("live");
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
+  });
+
+  it("releases an inactive thread pick only after its queued model becomes durable", () => {
+    const store = useComposerDraftStore.getState();
+    const pick = modelSelection(CODEX_DRIVER, "gpt-5.5", { fastMode: false });
+    store.setPrompt(threadRef, "keep this unsent follow-up");
+    store.addImage(threadRef, makeImage({ id: "image", previewUrl: "blob:keep-image" }));
+    store.setTerminalContexts(threadRef, [makeTerminalContext({ id: "terminal" })]);
+    store.setRuntimeMode(threadRef, "approval-required");
+    store.setInteractionMode(threadRef, "plan");
+    store.setModelSelection(threadRef, pick, { explicit: true });
+    const before = draftFor(threadId, TEST_ENVIRONMENT_ID)!;
+    const remoteRef = scopeThreadRef(OTHER_TEST_ENVIRONMENT_ID, threadId);
+    store.setModelSelection(remoteRef, pick, { explicit: true });
+    const remoteBefore = draftFor(threadId, OTHER_TEST_ENVIRONMENT_ID);
+    const h = modelReconciliationHarness(TEST_ENVIRONMENT_ID, threadId);
+
+    h.update({ status: "queued" });
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toEqual(before);
+    h.update({ status: "running", modelSelection: modelSelection(CODEX_DRIVER, "gpt-5.5") });
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toEqual({
+      ...before,
+      activeProvider: null,
+      modelSelectionByProvider: {},
+      modelSelectionExplicit: undefined,
+    });
+    expect(draftFor(threadId, OTHER_TEST_ENVIRONMENT_ID)).toEqual(remoteBefore);
+
+    const remoteModel = DEFAULT_MODEL_BY_PROVIDER[CLAUDE_AGENT_DRIVER]!;
+    h.update({ modelSelection: modelSelection(CLAUDE_AGENT_DRIVER, remoteModel) });
+    const effective = deriveEffectiveComposerModelState({
+      draft: draftFor(threadId, TEST_ENVIRONMENT_ID),
+      providers: [
+        {
+          instanceId: CLAUDE_AGENT_INSTANCE,
+          driver: CLAUDE_AGENT_DRIVER,
+          enabled: true,
+          installed: true,
+          version: null,
+          status: "ready",
+          auth: { status: "authenticated" },
+          checkedAt: "2026-01-01T00:00:00.000Z",
+          models: [{ slug: remoteModel, name: remoteModel, isCustom: false, capabilities: {} }],
+          slashCommands: [],
+          skills: [],
+        },
+      ],
+      selectedProvider: CLAUDE_AGENT_DRIVER,
+      selectedInstanceId: CLAUDE_AGENT_INSTANCE,
+      threadModelSelection: h.model(),
+      projectModelSelection: null,
+      settings: DEFAULT_UNIFIED_SETTINGS,
+    });
+    expect(effective.selectedModel).toBe(remoteModel);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider).toEqual({});
+  });
+
+  it("retains an unavailable provider pick through differing durable model updates", () => {
+    const store = useComposerDraftStore.getState();
+    const pick = createModelSelection(CODEX_SECONDARY_INSTANCE, "gpt-5.5", [
+      { id: "reasoningEffort", value: "high" },
+      { id: "fastMode", value: true },
+    ]);
+    // A remembered primary pick is the visible fallback while the secondary is unavailable.
+    const primary = modelSelection(CODEX_DRIVER, DEFAULT_MODEL);
+    store.setModelSelection(threadRef, primary);
+    store.setModelSelection(threadRef, pick, { explicit: true });
+    const before = draftFor(threadId, TEST_ENVIRONMENT_ID);
+    const h = modelReconciliationHarness(TEST_ENVIRONMENT_ID, threadId);
+    h.update({ modelSelection: primary });
+    const fallback = deriveEffectiveComposerModelState({
+      draft: before,
+      providers: [],
+      selectedProvider: CODEX_DRIVER,
+      selectedInstanceId: CODEX_INSTANCE,
+      threadModelSelection: h.model(),
+      projectModelSelection: null,
+      settings: DEFAULT_UNIFIED_SETTINGS,
+    });
+    expect(fallback.selectedModel).toBe(h.model().model);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toEqual(before);
+
+    for (const modelSelection of [
+      { ...pick, instanceId: CODEX_INSTANCE },
+      { ...pick, model: "gpt-5.4" },
+      { ...pick, options: [{ id: "reasoningEffort", value: "high" }] },
+      {
+        ...pick,
+        options: [
+          { id: "reasoningEffort", value: "low" },
+          { id: "fastMode", value: true },
+        ],
+      },
+    ]) {
+      h.update({ modelSelection });
+      expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toEqual(before);
+    }
+    h.update({ modelSelection: { ...pick, options: pick.options!.toReversed() } });
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
   });
 
   it("keeps default-only model selections on the draft", () => {

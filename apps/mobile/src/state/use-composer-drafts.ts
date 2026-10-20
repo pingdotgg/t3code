@@ -18,10 +18,18 @@ import {
   type ProviderInteractionMode,
   type ProviderOptionSelection,
   type RuntimeMode,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { useEffect } from "react";
-import { Atom } from "effect/reactivity";
+import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
+import * as Option from "effect/Option";
+import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import type {
+  EnvironmentShellState,
+  EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/shell";
+import { draftModelPickMatchesThread } from "@t3tools/shared/model";
 
 import { writeFileAtomically } from "../lib/atomic-file";
 import { createComposerContextHistory, referencedComposerContext } from "../lib/composerContext";
@@ -1458,6 +1466,71 @@ export function updateComposerDraftSettings(
     };
     return withComposerDraft(current, draftKey, draft);
   });
+}
+
+export function subscribeComposerDraftModelReconciliation(input: {
+  readonly registry: AtomRegistry.AtomRegistry;
+  readonly threadRefsAtom: Atom.Atom<ReadonlyArray<ScopedThreadRef>>;
+  readonly threadShellAtom: (ref: ScopedThreadRef) => Atom.Atom<EnvironmentThreadShell | null>;
+  readonly shellStateAtom: (
+    environmentId: EnvironmentId,
+  ) => Atom.Atom<AsyncResult.AsyncResult<EnvironmentShellState, unknown>>;
+}): () => void {
+  const draftsAtom = Atom.make(appAtomRegistry.get(composerDraftsAtom));
+  const unsubscribeDrafts = appAtomRegistry.subscribe(composerDraftsAtom, (drafts) =>
+    input.registry.set(draftsAtom, drafts),
+  );
+  const threadKeysAtom = Atom.map(
+    input.threadRefsAtom,
+    (refs) => new Set(refs.map(scopedThreadKey)),
+  );
+  const matchesAtom = Atom.make((get) => {
+    const threadKeys = get(threadKeysAtom);
+    const matches: Array<readonly [string, ComposerDraft]> = [];
+    for (const [key, draft] of Object.entries(get(draftsAtom))) {
+      if (!draft.modelSelection || isNewTaskDraftKey(key) || isQueuedEditDraftKey(key)) continue;
+      const ref = parseScopedThreadKey(key);
+      if (!ref || !threadKeys.has(key)) continue;
+      const thread = get(input.threadShellAtom(ref));
+      if (!thread || !draftModelPickMatchesThread(draft.modelSelection, thread.modelSelection))
+        continue;
+      // Status and selection must come from the same emission; derived atoms can update apart.
+      const shell = Option.getOrNull(
+        AsyncResult.value(get(input.shellStateAtom(ref.environmentId))),
+      );
+      if (shell?.status !== "live") continue;
+      const authoritativeThread = Option.getOrNull(shell.snapshot)?.threads.find(
+        (candidate) => candidate.id === ref.threadId,
+      );
+      if (
+        authoritativeThread &&
+        draftModelPickMatchesThread(draft.modelSelection, authoritativeThread.modelSelection)
+      ) {
+        matches.push([key, draft]);
+      }
+    }
+    return matches;
+  });
+  const unsubscribeMatches = input.registry.subscribe(
+    matchesAtom,
+    (matches) => {
+      if (matches.length === 0) return;
+      updateComposerDrafts((current) => {
+        let next = current;
+        for (const [key, matchedDraft] of matches) {
+          if (next[key] !== matchedDraft) continue;
+          const { modelSelection: _modelSelection, ...draft } = matchedDraft;
+          next = withComposerDraft(next, key, draft);
+        }
+        return next;
+      });
+    },
+    { immediate: true },
+  );
+  return () => {
+    unsubscribeMatches();
+    unsubscribeDrafts();
+  };
 }
 
 export function clearComposerDraftContentState(
