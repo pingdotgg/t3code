@@ -2,6 +2,7 @@ import { assert, describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import * as GitLabCli from "./GitLabCli.ts";
 import * as GitLabPullRequestCli from "./GitLabPullRequestCli.ts";
 import { gitLabViewerPermissions, make } from "./GitLabPullRequestProvider.ts";
 
@@ -260,6 +261,106 @@ describe("expanding unchanged lines", () => {
         operation: "getDiffFileContents",
         reason: "failed",
         detail: "The diff file 'assets/logo.png' is binary.",
+      });
+    }),
+  );
+});
+
+describe("optional activity reads", () => {
+  const reference = { cwd: "/w", repository: "acme/web", host: "gitlab.com", number: 7 };
+  const comment = {
+    id: "42",
+    kind: "issue-comment" as const,
+    author: null,
+    body: "Keep this comment",
+    createdAt: "2026-07-01T00:00:00Z",
+    url: null,
+    path: null,
+    reviewState: null,
+  };
+  const commit = {
+    oid: "abc",
+    messageHeadline: "Keep this commit",
+    committedDate: "2026-07-01T00:00:00Z",
+  };
+  const reads = {
+    listNotes: () => Effect.succeed({ comments: [comment], truncated: false }),
+    listCommits: () => Effect.succeed([commit]),
+    listDiscussions: () => Effect.succeed({ threads: [], truncated: false }),
+    listReactions: () => Effect.succeed({ reactions: [], reactionsByNoteId: new Map() }),
+  };
+  const context = {
+    operation: "execute" as const,
+    command: "glab" as const,
+    cwd: "/w",
+    cause: null,
+  };
+
+  it.effect.each([
+    {
+      operation: "listNotes",
+      error: new GitLabCli.GitLabCliAuthenticationError(context),
+      reason: "unauthenticated",
+    },
+    {
+      operation: "listCommits",
+      error: new GitLabCli.GitLabCliUnavailableError(context),
+      reason: "missing-tool",
+    },
+  ] as const)(
+    "reports $reason instead of successful partial activity",
+    ({ operation, error, reason }) =>
+      Effect.gen(function* () {
+        const provider = yield* make.pipe(
+          Effect.provide(
+            Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+              ...reads,
+              [operation]: () => Effect.fail(error),
+            }),
+          ),
+        );
+
+        expect(yield* Effect.result(provider.getChangeRequestActivity(reference))).toMatchObject({
+          _tag: "Failure",
+          failure: {
+            _tag: "PullRequestProviderError",
+            provider: "gitlab",
+            operation: "getChangeRequestActivity",
+            reason,
+            detail: error.detail,
+            cause: error,
+          },
+        });
+      }),
+  );
+
+  it.effect("keeps comments and commits when optional discussions and reactions fail", () =>
+    Effect.gen(function* () {
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+            ...reads,
+            listDiscussions: () =>
+              Effect.fail(
+                new GitLabPullRequestCli.GitLabMergeRequestReadError({
+                  command: "glab",
+                  cwd: "/w",
+                  operation: "listDiscussions",
+                  cause: null,
+                }),
+              ),
+            listReactions: () => Effect.fail(new GitLabCli.GitLabCliCommandError(context)),
+          }),
+        ),
+      );
+
+      expect(yield* provider.getChangeRequestActivity(reference)).toEqual({
+        comments: [{ ...comment, reactions: [] }],
+        commentCount: 1,
+        commentsTruncated: true,
+        reviewThreads: [],
+        reactions: [],
+        commits: [commit],
       });
     }),
   );
