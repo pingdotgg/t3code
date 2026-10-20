@@ -166,9 +166,14 @@ async function publishUrl(path: string, url: string) {
   });
 }
 
+// Decoding sets naturalWidth before the load event reaches React, so wait for both together.
 async function expectPreview(row: HTMLElement) {
-  await expect.poll(() => row.querySelector("img")?.naturalWidth).toBe(8);
-  expect(row.querySelector("svg")).toBeNull();
+  await expect
+    .poll(() => ({
+      width: row.querySelector("img")?.naturalWidth,
+      fallback: row.querySelector("svg") !== null,
+    }))
+    .toEqual({ width: 8, fallback: false });
 }
 
 it("loads previews asynchronously and only acquires offscreen images after scrolling", async () => {
