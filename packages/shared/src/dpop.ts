@@ -11,7 +11,11 @@ import { stableStringify } from "./relaySigning.ts";
 
 const DPOP_TYP = "dpop+jwt";
 const DPOP_ALG = "ES256";
-const DEFAULT_MAX_AGE_SECONDS = 300;
+/**
+ * How far a proof's `iat` may sit from the verifier's clock, in either direction.
+ * Proofs carry the client's clock, so this also bounds tolerated clock skew.
+ */
+export const DPOP_MAX_CLOCK_SKEW_SECONDS = 300;
 
 export const DpopPublicJwk = DpopPublicJwkSchema;
 export type DpopPublicJwk = DpopPublicJwkType;
@@ -175,11 +179,8 @@ export function verifyDpopProof(input: {
       return { ok: false, code: "invalid_signature", reason: "Invalid DPoP signature." };
     }
 
-    const maxAgeSeconds = input.maxAgeSeconds ?? DEFAULT_MAX_AGE_SECONDS;
-    if (
-      payload.value.iat > input.nowEpochSeconds + 5 ||
-      input.nowEpochSeconds - payload.value.iat > maxAgeSeconds
-    ) {
+    const maxAgeSeconds = input.maxAgeSeconds ?? DPOP_MAX_CLOCK_SKEW_SECONDS;
+    if (Math.abs(input.nowEpochSeconds - payload.value.iat) > maxAgeSeconds) {
       return {
         ok: false,
         code: "time_window",

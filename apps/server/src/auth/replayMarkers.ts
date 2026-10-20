@@ -15,7 +15,7 @@ import { DPOP_REPLAY_MARKER_PREFIX } from "./dpop.ts";
 const REPLAY_MARKER_PREFIXES = [DPOP_REPLAY_MARKER_PREFIX, ...CLOUD_REPLAY_MARKER_PREFIXES];
 
 /**
- * A marker only matters while its proof can pass the time check (about 5 minutes
+ * A marker only matters while its proof can pass the time check (about 10 minutes
  * for DPoP, 7 for cloud proofs). After that, the time check rejects a replay by
  * itself.
  */
