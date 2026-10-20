@@ -16,6 +16,7 @@ import {
 } from "@t3tools/contracts";
 import type { ComposerEnterBehavior } from "../lib/composerEnterBehavior";
 import type { FollowUpBehavior } from "../lib/followUpBehavior";
+import { isThreadSwipeActionChoice, type ThreadSwipeActionChoice } from "../lib/threadSwipeAction";
 import { isMicrophoneKind, type MicrophoneEntry } from "../lib/microphonePriority";
 import { MOBILE_THEME_IDS, type MobileThemeId, type MobileThemeMode } from "../lib/mobileTheme";
 import * as MobileDatabase from "./mobile-database";
@@ -84,6 +85,10 @@ export interface Preferences {
   readonly threadListSnoozedShelfExpanded?: boolean;
   readonly threadListWorkingShelfExpanded?: boolean;
   readonly threadListFilters?: ThreadListFilters;
+  /** Thread row action behind a swipe to the right, which starts at the row's left edge. */
+  readonly threadSwipeLeadingAction?: ThreadSwipeActionChoice;
+  /** Thread row action behind a swipe to the left, which starts at the row's right edge. */
+  readonly threadSwipeTrailingAction?: ThreadSwipeActionChoice;
   readonly pullRequestListFilters?: PullRequestListPreferences;
 }
 
@@ -154,6 +159,8 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     threadListSnoozedShelfExpanded?: boolean;
     threadListWorkingShelfExpanded?: boolean;
     threadListFilters?: ThreadListFilters;
+    threadSwipeLeadingAction?: ThreadSwipeActionChoice;
+    threadSwipeTrailingAction?: ThreadSwipeActionChoice;
     pullRequestListFilters?: PullRequestListPreferences;
   } = {};
 
@@ -278,6 +285,12 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (isThreadListFilters(parsed.threadListFilters)) {
     preferences.threadListFilters = parsed.threadListFilters;
+  }
+  if (isThreadSwipeActionChoice(parsed.threadSwipeLeadingAction)) {
+    preferences.threadSwipeLeadingAction = parsed.threadSwipeLeadingAction;
+  }
+  if (isThreadSwipeActionChoice(parsed.threadSwipeTrailingAction)) {
+    preferences.threadSwipeTrailingAction = parsed.threadSwipeTrailingAction;
   }
   if (isPullRequestListPreferences(parsed.pullRequestListFilters)) {
     preferences.pullRequestListFilters = parsed.pullRequestListFilters;

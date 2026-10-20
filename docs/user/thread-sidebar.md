@@ -233,3 +233,10 @@ Choose **Snooze → Custom…** from a thread's menu to pick a date and time in 
 local time zone, or a duration in minutes, hours, or days. Durations start when
 you confirm; one day means 24 hours. On web and desktop, you can also snooze
 several selected threads together. Choose **Wake thread** to bring a thread back early.
+
+## Swipe actions on mobile
+
+Swipe a thread row right to snooze it and left to settle it. Change either side in **Settings →
+Swipe actions** to Settle, Snooze, Archive, Delete, or nothing. Swiping all the way across runs
+the action, except Snooze, which asks when to wake the thread. On a snoozed thread, the Snooze
+side wakes it instead.

@@ -101,6 +101,7 @@ import { SettingsAuthRouteScreen } from "./features/settings/SettingsAuthRouteSc
 import { SettingsEnvironmentDetailRouteScreen } from "./features/settings/SettingsEnvironmentDetailRouteScreen";
 import { SettingsEnvironmentsRouteScreen } from "./features/settings/SettingsEnvironmentsRouteScreen";
 import { SettingsFollowUpRouteScreen } from "./features/settings/SettingsFollowUpRouteScreen";
+import { SettingsSwipeActionsRouteScreen } from "./features/settings/SettingsSwipeActionsRouteScreen";
 import {
   SettingsEnvironmentAgentBehaviorRouteScreen,
   SettingsEnvironmentMaintenanceRouteScreen,
@@ -337,6 +338,13 @@ const SettingsContentStack = createV5SheetStackNavigator({
       linking: "follow-ups",
       options: {
         title: "Follow-ups",
+      },
+    }),
+    SettingsSwipeActions: createNativeStackScreen({
+      screen: SettingsSwipeActionsRouteScreen,
+      linking: "swipe-actions",
+      options: {
+        title: "Swipe actions",
       },
     }),
     SettingsScheduledTasks: createNativeStackScreen({

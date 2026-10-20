@@ -29,6 +29,7 @@ import type { ThreadListProvider } from "../../state/thread-list-environments";
 import type { ThreadMoveAvailability } from "./threadOrder";
 
 import { relativeTime } from "../../lib/time";
+import type { ThreadSwipeActionChoice } from "../../lib/threadSwipeAction";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 
 import {
@@ -65,7 +66,13 @@ export type ThreadListV2Status =
   | "failed"
   | "limited"
   | "ready";
-export type ThreadListV2SwipeAction = "archive" | "settle" | "unsettle" | "snooze" | "unsnooze";
+export type ThreadListV2SwipeAction =
+  | "archive"
+  | "delete"
+  | "settle"
+  | "unsettle"
+  | "snooze"
+  | "unsnooze";
 
 export function resolveThreadListV2SnoozeMenuSelection(input: {
   readonly event: string;
@@ -91,28 +98,28 @@ export function resolveThreadListV2SnoozeMenuSelection(input: {
   return { _tag: "expired" };
 }
 
-export function resolveThreadListV2SwipeActions(input: {
+export function resolveThreadListV2SwipeAction(input: {
+  readonly choice: ThreadSwipeActionChoice;
   readonly variant: "card" | "slim";
   readonly settlementSupported: boolean;
   readonly snoozeSupported: boolean;
   readonly snoozable: boolean;
   readonly snoozed?: boolean;
-}): {
-  readonly primary: Exclude<ThreadListV2SwipeAction, "snooze">;
-  readonly secondary: "snooze" | null;
-} {
-  if (input.snoozed === true) {
-    return { primary: "unsnooze", secondary: null };
+}): ThreadListV2SwipeAction | null {
+  switch (input.choice) {
+    case "none":
+      return null;
+    case "delete":
+    case "archive":
+      return input.choice;
+    case "snooze":
+      if (input.snoozed === true) return "unsnooze";
+      return input.snoozeSupported && input.snoozable ? "snooze" : null;
+    case "settle":
+      if (input.snoozed === true) return null;
+      if (!input.settlementSupported) return "archive";
+      return input.variant === "slim" ? "unsettle" : "settle";
   }
-  const primary = input.settlementSupported
-    ? input.variant === "slim"
-      ? "unsettle"
-      : "settle"
-    : "archive";
-  return {
-    primary,
-    secondary: input.snoozeSupported && input.snoozable ? "snooze" : null,
-  };
 }
 
 export function resolveThreadListV2SnoozeGateExpiryMs(

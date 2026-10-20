@@ -43,7 +43,8 @@ import {
 } from "../../state/thread-pr-presentation";
 import { useThreadPr } from "../../state/use-thread-pr";
 import { useSwipeRowDormant } from "../home/swipe-row-activation";
-import { ThreadSwipeable } from "../home/thread-swipe-actions";
+import { useThreadSwipeActionChoices } from "../home/thread-swipe-preferences";
+import { ThreadSwipeable, type ThreadSwipeAction } from "../home/thread-swipe-actions";
 import { buildThreadTitleRegenerationMenuItems } from "./thread-title-regeneration-menu";
 import {
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
@@ -52,8 +53,9 @@ import {
   threadHasUnseenCompletion,
   resolveThreadListV2Status,
   resolveThreadListV2ProviderDrivers,
-  resolveThreadListV2SwipeActions,
+  resolveThreadListV2SwipeAction,
   type ThreadListV2Status,
+  type ThreadListV2SwipeAction,
 } from "./threadListV2";
 import { QueuedMessageIcon } from "./queued-message-icon";
 import { shouldRecedeThreadRow } from "./thread-row-emphasis";
@@ -643,16 +645,23 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     const id = setTimeout(() => setSnoozeGateClock({ thread, now: Date.now() }), delayMs);
     return () => clearTimeout(id);
   }, [snoozeGateExpiryMs, snoozeGateClock.now, thread]);
-  const swipeActions = resolveThreadListV2SwipeActions({
-    variant,
-    settlementSupported: props.settlementSupported,
-    snoozeSupported: props.snoozeSupported,
-    snoozable: canSnooze(thread, { now: snoozeGateNow }),
-    snoozed: snoozedRow,
-  });
+  const swipeChoices = useThreadSwipeActionChoices();
+  const snoozable = canSnooze(thread, { now: snoozeGateNow });
+  const resolveSwipeAction = (choice: typeof swipeChoices.leading) =>
+    resolveThreadListV2SwipeAction({
+      choice,
+      variant,
+      settlementSupported: props.settlementSupported,
+      snoozeSupported: props.snoozeSupported,
+      snoozable,
+      snoozed: snoozedRow,
+    });
+  const leadingSwipeKind = resolveSwipeAction(swipeChoices.leading);
+  const trailingSwipeKind = resolveSwipeAction(swipeChoices.trailing);
+  const snoozeAvailable = !snoozedRow && props.snoozeSupported && snoozable;
   const snoozePresets = useMemo(
-    () => (swipeActions.secondary === "snooze" ? resolveSnoozePresets(new Date()) : ([] as const)),
-    [props.snoozePresetMinute, swipeActions.secondary],
+    () => (!snoozedRow && props.snoozeSupported ? resolveSnoozePresets(new Date()) : ([] as const)),
+    [props.snoozePresetMinute, snoozedRow, props.snoozeSupported],
   );
   const snoozePresetActions = useMemo<MenuAction[]>(
     () => [
@@ -850,66 +859,72 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       snoozePresets,
     ],
   );
-  const primaryAction = useMemo(() => {
-    if (swipeActions.primary === "archive") {
-      return {
-        accessibilityLabel: `Archive ${thread.title}`,
-        icon: "archivebox" as const,
-        label: "Archive",
-        onPress: handleArchive,
-      };
-    }
-    if (swipeActions.primary === "unsnooze") {
-      return {
-        accessibilityLabel: `Wake ${thread.title} now`,
-        icon: "clock" as const,
-        label: "Wake",
-        onPress: handleUnsnooze,
-      };
-    }
-    return swipeActions.primary === "unsettle"
-      ? {
+  const createSwipeAction = (kind: ThreadListV2SwipeAction | null): ThreadSwipeAction | null => {
+    switch (kind) {
+      case null:
+        return null;
+      case "archive":
+        return {
+          accessibilityLabel: `Archive ${thread.title}`,
+          icon: "archivebox",
+          label: "Archive",
+          onPress: handleArchive,
+        };
+      case "delete":
+        return {
+          accessibilityLabel: `Delete ${thread.title}`,
+          icon: "trash",
+          label: "Delete",
+          onPress: handleDelete,
+          tone: "danger",
+        };
+      case "unsnooze":
+        return {
+          accessibilityLabel: `Wake ${thread.title} now`,
+          icon: "clock",
+          label: "Wake",
+          onPress: handleUnsnooze,
+        };
+      case "unsettle":
+        return {
           accessibilityLabel: `Un-settle ${thread.title}`,
-          icon: "arrow.uturn.backward" as const,
+          icon: "arrow.uturn.backward",
           label: "Un-settle",
           onPress: handleUnsettle,
-        }
-      : {
+        };
+      case "settle":
+        return {
           accessibilityLabel: `Settle ${thread.title}`,
-          icon: "checkmark" as const,
+          icon: "checkmark",
           label: "Settle",
           onPress: handleSettle,
         };
-  }, [
-    handleArchive,
-    handleSettle,
-    handleUnsettle,
-    handleUnsnooze,
-    swipeActions.primary,
-    thread.title,
-  ]);
-  const secondaryAction = useMemo(
-    () =>
-      swipeActions.secondary === "snooze"
-        ? {
-            accessibilityLabel: `Choose when to snooze ${thread.title}`,
-            icon: "clock" as const,
-            label: "Snooze",
-            menu: {
-              actions: snoozePresetActions,
-              onPressAction: handleMenuAction,
-              title: "Snooze until",
-            },
-            onPress: () => undefined,
-          }
-        : null,
-    [handleMenuAction, snoozePresetActions, swipeActions.secondary, thread.title],
-  );
+      case "snooze":
+        return {
+          accessibilityLabel: `Choose when to snooze ${thread.title}`,
+          icon: "clock",
+          label: "Snooze",
+          menu: {
+            actions: snoozePresetActions,
+            onPressAction: handleMenuAction,
+            title: "Snooze until",
+          },
+          onPress: () => undefined,
+          tone: "secondary",
+        };
+    }
+  };
+  const leadingAction = createSwipeAction(leadingSwipeKind);
+  const trailingAction = createSwipeAction(trailingSwipeKind);
   const swipeAccessibilityHint = !canOperateThread
     ? "Opens the thread"
-    : secondaryAction === null
-      ? `Opens the thread. Swipe left to ${primaryAction.label.toLowerCase()}.`
-      : `Opens the thread. Swipe left for ${primaryAction.label.toLowerCase()} and snooze actions.`;
+    : [
+        "Opens the thread.",
+        leadingAction && `Swipe right to ${leadingAction.label.toLowerCase()}.`,
+        trailingAction && `Swipe left to ${trailingAction.label.toLowerCase()}.`,
+      ]
+        .filter(Boolean)
+        .join(" ");
 
   const cardContent = (
     <>
@@ -1262,14 +1277,16 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         compactActions={variant === "slim"}
         containerStyle={rowAppearance.swipeContainerStyle}
         enableTrackpadSwipe
+        enabled={leadingAction !== null || trailingAction !== null}
         fullSwipeAction="primary"
         fullSwipeWidth={props.fullSwipeWidth ?? windowWidth - 32}
         onDelete={handleDelete}
         onSwipeableClose={props.onSwipeableClose}
         onSwipeableWillOpen={props.onSwipeableWillOpen}
-        primaryAction={primaryAction}
-        secondaryAction={secondaryAction}
-        resetKey={`${thread.environmentId}:${thread.id}:${variant}:${snoozedRow}:${thread.settledAt}:${thread.unsettledAt}:${thread.snoozedUntil}`}
+        leadingAction={leadingAction}
+        primaryAction={trailingAction}
+        secondaryAction={null}
+        resetKey={`${thread.environmentId}:${thread.id}:${variant}:${snoozedRow}:${thread.settledAt}:${thread.unsettledAt}:${thread.snoozedUntil}:${leadingSwipeKind}:${trailingSwipeKind}`}
         simultaneousWith={props.simultaneousSwipeGesture}
         threadTitle={thread.title}
       >
@@ -1292,7 +1309,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                   ? legacyMenuActions
                   : canUnsettle
                     ? slimMenuActions
-                    : swipeActions.secondary === "snooze"
+                    : snoozeAvailable
                       ? snoozableCardMenuActions
                       : cardMenuActions),
             ]}

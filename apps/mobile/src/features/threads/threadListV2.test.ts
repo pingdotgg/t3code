@@ -35,7 +35,7 @@ import {
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SnoozeGateExpiryMs,
   resolveThreadListV2Status,
-  resolveThreadListV2SwipeActions,
+  resolveThreadListV2SwipeAction,
   sortThreadsForListV2,
   threadListV2ListItemsAreEqual,
   threadHasUnseenCompletion,
@@ -248,69 +248,48 @@ describe("queued messages keep a settled thread active", () => {
   });
 });
 
-describe("resolveThreadListV2SwipeActions", () => {
-  it("offers settle and snooze for an active snoozable thread", () => {
-    expect(
-      resolveThreadListV2SwipeActions({
-        variant: "card",
-        settlementSupported: true,
-        snoozeSupported: true,
-        snoozable: true,
-      }),
-    ).toEqual({ primary: "settle", secondary: "snooze" });
+describe("resolveThreadListV2SwipeAction", () => {
+  const active = {
+    variant: "card",
+    settlementSupported: true,
+    snoozeSupported: true,
+    snoozable: true,
+  } as const;
+
+  it("maps each choice to its action on an active thread", () => {
+    expect(resolveThreadListV2SwipeAction({ ...active, choice: "settle" })).toBe("settle");
+    expect(resolveThreadListV2SwipeAction({ ...active, choice: "snooze" })).toBe("snooze");
+    expect(resolveThreadListV2SwipeAction({ ...active, choice: "archive" })).toBe("archive");
+    expect(resolveThreadListV2SwipeAction({ ...active, choice: "delete" })).toBe("delete");
+    expect(resolveThreadListV2SwipeAction({ ...active, choice: "none" })).toBeNull();
   });
 
-  it("offers un-settle and snooze for settled history", () => {
-    expect(
-      resolveThreadListV2SwipeActions({
-        variant: "slim",
-        settlementSupported: true,
-        snoozeSupported: true,
-        snoozable: true,
-      }),
-    ).toEqual({ primary: "unsettle", secondary: "snooze" });
+  it("un-settles from settled history", () => {
+    expect(resolveThreadListV2SwipeAction({ ...active, variant: "slim", choice: "settle" })).toBe(
+      "unsettle",
+    );
   });
 
   it("omits snooze when the server or thread does not allow it", () => {
     expect(
-      resolveThreadListV2SwipeActions({
-        variant: "card",
-        settlementSupported: true,
-        snoozeSupported: false,
-        snoozable: true,
-      }),
-    ).toEqual({ primary: "settle", secondary: null });
+      resolveThreadListV2SwipeAction({ ...active, snoozeSupported: false, choice: "snooze" }),
+    ).toBeNull();
     expect(
-      resolveThreadListV2SwipeActions({
-        variant: "card",
-        settlementSupported: true,
-        snoozeSupported: true,
-        snoozable: false,
-      }),
-    ).toEqual({ primary: "settle", secondary: null });
+      resolveThreadListV2SwipeAction({ ...active, snoozable: false, choice: "snooze" }),
+    ).toBeNull();
   });
 
-  it("falls back to archive only for a pre-lifecycle server", () => {
+  it("settles by archiving on a pre-lifecycle server", () => {
     expect(
-      resolveThreadListV2SwipeActions({
-        variant: "card",
-        settlementSupported: false,
-        snoozeSupported: false,
-        snoozable: true,
-      }),
-    ).toEqual({ primary: "archive", secondary: null });
+      resolveThreadListV2SwipeAction({ ...active, settlementSupported: false, choice: "settle" }),
+    ).toBe("archive");
   });
 
-  it("offers wake and no snooze on a snoozed row", () => {
-    expect(
-      resolveThreadListV2SwipeActions({
-        variant: "slim",
-        settlementSupported: true,
-        snoozeSupported: true,
-        snoozable: true,
-        snoozed: true,
-      }),
-    ).toEqual({ primary: "unsnooze", secondary: null });
+  it("wakes a snoozed row from the snooze side and offers no settle", () => {
+    const snoozed = { ...active, variant: "slim", snoozed: true } as const;
+    expect(resolveThreadListV2SwipeAction({ ...snoozed, choice: "snooze" })).toBe("unsnooze");
+    expect(resolveThreadListV2SwipeAction({ ...snoozed, choice: "settle" })).toBeNull();
+    expect(resolveThreadListV2SwipeAction({ ...snoozed, choice: "delete" })).toBe("delete");
   });
 });
 

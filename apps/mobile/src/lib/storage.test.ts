@@ -281,6 +281,18 @@ describe("mobile connection storage", () => {
     await expect(loadPreferences()).resolves.toEqual({ baseFontSize: 17 });
   });
 
+  it("keeps valid thread swipe actions and drops unknown ones", async () => {
+    mocks.setPreferencesJson(
+      JSON.stringify({
+        threadSwipeLeadingAction: "delete",
+        threadSwipeTrailingAction: "unsettle",
+      }),
+      10,
+    );
+
+    await expect(loadPreferences()).resolves.toEqual({ threadSwipeLeadingAction: "delete" });
+  });
+
   it("keeps valid list filters and drops malformed ones", async () => {
     const threadListFilters = { environmentId: "environment-1", projectKey: null };
     const pullRequestListFilters = {
