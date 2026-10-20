@@ -538,6 +538,100 @@ const pollProtocolMethods = (events: Queue.Queue<EffectAcpProtocol.AcpProtocolLo
     return methods;
   });
 
+const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
+  environment: Readonly<Record<string, string>>,
+) {
+  const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const path = yield* Path.Path;
+  const selfInvocation = yield* resolveSelfInvocation();
+  const mockAgentPath = yield* path.fromFileUrl(
+    new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+  );
+  const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+  const instanceId = ProviderInstanceId.make("acp-test-instruction-compaction");
+  const threadId = ThreadId.make("thread-acp-instruction-compaction");
+  yield* (yield* McpProviderSessions.McpProviderSessions).set({
+    environmentId: EnvironmentId.make("environment-acp-instruction-compaction"),
+    threadId,
+    providerSessionId: "mcp-session-acp-instruction-compaction",
+    providerInstanceId: instanceId,
+    endpoint: "http://127.0.0.1:43123/mcp",
+    authorizationHeader: "Bearer instruction-compaction-token",
+    browserToolsAvailable: true,
+  });
+  const adapter = yield* makeAcpAdapterV2({
+    instanceId,
+    flavor: {
+      driver: ACP_TEST_DRIVER,
+      capabilities: AcpProviderCapabilitiesV2,
+      supportsCompaction: true,
+      makeRuntime: makeMockRuntime({
+        childProcessSpawner,
+        mockAgentPath,
+        protocolEvents,
+        environment,
+        wrapRuntime: (runtime) => ({
+          ...runtime,
+          // Make compaction during prompt completion deterministic at the adapter boundary.
+          prompt: (payload, options) =>
+            runtime.prompt(payload, options).pipe(Effect.tap(() => runtime.drainEvents)),
+        }),
+      }),
+    },
+    selfInvocation,
+  });
+  const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    cwd: process.cwd(),
+  });
+  const modelSelection = { instanceId, model: "default" } as const;
+  const runtime = yield* adapter.openSession({
+    threadId,
+    providerSessionId: ProviderSessionId.make("provider-session-acp-instruction-compaction"),
+    modelSelection,
+    runtimePolicy,
+  });
+  const providerThread = yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
+  const now = yield* DateTime.now;
+  let ordinal = 0;
+  return Effect.fnUntraced(function* (messageText: string, expectedStatus = "completed") {
+    yield* runtime.startTurn(
+      makeTurnInput({
+        threadId,
+        providerThread,
+        instanceId,
+        runtimePolicy,
+        now,
+        ordinal: ++ordinal,
+        messageText,
+      }),
+    );
+    const terminal = yield* runtime.events.pipe(
+      Stream.filter((event) => event.type === "turn.terminal"),
+      Stream.runHead,
+    );
+    assert.equal(Option.getOrThrow(terminal).status, expectedStatus);
+    while (true) {
+      const event = yield* Queue.take(protocolEvents);
+      if (event.direction === "outgoing" && rawProtocolMethod(event) === "session/prompt") {
+        return rawProtocolPromptTextBlocks(event);
+      }
+    }
+  });
+});
+
+function assertReinjectedInstructions(
+  blocks: Array<{ type: "text"; text: string }>,
+  request: string,
+) {
+  const text = blocks[0]?.text ?? "";
+  assert.include(text, "T3 Code interaction mode: Default");
+  assert.include(text, "T3 Code collaborative browser");
+  assert.include(text, "T3 Code orchestration");
+  assert.include(text, `<user_request>\n${request}\n</user_request>`);
+}
+
 describe("AcpAdapterV2", () => {
   it.live.each(["failed", "recovered", "completed", "cancelled"] as const)(
     "projects Mistral retry notices and their %s outcome",
@@ -825,6 +919,52 @@ describe("AcpAdapterV2", () => {
         "Build should restore the native mode that T3 temporarily replaced for Plan",
       );
     }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live(
+    "reinjects ACP instructions after protocol compaction, including during reinjection",
+    () =>
+      Effect.gen(function* () {
+        const runTurn = yield* makeInstructionCompactionHarness({
+          T3_ACP_COMPACTION_PROMPT_ORDINALS: "2,4",
+        });
+        yield* runTurn("Start work.");
+        yield* runTurn("Continue until context compacts.");
+        assert.deepEqual(yield* runTurn("  /repro-skill"), [
+          { type: "text", text: "  /repro-skill" },
+        ]);
+        assertReinjectedInstructions(
+          yield* runTurn("Continue after compaction."),
+          "Continue after compaction.",
+        );
+        assertReinjectedInstructions(
+          yield* runTurn("Continue after the second compaction."),
+          "Continue after the second compaction.",
+        );
+        assert.equal((yield* runTurn("Finish work."))[0]?.text, "Finish work.");
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live(
+    "reinjects ACP instructions after successful native compact, but not failed compact",
+    () =>
+      Effect.gen(function* () {
+        const runTurn = yield* makeInstructionCompactionHarness({
+          T3_ACP_FAIL_PROMPT_ORDINAL: "2",
+        });
+        yield* runTurn("Start work.");
+        assert.deepEqual(yield* runTurn("/compact", "failed"), [
+          { type: "text", text: "/compact" },
+        ]);
+        assert.equal(
+          (yield* runTurn("Continue after failure."))[0]?.text,
+          "Continue after failure.",
+        );
+        assert.deepEqual(yield* runTurn("/compact"), [{ type: "text", text: "/compact" }]);
+        assert.deepEqual(yield* runTurn("/repro-skill"), [{ type: "text", text: "/repro-skill" }]);
+        assertReinjectedInstructions(yield* runTurn("Continue work."), "Continue work.");
+        assert.equal((yield* runTurn("Finish work."))[0]?.text, "Finish work.");
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.live("reapplies a selection after a switch away from it failed partway", () =>
