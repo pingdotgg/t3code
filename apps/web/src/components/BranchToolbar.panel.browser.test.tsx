@@ -30,11 +30,6 @@ vi.mock(import("./BranchToolbarBranchSelector"), async (original) => ({
 }));
 vi.mock(import("../state/entities"), async (original) => ({
   ...(await original()),
-  useQuietThreadShell: (() => ({
-    environmentId: "local",
-    projectId: "project",
-    worktreePath: state.worktreePath,
-  })) as never,
   useProject: (() => ({ workspaceRoot: "/tmp/project" })) as never,
   useThreadShellsForProjectRefs: () => [],
 }));
@@ -71,6 +66,9 @@ function render(props: Partial<ComponentProps<typeof BranchToolbar>>) {
           panelSection="workspace"
           environmentId={EnvironmentId.make("local")}
           threadId={ThreadId.make("thread")}
+          projectId={ProjectId.make("project")}
+          worktreePath={state.worktreePath}
+          isServerThread
           showGitControls
           envMode="local"
           envLocked={false}
