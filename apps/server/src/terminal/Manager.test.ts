@@ -1361,6 +1361,100 @@ it.layer(
     assert.equal(TerminalManager.subprocessSnapshotPollDelayMs(1_000, 30), 60_000);
   });
 
+  // Fake PowerShell that honors the requested timeout like ProcessRunner's timedOutResult mode,
+  // so the fallback's own timeout decides whether a slow query succeeds.
+  const slowPowerShell = (
+    queryDuration: Duration.Input,
+    starts: Array<number>,
+    started: ReadonlyArray<Deferred.Deferred<void>>,
+  ): ProcessRunner.ProcessRunner["Service"] => ({
+    run: (input) =>
+      Effect.gen(function* () {
+        starts.push(yield* Clock.currentTimeMillis);
+        const deferred = started[starts.length - 1];
+        if (deferred) yield* Deferred.succeed(deferred, undefined);
+        const completed = yield* Effect.sleep(queryDuration).pipe(
+          Effect.timeoutOption(Duration.fromInputUnsafe(input.timeout!)),
+        );
+        return {
+          stdout: Option.isSome(completed) ? "100|9000|node.exe\n" : "",
+          stderr: "",
+          code: Option.isSome(completed) ? ChildProcessSpawner.ExitCode(0) : null,
+          timedOut: Option.isNone(completed),
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          stdoutInvalidUtf8: false,
+          stderrInvalidUtf8: false,
+        };
+      }),
+  });
+
+  const createWindowsFallbackManager = (runner: ProcessRunner.ProcessRunner["Service"]) =>
+    createManager(5, {
+      processTable: Effect.fail("sidecar unavailable").pipe(
+        Effect.mapError((cause) => cause as never),
+      ),
+      subprocessPollIntervalMs: 1_000,
+      processKillGraceMs: 0,
+    }).pipe(
+      Effect.provideService(ProcessRunner.ProcessRunner, runner),
+      Effect.provide(layerWithHostPlatform("win32")),
+    );
+
+  it.effect("reports activity from a slow Windows fallback and paces the next query", () =>
+    Effect.gen(function* () {
+      const firstStarted = yield* Deferred.make<void>();
+      const secondStarted = yield* Deferred.make<void>();
+      const starts: Array<number> = [];
+      const { manager, getEvents } = yield* createWindowsFallbackManager(
+        slowPowerShell("5 seconds", starts, [firstStarted, secondStarted]),
+      );
+
+      yield* manager.open(openInput());
+      yield* TestClock.adjust("1 second");
+      yield* Deferred.await(firstStarted);
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("5 seconds");
+      yield* TestClock.adjust("19999 millis");
+      expect(starts).toHaveLength(1);
+      yield* TestClock.adjust("1 millis");
+      yield* Deferred.await(secondStarted);
+
+      expect(starts[1]! - starts[0]!).toBe(25_000);
+      expect(
+        (yield* getEvents).some(
+          (event) =>
+            event.type === "activity" && event.hasRunningSubprocess && event.label === "node",
+        ),
+      ).toBe(true);
+      yield* manager.close({ threadId: "thread-1" });
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("waits before retrying a Windows fallback that timed out", () =>
+    Effect.gen(function* () {
+      const firstStarted = yield* Deferred.make<void>();
+      const secondStarted = yield* Deferred.make<void>();
+      const starts: Array<number> = [];
+      const { manager } = yield* createWindowsFallbackManager(
+        slowPowerShell("1 hour", starts, [firstStarted, secondStarted]),
+      );
+
+      yield* manager.open(openInput());
+      yield* TestClock.adjust("1 second");
+      yield* Deferred.await(firstStarted);
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("15 seconds");
+      yield* TestClock.adjust("59999 millis");
+      expect(starts).toHaveLength(1);
+      yield* TestClock.adjust("1 millis");
+      yield* Deferred.await(secondStarted);
+
+      expect(starts[1]! - starts[0]!).toBe(75_000);
+      yield* manager.close({ threadId: "thread-1" });
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("uses process snapshots from the resource monitor", () =>
     Effect.gen(function* () {
       let snapshotCalls = 0;
