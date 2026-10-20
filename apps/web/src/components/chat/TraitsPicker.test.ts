@@ -20,6 +20,12 @@ function fastModeDescriptor(
   return { id: "fastMode", label: "Fast Mode", type: "boolean", currentValue };
 }
 
+function ultracodeDescriptor(
+  currentValue: boolean,
+): Extract<ProviderOptionDescriptor, { type: "boolean" }> {
+  return { id: "ultracode", label: "Ultracode", type: "boolean", currentValue };
+}
+
 function serviceTierDescriptor(
   currentValue: "default" | "priority" | "ultrafast" | "flex",
 ): Extract<ProviderOptionDescriptor, { type: "select" }> {
@@ -66,6 +72,15 @@ function display(descriptors: ReadonlyArray<ProviderOptionDescriptor>) {
 }
 
 describe("buildTraitsTriggerDisplay", () => {
+  it("names Ultracode only while it is on", () => {
+    expect(display([EFFORT, ultracodeDescriptor(false), CONTEXT_WINDOW])).toEqual({
+      label: "High · 1M",
+    });
+    expect(display([EFFORT, ultracodeDescriptor(true), CONTEXT_WINDOW])).toEqual({
+      label: "High · Ultracode · 1M",
+    });
+  });
+
   it("omits fast mode from the label entirely when it is off", () => {
     expect(display([EFFORT, fastModeDescriptor(false), CONTEXT_WINDOW])).toEqual({
       label: "High · 1M",
