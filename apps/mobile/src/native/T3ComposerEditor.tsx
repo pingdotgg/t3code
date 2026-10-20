@@ -2,7 +2,6 @@ import { TextInputWrapper } from "expo-paste-input";
 import { useImperativeHandle, useRef } from "react";
 import { TextInput, type TextInputInstance } from "react-native";
 
-import { FONT_FAMILIES } from "../lib/fontFamilies";
 import { useScaledTextRole } from "../features/settings/appearance/useScaledTextRole";
 import { useNativePaste } from "../lib/useNativePaste";
 import type { ComposerEditorProps } from "./T3ComposerEditor.types";
@@ -23,7 +22,6 @@ export function ComposerEditor({
 }: ComposerEditorProps) {
   const inputRef = useRef<TextInputInstance>(null);
   const bodyText = useScaledTextRole("body");
-  const fontFamily = FONT_FAMILIES.regular;
   const handlePaste = useNativePaste((uris) => onPasteImages?.(uris));
 
   useImperativeHandle(
@@ -47,12 +45,11 @@ export function ComposerEditor({
         onSelectionChange={(event) => props.onSelectionChange?.(event.nativeEvent.selection)}
         multiline={props.multiline ?? true}
         placeholderTextColorClassName={"accent-placeholder"}
-        className="text-foreground"
+        className="font-sans text-foreground"
         style={[
           {
             flex: 1,
             minHeight: 0,
-            fontFamily,
             ...bodyText,
             paddingVertical: contentInsetVertical,
           },

@@ -65,7 +65,8 @@ import {
   selectProjectGroupingSettings,
 } from "../logicalProject";
 import { useUiStateStore } from "../uiStateStore";
-import { syncBrowserChromeTheme } from "../hooks/useTheme";
+import { syncBrowserChromeTheme, useTheme } from "../hooks/useTheme";
+import { getThemeDefinition, resolveThemeHalf } from "../themePalette";
 import { configureClientTracing } from "../observability/clientTracing";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
@@ -311,9 +312,14 @@ function GlassAppearanceSync() {
 }
 
 function FontAppearanceSync() {
+  const { theme, themeHalves, resolvedTheme } = useTheme();
+  const typography = getThemeDefinition(
+    resolveThemeHalf(theme, themeHalves, resolvedTheme),
+  )?.typography;
   const fontFamilySans = useClientSettings((settings) => settings.fontFamilySans);
   const fontFamilyCode = useClientSettings((settings) => settings.fontFamilyCode);
   const fontFamilyComposer = useClientSettings((settings) => settings.fontFamilyComposer);
+  const fontFamilyReply = useClientSettings((settings) => settings.fontFamilyReply);
   const fontSizeInterface = useClientSettings((settings) => settings.fontSizeInterface);
   const fontSizePrompt = useClientSettings((settings) => settings.fontSizePrompt);
   const fontSizeCode = useClientSettings((settings) => settings.fontSizeCode);
@@ -324,6 +330,8 @@ function FontAppearanceSync() {
       sans: fontFamilySans,
       code: fontFamilyCode,
       composer: fontFamilyComposer,
+      reply: fontFamilyReply,
+      typography,
       sizeInterface: fontSizeInterface,
       sizePrompt: fontSizePrompt,
       sizeCode: fontSizeCode,
@@ -332,11 +340,13 @@ function FontAppearanceSync() {
   }, [
     fontFamilyCode,
     fontFamilyComposer,
+    fontFamilyReply,
     fontFamilySans,
     fontSizeCode,
     fontSizeInterface,
     fontSizePrompt,
     fontSmoothing,
+    typography,
   ]);
 
   return null;

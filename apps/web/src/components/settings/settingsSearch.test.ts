@@ -45,6 +45,13 @@ const ITEMS: ReadonlyArray<SettingsSearchItem> = [
 ];
 
 describe("searchSettings", () => {
+  it.each(["reply font", "response serif", "assistant typography"])(
+    "finds the reply font setting for %s",
+    (query) => {
+      expect(searchSettings(query).map((item) => item.id)).toContain("reply-font");
+    },
+  );
+
   it.each(["OTel", "OTLP", "telemetry export", "Grafana"])(
     "finds environment telemetry settings for %s",
     (query) => {

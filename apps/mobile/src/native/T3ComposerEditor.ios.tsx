@@ -18,9 +18,8 @@ import { StyleSheet } from "react-native";
 import { markdownFileIconSource, markdownIconAssetUri } from "../lib/markdownFileIcons";
 import { composerChipSizeSuffix, contextChipPresentation } from "../lib/composerChipPresentation";
 import { resolveMarkdownFileIcon } from "../lib/markdownLinks";
-import { useUniwindTheme } from "../lib/useUniwindTheme";
+import { useUniwindTheme, useThemeFontFamilies } from "../lib/useUniwindTheme";
 import { createNativeComposerTheme } from "../lib/nativeComposerTheme";
-import { FONT_FAMILIES } from "../lib/fontFamilies";
 import { useScaledTextRole } from "../features/settings/appearance/useScaledTextRole";
 import {
   acknowledgeComposerNativeEvent,
@@ -139,7 +138,7 @@ export function ComposerEditor({
   const confirmedTokensRef = useRef(collectComposerInlineTokens(props.value));
   const bodyText = useScaledTextRole("body");
   const theme = useUniwindTheme();
-  const fontFamily = FONT_FAMILIES.regular;
+  const fontFamily = useThemeFontFamilies().regular;
 
   useImperativeHandle(
     ref,

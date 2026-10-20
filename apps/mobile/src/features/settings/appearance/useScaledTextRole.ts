@@ -14,9 +14,9 @@ export interface ScaledTextRole {
  * setTheme calls remain native-only.
  */
 export function useScaledTextRole(role: keyof typeof MOBILE_TYPOGRAPHY): ScaledTextRole {
-  const { appearance } = useAppearancePreferences();
+  const { appearance, themeId } = useAppearancePreferences();
   return useMemo(
-    () => resolveScaledTextRole(role, appearance.baseFontSize),
-    [appearance.baseFontSize, role],
+    () => resolveScaledTextRole(role, appearance.baseFontSize, themeId),
+    [appearance.baseFontSize, role, themeId],
   );
 }

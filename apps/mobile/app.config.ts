@@ -118,6 +118,37 @@ const dmSansFonts = {
   bold: "@expo-google-fonts/dm-sans/700Bold/DMSans_700Bold.ttf",
 } as const;
 
+const absolutelyNativeFonts = [
+  {
+    family: "SourceSerif4-Regular",
+    file: "source-serif-4/native/SourceSerif4-Regular.ttf",
+    italic: "source-serif-4/native/SourceSerif4-It.ttf",
+  },
+  { family: "SourceSerif4-It", file: "source-serif-4/native/SourceSerif4-It.ttf" },
+  {
+    family: "SourceSerif4-Semibold",
+    file: "source-serif-4/native/SourceSerif4-Semibold.ttf",
+    italic: "source-serif-4/native/SourceSerif4-SemiboldIt.ttf",
+  },
+  { family: "SourceSerif4-SemiboldIt", file: "source-serif-4/native/SourceSerif4-SemiboldIt.ttf" },
+  {
+    family: "JetBrainsMono-Regular",
+    file: "jetbrains-mono/native/JetBrainsMono-Regular.ttf",
+    italic: "jetbrains-mono/native/JetBrainsMono-Italic.ttf",
+  },
+  { family: "JetBrainsMono-Italic", file: "jetbrains-mono/native/JetBrainsMono-Italic.ttf" },
+  {
+    family: "JetBrainsMono-SemiBold",
+    file: "jetbrains-mono/native/JetBrainsMono-SemiBold.ttf",
+    italic: "jetbrains-mono/native/JetBrainsMono-SemiBoldItalic.ttf",
+  },
+  {
+    family: "JetBrainsMono-SemiBoldItalic",
+    file: "jetbrains-mono/native/JetBrainsMono-SemiBoldItalic.ttf",
+  },
+] as const;
+const absolutelyFontPath = (file: string) => `../../packages/shared/assets/fonts/${file}`;
+
 const widgetsPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
   "expo-widgets",
   {
@@ -322,7 +353,12 @@ const config: ExpoConfig = {
       "expo-font",
       {
         ios: {
-          fonts: [dmSansFonts.regular, dmSansFonts.medium, dmSansFonts.bold],
+          fonts: [
+            dmSansFonts.regular,
+            dmSansFonts.medium,
+            dmSansFonts.bold,
+            ...absolutelyNativeFonts.map(({ file }) => absolutelyFontPath(file)),
+          ],
         },
         android: {
           fonts: [
@@ -338,6 +374,21 @@ const config: ExpoConfig = {
               fontFamily: "DMSans-Bold",
               fontDefinitions: [{ path: dmSansFonts.bold, weight: 700 }],
             },
+            ...absolutelyNativeFonts.map((font) => ({
+              fontFamily: font.family,
+              fontDefinitions: [
+                { path: absolutelyFontPath(font.file), weight: 400, style: "normal" as const },
+                ...("italic" in font
+                  ? [
+                      {
+                        path: absolutelyFontPath(font.italic),
+                        weight: 400,
+                        style: "italic" as const,
+                      },
+                    ]
+                  : []),
+              ],
+            })),
           ],
         },
       },

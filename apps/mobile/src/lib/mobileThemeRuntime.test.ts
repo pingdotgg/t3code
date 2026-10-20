@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import { BUILT_IN_THEME_IDS } from "@t3tools/shared/themePalettes";
 
 import {
   createMobileThemeRuntimeOperations,
@@ -28,8 +29,8 @@ describe("mobileThemeRuntime", () => {
       (operation) => operation.kind === "update-text-variables",
     );
 
-    expect(variableOperations).toHaveLength(12);
-    expect(variableOperations.at(-1)?.themeName).toBe("iris-dark");
+    expect(variableOperations).toHaveLength(2 + BUILT_IN_THEME_IDS.length * 2);
+    expect(variableOperations.at(-1)?.themeName).toBe("absolutely-dark");
     expect(operations.at(-1)).toEqual({
       kind: "set-appearance-mode",
       appearance: "light",
@@ -68,11 +69,37 @@ describe("mobileThemeRuntime", () => {
       baseFontSize: 18,
     });
 
-    expect(operations).toHaveLength(12);
+    expect(operations).toHaveLength(2 + BUILT_IN_THEME_IDS.length * 2);
     expect(operations.every((operation) => operation.kind === "update-text-variables")).toBe(true);
     expect(operations.at(-1)).toMatchObject({
       kind: "update-text-variables",
-      themeName: "iris-dark",
+      themeName: "absolutely-dark",
+    });
+  });
+
+  it("uses Absolutely's measured text scale while preserving other themes", () => {
+    const operations = createMobileThemeRuntimeOperations(null, initialState);
+    const absolutely = operations.find(
+      (operation) =>
+        operation.kind === "update-text-variables" && operation.themeName === "absolutely-light",
+    );
+    const grove = operations.find(
+      (operation) =>
+        operation.kind === "update-text-variables" && operation.themeName === "grove-light",
+    );
+    expect(absolutely).toMatchObject({
+      variables: {
+        "--text-base": 15,
+        "--text-base--line-height": 21,
+        "--text-sm--line-height": 21,
+      },
+    });
+    expect(grove).toMatchObject({
+      variables: {
+        "--text-base": 16,
+        "--text-base--line-height": 23,
+        "--text-sm--line-height": 19,
+      },
     });
   });
 

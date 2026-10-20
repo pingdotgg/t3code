@@ -29,6 +29,7 @@ import {
   subscribeToCustomThemes,
   themeAllowsSidebarArtwork,
   T3_CHAT_THEME,
+  ABSOLUTELY_THEME,
   EMBER_THEME,
   GROVE_THEME,
   IRIS_THEME,
@@ -510,6 +511,45 @@ describe("theme files", () => {
       );
       expect(contrastRatio(colors.sidebarForeground, colors.sidebar)).toBeGreaterThanOrEqual(4.5);
       expect(contrastRatio(colors.accentForeground, colors.accent)).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it("offers Absolutely in both appearances with readable neutral palettes and serif replies", () => {
+    expect(getThemeDefinition("absolutely")).toBe(ABSOLUTELY_THEME);
+    expect(getThemeModes(ABSOLUTELY_THEME)).toEqual(["light", "dark"]);
+    expect(ABSOLUTELY_THEME.label).toBe("Absolutely");
+    expect(ABSOLUTELY_THEME.typography).toBe("absolutely");
+    expect(themeAllowsSidebarArtwork("absolutely")).toBe(false);
+    expectThemeColors(ABSOLUTELY_THEME.colors, {
+      canvas: "#fcfcfb",
+      accent: "#184f95",
+      sidebar: "#fbfbf9",
+      surface: "#ffffff",
+      messageSurface: "#f0f0ef",
+      messageAction: "#0b0b0b",
+    });
+    expectThemeColors(ABSOLUTELY_THEME.variants!.dark!, {
+      canvas: "#151515",
+      accent: "#6da7ec",
+      sidebar: "#111111",
+      surface: "#1a1a19",
+      surfaceOverlay: "#20201f",
+      codeBackground: "#1b1b1a",
+      codeForeground: "#eaecf0",
+      accentSurface: "#313130",
+      accentSurfaceForeground: "#f0efec",
+    });
+    for (const appearance of ["light", "dark"] as const) {
+      const colors = getThemeColorsForMode(ABSOLUTELY_THEME, appearance)!;
+      for (const [foreground, background] of [
+        [colors.text, colors.canvas],
+        [colors.textMuted, colors.canvas],
+        [colors.messageForeground, colors.messageSurface],
+        [colors.messageActionForeground, colors.messageAction],
+        [colors.sidebarForeground, colors.sidebar],
+      ]) {
+        expect(contrastRatio(foreground!, background!)).toBeGreaterThanOrEqual(4.5);
+      }
     }
   });
 

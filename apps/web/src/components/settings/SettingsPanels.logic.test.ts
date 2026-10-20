@@ -1,5 +1,4 @@
 import {
-  DEFAULT_SERVER_SETTINGS,
   DEFAULT_UNIFIED_SETTINGS,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -21,6 +20,17 @@ import {
 } from "./SettingsPanels.logic";
 
 describe("typography settings restore", () => {
+  it("detects a reply font override and clears the restore notice at the default", () => {
+    const settings = { ...DEFAULT_UNIFIED_SETTINGS, fontFamilyReply: "Georgia" };
+    expect(getChangedTypographySettingLabels(settings)).toEqual(["Reply font"]);
+    expect(
+      getChangedTypographySettingLabels({
+        ...settings,
+        fontFamilyReply: DEFAULT_UNIFIED_SETTINGS.fontFamilyReply,
+      }),
+    ).toEqual([]);
+  });
+
   it("detects family and size changes by font row", () => {
     expect(getChangedTypographySettingLabels(DEFAULT_UNIFIED_SETTINGS)).toEqual([]);
     expect(

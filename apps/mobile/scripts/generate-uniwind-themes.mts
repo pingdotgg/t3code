@@ -3,6 +3,8 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import tailwindColors from "tailwindcss/colors";
+import { MOBILE_TYPOGRAPHY } from "../src/lib/typography.ts";
+import { getMobileFontFamilies } from "../src/lib/fontFamilies.ts";
 import { BUILT_IN_THEME_IDS, type BuiltInThemeId } from "@t3tools/shared/themePalettes";
 
 import {
@@ -210,7 +212,17 @@ const clerkVariablesFor = (appearance: MobileThemeAppearance) => {
 };
 
 const renderVariant = (name: string, variables: Readonly<Record<string, string>>) => {
-  const declarations = Object.entries(variables)
+  const fonts = getMobileFontFamilies(name.replace(/-(light|dark)$/, ""));
+  const declarations = Object.entries({
+    ...variables,
+    "--text-base": `${fonts.code ? 15 : MOBILE_TYPOGRAPHY.body.fontSize}px`,
+    "--text-base--line-height": `${fonts.code ? 21 : MOBILE_TYPOGRAPHY.body.lineHeight}px`,
+    "--text-sm": `${MOBILE_TYPOGRAPHY.footnote.fontSize}px`,
+    "--text-sm--line-height": `${fonts.code ? 21 : MOBILE_TYPOGRAPHY.footnote.lineHeight}px`,
+    "--font-sans": `"${fonts.regular}"`,
+    "--font-medium": `"${fonts.medium}"`,
+    "--font-bold": `"${fonts.bold}"`,
+  })
     .map(([variable, value]) => `      ${variable}: ${value};`)
     .join("\n");
   return `    @variant ${name} {\n${declarations}\n    }`;

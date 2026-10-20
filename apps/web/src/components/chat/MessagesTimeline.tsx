@@ -2679,6 +2679,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           >
             <ChatMarkdown
               text={messageText}
+              className="font-reply text-(length:--font-size-reply,var(--text-sm)) leading-(--leading-reply)"
               cwd={ctx.markdownCwd}
               threadRef={ctx.threadRef ?? undefined}
               isStreaming={Boolean(row.message.streaming)}
@@ -4679,7 +4680,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
       cwd={props.markdownCwd}
       threadRef={ctx.threadRef ?? undefined}
       skills={props.skills}
-      className="text-foreground"
+      className="text-foreground text-(length:--font-size-user-message,var(--text-sm)) leading-(--leading-user-message)"
       lineBreaks
       parseRawHtml={false}
       renderContextReference={props.renderContextReference}

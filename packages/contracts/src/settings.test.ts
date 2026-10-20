@@ -23,6 +23,25 @@ const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
+describe("reply font preferences", () => {
+  it("keeps existing clients on their interface font", () => {
+    expect(decodeClientSettings({}).fontFamilyReply).toBe("");
+  });
+
+  it("round-trips a reply font independently and accepts clearing it", () => {
+    const input = { fontFamilySans: "Arial", fontFamilyReply: "Source Serif 4" };
+    expect(encodeClientSettings(decodeClientSettings(input))).toMatchObject(input);
+    expect(decodeClientSettingsPatch(input)).toEqual(input);
+    expect(decodeClientSettingsPatch({ fontFamilyReply: "" })).toEqual({ fontFamilyReply: "" });
+  });
+
+  it("enforces the existing font preference limit on reads and writes", () => {
+    const input = { fontFamilyReply: "a".repeat(201) };
+    expect(() => decodeClientSettings(input)).toThrow();
+    expect(() => decodeClientSettingsPatch(input)).toThrow();
+  });
+});
+
 describe("ServerSettings response streaming", () => {
   it("defaults to paragraph buffering", () => {
     expect(decodeServerSettings({}).responseStreamingMode).toBe("paragraph");

@@ -269,6 +269,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["typography family size composer input"],
   },
   {
+    id: "reply-font",
+    title: "Reply font",
+    to: "/settings/appearance",
+    searchTerms: ["typography family assistant response chat serif"],
+  },
+  {
     id: "code-font",
     title: "Code font",
     to: "/settings/appearance",

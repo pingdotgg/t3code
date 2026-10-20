@@ -203,6 +203,27 @@
           ]
         }
       ]
+    },
+    {
+      "bundles": ["assets", "desktop", "mobile", "web"],
+      "license": "OFL-1.1",
+      "name": "DM Sans",
+      "noticeFile": "packages/shared/assets/fonts/dm-sans/OFL.txt",
+      "sourceUrl": "https://github.com/google/fonts/tree/main/ofl/dmsans"
+    },
+    {
+      "bundles": ["assets", "desktop", "mobile", "web"],
+      "license": "OFL-1.1",
+      "name": "Source Serif 4",
+      "noticeFile": "packages/shared/assets/fonts/source-serif-4/OFL.txt",
+      "sourceUrl": "https://github.com/adobe-fonts/source-serif"
+    },
+    {
+      "bundles": ["assets", "desktop", "mobile", "web"],
+      "license": "OFL-1.1",
+      "name": "JetBrains Mono",
+      "noticeFile": "packages/shared/assets/fonts/jetbrains-mono/OFL.txt",
+      "sourceUrl": "https://github.com/JetBrains/JetBrainsMono"
     }
   ],
   "packageOverrides": [

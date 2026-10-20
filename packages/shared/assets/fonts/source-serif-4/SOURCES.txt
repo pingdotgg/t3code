@@ -1,0 +1,9 @@
+Unmodified upstream font files. Licensed under SIL Open Font License 1.1; see OFL.txt.
+https://cdn.jsdelivr.net/npm/@fontsource-variable/source-serif-4@5.3.1/files/source-serif-4-latin-standard-normal.woff2
+https://cdn.jsdelivr.net/npm/@fontsource-variable/source-serif-4@5.3.1/files/source-serif-4-latin-standard-italic.woff2
+https://cdn.jsdelivr.net/npm/@fontsource-variable/source-serif-4@5.3.1/LICENSE
+https://raw.githubusercontent.com/adobe-fonts/source-serif/4.005R/TTF/SourceSerif4-Regular.ttf
+https://raw.githubusercontent.com/adobe-fonts/source-serif/4.005R/TTF/SourceSerif4-It.ttf
+https://raw.githubusercontent.com/adobe-fonts/source-serif/4.005R/TTF/SourceSerif4-Semibold.ttf
+https://raw.githubusercontent.com/adobe-fonts/source-serif/4.005R/TTF/SourceSerif4-SemiboldIt.ttf
+https://raw.githubusercontent.com/adobe-fonts/source-serif/4.005R/LICENSE.md

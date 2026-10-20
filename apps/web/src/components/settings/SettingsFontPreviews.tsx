@@ -21,6 +21,14 @@ const PROMPT_PREVIEW_TEXT =
 
 function noop() {}
 
+export function ReplyFontPreview() {
+  return (
+    <p className="mt-1 mb-2 rounded-lg border border-border bg-background px-3 py-2 font-reply text-sm leading-relaxed">
+      Let’s build something thoughtful. I can help you get started with <code>helloWorld()</code>.
+    </p>
+  );
+}
+
 export function PromptFontPreview() {
   const editorRef = useRef<ComposerPromptEditorHandle>(null);
   const [prompt, setPrompt] = useState(PROMPT_PREVIEW_TEXT);

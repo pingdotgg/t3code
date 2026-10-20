@@ -244,8 +244,10 @@ export function createMobileThemeVariables(
   appearance: MobileThemeAppearance,
   groupedCardColor = colors.surface,
   prominentAction: readonly [string, string] = [colors.text, colors.canvas],
+  linkAccent = colors.messageAction,
 ) {
   const c = nativeColors(colors);
+  const link = themeColorToNativeColor(linkAccent);
   const groupedCard = themeColorToNativeColor(groupedCardColor);
   const textSurfaces = [
     c.canvas,
@@ -299,7 +301,7 @@ export function createMobileThemeVariables(
     "--color-prominent-action": themeColorToNativeColor(prominentAction[0]),
     "--color-prominent-action-foreground": themeColorToNativeColor(prominentAction[1]),
     "--color-primary-foreground": c.messageActionForeground,
-    "--color-primary-text": themeColorWithContrast(c.messageAction, textSurfaces),
+    "--color-primary-text": themeColorWithContrast(link, textSurfaces),
     "--color-primary-shadow": "#000000",
     "--color-secondary": c.secondary,
     "--color-secondary-foreground": c.secondaryForeground,
@@ -332,7 +334,7 @@ export function createMobileThemeVariables(
     "--color-status-bar": c.canvas,
     "--color-md-body": c.text,
     "--color-md-strong": c.text,
-    "--color-md-link": themeColorWithContrast(c.messageAction, c.canvas),
+    "--color-md-link": themeColorWithContrast(link, c.canvas),
     "--color-md-blockquote-border": c.border,
     "--color-md-blockquote-bg": c.muted,
     "--color-md-code-bg": c.codeBackground,
@@ -345,10 +347,7 @@ export function createMobileThemeVariables(
     "--color-user-bubble": c.messageSurface,
     "--color-user-bubble-foreground": c.messageForeground,
     "--color-user-bubble-foreground-muted": withAlpha(c.messageForeground, 0.78),
-    "--color-user-bubble-skill-foreground": themeColorWithContrast(
-      c.messageAction,
-      c.messageSurface,
-    ),
+    "--color-user-bubble-skill-foreground": themeColorWithContrast(link, c.messageSurface),
     "--color-backdrop": withAlpha("#000000", appearance === "dark" ? 0.48 : 0.22),
     "--color-drawer": c.sidebar,
     "--color-drawer-foreground": c.sidebarForeground,
@@ -390,11 +389,13 @@ export function getMobileThemeVariables(
       ? appearance === "light"
         ? colors.toolbarControlHover
         : colors.sidebarRowActive
-      : themeId === "t3-chat"
-        ? appearance === "light"
-          ? colors.toolbarControl
-          : colors.surface
-        : colors.muted;
+      : themeId === "absolutely"
+        ? colors.surfaceRaised
+        : themeId === "t3-chat"
+          ? appearance === "light"
+            ? colors.toolbarControl
+            : colors.surface
+          : colors.muted;
   const mobileColors =
     themeId === DEFAULT_MOBILE_THEME_ID
       ? {
@@ -417,6 +418,7 @@ export function getMobileThemeVariables(
       : themeId !== DEFAULT_MOBILE_THEME_ID && themeId !== "t3-chat"
         ? [colors.messageAction, colors.messageActionForeground]
         : undefined,
+    themeId === "absolutely" ? colors.accent : colors.messageAction,
   );
 
   return overrides ? ({ ...baseVariables, ...overrides } as MobileThemeVariables) : baseVariables;
@@ -432,7 +434,9 @@ export function getMobileThemePreviewColors(
   const colors = getThemeColorsForAppearance(theme, appearance) ?? theme.colors;
   return {
     canvas: themeColorToNativeColor(colors.canvas),
-    accent: themeColorToNativeColor(colors.accent),
+    accent: themeColorToNativeColor(
+      theme.id === "absolutely" ? colors.accentSurface : colors.accent,
+    ),
     messageAction: themeColorToNativeColor(colors.messageAction),
   };
 }

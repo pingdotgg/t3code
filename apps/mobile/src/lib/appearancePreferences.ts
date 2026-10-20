@@ -1,3 +1,4 @@
+import { getMobileFontFamilies } from "./fontFamilies";
 import { MOBILE_CODE_SURFACE, MOBILE_TYPOGRAPHY } from "./typography";
 import {
   DEFAULT_TERMINAL_FONT_SIZE,
@@ -179,13 +180,24 @@ const TEXT_SCALE_VARIABLE_ROLES = {
   "--text-3xl": MOBILE_TYPOGRAPHY.display,
 } as const;
 
-export function resolveTextScaleVariables(baseFontSize: number): Record<string, number> {
+export function resolveTextScaleVariables(
+  baseFontSize: number,
+  themeId?: string,
+): Record<string, number> {
   const scale = normalizeBaseFontSize(baseFontSize) / DEFAULT_BASE_FONT_SIZE;
   const variables: Record<string, number> = {};
 
   for (const [name, role] of Object.entries(TEXT_SCALE_VARIABLE_ROLES)) {
-    variables[name] = Math.max(8, Math.round(role.fontSize * scale));
-    variables[`${name}--line-height`] = scaledTypographyLineHeight(role, baseFontSize);
+    const typography =
+      themeId && getMobileFontFamilies(themeId).code
+        ? name === "--text-base"
+          ? { fontSize: 15, lineHeight: 21 }
+          : name === "--text-sm"
+            ? { fontSize: 14, lineHeight: 21 }
+            : role
+        : role;
+    variables[name] = Math.max(8, Math.round(typography.fontSize * scale));
+    variables[`${name}--line-height`] = scaledTypographyLineHeight(typography, baseFontSize);
   }
 
   return variables;
@@ -199,8 +211,15 @@ export function scaledTypographyLineHeight(
   return Math.max(10, Math.round(role.lineHeight * scale));
 }
 
-export function resolveScaledTextRole(role: keyof typeof MOBILE_TYPOGRAPHY, baseFontSize: number) {
-  const typography = MOBILE_TYPOGRAPHY[role];
+export function resolveScaledTextRole(
+  role: keyof typeof MOBILE_TYPOGRAPHY,
+  baseFontSize: number,
+  themeId?: string,
+) {
+  const typography =
+    themeId && getMobileFontFamilies(themeId).code && role === "body"
+      ? { fontSize: 15, lineHeight: 21 }
+      : MOBILE_TYPOGRAPHY[role];
   const scale = normalizeBaseFontSize(baseFontSize) / DEFAULT_BASE_FONT_SIZE;
   return {
     fontSize: Math.max(8, Math.round(typography.fontSize * scale)),
