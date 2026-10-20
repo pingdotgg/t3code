@@ -61,6 +61,7 @@ import {
 } from "@t3tools/client-runtime/state/subagent-display";
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
 import { observeResize } from "~/lib/observeResize";
+import { useStableCallback } from "~/hooks/useStableCallback";
 
 const NOOP_USE_ARTIFACT_TEMPLATE = () => {};
 const NOOP_OPEN_ATTACHMENT = (_attachment: ChatFileAttachment) => {};
@@ -208,6 +209,8 @@ import {
   resolveTimelineIsAtEnd,
   resolveTimelineMinimapHasPersistentGutter,
   resolveTimelineMinimapCurrentIndex,
+  isTimelineMinimapRowVisible,
+  resolveTimelineMinimapVisibleRange,
   resolveTimelineMinimapHeightStyle,
   resolveTimelineMinimapHitStripWidth,
   resolveTimelineMinimapIndexFromPointer,
@@ -870,6 +873,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // must not change with them or every timeline row re-renders per event.
   const runs = useStableHandoffRuns(runsProp);
   const minimapItems = deriveTimelineMinimapItems(rows);
+  const minimapRowIndices = minimapItems.map((item) => item.rowIndex);
   // Preserve initialScrollAtEnd's measured target until the list is reused
   // for another thread; scrollToEnd would replace it with an estimated offset.
   const listOpenedOnRef = useRef<{
@@ -1126,19 +1130,66 @@ const ConversationTimeline = memo(function ConversationTimeline({
       onContentOverflowChange(measureContentOverflow());
     });
   };
-  const handleItemSizeChanged = () => {
-    if (disclosurePinsEndRef.current) {
-      queueMicrotask(pinDisclosureToEnd);
-      scheduleDisclosureSettle();
-    }
-    reportContentOverflow();
-  };
   useEffect(() => cancelContentOverflowFrame, [cancelContentOverflowFrame]);
   useLayoutEffect(() => {
     cancelContentOverflowFrame();
     onContentOverflowChange?.(measureContentOverflow());
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Added or removed rows change the content height.
   }, [cancelContentOverflowFrame, measureContentOverflow, onContentOverflowChange, rows.length]);
+
+  const refreshMinimap = useStableCallback(() => {
+    const state = listRef.current?.getState?.();
+    if (restoringThreadPosition || state?.data !== rows) return;
+    if (!state || minimapItems.length === 0) {
+      return;
+    }
+
+    const firstBufferedIndex = state.startBuffered;
+    const firstBufferedRow: HTMLElement | undefined =
+      firstBufferedIndex == null ? undefined : state.elementAtIndex(firstBufferedIndex);
+    const firstBufferedTop =
+      firstBufferedIndex == null ? undefined : state.positionAtIndex(firstBufferedIndex);
+    const viewport: HTMLElement | undefined = listRef.current?.getScrollableNode();
+    // Cached row positions exclude the header and pending scroll adjustments.
+    const scroll =
+      firstBufferedRow && viewport && firstBufferedTop !== undefined
+        ? firstBufferedTop +
+          viewport.getBoundingClientRect().top -
+          firstBufferedRow.getBoundingClientRect().top
+        : state.scroll;
+    const visibleRange = resolveTimelineMinimapVisibleRange({ ...state, scroll });
+    for (const item of minimapItems) {
+      const strip = minimapStripMap.get(item.id);
+      const inView = isTimelineMinimapRowVisible(
+        item.rowIndex,
+        visibleRange.start,
+        visibleRange.end,
+      );
+      const next = inView ? "true" : "false";
+      // Avoid dirtying style state on every scroll tick for unchanged strips.
+      if (strip && strip.dataset.inView !== next) {
+        strip.dataset.inView = next;
+      }
+    }
+    const nextCurrentIndex = resolveTimelineMinimapCurrentIndex({
+      visibleStart: visibleRange.start,
+      visibleEnd: visibleRange.end,
+      rowIndices: minimapRowIndices,
+    });
+    setMinimapCurrentIndex((current) =>
+      current === nextCurrentIndex ? current : nextCurrentIndex,
+    );
+  });
+
+  const minimapRefreshFrameRef = useRef<number | null>(null);
+  const scheduleMinimapRefresh = () => {
+    if (minimapRefreshFrameRef.current !== null) return;
+    // LegendList recycles row containers before React commits their positions.
+    minimapRefreshFrameRef.current = requestAnimationFrame(() => {
+      minimapRefreshFrameRef.current = null;
+      refreshMinimap();
+    });
+  };
 
   const handleScroll = () => {
     const state = listRef.current?.getState?.();
@@ -1172,44 +1223,27 @@ const ConversationTimeline = memo(function ConversationTimeline({
       onIsAtEndChange(isAtEnd);
     }
     reportContentOverflow();
-    if (!state || minimapItems.length === 0) {
-      return;
-    }
-
-    const scrollTop = state.scroll ?? 0;
-    const scrollBottom = scrollTop + (state.scrollLength ?? 0);
-
-    const itemBounds = minimapItems.map((item) => ({
-      top: resolveTimelineRowTop(state, item.rowIndex),
-      height: resolveTimelineRowHeight(state, item.rowIndex),
-    }));
-
-    for (const [index, item] of minimapItems.entries()) {
-      const strip = minimapStripMap.get(item.id);
-      const bounds = itemBounds[index];
-      const rowTop = bounds?.top ?? null;
-      const rowHeight = bounds?.height ?? null;
-      const inView =
-        rowTop !== null &&
-        rowTop < scrollBottom &&
-        rowTop + Math.max(1, rowHeight ?? 1) > scrollTop;
-
-      // Skip no-op attribute writes: this runs for every strip on every scroll
-      // tick, and rewriting an unchanged attribute still dirties style state.
-      const next = inView ? "true" : "false";
-      if (strip && strip.dataset.inView !== next) {
-        strip.dataset.inView = next;
-      }
-    }
-    const nextCurrentIndex = resolveTimelineMinimapCurrentIndex({
-      scrollTop,
-      scrollBottom,
-      itemBounds,
-    });
-    setMinimapCurrentIndex((current) =>
-      current === nextCurrentIndex ? current : nextCurrentIndex,
-    );
+    scheduleMinimapRefresh();
   };
+
+  const handleItemSizeChanged = () => {
+    if (disclosurePinsEndRef.current) {
+      queueMicrotask(pinDisclosureToEnd);
+      scheduleDisclosureSettle();
+    }
+    reportContentOverflow();
+    scheduleMinimapRefresh();
+  };
+
+  useEffect(
+    () => () => {
+      if (minimapRefreshFrameRef.current !== null) {
+        cancelAnimationFrame(minimapRefreshFrameRef.current);
+        minimapRefreshFrameRef.current = null;
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     const frame = requestAnimationFrame(handleScroll);
@@ -1611,24 +1645,6 @@ function getItemType(item: MessagesTimelineRow) {
   if (item.kind !== "message") return item.kind;
   const lengthBucket = Math.max(0, Math.floor(Math.log2(item.message.text.length / 1000)));
   return `message:${item.message.role}:${lengthBucket}`;
-}
-
-interface TimelinePositionState {
-  readonly contentLength?: number;
-  readonly scroll?: number;
-  readonly scrollLength?: number;
-  readonly positionAtIndex?: (index: number) => number | undefined;
-  readonly sizeAtIndex?: (index: number) => number | undefined;
-}
-
-function resolveTimelineRowTop(state: TimelinePositionState, rowIndex: number) {
-  const top = state.positionAtIndex?.(rowIndex);
-  return typeof top === "number" && Number.isFinite(top) ? top : null;
-}
-
-function resolveTimelineRowHeight(state: TimelinePositionState, rowIndex: number) {
-  const height = state.sizeAtIndex?.(rowIndex);
-  return typeof height === "number" && Number.isFinite(height) ? height : null;
 }
 
 function timelineMinimapEventTargetsPreview(target: EventTarget): boolean {
