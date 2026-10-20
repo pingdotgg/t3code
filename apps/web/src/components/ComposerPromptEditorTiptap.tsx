@@ -13,6 +13,7 @@ import { type Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { newlineInCode, splitBlockKeepMarks } from "@tiptap/pm/commands";
 import {
   type EditorState,
+  AllSelection,
   NodeSelection,
   Plugin,
   PluginKey,
@@ -223,6 +224,24 @@ const SURROUND_CLOSE: Record<string, string> = {
   "*": "*",
   _: "_",
 };
+
+function canSurroundComposerRange(doc: ProseMirrorNode, from: number, to: number) {
+  if (from === to) return false;
+  // Wrapping styled text or inline chips would discard their formatting or context.
+  let touchesSpecial = false;
+  doc.nodesBetween(from, to, (node) => {
+    if ((node.isAtom && node.isInline && !node.isText) || (node.isText && node.marks.length > 0)) {
+      touchesSpecial = true;
+      return false;
+    }
+    return true;
+  });
+  if (touchesSpecial) return false;
+  const map = serializeEditorDoc(doc);
+  const startMd = flatToMarkdown(map, pmToFlat(map, from));
+  const endMd = flatToMarkdown(map, pmToFlat(map, to));
+  return !selectionTouchesMentionBoundary(map.value, startMd, endMd);
+}
 
 function resolvedThemeFromDocument(): "light" | "dark" {
   return document.documentElement.classList.contains("dark") ? "dark" : "light";
@@ -928,6 +947,11 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
   const importFragmentRef = useRef(importContextFragment);
   const latestValueRef = useRef(value);
   const editorHolder = useRef<TiptapEditor | null>(null);
+  const deadKeySelectionRef = useRef<{
+    selection: TextSelection;
+    inputState: EditorState;
+    compositionId: number | null;
+  } | null>(null);
 
   useEffect(() => {
     onChangeRef.current = onChange;
@@ -1105,6 +1129,45 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
       editable: !disabled,
       editorProps: {
         attributes: editorAttributes,
+        handleDOMEvents: {
+          compositionstart: (view) => {
+            const pending = deadKeySelectionRef.current;
+            if (pending?.inputState !== view.state) {
+              deadKeySelectionRef.current = null;
+            }
+            return false;
+          },
+          compositionend: (view, event) => {
+            const previous = deadKeySelectionRef.current;
+            const text = event.data;
+            if (!previous) return false;
+            const closer = text.length === 1 ? SURROUND_CLOSE[text] : undefined;
+            // Like Tiptap's input rules, wait for ProseMirror to commit the composition.
+            setTimeout(() => {
+              if (deadKeySelectionRef.current !== previous) return;
+              deadKeySelectionRef.current = null;
+              if (view.isDestroyed || view.composing) return;
+              const { from, to } = previous.selection;
+              const committed = previous.inputState.tr.insertText(text, from, from);
+              if (
+                !view.state.doc.eq(committed.doc) ||
+                !view.state.selection.eq(committed.selection)
+              )
+                return;
+              const tr = view.state.tr;
+              const start = from + text.length;
+              const end = to + text.length;
+              const replaceSelection = text.length > 0 && !closer;
+              if (closer) tr.insertText(closer, end);
+              else if (replaceSelection) tr.delete(start, end);
+              tr.setSelection(TextSelection.create(tr.doc, start, replaceSelection ? start : end));
+              if (previous.compositionId !== null)
+                tr.setMeta("composition", previous.compositionId);
+              view.dispatch(tr);
+            });
+            return false;
+          },
+        },
         handleKeyDown: (view, event) => {
           const boundary = event.metaKey
             ? event.key === "ArrowLeft" || event.key === "ArrowRight"
@@ -1115,6 +1178,36 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
             : event.key === "Home" || event.key === "End"
               ? "lineboundary"
               : null;
+          if (
+            (event.key === "Dead" ||
+              (event.key === "Process" &&
+                (event.code === "Quote" || event.code === "Backquote"))) &&
+            !literalText &&
+            !view.composing
+          ) {
+            const { state } = view;
+            const selection =
+              state.selection instanceof AllSelection
+                ? TextSelection.between(state.selection.$from, state.selection.$to)
+                : state.selection;
+            if (
+              selection instanceof TextSelection &&
+              canSurroundComposerRange(state.doc, selection.from, selection.to)
+            ) {
+              // Wayland reports Process on keydown and Dead only on keyup. Collapse
+              // before composition starts so native input leaves the selected text in place.
+              view.dispatch(
+                view.state.tr.setSelection(TextSelection.create(view.state.doc, selection.from)),
+              );
+              deadKeySelectionRef.current = {
+                selection,
+                inputState: view.state,
+                compositionId: null,
+              };
+            } else {
+              deadKeySelectionRef.current = null;
+            }
+          }
           if (
             isMacPlatform(navigator.platform) &&
             boundary &&
@@ -1309,39 +1402,38 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
           return handled;
         },
         handleTextInput: (view, from, to, text) => {
-          if (literalText || view.composing || text.length !== 1) return false;
-          const closer = SURROUND_CLOSE[text];
-          const { selection } = view.state;
-          // Compose preedit updates replace a range even without a user selection.
+          if (literalText || view.composing) return false;
+          const pending = deadKeySelectionRef.current;
+          // Windows dead keys commit text without starting an IME composition.
+          const preserved =
+            pending &&
+            view.state === pending.inputState &&
+            from === to &&
+            from === pending.selection.from
+              ? pending.selection
+              : null;
+          if (preserved) deadKeySelectionRef.current = null;
+          const closer = text.length === 1 ? SURROUND_CLOSE[text] : undefined;
+          if (!closer) {
+            if (!preserved) return false;
+            view.dispatch(view.state.tr.insertText(text, preserved.from, preserved.to));
+            return true;
+          }
+          const selection = preserved ?? view.state.selection;
+          // A preedit replacement range is not necessarily the user's selection.
           if (
-            !closer ||
             !(selection instanceof TextSelection) ||
-            selection.empty ||
-            selection.from !== from ||
-            selection.to !== to
+            (!preserved && (selection.from !== from || selection.to !== to)) ||
+            !canSurroundComposerRange(view.state.doc, selection.from, selection.to)
           ) {
             return false;
           }
-          // Never wrap chips or other atoms, and never wrap styled text: the
-          // default replace keeps marks intact, wrapping would drop them.
-          let touchesSpecial = false;
-          view.state.doc.nodesBetween(from, to, (node) => {
-            if (
-              (node.isAtom && node.isInline && !node.isText) ||
-              (node.isText && node.marks.length > 0)
-            ) {
-              touchesSpecial = true;
-              return false;
-            }
-            return true;
-          });
-          if (touchesSpecial) return false;
-          const map = serializeEditorDoc(view.state.doc);
-          const startMd = flatToMarkdown(map, pmToFlat(map, from));
-          const endMd = flatToMarkdown(map, pmToFlat(map, to));
-          if (selectionTouchesMentionBoundary(map.value, startMd, endMd)) return false;
-          const tr = view.state.tr.insertText(closer, to).insertText(text, from);
-          tr.setSelection(TextSelection.create(tr.doc, from + text.length, to + text.length));
+          const tr = view.state.tr
+            .insertText(closer, selection.to)
+            .insertText(text, selection.from);
+          tr.setSelection(
+            TextSelection.create(tr.doc, selection.from + text.length, selection.to + text.length),
+          );
           view.dispatch(tr);
           return true;
         },
@@ -1429,6 +1521,11 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
           }
           return true;
         },
+      },
+      onTransaction: ({ transaction }) => {
+        const pending = deadKeySelectionRef.current;
+        const compositionId = transaction.getMeta("composition");
+        if (pending && typeof compositionId === "number") pending.compositionId = compositionId;
       },
       onUpdate: ({ editor: updated }) => {
         handleEditorChange(updated);
