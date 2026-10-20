@@ -52,27 +52,29 @@ const decodeReleaseIndex = Schema.decodeUnknownEffect(Schema.fromJsonString(Rele
 const RELEASE_INDEX_TIMEOUT = Duration.seconds(30);
 const RELEASE_INDEX_MAX_PAGES = 10;
 
-const resolveNewestVersion = Effect.fn("cli.update.resolve_newest")(function* (
+export const resolveNewestVersion = Effect.fn("cli.update.resolve_newest")(function* (
   channel: CliReleaseChannel,
 ) {
   const httpClient = yield* HttpClient.HttpClient;
+  const environment = yield* HostProcess.Environment;
+  const githubToken = environment.GH_TOKEN?.trim() || environment.GITHUB_TOKEN?.trim() || undefined;
   for (let page = 1; page <= RELEASE_INDEX_MAX_PAGES; page += 1) {
-    const body = yield* httpClient
-      .execute(
-        HttpClientRequest.get(cliReleaseIndexPageUrl(page)).pipe(
-          HttpClientRequest.setHeader("Accept", "application/vnd.github+json"),
-        ),
-      )
-      .pipe(
-        Effect.flatMap(HttpClientResponse.filterStatusOk),
-        Effect.flatMap((response) => response.text),
-        Effect.mapError(() => new CliUpdateError({ reason: "Could not list t3 releases." })),
-        Effect.timeoutOrElse({
-          duration: RELEASE_INDEX_TIMEOUT,
-          orElse: () =>
-            Effect.fail(new CliUpdateError({ reason: "Timed out listing t3 releases." })),
-        }),
-      );
+    const request = HttpClientRequest.get(cliReleaseIndexPageUrl(page)).pipe(
+      HttpClientRequest.setHeader("Accept", "application/vnd.github+json"),
+    );
+    const authenticatedRequest =
+      githubToken === undefined
+        ? request
+        : HttpClientRequest.setHeader(request, "Authorization", `Bearer ${githubToken}`);
+    const body = yield* httpClient.execute(authenticatedRequest).pipe(
+      Effect.flatMap(HttpClientResponse.filterStatusOk),
+      Effect.flatMap((response) => response.text),
+      Effect.mapError(() => new CliUpdateError({ reason: "Could not list t3 releases." })),
+      Effect.timeoutOrElse({
+        duration: RELEASE_INDEX_TIMEOUT,
+        orElse: () => Effect.fail(new CliUpdateError({ reason: "Timed out listing t3 releases." })),
+      }),
+    );
     const releases = yield* decodeReleaseIndex(body).pipe(
       Effect.mapError(
         () => new CliUpdateError({ reason: "The t3 release index had an unexpected shape." }),
