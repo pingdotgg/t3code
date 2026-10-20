@@ -88,8 +88,9 @@ import {
   groupByProvider,
   isModelSelectionUnavailable,
 } from "../../lib/modelOptions";
-import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
+import { useScaledTextRole, type ScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import type { RemoteClientConnectionState } from "../../lib/connection";
+import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { Menu } from "../../components/ui/Menu";
 import type { ActiveTurnComposerAction } from "@t3tools/client-runtime/state/composer-dispatch";
@@ -126,6 +127,20 @@ import {
 } from "./use-thread-settings-sheet-presentation";
 
 export const COMPOSER_COLLAPSED_CHROME = 60;
+
+const COLLAPSED_EDITOR_DEFAULT_INSET = 6;
+// iOS puts line-height slack above glyphs. DM Sans's lowercase midline is
+// descender (0.31em) + half x-height (0.504em) above the line bottom.
+const LOWERCASE_MIDLINE_EM = 0.562;
+
+function lowercaseMidline(text: ScaledTextRole): number {
+  return text.lineHeight - LOWERCASE_MIDLINE_EM * text.fontSize;
+}
+
+function collapsedEditorInset(text: ScaledTextRole): number {
+  const shift = lowercaseMidline(text) - lowercaseMidline(MOBILE_TYPOGRAPHY.body);
+  return Math.max(0, Math.round(COLLAPSED_EDITOR_DEFAULT_INSET - shift));
+}
 
 export const COMPOSER_EXPANDED_CHROME = 156;
 
@@ -914,7 +929,9 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 }
                 scrollEnabled={isExpanded}
                 singleLineCentered={!isExpanded}
-                contentInsetVertical={isExpanded || Platform.OS === "android" ? 0 : 6}
+                contentInsetVertical={
+                  isExpanded || Platform.OS === "android" ? 0 : collapsedEditorInset(bodyText)
+                }
                 style={
                   isExpanded
                     ? {
