@@ -26,7 +26,7 @@ const boundedOpaqueValue = (value: string, maximumLength: number): string | unde
 const choiceId = (value: string): string | undefined =>
   value === "" ? ACP_EMPTY_OPTION_VALUE : boundedOpaqueValue(value, MAX_TEXT_LENGTH);
 
-function flattenSelectChoices(
+export function flattenSelectChoices(
   options: EffectAcpSchema.SessionConfigSelectOptions,
 ): ReadonlyArray<EffectAcpSchema.SessionConfigSelectOption> {
   return options.flatMap((candidate) => ("value" in candidate ? [candidate] : candidate.options));

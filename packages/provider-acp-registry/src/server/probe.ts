@@ -25,8 +25,14 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
-import { parseSessionModeState } from "@t3tools/provider-acp/server/runtimeModel";
-import { acpProviderOptionDescriptors } from "@t3tools/provider-acp/server/sessionConfig";
+import {
+  findModelConfigOption,
+  parseSessionModeState,
+} from "@t3tools/provider-acp/server/runtimeModel";
+import {
+  acpProviderOptionDescriptors,
+  flattenSelectChoices,
+} from "@t3tools/provider-acp/server/sessionConfig";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 
@@ -53,23 +59,12 @@ export function normalizeAcpRegistryWebUrl(value: string): string | undefined {
   return url.protocol === "https:" || url.protocol === "http:" ? url.href : undefined;
 }
 
-function modelConfigOptions(
-  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
-): ReadonlyArray<EffectAcpSchema.SessionConfigSelectOption> {
-  return (configOptions ?? []).flatMap((option) => {
-    if (option.category !== "model" || option.type !== "select") return [];
-    return option.options.flatMap((candidate) =>
-      "value" in candidate ? [candidate] : candidate.options,
-    );
-  });
-}
-
 function normalizeModels(
-  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
+  modelChoices: ReadonlyArray<EffectAcpSchema.SessionConfigSelectOption>,
 ): ReadonlyArray<AcpRegistryProbeModel> {
   // Model discovery is the model config option's base models; ACP has no
   // other portable model inventory.
-  const candidates = modelConfigOptions(configOptions).map((model) => ({
+  const candidates = modelChoices.map((model) => ({
     id: model.value,
     name: model.name,
     description: model.description ?? null,
@@ -174,14 +169,12 @@ export function normalizeAcpRegistryLiveConfiguration(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
   modeState?: Parameters<typeof acpProviderOptionDescriptors>[0]["modeState"],
 ): AcpRegistryLiveConfiguration {
-  const modelOption = configOptions.find(
-    (option) => option.category === "model" && option.type === "select",
-  );
+  const modelOption = findModelConfigOption(configOptions);
   const boundedCurrentModelId =
-    modelOption?.type === "select"
-      ? (boundedOpaqueValue(modelOption.currentValue, MAX_ID_LENGTH) ?? null)
-      : null;
-  const models = normalizeModels(configOptions);
+    modelOption === undefined
+      ? null
+      : (boundedOpaqueValue(modelOption.currentValue, MAX_ID_LENGTH) ?? null);
+  const models = normalizeModels(flattenSelectChoices(modelOption?.options ?? []));
   return {
     models,
     currentModelId: models.some((model) => model.id === boundedCurrentModelId)

@@ -67,6 +67,7 @@ import {
   acpContentBlockDisplayText,
   embeddedTerminalIdsFromSessionUpdate,
   extractMcpToolCallIdentity,
+  findModelConfigOption,
   mergeToolCallState,
   parsePermissionRequest,
   parseSessionUpdateEvent,
@@ -515,8 +516,7 @@ function negotiatedCapabilities(
   const agent = started.initializeResult.agentCapabilities ?? {};
   const session = agent.sessionCapabilities;
   const setup = started.sessionSetupResult;
-  const hasModelConfig =
-    setup.configOptions?.some((option) => option.category === "model") === true;
+  const hasModelConfig = findModelConfigOption(setup.configOptions) !== undefined;
   const canLoad = agent.loadSession === true;
   const canFork = session?.fork != null;
   return {
@@ -5902,11 +5902,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             requestedModel !== "auto" &&
             requestedModel !== "default"
           ) {
-            const hasModelConfig =
-              startResult.sessionSetupResult.configOptions?.some(
-                (option) => option.category === "model",
-              ) === true;
-            if (hasModelConfig) {
+            if (findModelConfigOption(startResult.sessionSetupResult.configOptions) !== undefined) {
               yield* runtime.setModel(requestedModel);
             }
           }

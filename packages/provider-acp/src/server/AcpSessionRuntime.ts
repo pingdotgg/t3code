@@ -36,6 +36,7 @@ import {
   collectSessionConfigOptionValues,
   decideToolCallUpdateEmission,
   extractModelConfigId,
+  findModelConfigOption,
   findSessionConfigOption,
   mergeToolCallState,
   toolCallProgressLength,
@@ -1818,7 +1819,8 @@ export const make = (
       value: string | boolean,
     ): Effect.Effect<void, EffectAcpErrors.AcpError> =>
       Effect.gen(function* () {
-        const configOption = findSessionConfigOption(yield* Ref.get(configOptionsRef), configId);
+        const configOptions = yield* Ref.get(configOptionsRef);
+        const configOption = findSessionConfigOption(configOptions, configId);
         if (!configOption) {
           return;
         }
@@ -1851,7 +1853,10 @@ export const make = (
         if (allowedValues.includes(value)) {
           return;
         }
-        if (configOption.category === "model" && options.customModels?.includes(value)) {
+        if (
+          configOption === findModelConfigOption(configOptions) &&
+          options.customModels?.includes(value)
+        ) {
           return;
         }
         return yield* new EffectAcpErrors.AcpRequestError({
