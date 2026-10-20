@@ -73,6 +73,7 @@ vi.mock(import("./settingsLayout"), async (original) => {
   };
 });
 
+import { makeThreadProjectionFixture } from "../../test-fixtures";
 import { ArchivedThreadsPanel } from "./SettingsPanels";
 
 const environmentId = EnvironmentId.make("local");
@@ -92,20 +93,10 @@ const snapshot = Schema.decodeUnknownSync(OrchestrationV2ArchivedShellSnapshot)(
     },
   ],
   threads: [1, 2].map((index) => ({
+    ...makeThreadProjectionFixture().thread,
     id: `thread-${index}`,
     projectId: "project-1",
     title: `Thread ${index}`,
-    createdBy: "user",
-    creationSource: "web",
-    providerInstanceId: "codex",
-    modelSelection: { instanceId: "codex", model: "gpt-5" },
-    runtimeMode: "full-access",
-    interactionMode: "default",
-    branch: null,
-    worktreePath: null,
-    lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: `thread-${index}` },
-    forkedFrom: null,
-    activeProviderThreadId: null,
     latestRunId: null,
     activeRunId: null,
     status: "completed",
@@ -115,8 +106,6 @@ const snapshot = Schema.decodeUnknownSync(OrchestrationV2ArchivedShellSnapshot)(
     hasActionableProposedPlan: false,
     itemCount: 0,
     visibleItemCount: 0,
-    createdAt: DateTime.makeUnsafe(now),
-    updatedAt: DateTime.makeUnsafe(now),
     archivedAt: DateTime.makeUnsafe(now),
     settledOverride: null,
     settledAt: null,
@@ -156,12 +145,17 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-function button(label: string) {
-  const found = [...container.querySelectorAll("button")].find(
-    (item) => item.textContent === label,
+async function runBulkAction(label: string) {
+  await act(async () => {
+    container
+      .querySelector<HTMLButtonElement>('button[aria-label="Archived thread actions for Project"]')!
+      .click();
+  });
+  const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+    (entry) => entry.textContent?.trim() === label,
   );
-  expect(found, label).toBeDefined();
-  return found!;
+  expect(item, label).toBeDefined();
+  await act(async () => item!.click());
 }
 
 function openContextMenu() {
@@ -171,15 +165,15 @@ function openContextMenu() {
 }
 
 it.each([
-  ["Unarchive all", "unarchiveThreads"],
-  ["Delete all", "deleteArchivedThreads"],
+  ["Unarchive all in project", "unarchiveThreads"],
+  ["Delete all in project", "deleteArchivedThreads"],
 ] as const)(
   "blocks context-menu actions during %s and releases them afterward",
   async (label, method) => {
     const batch = deferred<null>();
     state[method].mockReturnValueOnce(batch.promise);
 
-    await act(async () => button(label).click());
+    await runBulkAction(label);
     expect(state[method]).toHaveBeenCalledOnce();
     await act(async () => openContextMenu());
     expect(state.showContextMenu).not.toHaveBeenCalled();
@@ -202,7 +196,7 @@ it.each(["unarchive", "delete"])(
 
     await act(async () => openContextMenu());
     expect(state.showContextMenu).toHaveBeenCalledOnce();
-    await act(async () => button("Unarchive all").click());
+    await runBulkAction("Unarchive all in project");
     await act(async () => menu.resolve(choice));
     expect(state.unarchiveThread).not.toHaveBeenCalled();
     expect(state.confirmAndDeleteThread).not.toHaveBeenCalled();
@@ -214,8 +208,7 @@ it("locks while confirming bulk deletion and releases the lock on cancellation",
   const confirmation = deferred<boolean>();
   state.confirm.mockReturnValueOnce(confirmation.promise);
 
-  await act(async () => button("Delete all").click());
-  await act(async () => button("Delete all").click());
+  await runBulkAction("Delete all in project");
   await act(async () => openContextMenu());
   expect(state.confirm).toHaveBeenCalledOnce();
   expect(state.showContextMenu).not.toHaveBeenCalled();
@@ -230,7 +223,7 @@ it("locks while confirming bulk deletion and releases the lock on cancellation",
 it("releases the lock and reports a failed bulk action", async () => {
   state.unarchiveThreads.mockRejectedValueOnce(new Error("Disconnected"));
 
-  await act(async () => button("Unarchive all").click());
+  await runBulkAction("Unarchive all in project");
   expect(state.toast).toHaveBeenCalledWith(
     expect.objectContaining({
       title: "Failed to unarchive threads",
