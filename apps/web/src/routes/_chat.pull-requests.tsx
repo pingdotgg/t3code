@@ -104,6 +104,8 @@ import {
   writePullRequestListPreferences,
 } from "../components/pullRequest/pullRequestListPreferences";
 import { assignProjectsToEnvironments } from "../components/pullRequest/pullRequestProjectAssignment.logic";
+import { PullRequestSavedViewsMenu } from "../components/pullRequest/PullRequestSavedViewsMenu";
+import { pullRequestSavedViewPatch } from "../components/pullRequest/pullRequestSavedViews";
 import { pullRequestFilterProjects } from "../components/pullRequest/pullRequestProjectFilter.logic";
 import { environmentMachineIcon } from "../components/EnvironmentMachineIcon";
 import { PullRequestDetailPanel } from "../components/pullRequest/PullRequestDetailPanel";
@@ -1515,21 +1517,32 @@ function PullRequestsRouteView() {
     searchInput,
     sortMenu,
     filtersMenu,
-    rightPanelControl: !pullRequestsSupported ? null : (
-      <span
-        aria-hidden
-        className={cn(
-          "shrink-0",
-          rightPanelState.isOpen ? "-ml-3 w-0" : "w-7 sm:w-5",
-          panelAnimationsActive && "transition-[width,margin] ease-out",
-        )}
-        style={
-          panelAnimationsActive
-            ? { transitionDuration: `${panelAnimationDurationMs}ms` }
-            : undefined
-        }
+    savedViewsMenu: (
+      <PullRequestSavedViewsMenu
+        preferences={search}
+        onApply={(preferences) => updateListScope(pullRequestSavedViewPatch(preferences))}
       />
     ),
+    rightPanelControl:
+      // Footprint reserve while the panel is closed: the toggle itself stays
+      // mounted at the fixed titlebar inset in both states so it cannot move
+      // on toggle, and this spacer keeps refresh from sliding underneath it
+      // (sized per header padding so refresh ends a normal gap short of it).
+      !pullRequestsSupported ? null : (
+        <span
+          aria-hidden
+          className={cn(
+            "shrink-0",
+            rightPanelState.isOpen ? "-ml-3 w-0" : "w-7 sm:w-5",
+            panelAnimationsActive && "transition-[width,margin] ease-out",
+          )}
+          style={
+            panelAnimationsActive
+              ? { transitionDuration: `${panelAnimationDurationMs}ms` }
+              : undefined
+          }
+        />
+      ),
     titlebarControls:
       // While the panel is closed the strip lives inside the header: a no-drag
       // descendant beats the header's desktop drag-region, where a floating
@@ -2299,6 +2312,7 @@ function PullRequestsColumn({
   searchInput,
   sortMenu,
   filtersMenu,
+  savedViewsMenu,
   rightPanelControl,
   titlebarControls,
   rightPanelOpen,
@@ -2319,6 +2333,7 @@ function PullRequestsColumn({
   searchInput: ReactNode;
   sortMenu: ReactNode;
   filtersMenu: ReactNode;
+  savedViewsMenu: ReactNode;
   rightPanelControl: ReactNode;
   titlebarControls: ReactNode;
   rightPanelOpen: boolean;
@@ -2455,6 +2470,7 @@ function PullRequestsColumn({
               </div>
               {sortMenu}
               {filtersMenu}
+              {savedViewsMenu}
               <CompactFilterMenu
                 label="Filter by provider"
                 outlined

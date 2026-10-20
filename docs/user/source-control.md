@@ -159,6 +159,12 @@ Open **Pull requests** to review changes and comments, request reviewers, check 
 or merge. You can edit review titles and descriptions and your own comments where the host allows it.
 GitLab calls these merge requests.
 
+Save a filter setup with **Views → Save current view** on the Pull Requests page. For example, choose
+**Reviewing** (**Your review** on mobile) and save it as "PRs Requesting My Review". Choose a saved view to restore its search,
+filters, sort order, and server/project scope. After changing filters, use **Update saved view** to
+keep the changes, or save another view. You can also rename or delete views from the same menu.
+Saved views stay in the browser or app where you created them and do not sync across devices.
+
 On mobile, **Pull requests** lists reviews across your connected environments. Open a review
 to read its description, activity, commits, and changed files. Line comments stay as drafts
 until you submit the review. **Work on PR** opens a chat with the review attached; sending

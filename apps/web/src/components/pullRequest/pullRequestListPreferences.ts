@@ -44,7 +44,7 @@ const DEFAULT_PULL_REQUEST_LIST_PREFERENCES = {
 } as const satisfies PullRequestListPreferences;
 
 const BoundedPreference = Schema.String.check(Schema.isMaxLength(200));
-const PullRequestListPreferencesSchema = Schema.Struct({
+export const PullRequestListPreferencesSchema = Schema.Struct({
   involvement: PullRequestInvolvement,
   state: PullRequestListState,
   environmentId: Schema.optional(EnvironmentId),
