@@ -17,6 +17,7 @@ import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import {
   createMemoryHistory,
   createRootRoute,
+  createRoute,
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
@@ -118,6 +119,8 @@ import { useComposerDraftStore } from "../../composerDraftStore";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { buildSidebarProjectSnapshots } from "../../sidebarProjectGrouping";
 import { ProjectSettingsPanel } from "./ProjectSettingsPanel";
+import type { SettingsScopeSearch } from "./settingsScope";
+import { retainSettingsScope, validateSettingsRouteSearch } from "./settingsScopeNavigation";
 
 const primaryId = EnvironmentId.make("primary");
 const remoteId = EnvironmentId.make("remote");
@@ -210,11 +213,33 @@ function projectKey() {
   })[0]!.projectKey;
 }
 
-async function mountPanel() {
+async function mountPanel(search: Omit<SettingsScopeSearch, "project"> = {}) {
   const key = projectKey();
+  const rootRoute = createRootRoute();
+  const settingsRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "settings",
+    validateSearch: validateSettingsRouteSearch,
+    search: { middlewares: [retainSettingsScope] },
+  });
+  const projectsRoute = createRoute({
+    getParentRoute: () => settingsRoute,
+    path: "projects",
+    component: () => (
+      <ProjectSettingsPanel
+        projectKey={key}
+        environmentId={search.machine ? EnvironmentId.make(search.machine) : null}
+        checkoutKey={search.checkout ?? null}
+      />
+    ),
+  });
+  const query = new URLSearchParams({ project: key });
+  for (const [name, value] of Object.entries(search)) {
+    if (value !== undefined) query.set(name, value);
+  }
   const router = createRouter({
-    routeTree: createRootRoute({ component: () => <ProjectSettingsPanel projectKey={key} /> }),
-    history: createMemoryHistory({ initialEntries: ["/settings/projects"] }),
+    routeTree: rootRoute.addChildren([settingsRoute.addChildren([projectsRoute])]),
+    history: createMemoryHistory({ initialEntries: [`/settings/projects?${query}`] }),
   });
   await router.load();
   await act(async () =>
@@ -225,6 +250,7 @@ async function mountPanel() {
     ),
   );
   await vi.waitFor(() => expect(nameInput()).not.toBeNull());
+  return router;
 }
 
 const nameInput = () => container.querySelector<HTMLInputElement>('[aria-label="Project name"]')!;
@@ -292,7 +318,8 @@ describe("project settings permissions", () => {
 
   it("removes a writable checkout while removal of the mixed group stays denied", async () => {
     await grant(remoteId, AsyncResult.success(session([])));
-    await mountPanel();
+    const router = await mountPanel();
+    const initialHref = router.state.location.href;
     expect(removeAll().disabled).toBe(true);
 
     await userEvent.click(removeCheckout("/work/primary"));
@@ -303,6 +330,7 @@ describe("project settings permissions", () => {
     });
     await vi.waitFor(() => expect(state.releaseUploads).toHaveBeenCalledOnce());
     expect(state.clearDraft).toHaveBeenCalledOnce();
+    expect(router.state.location.href).toBe(initialHref);
   });
 
   it("rechecks every removal target after confirmation before deleting or clearing drafts", async () => {
@@ -355,4 +383,19 @@ describe("project settings permissions", () => {
       expect(state.update).toHaveBeenCalledTimes(2);
     },
   );
+});
+
+it("returns to the project overview after removal, clearing the selection but keeping the environment", async () => {
+  state.projects = [state.projects[1]!];
+  const router = await mountPanel({ machine: remoteId, checkout: "remote:/work/remote" });
+  const removeProject = [...container.querySelectorAll("button")].find(
+    (button) => button.textContent === "Remove project",
+  )!;
+
+  await act(async () => userEvent.click(removeProject));
+
+  await vi.waitFor(() => {
+    expect(router.state.location.pathname).toBe("/settings/projects");
+    expect(router.state.location.search).toEqual({ machine: remoteId });
+  });
 });

@@ -387,7 +387,11 @@ function ProjectDetail({
     }
 
     if (isWholeGroup && !hasOtherMembers) {
-      void navigate({ to: "/", replace: true });
+      void navigate({
+        to: "/settings/projects",
+        search: ({ machine }) => ({ project: undefined, machine, checkout: undefined }),
+        replace: true,
+      });
     }
   };
 
