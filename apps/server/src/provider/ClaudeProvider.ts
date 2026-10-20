@@ -194,6 +194,8 @@ function claudeAuthStatus(
 // Amazon Bedrock initializes far slower than first-party auth: the SDK boots the Bedrock
 // backend and runs the `awsAuthRefresh` credential hook before returning account info.
 const CAPABILITIES_PROBE_TIMEOUT_MS = 25_000;
+// Native CLI startup on Windows can exceed the shared probe deadline.
+const CLAUDE_VERSION_CHECK_TIMEOUT_MS = 20_000;
 
 export const CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES = [
   "user",
@@ -514,7 +516,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     ["--version"],
     resolvedEnvironment,
     cwd,
-  ).pipe(Effect.timeoutOption(DEFAULT_TIMEOUT_MS), Effect.result);
+  ).pipe(Effect.timeoutOption(CLAUDE_VERSION_CHECK_TIMEOUT_MS), Effect.result);
 
   if (Result.isFailure(versionProbe)) {
     const error = versionProbe.failure;

@@ -4007,6 +4007,66 @@ it.layer(
       ),
     );
 
+    it.effect.each([
+      {
+        name: "accepts a healthy claude --version response after 19 seconds",
+        answer: Effect.sleep("19 seconds"),
+        elapsed: 19_000,
+        status: "ready",
+        version: "1.0.0",
+      },
+      {
+        name: "bounds a hung claude --version probe",
+        answer: Effect.never,
+        elapsed: 21_000,
+        status: "error",
+        version: null,
+      },
+    ])("$name", ({ answer, elapsed, status: expectedStatus, version }) =>
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const statusFiber = yield* checkClaudeProviderStatus(
+          defaultClaudeSettings,
+          claudeCapabilities(),
+        ).pipe(
+          Effect.provide(
+            Layer.succeed(
+              ChildProcessSpawner.ChildProcessSpawner,
+              ChildProcessSpawner.make((command) => {
+                assert.deepStrictEqual(
+                  (command as unknown as { args: ReadonlyArray<string> }).args,
+                  ["--version"],
+                );
+                return Effect.succeed(
+                  ChildProcessSpawner.makeHandle({
+                    ...mockHandle({ stdout: "", stderr: "", code: 0 }),
+                    exitCode: answer.pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+                    stdout: Stream.fromEffect(
+                      Deferred.succeed(started, undefined).pipe(
+                        Effect.andThen(answer),
+                        Effect.as(encoder.encode("1.0.0\n")),
+                      ),
+                    ),
+                  }),
+                );
+              }),
+            ),
+          ),
+          Effect.forkChild,
+        );
+        yield* Deferred.await(started);
+        yield* TestClock.adjust(elapsed);
+
+        const status = yield* Fiber.join(statusFiber);
+        assert.strictEqual(status.status, expectedStatus);
+        assert.strictEqual(status.installed, true);
+        assert.strictEqual(status.version, version);
+        if (expectedStatus === "error") {
+          assert.include(status.message, "Timed out while running command.");
+        }
+      }),
+    );
+
     it.effect("returns ready and labels Bedrock-backed Claude as authenticated", () =>
       Effect.gen(function* () {
         // Bedrock authenticates via external AWS credentials, so the SDK init
