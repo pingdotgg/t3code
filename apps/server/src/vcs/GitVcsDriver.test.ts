@@ -1277,6 +1277,47 @@ it.effect("GitVcsDriver forwards execute env to the VCS process", () => {
   );
 });
 
+// The real VCS process, spawning `command` wherever the driver runs git.
+const vcsProcessSpawning = (command: string) =>
+  Layer.effect(
+    VcsProcess.VcsProcess,
+    Effect.map(VcsProcess.make, (vcsProcess) =>
+      VcsProcess.VcsProcess.of({ run: (input) => vcsProcess.run({ ...input, command }) }),
+    ),
+  ).pipe(Layer.provide(ProcessRunner.layer), Layer.provideMerge(NodeServices.layer));
+
+it.effect("GitVcsDriver treats a missing git executable as outside any repository", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-missing-git-" });
+    const driver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+      Effect.provide(vcsProcessSpawning(path.join(cwd, "git"))),
+    );
+
+    assert.strictEqual(yield* driver.isInsideWorkTree(cwd), false);
+    assert.strictEqual(yield* driver.detectRepository(cwd), null);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+  "GitVcsDriver still fails detection when git exists but cannot be spawned",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      // A file without the execute bit fails to spawn with a permission error.
+      const notExecutable = yield* fileSystem.makeTempFileScoped({ prefix: "t3-git-" });
+      const driver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+        Effect.provide(vcsProcessSpawning(notExecutable)),
+      );
+
+      const error = yield* driver.isInsideWorkTree(process.cwd()).pipe(Effect.flip);
+      assert.strictEqual(error._tag, "VcsProcessSpawnError");
+      const detectionError = yield* driver.detectRepository(process.cwd()).pipe(Effect.flip);
+      assert.strictEqual(detectionError._tag, "VcsProcessSpawnError");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("GitVcsDriver flushes checkpoint objects and refs to disk before publishing them", () => {
   const observedArgs: ReadonlyArray<string>[] = [];
 
