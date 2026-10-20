@@ -102,13 +102,13 @@ function buildLargeText(lineCount = 5_000): string {
 }
 
 it.layer(layerTest)("CheckpointStore.layer", (it) => {
-  describe("isGitRepository", () => {
-    it.effect("returns false when no Git repository is detected", () =>
+  describe("supportsCheckpoints", () => {
+    it.effect("returns false when no repository is detected", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         const checkpointStore = yield* CheckpointStore.CheckpointStore;
 
-        expect(yield* checkpointStore.isGitRepository(tmp)).toBe(false);
+        expect(yield* checkpointStore.supportsCheckpoints(tmp)).toBe(false);
       }),
     );
 
@@ -118,7 +118,7 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
         yield* initRepoWithCommit(tmp);
         const checkpointStore = yield* CheckpointStore.CheckpointStore;
 
-        expect(yield* checkpointStore.isGitRepository(tmp)).toBe(true);
+        expect(yield* checkpointStore.supportsCheckpoints(tmp)).toBe(true);
       }),
     );
   });
@@ -131,7 +131,29 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
       const nested = NodePath.join(tmp, "packages", "nested");
       yield* fileSystem.makeDirectory(nested, { recursive: true });
       const checkpointStore = yield* CheckpointStore.CheckpointStore;
-      expect(yield* checkpointStore.isGitRepository(nested)).toBe(true);
+      expect(yield* checkpointStore.supportsCheckpoints(nested)).toBe(true);
+    }),
+  );
+
+  it.effect("resolves checkpoint operations without overriding the registry selection", () =>
+    Effect.gen(function* () {
+      const cwd = yield* makeTmpDir();
+      yield* initRepoWithCommit(cwd);
+      const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
+      const resolutions: VcsDriverRegistry.VcsDriverResolveInput[] = [];
+      const store = yield* CheckpointStore.make.pipe(
+        Effect.provideService(VcsDriverRegistry.VcsDriverRegistry, {
+          ...registry,
+          resolve: (input) => {
+            resolutions.push(input);
+            return registry.resolve(input);
+          },
+        }),
+      );
+      const checkpointRef = checkpointRefForThreadTurn(ThreadId.make("registry-selection"), 0);
+      yield* store.captureCheckpoint({ cwd, checkpointRef });
+      expect(resolutions).toEqual([{ cwd }]);
+      expect(yield* store.hasCheckpointRef({ cwd, checkpointRef })).toBe(true);
     }),
   );
   describe("diffCheckpoints", () => {

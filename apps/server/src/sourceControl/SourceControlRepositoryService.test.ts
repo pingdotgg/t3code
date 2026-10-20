@@ -17,6 +17,8 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as BitbucketApi from "@t3tools/source-control-bitbucket/server/BitbucketApi";
 import * as BitbucketSourceControlProvider from "@t3tools/source-control-bitbucket/server/BitbucketSourceControlProvider";
 import type * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import { JJ_REPOSITORY_DETECTION_ENABLED } from "../vcs/JjRepo.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 import * as SourceControlRepositoryService from "./SourceControlRepositoryService.ts";
 
@@ -64,8 +66,14 @@ function layer(input: {
   readonly provider?: SourceControlProvider.SourceControlProvider["Service"];
   readonly git?: Partial<GitVcsDriver.GitVcsDriver["Service"]>;
   readonly fileSystem?: FileSystem.FileSystem;
+  readonly detect?: VcsDriverRegistry.VcsDriverRegistry["Service"]["detect"];
 }) {
   const layerService = SourceControlRepositoryService.layer.pipe(
+    Layer.provide(
+      Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
+        detect: input.detect ?? (() => Effect.succeed(null)),
+      }),
+    ),
     Layer.provide(
       Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
         resolveLink: () => undefined,
@@ -570,6 +578,7 @@ it.effect("clones directly under an existing filesystem root without recreating 
 );
 
 it.effect("publishes by creating the repository, adding a remote, and pushing upstream", () => {
+  let detections = 0;
   const createCalls: Array<{ cwd: string; repository: string; visibility: string }> = [];
   const remoteCalls: Array<{ cwd: string; preferredName: string; url: string }> = [];
   const pushCalls: Array<{ cwd: string; remoteName: string | null | undefined }> = [];
@@ -611,10 +620,16 @@ it.effect("publishes by creating the repository, adding a remote, and pushing up
       { cwd: "/workspace", preferredName: "origin", url: CLONE_URLS.sshUrl },
     ]);
     assert.deepStrictEqual(pushCalls, [{ cwd: "/workspace", remoteName: "origin" }]);
+    assert.equal(detections, JJ_REPOSITORY_DETECTION_ENABLED ? 1 : 0);
   }).pipe(
     Effect.provide(
       layer({
         provider,
+        detect: () =>
+          Effect.sync(() => {
+            detections += 1;
+            return null;
+          }),
         git: {
           ensureRemote: (input) =>
             Effect.sync(() => {
@@ -636,6 +651,59 @@ it.effect("publishes by creating the repository, adding a remote, and pushing up
     ),
   );
 });
+
+it.effect.skipIf(!JJ_REPOSITORY_DETECTION_ENABLED)(
+  "refuses Jujutsu publishing before creating a hosting repository or running Git",
+  () => {
+    const calls: string[] = [];
+    const provider = makeProvider({
+      createRepository: () =>
+        Effect.sync(() => {
+          calls.push("createRepository");
+          return CLONE_URLS;
+        }),
+    });
+
+    return Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      const failure = yield* service
+        .publishRepository({
+          cwd: "/workspace",
+          provider: SourceControlProviderKind.make("github"),
+          repository: "octocat/t3code",
+          visibility: "private",
+        })
+        .pipe(Effect.flip);
+      assert.equal(failure.operation, "publishRepository");
+      assert.include(failure.detail, "Jujutsu");
+      assert.deepStrictEqual(calls, []);
+    }).pipe(
+      Effect.provide(
+        layer({
+          provider,
+          detect: () =>
+            Effect.succeed({ kind: "jj" } as unknown as VcsDriverRegistry.VcsDriverHandle),
+          git: {
+            execute: () =>
+              Effect.sync(() => {
+                calls.push("execute");
+                return processOutput();
+              }),
+            ensureRemote: () =>
+              Effect.sync(() => {
+                calls.push("ensureRemote");
+                return "origin";
+              }),
+            pushCurrentBranch: () =>
+              Effect.sync(() => calls.push("pushCurrentBranch")).pipe(
+                Effect.andThen(Effect.die("Jujutsu publishing must not reach Git")),
+              ),
+          },
+        }),
+      ),
+    );
+  },
+);
 
 it.effect("publishes to the remote name returned by ensureRemote", () => {
   const pushCalls: Array<{ cwd: string; remoteName: string | null | undefined }> = [];

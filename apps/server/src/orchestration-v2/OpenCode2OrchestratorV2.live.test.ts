@@ -183,6 +183,7 @@ const layerOrchestration = RuntimeLayer.layer.pipe(
   Layer.provide(layerMcpRegistry),
   Layer.provide(SqlitePersistence.layerMemory),
   Layer.provide(CheckpointStore.layer.pipe(Layer.provide(layerVcsDriverRegistry))),
+  Layer.provide(layerVcsDriverRegistry),
   Layer.provide(layerServerConfig),
   Layer.provide(layerServerSettings),
   Layer.provideMerge(layerProviderInstanceRegistry),
