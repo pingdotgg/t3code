@@ -48,6 +48,7 @@ export interface ProjectThreadAwarenessV2Input {
     | "modelSelection"
     | "pendingBackgroundTasks"
     | "pendingRuntimeRequest"
+    | "settledOverride"
     | "status"
     | "title"
     | "updatedAt"
@@ -61,6 +62,14 @@ export function projectThreadAwarenessV2(
   if (thread.lineage.relationshipToParent === "subagent") return null;
   const phase = resolveThreadAwarenessPhaseV2(thread);
   if (phase === null) {
+    return null;
+  }
+  // Resolve the phase first so live or waiting work stays visible after settlement.
+  if (
+    thread.settledOverride === "settled" &&
+    (phase === "completed" || phase === "failed") &&
+    !backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])
+  ) {
     return null;
   }
   const detail =

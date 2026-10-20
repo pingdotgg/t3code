@@ -28,6 +28,7 @@ describe("projectThreadAwarenessV2", () => {
         | "pendingBackgroundTasks"
         | "pendingRuntimeRequest"
         | "lineage"
+        | "settledOverride"
       >
     > = {},
   ) => ({
@@ -41,6 +42,7 @@ describe("projectThreadAwarenessV2", () => {
     modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
     status: "running" as const,
     pendingRuntimeRequest: null,
+    settledOverride: null,
     updatedAt,
     ...overrides,
   });

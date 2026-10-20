@@ -11,6 +11,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -769,6 +770,116 @@ describe("AgentAwarenessRelay", () => {
       yield* relay.drain;
       assert.equal(publications.length, 0);
     }),
+  );
+
+  it.effect.each(["completed", "failed"] as const)(
+    "settling a %s thread publishes a tombstone without re-alerting on unsettle",
+    (status) =>
+      Effect.gen(function* () {
+        const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+        const pulls = yield* Queue.unbounded<void>();
+        const { relay, currentShell, publications } = yield* makeTestRelay({
+          domainEvents: Stream.fromEffectRepeat(
+            Queue.offer(pulls, undefined).pipe(Effect.andThen(Queue.take(events))),
+          ),
+        });
+        yield* relay.start();
+        yield* Queue.take(pulls);
+        const finished = shell({
+          status,
+          latestRunCompletedAt: DateTime.add(yield* DateTime.now, { seconds: 1 }),
+        });
+        yield* Ref.set(currentShell, finished);
+        yield* relay.publishThread(THREAD_ID);
+        yield* TestClock.adjust("5 seconds");
+        yield* relay.drain;
+        assert.deepEqual(
+          publications.map(({ state }) => state?.phase),
+          [status],
+        );
+
+        for (const type of ["thread.settled", "thread.unsettled"] as const) {
+          const updated = {
+            ...finished,
+            settledOverride: type === "thread.settled" ? ("settled" as const) : ("active" as const),
+            updatedAt: yield* DateTime.now,
+          };
+          yield* Ref.set(currentShell, updated);
+          yield* Queue.offer(events, {
+            id: EventId.make(type),
+            type,
+            threadId: THREAD_ID,
+            occurredAt: updated.updatedAt,
+            payload: { ...updated, lastVisitedAt: updated.lastVisitedAt ?? null },
+          });
+          yield* Queue.take(pulls);
+          yield* relay.drain;
+          yield* TestClock.adjust("5 seconds");
+          yield* relay.drain;
+          assert.deepEqual(
+            publications.map(({ state }) => state?.phase ?? null),
+            [status, null],
+          );
+        }
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect.each([
+    { work: "running", status: "running", phase: "running" },
+    { work: "user input", status: "completed", phase: "waiting_for_input" },
+    { work: "monitor", status: "completed", phase: "running" },
+    { work: "monitor", status: "failed", phase: "failed" },
+  ] as const)(
+    "keeps settled $work visible until it finishes ($status run)",
+    ({ work, status, phase }) =>
+      Effect.gen(function* () {
+        const { relay, currentShell, publications } = yield* makeTestRelay();
+        const active = shell({
+          status,
+          latestRunCompletedAt: DateTime.add(yield* DateTime.now, { seconds: 1 }),
+          pendingRuntimeRequest:
+            work === "user input"
+              ? {
+                  id: RuntimeRequestId.make("waiting"),
+                  kind: "user_input",
+                  createdAt: yield* DateTime.now,
+                }
+              : null,
+          pendingBackgroundTasks: work === "monitor" ? [{ taskId: "watch", kind: "monitor" }] : [],
+        });
+        yield* Ref.set(currentShell, active);
+        yield* relay.publishThread(THREAD_ID);
+        yield* TestClock.adjust("5 seconds");
+        yield* relay.drain;
+        assert.deepEqual(
+          publications.map(({ state }) => state?.phase),
+          [phase],
+        );
+
+        yield* Ref.set(currentShell, { ...active, settledOverride: "settled" });
+        yield* relay.publishThread(THREAD_ID);
+        yield* TestClock.adjust("5 seconds");
+        yield* relay.drain;
+        assert.deepEqual(
+          publications.map(({ state }) => state?.phase),
+          [phase],
+        );
+
+        yield* Ref.set(currentShell, {
+          ...active,
+          settledOverride: "settled",
+          status: status === "running" ? "completed" : status,
+          pendingRuntimeRequest: null,
+          pendingBackgroundTasks: [],
+        });
+        yield* relay.publishThread(THREAD_ID);
+        yield* TestClock.adjust("5 seconds");
+        yield* relay.drain;
+        assert.deepEqual(
+          publications.map(({ state }) => state?.phase ?? null),
+          [phase, null],
+        );
+      }),
   );
 
   it.effect("confirms a first completed state and respects disabling during confirmation", () =>
