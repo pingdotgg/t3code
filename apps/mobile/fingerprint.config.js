@@ -18,5 +18,13 @@ if (!majorVersion) {
 
 module.exports = {
   nativeModuleSourceType: "files",
-  extraSources: [{ type: "contents", id: "appMajorVersion", contents: majorVersion }],
+  extraSources: [
+    { type: "contents", id: "appMajorVersion", contents: majorVersion },
+    ...[
+      "plugins/withAgentWidgetRefresh.cjs",
+      "plugins/widget/AgentWidgetTimelineProvider.swift",
+      "plugins/widget/AgentWidgetState.swift",
+      "modules/t3-native-controls/ios/AgentWidgetCredential.swift",
+    ].map((filePath) => ({ type: "file", filePath, reasons: ["agentWidgetRefresh"] })),
+  ],
 };

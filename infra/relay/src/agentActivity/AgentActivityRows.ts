@@ -79,6 +79,7 @@ export class AgentActivityRows extends Context.Service<
     }) => Effect.Effect<void, AgentActivityRowDeletePersistenceError>;
     readonly listForUser: (input: {
       readonly userId: string;
+      readonly includeLiveActivitiesDisabled?: boolean;
     }) => Effect.Effect<
       ReadonlyArray<RelayAgentActivityState>,
       AgentActivityRowListPersistenceError
@@ -221,7 +222,9 @@ export const make = Effect.gen(function* () {
           and(
             eq(relayEnvironmentLinks.userId, input.userId),
             isNull(relayEnvironmentLinks.revokedAt),
-            eq(relayEnvironmentLinks.liveActivitiesEnabled, true),
+            input.includeLiveActivitiesDisabled
+              ? undefined
+              : eq(relayEnvironmentLinks.liveActivitiesEnabled, true),
           ),
         )
         .orderBy(desc(relayAgentActivityRows.updatedAt))

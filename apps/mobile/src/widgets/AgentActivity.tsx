@@ -1,7 +1,9 @@
-import { HStack, Image, Spacer, Text, VStack, ZStack } from "@expo/ui/swift-ui";
-import type { ComponentProps } from "react";
+import { Divider, HStack, Image, Spacer, Text, VStack, ZStack } from "@expo/ui/swift-ui";
+import type { ComponentProps, JSX } from "react";
 import {
   activityBackgroundTint,
+  aspectRatio,
+  containerBackground,
   font,
   foregroundStyle,
   frame,
@@ -13,11 +15,11 @@ import {
 } from "@expo/ui/swift-ui/modifiers";
 import {
   createLiveActivity,
-  type LiveActivityComponent,
+  createWidget,
+  type LiveActivityEnvironment,
   type LiveActivityLayout,
+  type WidgetEnvironment,
 } from "expo-widgets";
-
-type LiveActivityEnvironment = Parameters<LiveActivityComponent<AgentActivityProps>>[1];
 
 export type AgentActivityPhase =
   | "starting"
@@ -43,7 +45,10 @@ export interface AgentActivityRowProps {
 export interface AgentActivityProps {
   readonly title: string;
   readonly subtitle: string;
-  readonly activeCount: number;
+  readonly activeCount: number | null;
+  readonly isStale?: boolean;
+  readonly isExpired?: boolean;
+  readonly expiresAt?: number;
   readonly updatedAt: string;
   readonly activities: ReadonlyArray<AgentActivityRowProps>;
 }
@@ -52,10 +57,35 @@ export interface AgentActivityProps {
 // must stay self-contained: no references to module-scope helpers, only the
 // imported view/modifier factories.
 export function AgentActivity(
-  props: AgentActivityProps,
+  props: AgentActivityProps | undefined,
+  environment: WidgetEnvironment,
+): JSX.Element;
+export function AgentActivity(
+  props: AgentActivityProps | undefined,
   environment: LiveActivityEnvironment,
-): LiveActivityLayout {
+): LiveActivityLayout;
+export function AgentActivity(
+  props: AgentActivityProps = {
+    title: "T3 Code",
+    subtitle: "No active agents",
+    activeCount: 0,
+    updatedAt: "",
+    activities: [],
+  },
+  environment: WidgetEnvironment | LiveActivityEnvironment,
+): JSX.Element | LiveActivityLayout {
   "widget";
+
+  // Placeholder / first-paint entries arrive with empty props. Treat missing
+  // fields as idle rather than throwing inside the widget JS runtime.
+  const receivedActivities = Array.isArray(props.activities) ? props.activities : [];
+  const activeCount =
+    props.activeCount === null || (typeof props.activeCount === "number" && props.activeCount < 0)
+      ? null
+      : typeof props.activeCount === "number"
+        ? props.activeCount
+        : 0;
+  const widgetFamily = "widgetFamily" in environment ? environment.widgetFamily : undefined;
 
   // Hierarchical styles inherit the system's foreground treatment, including
   // tinted and vibrant presentations, rather than resolving to a label color.
@@ -65,6 +95,9 @@ export function AgentActivity(
   const monochrome =
     environment.widgetRenderingMode === "accented" || environment.widgetRenderingMode === "vibrant";
 
+  // Status tints mirror the web sidebar's pills
+  // (apps/web/src/components/Sidebar.logic.ts resolveThreadStatusPill): amber
+  // for approval, indigo for input, sky for working, emerald for completed.
   // On iPhone the LA sits on a dark material, but macOS (iPhone Mirroring /
   // Mac notification center) renders it on a light one — so pick the web
   // palette's light (-600) or dark (-300) variant off the color scheme.
@@ -78,38 +111,41 @@ export function AgentActivity(
     }
     switch (phase) {
       case "waiting_for_approval":
-        return isLightScheme ? "#d97706" : "#fcd34d";
+        return isLightScheme ? "#d97706" : "#fcd34d"; // amber-600 / amber-300
       case "waiting_for_input":
-        return isLightScheme ? "#4f46e5" : "#a5b4fc";
+        return isLightScheme ? "#4f46e5" : "#a5b4fc"; // indigo-600 / indigo-300
       case "failed":
-        return isLightScheme ? "#dc2626" : "#fca5a5";
+        return isLightScheme ? "#dc2626" : "#fca5a5"; // red-600 / red-300
       case "completed":
-        return isLightScheme ? "#059669" : "#6ee7b7";
+        return isLightScheme ? "#059669" : "#6ee7b7"; // emerald-600 / emerald-300
       case "stale":
         return secondaryForeground;
       case "starting":
       case "running":
       default:
-        return isLightScheme ? "#0284c7" : "#7dd3fc";
+        return isLightScheme ? "#0284c7" : "#7dd3fc"; // sky-600 / sky-300
     }
   };
 
+  // Order attention-first so whatever needs the user floats to the top of every
+  // presentation, then failures, then in-flight work, then finished/stale.
   const phasePriority = (phase: AgentActivityPhase): number => {
     if (phase === "waiting_for_approval" || phase === "waiting_for_input") return 0;
     if (phase === "failed") return 1;
     if (phase === "running" || phase === "starting") return 2;
     return 3;
   };
-  // Past the stale date the system stops vouching for the content, so every
-  // in-flight row degrades to "stale" rather than claiming an agent is still
-  // working.
-  const activities: ReadonlyArray<AgentActivityRowProps> = environment.isStale
-    ? props.activities.map((row) =>
+  // Past a Live Activity's stale date the system stops vouching for the
+  // content, so every in-flight row degrades to "stale" rather than claiming
+  // an agent is still working. Terminal phases keep their own state.
+  const isSystemStale = "isStale" in environment && environment.isStale === true;
+  const activities: ReadonlyArray<AgentActivityRowProps> = isSystemStale
+    ? receivedActivities.map((row) =>
         row.phase === "completed" || row.phase === "failed"
           ? row
           : { ...row, phase: "stale", status: "Out of date" },
       )
-    : props.activities;
+    : receivedActivities;
   const ordered = [...activities].sort((a, b) => phasePriority(a.phase) - phasePriority(b.phase));
   const row0 = ordered[0];
   const row1 = ordered[1];
@@ -124,31 +160,59 @@ export function AgentActivity(
   const failedRow = activities.find((row) => row.phase === "failed");
   const heroRow = attentionRow ?? failedRow ?? row0;
   const tint = phaseTint(heroRow?.phase);
+  // Headline count leans on the accent when a human is actually blocked.
   const headerTint = attentionRow
     ? phaseTint(attentionRow.phase)
     : failedRow
       ? phaseTint(failedRow.phase)
       : tint;
 
-  const allDone = props.activeCount === 0;
-  const doneLabel = failedRow ? "Failed" : "Done";
-  const outcomeLabel = failedRow ? "Agent work failed" : "Agent work completed";
+  // With nothing active the aggregate only carries recently finished work, so
+  // "0 active agents" (and a lone "0" in the expanded island) read as broken.
+  // Lead with the outcome instead. The outcome is derived here from the rows
+  // rather than taken from the server subtitle (which keys off the newest
+  // terminal row): every presentation — header text, tint, count slots,
+  // minimal glyph — must agree, and a failure anywhere should dominate a
+  // newer success.
+  const allDone =
+    activeCount === 0 ||
+    (props.isExpired === true &&
+      activities.length > 0 &&
+      activities.every((row) => row.phase === "completed" || row.phase === "failed"));
+  const hasRows = activities.length > 0;
+  const doneLabel = failedRow ? "Failed" : hasRows ? "Done" : "Idle";
+  const outcomeLabel = failedRow
+    ? "Agent work failed"
+    : hasRows
+      ? "Agent work completed"
+      : "No active agents";
 
-  const agentWord = props.activeCount === 1 ? "agent" : "agents";
-  const agentsLabel = allDone
+  // Header copy: "5 active agents" + (", 1 needs attention"). The banner renders
+  // the two parts in-line so the attention half can carry the accent color;
+  // `summary` is the short form for tight spots (expanded center, watch card).
+  const agentWord = activeCount === 1 ? "agent" : "agents";
+  const countLabel = allDone
     ? outcomeLabel
-    : environment.isStale
+    : props.isExpired || isSystemStale
       ? "Agent status out of date"
-      : `${props.activeCount} active ${agentWord}`;
+      : activeCount === null
+        ? "Activity count unavailable"
+        : `${activeCount} active ${agentWord}`;
+  const agentsLabel =
+    props.isStale && !props.isExpired ? `Last observed: ${countLabel}` : countLabel;
   const attentionSuffix =
     attentionRows.length > 0
       ? `${attentionRows.length} need${attentionRows.length === 1 ? "s" : ""} attention`
       : "";
-  const activeLabel = allDone
+  const currentLabel = allDone
     ? doneLabel
-    : environment.isStale
+    : props.isExpired || isSystemStale
       ? "Out of date"
-      : `${props.activeCount} active`;
+      : activeCount === null
+        ? "Count unavailable"
+        : `${activeCount} active`;
+  const activeLabel =
+    props.isStale && !props.isExpired ? `Last observed: ${currentLabel}` : currentLabel;
   const summary = attentionSuffix || activeLabel;
 
   // Any registered scheme variant routes back to this app; taps are delivered
@@ -158,8 +222,11 @@ export function AgentActivity(
     deepLinkRow && deepLinkRow.deepLink.startsWith("/") && !deepLinkRow.deepLink.startsWith("//")
       ? `t3code://${deepLinkRow.deepLink.slice(1)}`
       : null;
+
   const linkModifiers = deepLink ? [widgetURL(deepLink)] : [];
 
+  // A scannable status glyph per phase — reads faster than colored words and
+  // ties the compact / expanded / banner / watch presentations together.
   type SFName = NonNullable<ComponentProps<typeof Image>["systemName"]>;
   const phaseSymbol = (phase: AgentActivityPhase): SFName => {
     switch (phase) {
@@ -182,20 +249,22 @@ export function AgentActivity(
   };
 
   // SF Symbols, like the logo, ignore frame/foregroundStyle applied directly to
-  // the image; size + tint them through a container the resizable symbol fills.
-  const renderGlyph = (
-    systemName: SFName,
-    size: number,
-    color: Foreground,
-    modifiers: typeof linkModifiers = [],
-  ) => (
-    <HStack
-      modifiers={[frame({ width: size, height: size }), foregroundStyle(color), ...modifiers]}
-    >
-      <Image systemName={systemName} modifiers={[resizable()]} />
+  // the image; size + tint them through a container. Preserve the symbol's
+  // intrinsic aspect ratio when the resizable image fills that frame.
+  const renderGlyph = (systemName: SFName, size: number, color: Foreground, modifiers: typeof linkModifiers = []) => (
+    <HStack modifiers={[frame({ width: size, height: size }), foregroundStyle(color), ...modifiers]}>
+      <Image
+        systemName={systemName}
+        modifiers={[resizable(), aspectRatio({ contentMode: "fit" })]}
+      />
     </HStack>
   );
 
+  // Single-line row used by every presentation: glyph, title, inline project,
+  // status. The project and status carry layoutPriority(1) so when space runs
+  // out it's the title that truncates, never the (short) project name or the
+  // status label. Single-line keeps rows inside the expanded island's hard
+  // height budget (~160pt) and lets the banner fit more agents.
   const renderCompactRow = (row: AgentActivityRowProps) => (
     <HStack spacing={7} alignment="center">
       <Text
@@ -210,7 +279,9 @@ export function AgentActivity(
       {/* No layoutPriority and no frame on the project: two bare texts take
           their ideal width when it fits and shrink proportionally only when it
           doesn't — so short rows never truncate, and long title + long project
-          truncate together. */}
+          truncate together. (A maxWidth frame is greedy and reserved its full
+          width even for short names; layoutPriority let the project starve the
+          title.) */}
       <Text modifiers={[font({ size: 11 }), foregroundStyle(secondaryForeground), lineLimit(1)]}>
         {row.projectTitle}
       </Text>
@@ -227,113 +298,298 @@ export function AgentActivity(
     </HStack>
   );
 
-  // Image views only honor `resizable` directly (frame/foregroundStyle are
-  // dropped), so we size it via a container frame the resizable image fills and
-  // tint it through the container's foreground style, which the template image
-  // inherits.
+  // The branded T3 mark. `assetName` resolves the template image set bundled in
+  // the widget extension's asset catalog. Image views only honor `resizable`
+  // directly (frame/foregroundStyle are dropped), so we size it via a container
+  // frame the resizable image fills and tint it through the container's
+  // foreground style, which the template image inherits. The 3:2 frame matches
+  // the glyph's aspect ratio so it never distorts.
   const renderLogo = (height: number, color: Foreground, modifiers: typeof linkModifiers = []) => (
-    <HStack
-      modifiers={[frame({ width: height * 1.5, height }), foregroundStyle(color), ...modifiers]}
-    >
+    <HStack modifiers={[frame({ width: height * 1.5, height }), foregroundStyle(color), ...modifiers]}>
       <Image assetName="T3Mark" modifiers={[resizable()]} />
     </HStack>
   );
 
-  return {
-    banner: (
-      <VStack
-        alignment="leading"
-        spacing={6}
-        modifiers={[
-          padding({ all: 14 }),
-          // A clear tint reveals iOS 26's glass material; older hosts keep the standard surface.
-          activityBackgroundTint(environment.isLiquidGlassAvailable ? "clear" : null),
-          ...(deepLink ? [widgetURL(deepLink)] : []),
-        ]}
-      >
-        <ZStack>
-          <HStack spacing={0} alignment="center">
-            {renderLogo(13, primaryForeground)}
-            <Spacer minLength={0} />
-          </HStack>
-          <HStack spacing={6} alignment="center">
-            <Spacer minLength={0} />
-            <Text
-              modifiers={[
-                font({ weight: "semibold", size: 13 }),
-                foregroundStyle(allDone ? headerTint : primaryForeground),
-                lineLimit(1),
-              ]}
-            >
-              {agentsLabel}
-            </Text>
-            {attentionSuffix ? (
-              <Text modifiers={[font({ size: 13 }), foregroundStyle(secondaryForeground)]}>·</Text>
-            ) : null}
-            {attentionSuffix ? (
-              <Text
-                modifiers={[
-                  font({ weight: "semibold", size: 13 }),
-                  foregroundStyle(headerTint),
-                  lineLimit(1),
-                ]}
-              >
-                {attentionSuffix}
-              </Text>
-            ) : null}
-            <Spacer minLength={0} />
-          </HStack>
-        </ZStack>
-        {row0 ? renderCompactRow(row0) : null}
-        {row1 ? renderCompactRow(row1) : null}
-        {row2 ? renderCompactRow(row2) : null}
-        {row3 ? renderCompactRow(row3) : null}
-        {row4 ? renderCompactRow(row4) : null}
-      </VStack>
-    ),
-    bannerSmall: (
-      <VStack alignment="leading" spacing={5} modifiers={[padding({ all: 10 })]}>
+  // Compact card for the watchOS Smart Stack + CarPlay (the `.small` family)
+  // and lock-screen accessory widgets.
+  const renderCompactLayout = () => (
+    <VStack
+      alignment="leading"
+      spacing={5}
+      modifiers={[
+        padding({ all: 10 }),
+        ...(deepLink ? [widgetURL(deepLink)] : []),
+        ...(widgetFamily ? [containerBackground("clear", "widget")] : []),
+      ]}
+    >
+      <HStack spacing={7} alignment="center">
+        {renderLogo(14, primaryForeground)}
+        <Text
+          modifiers={[
+            font({ weight: "bold", size: 13 }),
+            foregroundStyle(headerTint),
+            lineLimit(1),
+          ]}
+        >
+          {props.isStale || activeCount === null ? activeLabel : summary}
+        </Text>
+        <Spacer minLength={6} />
+      </HStack>
+      {row0 ? (
         <HStack spacing={7} alignment="center">
-          {renderLogo(14, primaryForeground)}
           <Text
             modifiers={[
-              font({ weight: "bold", size: 13 }),
-              foregroundStyle(headerTint),
+              font({ weight: "semibold", size: 12 }),
+              foregroundStyle(primaryForeground),
               lineLimit(1),
             ]}
           >
-            {attentionRows.length > 0 ? summary : activeLabel}
+            {props.isExpired ? "Open T3 to refresh" : row0.threadTitle}
           </Text>
           <Spacer minLength={6} />
+          <Text modifiers={[font({ size: 11 }), foregroundStyle(phaseTint(row0.phase))]}>
+            {row0.status}
+          </Text>
         </HStack>
-        {row0 ? (
-          <HStack spacing={7} alignment="center">
+      ) : null}
+      {props.isExpired && !row0 ? (
+        <Text modifiers={[font({ size: 11 }), foregroundStyle(secondaryForeground)]}>
+          Open T3 to refresh
+        </Text>
+      ) : null}
+    </VStack>
+  );
+
+  if (
+    widgetFamily === "accessoryCircular" ||
+    widgetFamily === "accessoryInline" ||
+    widgetFamily === "accessoryRectangular"
+  ) {
+    return renderCompactLayout();
+  }
+
+  if (widgetFamily) {
+    // iOS supplies content margins for home-screen widgets, so adding explicit
+    // padding here would double-inset the layout.
+    const widgetModifiers = [
+      ...(deepLink ? [widgetURL(deepLink)] : []),
+      containerBackground("clear", "widget"),
+    ];
+    const homeSummaryTint = allDone && !hasRows ? secondaryForeground : headerTint;
+    const homeSummary =
+      props.isStale || activeCount === null ? agentsLabel : attentionSuffix || agentsLabel;
+    const renderHomeStatusIcon = (row: AgentActivityRowProps, size: number) =>
+      renderGlyph(phaseSymbol(row.phase), size, phaseTint(row.phase));
+
+    if (widgetFamily === "systemSmall") {
+      return (
+        <VStack alignment="leading" spacing={5} modifiers={widgetModifiers}>
+          <HStack spacing={5} alignment="center" modifiers={[padding({ bottom: 3 })]}>
+            {renderLogo(12, primaryForeground)}
+            <Text
+              modifiers={[
+                font({ weight: "medium", size: 12 }),
+                foregroundStyle(secondaryForeground),
+              ]}
+            >
+              Code
+            </Text>
+            <Spacer minLength={4} />
+            {renderGlyph("arrow.up.right", 10, secondaryForeground)}
+          </HStack>
+          <Text
+            modifiers={[
+              font({ weight: "bold", size: 15 }),
+              foregroundStyle(homeSummaryTint),
+              lineLimit(props.isStale || activeCount === null ? 2 : 1),
+            ]}
+          >
+            {homeSummary}
+          </Text>
+          {heroRow ? (
             <Text
               modifiers={[
                 font({ weight: "semibold", size: 12 }),
                 foregroundStyle(primaryForeground),
+                lineLimit(2),
+              ]}
+            >
+              {heroRow.threadTitle}
+            </Text>
+          ) : null}
+          {heroRow ? (
+            <HStack spacing={5} alignment="center">
+              {renderHomeStatusIcon(heroRow, 11)}
+              <Text
+                modifiers={[font({ size: 11 }), foregroundStyle(secondaryForeground), lineLimit(1)]}
+              >
+                {heroRow.projectTitle}
+              </Text>
+              <Spacer minLength={4} />
+              <Text
+                modifiers={[
+                  font({ weight: "semibold", size: 11 }),
+                  foregroundStyle(phaseTint(heroRow.phase)),
+                  lineLimit(1),
+                  layoutPriority(1),
+                ]}
+              >
+                {heroRow.status}
+              </Text>
+            </HStack>
+          ) : null}
+          {props.isExpired ? (
+            <Text
+              modifiers={[font({ size: 11 }), foregroundStyle(secondaryForeground), lineLimit(1)]}
+            >
+              Open T3 to refresh
+            </Text>
+          ) : null}
+          <Spacer minLength={0} />
+        </VStack>
+      );
+    }
+
+    const renderHomeRow = (row: AgentActivityRowProps) => (
+      <HStack spacing={9} alignment="center">
+        {renderHomeStatusIcon(row, 17)}
+        <VStack alignment="leading" spacing={1}>
+          <Text
+            modifiers={[
+              font({ weight: "semibold", size: 13 }),
+              foregroundStyle(primaryForeground),
+              lineLimit(1),
+            ]}
+          >
+            {row.threadTitle}
+          </Text>
+          <Text
+            modifiers={[font({ size: 11 }), foregroundStyle(secondaryForeground), lineLimit(1)]}
+          >
+            {row.projectTitle}
+          </Text>
+        </VStack>
+        <Spacer minLength={8} />
+        <Text
+          modifiers={[
+            font({ weight: "semibold", size: 12 }),
+            foregroundStyle(phaseTint(row.phase)),
+            layoutPriority(1),
+          ]}
+        >
+          {row.status}
+        </Text>
+      </HStack>
+    );
+
+    return (
+      <VStack alignment="leading" spacing={0} modifiers={widgetModifiers}>
+        <HStack spacing={5} alignment="center" modifiers={[padding({ bottom: 10 })]}>
+          {renderLogo(13, primaryForeground)}
+          <Text
+            modifiers={[font({ weight: "medium", size: 13 }), foregroundStyle(secondaryForeground)]}
+          >
+            Code
+          </Text>
+          <Spacer minLength={8} />
+          <Text
+            modifiers={[
+              font({ weight: "semibold", size: 12 }),
+              foregroundStyle(homeSummaryTint),
+              lineLimit(props.isStale || activeCount === null ? 2 : 1),
+              layoutPriority(1),
+            ]}
+          >
+            {homeSummary}
+          </Text>
+          {renderGlyph("arrow.up.right", 10, secondaryForeground)}
+        </HStack>
+        {row0 ? renderHomeRow(row0) : null}
+        {row1 ? <Divider modifiers={[padding({ vertical: 7, leading: 26 })]} /> : null}
+        {row1 ? renderHomeRow(row1) : null}
+        {props.isExpired ? (
+          <Text
+            modifiers={[
+              font({ size: 11 }),
+              foregroundStyle(secondaryForeground),
+              padding({ top: 4 }),
+            ]}
+          >
+            Open T3 to refresh
+          </Text>
+        ) : null}
+        <Spacer minLength={0} />
+      </VStack>
+    );
+  }
+
+  const banner = (
+    <VStack
+      alignment="leading"
+      spacing={6}
+      modifiers={[
+        padding({ all: 14 }),
+        // A clear tint reveals iOS 26's glass material; older hosts keep the standard surface.
+        activityBackgroundTint(
+          "isLiquidGlassAvailable" in environment && environment.isLiquidGlassAvailable
+            ? "clear"
+            : null,
+        ),
+        ...(deepLink ? [widgetURL(deepLink)] : []),
+      ]}
+    >
+      {/* Logo pinned to the leading edge; the status texts centered across the
+          full width (ZStack so the logo doesn't skew the centering). No footer —
+          overflow beyond the visible rows is inferable from the count. */}
+      <ZStack>
+        <HStack spacing={0} alignment="center">
+          {renderLogo(13, primaryForeground)}
+          <Spacer minLength={0} />
+        </HStack>
+        <HStack spacing={6} alignment="center">
+          <Spacer minLength={0} />
+          <Text
+            modifiers={[
+              font({ weight: "semibold", size: 13 }),
+              // The all-done header carries the outcome tint (emerald /
+              // red) the way the Done/Failed status labels do.
+              foregroundStyle(allDone ? headerTint : primaryForeground),
+              lineLimit(1),
+            ]}
+          >
+            {agentsLabel}
+          </Text>
+          {attentionSuffix ? (
+            <Text modifiers={[font({ size: 13 }), foregroundStyle(secondaryForeground)]}>·</Text>
+          ) : null}
+          {attentionSuffix ? (
+            <Text
+              modifiers={[
+                font({ weight: "semibold", size: 13 }),
+                foregroundStyle(headerTint),
                 lineLimit(1),
               ]}
             >
-              {row0.threadTitle}
+              {attentionSuffix}
             </Text>
-            <Spacer minLength={6} />
-            <Text modifiers={[font({ size: 11 }), foregroundStyle(phaseTint(row0.phase))]}>
-              {row0.status}
-            </Text>
-          </HStack>
-        ) : null}
-      </VStack>
-    ),
+          ) : null}
+          <Spacer minLength={0} />
+        </HStack>
+      </ZStack>
+      {row0 ? renderCompactRow(row0) : null}
+      {row1 ? renderCompactRow(row1) : null}
+      {row2 ? renderCompactRow(row2) : null}
+      {row3 ? renderCompactRow(row3) : null}
+      {row4 ? renderCompactRow(row4) : null}
+    </VStack>
+  );
+
+  return {
+    banner,
+    bannerSmall: renderCompactLayout(),
     compactLeading: renderLogo(14, tint, linkModifiers),
     compactTrailing: (
-      <Text
-        modifiers={[
-          font({ weight: "semibold", size: 11 }),
-          foregroundStyle(tint),
-          ...linkModifiers,
-        ]}
-      >
+      <Text modifiers={[font({ weight: "semibold", size: 11 }), foregroundStyle(tint), ...linkModifiers]}>
         {attentionRow
           ? attentionRow.phase === "waiting_for_approval"
             ? "Approval"
@@ -341,6 +597,9 @@ export function AgentActivity(
           : activeLabel}
       </Text>
     ),
+    // The shared/minimal form is a ~22pt circle — a single signal reads there,
+    // the wordmark does not. Show the blocking/outcome phase glyph, else the
+    // mark (all-done shows the hero row's checkmark/cross).
     minimal:
       (attentionRow || failedRow || allDone) && heroRow
         ? renderGlyph(phaseSymbol(heroRow.phase), 13, phaseTint(heroRow.phase), linkModifiers)
@@ -349,13 +608,23 @@ export function AgentActivity(
       <HStack spacing={5} alignment="center" modifiers={[padding({ leading: 4, vertical: 4 })]}>
         {renderLogo(15, tint)}
         <Text modifiers={[font({ weight: "bold", size: 13 }), foregroundStyle(tint)]}>
-          {allDone ? doneLabel : `${props.activeCount}`}
+          {activeCount === null ? "?" : allDone ? doneLabel : `${activeCount}`}
         </Text>
       </HStack>
     ),
+    // No center content: the phase glyphs + statuses in expandedBottom already
+    // carry the attention signal, and the expanded island's height budget is
+    // tight enough that a summary line there pushed the third row off.
     expandedCenter: null,
+    // No trailing content: a timestamp is glanceable-lock-screen info, not
+    // useful in a view the user is actively holding open — and the trailing
+    // region hugs the island's corner radius, which clipped it anyway.
     expandedTrailing: null,
     expandedBottom: (
+      // Vertical padding only: the expanded region provides its own horizontal
+      // content margins, so `all` padding double-indented the rows.
+      // Horizontal padding keeps both edges clear of the island's corner
+      // curvature (right edge clipped status labels; titles hugged the left).
       <VStack
         alignment="leading"
         spacing={5}
@@ -372,5 +641,7 @@ export function AgentActivity(
     ),
   };
 }
+
+export const AgentActivityWidget = createWidget<AgentActivityProps>("AgentActivity", AgentActivity);
 
 export default createLiveActivity<AgentActivityProps>("AgentActivity", AgentActivity);
