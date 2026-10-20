@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import { isCloudPlaceholder } from "@t3tools/shared/cloudPlaceholder";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
@@ -210,6 +211,21 @@ const readSkillOverrides = Effect.fn("readSkillOverrides")(function* (
     environment,
     repositoryRoot,
   )) {
+    // Same hazard as a cloud-only SKILL.md: a project's
+    // `.claude/settings.local.json` in an online-only OneDrive folder blocks
+    // the read, and four of those wedge every file operation in the server.
+    const settingsInfo = yield* fileSystem
+      .stat(settingsPath)
+      .pipe(Effect.orElseSucceed(() => undefined));
+    if (settingsInfo === undefined) {
+      continue;
+    }
+    if (isCloudPlaceholder(settingsInfo, platform)) {
+      yield* Effect.logDebug("claude settings file is online-only; ignoring skillOverrides", {
+        path: settingsPath,
+      });
+      continue;
+    }
     const contents = yield* fileSystem
       .readFileString(settingsPath)
       .pipe(Effect.orElseSucceed(() => undefined));
@@ -274,6 +290,7 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
 ): Effect.fn.Return<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const platform = yield* HostProcess.Platform;
   const configDirPath = yield* resolveClaudeConfigDirPath(config, environment ?? process.env, cwd);
   const skillOverrides = yield* readSkillOverrides(configDirPath, cwd, environment ?? process.env);
 
@@ -304,6 +321,13 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
 
     for (const entry of [...entries].sort()) {
       const skillPath = path.join(root.directory, entry, "SKILL.md");
+      // Reading a cloud-only placeholder can block a libuv thread for good.
+      const skillInfo = yield* fileSystem
+        .stat(skillPath)
+        .pipe(Effect.orElseSucceed(() => undefined));
+      if (skillInfo === undefined || isCloudPlaceholder(skillInfo, platform)) {
+        continue;
+      }
       const contents = yield* fileSystem
         .readFileString(skillPath)
         .pipe(Effect.orElseSucceed(() => undefined));

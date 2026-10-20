@@ -3,7 +3,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import { discoverClaudeSkills, skillOverrideSettingsPaths } from "./ClaudeSkills.ts";
 import { planClaudeSkillDispatch } from "./ClaudeSkillDispatch.ts";
@@ -292,6 +294,48 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
+  it.effect("skips a cloud-only SKILL.md without reading it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const skillsDir = path.join(configDir, "skills");
+      const cloudSkillPath = path.join(skillsDir, "cloud", "SKILL.md");
+
+      yield* writeSkill(skillsDir, "local", "---\ndescription: on disk\n---\n");
+      yield* writeSkill(skillsDir, "cloud", "---\ndescription: online only\n---\n");
+
+      // An online-only OneDrive file: stat reports a size but no blocks, and
+      // a read would block until the sync client downloads it.
+      const placeholderFs: FileSystem.FileSystem = {
+        ...fs,
+        stat: (target) =>
+          fs
+            .stat(target)
+            .pipe(
+              Effect.map((info) =>
+                target === cloudSkillPath ? { ...info, blocks: Option.some(0n) } : info,
+              ),
+            ),
+        readFileString: (target, encoding) =>
+          target === cloudSkillPath
+            ? Effect.die(new Error("read a cloud-only placeholder"))
+            : fs.readFileString(target, encoding),
+      };
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, undefined).pipe(
+        Effect.provideService(FileSystem.FileSystem, placeholderFs),
+        Effect.provideService(HostProcess.Platform, "darwin"),
+      );
+
+      assert.deepEqual(
+        skills.map((skill) => skill.name),
+        ["local"],
+      );
+    }),
+  );
+
   it.effect("honors CLAUDE_CONFIG_DIR from the environment when homePath is unset", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -435,6 +479,62 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
           ["kept", true],
           ["off-by-project", false],
           ["off-by-user", false],
+        ],
+      );
+    }),
+  );
+
+  it.effect("skips a cloud-only settings.local.json without reading it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const workspace = path.join(tempDir, "workspace");
+      const cloudSettingsPath = path.join(workspace, ".claude", "settings.local.json");
+
+      for (const name of ["kept", "off-by-project"]) {
+        yield* writeSkill(
+          path.join(configDir, "skills"),
+          name,
+          ["---", `name: ${name}`, "---", "", "# Body"].join("\n"),
+        );
+      }
+      yield* fs.makeDirectory(path.join(workspace, ".claude"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(workspace, ".claude", "settings.json"),
+        '{ "skillOverrides": { "off-by-project": "off" } }',
+      );
+      yield* fs.writeFileString(cloudSettingsPath, '{ "skillOverrides": { "kept": "off" } }');
+
+      // A project's local settings in an online-only OneDrive folder.
+      const placeholderFs: FileSystem.FileSystem = {
+        ...fs,
+        stat: (target) =>
+          fs
+            .stat(target)
+            .pipe(
+              Effect.map((info) =>
+                target === cloudSettingsPath ? { ...info, blocks: Option.some(0n) } : info,
+              ),
+            ),
+        readFileString: (target, encoding) =>
+          target === cloudSettingsPath
+            ? Effect.die(new Error("read a cloud-only placeholder"))
+            : fs.readFileString(target, encoding),
+      };
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, workspace).pipe(
+        Effect.provideService(FileSystem.FileSystem, placeholderFs),
+        Effect.provideService(HostProcess.Platform, "darwin"),
+      );
+
+      // The readable project settings still apply; the placeholder is ignored.
+      assert.deepEqual(
+        skills.map((skill) => [skill.name, skill.enabled]),
+        [
+          ["kept", true],
+          ["off-by-project", false],
         ],
       );
     }),

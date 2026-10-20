@@ -3,8 +3,10 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type * as Scope from "effect/Scope";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 import {
@@ -316,6 +318,47 @@ describe("Cursor skills", () => {
         }),
       ),
   );
+
+  it("lists a cloud-only SKILL.md without reading it", async () =>
+    await runNode(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const userHome = yield* fileSystem
+          .makeTempDirectoryScoped({
+            directory: NodeOS.tmpdir(),
+            prefix: "cursor-skills-home-",
+          })
+          .pipe(Effect.flatMap((directory) => fileSystem.realPath(directory)));
+        const skillPath = path.join(userHome, ".cursor", "skills", "cloud", "SKILL.md");
+        yield* fileSystem.makeDirectory(path.dirname(skillPath), { recursive: true });
+        yield* fileSystem.writeFileString(skillPath, "---\ndescription: on disk\n---\n");
+
+        // An online-only OneDrive file: stat reports a size but no blocks, and
+        // a read would block until the sync client downloads it.
+        const placeholderFileSystem: FileSystem.FileSystem = {
+          ...fileSystem,
+          stat: (target) =>
+            fileSystem
+              .stat(target)
+              .pipe(
+                Effect.map((info) =>
+                  target === skillPath ? { ...info, blocks: Option.some(0n) } : info,
+                ),
+              ),
+          readFileString: (target, encoding) =>
+            target === skillPath
+              ? Effect.die(new Error("read a cloud-only placeholder"))
+              : fileSystem.readFileString(target, encoding),
+        };
+
+        const skills = yield* discoverCursorSkills(undefined, { HOME: userHome }).pipe(
+          Effect.provideService(FileSystem.FileSystem, placeholderFileSystem),
+          Effect.provideService(HostProcess.Platform, "darwin"),
+        );
+        expect(skills).toEqual([{ name: "cloud", path: skillPath, scope: "user", enabled: true }]);
+      }),
+    ));
 
   it("rewrites only discovered skill mentions into Cursor slash invocations", () => {
     expect(hasCursorSkillMention("use $Review_Pr:V2 here")).toBe(true);
