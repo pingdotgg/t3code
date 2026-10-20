@@ -262,8 +262,18 @@ const ComposerListItemExtension = ListItem.extend({
       Delete: () => deleteAcrossList(this.editor),
     };
   },
+  // ProseMirror can reuse the parent list when only an item's marker changes.
+  // Item metadata lets CSS resize its gutter through CommonMark's nine-digit limit.
   renderHTML({ node, HTMLAttributes }) {
-    return ["li", mergeAttributes(HTMLAttributes, { "data-marker": node.attrs.marker }), 0];
+    const marker = String(node.attrs.marker);
+    return [
+      "li",
+      mergeAttributes(HTMLAttributes, {
+        "data-marker": marker,
+        "data-marker-width": Math.min(marker.length, 10),
+      }),
+      0,
+    ];
   },
 });
 

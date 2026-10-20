@@ -1869,6 +1869,48 @@ code {
   content: attr(data-marker) " ";
 }
 
+/* The prompt font and size can differ from the interface, so its gutter must
+   also follow the prompt's font metrics. */
+.composer-tiptap ol {
+  --list-gutter: max(1.25rem, 3ch);
+}
+
+.composer-tiptap ol:has(> li[data-marker-width="3"]) {
+  --list-gutter: max(1.25rem, 4ch);
+}
+
+.composer-tiptap ol:has(> li[data-marker-width="4"]) {
+  --list-gutter: max(1.25rem, 5ch);
+}
+
+.composer-tiptap ol:has(> li[data-marker-width="5"]) {
+  --list-gutter: max(1.25rem, 6ch);
+}
+
+.composer-tiptap ol:has(> li[data-marker-width="6"]) {
+  --list-gutter: max(1.25rem, 7ch);
+}
+
+.composer-tiptap ol:has(> li[data-marker-width="7"]) {
+  --list-gutter: max(1.25rem, 8ch);
+}
+
+.composer-tiptap ol:has(> li[data-marker-width="8"]) {
+  --list-gutter: max(1.25rem, 9ch);
+}
+
+.composer-tiptap ol:has(> li[data-marker-width="9"]) {
+  --list-gutter: max(1.25rem, 10ch);
+}
+
+.composer-tiptap ol:has(> li[data-marker-width="10"]) {
+  --list-gutter: max(1.25rem, 11ch);
+}
+
+.composer-tiptap ul {
+  padding-left: max(1.25rem, 2ch);
+}
+
 :is(.chat-markdown, .composer-tiptap) ul ul {
   list-style-type: circle;
 }
