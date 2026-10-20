@@ -106,7 +106,10 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       const settings = { homePath: configDir, launchArgs: `--add-dir "${extraDir}"` };
       const skills = yield* discoverClaudeSkills(settings, workspace);
       assert.deepEqual(
-        planClaudeSkillDispatch("$demo", new Set(skills.map((skill) => skill.name))),
+        planClaudeSkillDispatch(
+          "$demo",
+          new Map(skills.map((skill) => [skill.name, { path: skill.path }])),
+        ),
         {
           leadingText: undefined,
           commandText: "/demo",
