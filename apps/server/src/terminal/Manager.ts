@@ -1,6 +1,7 @@
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import {
   DEFAULT_TERMINAL_ID,
+  DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
   TerminalCwdError,
   TerminalCwdNotDirectoryError,
   TerminalCwdNotFoundError,
@@ -984,6 +985,46 @@ export class BoundedTerminalHistory {
       .join("");
     return this.cachedValue;
   }
+}
+
+// Pop beyond Ghostty's eight-entry Kitty stacks on both screens before clearing
+// flags. A 1049 round trip preserves the main cursor, text, and scrollback.
+const INHERITED_INPUT_RESET =
+  "\u001b[?1049h\u001b[<100u\u001b[=0;1u\u001b[?1049l" +
+  "\u001b[?1;9;66;67;1000;1002;1003;1004;1005;1006;1015;2004l" +
+  "\u001b[?25;1035;1036h\u001b[<100u\u001b[=0;1u\u001b[>4m";
+
+function neutralizeInheritedHistory(history: string, maxLines: number, maxBytes: number): string {
+  // Scan exactly the cold replay window, reserving the entire longest reset so
+  // neither the server nor the client can trim away the entry after we choose its exit.
+  const resetBytes = history.includes("\u001b")
+    ? Buffer.byteLength(INHERITED_INPUT_RESET + "\u001b7\u001b[?1049l")
+    : 0;
+  history = new BoundedTerminalHistory(
+    // The suffix occupies the empty line after a trailing newline, too.
+    resetBytes > 0 && history.endsWith("\n") ? maxLines - 1 : maxLines,
+    history,
+    Math.max(0, maxBytes - resetBytes),
+  ).value();
+  if (!history.includes("\u001b")) return history;
+  // An unconditional 1049 reset restores a stale saved cursor on the main
+  // screen. The exit must match the inherited screen's cursor-save behavior.
+  let alternateScreen: number | undefined;
+  // eslint-disable-next-line no-control-regex -- Match replayed alternate-screen controls.
+  for (const match of history.matchAll(/\u001b(?:\[\?([0-9;]+)([hl])|(c))/gu)) {
+    if (match[3]) alternateScreen = undefined;
+    for (const parameter of (match[1] ?? "").split(";")) {
+      const mode = Number(parameter);
+      if (mode === 47 || mode === 1047 || mode === 1049) {
+        alternateScreen = match[2] === "h" ? (alternateScreen ?? mode) : undefined;
+      }
+    }
+  }
+  // A client may trim away the entry, leaving us on main: save its current
+  // cursor before exiting. On alternate this saves only the alternate cursor.
+  const leaveAlternateScreen =
+    alternateScreen === undefined ? "" : `\u001b7\u001b[?${alternateScreen}l`;
+  return history + leaveAlternateScreen + INHERITED_INPUT_RESET;
 }
 
 function isCsiFinalByte(codePoint: number): boolean {
@@ -2582,7 +2623,16 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     const existing = yield* getSession(input.threadId, terminalId);
     if (Option.isNone(existing)) {
       yield* flushPersist(input.threadId, terminalId);
-      const history = yield* readHistory(input.threadId, terminalId);
+      const inherited = yield* readHistory(input.threadId, terminalId);
+      const history = new BoundedTerminalHistory(
+        historyLineLimit,
+        neutralizeInheritedHistory(
+          inherited.value(),
+          historyLineLimit,
+          Math.min(historyByteLimit, DEFAULT_MAX_TERMINAL_BUFFER_BYTES),
+        ),
+        historyByteLimit,
+      );
       const cols = input.cols ?? DEFAULT_OPEN_COLS;
       const rows = input.rows ?? DEFAULT_OPEN_ROWS;
       const session: TerminalSessionState = {

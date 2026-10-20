@@ -1,3 +1,4 @@
+import * as NodeURL from "node:url";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -45,11 +46,25 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TerminalManager from "./Manager.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
+import {
+  applyTerminalAttachStreamEvent,
+  DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
+  nextTerminalAttachSeedState,
+  terminalOutputText,
+} from "../../../../packages/client-runtime/src/state/terminalSession.ts";
 
 vi.mock("effect/SynchronizedRef", async (importOriginal) => {
   const original = await importOriginal<typeof SynchronizedRef>();
   return { ...original, make: vi.fn(original.make) };
 });
+
+// The server omits DOM types, which include TypeScript's WebAssembly declarations.
+declare const WebAssembly: {
+  instantiate(
+    bytes: ArrayBuffer,
+    imports: { env: { log: () => void } },
+  ): Promise<{ instance: { exports: Record<string, unknown> } }>;
+};
 
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -1697,7 +1712,187 @@ it.layer(
       yield* manager.close({ threadId: "thread-1" });
 
       const reopened = yield* manager.open(openInput());
-      assert.equal(reopened.history, "prompt \u001b[32mok\u001b[0m done\n");
+      expect(reopened.history.startsWith("prompt \u001b[32mok\u001b[0m done\n")).toBe(true);
+    }),
+  );
+
+  it.effect("restores dead-process history without resetting a live terminal", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const wasm = yield* fs.readFile(
+        NodeURL.fileURLToPath(
+          new URL("../../../web/src/terminal/ghostty/vendor/ghostty-vt.wasm", import.meta.url),
+        ),
+      );
+      const { instance } = yield* Effect.promise(() =>
+        WebAssembly.instantiate(Uint8Array.from(wasm).buffer, { env: { log: () => {} } }),
+      );
+      const memory = instance.exports.memory as { buffer: ArrayBuffer };
+      const call = (name: string, ...args: number[]) =>
+        (instance.exports[name] as (...args: number[]) => number)(...args);
+      const buffer = call("ghostty_wasm_alloc_u8_array", 16384);
+      new Uint8Array(memory.buffer, buffer, 16384).fill(0);
+      const view = () => new DataView(memory.buffer);
+      view().setUint16(buffer, 100, true);
+      view().setUint16(buffer + 2, 24, true);
+      view().setUint32(buffer + 4, 100, true);
+      expect(call("ghostty_terminal_new", 0, buffer + 8, buffer)).toBe(0);
+      const terminal = view().getUint32(buffer + 8, true);
+      expect(call("ghostty_key_encoder_new", 0, buffer + 12)).toBe(0);
+      expect(call("ghostty_key_event_new", 0, buffer + 16)).toBe(0);
+      const encoder = view().getUint32(buffer + 12, true);
+      const key = view().getUint32(buffer + 16, true);
+      call("ghostty_key_event_set_key", key, 22); // GhosttyKey C in the vendored ABI.
+      call("ghostty_key_event_set_unshifted_codepoint", key, 99);
+      new Uint8Array(memory.buffer, buffer + 96, 1).set([99]);
+      call("ghostty_key_event_set_utf8", key, buffer + 96, 1);
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          call("ghostty_key_event_free", key);
+          call("ghostty_key_encoder_free", encoder);
+          call("ghostty_terminal_free", terminal);
+          call("ghostty_wasm_free_u8_array", buffer, 16384);
+        }),
+      );
+
+      // Replay the actual server snapshot in the shipped emulator, not a second mode parser.
+      const replay = (history: string) => {
+        call("ghostty_terminal_reset", terminal);
+        const bytes = new TextEncoder().encode(history);
+        for (let offset = 0; offset < bytes.length; offset += 16256) {
+          const chunk = bytes.subarray(offset, offset + 16256);
+          new Uint8Array(memory.buffer, buffer + 128, chunk.length).set(chunk);
+          call("ghostty_terminal_vt_write", terminal, buffer + 128, chunk.length);
+        }
+        const get = (name: string, field: number) => {
+          view().setUint32(buffer + 20, 0, true);
+          expect(call(name, terminal, field, buffer + 20)).toBe(0);
+          return view().getUint32(buffer + 20, true);
+        };
+        const state = {
+          cursor: [get("ghostty_terminal_get", 3), get("ghostty_terminal_get", 4)],
+          screen: get("ghostty_terminal_get", 6),
+          visible: get("ghostty_terminal_get", 7),
+          kitty: get("ghostty_terminal_get", 8),
+          mouse: get("ghostty_terminal_get", 11),
+          modes: [1, 66, 67, 1004, 1006, 1035, 1036, 2004].map((mode) =>
+            get("ghostty_terminal_mode_get", mode),
+          ),
+        };
+        call("ghostty_key_encoder_setopt_from_terminal", encoder, terminal);
+        call("ghostty_key_event_set_action", key, 0);
+        call("ghostty_key_event_set_mods", key, 0);
+        expect(
+          call("ghostty_key_encoder_encode", encoder, key, buffer + 128, 16256, buffer + 80),
+        ).toBe(0);
+        const release = new TextDecoder().decode(
+          new Uint8Array(memory.buffer, buffer + 128, view().getUint32(buffer + 80, true)),
+        );
+        call("ghostty_key_event_set_action", key, 1);
+        call("ghostty_key_event_set_mods", key, 4);
+        expect(
+          call("ghostty_key_encoder_encode", encoder, key, buffer + 128, 16256, buffer + 80),
+        ).toBe(0);
+        const modifiedPress = new TextDecoder().decode(
+          new Uint8Array(memory.buffer, buffer + 128, view().getUint32(buffer + 80, true)),
+        );
+        view().setUint32(buffer + 32, 32, true);
+        expect(call("ghostty_terminal_select_all", terminal, buffer + 32)).toBe(0);
+        expect(call("ghostty_terminal_set", terminal, 21, buffer + 32)).toBe(0);
+        view().setUint32(buffer + 64, 16, true);
+        view().setUint8(buffer + 72, 1);
+        view().setUint8(buffer + 73, 1);
+        expect(
+          call(
+            "ghostty_terminal_selection_format_buf",
+            terminal,
+            buffer + 64,
+            buffer + 128,
+            16256,
+            buffer + 80,
+          ),
+        ).toBe(0);
+        const text = new TextDecoder().decode(
+          new Uint8Array(memory.buffer, buffer + 128, view().getUint32(buffer + 80, true)),
+        );
+        return { ...state, release, modifiedPress, text };
+      };
+
+      const { manager, ptyAdapter, logsDir } = yield* createManager(100);
+      const logPath = yield* historyLogPath(logsDir);
+      const text = `${Array.from({ length: 30 }, (_, i) => `history ${i}\r\n`).join("")}prompt % `;
+      const dirty = `${text}\u001b[>7u\u001b[>0u\u001b[>7u\u001b[?1049h\u001b[7;18H\u001b[?47h\u001b[>4;2m\u001b[>7u\u001b[>0u\u001b[>7u\u001b[?25l\u001b[?1;66;67;1003;1004;1006;2004h\u001b[?1035;1036ldead app`;
+      const clean = replay(text);
+      expect(clean).toMatchObject({ screen: 0, visible: 1, kitty: 0, mouse: 0, release: "" });
+      expect(clean.text).toContain("history 0");
+      expect(replay(dirty)).toMatchObject({ screen: 1, visible: 0, kitty: 7, mouse: 1 });
+      expect(replay(dirty).release).not.toBe("");
+      yield* fs.writeFileString(logPath, dirty);
+
+      const events: TerminalAttachStreamEvent[] = [];
+      const outputReceived = yield* Deferred.make<void>();
+      const unsubscribe = yield* manager.attachStream(openInput(), (event) =>
+        Effect.gen(function* () {
+          events.push(event);
+          if (event.type === "output") yield* Deferred.succeed(outputReceived, undefined);
+        }),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+      const first = yield* manager.open(openInput());
+      expect(replay(first.history).cursor).toEqual(replay(dirty + "\u001b[?1049l").cursor);
+      expect(replay(first.history)).toEqual(clean);
+      expect(replay(first.history + "\u001b[<u\u001b[<u")).toEqual(clean);
+      expect(replay(first.history + "\u001b[?1049h\u001b[<u\u001b[<unext app")).toEqual(
+        replay(text + "\u001b[?1049hnext app"),
+      );
+      const trimmed = (history: string) => history.slice(history.indexOf("dead app"));
+      expect(replay(trimmed(first.history)).cursor).toEqual(replay(trimmed(dirty)).cursor);
+      expect(replay(first.history + "\u001b[?1049hnext app")).toEqual(
+        replay(text + "\u001b[?1049hnext app"),
+      );
+      expect(events[0]).toMatchObject({ type: "snapshot", snapshot: { history: first.history } });
+      expect(ptyAdapter.spawnInputs).toHaveLength(1);
+
+      const freshOutput = "fresh shell\u001b[>7u\u001b[?1003;1004h";
+      ptyAdapter.processes[0]!.emitData(freshOutput);
+      yield* Deferred.await(outputReceived);
+      const active = yield* manager.open(openInput());
+      expect(active.history).toBe(first.history + freshOutput);
+      expect(replay(active.history)).toMatchObject({ kitty: 7, mouse: 1 });
+      expect(ptyAdapter.spawnInputs).toHaveLength(1);
+      expect(events[1]).toMatchObject({ type: "output", data: freshOutput });
+      yield* manager.close({ threadId: "thread-1" });
+      expect(yield* fs.readFileString(logPath)).toBe(active.history);
+
+      const restarted = yield* TerminalManager.makeWithOptions({
+        logsDir,
+        historyLineLimit: 100,
+        ptyAdapter,
+        processKillGraceMs: 1,
+      });
+      const second = yield* restarted.open(openInput());
+      expect(replay(second.history)).toEqual(replay(text + "fresh shell"));
+      yield* restarted.close({ threadId: "thread-1" });
+      expect(yield* fs.readFileString(logPath)).toBe(second.history);
+      const third = yield* restarted.open(openInput());
+      expect(replay(third.history)).toEqual(replay(text + "fresh shell"));
+      expect(ptyAdapter.spawnInputs).toHaveLength(3);
+
+      const cut = yield* createManager(100);
+      const mixed = `main\u001b[4;10H\u001b[?1049h${"\r".repeat(DEFAULT_MAX_TERMINAL_BUFFER_BYTES)}\u001b[7;18Hretained\u001b[?47hmore`;
+      yield* fs.writeFileString(yield* historyLogPath(cut.logsDir), mixed);
+      const snapshot = yield* cut.manager.open(openInput());
+      const clientHistory = terminalOutputText(
+        applyTerminalAttachStreamEvent(nextTerminalAttachSeedState(), {
+          type: "snapshot",
+          snapshot,
+        }).output,
+      );
+      expect(replay(clientHistory).cursor).toEqual(
+        replay("\u001b[7;18Hretained\u001b[?47hmore\u001b[?47l").cursor,
+      );
+      expect(replay(clientHistory)).toMatchObject({ screen: 0, kitty: 0, mouse: 0, release: "" });
+      yield* cut.manager.close({ threadId: "thread-1" });
     }),
   );
 
@@ -1721,7 +1916,9 @@ it.layer(
       yield* manager.close({ threadId: "thread-1" });
 
       const reopened = yield* manager.open(openInput());
-      assert.equal(reopened.history, 'prompt \u001b[!p\u001b["p\u001b[4 q\u001b[udone\n');
+      expect(reopened.history.startsWith('prompt \u001b[!p\u001b["p\u001b[4 q\u001b[udone\n')).toBe(
+        true,
+      );
     }),
   );
 
@@ -1771,10 +1968,11 @@ it.layer(
         yield* manager.close({ threadId: "thread-1" });
 
         const reopened = yield* manager.open(openInput());
-        assert.equal(
-          reopened.history,
-          "before clear\n\u001b[H\u001b[2Jprompt \u001b[36mdone\u001b[0m\n",
-        );
+        expect(
+          reopened.history.startsWith(
+            "before clear\n\u001b[H\u001b[2Jprompt \u001b[36mdone\u001b[0m\n",
+          ),
+        ).toBe(true);
       }),
   );
 
@@ -1793,7 +1991,7 @@ it.layer(
       yield* manager.close({ threadId: "thread-1" });
 
       const reopened = yield* manager.open(openInput());
-      assert.equal(reopened.history, "before \u001b(Bafter\n");
+      expect(reopened.history.startsWith("before \u001b(Bafter\n")).toBe(true);
     }),
   );
 
@@ -1814,7 +2012,7 @@ it.layer(
         yield* manager.close({ threadId: "thread-1" });
 
         const reopened = yield* manager.open(openInput());
-        assert.equal(reopened.history, "before \u001b(Bafter\n");
+        expect(reopened.history.startsWith("before \u001b(Bafter\n")).toBe(true);
       }),
   );
 

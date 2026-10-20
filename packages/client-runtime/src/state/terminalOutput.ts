@@ -40,7 +40,6 @@ export type TerminalOutputUpdate =
       readonly data: string;
     };
 
-export const DEFAULT_MAX_TERMINAL_BUFFER_BYTES = 512 * 1024;
 const DEFAULT_TERMINAL_CHUNK_BYTES = 16 * 1024;
 const MAX_TERMINAL_OUTPUT_CHUNKS = 1_024;
 const textEncoder = new TextEncoder();
