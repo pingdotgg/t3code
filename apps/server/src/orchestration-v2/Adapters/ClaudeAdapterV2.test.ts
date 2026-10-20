@@ -471,6 +471,30 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     });
   });
 
+  it("keeps approval checks when Full access must fall back to an allowed Claude mode", () => {
+    const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      cwd: "/workspace",
+      approvalPolicy: "never",
+    });
+
+    assert.deepEqual(
+      ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(runtimePolicy, {
+        bypassDisabled: true,
+        autoDisabled: false,
+      }),
+      { permissionMode: "auto", installPermissionCallback: true },
+    );
+    assert.deepEqual(
+      ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(runtimePolicy, {
+        bypassDisabled: true,
+        autoDisabled: true,
+      }),
+      { permissionMode: "default", installPermissionCallback: true },
+    );
+  });
+
   it("maps Auto runtime mode to Claude's AI-reviewed permission mode", () => {
     const queryPolicy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
       ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
