@@ -121,6 +121,7 @@ function harness() {
     Layer.succeed(LiveActivities.LiveActivities, {
       register: () => Effect.void,
       listTargets: () => Effect.sync(() => [current.target]),
+      listIdleArmedTargets: () => Effect.succeed([]),
       markDelivery: (input) =>
         Effect.sync(() => {
           marked.push(input);
