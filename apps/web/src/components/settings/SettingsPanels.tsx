@@ -23,7 +23,7 @@ import {
   type ScopedThreadRef,
   type SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { presentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
   isAtomCommandInterrupted,
@@ -3333,6 +3333,7 @@ export function GeneralSettingsPanel() {
 export function ArchivedThreadsPanel() {
   const { scope, groups: projectGroups, environments } = useSettingsScope();
   const { unarchiveThread, confirmAndDeleteThread } = useThreadActions();
+  const [pendingThreadKeys, setPendingThreadKeys] = useState<ReadonlySet<string>>(() => new Set());
   const {
     snapshots: archivedSnapshots,
     error: archiveError,
@@ -3432,37 +3433,56 @@ export function ArchivedThreadsPanel() {
     return { groups: sortedGroups, hasMultipleEnvironments };
   })();
 
-  const handleUnarchiveThread = async (threadRef: ScopedThreadRef) => {
-    const result = await unarchiveThread(threadRef);
-    if (result._tag === "Success") {
-      refreshArchivedThreads();
-    } else if (!isAtomCommandInterrupted(result)) {
-      const error = squashAtomCommandFailure(result);
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Failed to unarchive thread",
-          description: error instanceof Error ? error.message : "An error occurred.",
-        }),
-      );
+  // A row stays locked until its action settles, so a repeated click can't queue
+  // a second confirmation or command for the same thread.
+  const withPendingThread = async (threadRef: ScopedThreadRef, action: () => Promise<void>) => {
+    const threadKey = scopedThreadKey(threadRef);
+    if (pendingThreadKeys.has(threadKey)) return;
+    setPendingThreadKeys((current) => new Set(current).add(threadKey));
+    try {
+      await action();
+    } finally {
+      setPendingThreadKeys((current) => {
+        const next = new Set(current);
+        next.delete(threadKey);
+        return next;
+      });
     }
   };
 
-  const handleDeleteThread = async (threadRef: ScopedThreadRef, title: string) => {
-    const result = await confirmAndDeleteThread(threadRef, title);
-    if (result._tag === "Success") {
-      refreshArchivedThreads();
-    } else if (!isAtomCommandInterrupted(result)) {
-      const error = squashAtomCommandFailure(result);
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Failed to delete thread",
-          description: error instanceof Error ? error.message : "An error occurred.",
-        }),
-      );
-    }
-  };
+  const handleUnarchiveThread = (threadRef: ScopedThreadRef) =>
+    withPendingThread(threadRef, async () => {
+      const result = await unarchiveThread(threadRef);
+      if (result._tag === "Success") {
+        refreshArchivedThreads();
+      } else if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to unarchive thread",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    });
+
+  const handleDeleteThread = (threadRef: ScopedThreadRef, title: string) =>
+    withPendingThread(threadRef, async () => {
+      const result = await confirmAndDeleteThread(threadRef, title);
+      if (result._tag === "Success") {
+        refreshArchivedThreads();
+      } else if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to delete thread",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    });
 
   const handleArchivedThreadContextMenu = async (
     threadRef: ScopedThreadRef,
@@ -3567,6 +3587,9 @@ export function ArchivedThreadsPanel() {
                       type="button"
                       variant="outline"
                       size="sm"
+                      disabled={pendingThreadKeys.has(
+                        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+                      )}
                       onClick={() => {
                         void handleUnarchiveThread(scopeThreadRef(thread.environmentId, thread.id));
                       }}
@@ -3578,6 +3601,9 @@ export function ArchivedThreadsPanel() {
                       type="button"
                       variant="destructive-outline"
                       size="sm"
+                      disabled={pendingThreadKeys.has(
+                        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+                      )}
                       onClick={() => {
                         void handleDeleteThread(
                           scopeThreadRef(thread.environmentId, thread.id),
