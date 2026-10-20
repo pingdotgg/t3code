@@ -37,12 +37,15 @@ import {
   DEFAULT_SERVER_SETTINGS,
   EventId,
   GitCommandError,
+  MessageId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  RunId,
   SourceControlProviderError as SourceControlProviderFailure,
   TextGenerationError,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { decodeGitHubPullRequestListJson } from "@t3tools/source-control-github/server/gitHubPullRequests";
@@ -52,6 +55,10 @@ import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import {
+  fromRunner,
+  decodeJsonReply,
+} from "@t3tools/provider-core/server/textGenerationOperations";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -5251,6 +5258,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       yield* runGit(repoDir, ["config", "branch.feature-create-pr.gh-merge-base", "main"]);
       let generatedPolicy: TextGeneration.PrContentGenerationInput["policy"] = undefined;
       let generatedChangeRequestTemplate: string | undefined;
+      let generatedThreadContext: string | undefined;
 
       const { manager, ghCalls } = yield* makeManager({
         serverSettings: {
@@ -5263,6 +5271,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           generatePrContent: (input) => {
             generatedPolicy = input.policy;
             generatedChangeRequestTemplate = input.changeRequestTemplate;
+            generatedThreadContext = input.threadContext;
             return Effect.succeed({
               title: "Add stacked git actions",
               body: "## What changed?\nAdded stacked git actions.",
@@ -5296,11 +5305,184 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         changeRequestInstructions: "Lead with user impact.",
       });
       expect(generatedChangeRequestTemplate).toBe("## What changed?\n\n## Verification");
+      expect(generatedThreadContext).toBeUndefined();
       expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(2);
       expect(
         ghCalls.some((call) => call.includes("pr create --base main --head feature-create-pr")),
       ).toBe(true);
       expect(ghCalls.some((call) => call.startsWith("pr view "))).toBe(false);
+    }),
+  );
+
+  it.effect("create_pr sends bounded checks to the model and omits rolled-back runs", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/thread-context"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "thread-context.txt"), "context\n");
+      yield* runGit(repoDir, ["add", "thread-context.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Thread context"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      const threadId = ThreadId.make("thread:pr-thread-context");
+      const providerInstanceId = ProviderInstanceId.make("codex");
+      const createdAt = DateTime.makeUnsafe("2026-09-27T00:00:00.000Z");
+      const run = (ordinal: number, status: "completed" | "rolled_back") => ({
+        id: RunId.make(`run:pr-thread-context:${ordinal}`),
+        threadId,
+        ordinal,
+        providerInstanceId,
+        modelSelection: { instanceId: providerInstanceId, model: "gpt-5" },
+        providerThreadId: null,
+        userMessageId: MessageId.make(`message:pr-thread-context:${ordinal}`),
+        rootNodeId: null,
+        activeAttemptId: null,
+        status,
+        requestedAt: createdAt,
+        startedAt: createdAt,
+        completedAt: createdAt,
+        checkpointId: null,
+        contextHandoffId: null,
+      });
+      const itemBase = (ordinal: number, runId: RunId) => ({
+        id: TurnItemId.make(`item:pr-thread-context:${ordinal}`),
+        threadId,
+        runId,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal,
+        status: "completed" as const,
+        title: null,
+        startedAt: createdAt,
+        completedAt: createdAt,
+        updatedAt: createdAt,
+      });
+      let generatedThreadContext: string | undefined;
+      let generatedPrompt = "";
+      const writer = fromRunner("test", (request) => {
+        generatedPrompt = request.prompt;
+        return decodeJsonReply(request, "test", '{"title":"Thread context","body":"Body"}');
+      });
+
+      const { manager } = yield* makeManager({
+        textGeneration: {
+          generatePrContent: (input) => {
+            generatedThreadContext = input.threadContext;
+            return writer.generatePrContent(input);
+          },
+        },
+        seed: Effect.gen(function* () {
+          const store = yield* ProjectionStore.ProjectionStoreV2;
+          const completedRun = run(1, "completed");
+          const abandonedRun = run(2, "rolled_back");
+          yield* store.apply({
+            id: EventId.make("event:pr-thread-context:thread"),
+            type: "thread.created",
+            threadId,
+            providerInstanceId,
+            occurredAt: createdAt,
+            payload: {
+              createdBy: "user",
+              creationSource: "web",
+              id: threadId,
+              projectId: ProjectId.make("project:pr-thread-context"),
+              title: "PR thread context",
+              providerInstanceId,
+              modelSelection: { instanceId: providerInstanceId, model: "gpt-5" },
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: repoDir,
+              activeProviderThreadId: null,
+              lineage: {
+                parentThreadId: null,
+                relationshipToParent: null,
+                rootThreadId: threadId,
+              },
+              forkedFrom: null,
+              createdAt,
+              updatedAt: createdAt,
+              archivedAt: null,
+              settledOverride: null,
+              settledAt: null,
+              lastVisitedAt: null,
+              deletedAt: null,
+            },
+          });
+          for (const payload of [completedRun, abandonedRun]) {
+            yield* store.apply({
+              id: EventId.make(`event:pr-thread-context:run:${payload.ordinal}`),
+              type: "run.updated",
+              threadId,
+              runId: payload.id,
+              occurredAt: createdAt,
+              payload,
+            });
+          }
+          const items = [
+            {
+              ...itemBase(1, completedRun.id),
+              type: "user_message" as const,
+              messageId: completedRun.userMessageId,
+              createdBy: "user" as const,
+              creationSource: "web" as const,
+              inputIntent: "turn_start" as const,
+              text: "Make the PR writer see the thread",
+              attachments: [],
+            },
+            {
+              ...itemBase(3, completedRun.id),
+              type: "command_execution" as const,
+              input: "vp test run",
+              output: `${"collecting tests\n".repeat(4_000)}Tests 12 passed`,
+              exitCode: 0,
+            },
+            {
+              ...itemBase(4, completedRun.id),
+              type: "command_execution" as const,
+              input: "vp lint",
+              output: "2 lint errors",
+              exitCode: 1,
+            },
+            {
+              ...itemBase(5, abandonedRun.id),
+              type: "command_execution" as const,
+              input: "vp run abandoned",
+              output: "abandoned output",
+              exitCode: 0,
+            },
+          ];
+          for (const payload of items) {
+            yield* store.apply({
+              id: EventId.make(`event:pr-thread-context:${payload.id}`),
+              type: "turn-item.updated",
+              threadId,
+              runId: payload.runId,
+              occurredAt: createdAt,
+              payload,
+            });
+          }
+        }),
+      });
+
+      yield* manager.runStackedAction({
+        actionId: "test-action-id",
+        cwd: repoDir,
+        action: "create_pr",
+        threadId,
+      });
+
+      expect(generatedPrompt).toContain("Command: vp test run\nExit code: 0");
+      expect(generatedPrompt).toContain("Tests 12 passed");
+      expect(generatedPrompt).toContain("Make the PR writer see the thread");
+      expect(generatedPrompt).toContain("Command: vp lint\nExit code: 1");
+      expect(generatedPrompt).toContain("2 lint errors");
+      expect(generatedPrompt).not.toContain("vp run abandoned");
+      expect(generatedPrompt).not.toContain("abandoned output");
+      expect(Buffer.byteLength(generatedThreadContext ?? "")).toBeLessThanOrEqual(16_000);
     }),
   );
 

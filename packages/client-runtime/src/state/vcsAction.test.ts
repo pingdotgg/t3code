@@ -1,6 +1,7 @@
 import { vi } from "vite-plus/test";
 import {
   EnvironmentId,
+  AuthOrchestrationReadScope,
   AuthSourceControlWriteScope,
   ThreadId,
   ProjectId,
@@ -733,7 +734,7 @@ const grantedSessions = Atom.family((_id: EnvironmentId) =>
         sessionMethods: [],
         sessionCookieName: "test",
       },
-      scopes: [AuthSourceControlWriteScope],
+      scopes: [AuthOrchestrationReadScope, AuthSourceControlWriteScope],
     }),
   ),
 );
