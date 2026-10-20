@@ -1,13 +1,17 @@
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import * as Effect from "effect/Effect";
+import { Atom, AtomRegistry } from "effect/reactivity";
 import { AuthFilesystemReadScope, AuthOrchestrationReadScope } from "@t3tools/contracts";
 
 import {
   canPreloadBrowsePath,
   createBrowseNavigationCoordinator,
+  createFilesystemBrowseSession,
   filterFilesystemBrowseEntries,
   getFilesystemBrowsePath,
   resolveFilesystemReadAccess,
 } from "./filesystem.ts";
+import { executeAtomQuery } from "./runtime.ts";
 
 const SPLIT_SCOPES_SERVER = { serverUpdateScope: "environment:maintain" } as const;
 
@@ -186,5 +190,89 @@ describe("browse navigation", () => {
     expect(canPreloadBrowsePath("offline")).toBe(false);
     expect(canPreloadBrowsePath("reconnecting")).toBe(false);
     expect(canPreloadBrowsePath(null)).toBe(false);
+  });
+});
+
+describe("filesystem browse sessions", () => {
+  const registries: AtomRegistry.AtomRegistry[] = [];
+  const makeRegistry = () => {
+    const registry = AtomRegistry.make();
+    registries.push(registry);
+    return registry;
+  };
+  afterEach(() => {
+    for (const registry of registries.splice(0)) registry.dispose();
+    vi.useRealTimers();
+  });
+
+  const cachedQuery = <A, E>(effect: Effect.Effect<A, E>) =>
+    Atom.make(effect).pipe(
+      Atom.swr({ staleTime: 30_000, revalidateOnMount: true }),
+      Atom.setIdleTTL(5 * 60_000),
+    );
+
+  it("shows newly created folders on reopen and refreshes only once per session", async () => {
+    vi.useFakeTimers();
+    const registry = makeRegistry();
+    let entries = ["existing"];
+    const request = vi.fn(() => entries);
+    const source = cachedQuery(Effect.sync(request));
+    const first = createFilesystemBrowseSession(() => source)(undefined);
+    const close = registry.mount(first);
+    expect(registry.get(first)).toMatchObject({ value: ["existing"] });
+    expect(request).toHaveBeenCalledTimes(1);
+    close();
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    entries = ["existing", "new-folder"];
+    const reopened = createFilesystemBrowseSession(() => source)(undefined);
+    const rendered = vi.fn();
+    const leaveDirectory = registry.subscribe(reopened, rendered, { immediate: true });
+    expect(rendered).toHaveBeenLastCalledWith(
+      expect.objectContaining({ value: entries, waiting: false }),
+    );
+    expect(request).toHaveBeenCalledTimes(2);
+
+    leaveDirectory();
+    await vi.advanceTimersByTimeAsync(2_000);
+    registry.mount(reopened);
+    expect(registry.get(reopened)).toMatchObject({ value: entries, waiting: false });
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  it("shares a cold request with another picker opened while it is pending", async () => {
+    const registry = makeRegistry();
+    const pending = Promise.withResolvers<string[]>();
+    const request = vi.fn(() => pending.promise);
+    const source = cachedQuery(Effect.promise(request));
+    const first = createFilesystemBrowseSession(() => source)(undefined);
+    const second = createFilesystemBrowseSession(() => source)(undefined);
+    const firstResult = executeAtomQuery(registry, first);
+    const secondResult = executeAtomQuery(registry, second);
+    expect(request).toHaveBeenCalledTimes(1);
+
+    pending.resolve(["folder"]);
+    for (const result of await Promise.all([firstResult, secondResult])) {
+      expect(result).toMatchObject({ _tag: "Success", value: ["folder"] });
+    }
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders a completed navigation preload without requesting the directory again", async () => {
+    vi.useFakeTimers();
+    const registry = makeRegistry();
+    const request = vi.fn((path: string) => [path]);
+    const family = Atom.family((path: string) => cachedQuery(Effect.sync(() => request(path))));
+    const browse = createFilesystemBrowseSession(family);
+    registry.mount(browse("/"));
+
+    expect(await executeAtomQuery(registry, browse("/next/"))).toMatchObject({
+      _tag: "Success",
+      value: ["/next/"],
+    });
+    await vi.advanceTimersByTimeAsync(2_000);
+    registry.mount(browse("/next/"));
+    expect(registry.get(browse("/next/"))).toMatchObject({ value: ["/next/"] });
+    expect(request.mock.calls).toEqual([["/"], ["/next/"]]);
   });
 });

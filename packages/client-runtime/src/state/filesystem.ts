@@ -6,7 +6,7 @@ import {
   sessionGrantsScope,
   type SessionGrantInput,
 } from "@t3tools/contracts";
-import { Atom } from "effect/reactivity";
+import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
 import type {
   EnvironmentConnectionPhase,
@@ -109,6 +109,29 @@ export function canPreloadBrowsePath(
   connectionPhase: EnvironmentConnectionPhase | null | undefined,
 ): boolean {
   return connectionPhase === "connected";
+}
+
+export function createFilesystemBrowseSession<T, A, E>(
+  browse: (target: T) => Atom.Atom<AsyncResult.AsyncResult<A, E>>,
+) {
+  const family = Atom.family((source: Atom.Atom<AsyncResult.AsyncResult<A, E>>) => {
+    const visited = new WeakSet<AtomRegistry.AtomRegistry>();
+    return Atom.transform(source, (get) => {
+      // Idle-TTL nodes outlive the picker without remounting SWR. Check before
+      // reading so a synchronous cold load isn't mistaken for cached data.
+      const cached = get.registry.getNodes().get(source)?.currentState() === "valid";
+      const result = get.once(source);
+      if (!visited.has(get.registry)) {
+        visited.add(get.registry);
+        if (cached && !result.waiting && !AsyncResult.isInitial(result)) {
+          get.refresh(source);
+        }
+      }
+      get.subscribe(source, (value) => get.setSelf(value));
+      return get.once(source);
+    });
+  });
+  return (target: T) => family(browse(target));
 }
 
 export function createFilesystemEnvironmentAtoms<R, E>(
