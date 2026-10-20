@@ -4,12 +4,40 @@ import { randomUUID } from "expo-crypto";
 import {
   importedFontFamilies,
   importedFontVariant,
+  mergeImportedFonts,
   readFontMetadata,
   type ImportedFontFace,
 } from "./mobileFonts";
 
 const directory = () => new Directory(Paths.document, "custom-fonts");
 const fontFile = (face: ImportedFontFace) => new File(directory(), face.file);
+
+export async function importFontFiles(
+  assets: readonly { readonly uri: string; readonly name: string }[],
+  current: readonly ImportedFontFace[],
+  save: (copied: readonly ImportedFontFace[]) => Promise<readonly ImportedFontFace[]>,
+) {
+  const copied = await copyImportedFonts(assets);
+  let saved = false;
+  try {
+    const next = mergeImportedFonts(current, copied);
+    const loaded = await loadImportedFontFiles(next);
+    const incomingFamilies = new Set(copied.map((face) => face.family));
+    const unavailable = loaded.unavailable.filter((family) => incomingFamilies.has(family));
+    if (unavailable.length)
+      throw new Error(
+        `Could not load: ${unavailable.join(", ")}. Try another static TTF or OTF font.`,
+      );
+    const retained = await save(copied);
+    saved = true;
+    const retainedIds = new Set(retained.map((face) => face.id));
+    deleteImportedFontFiles([...current, ...copied].filter((face) => !retainedIds.has(face.id)));
+    return retained;
+  } catch (error) {
+    if (!saved) deleteImportedFontFiles(copied);
+    throw error;
+  }
+}
 
 export async function copyImportedFonts(
   assets: readonly { readonly uri: string; readonly name: string }[],
