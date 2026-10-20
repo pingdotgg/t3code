@@ -1,5 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as NodeEvents from "node:events";
 import { beforeEach, vi } from "vite-plus/test";
 
 const { autoUpdaterMock } = vi.hoisted(() => ({
@@ -14,6 +15,7 @@ const { autoUpdaterMock } = vi.hoisted(() => ({
     checkForUpdates: vi.fn(() => Promise.resolve(null)),
     downloadUpdate: vi.fn(() => Promise.resolve([])),
     on: vi.fn(),
+    prependListener: vi.fn(),
     quitAndInstall: vi.fn(),
     removeListener: vi.fn(),
     setFeedURL: vi.fn(),
@@ -27,7 +29,10 @@ vi.mock("electron-updater", () => ({
 import * as ElectronUpdater from "./ElectronUpdater.ts";
 
 describe("ElectronUpdater", () => {
+  let updaterEvents = new NodeEvents.EventEmitter();
+
   beforeEach(() => {
+    updaterEvents = new NodeEvents.EventEmitter();
     autoUpdaterMock.allowDowngrade = false;
     autoUpdaterMock.allowPrerelease = false;
     autoUpdaterMock.autoDownload = true;
@@ -40,8 +45,18 @@ describe("ElectronUpdater", () => {
     autoUpdaterMock.downloadUpdate.mockClear();
     autoUpdaterMock.downloadUpdate.mockImplementation(() => Promise.resolve([]));
     autoUpdaterMock.on.mockClear();
+    autoUpdaterMock.on.mockImplementation((eventName, listener) =>
+      updaterEvents.on(eventName, listener),
+    );
+    autoUpdaterMock.prependListener.mockClear();
+    autoUpdaterMock.prependListener.mockImplementation((eventName, listener) =>
+      updaterEvents.prependListener(eventName, listener),
+    );
     autoUpdaterMock.quitAndInstall.mockClear();
     autoUpdaterMock.removeListener.mockClear();
+    autoUpdaterMock.removeListener.mockImplementation((eventName, listener) =>
+      updaterEvents.removeListener(eventName, listener),
+    );
     autoUpdaterMock.setFeedURL.mockClear();
   });
 
@@ -134,6 +149,41 @@ describe("ElectronUpdater", () => {
       );
       assert.notInclude(error.message, cause.message);
       assert.deepEqual(autoUpdaterMock.quitAndInstall.mock.calls, [[true, false]]);
+    }).pipe(Effect.provide(ElectronUpdater.layer)),
+  );
+
+  it.effect("fails quit-and-install with an error the updater emits during the call", () =>
+    Effect.gen(function* () {
+      const cause = new Error("No update filepath provided, can't quit and install");
+      const otherError = new Error("background check failed");
+      const errorListener = vi.fn();
+      // electron-updater emits most install failures and returns normally.
+      autoUpdaterMock.quitAndInstall.mockImplementationOnce(() => {
+        updaterEvents.emit("error", cause);
+      });
+      const updater = yield* ElectronUpdater.ElectronUpdater;
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* updater.on("error", errorListener);
+
+          const error = yield* updater
+            .quitAndInstall({ isSilent: true, isForceRunAfter: true })
+            .pipe(Effect.flip);
+          assert.instanceOf(error, ElectronUpdater.ElectronUpdaterQuitAndInstallError);
+          assert.strictEqual(error.cause, cause);
+          assert.deepEqual(errorListener.mock.calls, []);
+          assert.equal(updaterEvents.listenerCount("error"), 1);
+
+          // Errors after the call reach the global listener once each, even when
+          // the updater reuses the Error object it emitted during the install.
+          updaterEvents.emit("error", otherError);
+          updaterEvents.emit("error", cause);
+          assert.deepEqual(errorListener.mock.calls, [[otherError], [cause]]);
+        }),
+      );
+
+      assert.equal(updaterEvents.listenerCount("error"), 0);
     }).pipe(Effect.provide(ElectronUpdater.layer)),
   );
 });

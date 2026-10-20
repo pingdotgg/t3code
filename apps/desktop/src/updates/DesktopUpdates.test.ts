@@ -875,6 +875,71 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
+  it.effect("logs a bounded reason and a no_new_privs hint for install failures", () => {
+    const loggedInstallFailure = (procSelfStatus: string, cause: Error) => {
+      const harness = makeHarness({
+        platform: "linux",
+        packageType: "deb",
+        procSelfStatus,
+        quitAndInstall: Effect.fail(
+          new ElectronUpdater.ElectronUpdaterQuitAndInstallError({
+            channel: "latest",
+            isSilent: true,
+            isForceRunAfter: true,
+            cause,
+          }),
+        ),
+      });
+      const loggedAnnotations: Array<Record<string, unknown>> = [];
+      const logger = Logger.make(({ fiber }) => {
+        const annotations = fiber.getRef(References.CurrentLogAnnotations);
+        if (annotations.errorTag === "ElectronUpdaterQuitAndInstallError") {
+          loggedAnnotations.push(annotations);
+        }
+      });
+      return Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          harness.emit("update-downloaded", { version: "1.2.4" });
+          yield* flushCallbacks;
+          yield* updates.install;
+          assert.lengthOf(loggedAnnotations, 1);
+          return loggedAnnotations[0];
+        }),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            TestClock.layer(),
+            harness.layer,
+            Logger.layer([logger], { mergeWithExisting: false }),
+          ),
+        ),
+      );
+    };
+    const flagged = "Name:\tt3code\nNoNewPrivs:\t1\n";
+    const unflagged = "Name:\tt3code\nNoNewPrivs:\t0\n";
+    const commandExit = new Error("Command pkexec exited with code 127");
+
+    return Effect.gen(function* () {
+      // A check that fails before any installer command runs keeps its own reason.
+      const precheck = yield* loggedInstallFailure(
+        flagged,
+        new Error("No update filepath provided, can't quit and install"),
+      );
+      assert.equal(precheck?.reason, "no-installer-path");
+      assert.isUndefined(precheck?.exitStatus);
+
+      const blocked = yield* loggedInstallFailure(flagged, commandExit);
+      assert.equal(blocked?.reason, "no-new-privs");
+      assert.equal(blocked?.exitStatus, 127);
+
+      const plain = yield* loggedInstallFailure(unflagged, commandExit);
+      assert.isUndefined(plain?.reason);
+      assert.equal(plain?.exitStatus, 127);
+    });
+  });
+
   it.effect("holds the install reservation until failed-install recovery finishes", () => {
     const recoveryStarted = Deferred.makeUnsafe<void>();
     const releaseRecovery = Deferred.makeUnsafe<void>();

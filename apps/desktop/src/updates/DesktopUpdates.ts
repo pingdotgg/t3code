@@ -256,6 +256,31 @@ export function describeUpdateErrorCause(cause: unknown): string {
   }
 }
 
+// Fixed electron-updater messages for install checks that fail before any
+// installer command runs. These errors carry no code or exit status.
+const UPDATER_INSTALL_FAILURE_REASONS = [
+  ["No update filepath provided", "no-installer-path"],
+  ["Neither dpkg nor apt command found", "no-package-manager"],
+] as const;
+
+// Only these bounded fields of an updater failure cause are logged as their own
+// annotations: the exit status of a failed installer command such as a
+// dismissed pkexec prompt, and a fixed reason for known install checks.
+function describeUpdaterFailureCause(cause: unknown): {
+  readonly exitStatus?: number;
+  readonly reason?: string;
+} {
+  if (!(cause instanceof Error)) return {};
+  const exitStatus = / exited with code (\d{1,3})$/.exec(cause.message)?.[1];
+  const reason = UPDATER_INSTALL_FAILURE_REASONS.find(([prefix]) =>
+    cause.message.startsWith(prefix),
+  )?.[1];
+  return {
+    ...(reason ? { reason } : {}),
+    ...(exitStatus ? { exitStatus: Number(exitStatus) } : {}),
+  };
+}
+
 function parseAppUpdateYml(raw: string): Effect.Effect<Option.Option<AppUpdateYmlConfig>> {
   const entries: Record<string, string> = {};
   for (const line of raw.split("\n")) {
@@ -388,6 +413,17 @@ export const make = Effect.gen(function* () {
         return setState(nextState).pipe(Effect.as(nextState));
       }),
     );
+
+  // A Linux process with the no_new_privs flag can never gain root through
+  // pkexec or sudo, and the flag is permanent. Chromium sets it on processes
+  // that app.relaunch() starts.
+  const hasNoNewPrivs =
+    environment.platform === "linux"
+      ? fileSystem.readFileString("/proc/self/status", "utf-8").pipe(
+          Effect.map((status) => /^NoNewPrivs:\s*1$/m.test(status)),
+          Effect.orElseSucceed(() => false),
+        )
+      : Effect.succeed(false);
 
   const readAppUpdateYml = fileSystem.readFileString(environment.appUpdateYmlPath, "utf-8").pipe(
     Effect.option,
@@ -768,12 +804,22 @@ export const make = Effect.gen(function* () {
             ElectronUpdaterQuitAndInstallError: Effect.fn("desktop.updates.handleInstallFailure")(
               function* (error) {
                 yield* recoverFailedInstall(error.message);
+                const causeContext = describeUpdaterFailureCause(error.cause);
+                // An installer command cannot elevate under no_new_privs, which
+                // is the likely cause of its exit even though the flag does not
+                // prove it.
+                const reason =
+                  causeContext.exitStatus !== undefined && (yield* hasNoNewPrivs)
+                    ? "no-new-privs"
+                    : causeContext.reason;
                 yield* logUpdaterError(error.message, {
                   errorTag: error._tag,
                   cause: describeUpdateErrorCause(error.cause),
                   channel: error.channel,
                   isSilent: error.isSilent,
                   isForceRunAfter: error.isForceRunAfter,
+                  ...causeContext,
+                  ...(reason ? { reason } : {}),
                 });
                 return { accepted: true, completed: false, failed: true };
               },
