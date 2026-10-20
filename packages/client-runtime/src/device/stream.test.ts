@@ -114,6 +114,8 @@ describe("native device stream transport", () => {
     socket.onopen?.();
     expect(socket.send).not.toHaveBeenCalled();
     socket.onmessage?.({ data: Uint8Array.of(0x83).buffer });
+    client.sendText("hello");
+    expect(socket.send).not.toHaveBeenCalled();
     client.setOrientation("landscape_right");
     client.pressButton("home");
     client.sendTouch("begin", 0.25, 0.75);
@@ -148,6 +150,8 @@ describe("native device stream transport", () => {
     client.setOrientation("landscape_right");
     client.pressButton("home");
     client.pressButton("appSwitcher");
+    const prefix = "a".repeat(299);
+    client.sendText(`${prefix}ä`);
     expect(
       socket.send.mock.calls.map(([message]) => JSON.parse(message as string) as unknown),
     ).toEqual([
@@ -156,6 +160,8 @@ describe("native device stream transport", () => {
       { type: "touch", action: "up", x: 0.2, y: 0.1 },
       { type: "home" },
       { type: "recents" },
+      { type: "text", text: prefix },
+      { type: "text", text: "ä" },
     ]);
     client.stop();
     expect(socket.close).toHaveBeenCalledTimes(1);

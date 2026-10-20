@@ -35,6 +35,7 @@ vi.mock(import("./DevicePhoneViewport"), async (original) => ({
     return <></>;
   },
 }));
+import { pasteTextToFocusComposer } from "../chat/composerFocusRedirect";
 import { DeviceStreamView } from "./DeviceStreamView";
 
 // MJPEG frames come from the device hub, so images keep their src without loading it and a
@@ -109,7 +110,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-async function setup(h264 = false) {
+async function setup(h264 = false, platform: "ios" | "android" = "ios") {
   const touches: unknown[] = [];
   vi.useFakeTimers();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -160,6 +161,7 @@ async function setup(h264 = false) {
     return Promise.resolve(new Response("prime"));
   });
   const sockets: Array<{ onmessage?: (event: { data: ArrayBuffer }) => void }> = [];
+  const sent: unknown[] = [];
   vi.stubGlobal(
     "WebSocket",
     class {
@@ -169,9 +171,11 @@ async function setup(h264 = false) {
         sockets.push(this);
       }
       onmessage?: (event: { data: ArrayBuffer }) => void;
-      send(packet: Uint8Array) {
-        if (packet[0] === 0x03) {
-          touches.push(JSON.parse(new TextDecoder().decode(packet.subarray(1))));
+      send(message: string | Uint8Array) {
+        if (typeof message === "string") {
+          sent.push(message);
+        } else if (message[0] === 0x03) {
+          touches.push(JSON.parse(new TextDecoder().decode(message.subarray(1))));
         }
       }
       close() {}
@@ -182,7 +186,7 @@ async function setup(h264 = false) {
       hostId="local"
       environmentId={EnvironmentId.make("test")}
       deviceId="test"
-      platform="ios"
+      platform={platform}
       visible={visible}
       allowPhoneView={h264}
     />
@@ -190,6 +194,7 @@ async function setup(h264 = false) {
   await act(async () => root.render(view(true)));
   return {
     images,
+    sent,
     view,
     touches,
     configure() {
@@ -321,4 +326,34 @@ it("keeps the 3D viewer mounted across iOS video recovery and releases it when h
   await act(async () => root.render(view(false)));
   expect(viewerUnmounts).toBe(1);
   expect(vi.getTimerCount()).toBe(0);
+});
+
+it("types a paste on the Android screen into the device and lets Ctrl+V reach the paste", async () => {
+  const { sent } = await setup(true, "android");
+  const screen = container.querySelector<HTMLElement>('[role="application"]')!;
+  screen.focus();
+  expect(document.activeElement).toBe(screen);
+  const chord = new KeyboardEvent("keydown", {
+    key: "v",
+    code: "KeyV",
+    ctrlKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  screen.dispatchEvent(chord);
+  expect(chord.defaultPrevented).toBe(false);
+  const clipboardData = new DataTransfer();
+  clipboardData.setData("text/plain", "pässwörd 1");
+  const composerPastes: Array<string | null> = [];
+  const capturePaste = (event: ClipboardEvent) =>
+    composerPastes.push(pasteTextToFocusComposer(event));
+  window.addEventListener("paste", capturePaste, true);
+  onTestFinished(() => window.removeEventListener("paste", capturePaste, true));
+  const paste = new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true });
+  screen.dispatchEvent(paste);
+  expect(paste.defaultPrevented).toBe(true);
+  expect(sent.map((message) => JSON.parse(message as string) as unknown)).toEqual([
+    { type: "text", text: "pässwörd 1" },
+  ]);
+  expect(composerPastes).toEqual([null]);
 });
