@@ -23,6 +23,19 @@ import {
   type ResolvedAppearance,
 } from "../../../lib/appearancePreferences";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../../state/preferences";
+import {
+  normalizeFontSelections,
+  reconcileInstalledFonts,
+  normalizeReplyEmphasisWeights,
+  resolveReplyEmphasis,
+  type ReplyEmphasisWeight,
+  resolveMobileFonts,
+  type MobileFontRole,
+  type MobileFontSelections,
+  type InstalledMobileFont,
+} from "../../../lib/mobileFonts";
+import { resolveInstalledFonts } from "../../../native/installed-fonts";
+import { normalizeBaseFontSize } from "../../../lib/appearancePreferences";
 import type { Preferences } from "../../../persistence/mobile-preferences";
 import { isSystemColorsAvailable, readSystemColorPalettes } from "../../../lib/materialYouPalette";
 import { materialYouPaletteToMobileThemeVariables } from "../../../lib/materialYouTheme";
@@ -45,6 +58,20 @@ import {
 } from "../../../lib/mobileThemeRuntime";
 
 interface AppearancePreferencesContextValue {
+  readonly fonts: ReturnType<typeof resolveMobileFonts>;
+  readonly fontSelections: MobileFontSelections;
+  readonly installedFonts: ReadonlyMap<string, InstalledMobileFont>;
+  readonly unavailableFonts: readonly string[];
+  readonly replyFontSize: number;
+  readonly replyEmphasisWeight: ReplyEmphasisWeight | undefined;
+  readonly replyEmphasisFontFamily: string;
+  readonly setReplyEmphasisWeight: (weight: ReplyEmphasisWeight | undefined) => void;
+  readonly composerFontSize: number;
+  readonly customReplyFontSize: boolean;
+  readonly customComposerFontSize: boolean;
+  readonly setFontSelection: (role: MobileFontRole, selection: string) => void;
+  readonly setReplyFontSize: (size: number | null) => void;
+  readonly setComposerFontSize: (size: number | null) => void;
   readonly appearance: ResolvedAppearance;
   readonly themeId: MobileThemeId;
   readonly themeIds: MobileThemeIds;
@@ -132,6 +159,83 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
     () => resolveAppearance({ baseFontSize, codeFontSize, codeWordBreak, terminalFontSize }),
     [baseFontSize, codeFontSize, codeWordBreak, terminalFontSize],
   );
+  const fontSelections = useMemo(
+    () => normalizeFontSelections(storedPreferences?.fontSelections),
+    [storedPreferences?.fontSelections],
+  );
+  const selectedFontNames = useMemo(
+    () => [
+      ...new Set(
+        Object.values(fontSelections)
+          .filter((selection) => selection.startsWith("installed:"))
+          .map((selection) => selection.slice(10)),
+      ),
+    ],
+    [fontSelections],
+  );
+  const [installedFonts, setInstalledFonts] = useState<ReadonlyMap<string, InstalledMobileFont>>(
+    new Map(),
+  );
+  const [unavailableFonts, setUnavailableFonts] = useState<readonly string[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    let generation = 0;
+    const updateUnavailableFonts = (missing: readonly string[]) => {
+      setUnavailableFonts((previous) =>
+        previous.length === missing.length &&
+        previous.every((name, index) => name === missing[index])
+          ? previous
+          : missing,
+      );
+    };
+    const refresh = () => {
+      generation = generation + 1;
+      const request = generation;
+      void resolveInstalledFonts(selectedFontNames)
+        .then((resolved) => {
+          if (cancelled || request !== generation) return;
+          const available = new Map(resolved.map((font) => [font.name, font]));
+          setInstalledFonts((previous) => reconcileInstalledFonts(previous, available));
+          updateUnavailableFonts(selectedFontNames.filter((name) => !available.has(name)));
+        })
+        .catch(() => {
+          if (cancelled || request !== generation) return;
+          setInstalledFonts((previous) => (previous.size ? new Map() : previous));
+          updateUnavailableFonts(selectedFontNames);
+        });
+    };
+    refresh();
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") refresh();
+    });
+    return () => {
+      cancelled = true;
+      subscription.remove();
+    };
+  }, [selectedFontNames]);
+  const fonts = useMemo(
+    () => resolveMobileFonts(fontSelections, installedFonts, Platform.OS),
+    [fontSelections, installedFonts],
+  );
+  const replyEmphasisWeight = normalizeReplyEmphasisWeights(
+    storedPreferences?.replyEmphasisWeights,
+  )[fonts.reply.regular];
+  const replyEmphasisFontFamily = resolveReplyEmphasis(fonts.reply, replyEmphasisWeight);
+  const fontVariables = useMemo(
+    () => ({
+      ...themeVariables,
+      "--font-sans": fonts.interface.regular,
+      "--font-medium": fonts.interface.medium,
+      "--font-bold": fonts.interface.bold,
+    }),
+    [themeVariables, fonts.interface],
+  );
+  const replyFontSize = normalizeBaseFontSize(storedPreferences?.replyFontSize ?? baseFontSize);
+  const composerFontSize = normalizeBaseFontSize(
+    storedPreferences?.composerFontSize ?? baseFontSize,
+  );
+  const customReplyFontSize = storedPreferences?.replyFontSize != null;
+  const customComposerFontSize = storedPreferences?.composerFontSize != null;
   const isReady = AsyncResult.isSuccess(preferencesResult);
   const runtimeState = useMemo<MobileThemeRuntimeState>(
     () => ({
@@ -271,10 +375,57 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
     (value: boolean) => updatePreferences({ mathRenderingEnabled: value }),
     [updatePreferences],
   );
+  const setFontSelection = useCallback(
+    (role: MobileFontRole, selection: string) => {
+      savePreferences({
+        transform: (current) => ({
+          fontSelections: { ...normalizeFontSelections(current.fontSelections), [role]: selection },
+        }),
+      });
+    },
+    [savePreferences],
+  );
+  const setReplyEmphasisWeight = useCallback(
+    (weight: ReplyEmphasisWeight | undefined) => {
+      savePreferences({
+        transform: (current) => {
+          const next = { ...normalizeReplyEmphasisWeights(current.replyEmphasisWeights) };
+          if (weight === undefined) delete next[fonts.reply.regular];
+          else next[fonts.reply.regular] = weight;
+          return { replyEmphasisWeights: next };
+        },
+      });
+    },
+    [fonts.reply.regular, savePreferences],
+  );
+  const setReplyFontSize = useCallback(
+    (size: number | null) =>
+      updatePreferences({ replyFontSize: size === null ? null : normalizeBaseFontSize(size) }),
+    [updatePreferences],
+  );
+  const setComposerFontSize = useCallback(
+    (size: number | null) =>
+      updatePreferences({ composerFontSize: size === null ? null : normalizeBaseFontSize(size) }),
+    [updatePreferences],
+  );
 
   const value = useMemo(
     (): AppearancePreferencesContextValue => ({
       appearance,
+      fonts,
+      fontSelections,
+      installedFonts,
+      unavailableFonts,
+      replyFontSize,
+      replyEmphasisWeight,
+      replyEmphasisFontFamily,
+      setReplyEmphasisWeight,
+      composerFontSize,
+      customReplyFontSize,
+      customComposerFontSize,
+      setFontSelection,
+      setReplyFontSize,
+      setComposerFontSize,
       themeId,
       themeIds,
       themeMode,
@@ -297,6 +448,20 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
     }),
     [
       appearance,
+      fonts,
+      fontSelections,
+      installedFonts,
+      unavailableFonts,
+      replyFontSize,
+      replyEmphasisWeight,
+      replyEmphasisFontFamily,
+      setReplyEmphasisWeight,
+      composerFontSize,
+      customReplyFontSize,
+      customComposerFontSize,
+      setFontSelection,
+      setReplyFontSize,
+      setComposerFontSize,
       themeId,
       themeIds,
       themeMode,
@@ -321,7 +486,7 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
   return (
     <AppearancePreferencesContext.Provider value={value}>
       <ScopedTheme theme={activeThemeName}>
-        <ScopedVariables variables={themeVariables}>{props.children}</ScopedVariables>
+        <ScopedVariables variables={fontVariables}>{props.children}</ScopedVariables>
       </ScopedTheme>
     </AppearancePreferencesContext.Provider>
   );

@@ -256,6 +256,7 @@ const config: ExpoConfig = {
       `webcredentials:${variant.relyingParty}`,
     ],
     entitlements: {
+      "com.apple.developer.user-fonts": ["app-usage"],
       "keychain-access-groups": [`$(AppIdentifierPrefix)${variant.iosBundleIdentifier}`],
     },
     infoPlist: {

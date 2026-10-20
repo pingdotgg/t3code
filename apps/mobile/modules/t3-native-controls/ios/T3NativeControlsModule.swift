@@ -10,6 +10,7 @@ public final class T3NativeControlsModule: Module {
   private let presentationSources = T3PresentationSources()
   private var videoPresentation: T3NativeVideoPresentation?
   private var filePresentation: T3NativeFilePresentation?
+  private var fontPresentation: T3FontPickerPresentation?
 
   public func definition() -> ModuleDefinition {
     Constants {
@@ -36,6 +37,29 @@ public final class T3NativeControlsModule: Module {
       ViewName("LayoutMetrics")
       Events("onMetricsChange")
     }
+
+    AsyncFunction("pickInstalledFont") { (selectedName: String?, promise: Promise) in
+      MainActor.assumeIsolated {
+        guard self.fontPresentation == nil,
+          let presenter = self.appContext?.utilities?.currentViewController()
+        else {
+          promise.reject("ERR_FONT_PICKER", "Cannot present the font picker right now.")
+          return
+        }
+        let presentation = T3FontPickerPresentation { [weak self] result in
+          self?.fontPresentation = nil
+          promise.resolve(result)
+        }
+        self.fontPresentation = presentation
+        presentation.present(from: presenter, selectedName: selectedName)
+      }
+    }.runOnQueue(.main)
+
+    AsyncFunction("resolveInstalledFonts") { (names: [String], promise: Promise) in
+      MainActor.assumeIsolated {
+        T3InstalledFonts.resolve(names) { promise.resolve($0) }
+      }
+    }.runOnQueue(.main)
 
     AsyncFunction("presentVideo") { (url: URL, title: String, sourceIdentifier: String, identifier: String, promise: Promise) in
       try self.presentVideo(
@@ -70,9 +94,11 @@ public final class T3NativeControlsModule: Module {
     OnDestroy {
       let presentation = self.videoPresentation
       let file = self.filePresentation
+      let font = self.fontPresentation
       DispatchQueue.main.async {
         presentation?.dismiss()
         file?.dismiss()
+        font?.dismiss()
       }
     }
 

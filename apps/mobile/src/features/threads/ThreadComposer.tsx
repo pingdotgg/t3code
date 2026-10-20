@@ -344,7 +344,7 @@ export function ComposerSurface(props: {
 
 export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps) {
   const project = useProject(scopeProjectRef(props.environmentId, props.selectedThread.projectId));
-  const { themeVariables: materialTheme } = useAppearancePreferences();
+  const { themeVariables: materialTheme, fonts, composerFontSize } = useAppearancePreferences();
   const composerPanel = materialTheme["--color-composer-panel"];
   const navigation = useNavigation();
   const foregroundColor = useUniwindTheme()["--color-foreground"];
@@ -943,11 +943,14 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                         paddingVertical: 4,
                       }
                     : {
-                        height: 36,
+                        height: Math.max(36, Math.round((composerFontSize * 23) / 16) + 12),
                       }
                 }
                 textStyle={{
                   ...bodyText,
+                  fontFamily: fonts.composer.regular,
+                  fontSize: composerFontSize,
+                  lineHeight: Math.round((composerFontSize * 23) / 16),
                   color: foregroundColor,
                 }}
               />

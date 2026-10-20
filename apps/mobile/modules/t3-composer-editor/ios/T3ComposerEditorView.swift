@@ -931,8 +931,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
       iconImage: iconImage,
       style: style
     )
-    let font = UIFont(name: fontFamily, size: fontSize)
-      ?? UIFont.systemFont(ofSize: fontSize)
+    let font = resolvedComposerFont()
     let baselineOffset = floor((font.capHeight - image.size.height) / 2)
     let attachment = ComposerTextAttachment(
       source: token.source,
@@ -1114,9 +1113,21 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     return nil
   }
 
+  private func resolvedComposerFont() -> UIFont {
+    if let font = UIFont(name: fontFamily, size: fontSize) {
+      return font
+    }
+    // Expo registers aliases through the family-name lookup, not UIFont(name:).
+    for name in UIFont.fontNames(forFamilyName: fontFamily) {
+      if let font = UIFont(name: name, size: fontSize) {
+        return font
+      }
+    }
+    return UIFont.systemFont(ofSize: fontSize)
+  }
+
   private func baseAttributes() -> [NSAttributedString.Key: Any] {
-    let font = UIFont(name: fontFamily, size: fontSize)
-      ?? UIFont.systemFont(ofSize: fontSize)
+    let font = resolvedComposerFont()
     let paragraph = NSMutableParagraphStyle()
     paragraph.minimumLineHeight = lineHeight
     paragraph.maximumLineHeight = lineHeight
@@ -1128,8 +1139,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   }
 
   private func applyTypography() {
-    let font = UIFont(name: fontFamily, size: fontSize)
-      ?? UIFont.systemFont(ofSize: fontSize)
+    let font = resolvedComposerFont()
     textView.font = font
     restoreBaseTypingAttributes()
     placeholderLabel.font = font
