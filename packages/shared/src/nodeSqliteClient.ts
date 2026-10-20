@@ -48,9 +48,11 @@ export interface SqliteClientConfig {
   readonly checkpointWorker?: boolean | undefined;
 }
 
-const ReadOnly = Context.Reference<boolean>("@t3tools/shared/nodeSqliteClient/ReadOnly", {
-  defaultValue: () => false,
-});
+// SqlClient masks transaction acquisition, so readOnly carries the caller's interruption policy.
+const ReadOnly = Context.Reference<typeof Effect.interruptible | undefined>(
+  "@t3tools/shared/nodeSqliteClient/ReadOnly",
+  { defaultValue: () => undefined },
+);
 
 /**
  * Wrap the whole transaction, as in
@@ -59,7 +61,9 @@ const ReadOnly = Context.Reference<boolean>("@t3tools/shared/nodeSqliteClient/Re
  * with "attempt to write a readonly database".
  */
 export const readOnly = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
-  Effect.provideService(effect, ReadOnly, true);
+  Effect.uninterruptibleMask((restore) =>
+    restore(Effect.provideService(effect, ReadOnly, restore)),
+  );
 
 interface Acquired {
   readonly connection: "writer" | "reader";
@@ -441,15 +445,16 @@ const makeReader = Effect.fnUntraced(function* (options: SqliteClientConfig) {
     } catch (cause) {
       return turnOff(undefined, String(cause));
     }
-    // SqlClient acquires transaction connections uninterruptibly. Waiting for the
-    // worker happens before any lock is taken, so let a cancelled request leave.
     return Effect.flatMap(
-      Effect.interruptible(
-        Effect.timeoutOption(
-          Effect.promise(() => reader.started),
-          startupTimeout,
-        ),
-      ),
+      Effect.withFiber((fiber) => {
+        const restore = Context.get(fiber.context, ReadOnly) ?? identity;
+        return restore(
+          Effect.timeoutOption(
+            Effect.promise(() => reader.started),
+            startupTimeout,
+          ),
+        );
+      }),
       (startup): Effect.Effect<Connection | undefined> =>
         // Another acquire may have timed out and retired this worker while this one
         // waited; a late "ready" must not hand out a worker that is being terminated.

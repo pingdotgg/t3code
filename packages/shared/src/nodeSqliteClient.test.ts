@@ -707,6 +707,43 @@ it.effect("lets a read be cancelled while its worker is still starting", () =>
   ),
 );
 
+it.effect.each(["cold", "warm", "stalled"])(
+  "completes an interrupted shutdown finalizer's read with a %s reader",
+  (state) => {
+    const { warnings, layer: logs } = captureWarnings();
+    return withReaderClient((sql) => {
+      const shutdown = Effect.gen(function* () {
+        const read = sql.withTransaction(countEntries(sql)).pipe(SqliteClient.readOnly);
+        if (state === "warm") yield* read;
+        const registered = yield* Deferred.make<void>();
+        const finalizing = yield* Deferred.make<void>();
+        let observed: number | undefined;
+        const fiber = yield* Effect.scoped(
+          Effect.gen(function* () {
+            yield* Effect.addFinalizer(() =>
+              Effect.gen(function* () {
+                yield* Deferred.succeed(finalizing, undefined);
+                observed = yield* read;
+              }).pipe(Effect.orDie),
+            );
+            yield* Deferred.succeed(registered, undefined);
+            return yield* Effect.never;
+          }),
+        ).pipe(Effect.forkChild);
+        yield* Deferred.await(registered);
+        const interrupted = yield* Effect.forkChild(Fiber.interrupt(fiber));
+        yield* Deferred.await(finalizing);
+        if (state === "stalled") yield* TestClock.adjust("10 seconds");
+        yield* Fiber.join(interrupted);
+
+        assert.equal(observed, 1);
+        assert.lengthOf(warnings, state === "stalled" ? 1 : 0);
+      });
+      return state === "stalled" ? silently(shutdown) : shutdown;
+    }).pipe(Effect.provide(logs));
+  },
+);
+
 it.effect("logs one warning when concurrent first reads find the reader unavailable", () => {
   const { warnings, layer: logs } = captureWarnings();
   return withFileClient((sql, filename) =>
