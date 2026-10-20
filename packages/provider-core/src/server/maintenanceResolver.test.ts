@@ -759,6 +759,43 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     }),
   );
 
+  it.effect.each(["wrapper", "symlink"])(
+    "keeps a mise-owned %s in a native install location manual-only",
+    (launcher, { skip }) => {
+      if (windowsHost || (launcher === "symlink" && !symlinksSupported)) skip();
+      return Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-native-mise");
+        const nativePath = NodePath.join(tempDir, ".local", "bin", "native-package-tool");
+        if (launcher === "wrapper") {
+          writeExecutable(nativePath);
+          NodeFS.writeFileSync(
+            nativePath,
+            '#!/bin/sh\nexec mise x native-package-tool -- native-package-tool "$@"\n',
+          );
+        } else {
+          const target = NodePath.join(
+            tempDir,
+            "mise",
+            "installs",
+            "native-package-tool",
+            "1.0.0",
+            "native-package-tool",
+          );
+          writeExecutable(target);
+          NodeFS.mkdirSync(NodePath.dirname(nativePath), { recursive: true });
+          NodeFS.symlinkSync(target, nativePath);
+        }
+
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          nativePackageToolUpdate,
+          { binaryPath: nativePath, env: { PATH: "" } },
+        ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+
+        expect(capabilities.update).toBeNull();
+      });
+    },
+  );
+
   it.effect.skipIf(windowsHost)("runs an explicit native updater outside PATH", () =>
     Effect.gen(function* () {
       const tempDir = yield* makeTempDir("t3-native-update");
