@@ -1,14 +1,23 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
+  type ClientSettings,
   type DesktopPendingSnapShot,
+  type DesktopSnapShotEvent,
+  DEFAULT_CLIENT_SETTINGS,
   EnvironmentId,
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
+import { act, createElement } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import type { DesktopSnapShotBridge } from "../../lib/desktopSnapShot";
+import * as settings from "../../hooks/useSettings";
+import * as newThread from "../../hooks/useHandleNewThread";
+import * as snapShotSound from "../../lib/snapShotSound";
+import { toastManager } from "../ui/toast";
 import {
   beginSnapShotAnimationWhenReady,
   deliverSnapShot,
@@ -16,6 +25,7 @@ import {
   resolveExistingSnapShotTarget,
   resolveSnapShotTargetOnce,
   resolveSnapShotDeliveryTarget,
+  SnapShotCoordinator,
 } from "./SnapShotCoordinator";
 import {
   beginSnapShotAnimation,
@@ -24,6 +34,10 @@ import {
   setSnapShotAnimationDestination,
   scheduleSnapShotAnimationDestination,
 } from "../../lib/snapShotAnimation";
+
+vi.mock(import("../../hooks/useSettings"), { spy: true });
+vi.mock(import("../../hooks/useHandleNewThread"), { spy: true });
+vi.mock(import("../../lib/snapShotSound"), { spy: true });
 
 const storage = vi.hoisted(() => {
   const values = new Map<string, string>();
@@ -60,6 +74,7 @@ afterEach(() => {
   dismissAllSnapShotAnimations();
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe("window capture failures", () => {
@@ -68,19 +83,16 @@ describe("window capture failures", () => {
     const pendingStarts = new Set<string>();
     const soundedIds = new Set(["older", "newer"]);
     const dismissSnapShotAnimation = vi.fn(async () => undefined);
-    vi.stubGlobal("window", {
-      localStorage: storage,
-      desktopBridge: {
-        requestSnapShotPermissions: vi.fn(),
-        getSnapShotState: vi.fn(),
-        checkSnapShotShortcut: vi.fn(),
-        setSnapShotShortcutSuppressed: vi.fn(),
-        listPendingSnapShots: vi.fn(),
-        readSnapShot: vi.fn(),
-        acknowledgeSnapShot: vi.fn(),
-        onSnapShotEvent: vi.fn(() => () => undefined),
-        dismissSnapShotAnimation,
-      },
+    vi.stubGlobal("desktopBridge", {
+      requestSnapShotPermissions: vi.fn(),
+      getSnapShotState: vi.fn(),
+      checkSnapShotShortcut: vi.fn(),
+      setSnapShotShortcutSuppressed: vi.fn(),
+      listPendingSnapShots: vi.fn(),
+      readSnapShot: vi.fn(),
+      acknowledgeSnapShot: vi.fn(),
+      onSnapShotEvent: vi.fn(() => () => undefined),
+      dismissSnapShotAnimation,
     });
     await beginSnapShotAnimationWhenReady("older", Promise.resolve(target), pendingStarts);
     await beginSnapShotAnimationWhenReady("newer", Promise.resolve(target), pendingStarts);
@@ -130,6 +142,305 @@ describe("window capture failures", () => {
     expect(getPendingSnapShotAnimations()).toEqual([]);
     expect(soundedIds.size).toBe(0);
     expect(pendingStarts.size).toBe(0);
+  });
+});
+
+describe("pending snapshot processing", () => {
+  const capture = {
+    id: "12345678-1234-1234-1234-123456789abc",
+    name: "window.png",
+    mimeType: "image/png" as const,
+    sizeBytes: 3,
+    dataUrl: "data:image/png;base64,AQID",
+    source: {
+      kind: "snap-shot" as const,
+      capturedAt: "2026-09-01T00:00:00.000Z",
+      appName: "Editor",
+      windowTitle: "main.ts",
+    },
+  };
+  const target = scopeThreadRef(environmentId, ThreadId.make("enabled-thread"));
+  let root: Root;
+  let container: HTMLDivElement;
+
+  function setup(routeThreadRef: typeof target | null = target) {
+    let currentSettings = {
+      ...DEFAULT_CLIENT_SETTINGS,
+      snapShotEnabled: true,
+      snapShotPlaySound: true,
+      snapShotAnimations: false,
+    };
+    const listeners = new Set<(event: DesktopSnapShotEvent) => void>();
+    let pending = [capture];
+    const bridge = {
+      requestSnapShotPermissions: vi.fn(),
+      getSnapShotState: vi.fn(),
+      checkSnapShotShortcut: vi.fn(),
+      setSnapShotShortcutSuppressed: vi.fn(),
+      onSnapShotEvent: vi.fn((listener: (event: DesktopSnapShotEvent) => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      }),
+      listPendingSnapShots: vi.fn(async () => pending),
+      readSnapShot: vi.fn(async () => capture),
+      acknowledgeSnapShot: vi.fn(async (id: string) => {
+        pending = pending.filter((item) => item.id !== id);
+      }),
+    };
+    vi.spyOn(settings, "getClientSettings").mockImplementation(() => currentSettings);
+    vi.spyOn(settings, "useClientSettings").mockImplementation(
+      <T = ClientSettings>(selector?: (value: ClientSettings) => T) =>
+        selector ? selector(currentSettings) : (currentSettings as T),
+    );
+    const route = {
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: routeThreadRef ? projectRef : null,
+      handleNewThread: vi.fn<ReturnType<typeof newThread.useHandleNewThread>["handleNewThread"]>(),
+      routeDraftId: null,
+      routeThreadRef,
+    };
+    vi.spyOn(newThread, "useHandleNewThread").mockImplementation(() => ({ ...route }));
+    const sound = vi.spyOn(snapShotSound, "playSnapShotSound").mockImplementation(() => undefined);
+    const toast = vi.spyOn(toastManager, "add").mockReturnValue("toast-id");
+    vi.stubGlobal("desktopBridge", bridge);
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    const render = () => act(async () => root.render(createElement(SnapShotCoordinator)));
+    return {
+      bridge,
+      route,
+      sound,
+      toast,
+      render,
+      setPending: (items: typeof pending) => {
+        pending = items;
+      },
+      setEnabled: async (snapShotEnabled: boolean) => {
+        currentSettings = { ...currentSettings, snapShotEnabled };
+        await render();
+      },
+      emit: (event: DesktopSnapShotEvent) =>
+        act(async () => {
+          for (const listener of listeners) listener(event);
+        }),
+    };
+  }
+
+  afterEach(async () => {
+    await act(async () => root?.unmount());
+    container?.remove();
+  });
+
+  const focus = () =>
+    act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+
+  it("leaves captures untouched while disabled and resumes them when enabled again", async () => {
+    const fixture = setup();
+    const { bridge, sound, toast } = fixture;
+    await fixture.setEnabled(false);
+    await focus();
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect(bridge.onSnapShotEvent).not.toHaveBeenCalled();
+    expect(bridge.listPendingSnapShots).not.toHaveBeenCalled();
+    expect(bridge.readSnapShot).not.toHaveBeenCalled();
+    expect(sound).not.toHaveBeenCalled();
+    expect(toast).not.toHaveBeenCalled();
+
+    await fixture.setEnabled(true);
+    await vi.waitFor(() =>
+      expect(bridge.acknowledgeSnapShot).toHaveBeenCalledExactlyOnceWith(capture.id),
+    );
+    expect(useComposerDraftStore.getState().getComposerDraft(target)?.images).toHaveLength(1);
+    expect(sound).toHaveBeenCalledOnce();
+
+    await fixture.setEnabled(false);
+    const another = { ...capture, id: "another-capture" };
+    fixture.setPending([another]);
+    bridge.listPendingSnapShots.mockClear();
+    await fixture.emit({ type: "started", id: another.id });
+    await fixture.emit({ type: "ready", id: another.id });
+    await fixture.emit({ type: "failed", id: another.id });
+    await focus();
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect(bridge.listPendingSnapShots).not.toHaveBeenCalled();
+    expect(bridge.getSnapShotState).not.toHaveBeenCalled();
+    expect(bridge.readSnapShot).toHaveBeenCalledOnce();
+    expect(sound).toHaveBeenCalledOnce();
+    expect(toast).not.toHaveBeenCalled();
+  });
+
+  it("reports each pending capture failure once, allows a new failure kind, and resets after success", async () => {
+    const fixture = setup(null);
+    const { bridge, sound, toast, route } = fixture;
+    await fixture.render();
+    await focus();
+    expect(toast).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        title: "Snapshot taken, but no project is available",
+      }),
+    );
+    expect(sound).toHaveBeenCalledOnce();
+    expect(bridge.acknowledgeSnapShot).not.toHaveBeenCalled();
+
+    route.routeThreadRef = target;
+    bridge.readSnapShot.mockRejectedValue(new Error("Capture unavailable"));
+    await fixture.render();
+    await focus();
+    await fixture.emit({ type: "ready", id: capture.id });
+    expect(toast.mock.calls.map(([value]) => value.title)).toEqual([
+      "Snapshot taken, but no project is available",
+      "Snapshot failed",
+    ]);
+    expect(sound).toHaveBeenCalledOnce();
+    expect(bridge.acknowledgeSnapShot).not.toHaveBeenCalled();
+
+    route.routeThreadRef = null;
+    await fixture.render();
+    await focus();
+    expect(toast).toHaveBeenCalledTimes(2);
+    route.routeThreadRef = target;
+    await fixture.render();
+
+    bridge.readSnapShot.mockResolvedValue(capture);
+    await focus();
+    await vi.waitFor(() =>
+      expect(bridge.acknowledgeSnapShot).toHaveBeenCalledExactlyOnceWith(capture.id),
+    );
+    expect(useComposerDraftStore.getState().getComposerDraft(target)?.images).toHaveLength(1);
+    fixture.setPending([capture]);
+    bridge.readSnapShot.mockRejectedValue(new Error("Capture unavailable again"));
+    await focus();
+    await focus();
+    expect(sound).toHaveBeenCalledTimes(2);
+    expect(toast.mock.calls.map(([value]) => value.title)).toEqual([
+      "Snapshot taken, but no project is available",
+      "Snapshot failed",
+      "Snapshot failed",
+    ]);
+  });
+
+  it("suppresses deferred failures while disabled and reports fresh failures after re-enable", async () => {
+    const fixture = setup();
+    const { bridge, sound, toast } = fixture;
+    let rejectRead: ((error: Error) => void) | undefined;
+    bridge.readSnapShot.mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        rejectRead = reject;
+      }),
+    );
+    await fixture.render();
+    expect(bridge.readSnapShot).toHaveBeenCalledExactlyOnceWith(capture.id);
+    await fixture.setEnabled(false);
+    await act(async () => rejectRead?.(new Error("Capture unavailable")));
+    expect(toast).not.toHaveBeenCalled();
+    expect(bridge.acknowledgeSnapShot).not.toHaveBeenCalled();
+
+    bridge.readSnapShot.mockRejectedValue(new Error("Capture unavailable"));
+    await fixture.setEnabled(true);
+    await focus();
+    expect(toast).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ description: `Capture ${capture.id}: Capture unavailable` }),
+    );
+    expect(sound).toHaveBeenCalledOnce();
+
+    await fixture.setEnabled(false);
+    let rejectList: ((error: Error) => void) | undefined;
+    bridge.listPendingSnapShots.mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        rejectList = reject;
+      }),
+    );
+    await fixture.setEnabled(true);
+    await fixture.setEnabled(false);
+    await act(async () => rejectList?.(new Error("Pending captures unavailable")));
+    expect(toast).toHaveBeenCalledOnce();
+
+    bridge.listPendingSnapShots.mockRejectedValueOnce(new Error("Pending captures unavailable"));
+    await fixture.setEnabled(true);
+    expect(toast).toHaveBeenCalledTimes(2);
+    expect(toast).toHaveBeenLastCalledWith(
+      expect.objectContaining({ description: "Pending captures unavailable" }),
+    );
+
+    fixture.setPending([]);
+    let resolveState: ((state: { message: string }) => void) | undefined;
+    bridge.getSnapShotState.mockReturnValueOnce(
+      new Promise<{ message: string }>((resolve) => {
+        resolveState = resolve;
+      }),
+    );
+    await fixture.emit({ type: "failed", id: "native-capture" });
+    expect(bridge.getSnapShotState).toHaveBeenCalledOnce();
+    await fixture.setEnabled(false);
+    await act(async () => resolveState?.({ message: "Native capture unavailable" }));
+    expect(toast).toHaveBeenCalledTimes(2);
+
+    bridge.getSnapShotState.mockResolvedValue({ message: "Native capture unavailable" });
+    await fixture.setEnabled(true);
+    await fixture.emit({ type: "failed", id: "native-capture" });
+    expect(toast).toHaveBeenCalledTimes(3);
+    expect(toast).toHaveBeenLastCalledWith(
+      expect.objectContaining({ description: "Native capture unavailable" }),
+    );
+    expect(sound).toHaveBeenCalledOnce();
+    expect(bridge.acknowledgeSnapShot).not.toHaveBeenCalled();
+  });
+
+  it("keeps a capture pending when disabled during target resolution, then retries on re-enable", async () => {
+    const fixture = setup(null);
+    const { bridge, route } = fixture;
+    route.defaultProjectRef = projectRef;
+    const draftId = DraftId.make("resolving-snapshot");
+    const threadId = ThreadId.make("resolving-snapshot-thread");
+    let resolveTarget: ((target: { draftId: DraftId; threadId: ThreadId }) => void) | undefined;
+    const resolution = new Promise<{ draftId: DraftId; threadId: ThreadId }>((resolve) => {
+      resolveTarget = resolve;
+    });
+    route.handleNewThread.mockReturnValue(resolution);
+    await fixture.render();
+    expect(route.handleNewThread).toHaveBeenCalledOnce();
+    await fixture.setEnabled(false);
+    await act(async () => {
+      useComposerDraftStore.getState().setProjectDraftThreadId(projectRef, draftId, { threadId });
+      resolveTarget?.({ draftId, threadId });
+    });
+    expect(bridge.readSnapShot).not.toHaveBeenCalled();
+    expect(bridge.acknowledgeSnapShot).not.toHaveBeenCalled();
+    expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.images ?? []).toEqual([]);
+    await fixture.setEnabled(true);
+    await vi.waitFor(() =>
+      expect(bridge.acknowledgeSnapShot).toHaveBeenCalledExactlyOnceWith(capture.id),
+    );
+    expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.images).toHaveLength(1);
+  });
+
+  it("finishes and acknowledges delivery already reading when disabled", async () => {
+    const fixture = setup();
+    let finishReading: ((value: typeof capture) => void) | undefined;
+    const reading = new Promise<typeof capture>((resolve) => {
+      finishReading = resolve;
+    });
+    fixture.bridge.readSnapShot.mockReturnValue(reading);
+    await fixture.render();
+    expect(fixture.bridge.readSnapShot).toHaveBeenCalledExactlyOnceWith(capture.id);
+    await fixture.setEnabled(false);
+    await act(async () => {
+      finishReading?.(capture);
+    });
+    await vi.waitFor(() =>
+      expect(fixture.bridge.acknowledgeSnapShot).toHaveBeenCalledExactlyOnceWith(capture.id),
+    );
+    expect(useComposerDraftStore.getState().getComposerDraft(target)?.images).toHaveLength(1);
+    expect(fixture.toast).not.toHaveBeenCalled();
   });
 });
 
@@ -190,20 +501,14 @@ describe("window capture delivery", () => {
           ...(accessibleText ? { accessibleText } : {}),
         },
       };
-      vi.stubGlobal("window", {
-        localStorage: storage,
-        desktopBridge: bridge,
-        setTimeout,
-        clearTimeout,
-        matchMedia: () => ({ matches: false }),
-        getComputedStyle: () => ({
-          backgroundColor: "rgb(0, 0, 0)",
-          borderTopColor: "rgb(255, 255, 255)",
-          borderTopLeftRadius: "8px",
-          borderTopWidth: "1px",
-        }),
-        dispatchEvent: vi.fn(),
-      });
+      vi.stubGlobal("desktopBridge", bridge);
+      vi.spyOn(window, "matchMedia").mockReturnValue({ matches: false } as MediaQueryList);
+      vi.spyOn(window, "getComputedStyle").mockReturnValue({
+        backgroundColor: "rgb(0, 0, 0)",
+        borderTopColor: "rgb(255, 255, 255)",
+        borderTopLeftRadius: "8px",
+        borderTopWidth: "1px",
+      } as CSSStyleDeclaration);
       vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
         animationFrames.push(callback);
         return animationFrames.length;
@@ -224,7 +529,16 @@ describe("window capture delivery", () => {
         item.source,
       );
 
+      const persisted = new Promise<void>((resolve) => {
+        const unsubscribe = useComposerDraftStore.subscribe((state) => {
+          if (state.getComposerDraft(target)?.persistedAttachments.length) {
+            unsubscribe();
+            resolve();
+          }
+        });
+      });
       const delivery = deliverSnapShot(bridge, item, target);
+      await persisted;
       await vi.advanceTimersByTimeAsync(0);
 
       const draft = useComposerDraftStore.getState().getComposerDraft(target);
@@ -314,7 +628,6 @@ describe("durable snapshot delivery", () => {
         readSnapShot: async () => capture,
         acknowledgeSnapShot,
       } as unknown as DesktopSnapShotBridge;
-      vi.stubGlobal("window", { localStorage: storage, dispatchEvent: vi.fn() });
       const write = storage.setItem.getMockImplementation()!;
       storage.setItem.mockImplementation(() => {
         throw new Error("QuotaExceededError");
