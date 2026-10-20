@@ -8,11 +8,12 @@ import type {
   SourceControlDiscoveryResult,
   SourceControlRepositoryInfo,
 } from "@t3tools/contracts";
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { SourceControlProviderKind, SourceControlRepositoryError } from "@t3tools/contracts";
 import { newProjectFolderName } from "@t3tools/shared/path";
 import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
+import * as Schema from "effect/Schema";
 
 import {
   appendBrowsePathSegment,
@@ -83,6 +84,18 @@ export function addProjectRemoteSourceProvider(
   source: AddProjectRemoteSource,
 ): SourceControlProviderKind | null {
   return source === "url" ? null : source;
+}
+
+const isSourceControlRepositoryError = Schema.is(SourceControlRepositoryError);
+
+export function sourceControlRepositoryErrorMessage(error: unknown): string {
+  if (isSourceControlRepositoryError(error)) {
+    const detail = error.detail.trim();
+    if (detail.length > 0) return detail;
+  }
+  return error instanceof Error && error.message.trim().length > 0
+    ? error.message
+    : "An error occurred.";
 }
 
 export function parseAddProjectRemoteSource(

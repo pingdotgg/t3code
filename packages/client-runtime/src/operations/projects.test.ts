@@ -1,4 +1,4 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { SourceControlProviderKind, SourceControlRepositoryError } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
   EnvironmentId,
@@ -23,10 +23,26 @@ import {
   normalizePastedCloneUrl,
   resolveAddProjectPath,
   sortAddProjectProviderSources,
+  sourceControlRepositoryErrorMessage,
 } from "./projects.ts";
 import type { EnvironmentProject } from "../state/models.ts";
 
 describe("add project shared logic", () => {
+  it("formats repository guidance and falls back for other lookup failures", () => {
+    const repositoryError = new SourceControlRepositoryError({
+      provider: SourceControlProviderKind.make("github"),
+      operation: "lookupRepository",
+      detail: "Repository not found. Check the owner and name and try again.",
+    });
+    const transportError = Object.assign(new Error("Connection closed."), {
+      detail: "raw transport diagnostic",
+    });
+
+    expect(sourceControlRepositoryErrorMessage(repositoryError)).toBe(repositoryError.detail);
+    expect(sourceControlRepositoryErrorMessage(transportError)).toBe("Connection closed.");
+    expect(sourceControlRepositoryErrorMessage(null)).toBe("An error occurred.");
+  });
+
   it("only allows project creation in connected environments", () => {
     expect(canCreateProjectInEnvironment("connected")).toBe(true);
     expect(canCreateProjectInEnvironment("available")).toBe(false);

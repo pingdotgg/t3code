@@ -17,6 +17,7 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as BitbucketApi from "@t3tools/source-control-bitbucket/server/BitbucketApi";
 import * as BitbucketSourceControlProvider from "@t3tools/source-control-bitbucket/server/BitbucketSourceControlProvider";
 import type * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
+import { GitHubNotSignedInError } from "@t3tools/source-control-github/server/GitHubCredentials";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 import * as SourceControlRepositoryService from "./SourceControlRepositoryService.ts";
 
@@ -128,38 +129,60 @@ it.effect("looks up repositories through the requested provider without search",
   }).pipe(Effect.provide(layer({ provider })));
 });
 
-it.effect("preserves provider failures without deriving the repository message from them", () => {
-  const providerCause = new SourceControlProviderError({
-    provider: SourceControlProviderKind.make("github"),
-    operation: "getRepositoryCloneUrls",
-    cwd: "/workspace",
-    repository: "octocat/t3code",
-    detail: "credential token abc123 was rejected",
-  });
-  const provider = makeProvider({
-    getRepositoryCloneUrls: () => Effect.fail(providerCause),
-  });
-
-  return Effect.gen(function* () {
-    const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
-    const error = yield* Effect.flip(
-      service.lookupRepository({
-        provider: SourceControlProviderKind.make("github"),
-        repository: "octocat/t3code",
+it.effect("exposes only safe GitHub lookup guidance while retaining provider failures", () =>
+  Effect.gen(function* () {
+    const safeDetail = "Repository not found. Check the owner and name and try again.";
+    const genericDetail = "The source control operation could not be completed.";
+    const signedOutCause = new GitHubNotSignedInError({
+      host: "private-github.example.com",
+      account: "private-account",
+    });
+    for (const [providerKind, detail, expectedDetail, cause] of [
+      ["github", safeDetail, safeDetail, undefined],
+      ["github", `${safeDetail} credential token abc123 was rejected`, genericDetail, undefined],
+      ["gitlab", safeDetail, genericDetail, undefined],
+      ["gitlab", signedOutCause.message, genericDetail, signedOutCause],
+      [
+        "github",
+        signedOutCause.message,
+        "GitHub is not authenticated. Run `gh auth login` (or set GH_TOKEN) and retry.",
+        signedOutCause,
+      ],
+    ] as const) {
+      const providerKindValue = SourceControlProviderKind.make(providerKind);
+      const providerCause = new SourceControlProviderError({
+        provider: providerKindValue,
+        operation: "getRepositoryCloneUrls",
         cwd: "/workspace",
-      }),
-    );
+        repository: "octocat/missing",
+        detail,
+        cause,
+      });
+      const provider = makeProvider({
+        kind: providerKindValue,
+        getRepositoryCloneUrls: () => Effect.fail(providerCause),
+      });
+      const error = yield* Effect.gen(function* () {
+        const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+        return yield* Effect.flip(
+          service.lookupRepository({
+            provider: providerKindValue,
+            repository: "octocat/missing",
+            cwd: "/workspace",
+          }),
+        );
+      }).pipe(Effect.provide(layer({ provider })));
 
-    assert.strictEqual(error.provider, "github");
-    assert.strictEqual(error.operation, "lookupRepository");
-    assert.strictEqual(error.detail, "The source control operation could not be completed.");
-    assert.strictEqual(
-      error.message,
-      "Source control repository operation lookupRepository failed for github: The source control operation could not be completed.",
-    );
-    assert.strictEqual(error.cause, providerCause);
-  }).pipe(Effect.provide(layer({ provider })));
-});
+      assert.strictEqual(error.provider, providerKindValue);
+      assert.strictEqual(error.operation, "lookupRepository");
+      assert.notInclude(error.message, "abc123");
+      assert.notInclude(error.message, signedOutCause.host);
+      assert.notInclude(error.message, "private-account");
+      assert.strictEqual(error.cause, providerCause);
+      assert.strictEqual(error.detail, expectedDetail);
+    }
+  }),
+);
 
 it.effect(
   "reports the safe Bitbucket locator detail through repository lookup and publishing",
