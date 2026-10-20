@@ -1245,7 +1245,12 @@ it.effect("reconciles SSH host settings without publishing no-op changes", () =>
     const initial = yield* service.state;
     expect(yield* update([])).toEqual(initial);
 
-    const host: SshDeviceHostConfig = { id: "remote", label: "Remote", target: "remote-fixture" };
+    const host: SshDeviceHostConfig = {
+      kind: "ssh",
+      id: "remote",
+      label: "Remote",
+      target: "remote-fixture",
+    };
     const added = yield* update([host]);
     expect(added.hosts.map((entry) => entry.id)).toEqual([LOCAL_DEVICE_HOST_ID, host.id]);
     expect(yield* update([{ ...host }])).toEqual(added);

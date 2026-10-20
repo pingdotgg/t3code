@@ -145,7 +145,7 @@ export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null
           }
           onClick={() => {
             setOriginalHost(null);
-            setEditing({ id: randomUUID(), label: "", target: "" });
+            setEditing({ kind: "ssh", id: randomUUID(), label: "", target: "" });
           }}
         >
           <PlusIcon className="size-3.5" /> Add host

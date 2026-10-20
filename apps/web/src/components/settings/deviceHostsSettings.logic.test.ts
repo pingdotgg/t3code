@@ -2,8 +2,13 @@ import { describe, expect, it } from "vite-plus/test";
 import { updateDeviceHosts } from "./deviceHostsSettings.logic";
 
 describe("device host changes across environments", () => {
-  const shared = { id: "shared", label: "Mac mini", target: "julius@macmini" };
-  const local = { id: "other", label: "Android", target: "julius@android" };
+  const shared = {
+    kind: "ssh" as const,
+    id: "shared",
+    label: "Mac mini",
+    target: "julius@macmini",
+  };
+  const local = { kind: "ssh" as const, id: "other", label: "Android", target: "julius@android" };
 
   it("adds to differing host lists without losing environment-specific hosts, including on retry", () => {
     const environments = [[], [local], [shared, local]];
