@@ -75,6 +75,14 @@ function makeFrame() {
   return frame;
 }
 
+const PNG_HEADER = (() => {
+  const header = Buffer.alloc(24);
+  header.write("IHDR", 12);
+  header.writeUInt32BE(1280, 16);
+  header.writeUInt32BE(800, 20);
+  return header.toString("base64");
+})();
+
 function makeSession(frame?: ReturnType<typeof makeFrame>) {
   const events = new NodeEvents.EventEmitter();
   return {
@@ -84,7 +92,10 @@ function makeSession(frame?: ReturnType<typeof makeFrame>) {
     send: vi.fn(async (method: string, input?: unknown): Promise<Record<string, unknown>> => {
       if (method === "Page.getNavigationHistory") return { currentIndex: 0, entries: [{}] };
       if (method === "Page.getLayoutMetrics") return { cssVisualViewport: { pageX: 0, pageY: 0 } };
-      if (method === "Page.captureScreenshot") return { data: "ZnJhbWU=" };
+      if (method === "Page.captureScreenshot") {
+        // A snapshot sizes its screenshot from the PNG header; viewers get JPEG frames as-is.
+        return { data: (input as { format: string }).format === "png" ? PNG_HEADER : "ZnJhbWU=" };
+      }
       if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "main" } } };
       // Snapshots read password fields from their own isolated world in each frame.
       if (method === "Page.createIsolatedWorld") {
@@ -2261,6 +2272,106 @@ it.live("a desktop page that comes back reconnects without waiting for a viewer"
       desktopDetaches.emit("attach", { threadId: scope.thread.threadId, tabId: opened.tabId });
       while (desktopConnections.length < 2) yield* Effect.yieldNow;
       expect(desktopConnections).toHaveLength(2);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+// Chromium sizes a capture by the clip, its scale, and the display ratio net of page zoom.
+it.live.each([
+  {
+    name: "desktop at display ratio 1.5",
+    desktop: true,
+    page: { ratio: 1.5, width: 1280, height: 800, zoom: 1 },
+    scrollY: 0,
+    size: { width: 1280, height: 800 },
+    clipY: 0,
+  },
+  {
+    name: "desktop resized to a phone",
+    desktop: true,
+    page: { ratio: 1, width: 390, height: 844, zoom: 1 },
+    scrollY: 0,
+    size: { width: 390, height: 844 },
+    clipY: undefined,
+  },
+  {
+    name: "desktop zoom changes during a scrolled snapshot",
+    desktop: true,
+    page: { ratio: 3, width: 640, height: 400, zoom: 2 },
+    scrollY: 100,
+    size: { width: 1280, height: 800 },
+    clipY: 200,
+  },
+  {
+    name: "headless",
+    desktop: false,
+    page: { ratio: 2, width: 1280, height: 800, zoom: 1 },
+    scrollY: 0,
+    size: { width: 640, height: 400 },
+    clipY: 0,
+  },
+])("snapshot captures the page's own viewport: $name", ({ desktop, page, scrollY, size, clipY }) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      desktopRendersNext = desktop;
+      const { browser, broker, tabId } = yield* ready;
+      yield* browser.attachViewer(viewerInput(tabId, false));
+      const context = desktop ? desktopConnections[0]!.context : contexts[0]!;
+      const display = desktop ? page.ratio / page.zoom : 1;
+      let zoom = 1;
+      const clips: Array<{ y: number } | undefined> = [];
+      let metricsReads = 0;
+      for (const session of context.sessions) {
+        const send = session.send.getMockImplementation()!;
+        session.send.mockImplementation(async (method, input) => {
+          if (
+            method === "Runtime.evaluate" &&
+            String((input as { expression?: string })?.expression).includes("devicePixelRatio")
+          ) {
+            metricsReads += 1;
+            const value = {
+              ratio: page.ratio * (zoom / page.zoom),
+              width: page.width * (page.zoom / zoom),
+              height: page.height * (page.zoom / zoom),
+            };
+            // Desktop zoom applies after this renderer read, before the next layout reply.
+            zoom = page.zoom;
+            return { result: { value } };
+          }
+          if (method === "Page.getLayoutMetrics") {
+            return { cssVisualViewport: { pageX: 0, pageY: scrollY, zoom } };
+          }
+          if (method === "Page.captureScreenshot") {
+            const clip = (
+              input as { clip?: { y: number; width: number; height: number; scale: number } }
+            )?.clip;
+            clips.push(clip);
+            const header = Buffer.alloc(24);
+            header.write("IHDR", 12);
+            header.writeUInt32BE(
+              Math.round((clip ? clip.width * clip.scale : page.width * page.zoom) * display),
+              16,
+            );
+            header.writeUInt32BE(
+              Math.round((clip ? clip.height * clip.scale : page.height * page.zoom) * display),
+              20,
+            );
+            return { data: header.toString("base64") };
+          }
+          return send(method, input);
+        });
+      }
+      const result = yield* broker.invoke<PreviewAutomationSnapshot>({
+        scope,
+        tabId,
+        operation: "snapshot",
+        input: {},
+      });
+      const png = Buffer.from(result.screenshot.data, "base64");
+      expect(result.screenshot).toMatchObject(size);
+      expect({ width: png.readUInt32BE(16), height: png.readUInt32BE(20) }).toEqual(size);
+      expect(clips.map((clip) => clip?.y)).toEqual([clipY]);
+      if (!desktop) expect(metricsReads).toBe(0);
     }),
   ).pipe(Effect.provide(layer)),
 );

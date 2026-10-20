@@ -1961,7 +1961,10 @@ const make = Effect.gen(function* () {
       }
       case "snapshot": {
         return withScreencastsPaused(tab, () =>
-          ServerBrowserPage.snapshot({ ...tab, renderScale: RENDER_SCALE }),
+          ServerBrowserPage.snapshot({
+            ...tab,
+            renderScale: tab.desktop ? "display" : RENDER_SCALE,
+          }),
         );
       }
       case "click": {
