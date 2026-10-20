@@ -15,7 +15,10 @@ import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
 import { resolveLinuxDesktopEntryName } from "./DesktopEarlyElectronStartup.ts";
 import { resolveDesktopBaseDir, resolveDesktopStateDir } from "./DesktopStatePaths.ts";
-import { isNightlyDesktopVersion } from "../updates/updateChannels.ts";
+import {
+  isNightlyDesktopVersion,
+  resolveDefaultDesktopUpdateChannel,
+} from "../updates/updateChannels.ts";
 import type { OtlpProtocol } from "@t3tools/shared/observability";
 
 export interface MakeDesktopEnvironmentInput {
@@ -108,6 +111,13 @@ export function resolveDesktopAppBranding(input: {
     stageLabel,
     displayName: `${APP_BASE_NAME} (${stageLabel})`,
   };
+}
+
+// Keep Chromium's encryption identity on the names shipped before branding changed.
+export function resolveDesktopSafeStorageName(appVersion: string): string {
+  return resolveDefaultDesktopUpdateChannel(appVersion) === "nightly"
+    ? "T3 Code (Nightly)"
+    : "T3 Code (Alpha)";
 }
 
 function normalizeDesktopArch(arch: string): DesktopRuntimeArch {
