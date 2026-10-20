@@ -398,6 +398,7 @@ describe.each([
     );
   });
 
+  // The first Code-tab action starts real diff workers as well as driving the panel.
   it.each([
     "Resolve conflicts",
     "Ask a question",
@@ -405,7 +406,7 @@ describe.each([
     "Fix findings in this thread",
     "Fix check",
     "Add to agent",
-  ])("%s writes to the correct composer", async (action) => {
+  ])("%s writes to the correct composer", { timeout: 30_000 }, async (action) => {
     setup();
     // Cover both a host without inline comments and an account that cannot write them.
     currentDetail =

@@ -77,14 +77,19 @@ it("keeps only the usage limit attached while an active goal waits in the collap
   const limit = page.getByText("Usage limit reached", { exact: true });
   const goal = page.getByText("Goal active", { exact: true });
 
-  expect(visibleBanners()).toHaveLength(1);
+  // A retained pointer can expand the stack as it mounts; start outside the hover target.
+  await userEvent.hover(limit);
+  await expect.poll(visibleBanners).toHaveLength(1);
   await expect.element(limit).toBeVisible();
   await expect.element(goal).not.toBeVisible();
   expect(container.querySelector('[data-slot="composer-banner-attachment"]')?.textContent).toBe(
     "Usage limit reached",
   );
 
-  await page.getByRole("button", { name: "Show other notices" }).click();
+  const peek = page.getByRole("button", { name: "Show other notices" });
+  // Hover opens the stack and hides the peek before a pointer click can finish.
+  await act(() => peek.element().focus());
+  await userEvent.keyboard("{Enter}");
   await expect.element(goal).toBeVisible();
   await expect.element(limit).toBeVisible();
   await expect.poll(visibleBanners).toHaveLength(2);
@@ -93,6 +98,11 @@ it("keeps only the usage limit attached while an active goal waits in the collap
   await expect.element(goal).not.toBeVisible();
   await expect.element(limit).toBeVisible();
   expect(visibleBanners()).toHaveLength(1);
+
+  await userEvent.hover(peek);
+  await expect.element(goal).toBeVisible();
+  await expect.element(limit).toBeVisible();
+  await expect.poll(visibleBanners).toHaveLength(2);
 });
 
 it("reveals the full running command only while its title is clipped", async () => {

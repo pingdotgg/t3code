@@ -200,7 +200,8 @@ describe("code-view worker lifecycle", () => {
     };
   }
 
-  it("starts on demand, keeps quick reopens warm, and expires the last closed pool", async () => {
+  // Two cold starts can each use Pierre's 10-second initialization budget.
+  it("starts workers on demand and expires idle pools", { timeout: 30_000 }, async () => {
     setup();
     await using workers = await workerEnvironment();
     const view = await workers.render(renderViews(0));
