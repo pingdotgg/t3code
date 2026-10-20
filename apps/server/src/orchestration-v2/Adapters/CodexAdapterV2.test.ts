@@ -48,6 +48,7 @@ import { resolveAttachmentPathById } from "../../attachmentStore.ts";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -63,6 +64,7 @@ import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEve
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as EffectWorker from "../EffectWorker.ts";
 import * as Orchestrator from "../Orchestrator.ts";
+import * as ProviderSessionManager from "../ProviderSessionManager.ts";
 import * as ProviderReplayHarness from "../testkit/ProviderReplayHarness.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -2020,6 +2022,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       Effect.void,
     onRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
     readChildMetadata?: Parameters<typeof withCodexReplayChildMetadata>[2],
+    replayOptions: Parameters<typeof CodexReplay.makeReplayDriver>[1] = {},
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -2027,9 +2030,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       const serverConfig = yield* makeReplayServerConfig(transcript.scenario).pipe(Effect.orDie);
       const continuationRequests: Array<ProviderContinuationRequests.ProviderContinuationRequest> =
         [];
+      const replayDriver = yield* CodexReplay.makeReplayDriver(transcript, replayOptions);
       const clientFactory: CodexAdapterV2.CodexAppServerClientFactoryShape = {
         open: (openInput) =>
-          Layer.build(CodexReplay.layerReplay(transcript)).pipe(
+          Layer.build(CodexReplay.layerReplayWithDriver(replayDriver)).pipe(
             Effect.mapError(
               (cause) =>
                 new ProviderAdapter.ProviderAdapterOpenSessionError({
@@ -3316,7 +3320,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             attemptId: RunAttemptId.make("compact-attempt"),
             text: "/compact",
           }),
-        );
+        ).pipe(Effect.forkScoped);
         yield* harness.firstTerminal;
         const items = harness.events.flatMap((event) =>
           event.type === "turn_item.updated" && event.turnItem.type === "compaction"
@@ -9392,6 +9396,573 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
     );
 
+    it.effect.each(["no hold", "held active goal"] as const)(
+      "keeps manual compaction separate from an earlier goal turn with %s",
+      (ownership) =>
+        Effect.gen(function* () {
+          const heldGoal = ownership === "held active goal";
+          const item = { type: "contextCompaction", id: "compact-item" };
+          const transcript = makeCodexReplayTranscript({
+            scenario: `goal-${ownership}-during-compaction`,
+            entries: [
+              ...(heldGoal
+                ? [
+                    ...codexReplayPreamble({
+                      nativeThreadId,
+                      nativeTurnId: "goal-turn-1",
+                      prompt: objective,
+                    }),
+                    notification("goal active", "thread/goal/updated", {
+                      threadId: nativeThreadId,
+                      goal: codexGoal("active", 0),
+                    }),
+                    notification("first turn done", "turn/completed", {
+                      threadId: nativeThreadId,
+                      turn: makeCodexReplayTurn({ id: "goal-turn-1", status: "completed" }),
+                    }),
+                  ]
+                : sessionStart),
+              ...request(
+                heldGoal ? 4 : 3,
+                "thread/compact/start",
+                { threadId: nativeThreadId },
+                {},
+              ),
+              notification("goal progress", "thread/goal/updated", {
+                threadId: nativeThreadId,
+                goal: codexGoal("active", 10),
+              }),
+              notification("continuation", "turn/started", {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: "goal-turn-2", status: "inProgress" }),
+              }),
+              notification("continuation done", "turn/completed", {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({
+                  id: "goal-turn-2",
+                  status: heldGoal ? "completed" : "interrupted",
+                }),
+              }),
+              ...(!heldGoal
+                ? [
+                    notification("failed continuation", "turn/started", {
+                      threadId: nativeThreadId,
+                      turn: makeCodexReplayTurn({ id: "failed-goal-turn", status: "inProgress" }),
+                    }),
+                    notification("continuation error", "error", {
+                      threadId: nativeThreadId,
+                      turnId: "failed-goal-turn",
+                      willRetry: false,
+                      error: {
+                        message: "goal continuation failed",
+                        codexErrorInfo: null,
+                        additionalDetails: null,
+                      },
+                    }),
+                    notification("failed continuation done", "turn/completed", {
+                      threadId: nativeThreadId,
+                      turn: {
+                        ...makeCodexReplayTurn({ id: "failed-goal-turn", status: "failed" }),
+                        error: {
+                          message: "goal continuation failed",
+                          codexErrorInfo: null,
+                          additionalDetails: null,
+                        },
+                      },
+                    }),
+                  ]
+                : []),
+              notification("compaction", "turn/started", {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: "compact-turn", status: "inProgress" }),
+              }),
+              ...(["item/started", "item/completed"] as const).map((method) =>
+                notification(method, method, {
+                  threadId: nativeThreadId,
+                  turnId: "compact-turn",
+                  item,
+                }),
+              ),
+              notification("compaction done", "turn/completed", {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: "compact-turn", status: "completed" }),
+              }),
+              notification("accounted", "thread/goal/updated", {
+                threadId: nativeThreadId,
+                goal: codexGoal("active", 20),
+              }),
+            ],
+          });
+          const idAllocator = yield* IdAllocator.IdAllocatorV2;
+          const providerTurnId = (nativeTurnId: string) =>
+            idAllocator.derive.providerTurn({
+              driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+              nativeTurnId,
+            });
+          // This milestone also arrives when ownership is broken and compaction
+          // never emits a terminal, so regressions fail assertions instead of hanging.
+          const accounted = yield* Deferred.make<void>();
+          const harness = yield* makeCodexReplayHarness(transcript, (event) =>
+            event.type === "provider_thread.updated" && event.providerThread.goal?.tokensUsed === 20
+              ? Deferred.succeed(accounted, undefined)
+              : Effect.void,
+          );
+          if (heldGoal) {
+            yield* harness.runtime.startTurn(yield* goalTurnInput(harness, objective));
+          }
+          yield* harness.runtime.compactThread!(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("compact-attempt"),
+              text: "/compact",
+            }),
+          ).pipe(Effect.forkScoped);
+          yield* Deferred.await(accounted);
+
+          assert.deepEqual(
+            harness.events.flatMap((event) =>
+              event.type === "provider_turn.updated" && event.providerTurn.status === "running"
+                ? [
+                    [
+                      event.providerTurn.id,
+                      event.providerTurn.runAttemptId,
+                      event.providerTurn.nodeId,
+                    ],
+                  ]
+                : [],
+            ),
+            [
+              ...(heldGoal
+                ? ["goal-turn-1", "goal-turn-2"].map((turnId) => [
+                    providerTurnId(turnId),
+                    RunAttemptId.make("goal-attempt"),
+                    NodeId.make("node-goal-attempt"),
+                  ])
+                : []),
+              [
+                providerTurnId("compact-turn"),
+                RunAttemptId.make("compact-attempt"),
+                NodeId.make("node-compact-attempt"),
+              ],
+            ],
+          );
+          assert.deepEqual(
+            harness.events.flatMap((event) =>
+              event.type === "turn_item.updated" && event.turnItem.type === "compaction"
+                ? [[event.turnItem.providerTurnId, event.turnItem.runId, event.turnItem.status]]
+                : [],
+            ),
+            [
+              [providerTurnId("compact-turn"), RunId.make("run-compact-attempt"), "running"],
+              [providerTurnId("compact-turn"), RunId.make("run-compact-attempt"), "completed"],
+            ],
+          );
+          assert.deepEqual(
+            harness
+              .terminalEvents()
+              .filter(
+                (event) => !heldGoal || event.providerTurnId !== providerTurnId("goal-turn-2"),
+              )
+              .map((event) => [event.providerTurnId, event.status]),
+            [[providerTurnId("compact-turn"), "completed"]],
+          );
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+    );
+
+    it.effect("run.interrupt stops compact after RPC success and before its first item", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-compact-stop-" });
+          const transcript = makeCodexReplayTranscript({
+            scenario: "compact-stop-before-first-item",
+            entries: [
+              ...codexReplayPreamble({
+                nativeThreadId,
+                nativeTurnId: "seed-turn",
+                prompt: "Prepare context",
+              }),
+              notification("seed completed", "turn/completed", {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: "seed-turn", status: "completed" }),
+              }),
+              notification("goal active before compact", "thread/goal/updated", {
+                threadId: nativeThreadId,
+                goal: codexGoal("active", 10),
+              }),
+              ...request(4, "thread/compact/start", { threadId: nativeThreadId }, {}),
+              notification("compact started", "turn/started", {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: "compact-turn", status: "inProgress" }),
+              }),
+              notification("start accounted", "thread/goal/updated", {
+                threadId: nativeThreadId,
+                goal: codexGoal("active", 11),
+              }),
+              ...request(
+                5,
+                "turn/interrupt",
+                {
+                  threadId: nativeThreadId,
+                  turnId: "compact-turn",
+                },
+                {},
+              ),
+              ...(["item/started", "item/completed"] as const).map((method) =>
+                notification(method, method, {
+                  threadId: nativeThreadId,
+                  turnId: "compact-turn",
+                  item: { type: "contextCompaction", id: "late-compact-item" },
+                }),
+              ),
+              notification("compact interrupted", "turn/completed", {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: "compact-turn", status: "interrupted" }),
+              }),
+              notification("late events accounted", "thread/goal/updated", {
+                threadId: nativeThreadId,
+                goal: codexGoal("paused", 12),
+              }),
+            ],
+          });
+          const localTranscript = yield* decodeReplayTranscriptJson(
+            (yield* encodeReplayTranscriptJson(transcript)).replaceAll(
+              yield* encodeStringJson("/workspace"),
+              yield* encodeStringJson(cwd),
+            ),
+          );
+          const goalActiveAllowed = yield* Deferred.make<void>();
+          const lateItemsAllowed = yield* Deferred.make<void>();
+          const nativeInterrupt = yield* Deferred.make<void>();
+          const replayDriver = yield* CodexReplay.makeReplayDriver(localTranscript, {
+            beforeEmitInbound: (entry) =>
+              entry.label === "goal active before compact"
+                ? Deferred.await(goalActiveAllowed)
+                : entry.label === "turn/interrupt"
+                  ? Deferred.succeed(nativeInterrupt, undefined).pipe(Effect.asVoid)
+                  : entry.label === "item/started"
+                    ? Deferred.await(lateItemsAllowed)
+                    : Effect.void,
+          });
+          const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+          for (const args of [
+            ["init", "--quiet"],
+            [
+              "-c",
+              "user.name=Test",
+              "-c",
+              "user.email=test@example.com",
+              "commit",
+              "--allow-empty",
+              "--quiet",
+              "-m",
+              "Initial commit",
+            ],
+          ]) {
+            assert.equal(
+              Number(yield* spawner.exitCode(ChildProcess.make("git", args, { cwd }))),
+              0,
+            );
+          }
+          yield* Effect.gen(function* () {
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
+            const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+            const threadId = ThreadId.make("thread:compact-stop");
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              commandId: CommandId.make("create-compact-stop"),
+              threadId,
+              projectId: ProjectId.make("project:compact-stop"),
+              title: "Compact Stop",
+              modelSelection: CODEX_TEST_MODEL_SELECTION,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: cwd,
+              createdBy: "user",
+              creationSource: "web",
+            });
+            const seedSettled = yield* orchestrator.streamDomainEvents.pipe(
+              Stream.filter(
+                (event) =>
+                  event.type === "run.updated" &&
+                  (event.payload.status === "waiting" || event.payload.status === "completed"),
+              ),
+              Stream.runHead,
+              Effect.forkChild({ startImmediately: true }),
+            );
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make("seed-compact"),
+              threadId,
+              messageId: MessageId.make("message:seed-compact"),
+              text: "Prepare context",
+              attachments: [],
+              createdBy: "user",
+              creationSource: "web",
+              dispatchMode: { type: "start_immediately" },
+            });
+            yield* worker.drain();
+            assert.isNull((yield* Ref.get(replayDriver.state)).failure);
+            yield* Fiber.join(seedSettled);
+            yield* worker.drain();
+            assert.equal(
+              (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)?.status,
+              "completed",
+            );
+            const session = Option.getOrThrow(
+              yield* (yield* ProviderSessionManager.ProviderSessionManagerV2).get(
+                (yield* orchestrator.getThreadProjection(threadId)).providerThreads.at(-1)!
+                  .providerSessionId!,
+              ),
+            );
+            const goalReady = yield* session.events.pipe(
+              Stream.filter(
+                (event) =>
+                  event.type === "provider_thread.updated" &&
+                  event.providerThread.goal?.tokensUsed === 10,
+              ),
+              Stream.runHead,
+              Effect.forkChild({ startImmediately: true }),
+            );
+            yield* Deferred.succeed(goalActiveAllowed, undefined);
+            yield* Fiber.join(goalReady);
+            const started = yield* orchestrator.streamDomainEvents.pipe(
+              Stream.filter(
+                (event) =>
+                  event.type === "provider-thread.updated" && event.payload.goal?.tokensUsed === 11,
+              ),
+              Stream.runHead,
+              Effect.forkChild({ startImmediately: true }),
+            );
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make("start-compact"),
+              threadId,
+              messageId: MessageId.make("message:compact"),
+              text: "/compact",
+              attachments: [],
+              createdBy: "user",
+              creationSource: "web",
+              dispatchMode: { type: "start_immediately" },
+            });
+            // The start effect may remain unsettled until ownership is classified.
+            const starting = yield* worker.drain().pipe(Effect.forkScoped);
+            yield* Fiber.join(started);
+            const before = yield* orchestrator.getThreadProjection(threadId);
+            const run = before.runs.at(-1)!;
+            assert.equal(before.providerThreads.at(-1)?.goal?.status, "active");
+            assert.isFalse(
+              before.providerTurns.some((turn) => turn.runAttemptId === run.activeAttemptId),
+            );
+            yield* orchestrator.dispatch({
+              type: "run.interrupt",
+              commandId: CommandId.make("stop-compact"),
+              threadId,
+              runId: run.id,
+            });
+            yield* Fiber.join(starting);
+            yield* worker.drain();
+            assert.isNull((yield* Ref.get(replayDriver.state)).failure);
+            assert.isTrue(
+              yield* Deferred.isDone(nativeInterrupt),
+              "run.interrupt must send turn/interrupt for the deferred native compact",
+            );
+            const stopped = yield* orchestrator.getThreadProjection(threadId);
+            assert.equal(stopped.runs.at(-1)?.status, "interrupted");
+            assert.equal(stopped.attempts.at(-1)?.status, "interrupted");
+            const runStatuses: Array<string> = [];
+            const attemptStatuses: Array<string> = [];
+            yield* orchestrator.streamDomainEvents.pipe(
+              Stream.runForEach((event) =>
+                Effect.sync(() => {
+                  if (event.type === "run.updated" && event.payload.id === run.id) {
+                    runStatuses.push(event.payload.status);
+                  }
+                  if (
+                    event.type === "run-attempt.updated" &&
+                    event.payload.id === run.activeAttemptId
+                  ) {
+                    attemptStatuses.push(event.payload.status);
+                  }
+                }),
+              ),
+              Effect.forkChild({ startImmediately: true }),
+            );
+            // Stopped runs reject persisted thread updates; observe the processed adapter event.
+            const accounted = yield* session.events.pipe(
+              Stream.filter(
+                (event) =>
+                  event.type === "provider_thread.updated" &&
+                  event.providerThread.goal?.tokensUsed === 12,
+              ),
+              Stream.runHead,
+              Effect.forkChild({ startImmediately: true }),
+            );
+            yield* Deferred.succeed(lateItemsAllowed, undefined);
+            yield* Fiber.join(accounted);
+            yield* worker.drain();
+            const after = yield* orchestrator.getThreadProjection(threadId);
+            assert.equal(after.runs.at(-1)?.status, "interrupted");
+            assert.equal(after.attempts.at(-1)?.status, "interrupted");
+            assert.deepEqual(
+              runStatuses.filter((status) => status !== "interrupted"),
+              [],
+            );
+            assert.deepEqual(
+              attemptStatuses.filter((status) => status !== "interrupted"),
+              [],
+            );
+            assert.isFalse(
+              after.providerTurns.some((turn) => turn.runAttemptId === run.activeAttemptId),
+            );
+            assert.isFalse(after.turnItems.some((item) => item.type === "compaction"));
+            assert.isNull((yield* Ref.get(replayDriver.state)).failure);
+          }).pipe(
+            Effect.provide(
+              ProviderReplayHarness.layerWithRegistry(
+                { name: "codex-compact-stop", runtimePolicyOverride: { cwd } },
+                CodexAdapterV2Testkit.layer({ transcript: localTranscript, driver: replayDriver }),
+                { runEffectWorker: false },
+              ),
+            ),
+          );
+        }).pipe(Effect.provide(NodeServices.layer)),
+      ),
+    );
+
+    it.effect.each(["failed", "interrupted"] as const)(
+      "settles an itemless manual compaction as %s without claiming a later turn",
+      (terminalStatus) =>
+        Effect.gen(function* () {
+          const failure = {
+            message: "compaction failed",
+            codexErrorInfo: null,
+            additionalDetails: null,
+          };
+          const transcript = makeCodexReplayTranscript({
+            scenario: `itemless-compaction-${terminalStatus}`,
+            entries: [
+              ...sessionStart,
+              ...request(3, "thread/compact/start", { threadId: nativeThreadId }, {}),
+              notification("compaction", "turn/started", {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: "compact-turn", status: "inProgress" }),
+              }),
+              ...(terminalStatus === "failed"
+                ? [
+                    notification("compaction error", "error", {
+                      threadId: nativeThreadId,
+                      turnId: "compact-turn",
+                      willRetry: false,
+                      error: failure,
+                    }),
+                  ]
+                : []),
+              notification("compaction terminal", "turn/completed", {
+                threadId: nativeThreadId,
+                turn: {
+                  ...makeCodexReplayTurn({ id: "compact-turn", status: terminalStatus }),
+                  ...(terminalStatus === "failed" ? { error: failure } : {}),
+                },
+              }),
+              notification("later turn", "turn/started", {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: "later-turn", status: "inProgress" }),
+              }),
+              ...(["item/started", "item/completed"] as const).map((method) =>
+                notification(method, method, {
+                  threadId: nativeThreadId,
+                  turnId: "later-turn",
+                  item: { type: "contextCompaction", id: "later-compaction" },
+                }),
+              ),
+              notification("later turn done", "turn/completed", {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: "later-turn", status: "completed" }),
+              }),
+              // A trailing protocol event proves both terminals were processed even
+              // when the adapter loses the itemless compaction entirely.
+              notification("accounted", "thread/goal/updated", {
+                threadId: nativeThreadId,
+                goal: codexGoal("paused", 20),
+              }),
+            ],
+          });
+          const accounted = yield* Deferred.make<void>();
+          const harness = yield* makeCodexReplayHarness(transcript, (event) =>
+            event.type === "provider_thread.updated" && event.providerThread.goal?.tokensUsed === 20
+              ? Deferred.succeed(accounted, undefined)
+              : Effect.void,
+          );
+          yield* harness.runtime.compactThread!(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("compact-attempt"),
+              text: "/compact",
+            }),
+          ).pipe(Effect.forkScoped);
+          yield* Deferred.await(accounted);
+          const compactTurnId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+            driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+            nativeTurnId: "compact-turn",
+          });
+
+          assert.deepEqual(
+            harness.events.flatMap((event) =>
+              event.type === "provider_turn.updated"
+                ? [
+                    [
+                      event.providerTurn.id,
+                      event.providerTurn.runAttemptId,
+                      event.providerTurn.nodeId,
+                      event.providerTurn.status,
+                    ],
+                  ]
+                : [],
+            ),
+            (["running", terminalStatus] as const).map((status) => [
+              compactTurnId,
+              RunAttemptId.make("compact-attempt"),
+              NodeId.make("node-compact-attempt"),
+              status,
+            ]),
+          );
+          assert.deepEqual(
+            harness
+              .terminalEvents()
+              .map((event) => [event.providerTurnId, event.status, event.failure?.message]),
+            [
+              [
+                compactTurnId,
+                terminalStatus,
+                terminalStatus === "failed" ? failure.message : undefined,
+              ],
+            ],
+          );
+          assert.isFalse(
+            harness.events.some(
+              (event) => event.type === "turn_item.updated" && event.turnItem.type === "compaction",
+            ),
+            "The later native turn must not inherit the settled compact attempt",
+          );
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+    );
+
     it.effect("settles /goal pause with a reply instead of a native turn", () =>
       Effect.gen(function* () {
         const transcript = makeCodexReplayTranscript({
@@ -9535,11 +10106,35 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
     );
 
-    it.effect("moves a Stop that names an earlier goal turn to the turn Codex continued with", () =>
+    it.effect.each([
+      "no compact",
+      "goal first item",
+      "goal starts after Stop",
+      "compact first item",
+    ] as const)("classifies the deferred turn after goal Stop (%s)", (scenario) =>
       Effect.gen(function* () {
+        const pendingCompaction = scenario !== "no compact";
+        const compactTurn = scenario === "compact first item";
+        const stopBeforeStart = scenario === "goal starts after Stop";
+        const nativeTurnId = compactTurn ? "compact-turn" : "goal-turn-b";
         const prompt = "Keep going";
+        const nativeStart = notification("deferred start", "turn/started", {
+          threadId: nativeThreadId,
+          turn: makeCodexReplayTurn({ id: nativeTurnId, status: "inProgress" }),
+        });
+        const classified = notification("classification accounted", "thread/goal/updated", {
+          threadId: nativeThreadId,
+          goal: codexGoal("paused", 12),
+        });
+        const firstItem = notification("late first item", "item/started", {
+          threadId: nativeThreadId,
+          turnId: nativeTurnId,
+          item: compactTurn
+            ? { type: "contextCompaction", id: "compact-item" }
+            : { type: "agentMessage", id: "late-message", text: "Late continuation" },
+        });
         const transcript = makeCodexReplayTranscript({
-          scenario: "goal-stop-after-continuation",
+          scenario: `goal-stop-classification-${scenario}`,
           entries: [
             ...codexReplayPreamble({ nativeThreadId, nativeTurnId: "goal-turn-a", prompt }),
             notification("goal active", "thread/goal/updated", {
@@ -9551,34 +10146,169 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               threadId: nativeThreadId,
               turn: makeCodexReplayTurn({ id: "goal-turn-a", status: "completed" }),
             }),
-            notification("continuation", "turn/started", {
-              threadId: nativeThreadId,
-              turn: makeCodexReplayTurn({ id: "goal-turn-b", status: "inProgress" }),
-            }),
+            ...(pendingCompaction
+              ? request(4, "thread/compact/start", { threadId: nativeThreadId }, {})
+              : []),
+            ...(stopBeforeStart ? [] : [nativeStart]),
             notification("goal accounted", "thread/goal/updated", {
               threadId: nativeThreadId,
-              turnId: "goal-turn-b",
               goal: codexGoal("active", 11),
             }),
             ...request(
-              4,
+              pendingCompaction ? 5 : 4,
               "thread/goal/set",
               { threadId: nativeThreadId, status: "paused" },
               { goal: codexGoal("paused", 11) },
             ),
-            ...request(
-              5,
-              "turn/interrupt",
-              { threadId: nativeThreadId, turnId: "goal-turn-b" },
-              {},
-            ),
-            notification("continuation interrupted", "turn/completed", {
+            ...(stopBeforeStart ? [nativeStart] : []),
+            ...(pendingCompaction ? [firstItem] : []),
+            ...(pendingCompaction && !compactTurn ? [classified] : []),
+            ...(pendingCompaction && !compactTurn
+              ? request(
+                  6,
+                  "thread/goal/set",
+                  { threadId: nativeThreadId, status: "paused" },
+                  { goal: codexGoal("paused", 12) },
+                )
+              : []),
+            ...(compactTurn
+              ? []
+              : request(
+                  pendingCompaction ? 7 : 5,
+                  "turn/interrupt",
+                  { threadId: nativeThreadId, turnId: nativeTurnId },
+                  {},
+                )),
+            ...(pendingCompaction ? [] : [firstItem]),
+            ...(compactTurn
+              ? [
+                  notification("compaction item done", "item/completed", {
+                    threadId: nativeThreadId,
+                    turnId: nativeTurnId,
+                    item: { type: "contextCompaction", id: "compact-item" },
+                  }),
+                ]
+              : []),
+            notification("native terminal", "turn/completed", {
               threadId: nativeThreadId,
-              turn: makeCodexReplayTurn({ id: "goal-turn-b", status: "interrupted" }),
+              turn: makeCodexReplayTurn({
+                id: nativeTurnId,
+                status: compactTurn ? "completed" : "interrupted",
+              }),
+            }),
+            ...(compactTurn
+              ? [
+                  ...request(6, "thread/compact/start", { threadId: nativeThreadId }, {}),
+                  notification("late goal start", "turn/started", {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: "goal-turn-b", status: "inProgress" }),
+                  }),
+                  notification("late goal item", "item/started", {
+                    threadId: nativeThreadId,
+                    turnId: "goal-turn-b",
+                    item: {
+                      type: "agentMessage",
+                      id: "late-goal-message",
+                      text: "Late continuation",
+                    },
+                  }),
+                  classified,
+                  ...request(
+                    7,
+                    "thread/goal/set",
+                    { threadId: nativeThreadId, status: "paused" },
+                    { goal: codexGoal("paused", 12) },
+                  ),
+                  ...request(
+                    8,
+                    "turn/interrupt",
+                    { threadId: nativeThreadId, turnId: "goal-turn-b" },
+                    {},
+                  ),
+                  notification("late goal interrupted", "turn/completed", {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: "goal-turn-b", status: "interrupted" }),
+                  }),
+                  notification("second compact start", "turn/started", {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: "compact-turn-b", status: "inProgress" }),
+                  }),
+                  notification("second compact item", "item/started", {
+                    threadId: nativeThreadId,
+                    turnId: "compact-turn-b",
+                    item: { type: "contextCompaction", id: "compact-item-b" },
+                  }),
+                  notification("second compact item done", "item/completed", {
+                    threadId: nativeThreadId,
+                    turnId: "compact-turn-b",
+                    item: { type: "contextCompaction", id: "compact-item-b" },
+                  }),
+                  notification("second compact terminal", "turn/completed", {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: "compact-turn-b", status: "completed" }),
+                  }),
+                ]
+              : []),
+            notification("stop accounted", "thread/goal/updated", {
+              threadId: nativeThreadId,
+              goal: codexGoal("paused", 13),
             }),
           ],
         });
-        const harness = yield* makeCodexReplayHarness(transcript);
+        const started = yield* Deferred.make<void>();
+        const accounted = yield* Deferred.make<void>();
+        const classificationAccounted = yield* Deferred.make<void>();
+        const firstItemAllowed = yield* Deferred.make<void>();
+        const interruptRequested = yield* Deferred.make<void>();
+        const firstCompactCompleted = yield* Deferred.make<void>();
+        const lateGoalStartAllowed = yield* Deferred.make<void>();
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const providerTurnId = (id: string) =>
+          idAllocator.derive.providerTurn({
+            driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+            nativeTurnId: id,
+          });
+        const interrupts: Array<unknown> = [];
+        const pauses: Array<unknown> = [];
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          (event) =>
+            event.type === "turn.terminal" &&
+            event.providerTurnId === providerTurnId("compact-turn") &&
+            event.status === "completed"
+              ? Deferred.succeed(firstCompactCompleted, undefined)
+              : event.type === "provider_thread.updated"
+                ? event.providerThread.goal?.tokensUsed === 11
+                  ? Deferred.succeed(started, undefined)
+                  : event.providerThread.goal?.tokensUsed === 12
+                    ? Deferred.succeed(classificationAccounted, undefined)
+                    : event.providerThread.goal?.tokensUsed === 13
+                      ? Deferred.succeed(accounted, undefined)
+                      : Effect.void
+                : Effect.void,
+          (method, params) =>
+            method === "turn/interrupt"
+              ? Effect.sync(() => interrupts.push(params)).pipe(
+                  Effect.andThen(Deferred.succeed(interruptRequested, undefined)),
+                  Effect.asVoid,
+                )
+              : method === "thread/goal/set"
+                ? Effect.sync(() => {
+                    pauses.push(params);
+                  })
+                : Effect.void,
+          undefined,
+          {
+            beforeEmitInbound: (entry) =>
+              pendingCompaction &&
+              (entry.label === "late first item" ||
+                (stopBeforeStart && entry.label === "deferred start"))
+                ? Deferred.await(firstItemAllowed)
+                : compactTurn && entry.label === "late goal start"
+                  ? Deferred.await(lateGoalStartAllowed)
+                  : Effect.void,
+          },
+        );
         yield* harness.runtime.startTurn(
           makeCodexTestTurnInput({
             threadId: harness.threadId,
@@ -9588,28 +10318,167 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             text: prompt,
           }),
         );
-        yield* awaitUntil(
-          () =>
+        if (pendingCompaction) {
+          yield* harness.runtime.compactThread!(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("compact-attempt"),
+              text: "/compact",
+            }),
+          ).pipe(Effect.forkScoped);
+        }
+        yield* Deferred.await(started);
+        const stop = yield* harness.runtime
+          .interruptTurn({
+            providerThread: harness.providerThread,
+            providerTurnId: providerTurnId("goal-turn-a"),
+            requestRuntimeRestart: true,
+          })
+          .pipe(Effect.forkScoped);
+        if (pendingCompaction) {
+          // Either Stop returns without guessing, or the invalid native interrupt
+          // provides an immediate failure milestone while the item is still gated.
+          yield* Effect.raceFirst(Fiber.join(stop), Deferred.await(interruptRequested));
+          assert.deepEqual(interrupts, [], "Stop must not guess the deferred turn's owner");
+          yield* Deferred.succeed(firstItemAllowed, undefined);
+        }
+        yield* Fiber.join(stop);
+        if (compactTurn) {
+          yield* Deferred.await(firstCompactCompleted);
+          assert.equal(providerGoals(harness.events).at(-1), "paused");
+          yield* harness.runtime.compactThread!(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("compact-attempt-b"),
+              text: "/compact",
+            }),
+          ).pipe(Effect.forkScoped);
+          yield* Deferred.succeed(lateGoalStartAllowed, undefined);
+        }
+        if (pendingCompaction) {
+          // This notification follows classification even if containment never starts.
+          yield* Deferred.await(classificationAccounted);
+          assert.equal(providerGoals(harness.events).at(-1), "paused");
+          if (compactTurn) {
+            assert.deepEqual(
+              harness.events.flatMap((event) =>
+                event.type === "provider_turn.updated" &&
+                event.providerTurn.id === providerTurnId("goal-turn-b")
+                  ? [[event.providerTurn.runAttemptId, event.providerTurn.status]]
+                  : [],
+              ),
+              [],
+              "The queued ordinary goal turn must not claim the second compact attempt",
+            );
+          }
+          assert.deepEqual(
+            pauses,
+            Array.from({ length: 2 }, () => ({ threadId: nativeThreadId, status: "paused" })),
+            "Stop must retain intent until the late goal continuation is contained",
+          );
+        }
+        yield* Deferred.await(accounted);
+        assert.deepEqual(interrupts, [{ threadId: nativeThreadId, turnId: "goal-turn-b" }]);
+        if (pendingCompaction) {
+          assert.isFalse(
             harness.events.some(
               (event) =>
-                event.type === "provider_thread.updated" &&
-                event.providerThread.goal?.tokensUsed === 11,
+                (event.type === "provider_turn.updated" &&
+                  event.providerTurn.id === providerTurnId("goal-turn-b")) ||
+                (event.type === "turn_item.updated" &&
+                  event.turnItem.providerTurnId === providerTurnId("goal-turn-b")),
             ),
-          "the continuation to be adopted",
-        );
-        yield* harness.runtime.interruptTurn({
-          providerThread: harness.providerThread,
-          providerTurnId: (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
-            driver: CodexAdapterV2.CODEX_DRIVER_KIND,
-            nativeTurnId: "goal-turn-a",
-          }),
-          requestRuntimeRestart: true,
-        });
-        yield* harness.firstTerminal;
-        assert.deepEqual(
-          harness.terminalEvents().map((event) => event.status),
-          ["interrupted"],
-        );
+          );
+          assert.deepEqual(
+            harness.terminalEvents().map((event) => [event.providerTurnId, event.status]),
+            [
+              [providerTurnId("goal-turn-a"), "interrupted"],
+              ...(compactTurn
+                ? [
+                    [providerTurnId(nativeTurnId), "completed"],
+                    [providerTurnId("compact-turn-b"), "completed"],
+                  ]
+                : []),
+            ],
+          );
+          assert.deepEqual(
+            harness.events.flatMap((event) =>
+              event.type === "provider_turn.updated" &&
+              event.providerTurn.id === providerTurnId(nativeTurnId)
+                ? [[event.providerTurn.runAttemptId, event.providerTurn.status]]
+                : [],
+            ),
+            compactTurn
+              ? (["running", "completed"] as const).map((status) => [
+                  RunAttemptId.make("compact-attempt"),
+                  status,
+                ])
+              : [],
+          );
+          assert.deepEqual(
+            harness.events.flatMap((event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.providerTurnId === providerTurnId(nativeTurnId)
+                ? [[event.turnItem.runId, event.turnItem.type, event.turnItem.status]]
+                : [],
+            ),
+            compactTurn
+              ? (["running", "completed"] as const).map((status) => [
+                  RunId.make("run-compact-attempt"),
+                  "compaction" as const,
+                  status,
+                ])
+              : [],
+          );
+          if (compactTurn) {
+            assert.deepEqual(
+              harness.events.flatMap((event) =>
+                event.type === "provider_turn.updated" &&
+                event.providerTurn.id === providerTurnId("compact-turn-b")
+                  ? [[event.providerTurn.runAttemptId, event.providerTurn.status]]
+                  : [],
+              ),
+              (["running", "completed"] as const).map((status) => [
+                RunAttemptId.make("compact-attempt-b"),
+                status,
+              ]),
+            );
+            assert.deepEqual(
+              harness.events.flatMap((event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.providerTurnId === providerTurnId("compact-turn-b")
+                  ? [[event.turnItem.runId, event.turnItem.type, event.turnItem.status]]
+                  : [],
+              ),
+              (["running", "completed"] as const).map((status) => [
+                RunId.make("run-compact-attempt-b"),
+                "compaction" as const,
+                status,
+              ]),
+            );
+          }
+        } else {
+          assert.deepEqual(
+            harness.events.flatMap((event) =>
+              event.type === "provider_turn.updated" &&
+              event.providerTurn.id === providerTurnId(nativeTurnId)
+                ? [[event.providerTurn.runAttemptId, event.providerTurn.status]]
+                : [],
+            ),
+            (["running", "interrupted"] as const).map((status) => [
+              RunAttemptId.make("goal-successor-attempt"),
+              status,
+            ]),
+          );
+          assert.deepEqual(
+            harness.terminalEvents().map((event) => [event.providerTurnId, event.status]),
+            [[providerTurnId(nativeTurnId), "interrupted"]],
+          );
+        }
       }).pipe(
         Effect.scoped,
         Effect.provide(

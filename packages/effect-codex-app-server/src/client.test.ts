@@ -1,8 +1,11 @@
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
@@ -10,6 +13,10 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 
 import * as CodexClient from "./client.ts";
+import * as CodexError from "./errors.ts";
+import { makeInMemoryStdio } from "./_internal/stdio.ts";
+
+const encodeJson = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 
 const mockPeerPath = Effect.map(Effect.service(Path.Path), (path) =>
   path.join(import.meta.dirname, "../test/fixtures/codex-app-server-mock-peer.ts"),
@@ -124,6 +131,30 @@ it.layer(NodeServices.layer)("effect-codex-app-server client", (it) => {
       ]);
     }),
   );
+  it.effect("shares transport exit with current and later waiters after a successful RPC", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const client = yield* CodexClient.make(stdio);
+      const response = yield* client
+        .request("thread/compact/start", { threadId: "thread-1" })
+        .pipe(Effect.forkScoped);
+      yield* Queue.take(output);
+      const responseLine = yield* encodeJson({ id: 1, result: {} });
+      yield* Queue.offer(input, new TextEncoder().encode(`${responseLine}\n`));
+      assert.deepEqual(yield* Fiber.join(response), {});
+
+      const cancelled = yield* client.waitExit.pipe(Effect.forkScoped({ startImmediately: true }));
+      yield* Fiber.interrupt(cancelled);
+      const waiting = yield* client.waitExit.pipe(Effect.forkScoped({ startImmediately: true }));
+      yield* Queue.end(input);
+
+      const error = yield* Fiber.join(waiting).pipe(Effect.flip);
+      assert.instanceOf(error, CodexError.CodexAppServerInputStreamEndedError);
+      assert.strictEqual(yield* client.waitExit.pipe(Effect.flip), error);
+      assert.strictEqual(yield* client.waitExit.pipe(Effect.flip), error);
+    }),
+  );
+
   it.effect("drains child stderr so large diagnostics cannot block protocol responses", () =>
     Effect.gen(function* () {
       const handle = yield* makeHandle({
