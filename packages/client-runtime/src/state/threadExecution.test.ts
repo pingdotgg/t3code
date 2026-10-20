@@ -441,7 +441,7 @@ describe("formatModelSelectionEffort", () => {
     model: "claude-sonnet-5",
     ...(options === undefined ? {} : { options }),
   });
-  const catalog = (descriptor: { currentValue?: string }) => [
+  const catalog = (descriptor: { id?: string; currentValue?: string }) => [
     {
       slug: "claude-sonnet-5",
       name: "Claude Sonnet 5",
@@ -464,27 +464,26 @@ describe("formatModelSelectionEffort", () => {
     },
   ];
 
-  it("names stored and matching reported effort, preferring the stored choice", () => {
-    expect(
-      formatModelSelectionEffort(selection([{ id: "effort", value: "xhigh" }]), catalog({})),
-    ).toBe("Extra High");
-    const reported = selection([{ id: "effort", value: "xhigh" }]);
-    expect(formatModelSelectionEffort(selection(), catalog({}), reported)).toBe("Extra High");
-    expect(
-      formatModelSelectionEffort(
-        selection([{ id: "effort", value: "medium" }]),
-        catalog({}),
-        reported,
-      ),
-    ).toBe("Medium");
-    expect(
-      formatModelSelectionEffort(
-        selection([{ id: "effort", value: "retired-effort" }]),
-        catalog({ currentValue: "medium" }),
-        reported,
-      ),
-    ).toBeNull();
-  });
+  it.each(["effort", "reasoning_effort"])(
+    "names stored and matching reported %s, preferring the stored choice",
+    (id) => {
+      expect(formatModelSelectionEffort(selection([{ id, value: "xhigh" }]), catalog({ id }))).toBe(
+        "Extra High",
+      );
+      const reported = selection([{ id, value: "xhigh" }]);
+      expect(formatModelSelectionEffort(selection(), catalog({ id }), reported)).toBe("Extra High");
+      expect(
+        formatModelSelectionEffort(selection([{ id, value: "medium" }]), catalog({ id }), reported),
+      ).toBe("Medium");
+      expect(
+        formatModelSelectionEffort(
+          selection([{ id, value: "retired-effort" }]),
+          catalog({ id, currentValue: "medium" }),
+          reported,
+        ),
+      ).toBeNull();
+    },
+  );
 
   it("shows nothing when neither the selection nor the provider states an effort", () => {
     expect(formatModelSelectionEffort(selection(), catalog({}))).toBeNull();
