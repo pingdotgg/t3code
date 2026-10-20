@@ -1,9 +1,11 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, vi } from "@effect/vitest";
 import {
   CheckpointScopeId,
   ChatAttachmentId,
   ChatFileAttachment,
   CommandId,
+  EnvironmentId,
   EventId,
   MessageId,
   NodeId,
@@ -32,10 +34,16 @@ import * as Exit from "effect/Exit";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import { HttpServer } from "effect/http";
+import * as NetAddress from "effect/net/NetAddress";
+import * as TestClock from "effect/testing/TestClock";
+
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -1096,75 +1104,128 @@ it.effect(
     }).pipe(Effect.provide(layerRunExecutionTest)),
 );
 
+const layerMcpSessionRegistryTest = McpSessionRegistry.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      NodeServices.layer,
+      Layer.mock(HttpServer.HttpServer)({
+        address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 43123),
+      }),
+      Layer.mock(ServerEnvironment.ServerEnvironment)({
+        getEnvironmentId: Effect.succeed(EnvironmentId.make("environment:mcp-liveness")),
+      }),
+    ),
+  ),
+);
+
 it.effect("refreshes MCP credential liveness before calling the provider", () =>
   Effect.gen(function* () {
-    const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const order = yield* Ref.make<ReadonlyArray<string>>([]);
-    const threadId = ThreadId.make("thread:run-execution-mcp-liveness");
+    const key = "run-execution-mcp-liveness";
     const touchActiveMcpThread = vi
       .spyOn(McpSessionRegistry, "touchActiveMcpThread")
-      .mockImplementation((touchedThreadId) =>
-        Ref.update(order, (entries) => [...entries, `touch:${touchedThreadId}`]),
+      .mockImplementation((threadId) =>
+        Ref.update(order, (entries) => [...entries, `touch:${threadId}`]),
       );
 
-    yield* runExecution
-      .startRootRun({
-        commandId: CommandId.make("command:run-execution-mcp-liveness"),
-        appThread: { id: threadId } as OrchestrationV2AppThread,
-        providerSessionId: ProviderSessionId.make("session:run-execution-mcp-liveness"),
-        session: {
-          events: Stream.never,
-          startTurn: () => Ref.update(order, (entries) => [...entries, "start-turn"]),
-        } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime,
-        run: {
-          id: RunId.make("run:run-execution-mcp-liveness"),
-          threadId,
-          ordinal: 1,
-          providerInstanceId: ProviderInstanceId.make("codex"),
-        } as OrchestrationV2Run,
-        rootNode: {
-          id: NodeId.make("node:run-execution-mcp-liveness"),
-        } as OrchestrationV2ExecutionNode,
-        checkpointScope: {
-          id: CheckpointScopeId.make("checkpoint-scope:run-execution-mcp-liveness"),
-        } as OrchestrationV2CheckpointScope,
-        providerThread: {
-          id: ProviderThreadId.make("provider-thread:run-execution-mcp-liveness"),
-          driver,
-        } as OrchestrationV2ProviderThread,
-        attempt: {
-          id: RunAttemptId.make("attempt:run-execution-mcp-liveness"),
-          providerTurnId: null,
-        } as OrchestrationV2RunAttempt,
-        attemptId: RunAttemptId.make("attempt:run-execution-mcp-liveness"),
-        providerTurnOrdinal: 1,
-        message: {
-          messageId: MessageId.make("message:run-execution-mcp-liveness"),
-          text: "Keep the MCP credential alive.",
-          attachments: [],
-          createdBy: "user",
-          creationSource: "web",
-        },
-        modelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5.4",
-        },
-        runtimePolicy: {
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          cwd: process.cwd(),
-          approvalPolicy: "never",
-          sandboxPolicy: {
-            type: "readOnly",
-            access: { type: "fullAccess" },
-            networkAccess: false,
-          },
-        },
-      })
-      .pipe(Effect.ensuring(Effect.sync(() => touchActiveMcpThread.mockRestore())));
+    yield* captureRootRunTermination({
+      key,
+      shouldFinalizeRun: () => Effect.succeed(true),
+      startTurn: () => Ref.update(order, (entries) => [...entries, "start-turn"]),
+    }).pipe(Effect.ensuring(Effect.sync(() => touchActiveMcpThread.mockRestore())));
 
-    assert.deepEqual(yield* Ref.get(order), [`touch:${threadId}`, "start-turn"]);
-  }).pipe(Effect.provide(layerRunExecutionTest)),
+    assert.deepEqual(yield* Ref.get(order), [
+      `touch:${backgroundScenarioIds(key).threadId}`,
+      "start-turn",
+    ]);
+  }),
+);
+
+it.effect.each([
+  ["keeps the MCP credential alive for a 44-hour turn without MCP traffic", false],
+  ["expires the MCP credential at 44 hours when ingestion ended at 2 hours", true],
+] as const)("%s", ([, endEarly]) =>
+  Effect.gen(function* () {
+    const key = `mcp-liveness:${endEarly}`;
+    const { threadId } = backgroundScenarioIds(key);
+    const registry = yield* McpSessionRegistry.McpSessionRegistry;
+    const issued = yield* registry.issue({
+      threadId,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+    });
+    const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+    const started = yield* Deferred.make<void>();
+    const end = yield* Deferred.make<void>();
+    const run = yield* captureRootRunTermination({
+      key,
+      shouldFinalizeRun: () => Effect.succeed(true),
+      startTurn: () => Deferred.succeed(started, undefined).pipe(Effect.asVoid),
+      events: (ids) =>
+        Stream.fromEffect(Deferred.await(end)).pipe(
+          Stream.map(() => rootTerminalEvent(ids, "completed")),
+        ),
+    }).pipe(Effect.forkChild);
+
+    yield* Effect.gen(function* () {
+      yield* Deferred.await(started);
+      yield* TestClock.adjust("2 hours");
+      if (endEarly) {
+        yield* Deferred.succeed(end, undefined);
+        yield* Fiber.join(run);
+      }
+      yield* TestClock.adjust("42 hours");
+      assert.equal(
+        (yield* registry.resolve(token))?.thread.threadId,
+        endEarly ? undefined : threadId,
+      );
+    }).pipe(
+      Effect.ensuring(
+        Deferred.succeed(end, undefined).pipe(Effect.andThen(Fiber.join(run)), Effect.orDie),
+      ),
+    );
+  }).pipe(Effect.provide(layerMcpSessionRegistryTest)),
+);
+
+it.effect(
+  "does not renew an MCP credential after startup is interrupted during the app context read",
+  () =>
+    Effect.gen(function* () {
+      const key = "mcp-liveness:abandoned-startup";
+      const { threadId } = backgroundScenarioIds(key);
+      const registry = yield* McpSessionRegistry.McpSessionRegistry;
+      const issued = yield* registry.issue({
+        threadId,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+      });
+      const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+      const contextReadStarted = yield* Deferred.make<void>();
+      const end = yield* Deferred.make<void>();
+      const closed = yield* Deferred.make<void>();
+      const run = yield* captureRootRunTermination({
+        key,
+        shouldFinalizeRun: () => Effect.succeed(true),
+        appContext: Deferred.succeed(contextReadStarted, undefined).pipe(
+          Effect.andThen(Effect.never),
+        ),
+        events: (ids) =>
+          Stream.fromEffect(Deferred.await(end)).pipe(
+            Stream.map(() => rootTerminalEvent(ids, "completed")),
+          ),
+        onSubscriptionClose: Deferred.succeed(closed, undefined).pipe(Effect.asVoid),
+      }).pipe(Effect.interruptible, Effect.forkChild);
+
+      yield* Effect.gen(function* () {
+        yield* Deferred.await(contextReadStarted);
+        yield* Fiber.interrupt(run);
+        assert.isTrue(Exit.hasInterrupts(yield* Fiber.await(run)));
+        yield* TestClock.adjust("44 hours");
+        assert.isUndefined(yield* registry.resolve(token));
+      }).pipe(
+        Effect.ensuring(
+          Deferred.succeed(end, undefined).pipe(Effect.andThen(Deferred.await(closed))),
+        ),
+      );
+    }).pipe(Effect.provide(layerMcpSessionRegistryTest)),
 );
 
 it.effect("starts the provider when checkpoint baseline capture fails", () =>
@@ -4057,6 +4118,7 @@ function captureRootRunTermination(input: {
   >;
   readonly startTurn?: ProviderAdapter.ProviderAdapterV2SessionRuntime["startTurn"];
   readonly refreshAfterTurn?: Effect.Effect<void>;
+  readonly onSubscriptionClose?: Effect.Effect<void>;
   readonly shouldStartProviderTurn?: RunExecutionService.RunExecutionServiceV2StartRootRunInput["shouldStartProviderTurn"];
   readonly appContext?: ReturnType<McpAppModelContext.McpAppModelContext["Service"]["forThread"]>;
 }) {
@@ -4178,7 +4240,9 @@ function captureRootRunTermination(input: {
                   : []),
                 rootTerminalEvent(ids, "interrupted"),
               ] satisfies ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>),
-            close: Deferred.succeed(ingestionDone, undefined),
+            close: Deferred.succeed(ingestionDone, undefined).pipe(
+              Effect.andThen(input.onSubscriptionClose ?? Effect.void),
+            ),
           }),
           startTurn: input.startTurn ?? (() => Effect.void),
         } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime,
