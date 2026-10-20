@@ -10,7 +10,7 @@ import * as Electron from "electron";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as DesktopEarlyElectronStartup from "./DesktopEarlyElectronStartup.ts";
-import { resolveDesktopAppBranding, resolveDesktopSafeStorageName } from "./DesktopEnvironment.ts";
+import { resolveDesktopAppBranding } from "./DesktopEnvironment.ts";
 import { renderUrlHandlerDesktopEntry } from "./DesktopLinuxUrlHandler.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 
@@ -54,11 +54,6 @@ export const make = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
   const homeDirectory = yield* HostProcess.HomeDirectory;
   return yield* Effect.sync((): DesktopPreReadyElectronOptions["Service"] => {
-    // Chromium reads the safeStorage key's name before startup first yields.
-    // DesktopAppIdentity's later rename only changes the branded app name.
-    if (platform === "darwin" || platform === "linux") {
-      Electron.app.setName(resolveDesktopSafeStorageName(Electron.app.getVersion()));
-    }
     const linuxPasswordStoreCommandLine =
       platform === "linux"
         ? readCommandLineSwitchValue(Electron.app.commandLine, "password-store")
