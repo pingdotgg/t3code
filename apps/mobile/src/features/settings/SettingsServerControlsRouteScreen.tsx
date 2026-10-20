@@ -12,6 +12,7 @@ import {
   type WorktreeSubmodules,
   PROJECT_SCOPED_SERVER_SETTING_KEYS,
   type ProjectScopedServerSettingKey,
+  resolveModelCatalogUpdatesEnabled,
 } from "@t3tools/contracts";
 import { useRef, useState } from "react";
 import { View } from "react-native";
@@ -238,6 +239,12 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
     (target) =>
       target.environment.serverConfig.environment.capabilities.threadRestartContinuation === true,
   );
+  const catalogUpdates = displayTargets.map((target) =>
+    resolveModelCatalogUpdatesEnabled(target.settings),
+  );
+  const modelCatalogUpdates = catalogUpdates.every((value) => value === catalogUpdates[0])
+    ? (catalogUpdates[0] ?? null)
+    : null;
   const disabledFor = (key: string) =>
     disabled ||
     (projectSelected &&
@@ -471,12 +478,26 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       subtitle={
                         projectSelected
                           ? "Environment-wide setting. Select All projects to change it."
-                          : "Check installed provider CLIs for newer versions and fetch model catalog updates. When off, new models may not appear."
+                          : "Check installed provider CLIs for newer versions."
                       }
                       value={uniform("enableProviderUpdateChecks")}
                       disabled={disabledFor("enableProviderUpdateChecks")}
                       onValueChange={(value) => write({ enableProviderUpdateChecks: value })}
                     />
+                    <View className="border-t border-border-subtle">
+                      <SettingsSwitchRow
+                        icon="sparkles"
+                        label="Download new models"
+                        subtitle={
+                          projectSelected
+                            ? "Environment-wide setting. Select All projects to change it."
+                            : "Download the latest model catalog so new models appear between releases."
+                        }
+                        value={modelCatalogUpdates}
+                        disabled={disabledFor("enableModelCatalogUpdates")}
+                        onValueChange={(value) => write({ enableModelCatalogUpdates: value })}
+                      />
+                    </View>
                     <View className="border-t border-border-subtle">
                       <SettingsSwitchRow
                         icon="arrow.uturn.forward"

@@ -447,6 +447,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "environment-defaults",
   },
   {
+    id: "download-new-models",
+    title: "Download new models",
+    to: "/settings/general",
+    searchTerms: ["model catalog list manifest updates claude opus picker missing"],
+    scope: "environment-defaults",
+  },
+  {
     id: "continue-threads-after-server-update",
     title: "Continue threads after restarts",
     to: "/settings/general",
