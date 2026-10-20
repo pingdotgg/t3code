@@ -100,7 +100,12 @@ An empty database is a bad test. Seed your worktree's `.t3` with a copy of real 
 - **Do not run repo-wide checks.** No `vp check`, no `vp run -r test`, no `vp run -r typecheck` unless I ask. CI owns the full suite.
 - Backend behavior changes ship with focused tests for that behavior.
 - The server is event-sourced, and side effects run after the command commits. In tests, drain the effect worker (`OrchestrationEffectWorkerV2.drain`) or await the specific persisted event or `Deferred` that marks the milestone. Never wait on sleeps or polling. A test that needs a timeout to pass is wrong.
-- Web component tests are `*.browser.test.tsx` and render through `apps/web/test/render.tsx`. Acquire everything a test changes with `using`/`await using` so disposal undoes it even when the test fails; no `beforeEach`/`afterEach`, no module-level screens. Shared mock state that `vi.mock` factories read gets reset by a `setup()` call at the top of the test. `t3code/require-disposable-render` flags the old patterns.
+- Web browser tests are `*.browser.test.tsx` or `*.browser.test.ts` and render with `await using screen = await render(...)` from `apps/web/test/render.tsx`. `t3code/require-disposable-render` errors on the old patterns.
+  - Acquire what the test drives after mounting (fake timers it advances, spies it sets up after mounting) after the render, so it disposes before the unmount. Anything the first render reads comes before it.
+  - A helper that renders and then waits or clicks puts the screen in an `AsyncDisposableStack` and `move()`s it out only on success, so a failed wait still unmounts.
+  - `rerender` needs a fresh element on every call.
+  - No lifecycle hooks and no module-level mutable state. Shared mock state that `vi.mock` factories read is reset by a `setup()` call at the top of the test.
+  - `router` is on by default. Pass `router: false` only with a one-line comment saying why.
 
   ```tsx
   it("saves on Enter", async () => {
