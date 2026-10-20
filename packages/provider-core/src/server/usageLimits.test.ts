@@ -85,6 +85,35 @@ describe("applyUsageLimitsUpdate", () => {
 });
 
 describe("resolveUsageLimitsAfterProbe", () => {
+  it("uses read order for windows while taking metadata from the successful probe", () => {
+    const live = {
+      checkedAt: "2026-09-03T12:00:05.000Z",
+      windows: [
+        { ...session, usedPercent: 95 },
+        { ...weekly, usedPercent: 70 },
+      ],
+      resetCredits: { availableCount: 2 },
+      externalUsage: { label: "Old dashboard", url: "https://example.com/old" },
+    };
+    const probed = {
+      ...published,
+      windows: [{ ...session, usedPercent: 0 }],
+      resetCredits: { availableCount: 1 },
+      externalUsage: { label: "Usage dashboard", url: "https://example.com/usage" },
+    };
+
+    expect(resolveUsageLimitsAfterProbe({ published: live, probed })).toEqual({
+      ...probed,
+      checkedAt: live.checkedAt,
+      windows: live.windows,
+    });
+
+    const sameTime = { ...probed, checkedAt: live.checkedAt };
+    const newer = { ...probed, checkedAt: "2026-09-03T12:00:06.000Z" };
+    expect(resolveUsageLimitsAfterProbe({ published: live, probed: sameTime })).toEqual(sameTime);
+    expect(resolveUsageLimitsAfterProbe({ published: live, probed: newer })).toEqual(newer);
+  });
+
   it("keeps the last good windows through a failed probe but not an unsupported one", () => {
     const failed = { checkedAt, windows: [], unavailable: { reason: "probeFailed" as const } };
     const unsupported = { checkedAt, windows: [], unavailable: { reason: "unsupported" as const } };
