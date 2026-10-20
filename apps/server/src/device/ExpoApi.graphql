@@ -1,0 +1,83 @@
+query T3ExpoViewer {
+  meActor {
+    __typename
+    ... on UserActor {
+      username
+    }
+    ... on Robot {
+      firstName
+    }
+    accounts {
+      name
+      appsPaginated(first: 100) {
+        edges {
+          node {
+            id
+            fullName
+          }
+        }
+      }
+    }
+  }
+}
+
+query T3EasSimulatorAvailability($appId: String!, $filter: [String!]) {
+  app {
+    byId(appId: $appId) {
+      ownerAccount {
+        name
+        accountFeatureGates(filter: $filter)
+      }
+    }
+  }
+}
+
+mutation T3CreateEasSimulatorSession($input: CreateDeviceRunSessionInput!) {
+  deviceRunSession {
+    createDeviceRunSession(deviceRunSessionInput: $input) {
+      id
+    }
+  }
+}
+
+query T3EasSimulatorSession($id: ID!) {
+  deviceRunSessions {
+    byId(deviceRunSessionId: $id) {
+      id
+      status
+      remoteConfig {
+        ... on AgentDeviceRunSessionRemoteConfig {
+          agentDeviceRemoteSessionUrl
+          agentDeviceRemoteSessionToken
+          webPreviewToken
+          previewApiUrl
+        }
+      }
+    }
+  }
+}
+
+query T3ActiveEasSimulatorSessions($appId: String!, $filter: DeviceRunSessionFilterInput) {
+  app {
+    byId(appId: $appId) {
+      deviceRunSessionsPaginated(first: 50, filter: $filter) {
+        edges {
+          node {
+            id
+            status
+            name
+          }
+        }
+      }
+    }
+  }
+}
+
+mutation T3StopEasSimulatorSession($id: ID!) {
+  deviceRunSession {
+    ensureDeviceRunSessionStopped(deviceRunSessionId: $id) {
+      id
+      status
+    }
+  }
+}

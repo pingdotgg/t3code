@@ -26,7 +26,9 @@
     "record:cursor-replay": "node --env-file-if-exists=../../.env --experimental-strip-types scripts/record-cursor-agent-sdk-replay-fixture.ts",
     "record:pi-replay": "node scripts/record-pi-rpc-replay-fixture.ts",
     "record:grok-replay": "node scripts/record-grok-acp-replay-fixture.ts",
-    "record:muse-replay": "node scripts/record-muse-msp-replay-fixture.ts"
+    "record:muse-replay": "node scripts/record-muse-msp-replay-fixture.ts",
+    "generate": "graphqlgen",
+    "generate:expo-schema": "node scripts/fetch-expo-schema.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.276",
@@ -64,6 +66,7 @@
     "yauzl": "^3.4.0"
   },
   "devDependencies": {
+    "@effect/graphql-generator": "catalog:",
     "@effect/vitest": "catalog:",
     "@modelcontextprotocol/sdk": "1.29.0",
     "@t3tools/contracts": "workspace:*",
@@ -78,6 +81,7 @@
     "@types/yauzl": "^3.4.0",
     "effect-acp": "workspace:*",
     "effect-codex-app-server": "workspace:*",
+    "graphql": "16.14.1",
     "vite-plus": "catalog:"
   },
   "engines": {
