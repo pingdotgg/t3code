@@ -372,7 +372,9 @@ launching again. `create_threads` remains the batch option for a shared checkout
 Lists durable thread shells in one project, newest first: `projectId` when
 given, else the calling thread's project. Callers can filter by title, run
 status, and whether app-owned sub-agent threads are included. Results are
-bounded and offset-paginated. Deleted threads are never listed.
+bounded and offset-paginated. Deleted threads are never listed. Each listed
+thread reports the `branch` and `worktreePath` it works in, as the read tool
+does; both are null when the thread has no checkout of its own.
 
 ### `t3_thread_read`
 
