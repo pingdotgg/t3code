@@ -69,6 +69,14 @@ class FakeElement {
     this.attributes.set(name, value);
   }
 
+  getAttribute(name: string) {
+    return this.attributes.get(name) ?? null;
+  }
+
+  click() {
+    this.dispatchEvent(new FakeDomEvent("click"));
+  }
+
   dispatchEvent(event: FakeDomEvent) {
     for (const listener of this.listeners.get(event.type) ?? []) {
       listener(event);
@@ -86,6 +94,8 @@ class FakeElement {
     this.focused = true;
     this.dispatchEvent(new FakeDomEvent("focus"));
   }
+
+  scrollIntoView() {}
 
   blur() {
     const fakeDocument = document as unknown as FakeDocument;
@@ -177,6 +187,23 @@ class FakeDocument {
   querySelectorAll(tagName: string) {
     return this.body.querySelectorAll(tagName);
   }
+
+  dispatchEvent(event: FakeDomEvent) {
+    for (const listener of this.listeners.get(event.type) ?? []) {
+      listener(event);
+    }
+    return true;
+  }
+}
+
+function pressKey(key: string) {
+  const event = new KeyboardEvent("keydown", { key });
+  (document as unknown as FakeDocument).dispatchEvent(event as unknown as FakeDomEvent);
+  return event;
+}
+
+function focusedLabel() {
+  return (document as unknown as FakeDocument).activeElement?.textContent;
 }
 
 function findButton(label: string): FakeElement | undefined {
@@ -328,6 +355,132 @@ describe("showContextMenuFallback", () => {
   });
 });
 
+describe("showContextMenuFallback keyboard", () => {
+  it("moves between enabled items, wraps, and dismisses with Tab", async () => {
+    const fakeDocument = document as unknown as FakeDocument;
+    const invoker = fakeDocument.body.appendChild(fakeDocument.createElement("button"));
+    invoker.focus();
+    const selectionPromise = showContextMenuFallback([
+      { id: "unavailable", label: "Unavailable", disabled: true },
+      { id: "rename", label: "Rename" },
+      { id: "pin", label: "Pin", disabled: true },
+      { id: "archive", label: "Archive" },
+      { id: "delete", label: "Delete", disabled: true },
+    ]);
+    expect(focusedLabel()).toBe("Rename");
+    expect(findButton("Rename")?.attributes.get("role")).toBe("menuitem");
+
+    pressKey("Home");
+    expect(focusedLabel()).toBe("Rename");
+    expect(pressKey("ArrowDown").defaultPrevented).toBe(true);
+    expect(focusedLabel()).toBe("Archive");
+    pressKey("ArrowDown");
+    expect(focusedLabel()).toBe("Rename");
+    pressKey("ArrowUp");
+    expect(focusedLabel()).toBe("Archive");
+    pressKey("ArrowUp");
+    expect(focusedLabel()).toBe("Rename");
+    pressKey("End");
+    expect(focusedLabel()).toBe("Archive");
+    pressKey("Home");
+    expect(focusedLabel()).toBe("Rename");
+
+    expect(pressKey("Tab").defaultPrevented).toBe(false);
+    await expect(selectionPromise).resolves.toBeNull();
+    expect(findButton("Rename")).toBeUndefined();
+    expect(fakeDocument.activeElement).toBe(invoker);
+  });
+
+  it("enters a named submenu and returns through its trigger with Left or Escape", async () => {
+    const fakeDocument = document as unknown as FakeDocument;
+    const invoker = fakeDocument.body.appendChild(fakeDocument.createElement("button"));
+    invoker.focus();
+    const selectionPromise = showContextMenuFallback([
+      {
+        id: "copy:submenu",
+        label: "Copy",
+        children: [
+          { id: "copy:unavailable", label: "Unavailable", disabled: true },
+          { id: "copy:path", label: "Path" },
+          { id: "copy:branch", label: "Branch" },
+        ],
+      },
+    ]);
+    const trigger = findButton("Copy");
+
+    pressKey("ArrowRight");
+    expect(focusedLabel()).toBe("Path");
+    expect(trigger?.attributes.get("aria-expanded")).toBe("true");
+    const menus = fakeDocument
+      .querySelectorAll("div")
+      .filter((element) => element.attributes.get("role") === "menu");
+    expect(menus).toHaveLength(2);
+    expect(menus[1]?.attributes.get("aria-label")).toBe("Copy");
+    pressKey("ArrowDown");
+    expect(focusedLabel()).toBe("Branch");
+    pressKey("ArrowLeft");
+    expect(fakeDocument.activeElement).toBe(trigger);
+    expect(trigger?.attributes.get("aria-expanded")).toBe("false");
+    expect(findButton("Path")).toBeUndefined();
+
+    pressKey("ArrowRight");
+    expect(focusedLabel()).toBe("Path");
+    pressKey("Escape");
+    expect(fakeDocument.activeElement).toBe(trigger);
+    expect(findButton("Path")).toBeUndefined();
+    pressKey("Escape");
+    await expect(selectionPromise).resolves.toBeNull();
+    expect(findButton("Copy")).toBeUndefined();
+    expect(fakeDocument.activeElement).toBe(invoker);
+  });
+
+  it("keeps keyboard navigation usable when control passes to the pointer or outside the menu", async () => {
+    const fakeDocument = document as unknown as FakeDocument;
+    const outside = fakeDocument.body.appendChild(fakeDocument.createElement("button"));
+    const selectionPromise = showContextMenuFallback([
+      { id: "copy", label: "Copy", children: [{ id: "copy:path", label: "Path" }] },
+      { id: "archive", label: "Archive" },
+    ]);
+    const rootMenu = fakeDocument
+      .querySelectorAll("div")
+      .find((element) => element.attributes.get("role") === "menu");
+
+    pressKey("ArrowRight");
+    expect(focusedLabel()).toBe("Path");
+    // Scrolling can generate mouseenter beneath a stationary pointer.
+    rootMenu?.dispatchEvent(new MouseEvent("mouseenter"));
+    expect(focusedLabel()).toBe("Path");
+
+    fakeDocument.dispatchEvent(
+      new MouseEvent("mousemove", { clientX: 10, clientY: 10 }) as unknown as FakeDomEvent,
+    );
+    rootMenu?.dispatchEvent(new MouseEvent("mouseenter"));
+    expect(findButton("Path")).toBeUndefined();
+    expect(focusedLabel()).toBe("Copy");
+    pressKey("ArrowDown");
+    expect(focusedLabel()).toBe("Archive");
+
+    findButton("Copy")?.dispatchEvent(new MouseEvent("mouseenter"));
+    expect(focusedLabel()).toBe("Archive");
+    fakeDocument.dispatchEvent(
+      new MouseEvent("mousemove", { clientX: 20, clientY: 20 }) as unknown as FakeDomEvent,
+    );
+    findButton("Copy")?.dispatchEvent(new MouseEvent("mousemove"));
+    expect(focusedLabel()).toBe("Copy");
+    expect(findButton("Path")).toBeTruthy();
+    pressKey("ArrowDown");
+    expect(focusedLabel()).toBe("Archive");
+    expect(findButton("Path")).toBeUndefined();
+
+    outside.focus();
+    expect(pressKey("ArrowDown").defaultPrevented).toBe(false);
+    expect(fakeDocument.activeElement).toBe(outside);
+    pressKey("Escape");
+    await expect(selectionPromise).resolves.toBeNull();
+    expect(fakeDocument.activeElement).toBe(outside);
+  });
+});
+
 describe("dismissContextMenu", () => {
   it("resolves an open menu with null", async () => {
     const selectionPromise = showContextMenuFallback([
@@ -359,5 +512,21 @@ describe("dismissContextMenu", () => {
 
     dismissContextMenu();
     await expect(secondPromise).resolves.toBeNull();
+  });
+
+  it("restores focus to the original invoker after replacing an open menu", async () => {
+    const invoker = (document as unknown as FakeDocument).createElement("button");
+    (document as unknown as FakeDocument).body.appendChild(invoker);
+    invoker.focus();
+    const firstPromise = showContextMenuFallback([{ id: "first", label: "First" }]);
+    expect(focusedLabel()).toBe("First");
+
+    const secondPromise = showContextMenuFallback([{ id: "second", label: "Second" }]);
+    await expect(firstPromise).resolves.toBeNull();
+    expect(focusedLabel()).toBe("Second");
+
+    pressKey("Escape");
+    await expect(secondPromise).resolves.toBeNull();
+    expect(invoker.focused).toBe(true);
   });
 });
