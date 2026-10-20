@@ -21,6 +21,7 @@ const MAX_PROCESS_NAME_BYTES: usize = 1_024;
 const MAX_PROCESS_COMMAND_BYTES: usize = 16 * 1_024;
 const MAX_PROCESS_STATUS_BYTES: usize = 256;
 const HISTORY_CHUNK_SNAPSHOTS: usize = 32;
+const TWO_STAGE_PROCESS_REFRESH: bool = cfg!(any(target_os = "linux", target_os = "macos"));
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -455,7 +456,7 @@ impl Collector {
         roots.insert(config.root_pid);
         let tracked = select_tracked_pids(&rows, &roots);
         let tracked_process_count = tracked.len();
-        let process_details = if cfg!(target_os = "linux") && !tracked.is_empty() {
+        let process_details = if TWO_STAGE_PROCESS_REFRESH && !tracked.is_empty() {
             let monitor_pid = Pid::from_u32(std::process::id());
             let mut detail_pids = tracked
                 .iter()
@@ -562,7 +563,7 @@ impl Collector {
 
 // Keep CPU baselines separate. Even a metadata refresh resets Linux process times.
 fn process_discovery_refresh_kind() -> ProcessRefreshKind {
-    if cfg!(target_os = "linux") {
+    if TWO_STAGE_PROCESS_REFRESH {
         ProcessRefreshKind::nothing().with_cpu().without_tasks()
     } else {
         process_refresh_kind()
@@ -1033,6 +1034,43 @@ mod tests {
         assert!(!process.command.is_empty());
         assert!(process.resident_bytes > 0);
         assert!(process.cpu_percent.is_finite());
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn keeps_command_lines_and_memory_out_of_the_discovery_table() {
+        let mut collector = Collector::new();
+        let mut config = CollectorConfig {
+            root_pid: u32::MAX,
+            sample_interval: None,
+            external_processes: HashMap::new(),
+        };
+        assert!(collector.sample(&config, None).processes.is_empty());
+
+        let pid = Pid::from_u32(std::process::id());
+        let unselected = collector.system.process(pid).expect("discovered process");
+        assert!(unselected.cmd().is_empty());
+        assert_eq!(unselected.memory(), 0);
+        assert_eq!(unselected.virtual_memory(), 0);
+
+        config.external_processes.insert(pid.as_u32(), None);
+        let snapshot = collector.sample(&config, None);
+        let selected = snapshot
+            .processes
+            .iter()
+            .find(|process| process.pid == pid.as_u32())
+            .expect("external process details");
+        assert!(!selected.command.is_empty());
+        assert!(selected.resident_bytes > 0);
+        assert!(selected.start_time_ms > 0);
+
+        let retained = collector
+            .system
+            .process(pid)
+            .expect("retained CPU baseline");
+        assert!(retained.cmd().is_empty());
+        assert_eq!(retained.memory(), 0);
+        assert_eq!(retained.virtual_memory(), 0);
     }
 
     #[test]
