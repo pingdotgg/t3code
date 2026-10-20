@@ -26,7 +26,8 @@ export type SettingsPath =
   | "/settings/source-control"
   | "/settings/storage"
   | "/settings/connections"
-  | "/settings/archived";
+  | "/settings/archived"
+  | "/settings/beta";
 
 export type SettingsSearchScope =
   | "environment"
@@ -85,6 +86,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/storage": "Storage",
   "/settings/connections": "Connections",
   "/settings/archived": "Archive",
+  "/settings/beta": "Beta",
 };
 
 export function keybindingSearchAnchorId<Command extends KeybindingCommand>(command: Command) {
@@ -323,10 +325,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["usage quota rate limit reset recover continue"],
   },
   {
+    id: "boring-sidebar",
+    title: "Boring Sidebar (group by project)",
+    to: "/settings/beta",
+    searchTerms: ["beta folders project tree legacy old classic sidebar"],
+  },
+  {
     id: "working-shelf",
-    title: "Working section (beta)",
-    to: "/settings/general",
-    searchTerms: ["hide fold running monitoring threads inbox sidebar shelf"],
+    title: "Working section",
+    to: "/settings/beta",
+    searchTerms: ["beta hide fold running monitoring threads inbox sidebar shelf"],
   },
   {
     id: "auto-settle-inactive-threads",
@@ -338,8 +346,8 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "compact-idle-threads",
-    title: "Compact idle Claude threads (beta)",
-    to: "/settings/general",
+    title: "Compact idle Claude threads",
+    to: "/settings/beta",
     scope: "environment-defaults",
     searchTerms: ["context compaction idle cache tokens usage summary beta experimental"],
   },
@@ -586,12 +594,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Context window indicator (legacy)",
     to: "/settings/general",
     searchTerms: ["composer meter usage tokens circle old"],
-  },
-  {
-    id: "legacy-sidebar",
-    title: "Sidebar (legacy)",
-    to: "/settings/general",
-    searchTerms: ["project thread tree old flat list"],
   },
   {
     id: "keybindings",
@@ -863,15 +865,16 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "review-guides",
-    title: "Review guides (beta)",
-    to: "/settings/source-control",
+    title: "Review guides",
+    to: "/settings/beta",
     searchTerms: ["pull request pr guided review guide tour beta experimental"],
     environmentOnly: true,
+    scope: "environment-defaults",
   },
   {
     id: "review-guide-model",
     title: "Review guide model",
-    to: "/settings/source-control",
+    to: "/settings/beta",
     // Hidden until review guides are on, so a search lands on the switch that shows it.
     targetId: "review-guides",
     searchTerms: ["pull request pr guided review guide brief maintainer"],
@@ -881,7 +884,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "review-guide-instructions",
     title: "Review guide instructions",
-    to: "/settings/source-control",
+    to: "/settings/beta",
     targetId: "review-guides",
     searchTerms: ["pull request pr guided review guide preferences taste prompt custom"],
     environmentOnly: true,
@@ -1020,6 +1023,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/connections": "connections",
   "/settings/scheduled-tasks": null,
   "/settings/archived": "project-defaults",
+  "/settings/beta": null,
 };
 
 export function getSettingsSearchTargetScope(targetId: string) {

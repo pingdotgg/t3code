@@ -114,7 +114,7 @@ open.
 
 ### Fold working threads (beta)
 
-Turn on **Settings → General → Working section (beta)** on web and desktop, or **Settings →
+Turn on **Settings → Beta → Working section** on web and desktop, or **Settings →
 Thread behavior → Working section** on iOS and Android, to move threads that are working or
 monitoring into a collapsed **Working** section below the active list. A thread returns to the top
 of the active list when it finishes, fails, or needs an approval or answer. The Working section
@@ -123,6 +123,15 @@ device keeps its own choice.
 
 While this is on, the active list is ordered by when each thread last came back to you, so you
 cannot drag or move threads within it. Your saved order returns when you turn it off.
+
+### Group threads by project (beta)
+
+Turn on **Settings → Beta → Boring Sidebar (group by project)** on web and desktop to put
+threads in a folder for each project. Click a folder to open or close it. Use the pen button on
+a folder, or right-click it, to start a thread in that project. Settled threads stay hidden in
+each folder until you show them. Pinned threads stay above the folders, and snoozed threads stay
+in their own section below them. In this mode you cannot drag threads, and the Working section
+is off. Each device keeps its own choice.
 
 ## Settle finished work
 

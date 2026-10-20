@@ -437,22 +437,6 @@ export function SourceControlWritingSettingsSection() {
         }
       />
 
-      <SettingsRow
-        serverScoped
-        settingKeys={["reviewGuidesEnabled"]}
-        mixed={mixedReviewGuidesEnabled}
-        {...searchableSetting("review-guides")}
-        description="Adds a Guide tab to pull requests: an agent writes a tour of the change, stop by stop, with the calls a maintainer should make."
-        control={
-          <Switch
-            mixed={mixedReviewGuidesEnabled}
-            checked={mixedReviewGuidesEnabled ? false : settings.reviewGuidesEnabled}
-            onCheckedChange={(checked) => updateSettings({ reviewGuidesEnabled: Boolean(checked) })}
-            aria-label="Review guides"
-          />
-        }
-      />
-
       {settings.reviewGuidesEnabled || mixedReviewGuidesEnabled ? (
         <>
           <SettingsRow

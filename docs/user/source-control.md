@@ -202,7 +202,7 @@ declined pull request.
 
 ### Review guides
 
-Review guides are in beta. Turn on **Review guides** in Settings → Source Control to add the
+Review guides are in beta. Turn on **Review guides** in Settings → Beta to add the
 **Guide** tab to pull requests on that server. On mobile, move between stops with **Next**
 and the back button; a stale guide offers a rewrite and hides excerpts that no longer match
 the current change.

@@ -239,7 +239,7 @@ Provider commands must start the message to run. T3 Code commands such as
 Send `/compact` in an existing conversation to reduce context usage when the
 provider supports it. Web and desktop also offer compaction from the context meter.
 
-Enable **Compact idle Claude threads (beta)** in **Settings > General** to compact
+Enable **Compact idle Claude threads** in **Settings > Beta** to compact
 an idle Claude thread with at least 200,000 tokens of context shortly before its
 prompt cache expires, so coming back does not reprocess the whole conversation.
 The cache lasts 1 hour on Claude subscriptions and 5 minutes with an API key. The

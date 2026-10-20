@@ -65,7 +65,6 @@ const initialState: UiState = {
 };
 
 const LEGACY_PROJECT_CWD_PREFERENCE_PREFIX = "legacy-project-cwd:";
-const LEGACY_PROJECT_EXPANSION_DEFAULT_KEY = "legacy-project-expansion-default";
 let legacyKeysCleanedUp = false;
 
 export function legacyProjectCwdPreferenceKey(cwd: string): string {
@@ -129,9 +128,6 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
           }
           for (const cwd of expandedProjectCwds) {
             migrated[legacyProjectCwdPreferenceKey(cwd)] = true;
-          }
-          if (!Array.isArray(parsed.collapsedProjectCwds) && expandedProjectCwds.length > 0) {
-            migrated[LEGACY_PROJECT_EXPANSION_DEFAULT_KEY] = false;
           }
           return migrated;
         })()
@@ -212,15 +208,10 @@ export function persistState(state: UiState): void {
     return;
   }
   try {
-    const projectExpandedById = Object.fromEntries(
-      Object.entries(state.projectExpandedById).filter(
-        ([key]) => key !== LEGACY_PROJECT_EXPANSION_DEFAULT_KEY,
-      ),
-    );
     window.localStorage.setItem(
       PERSISTED_STATE_KEY,
       JSON.stringify({
-        projectExpandedById,
+        projectExpandedById: state.projectExpandedById,
         projectOrder: state.projectOrder,
         threadLastVisitedAtById: state.threadLastVisitedAtById,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
@@ -338,19 +329,6 @@ function setPullRequestMergeMethod(state: UiState, method: PullRequestMergeMetho
   return state.pullRequestMergeMethod === method
     ? state
     : { ...state, pullRequestMergeMethod: method };
-}
-
-export function resolveProjectExpanded(
-  projectExpandedById: Readonly<Record<string, boolean>>,
-  preferenceKeys: readonly string[],
-): boolean {
-  for (const key of preferenceKeys) {
-    const expanded = projectExpandedById[key];
-    if (expanded !== undefined) {
-      return expanded;
-    }
-  }
-  return projectExpandedById[LEGACY_PROJECT_EXPANSION_DEFAULT_KEY] ?? true;
 }
 
 export function setProjectExpanded(
