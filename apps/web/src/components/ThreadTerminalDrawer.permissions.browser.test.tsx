@@ -82,7 +82,7 @@ vi.mock(import("../state/session"), async (original) => {
   };
 });
 
-import { TerminalViewport } from "./ThreadTerminalDrawer";
+import ThreadTerminalDrawer, { TerminalViewport } from "./ThreadTerminalDrawer";
 
 const threadRef = {
   environmentId: EnvironmentId.make("secondary-terminal"),
@@ -110,6 +110,7 @@ afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 it("rechecks the target terminal grant when a retained surface callback reports a resize", async () => {
@@ -153,4 +154,104 @@ it("rechecks the target terminal grant when a retained surface callback reports 
     environmentId: threadRef.environmentId,
     input: { threadId: threadRef.threadId, terminalId: "terminal-1", cols: 100, rows: 30 },
   });
+});
+
+it("keeps held Kitty keys and the original surface through split, focus, and unsplit", async () => {
+  const { GhosttyTerminalSurface } = await vi.importActual<
+    typeof import("~/terminal/ghostty/surface")
+  >("~/terminal/ghostty/surface");
+  const output: string[][] = [];
+  state.createSurface.mockImplementation((mount, options) => {
+    const data: string[] = [];
+    output.push(data);
+    return GhosttyTerminalSurface.create(mount, {
+      ...options,
+      onData: (chunk) => {
+        data.push(chunk);
+        options.onData(chunk);
+      },
+    });
+  });
+  const consumeShortcut = (event: KeyboardEvent) => {
+    if ((event.code === "KeyD" && event.ctrlKey) || (event.code === "KeyB" && event.repeat)) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  };
+  // ChatView installs its capture listener before the terminal mounts.
+  window.addEventListener("keydown", consumeShortcut, { capture: true });
+  const composer = document.createElement("textarea");
+  document.body.append(composer);
+  const render = async (terminalIds: string[]) => {
+    await act(async () =>
+      root.render(
+        <ThreadTerminalDrawer
+          threadRef={threadRef}
+          threadId={threadRef.threadId}
+          cwd="/repo"
+          height={280}
+          terminalIds={terminalIds}
+          activeTerminalId="original"
+          terminalGroups={[{ id: "group", terminalIds }]}
+          activeTerminalGroupId="group"
+          focusRequestId={0}
+          onSplitTerminal={state.otherCommand}
+          onSplitTerminalVertical={state.otherCommand}
+          onNewTerminal={state.otherCommand}
+          onActiveTerminalChange={state.otherCommand}
+          onCloseTerminal={state.otherCommand}
+          onHeightChange={state.otherCommand}
+          onAddTerminalContext={state.otherCommand}
+          keybindings={[]}
+        />,
+      ),
+    );
+    await act(async () => {
+      await Promise.all(state.createSurface.mock.results.map((result) => result.value));
+    });
+  };
+  try {
+    await render(["original"]);
+    const original = await state.createSurface.mock.results[0]!.value;
+    const disposeOriginal = vi.spyOn(original, "dispose");
+    original.write("\x1b[>11u");
+    const key = (type: "keydown" | "keyup", init: KeyboardEventInit) =>
+      original.input.dispatchEvent(
+        new KeyboardEvent(type, { bubbles: true, cancelable: true, ...init }),
+      );
+    original.focus();
+    key("keydown", { key: "Control", code: "ControlLeft", ctrlKey: true });
+    key("keydown", { key: "d", code: "KeyD", ctrlKey: true });
+    await render(["original", "split"]);
+    expect(state.createSurface).toHaveBeenCalledTimes(2);
+    expect(container.querySelector("textarea")).toBe(original.input);
+    expect(disposeOriginal).not.toHaveBeenCalled();
+    const split = await state.createSurface.mock.results[1]!.value;
+    const disposeSplit = vi.spyOn(split, "dispose");
+    original.focus();
+    key("keyup", { key: "d", code: "KeyD", ctrlKey: true });
+    key("keyup", { key: "Control", code: "ControlLeft" });
+
+    key("keydown", { key: "b", code: "KeyB" });
+    composer.focus();
+    original.focus();
+    key("keydown", { key: "b", code: "KeyB", repeat: true });
+    key("keyup", { key: "b", code: "KeyB" });
+
+    key("keydown", { key: "c", code: "KeyC" });
+    await render(["original"]);
+    expect(state.createSurface).toHaveBeenCalledTimes(2);
+    expect(container.querySelector("textarea")).toBe(original.input);
+    expect(disposeOriginal).not.toHaveBeenCalled();
+    expect(disposeSplit).toHaveBeenCalledOnce();
+    original.focus();
+    key("keyup", { key: "c", code: "KeyC" });
+    expect(output).toEqual([
+      ["\x1b[57442;5u", "\x1b[57442;1:3u", "\x1b[98u", "\x1b[98;1:3u", "\x1b[99u", "\x1b[99;1:3u"],
+      [],
+    ]);
+  } finally {
+    window.removeEventListener("keydown", consumeShortcut, { capture: true });
+    composer.remove();
+  }
 });
