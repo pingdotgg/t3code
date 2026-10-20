@@ -406,6 +406,43 @@ it("folds the title only for the active tab's own scroller", async () => {
   await vi.waitFor(() => expect(titleFold()).toBe(true));
 });
 
+it("stays collapsed at the bottom after native scroll clamping and reopens at the top", async () => {
+  await render();
+  const title = page.getByRole("heading", { level: 1, name: "Test pull request" });
+  await expect.element(title).toBeVisible();
+  const scroller = page.getByTestId("summary-scroller").element() as HTMLElement;
+  const content = scroller.lastElementChild as HTMLElement;
+  // Leave only a short scroll range so folding the header makes the browser clamp it.
+  content.style.height = `${scroller.clientHeight - 24}px`;
+  const expandedHeight = scroller.clientHeight;
+  const expandedBottom = scroller.scrollHeight - scroller.clientHeight;
+
+  await act(async () => {
+    const scrolled = new Promise<void>((resolve) =>
+      scroller.addEventListener("scroll", () => resolve(), { once: true }),
+    );
+    scroller.scrollTop = scroller.scrollHeight;
+    await scrolled;
+  });
+
+  await vi.waitFor(() => {
+    expect(title.element().closest("[inert]")).not.toBeNull();
+    expect(scroller.clientHeight).toBeGreaterThan(expandedHeight);
+    expect(scroller.scrollTop).toBeGreaterThan(0);
+    expect(scroller.scrollTop).toBeLessThan(expandedBottom);
+    expect(scroller.scrollTop).toBe(scroller.scrollHeight - scroller.clientHeight);
+  });
+
+  await act(async () => {
+    const scrolled = new Promise<void>((resolve) =>
+      scroller.addEventListener("scroll", () => resolve(), { once: true }),
+    );
+    scroller.scrollTop = 0;
+    await scrolled;
+  });
+  await vi.waitFor(() => expect(title.element().closest("[inert]")).toBeNull());
+});
+
 it("shows the current checkout recovery detail on the first failure and on retry", async () => {
   const first = new GitManagerError({
     cwd: "/workspace",
