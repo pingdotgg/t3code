@@ -2115,6 +2115,131 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect("imports long Claude tool history with metadata from discarded records", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-long-claude-");
+        const codexHomePath = yield* makeTempDir("t3code-long-codex-");
+        const workspace = yield* makeTempDir("t3code-long-workspace-");
+        const record = (fields: Record<string, unknown>) =>
+          encodeTranscriptRecord({ sessionId: "first-session", ...fields });
+        const toolResult = record({
+          type: "user",
+          cwd: path.join(workspace, "later-cwd"),
+          message: {
+            role: "user",
+            content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "ok" }],
+          },
+        });
+        yield* writeTranscript({
+          filePath: path.join(claudeHomePath, "projects", "-slug", "long-session.jsonl"),
+          contents: [
+            record({ type: "attachment", cwd: workspace, aiTitle: "Old title" }),
+            record({ type: "user", message: { role: "user", content: "First prompt" } }),
+            record({
+              type: "assistant",
+              message: { role: "assistant", model: "claude-opus-5-5", content: "First reply" },
+            }),
+            // Small tool records exceed the real 32 MiB selected-history budget in aggregate.
+            ...Array.from({ length: 20_000 }, () => toolResult),
+            record({ type: "user", message: { role: "user", content: "Latest prompt" } }),
+            record({
+              type: "assistant",
+              message: {
+                role: "assistant",
+                model: "claude-sonnet-5-5",
+                content: [{ type: "tool_use", id: "toolu_1", name: "Bash", input: {} }],
+              },
+            }),
+            record({ type: "custom-title", customTitle: "Renamed conversation" }),
+            record({ type: "ai-title", aiTitle: "Newest title" }),
+            record({ type: "attachment", sessionId: "latest-session" }),
+          ].join("\n"),
+          mtimeMs: nowMs,
+        });
+
+        const threads = yield* runRecentThreads({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot: workspace,
+        });
+
+        expect(threads).toMatchObject([
+          {
+            providerSessionId: "latest-session",
+            title: "Renamed conversation",
+            model: "claude-sonnet-5-5",
+            messages: [
+              { role: "user", text: "First prompt" },
+              { role: "assistant", text: "First reply" },
+              { role: "user", text: "Latest prompt" },
+            ],
+          },
+        ]);
+      }),
+    );
+
+    it.effect("excludes hidden Claude records from the history budget and session metadata", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-hidden-claude-");
+        const codexHomePath = yield* makeTempDir("t3code-hidden-codex-");
+        const workspace = yield* makeTempDir("t3code-hidden-workspace-");
+        const message = (role: "user" | "assistant", text: string) =>
+          encodeTranscriptRecord({
+            sessionId: "visible-session",
+            cwd: workspace,
+            type: role,
+            message: { role, content: text },
+          });
+        const flags = ["isSidechain", "isMeta", "isCompactSummary"] as const;
+        // Each hidden reply selects about 2 MiB; together they exceed the real 32 MiB budget.
+        const hiddenReply = (flag: (typeof flags)[number]) =>
+          encodeTranscriptRecord({
+            sessionId: "hidden-session",
+            aiTitle: "Hidden title",
+            customTitle: "Hidden rename",
+            type: "assistant",
+            [flag]: true,
+            message: { role: "assistant", model: "hidden-model", content: "x".repeat(1024 * 1024) },
+          });
+        yield* writeTranscript({
+          filePath: path.join(claudeHomePath, "projects", "-slug", "hidden-session.jsonl"),
+          contents: [
+            message("user", "First prompt"),
+            message("assistant", "First reply"),
+            ...Array.from({ length: 20 }, (_, index) => hiddenReply(flags[index % flags.length]!)),
+            message("user", "Latest prompt"),
+            hiddenReply("isSidechain"),
+          ].join("\n"),
+          mtimeMs: nowMs,
+        });
+
+        const threads = yield* runRecentThreads({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot: workspace,
+        });
+
+        expect(threads).toMatchObject([
+          {
+            providerSessionId: "visible-session",
+            title: "First prompt",
+            model: null,
+            messages: [
+              { role: "user", text: "First prompt" },
+              { role: "assistant", text: "First reply" },
+              { role: "user", text: "Latest prompt" },
+            ],
+          },
+        ]);
+      }),
+    );
+
     it.effect("reports stat, read, and parse failures as skipped", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
