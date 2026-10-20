@@ -872,6 +872,7 @@ interface ActiveCursorTurn {
   readonly assistantReply: CursorTransportFailure;
   readonly reasoning: ActiveCursorTextStream;
   usage: Omit<TokenUsage, "totalTokens"> | null;
+  usageMissed: boolean;
   interrupted: boolean;
   finalized: boolean;
 }
@@ -1958,7 +1959,10 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               yield* completeReasoning(context);
               const added = update.usage;
               const usage = context.usage;
-              if (added === undefined) return;
+              if (added === undefined) {
+                context.usageMissed = true;
+                return;
+              }
               const reasoningTokens =
                 added.reasoningTokens === undefined && usage?.reasoningTokens === undefined
                   ? undefined
@@ -2046,7 +2050,10 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           const reasoningTokens = context.usage.reasoningTokens;
           return {
             usageScope: "main_agent" as const,
-            usageStatus: status === "completed" ? ("complete" as const) : ("partial" as const),
+            usageStatus:
+              status === "completed" && !context.usageMissed
+                ? ("complete" as const)
+                : ("partial" as const),
             inputTokens,
             cachedInputTokens,
             cacheCreationTokens: Math.min(
@@ -2374,6 +2381,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 nextSegment: 0,
               },
               usage: null,
+              usageMissed: false,
               interrupted: false,
               finalized: false,
             };

@@ -74,6 +74,29 @@ describe("CursorAdapterV2", () => {
       },
     },
     {
+      name: "marks a sum with an unreported turn partial",
+      usage: [
+        {
+          inputTokens: 1000,
+          outputTokens: 50,
+          cacheReadTokens: 600,
+          cacheWriteTokens: 100,
+        },
+        undefined,
+      ],
+      status: "finished" as const,
+      expectedStatus: "completed",
+      expectedUsage: {
+        usageScope: "main_agent",
+        usageStatus: "partial",
+        inputTokens: 1000,
+        cachedInputTokens: 600,
+        cacheCreationTokens: 100,
+        outputTokens: 50,
+        hasSubagents: false,
+      },
+    },
+    {
       name: "marks missing usage unavailable",
       usage: [],
       status: "finished" as const,
@@ -137,7 +160,11 @@ describe("CursorAdapterV2", () => {
               send: (input) =>
                 Effect.gen(function* () {
                   for (const step of usage) {
-                    yield* input.onDelta!({ type: "turn-ended", usage: step }).pipe(Effect.orDie);
+                    yield* input.onDelta!(
+                      step === undefined
+                        ? { type: "turn-ended" }
+                        : { type: "turn-ended", usage: step },
+                    ).pipe(Effect.orDie);
                   }
                   yield* Deferred.succeed(usageDelivered, undefined);
                   return {
