@@ -13,6 +13,7 @@ import { ChildProcessSpawner } from "effect/process";
 import {
   GitCommandError,
   VcsProcessExitError,
+  VcsUnsupportedOperationError,
   type VcsSwitchRefInput,
   type VcsSwitchRefResult,
   type VcsCreateRefInput,
@@ -965,6 +966,64 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           }
         }
 
+        const workspaceIgnored = (yield* filterIgnoredPaths(input.cwd, ["."])).length === 0;
+        if (workspaceIgnored) {
+          // HEAD omits staged-only paths. Seed just this workspace's additions, keeping
+          // unrelated staged changes and the scratch index's sparse flags untouched.
+          const additions = yield* execute({
+            operation,
+            cwd: input.cwd,
+            args: [
+              "-c",
+              "core.quotePath=true",
+              "diff",
+              "--cached",
+              "--raw",
+              "--no-abbrev",
+              "--no-renames",
+              "--no-relative",
+              "--ignore-submodules=none",
+              "--no-color",
+              "--no-ext-diff",
+              "--no-textconv",
+              "--ita-visible-in-index",
+              "--diff-filter=A",
+              "--",
+              ".",
+            ],
+            maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
+            outputMode: "error",
+          });
+          if (additions.stdout.length > 0) {
+            // Git's quoted paths round-trip through index-info, including non-UTF-8 names.
+            yield* execute({
+              operation,
+              cwd: input.cwd,
+              args: [...indexConfig, "-c", "index.sparse=false", "update-index", "--index-info"],
+              stdin: additions.stdout.replace(
+                /^:000000 ([0-7]{6}) 0+ ([0-9a-f]+) A\t/gm,
+                "$1 $2\t",
+              ),
+              env: commitEnv,
+            });
+          }
+          const tracked = yield* execute({
+            operation,
+            cwd: input.cwd,
+            args: [...indexConfig, "ls-files", "--cached", "-z", "--", "."],
+            env: commitEnv,
+            maxOutputBytes: 1,
+            outputMode: "truncate",
+          });
+          if (tracked.stdout.length === 0) {
+            return yield* new VcsUnsupportedOperationError({
+              operation,
+              kind: "git",
+              detail: "The workspace directory is ignored by its Git repository.",
+            });
+          }
+        }
+
         const stageFiles = (exclusions: ReadonlyArray<string>) =>
           execute({
             operation,
@@ -975,7 +1034,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               ...longPaths,
               "add",
               ...(sparseCheckout ? ["--sparse"] : []),
-              "-A",
+              // add -A rejects ignored directories even when they contain tracked files.
+              workspaceIgnored ? "-u" : "-A",
               "--",
               ".",
               ...exclusions,
