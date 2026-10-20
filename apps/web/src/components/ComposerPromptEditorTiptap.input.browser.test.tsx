@@ -1,8 +1,18 @@
+import type { ComposerFileAttachment } from "../composerDraftStore";
+import { formatInlineContextReference } from "../lib/composerContextReferences";
+import { fileContextReference } from "../lib/composerContextRecords";
+import {
+  reconcileAttachmentContextReferences,
+  type RetainedContextPayloads,
+  useRetainedContextPayloads,
+} from "./chat/composerContextUndo";
+
+import { userEvent } from "vite-plus/test/browser";
 import type { ServerProviderSkill } from "@t3tools/contracts";
 import type { Editor } from "@tiptap/core";
-import { act, createRef, useState } from "react";
+import { act, createElement, createRef, useEffect, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { detectComposerTrigger } from "~/composer-logic";
 import { serializeEditorDoc } from "~/composer-rich-text-doc";
@@ -352,4 +362,168 @@ it("reconciles provider skills and metadata without losing formatting, caret, or
   expect(document.body.textContent).not.toContain("Current short description");
   expect(document.body.textContent).toContain("No description is available for this skill.");
   expect(document.body.textContent).not.toContain("Previous provider description");
+});
+
+const file = {
+  type: "file",
+  id: "file-1",
+  name: "notes.txt",
+  mimeType: "text/plain",
+  sizeBytes: 5,
+  file: new File(["notes"], "notes.txt", { type: "text/plain" }),
+} satisfies ComposerFileAttachment;
+
+describe("composer context undo lifetime", () => {
+  async function mountComposer(destinationValue = "") {
+    const initialValue = `Draft A ${formatInlineContextReference(fileContextReference(file))}`;
+    const editorRef = createRef<ComposerPromptEditorHandle>();
+    let current: { value: string; files: ComposerFileAttachment[] };
+    let retained: RetainedContextPayloads;
+
+    function Composer({ targetKey }: { targetKey: string }) {
+      const [drafts, setDrafts] = useState<
+        Record<string, { value: string; files: ComposerFileAttachment[] }>
+      >({
+        a: { value: initialValue, files: [file] },
+        b: { value: destinationValue, files: [] },
+      });
+      const payloads = useRetainedContextPayloads(targetKey);
+      const draft = drafts[targetKey]!;
+      useEffect(() => {
+        current = draft;
+        retained = payloads;
+      });
+      const editorProps = {
+        draftKey: targetKey,
+        editorRef,
+        value: draft.value,
+        cursor: 0,
+        contextRecords: new Map(
+          draft.files.map((entry) => [
+            fileContextReference(entry).contextId,
+            { kind: "file" as const, record: entry },
+          ]),
+        ),
+        skills: [],
+        disabled: false,
+        placeholder: "",
+        onChange: (value, _cursor, _expandedCursor, _adjacent, contextIds) => {
+          const changes = reconcileAttachmentContextReferences({
+            referencedContextIds: new Set(contextIds),
+            files: draft.files,
+            images: [],
+            previewAnnotations: [],
+            retained: payloads,
+          });
+          setDrafts({
+            ...drafts,
+            [targetKey]: {
+              value,
+              files: [
+                ...draft.files.filter((entry) => !changes.filesToRemove.includes(entry.id)),
+                ...changes.filesToRestore,
+              ],
+            },
+          });
+        },
+        onPaste: () => {},
+      } satisfies ComposerPromptEditorProps;
+      return createElement(ComposerPromptEditor, editorProps);
+    }
+
+    const render = async (targetKey: string) => {
+      await act(async () => root.render(createElement(Composer, { targetKey })));
+    };
+    const editor = () => {
+      const element = container.querySelector<HTMLElement & { editor: Editor }>(".tiptap");
+      if (!element) throw new Error("Composer did not mount");
+      return element.editor;
+    };
+    await render("a");
+    return {
+      initialValue,
+      render,
+      editor,
+      draft: () => current,
+      retained: () => retained,
+      deleteDraft: async () => {
+        await act(async () => {
+          const currentEditor = editor();
+          currentEditor.view.dispatch(
+            currentEditor.state.tr.delete(1, currentEditor.state.doc.content.size - 1),
+          );
+        });
+      },
+      undo: async () => {
+        await act(async () => {
+          editor().commands.undo();
+        });
+      },
+    };
+  }
+
+  it("preserves typing focus across draft switches without taking focus from another control", async () => {
+    const composer = await mountComposer("Draft B");
+    const previousEditor = composer.editor();
+    await act(async () => {
+      previousEditor.commands.setTextSelection(previousEditor.state.doc.content.size - 1);
+      previousEditor.view.focus();
+    });
+    expect(document.activeElement).toBe(previousEditor.view.dom);
+
+    await composer.render("b");
+    const nextEditor = composer.editor();
+    expect(nextEditor).not.toBe(previousEditor);
+    expect(document.activeElement).toBe(nextEditor.view.dom);
+    await act(async () => userEvent.keyboard("x"));
+    expect(composer.draft().value).toBe("xDraft B");
+
+    const button = document.createElement("button");
+    container.append(button);
+    button.focus();
+    await composer.render("a");
+    expect(document.activeElement).toBe(button);
+    expect(composer.draft().value).toBe(composer.initialValue);
+  });
+
+  it("restores a deleted chip and its file bytes on same-draft undo, then releases them on unmount", async () => {
+    const composer = await mountComposer();
+    await composer.deleteDraft();
+    expect(composer.draft()).toEqual({ value: "", files: [] });
+    const retained = composer.retained();
+    expect(retained.files.get(fileContextReference(file).contextId)?.file).toBe(file.file);
+
+    await composer.render("a");
+    await composer.undo();
+    expect(serializeEditorDoc(composer.editor().state.doc).value).toBe(composer.initialValue);
+    expect(composer.draft()).toEqual({ value: composer.initialValue, files: [file] });
+    expect(composer.draft().files[0]?.file).toBe(file.file);
+
+    await composer.deleteDraft();
+    await act(async () => root.unmount());
+    expect(retained.files.size).toBe(0);
+    root = createRoot(container);
+  });
+
+  it.each(["", "Draft B"])(
+    "releases deleted payloads and prevents undo into the previous draft when switching to %j",
+    async (destinationValue) => {
+      const composer = await mountComposer(destinationValue);
+      await composer.deleteDraft();
+      expect(composer.draft()).toEqual({ value: "", files: [] });
+      const retained = composer.retained();
+      expect(retained.files.get(fileContextReference(file).contextId)?.file).toBe(file.file);
+
+      await composer.render("b");
+      expect(retained.files.size).toBe(0);
+      await composer.undo();
+      expect(serializeEditorDoc(composer.editor().state.doc).value).toBe(destinationValue);
+      expect(composer.draft()).toEqual({ value: destinationValue, files: [] });
+
+      await composer.render("a");
+      await composer.undo();
+      expect(serializeEditorDoc(composer.editor().state.doc).value).toBe("");
+      expect(composer.draft()).toEqual({ value: "", files: [] });
+    },
+  );
 });
