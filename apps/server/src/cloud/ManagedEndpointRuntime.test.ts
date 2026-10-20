@@ -19,6 +19,7 @@ import * as RelayClient from "@t3tools/shared/relayClient";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
+import * as RelayClientLedger from "./RelayClientLedger.ts";
 
 const layerRelayClientAvailable = Layer.succeed(
   RelayClient.RelayClient,
@@ -789,6 +790,65 @@ describe("CloudManagedEndpointRuntime", () => {
       expect(killed).toEqual([100, 101]);
       expect(stopped).toEqual({ status: "disabled" });
     }),
+  );
+
+  it.effect.each([{ ledger: "without" }, { ledger: "with" }])(
+    "starts and stops the connector the same way $ledger a relay client ledger",
+    ({ ledger }) =>
+      Effect.gen(function* () {
+        const events: Array<string> = [];
+        const spawner = ChildProcessSpawner.make(() =>
+          Effect.gen(function* () {
+            const handle = makeHandle({
+              pid: 500,
+              onKill: () => {
+                events.push("kill:500");
+              },
+            });
+            yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
+            return handle;
+          }),
+        );
+        const layerRuntime = ManagedEndpointRuntime.layer.pipe(
+          Layer.provide(runtimeDependencies(spawner)),
+        );
+        const context = yield* Layer.build(
+          ledger === "without"
+            ? layerRuntime
+            : layerRuntime.pipe(
+                Layer.provide(
+                  Layer.succeed(
+                    RelayClientLedger.RelayClientLedger,
+                    RelayClientLedger.RelayClientLedger.of({
+                      track: ({ pid }) =>
+                        Effect.sync(() => {
+                          events.push(`track:${pid}`);
+                          return Effect.sync(() => {
+                            events.push(`forget:${pid}`);
+                          });
+                        }),
+                    }),
+                  ),
+                ),
+              ),
+        );
+        const runtime = yield* Effect.service(
+          ManagedEndpointRuntime.CloudManagedEndpointRuntime,
+        ).pipe(Effect.provide(context));
+
+        const started = yield* runtime.applyConfig({
+          providerKind: "cloudflare_tunnel",
+          connectorToken: "token",
+        });
+        const stopped = yield* runtime.applyConfig(null);
+
+        expect(started).toMatchObject({ status: "running", pid: 500 });
+        expect(stopped).toEqual({ status: "disabled" });
+        // The record outlives the client: it is forgotten only after the kill.
+        expect(events).toEqual(
+          ledger === "without" ? ["kill:500"] : ["track:500", "kill:500", "forget:500"],
+        );
+      }),
   );
 
   it.effect("stops an active connector when a non-Cloudflare runtime config is applied", () =>
