@@ -17,6 +17,7 @@ export interface ComposerBannerStackItem {
   readonly icon: ReactNode;
   readonly title: ReactNode;
   readonly description?: ReactNode;
+  readonly descriptionPlacement?: "inline" | "below";
   readonly children?: ReactNode;
   readonly actions?: ReactNode;
   readonly dismissLabel?: string;
@@ -347,6 +348,7 @@ function ComposerBannerStackAlert({
       </ComposerBanner.Root>
     );
   }
+  const descriptionBelow = item.descriptionPlacement === "below";
   return (
     <ComposerBanner.Root
       role="alert"
@@ -354,11 +356,15 @@ function ComposerBannerStackAlert({
       variant={item.variant}
       density="comfortable"
     >
-      <ComposerBanner.Row layout={item.priority === "activity" ? "inline" : "wrap-actions"}>
+      <ComposerBanner.Row
+        layout={descriptionBelow || item.priority === "activity" ? "inline" : "wrap-actions"}
+      >
         <ComposerBanner.Icon className="h-(--composer-banner-icon-column) self-start">
           {item.icon}
         </ComposerBanner.Icon>
-        <ComposerBanner.Content className="whitespace-nowrap">
+        <ComposerBanner.Content
+          className={descriptionBelow ? "flex-col items-stretch gap-0" : "whitespace-nowrap"}
+        >
           <NoticeText
             detailsLabel="Show title details"
             className="min-w-0 truncate font-medium leading-7 sm:leading-6"
@@ -366,16 +372,22 @@ function ComposerBannerStackAlert({
             {item.title}
           </NoticeText>
           {item.description ? (
-            <NoticeText
-              detailsLabel="Show notice details"
-              className="w-0 min-w-0 grow truncate text-muted-foreground @max-[400px]:sr-only"
-            >
-              {item.description}
-            </NoticeText>
+            descriptionBelow ? (
+              <ComposerBanner.Scroll className="text-muted-foreground whitespace-normal wrap-anywhere [--inline-button-text-align:start] [--inline-button-white-space:normal] [&_[data-slot=inline-button]]:max-w-full">
+                <span className="block pb-1">{item.description}</span>
+              </ComposerBanner.Scroll>
+            ) : (
+              <NoticeText
+                detailsLabel="Show notice details"
+                className="w-0 min-w-0 grow truncate text-muted-foreground @max-[400px]:sr-only"
+              >
+                {item.description}
+              </NoticeText>
+            )
           ) : null}
         </ComposerBanner.Content>
         {item.actions || item.onDismiss ? (
-          <ComposerBanner.Actions>
+          <ComposerBanner.Actions className={descriptionBelow ? "self-start" : undefined}>
             {item.actions}
             {item.onDismiss ? (
               <ComposerBanner.Dismiss
