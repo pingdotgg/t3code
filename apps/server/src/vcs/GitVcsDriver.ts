@@ -50,6 +50,7 @@ export interface ExecuteGitInput {
   readonly env?: NodeJS.ProcessEnv;
   readonly allowNonZeroExit?: boolean;
   readonly timeoutMs?: number | null;
+  readonly forceKillAfterMs?: number;
   readonly maxOutputBytes?: number;
   readonly appendTruncationMarker?: boolean;
   /**
