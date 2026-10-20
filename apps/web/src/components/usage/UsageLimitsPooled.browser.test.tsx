@@ -194,6 +194,26 @@ it("cuts the pace gap through the segment track and keeps the tick inside it", a
   expect(tick.right).toBeLessThanOrEqual(rect.right);
 });
 
+it("drops the pace gap and tick when a segment is narrower than 6px", async () => {
+  setup();
+  await using _screen = await render(
+    <UsageLimitsPooled
+      presentations={presentations("2026-09-03T14:00:00Z", 0)}
+      now={Date.parse("2026-09-03T11:30:00Z")}
+    />,
+  );
+  const segment = page.getByRole("button", { name: /^Alpha:/ }).element();
+  const tick = () => segment.querySelector(':scope > span[style*="left"]');
+  expect(tick()).not.toBeNull();
+  // Pooled grid columns have no minimum width; squeeze the segment the way a crowded pool does.
+  await act(() => {
+    segment.style.width = "4.5px";
+  });
+  await expect.poll(tick).toBeNull();
+  expect(getComputedStyle(segment).backgroundImage).toBe("none");
+  expect(getComputedStyle(segment.querySelector(":scope > div > div")!).clipPath).toBe("none");
+});
+
 it("moves the one limit popover between windows on hover", async () => {
   setup();
   await using screen = await render(initial());
