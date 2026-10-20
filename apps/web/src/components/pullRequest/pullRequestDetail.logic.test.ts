@@ -547,6 +547,102 @@ describe("review verdicts", () => {
 });
 
 describe("pull request timeline", () => {
+  it("omits bodiless non-verdict reviews from Summary and Timeline while retaining verdicts", () => {
+    const empty = {
+      ...TIMELINE_SOURCE.comments[0]!,
+      id: "empty",
+      kind: "review" as const,
+      body: "",
+      reviewState: "COMMENTED",
+    };
+    const approval = { ...empty, id: "approval", reviewState: "APPROVED" };
+    const comments = [empty, approval, TIMELINE_SOURCE.comments[0]!];
+    expect(pullRequestConversationItems(comments, []).map((item) => item.id)).toEqual([
+      "approval",
+      "c1",
+    ]);
+    expect(
+      buildPullRequestTimeline({ ...TIMELINE_SOURCE, comments }).map((event) => event.id),
+    ).toEqual(["approval", "c1", "1baf7bdcafe", "created"]);
+  });
+
+  it("keeps open and resolved review conversations together, including thread-only replies", () => {
+    const root = { ...TIMELINE_SOURCE.comments[0]!, id: "root", path: "src/app.ts" };
+    const reply = {
+      ...root,
+      id: "reply",
+      body: "Please keep the fallback",
+      createdAt: "2026-07-05T00:00:00Z",
+    };
+    const thread: PullRequestReviewThread = {
+      id: "discussion",
+      path: "src/app.ts",
+      line: 10,
+      side: "right",
+      isResolved: false,
+      isOutdated: false,
+      comments: [root, reply],
+    };
+    const resolved: PullRequestReviewThread = {
+      ...thread,
+      id: "finished",
+      isResolved: true,
+      comments: [{ ...root, id: "resolved-comment", body: "Fixed now" }],
+    };
+    const events = buildPullRequestTimeline({
+      ...TIMELINE_SOURCE,
+      comments: [root, TIMELINE_SOURCE.comments[0]!],
+      reviewThreads: [thread, resolved],
+    });
+    expect(events.map((event) => event.id)).toEqual([
+      "thread:discussion",
+      "c1",
+      "thread:finished",
+      "1baf7bdcafe",
+      "created",
+    ]);
+    expect(events[0]).toMatchObject({
+      kind: "thread",
+      at: reply.createdAt,
+      path: "src/app.ts",
+      reviewThread: thread,
+    });
+    expect(events[0]?.reviewThread?.comments.map((comment) => [comment.id, comment.body])).toEqual([
+      ["root", "looks good"],
+      ["reply", "Please keep the fallback"],
+    ]);
+    expect(events.find((event) => event.id === "thread:finished")?.reviewThread?.isResolved).toBe(
+      true,
+    );
+    expect(
+      groupPullRequestTimelineConversations(events).map((row) =>
+        row.kind === "comments" ? row.events.map((event) => event.id) : row.event.id,
+      ),
+    ).toEqual(["thread:discussion", ["c1"], "thread:finished", "1baf7bdcafe", "created"]);
+  });
+
+  it("retains a discussion whose first page has not loaded yet", () => {
+    const thread: PullRequestReviewThread = {
+      id: "unloaded",
+      path: "src/app.ts",
+      line: null,
+      side: "right",
+      isResolved: false,
+      isOutdated: true,
+      comments: [],
+      commentCount: 5,
+      nextCommentsCursor: "page-2",
+    };
+    const event = buildPullRequestTimeline({ ...TIMELINE_SOURCE, reviewThreads: [thread] }).find(
+      (entry) => entry.kind === "thread",
+    );
+    expect(event).toMatchObject({
+      reviewThread: thread,
+      actor: null,
+      at: TIMELINE_SOURCE.createdAt,
+    });
+  });
+
   it("orders creation, commits and comments newest first", () => {
     expect(buildPullRequestTimeline(TIMELINE_SOURCE).map((event) => event.id)).toEqual([
       "c1",
@@ -758,35 +854,30 @@ describe("review thread conversations", () => {
     comments: [lastReply, { ...finding, body: "Stale finding" }, reply],
   };
 
-  it("keeps a timeline finding and its replies in one row at the finding time", () => {
+  it("keeps a timeline finding and replies together at the latest activity time", () => {
     const events = buildPullRequestTimeline({
       ...TIMELINE_SOURCE,
       comments,
       reviewThreads: [thread],
     });
-    expect(events.map((event) => event.id)).toEqual(["c1", "finding", "1baf7bdcafe", "created"]);
-    expect(events[1]).toMatchObject({
-      id: finding.id,
-      at: finding.createdAt,
-      body: finding.body,
-      url: finding.url,
-      thread: {
-        path: thread.path,
-        line: 7,
-        isOutdated: true,
-        replies: [
-          { id: reply.id, body: reply.body, url: reply.url, reactions: reply.reactions },
-          { id: lastReply.id, body: lastReply.body, url: lastReply.url },
-        ],
-      },
+    expect(events.map((event) => event.id)).toEqual([
+      "thread:thread",
+      "c1",
+      "1baf7bdcafe",
+      "created",
+    ]);
+    expect(events[0]).toMatchObject({
+      at: lastReply.createdAt,
+      reviewThread: { ...thread, comments: [finding, reply, lastReply] },
     });
+    expect(events[0]?.reviewThread?.comments).toEqual([finding, reply, lastReply]);
     expect(groupPullRequestTimelineConversations(events).map((row) => row.kind)).toEqual([
+      "event",
       "comments",
       "event",
       "event",
-      "event",
     ]);
-    expect(events[0]).toEqual(buildPullRequestTimeline(TIMELINE_SOURCE)[0]);
+    expect(events[1]).toEqual(buildPullRequestTimeline(TIMELINE_SOURCE)[0]);
   });
 
   it("orders and pages whole Summary conversations while retaining editable comment copies", () => {
@@ -844,24 +935,25 @@ describe("review thread conversations", () => {
     );
   });
 
-  it("distinguishes unloaded replies from complete threads, even when the host only supplies a cursor", () => {
-    const timeline = (reviewThread: PullRequestReviewThread) =>
-      buildPullRequestTimeline({
+  it("retains reply pagination metadata for the shared review thread card", () => {
+    for (const reviewThread of [
+      { ...thread, commentCount: 5 },
+      { ...thread, nextCommentsCursor: "next" },
+      thread,
+    ]) {
+      const timeline = buildPullRequestTimeline({
         ...TIMELINE_SOURCE,
         comments,
         reviewThreads: [reviewThread],
-      }).find((event) => event.id === finding.id)?.thread;
-    expect(timeline({ ...thread, commentCount: 5 })).toMatchObject({
-      moreReplies: 2,
-      hasMoreReplies: true,
-      url: finding.url,
-    });
-    expect(timeline({ ...thread, nextCommentsCursor: "next" })).toMatchObject({
-      moreReplies: 0,
-      hasMoreReplies: true,
-      url: finding.url,
-    });
-    expect(timeline(thread)).toMatchObject({ moreReplies: 0, hasMoreReplies: false });
+      });
+      expect(timeline.find((event) => event.id === "thread:thread")?.reviewThread).toMatchObject({
+        ...reviewThread,
+        comments: [finding, reply, lastReply],
+      });
+      expect(
+        timeline.filter((event) => [finding.id, reply.id, lastReply.id].includes(event.id)),
+      ).toEqual([]);
+    }
   });
 });
 

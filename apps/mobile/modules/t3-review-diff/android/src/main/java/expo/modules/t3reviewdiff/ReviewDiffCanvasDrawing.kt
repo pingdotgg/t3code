@@ -15,7 +15,7 @@ import kotlin.math.max
 import kotlin.math.min
 
 internal class ReviewDiffCanvasDrawing(context: Context) {
-  private val density = context.resources.displayMetrics.density
+  val density = context.resources.displayMetrics.density
   var theme: DiffTheme = DiffTheme.fallback("light")
 
   val backgroundPaint = Paint()
@@ -68,6 +68,188 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
       right,
       centerY + 10f * density,
     )
+  }
+
+  fun drawFileHeader(
+    canvas: Canvas,
+    row: DiffRow,
+    rect: RectF,
+    style: DiffStyle,
+    state: FileHeaderDrawingState
+  ) {
+    val top = rect.top.toInt()
+    val bottom = rect.bottom.toInt()
+    val width = rect.width().toInt()
+    backgroundPaint.color = theme.headerBackground
+    canvas.drawRect(rect, backgroundPaint)
+
+    val chevronRect = fileHeaderChevronRect(top, bottom, style)
+    val iconRect = fileHeaderIconRect(top, bottom, style)
+    val checkboxRect = fileHeaderCheckboxRect(top, bottom, width, style)
+    drawDisclosureChevron(
+      canvas,
+      chevronRect,
+      theme.mutedText,
+      collapsed = state.collapsed,
+    )
+    drawFileIcon(canvas, iconRect, row.changeType)
+    if (state.showViewedCheckbox) {
+      val saved = canvas.saveLayerAlpha(checkboxRect, if (state.viewedCheckboxEnabled) 255 else 102)
+      drawViewedCheckbox(
+        canvas,
+        checkboxRect,
+        state.viewed,
+      )
+      canvas.restoreToCount(saved)
+    }
+
+    configureUiPaint(
+      paint = uiPaint,
+      color = theme.deleteText,
+      size = style.fileHeaderMetaFontSizePx,
+      weight = style.fileHeaderMetaFontWeight,
+    )
+    val deleteText = "-${row.deletions}"
+    val deleteWidth = uiPaint.measureText(deleteText)
+    val addText = "+${row.additions}"
+    val addWidth = uiPaint.measureText(addText)
+    val countGap = 4f * density
+    val countsRight = if (row.fileAction != null) {
+      width - 110f * density
+    } else if (state.showViewedCheckbox) {
+      checkboxRect.left - 10f * density
+    } else {
+      width - 16f * density
+    }
+    val countsX = countsRight - deleteWidth - countGap - addWidth
+    val baseline = centeredBaseline(top, bottom, uiPaint)
+    canvas.drawText(deleteText, countsX, baseline, uiPaint)
+    uiPaint.color = theme.addText
+    canvas.drawText(addText, countsX + deleteWidth + countGap, baseline, uiPaint)
+
+    val pathLayout = fileHeaderPathLayout(row, iconRect, countsX, style)
+    val maxPathOffset = maxHeaderPathOffset(pathLayout)
+    val pathOffset = state.pathOffset
+      .coerceIn(0, maxPathOffset)
+    drawFileHeaderPath(canvas, row, pathLayout, pathOffset, maxPathOffset)
+    drawFileHeaderAction(canvas, row, rect)
+    borderPaint.color = theme.border
+    borderPaint.strokeWidth = density
+    canvas.drawLine(0f, bottom - density / 2f, width.toFloat(), bottom - density / 2f, borderPaint)
+  }
+
+  private fun drawFileHeaderPath(
+    canvas: Canvas,
+    row: DiffRow,
+    pathLayout: FileHeaderPathLayout,
+    pathOffset: Int,
+    maxPathOffset: Int
+  ) {
+    canvas.save()
+    canvas.clipRect(pathLayout.rect)
+    val metrics = uiPaint.fontMetrics
+    val baseline = pathLayout.rect.centerY() - (metrics.ascent + metrics.descent) / 2f
+    if (row.renameSegments.isNotEmpty()) {
+      drawRenamePath(canvas, row, pathLayout, pathOffset, baseline)
+    } else {
+      canvas.drawText(pathLayout.displayPath, pathLayout.rect.left - pathOffset, baseline, uiPaint)
+    }
+    canvas.restore()
+    drawFileHeaderPathScrollFades(canvas, pathLayout.rect, pathOffset, maxPathOffset)
+  }
+
+  private fun drawRenamePath(
+    canvas: Canvas,
+    row: DiffRow,
+    pathLayout: FileHeaderPathLayout,
+    pathOffset: Int,
+    baseline: Float
+  ) {
+    var x = pathLayout.rect.left - pathOffset
+    for (segment in row.renameSegments) {
+      val segmentWidth = uiPaint.measureText(segment.text)
+      if (segment.kind == "removed" || segment.kind == "added") {
+        backgroundPaint.color =
+          if (segment.kind == "removed") theme.deleteBackground else theme.addBackground
+        canvas.drawRect(
+          x,
+          pathLayout.rect.top,
+          x + segmentWidth,
+          pathLayout.rect.bottom,
+          backgroundPaint
+        )
+      }
+      uiPaint.color = if (segment.kind == "context") theme.mutedText else theme.text
+      canvas.drawText(segment.text, x, baseline, uiPaint)
+      x += segmentWidth
+    }
+  }
+
+  private fun drawFileHeaderAction(canvas: Canvas, row: DiffRow, rect: RectF) {
+    val top = rect.top.toInt()
+    val bottom = rect.bottom.toInt()
+    val width = rect.width().toInt()
+    row.fileAction?.let { label ->
+      val rect = RectF(
+        width - 96 * density,
+        top + 7 * density,
+        width - 10 * density,
+        bottom - 7 * density
+      )
+      backgroundPaint.color = theme.border
+      backgroundPaint.style = Paint.Style.STROKE
+      backgroundPaint.strokeWidth = density
+      canvas.drawRoundRect(rect, 6 * density, 6 * density, backgroundPaint)
+      backgroundPaint.style = Paint.Style.FILL
+      configureUiPaint(
+        uiPaint,
+        if (row.fileActionDisabled) theme.mutedText else theme.hunkText,
+        12 * density,
+        "semibold"
+      )
+      canvas.drawText(
+        label,
+        rect.centerX() - uiPaint.measureText(label) / 2,
+        centeredBaseline(top, bottom, uiPaint),
+        uiPaint
+      )
+    }
+  }
+
+  fun fileHeaderPathLayout(
+    row: DiffRow,
+    iconRect: RectF,
+    countsX: Float,
+    style: DiffStyle
+  ): FileHeaderPathLayout {
+    configureUiPaint(
+      paint = uiPaint,
+      color = theme.text,
+      size = style.fileHeaderFontSizePx,
+      weight = style.fileHeaderFontWeight,
+    )
+    val pathX = iconRect.right + 10f * density
+    val pathWidth = max(24f * density, countsX - pathX - 12f * density)
+    val centerY = iconRect.centerY()
+    val displayPath = if (row.renameSegments.isNotEmpty()) {
+      row.renameSegments.joinToString("") { it.text }
+    } else {
+      row.filePath
+    }
+    return FileHeaderPathLayout(
+      displayPath = displayPath,
+      rect = RectF(pathX, centerY - 10f * density, pathX + pathWidth, centerY + 10f * density),
+    )
+  }
+
+  private fun maxHeaderPathOffset(layout: FileHeaderPathLayout): Int = max(
+    0,
+    ceil(uiPaint.measureText(layout.displayPath) - layout.rect.width()).toInt(),
+  )
+
+  private fun centeredBaseline(top: Int, bottom: Int, paint: Paint): Float {
+    val metrics = paint.fontMetrics
+    return (top + bottom) / 2f - (metrics.ascent + metrics.descent) / 2f
   }
 
   fun drawDisclosureChevron(
@@ -466,3 +648,16 @@ private object ReviewDiffTypefaces {
     else -> regular
   }
 }
+
+internal data class FileHeaderDrawingState(
+  val collapsed: Boolean,
+  val viewed: Boolean,
+  val showViewedCheckbox: Boolean,
+  val viewedCheckboxEnabled: Boolean,
+  val pathOffset: Int
+)
+
+internal data class FileHeaderPathLayout(
+  val displayPath: String,
+  val rect: RectF
+)

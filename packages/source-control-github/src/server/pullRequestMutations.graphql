@@ -1,8 +1,10 @@
 # Writes to a pull request and the remarks on it. None reads its answer back beyond what GitHub
 # requires a mutation to select.
 
-mutation AddReviewThreadReply($threadId: ID!, $body: String!) {
-  addPullRequestReviewThreadReply(input: { pullRequestReviewThreadId: $threadId, body: $body }) {
+mutation AddReviewThreadReply($threadId: ID!, $body: String!, $reviewId: ID) {
+  addPullRequestReviewThreadReply(
+    input: { pullRequestReviewThreadId: $threadId, body: $body, pullRequestReviewId: $reviewId }
+  ) {
     comment {
       id
     }

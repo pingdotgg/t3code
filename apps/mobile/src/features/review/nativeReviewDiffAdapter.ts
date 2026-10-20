@@ -1,4 +1,5 @@
 import type { NativeReviewDiffRow, NativeReviewDiffTheme } from "../diffs/nativeReviewDiffSurface";
+import { reviewRenameSegments } from "@t3tools/client-runtime/review-workspace";
 import type {
   NativeReviewDiffFile,
   NativeReviewDiffLanguage,
@@ -433,6 +434,9 @@ function prepareFileRows(file: ReviewRenderableFile): PreparedNativeReviewFileRo
       fileId: file.id,
       filePath: file.path,
       previousPath: file.previousPath,
+      ...(file.previousPath && file.previousPath !== file.path
+        ? { renameSegments: reviewRenameSegments(file.previousPath, file.path) }
+        : {}),
       changeType: mapChangeType(file),
       additions: file.additions,
       deletions: file.deletions,

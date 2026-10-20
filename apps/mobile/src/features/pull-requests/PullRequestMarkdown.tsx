@@ -25,6 +25,8 @@ import {
 } from "../../components/FilePreviewModal";
 import { ThreadMarkdownImageView } from "../threads/ThreadMarkdownImage";
 import type { MarkdownImageRenderer } from "../../native/SelectableMarkdownText";
+import { isBotBadgeImage } from "./botBadgeImages";
+import { inlinePullRequestBadges } from "./pullRequestMarkdownBadges";
 
 const RepositoryContext = createContext<string | null>(null);
 
@@ -81,7 +83,10 @@ export function PullRequestMarkdown(props: {
   readonly markdown: string;
   readonly imageGroupMarkdown?: string;
 }) {
-  const segments = useMemo(() => splitPullRequestBody(props.markdown), [props.markdown]);
+  const segments = useMemo(
+    () => splitPullRequestBody(inlinePullRequestBadges(props.markdown)),
+    [props.markdown],
+  );
   return (
     <View style={{ gap: 12 }}>
       {segments.map((segment) =>
@@ -122,6 +127,7 @@ function PullRequestMarkdownContent(props: {
         .filter(
           (uri) =>
             /^https?:\/\//i.test(uri) &&
+            !isBotBadgeImage(uri) &&
             videoMimeType({ name: uri.split(/[?#]/)[0] ?? uri, mimeType: "" }) === null,
         )
         .map((uri) => pullRequestImageSource(uri, mediaContext)),

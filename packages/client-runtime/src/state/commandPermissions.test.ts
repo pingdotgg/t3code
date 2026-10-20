@@ -61,6 +61,39 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
+  it.effect(
+    "requires source-control write access for review commits, reverts, and draft comments",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const registry = yield* setup;
+          for (const method of [
+            WS_METHODS.reviewCommit,
+            WS_METHODS.reviewRevert,
+            WS_METHODS.pullRequestsSaveDraftComment,
+            WS_METHODS.pullRequestsDiscardDraftComment,
+          ]) {
+            const command = createCommandPermissions(runtime, method);
+            registry.set(sessions(env), AsyncResult.success(grant(true)));
+            expect(registry.get(command.permissionAtom(env))).toBe(false);
+            expect(
+              (yield* command.authorize(registry, env).pipe(Effect.flip)).requiredPermission,
+            ).toBe(AuthSourceControlWriteScope);
+            registry.set(
+              sessions(env),
+              AsyncResult.success({
+                ...grant(false),
+                scopes: [AuthSourceControlWriteScope],
+                permissions: [AuthSourceControlWriteScope],
+              }),
+            );
+            expect(registry.get(command.permissionAtom(env))).toBe(true);
+            yield* command.authorize(registry, env);
+          }
+        }),
+      ),
+  );
+
   it.effect("requires the destination preview grant to close a browser tab", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -378,5 +411,26 @@ it.effect("rejects protected unary and streamed RPCs outside a guarded command",
     }).pipe(Stream.runDrain, Effect.provideService(EnvironmentSupervisor, supervisor), Effect.flip);
     expect(streamed._tag).toBe("EnvironmentAuthorizationError");
     expect(writes).toBe(0);
+  }),
+);
+
+it.effect("requires orchestration permission for provider-backed commit message generation", () =>
+  Effect.gen(function* () {
+    const registry = yield* setup;
+    const command = createCommandPermissions(runtime, WS_METHODS.reviewGenerateCommitMessage);
+    registry.set(
+      sessions(env),
+      AsyncResult.success({
+        ...grant(false),
+        scopes: [AuthSourceControlWriteScope],
+        permissions: [AuthSourceControlWriteScope],
+      }),
+    );
+    expect(registry.get(command.permissionAtom(env))).toBe(false);
+    expect((yield* command.authorize(registry, env).pipe(Effect.flip)).requiredPermission).toBe(
+      AuthOrchestrationOperateScope,
+    );
+    registry.set(sessions(env), AsyncResult.success(grant(true)));
+    expect(registry.get(command.permissionAtom(env))).toBe(true);
   }),
 );

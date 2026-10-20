@@ -61,7 +61,12 @@ let root: Root;
 let current: PullRequestFilesViewedView;
 
 function Surface() {
-  const view = usePullRequestFilesViewed({ environmentId, reference, enabled: true });
+  const view = usePullRequestFilesViewed({
+    environmentId,
+    reference,
+    enabled: true,
+    paths: ["a.ts"],
+  });
   useEffect(() => {
     current = view;
   });
@@ -130,6 +135,30 @@ describe("a mark whose file was pushed to before the read that followed it", () 
 });
 
 describe("a mark the host has not answered for yet", () => {
+  it("keeps a saved mark through a truncated read until that file is answered", async () => {
+    view().setViewed("a.ts", true);
+    await act(async () => vi.advanceTimersByTimeAsync(500));
+
+    host.data = { files: [{ path: "b.ts", state: "unviewed" }], truncated: true };
+    await render();
+    expect(view().isViewed("a.ts")).toBe(true);
+    expect(view().viewedCount).toBe(1);
+
+    await reads("dismissed");
+    expect(view().isViewed("a.ts")).toBe(false);
+    expect(view().isStale("a.ts")).toBe(true);
+  });
+
+  it("accepts a complete response that no longer includes a saved mark", async () => {
+    view().setViewed("a.ts", true);
+    await act(async () => vi.advanceTimersByTimeAsync(500));
+
+    host.data = { files: [{ path: "b.ts", state: "unviewed" }], truncated: false };
+    await render();
+    expect(view().isViewed("a.ts")).toBe(false);
+    expect(view().viewedCount).toBe(0);
+  });
+
   it("holds the press while the write is still out", async () => {
     let land = (_result: unknown) => {};
     setFilesViewed.mockReturnValueOnce(new Promise((resolve) => (land = resolve)));
@@ -177,4 +206,15 @@ describe("a failed batch that the host partly applied", () => {
     expect(view().isViewed("a.ts")).toBe(true);
     expect(view().isViewed("b.ts")).toBe(false);
   });
+});
+
+it("follows GitHub marks and unmarks without writing them back", async () => {
+  await reads("viewed");
+  expect(view().isViewed("a.ts")).toBe(true);
+  expect(view().viewedCount).toBe(1);
+
+  await reads("unviewed");
+  expect(view().isViewed("a.ts")).toBe(false);
+  expect(view().viewedCount).toBe(0);
+  expect(setFilesViewed).not.toHaveBeenCalled();
 });

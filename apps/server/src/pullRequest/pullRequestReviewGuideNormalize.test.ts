@@ -2,7 +2,11 @@ import { describe, expect, it } from "vite-plus/test";
 import type { PullRequestReviewGuideStop } from "@t3tools/contracts";
 import type { ReviewGuideGenerationResult } from "@t3tools/provider-core/server/textGeneration";
 
-import { normalizeReviewGuide, parseReviewGuideChange } from "./pullRequestReviewGuideNormalize.ts";
+import {
+  groupReviewGuideFiles,
+  normalizeReviewGuide,
+  parseReviewGuideChange,
+} from "./pullRequestReviewGuideNormalize.ts";
 
 const patch = [
   "diff --git a/src/a.ts b/src/a.ts",
@@ -52,6 +56,96 @@ const excerpt = (path: string, start: number, end: number, side: "new" | "old" =
   start,
   end,
   caption: "",
+});
+
+describe("generated chapters", () => {
+  it("moves all excerpts and notes for repeated generated output into one generated chapter", () => {
+    const path = "src/_generated/sdk.ts";
+    const note = { path, line: 22, title: "Generated field", body: "Derived from the schema." };
+    const result = normalizeReviewGuide(
+      guide({
+        stops: [
+          stop({
+            title: "Add the field",
+            files: [{ path: "src/main.ts" }],
+            excerpts: [excerpt(path, 1, 3)],
+          }),
+          stop({
+            title: "Regenerate SDK",
+            excerpts: [excerpt(path, 20, 25)],
+            notes: [note],
+          }),
+        ],
+      }),
+      {
+        files: ["src/main.ts", path],
+        hunks: new Map([
+          [
+            path,
+            {
+              new: [
+                { start: 1, end: 3 },
+                { start: 20, end: 25 },
+              ],
+              old: [],
+            },
+          ],
+        ]),
+      },
+    );
+    const generated = result.stops.filter((chapter) =>
+      chapter.excerpts.some((entry) => entry.path === path),
+    );
+    expect(generated).toHaveLength(1);
+    expect(generated[0]?.excerpts).toEqual([excerpt(path, 1, 3), excerpt(path, 20, 25)]);
+    expect(generated[0]?.notes).toEqual([note]);
+    expect(result.stops[0]?.files).toEqual([{ path: "src/main.ts" }]);
+    expect(result.stops[0]?.excerpts).toEqual([]);
+  });
+
+  it("separates generated files in mixed chapters and includes omitted lockfiles", () => {
+    const result = normalizeReviewGuide(
+      guide({
+        stops: [
+          stop({
+            title: "Source changes",
+            files: [{ path: "src/main.ts" }, { path: "src/_generated/sdk.ts" }],
+          }),
+        ],
+      }),
+      { files: ["src/main.ts", "src/_generated/sdk.ts", "pnpm-lock.yaml"], hunks: new Map() },
+    );
+    expect(
+      result.stops.map((chapter) => [chapter.title, chapter.files.map((file) => file.path)]),
+    ).toEqual([
+      ["Source changes", ["src/main.ts"]],
+      ["Generated files", ["src/_generated/sdk.ts", "pnpm-lock.yaml"]],
+    ]);
+  });
+
+  it("retains the model's useful descriptions for chapters that only contain generated output", () => {
+    const result = normalizeReviewGuide(
+      guide({
+        stops: [
+          stop({
+            title: "Refresh generated API",
+            summary: "SDK regenerated after adding the field.",
+            files: [{ path: "src/_generated/sdk.ts" }],
+          }),
+          stop({ title: "Add the field", files: [{ path: "src/main.ts" }] }),
+        ],
+      }),
+      {
+        files: ["src/main.ts", "src/_generated/sdk.ts"],
+        hunks: new Map(),
+      },
+    );
+    expect(result.stops.map((chapter) => chapter.title)).toEqual([
+      "Add the field",
+      "Refresh generated API",
+    ]);
+    expect(result.stops[1]?.summary).toBe("SDK regenerated after adding the field.");
+  });
 });
 
 describe("parseReviewGuideChange", () => {
@@ -179,7 +273,7 @@ describe("normalizeReviewGuide", () => {
     });
   });
 
-  it("lets stops show different parts of one file and lists an unshown file once", () => {
+  it("keeps a file's shape and implementation in one chapter and lists unshown files once", () => {
     const result = normalizeReviewGuide(
       guide({
         stops: [
@@ -192,14 +286,70 @@ describe("normalizeReviewGuide", () => {
             title: "Implementation",
             excerpts: [excerpt("src/a.ts", 40, 50)],
             files: [{ path: "src/a.ts" }, { path: "docs/readme.md" }, { path: "src/gone.ts" }],
+            notes: [
+              { path: "src/a.ts", line: 45, title: "Implementation detail", body: "Why it works." },
+            ],
           }),
         ],
       }),
       change,
     );
     expect(result.stops.map((s) => [s.title, s.excerpts.map((e) => e.start), s.files])).toEqual([
-      ["Shape", [10], [{ path: "docs/readme.md" }]],
-      ["Implementation", [40], [{ path: "src/gone.ts" }]],
+      ["Shape", [10, 40], [{ path: "docs/readme.md" }]],
+      ["Implementation", [], [{ path: "src/gone.ts" }]],
     ]);
+    expect(result.stops[0]?.notes).toEqual([
+      { path: "src/a.ts", line: 45, title: "Implementation detail", body: "Why it works." },
+    ]);
+    expect(result.stops[1]?.notes).toEqual([]);
+  });
+});
+
+describe("groupReviewGuideFiles", () => {
+  it("prefers an excerpt chapter over an earlier files-only mention and keeps old/new ranges together", () => {
+    const original = [
+      stop({ title: "Background", files: [{ path: "src/a.ts" }, { path: "docs/readme.md" }] }),
+      stop({
+        title: "Contract",
+        excerpts: [excerpt("src/a.ts", 10, 14), excerpt("src/gone.ts", 2, 8, "old")],
+      }),
+      stop({
+        title: "Implementation",
+        excerpts: [
+          { ...excerpt("src/a.ts", 30, 30, "old"), caption: "Previous contract" },
+          { ...excerpt("src/a.ts", 40, 50), caption: "Implementation" },
+        ],
+        files: [{ path: "docs/readme.md" }],
+        notes: [{ path: "src/a.ts", line: 45, title: "Important", body: "Keep this explanation." }],
+      }),
+    ];
+    const result = groupReviewGuideFiles(original);
+    expect(result[0]?.files).toEqual([{ path: "docs/readme.md" }]);
+    expect(result[1]?.excerpts).toEqual([
+      excerpt("src/a.ts", 10, 14),
+      { ...excerpt("src/a.ts", 30, 30, "old"), caption: "Previous contract" },
+      { ...excerpt("src/a.ts", 40, 50), caption: "Implementation" },
+      excerpt("src/gone.ts", 2, 8, "old"),
+    ]);
+    expect(result[1]?.notes).toEqual(original[2]?.notes);
+    expect(result[2]?.excerpts).toEqual([]);
+    expect(result[2]?.files).toEqual([]);
+    expect(result[2]?.notes).toEqual([]);
+    expect(groupReviewGuideFiles(result)).toEqual(result);
+    expect(original[0]?.files).toEqual([{ path: "src/a.ts" }, { path: "docs/readme.md" }]);
+    expect(original[2]?.excerpts).toHaveLength(2);
+  });
+
+  it("does not merge separately anchored ranges when their combined length would drop notes", () => {
+    const stops = [
+      stop({ excerpts: [excerpt("src/a.ts", 1, 25)] }),
+      stop({
+        excerpts: [excerpt("src/a.ts", 26, 50)],
+        notes: [{ path: "src/a.ts", line: 48, title: "Late anchor", body: "Still visible." }],
+      }),
+    ];
+    const result = groupReviewGuideFiles(stops);
+    expect(result[0]?.excerpts).toEqual([excerpt("src/a.ts", 1, 25), excerpt("src/a.ts", 26, 50)]);
+    expect(result[0]?.notes).toEqual(stops[1]?.notes);
   });
 });

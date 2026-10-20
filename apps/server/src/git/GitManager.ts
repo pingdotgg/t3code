@@ -158,6 +158,9 @@ export class GitManager extends Context.Service<
     readonly preparePullRequestThread: (
       input: GitPreparePullRequestThreadInput,
     ) => Effect.Effect<GitPreparePullRequestThreadResult, GitManagerServiceError>;
+    readonly generateStagedCommitMessage: (input: {
+      readonly cwd: string;
+    }) => Effect.Effect<string, GitManagerServiceError>;
     readonly runStackedAction: (
       input: GitRunStackedActionInput,
       options?: GitRunStackedActionOptions,
@@ -2103,11 +2106,13 @@ export const make = Effect.gen(function* () {
       commitMessage?: string;
       includeBranch?: boolean;
       filePaths?: readonly string[];
+      stagedOnly?: boolean;
       settings: SourceControlTextGenerationSettings;
     }) {
       const customCommit = parseCustomCommitMessage(input.commitMessage ?? "");
       const context = yield* gitCore.prepareCommitContext(input.cwd, input.filePaths, {
         includePatch: customCommit === null,
+        stagedOnly: input.stagedOnly === true,
       });
       if (!context) {
         return null;
@@ -2144,6 +2149,59 @@ export const make = Effect.gen(function* () {
         ...(generated.branch !== undefined ? { branch: generated.branch } : {}),
         commitMessage: formatCommitMessage(generated.subject, generated.body),
       };
+    },
+  );
+
+  const resolveTextGenerationSettings = (
+    input: { cwd: string; threadId?: ThreadId | undefined },
+    operation = "runStackedAction",
+  ) =>
+    projectSettingsFor(input).pipe(
+      Effect.flatMap(({ settings, projectId }) =>
+        settings.sourceControlWriterModelSelection === null
+          ? Effect.succeed({
+              modelSelection: settings.textGenerationModelSelection,
+              style: settings.sourceControlWritingStyle,
+            })
+          : providerRegistry.getProviders.pipe(
+              Effect.map((providers) => ({
+                modelSelection: ServerSettings.resolveSourceControlWriterModelSelection(
+                  settings,
+                  providers,
+                  projectId,
+                ),
+                style: settings.sourceControlWritingStyle,
+              })),
+            ),
+      ),
+      Effect.mapError(
+        (cause) =>
+          new GitManagerError({
+            operation,
+            cwd: input.cwd,
+            detail: "Failed to get server settings.",
+            cause,
+          }),
+      ),
+    );
+
+  const generateStagedCommitMessage = Effect.fn("GitManager.generateStagedCommitMessage")(
+    function* (input: { cwd: string }) {
+      const settings = yield* resolveTextGenerationSettings(input, "generateStagedCommitMessage");
+      const { branch } = yield* gitCore.statusDetailsLocal(input.cwd);
+      const suggestion = yield* resolveCommitAndBranchSuggestion({
+        cwd: input.cwd,
+        branch,
+        settings,
+        stagedOnly: true,
+      });
+      if (!suggestion)
+        return yield* new GitManagerError({
+          operation: "generateStagedCommitMessage",
+          cwd: input.cwd,
+          detail: "Stage changes before generating a commit message.",
+        });
+      return suggestion.commitMessage;
     },
   );
 
@@ -3123,34 +3181,7 @@ export const make = Effect.gen(function* () {
         let commitMessageForStep = input.commitMessage;
         let preResolvedCommitSuggestion: CommitAndBranchSuggestion | undefined = undefined;
 
-        const textGenerationSettings = yield* projectSettingsFor(input).pipe(
-          Effect.flatMap(({ settings, projectId }) =>
-            settings.sourceControlWriterModelSelection === null
-              ? Effect.succeed({
-                  modelSelection: settings.textGenerationModelSelection,
-                  style: settings.sourceControlWritingStyle,
-                })
-              : providerRegistry.getProviders.pipe(
-                  Effect.map((providers) => ({
-                    modelSelection: ServerSettings.resolveSourceControlWriterModelSelection(
-                      settings,
-                      providers,
-                      projectId,
-                    ),
-                    style: settings.sourceControlWritingStyle,
-                  })),
-                ),
-          ),
-          Effect.mapError(
-            (cause) =>
-              new GitManagerError({
-                operation: "runStackedAction",
-                cwd: input.cwd,
-                detail: "Failed to get server settings.",
-                cause,
-              }),
-          ),
-        );
+        const textGenerationSettings = yield* resolveTextGenerationSettings(input);
 
         if (input.featureBranch) {
           yield* Ref.set(currentPhase, Option.some("branch"));
@@ -3275,6 +3306,7 @@ export const make = Effect.gen(function* () {
   );
 
   return GitManager.of({
+    generateStagedCommitMessage,
     createWorktree,
     localStatus,
     remoteStatus,

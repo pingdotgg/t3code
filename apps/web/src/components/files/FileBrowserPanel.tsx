@@ -1,7 +1,10 @@
+import { MorphIcon } from "~/components/MorphIcon";
+import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTreeExpansion";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import type {
   ContextMenuItem as TreeContextMenuItem,
   ContextMenuOpenContext as TreeContextMenuOpenContext,
+  GitStatusEntry,
 } from "@pierre/trees";
 import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
 import { FileTree, useFileTree, useFileTreeSearch, useFileTreeSelector } from "@pierre/trees/react";
@@ -14,7 +17,6 @@ import { useEffect, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { InputGroup, InputGroupInput } from "~/components/ui/input-group";
-import { MorphIcon } from "~/components/MorphIcon";
 import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useComposerHandleContext } from "~/composerHandleContext";
@@ -29,7 +31,6 @@ import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
 
 import { joinHostPath } from "./filePath";
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
-import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTreeExpansion";
 import { buildFileTreePathUpdates } from "./fileTreePathReconciliation";
 import { loadFileAncestors } from "./loadFileAncestors";
 import { useDirectoryEntries } from "./useDirectoryEntries";
@@ -51,7 +52,11 @@ interface FileBrowserPanelProps {
   hostFolder?: boolean;
   onRefreshSelectedFile?: () => void;
   workspaceMutationId: string | null;
+  /** Existing Git status data decorates loaded rows without loading more directories. */
+  gitChanges?: ReadonlyArray<GitStatusEntry>;
 }
+
+const NO_GIT_CHANGES: ReadonlyArray<GitStatusEntry> = [];
 
 function treePath(entry: ProjectEntry): string {
   return entry.kind === "directory" ? `${entry.path}/` : entry.path;
@@ -148,10 +153,27 @@ export default function FileBrowserPanel({
   onRefreshSelectedFile,
   workspaceMutationId,
   hostFolder = false,
+  gitChanges = NO_GIT_CHANGES,
 }: FileBrowserPanelProps) {
   const panelPath = (relativePath: string) =>
     hostFolder ? joinHostPath(cwd, relativePath) : relativePath;
   const { resolvedTheme } = useTheme();
+  const selectionCSS = (() => {
+    if (!selectedPath) return PIERRE_TREE_UNSAFE_CSS;
+    const path = selectedPath.replace(/\/$/, "");
+    return `${PIERRE_TREE_UNSAFE_CSS}
+      button[data-type='item']:is([data-item-path=${CSS.escape(path)}], [data-item-path=${CSS.escape(`${path}/`)}])::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        display: block;
+        pointer-events: none;
+        outline: 1px solid var(--ring);
+        outline-offset: -1px;
+        border-radius: var(--radius-md);
+      }
+    `;
+  })();
   const composerRef = useComposerHandleContext();
   const fileContextMenu = useFileContextMenu(environmentId);
   const {
@@ -317,6 +339,15 @@ export default function FileBrowserPanel({
     loadingDirectoriesRef.current = loadingDirectories;
     model.setComposition(model.getComposition());
   }, [loadingDirectories, model]);
+  useEffect(() => {
+    const shadow = model.getFileTreeContainer()?.shadowRoot;
+    if (!shadow) return;
+    const style = document.createElement("style");
+    style.dataset.reviewSelection = "true";
+    style.textContent = selectionCSS;
+    shadow.append(style);
+    return () => style.remove();
+  }, [model, selectionCSS]);
   const search = useFileTreeSearch(model);
   // Pierre restores the unfiltered tree when a search has no matches.
   const hasNoSearchMatches = search.value.trim().length > 0 && search.matchingPaths.length === 0;
@@ -352,7 +383,6 @@ export default function FileBrowserPanel({
             void load(path.replace(/\/$/, ""));
           }
         } else {
-          if (item?.isDirectory() && expandedPathsRef.current.has(path)) setExpandAll(false);
           expandedPathsRef.current.delete(path);
         }
       }
@@ -361,15 +391,18 @@ export default function FileBrowserPanel({
     return model.subscribe(loadExpanded);
   }, [directoryPaths, load, model]);
   useEffect(() => {
-    model.setGitStatus(
-      entries
-        .filter((entry) => entry.ignored)
-        .map((entry) => ({
-          path: treePath(entry),
-          status: "ignored",
-        })),
-    );
-  }, [entries, model]);
+    const statuses = new Map<string, GitStatusEntry>();
+    for (const entry of entries) {
+      if (entry.ignored) {
+        const path = treePath(entry);
+        statuses.set(path, { path, status: "ignored" });
+      }
+    }
+    // Pierre colors filenames, adds the status letter, and marks ancestor folders.
+    // Supplying unloaded paths also marks their visible ancestors without scanning them.
+    for (const change of gitChanges) statuses.set(change.path, change);
+    model.setGitStatus([...statuses.values()]);
+  }, [entries, gitChanges, model]);
   useEffect(() => {
     if (!selectedPath) return;
     const controller = new AbortController();
@@ -508,7 +541,7 @@ export default function FileBrowserPanel({
   return (
     <div
       ref={panelRef}
-      className="flex min-h-0 flex-1 flex-col bg-background"
+      className="flex min-h-0 min-w-0 flex-1 flex-col bg-background"
       data-file-browser-panel={`${environmentId}:${cwd}`}
     >
       <div

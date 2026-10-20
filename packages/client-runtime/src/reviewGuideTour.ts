@@ -14,6 +14,17 @@ export function stopFilePaths(stop: PullRequestReviewGuideStop): ReadonlyArray<s
   ];
 }
 
+/** Chapter progress uses the same file marks as the full PR diff. */
+export function reviewGuideStopProgress(
+  stop: PullRequestReviewGuideStop,
+  isViewed: (path: string) => boolean,
+) {
+  const paths = stopFilePaths(stop);
+  const reviewedCount = paths.filter(isViewed).length;
+  return { paths, reviewedCount, reviewed: paths.length > 0 && reviewedCount === paths.length };
+}
+
+/** The rail's second line for a stop. */
 export function stopSubline(stop: PullRequestReviewGuideStop): string {
   const count = stopFilePaths(stop).length;
   if (count === 0) return "Context, no code";

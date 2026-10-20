@@ -1,3 +1,5 @@
+import * as Context from "effect/Context";
+import * as FileSystem from "effect/FileSystem";
 import { SourceControlProviderKind, VcsProcessExitError } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeV8 from "node:v8";
@@ -25,6 +27,7 @@ import type {
 } from "@t3tools/contracts";
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts/settings";
 import type { ServerSettings } from "@t3tools/contracts";
+import * as ServerConfig from "../config.ts";
 import * as ServerSettingsService from "../serverSettings.ts";
 import { PullRequestOperationError } from "@t3tools/contracts";
 
@@ -531,6 +534,7 @@ function fakeProvider(
 
 function makeService(input: {
   readonly settings?: ServerSettings;
+  readonly attachmentsDir?: string;
   readonly projects: ReadonlyArray<OrchestrationProjectShell>;
   readonly providers: ReadonlyArray<PullRequestProviderApi>;
   readonly resolveHandle?: SourceControlProviderRegistry.SourceControlProviderRegistry["Service"]["resolveHandle"];
@@ -541,6 +545,10 @@ function makeService(input: {
   return Effect.flatMap(
     Layer.build(
       Layer.mergeAll(
+        NodeServices.layer,
+        ServerConfig.layerTest("/tmp/t3-pr-tests", { prefix: "t3-pr-attachments-" }).pipe(
+          Layer.provide(NodeServices.layer),
+        ),
         Layer.mock(ServerSettingsService.ServerSettingsService)({
           getSettings: Effect.succeed(input.settings ?? DEFAULT_SERVER_SETTINGS),
         }),
@@ -572,7 +580,16 @@ function makeService(input: {
         ),
       ),
     ),
-    (context) => Effect.provideContext(PullRequestService.make, context),
+    (context) =>
+      Effect.provideContext(
+        PullRequestService.make,
+        input.attachmentsDir === undefined
+          ? context
+          : Context.add(context, ServerConfig.ServerConfig, {
+              ...Context.get(context, ServerConfig.ServerConfig),
+              attachmentsDir: input.attachmentsDir,
+            }),
+      ),
   );
 }
 
@@ -8056,5 +8073,212 @@ it.effect("checks expanded files against a diff too large to cache without fetch
       });
     }
     assert.strictEqual(diffReads, 1);
+  }),
+);
+
+it.effect.each([false, true])(
+  "requires current admin permission before a merge override (%s)",
+  (adminMerge) =>
+    Effect.gen(function* () {
+      const calls: boolean[] = [];
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" }),
+        ],
+        providers: [
+          fakeProvider(SourceControlProviderKind.make("github"), {
+            getChangeRequestSummary: () => Effect.succeed(changeRequest(1, "2026-07-02T00:00:00Z")),
+            getViewerPermissions: () =>
+              Effect.succeed({
+                actions: ["merge"],
+                comment: true,
+                resolve: true,
+                verdicts: ["comment"],
+                requestReviewers: false,
+                adminMerge,
+              }),
+            runAction: (input) =>
+              Effect.sync(() => {
+                calls.push(input.adminOverride === true);
+              }),
+          }),
+        ],
+      });
+      const result = yield* Effect.result(
+        service.runAction({
+          projectId: "p1" as ProjectId,
+          repository: "acme/web",
+          number: 1,
+          action: "merge",
+          adminOverride: true,
+        }),
+      );
+      assert.strictEqual(result._tag, adminMerge ? "Success" : "Failure");
+      assert.deepStrictEqual(calls, adminMerge ? [true] : []);
+    }),
+);
+
+it.effect(
+  "refuses ranged comments before dispatching to a host that supports only single lines",
+  () =>
+    Effect.gen(function* () {
+      let submitted = false;
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" }),
+        ],
+        providers: [
+          fakeProvider(SourceControlProviderKind.make("github"), {
+            submitReview: () =>
+              Effect.sync(() => {
+                submitted = true;
+              }),
+          }),
+        ],
+      });
+      const error = yield* service
+        .submitReview({
+          projectId: "p1" as ProjectId,
+          repository: "acme/web",
+          number: 1,
+          verdict: "comment",
+          body: "",
+          comments: [
+            {
+              path: "a.ts",
+              body: "Range",
+              position: { kind: "added", newLine: 8, startLine: 3, startSide: "right" },
+            },
+          ],
+        })
+        .pipe(Effect.flip);
+      assert.strictEqual(error._tag, "PullRequestOperationError");
+      assert.isFalse(submitted);
+    }),
+);
+
+it.effect("publishes only a complete pending attachment from this environment", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const attachmentsDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pr-media-test-" });
+    const attachmentId = "pending-00000000-0000-4000-8000-000000000001-png";
+    yield* fs.writeFileString(`${attachmentsDir}/${attachmentId}.png`, "abc");
+    const received: string[] = [];
+    const provider = fakeProvider(SourceControlProviderKind.make("github"));
+    const service = yield* makeService({
+      attachmentsDir,
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" })],
+      providers: [
+        {
+          ...provider,
+          capabilities: { ...provider.capabilities, attachments: true },
+          getViewerPermissions: () =>
+            Effect.succeed({ ...hostedChangeRequest("").viewerPermissions, attachments: true }),
+          uploadAttachment: (input) =>
+            fs.readFileString(input.path).pipe(
+              Effect.orDie,
+              Effect.map((contents) => {
+                received.push(contents);
+                return { url: "https://github.com/user-attachments/assets/one" };
+              }),
+            ),
+        },
+      ],
+    });
+    const input = {
+      projectId: "p1" as ProjectId,
+      repository: "acme/web",
+      number: 1,
+      attachmentId,
+      name: "image.png",
+      mimeType: "image/png" as const,
+      sizeBytes: 3,
+    };
+    const result = yield* service.uploadAttachment(input);
+    assert.strictEqual(result.url, "https://github.com/user-attachments/assets/one");
+    assert.deepStrictEqual(received, ["abc"]);
+    yield* service.uploadAttachment({ ...input, sizeBytes: 4 }).pipe(Effect.flip);
+    yield* service
+      .uploadAttachment({
+        ...input,
+        attachmentId: "thread-00000000-0000-4000-8000-000000000001-png",
+      })
+      .pipe(Effect.flip);
+    assert.deepStrictEqual(received, ["abc"]);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  "refuses attachment publishing before reading files when repository write permission is absent",
+  () =>
+    Effect.gen(function* () {
+      let published = false;
+      const provider = fakeProvider(SourceControlProviderKind.make("github"));
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" }),
+        ],
+        providers: [
+          {
+            ...provider,
+            capabilities: { ...provider.capabilities, attachments: true },
+            getViewerPermissions: () =>
+              Effect.succeed({
+                actions: [],
+                comment: true,
+                attachments: false,
+                resolve: false,
+                verdicts: [],
+                requestReviewers: false,
+              }),
+            uploadAttachment: () =>
+              Effect.sync(() => {
+                published = true;
+                return { url: "https://github.com/user-attachments/assets/one" };
+              }),
+          },
+        ],
+      });
+      const error = yield* service
+        .uploadAttachment({
+          projectId: "p1" as ProjectId,
+          repository: "acme/web",
+          number: 1,
+          attachmentId: "missing",
+          name: "image.png",
+          mimeType: "image/png",
+          sizeBytes: 3,
+        })
+        .pipe(Effect.flip);
+      assert.strictEqual(error._tag, "PullRequestOperationError");
+      assert.isFalse(published);
+    }),
+);
+
+it.effect("forwards private reply ownership to the destination provider", () =>
+  Effect.gen(function* () {
+    const calls: string[] = [];
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "t3code", workspaceRoot: "/a", repository: "pingdotgg/t3code" }),
+      ],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("github"), {
+          replyToThread: (input) =>
+            Effect.sync(() => {
+              calls.push(`${input.threadId}:${input.pendingReviewId}:${input.body}`);
+            }),
+        }),
+      ],
+    });
+    yield* service.replyToThread({
+      projectId: "p1" as ProjectId,
+      repository: "pingdotgg/t3code",
+      number: 1,
+      threadId: "t1",
+      pendingReviewId: "private-review",
+      body: "Follow-up",
+    });
+    expect(calls).toEqual(["t1:private-review:Follow-up"]);
   }),
 );

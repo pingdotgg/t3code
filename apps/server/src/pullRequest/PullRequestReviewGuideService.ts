@@ -37,7 +37,11 @@ import { PATCH_RENDER_PREFIX_ARGS } from "../vcs/GitVcsDriverCore.ts";
 import * as PullRequestService from "./PullRequestService.ts";
 import { pullRequestSyncKey } from "./pullRequestSyncKey.ts";
 import { reviewGuideInputFromPullRequest } from "./pullRequestReviewGuideInput.ts";
-import { normalizeReviewGuide, parseReviewGuideChange } from "./pullRequestReviewGuideNormalize.ts";
+import {
+  groupReviewGuideFiles,
+  normalizeReviewGuide,
+  parseReviewGuideChange,
+} from "./pullRequestReviewGuideNormalize.ts";
 
 const COMMIT_HASH_PATTERN = /^[0-9a-f]{7,64}$/;
 
@@ -135,6 +139,9 @@ const make = Effect.gen(function* () {
           }),
       ),
       Effect.map(Option.getOrNull),
+      Effect.map((guide) =>
+        guide === null ? null : { ...guide, stops: groupReviewGuideFiles(guide.stops) },
+      ),
     );
 
   const get: PullRequestReviewGuideService["Service"]["get"] = Effect.fn(

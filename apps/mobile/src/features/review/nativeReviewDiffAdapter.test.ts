@@ -31,6 +31,30 @@ const parsedDiff = buildReviewParsedDiff(
   "native-review-cache-test",
 );
 
+it.each([false, true])(
+  "keeps inline rename formatting for a file with content changes: %s",
+  (changed) => {
+    const patch = [
+      "diff --git a/src/old-utils.ts b/src/pricing.ts",
+      `similarity index ${changed ? 50 : 100}%`,
+      "rename from src/old-utils.ts",
+      "rename to src/pricing.ts",
+      ...(changed
+        ? ["--- a/src/old-utils.ts", "+++ b/src/pricing.ts", "@@ -1 +1 @@", "-old();", "+next();"]
+        : []),
+    ].join("\n");
+    const data = buildNativeReviewDiffData({
+      parsedDiff: buildReviewParsedDiff(patch, `rename:${changed}`),
+    });
+    const header = data.rows.find((row) => row.kind === "file");
+    expect(header?.renameSegments?.map((part) => part.text).join("")).toBe(
+      "old-utils.ts → pricing.ts  src",
+    );
+    expect(header?.previousPath).toBe("src/old-utils.ts");
+    expect(header?.filePath).toBe("src/pricing.ts");
+  },
+);
+
 describe("buildNativeReviewSnippetRows", () => {
   it("preserves selected code and change types without inventing line numbers", () => {
     const rows = buildNativeReviewSnippetRows({

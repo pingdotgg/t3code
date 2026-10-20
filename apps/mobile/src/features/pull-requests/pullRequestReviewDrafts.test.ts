@@ -26,6 +26,35 @@ describe("mobile review draft recovery", () => {
     const saved = JSON.stringify({ version: 1, drafts: { key: draft } });
     expect(decodeDocument(JSON.parse(saved)).drafts.key).toEqual(draft);
   });
+  it("recovers a line range and keeps a range changed while submission was in flight", () => {
+    const ranged = {
+      ...draft,
+      comments: [
+        {
+          ...comment,
+          position: {
+            kind: "added" as const,
+            newLine: 12,
+            startLine: 9,
+            startSide: "right" as const,
+          },
+        },
+      ],
+    };
+    const recovered = decodeDocument(
+      JSON.parse(JSON.stringify({ version: 1, drafts: { key: ranged } })),
+    ).drafts.key!;
+    expect(recovered).toEqual(ranged);
+    const updated = {
+      ...recovered,
+      comments: recovered.comments.map((entry) => ({
+        ...entry,
+        position: { ...entry.position, startLine: 10 },
+      })),
+    };
+    expect(clearSubmittedReview(updated, recovered).comments).toEqual(updated.comments);
+    expect(clearSubmittedReview(recovered, recovered).comments).toEqual([]);
+  });
   it("rejects a damaged document instead of replacing drafts with an empty file", () => {
     expect(() =>
       decodeDocument({

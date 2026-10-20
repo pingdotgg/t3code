@@ -250,3 +250,36 @@ describe("v5 stack handoff", () => {
     ).toEqual([[home, thread], [settings, legal], [secondModal]]);
   });
 });
+
+it.each(["git:working-tree", "git:branch-range", "turn:1"])(
+  "native Back from a %s file returns to the same Git overview",
+  (sectionId) => {
+    const overview = { key: "git-overview", name: "ThreadReview", params: thread.params };
+    const state = {
+      ...history([home, thread, overview]),
+      routeNames: ["Home", "Thread", "ThreadReview", "ThreadReviewFile"],
+    };
+    const options = { routeNames: state.routeNames, routeParamList: {}, routeGetIdList: {} };
+    const router = StackRouter({});
+    const opened = router.getStateForAction(
+      state,
+      {
+        type: "PUSH",
+        payload: {
+          name: "ThreadReviewFile",
+          params: { ...thread.params, reviewSectionId: sectionId, reviewFilePath: "src/file.ts" },
+        },
+      },
+      options,
+    );
+    if (!opened || opened.stale !== false) throw new Error("Expected an opened file screen");
+    expect(opened.routes.at(-1)?.name).toBe("ThreadReviewFile");
+    const back = router.getStateForAction(
+      opened,
+      nativeStackPopAction(opened, opened.routes.at(-1)!.key, overview.key)!,
+      options,
+    );
+    expect(back?.routes).toEqual([home, thread, overview]);
+    expect(back?.routes.at(-1)).toBe(overview);
+  },
+);

@@ -12,6 +12,13 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as ServerConfig from "../config.ts";
+import {
+  parseThreadSegmentFromAttachmentId,
+  PENDING_ATTACHMENT_THREAD_SEGMENT,
+  resolveAttachmentPathById,
+} from "../attachmentStore.ts";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
@@ -32,6 +39,8 @@ import {
   type PullRequestActionInput,
   type PullRequestActivity,
   type PullRequestCommentInput,
+  type PullRequestUploadAttachmentInput,
+  type PullRequestUploadAttachmentResult,
   type PullRequestCommentUpdateInput,
   type PullRequestDetail,
   type PullRequestPreview,
@@ -66,6 +75,9 @@ import {
   type PullRequestSetFilesViewedInput,
   type PullRequestState,
   type PullRequestSubmitReviewInput,
+  type PullRequestSaveDraftCommentInput,
+  type PullRequestDiscardDraftCommentInput,
+  type PullRequestDraftCommentLink,
   PullRequestStack,
   PullRequestSummary,
   type PullRequestThreadReplyInput,
@@ -237,9 +249,18 @@ export class PullRequestService extends Context.Service<
     ) => Effect.Effect<PullRequestChangeBreakdown, PullRequestError>;
     readonly runAction: (input: PullRequestActionInput) => Effect.Effect<void, PullRequestError>;
     readonly update: (input: PullRequestUpdateInput) => Effect.Effect<void, PullRequestError>;
+    readonly uploadAttachment: (
+      input: PullRequestUploadAttachmentInput,
+    ) => Effect.Effect<PullRequestUploadAttachmentResult, PullRequestError>;
     readonly comment: (input: PullRequestCommentInput) => Effect.Effect<void, PullRequestError>;
     readonly updateComment: (
       input: PullRequestCommentUpdateInput,
+    ) => Effect.Effect<void, PullRequestError>;
+    readonly saveDraftComment: (
+      input: PullRequestSaveDraftCommentInput,
+    ) => Effect.Effect<PullRequestDraftCommentLink, PullRequestError>;
+    readonly discardDraftComment: (
+      input: PullRequestDiscardDraftCommentInput,
     ) => Effect.Effect<void, PullRequestError>;
     readonly submitReview: (
       input: PullRequestSubmitReviewInput,
@@ -555,10 +576,19 @@ function withRateLimitBackoff(
       : {
           updateChangeRequest: interactive("updateChangeRequest", api.updateChangeRequest),
         }),
+    ...(api.uploadAttachment === undefined
+      ? {}
+      : { uploadAttachment: interactive("uploadAttachment", api.uploadAttachment) }),
     comment: interactive("comment", api.comment),
     ...(api.updateComment === undefined
       ? {}
       : { updateComment: interactive("updateComment", api.updateComment) }),
+    ...(api.saveDraftComment === undefined
+      ? {}
+      : { saveDraftComment: interactive("saveDraftComment", api.saveDraftComment) }),
+    ...(api.discardDraftComment === undefined
+      ? {}
+      : { discardDraftComment: interactive("discardDraftComment", api.discardDraftComment) }),
     submitReview: interactive("submitReview", api.submitReview),
     listReviewerCandidates: interactive("listReviewerCandidates", api.listReviewerCandidates),
     setReviewerRequest: interactive("setReviewerRequest", api.setReviewerRequest),
@@ -585,6 +615,8 @@ export const make = Effect.gen(function* () {
   const mergedPullRequests = yield* PubSub.sliding<PullRequestMergeEvent>(64);
   const stateChanges = yield* PubSub.sliding<ThreadPullRequestKey>(64);
   const pullRequestRefreshes = yield* SubscriptionRef.make(0);
+  const config = yield* ServerConfig.ServerConfig;
+  const fileSystem = yield* FileSystem.FileSystem;
   const registry = yield* PullRequestProviderRegistry.PullRequestProviderRegistry;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const projects = yield* ProjectService.ProjectService;
@@ -1578,6 +1610,9 @@ export const make = Effect.gen(function* () {
             state: changeRequest.state,
             isDraft: changeRequest.isDraft,
             mergeability: changeRequest.mergeability,
+            ...(changeRequest.mergeRequirementsSatisfied === undefined
+              ? {}
+              : { mergeRequirementsSatisfied: changeRequest.mergeRequirementsSatisfied }),
             additions: changeRequest.additions,
             deletions: changeRequest.deletions,
             changedFiles: changeRequest.changedFiles,
@@ -1871,6 +1906,20 @@ export const make = Effect.gen(function* () {
                 }),
               );
             }
+            if (
+              input.adminOverride === true &&
+              (input.action !== "merge" ||
+                input.stackNumber !== undefined ||
+                viewer.adminMerge !== true)
+            ) {
+              return Effect.fail(
+                new PullRequestOperationError({
+                  operation: "runAction",
+                  detail:
+                    "Only repository administrators may override merge requirements for a single pull request.",
+                }),
+              );
+            }
             const mergeSettings =
               project.api.mergeMessageRewrite !== undefined &&
               input.stackNumber === undefined &&
@@ -1905,6 +1954,9 @@ export const make = Effect.gen(function* () {
                       ? {}
                       : { expectedStackHeads: input.expectedStackHeads }),
                     ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
+                    ...(input.adminOverride === undefined
+                      ? {}
+                      : { adminOverride: input.adminOverride }),
                     ...(input.updateMethod === undefined
                       ? {}
                       : { updateMethod: input.updateMethod }),
@@ -1937,6 +1989,50 @@ export const make = Effect.gen(function* () {
           : operation;
       }),
     );
+
+  const uploadAttachment = Effect.fn("PullRequestService.uploadAttachment")(function* (
+    input: PullRequestUploadAttachmentInput,
+  ) {
+    const fail = (detail: string) =>
+      new PullRequestOperationError({ operation: "uploadAttachment", detail });
+    const project = yield* requireProject(input);
+    const upload = project.api.uploadAttachment;
+    if (project.api.capabilities.attachments !== true || upload === undefined)
+      return yield* fail(
+        "This host cannot upload local attachments. Paste a hosted file link instead.",
+      );
+    const viewer = yield* viewerPermissionsOf(project, input, "uploadAttachment");
+    if (!viewer.comment || viewer.attachments !== true)
+      return yield* fail(
+        "You need write access on this repository to upload attachments. Paste a hosted file link instead.",
+      );
+    if (
+      parseThreadSegmentFromAttachmentId(input.attachmentId) !== PENDING_ATTACHMENT_THREAD_SEGMENT
+    )
+      return yield* fail("Select a new attachment to upload.");
+    const path = resolveAttachmentPathById({
+      attachmentsDir: config.attachmentsDir,
+      attachmentId: input.attachmentId,
+    });
+    if (path === null)
+      return yield* fail("The attachment upload has expired. Select the file again.");
+    const stat = yield* fileSystem
+      .stat(path)
+      .pipe(
+        Effect.mapError(() => fail("The attachment upload has expired. Select the file again.")),
+      );
+    if (stat.type !== "File" || stat.size !== BigInt(input.sizeBytes))
+      return yield* fail("The attachment upload is incomplete. Select the file again.");
+    return yield* upload({
+      cwd: project.project.workspaceRoot,
+      repository: project.repository,
+      host: project.host,
+      path,
+      name: input.name,
+      mimeType: input.mimeType,
+      sizeBytes: input.sizeBytes,
+    }).pipe(Effect.mapError(toPullRequestError("uploadAttachment")));
+  });
 
   const comment: PullRequestService["Service"]["comment"] = (input) =>
     (input.body.trim().length === 0
@@ -2051,6 +2147,69 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  const saveDraftComment = Effect.fn("PullRequestService.saveDraftComment")(function* (
+    input: PullRequestSaveDraftCommentInput,
+  ) {
+    const project = yield* requireProject(input);
+    const save = project.api.saveDraftComment;
+    const review = project.api.capabilities.review;
+    if (save === undefined || review.draftComment !== true || !review.inlineComment)
+      return yield* new PullRequestOperationError({
+        operation: "saveDraftComment",
+        detail: "This host cannot save pending review comments.",
+      });
+    if (input.comment.body.trim().length === 0)
+      return yield* new PullRequestOperationError({
+        operation: "saveDraftComment",
+        detail: "A comment cannot be empty.",
+      });
+    if (input.comment.position.startLine !== undefined && review.multilineComment !== true)
+      return yield* new PullRequestOperationError({
+        operation: "saveDraftComment",
+        detail: "This host cannot save a comment range.",
+      });
+    const viewer = yield* viewerPermissionsOf(project, input, "saveDraftComment");
+    if (!viewer.comment)
+      return yield* new PullRequestOperationError({
+        operation: "saveDraftComment",
+        detail: "You do not have permission to comment on this pull request.",
+      });
+    return yield* save({
+      cwd: project.project.workspaceRoot,
+      repository: project.repository,
+      host: project.host,
+      number: input.number,
+      comment: input.comment,
+    }).pipe(Effect.mapError(toPullRequestError("saveDraftComment")));
+  });
+
+  const discardDraftComment = Effect.fn("PullRequestService.discardDraftComment")(function* (
+    input: PullRequestDiscardDraftCommentInput,
+  ) {
+    const project = yield* requireProject(input);
+    const discard = project.api.discardDraftComment;
+    if (discard === undefined || project.api.capabilities.review.draftComment !== true)
+      return yield* new PullRequestOperationError({
+        operation: "discardDraftComment",
+        detail: "This host cannot discard pending review comments.",
+      });
+    const viewer = yield* viewerPermissionsOf(project, input, "discardDraftComment");
+    if (!viewer.comment)
+      return yield* new PullRequestOperationError({
+        operation: "discardDraftComment",
+        detail: "You do not have permission to discard this comment.",
+      });
+    return yield* discard({
+      cwd: project.project.workspaceRoot,
+      repository: project.repository,
+      host: project.host,
+      number: input.number,
+      reviewId: input.reviewId,
+      commentId: input.commentId,
+      url: input.url,
+    }).pipe(Effect.mapError(toPullRequestError("discardDraftComment")));
+  });
+
   const submitReview: PullRequestService["Service"]["submitReview"] = (input) =>
     requireProject(input).pipe(
       Effect.flatMap((project): Effect.Effect<void, PullRequestError> => {
@@ -2060,13 +2219,49 @@ export const make = Effect.gen(function* () {
         if (!review.verdicts.includes(input.verdict)) {
           return refuse(`This host cannot ${VERDICT_LABELS[input.verdict]} a change request.`);
         }
+        if (
+          (input.pendingReviewId !== undefined ||
+            input.comments.some((comment) => comment.hostedComment !== undefined)) &&
+          review.draftComment !== true
+        )
+          return refuse("This host cannot submit a saved pending review.");
         if (input.comments.length > 0 && !review.inlineComment) {
           return refuse("This host cannot comment on a line of a change request.");
         }
         if (
+          input.comments.some((comment) => comment.position.startLine !== undefined) &&
+          review.multilineComment !== true
+        )
+          return refuse(
+            "This host supports comments on a single line. Select one line to comment.",
+          );
+        for (const { position } of input.comments) {
+          const side =
+            position.kind === "deleted"
+              ? "left"
+              : position.kind === "context"
+                ? position.side
+                : "right";
+          const end =
+            position.kind === "deleted"
+              ? position.oldLine
+              : position.kind === "context" && position.side === "left"
+                ? position.oldLine
+                : position.newLine;
+          if (
+            position.startLine !== undefined &&
+            (position.startSide ?? side) === side &&
+            position.startLine > end
+          )
+            return refuse("The selected comment range is reversed. Select the lines again.");
+        }
+        // A verdict with nothing attached to it is a request every host rejects, and doing so
+        // here says which of the two is missing rather than reporting the host's refusal.
+        if (
           input.verdict !== "approve" &&
           input.body.trim().length === 0 &&
-          input.comments.length === 0
+          input.comments.length === 0 &&
+          input.pendingReviewId === undefined
         ) {
           return refuse("A review needs a summary or at least one comment.");
         }
@@ -2091,6 +2286,9 @@ export const make = Effect.gen(function* () {
                 host: project.host,
                 number: input.number,
                 verdict: input.verdict,
+                ...(input.pendingReviewId === undefined
+                  ? {}
+                  : { pendingReviewId: input.pendingReviewId }),
                 body: input.body,
                 comments: input.comments,
               })
@@ -2137,6 +2335,9 @@ export const make = Effect.gen(function* () {
                 host: project.host,
                 number: input.number,
                 threadId: input.threadId,
+                ...(input.pendingReviewId === undefined
+                  ? {}
+                  : { pendingReviewId: input.pendingReviewId }),
                 body: input.body,
               })
               .pipe(Effect.mapError(toPullRequestError("replyToThread")));
@@ -3218,13 +3419,13 @@ export const make = Effect.gen(function* () {
     });
 
   const invalidatedByMutation =
-    <I extends PullRequestRef>(
-      method: (input: I) => Effect.Effect<void, PullRequestError>,
-    ): ((input: I) => Effect.Effect<void, PullRequestError>) =>
+    <I extends PullRequestRef, A>(
+      method: (input: I) => Effect.Effect<A, PullRequestError>,
+    ): ((input: I) => Effect.Effect<A, PullRequestError>) =>
     (input) =>
       Effect.gen(function* () {
         const ref = yield* canonicalRef(input);
-        yield* readCache.invalidate(refScope(ref)).pipe(
+        const result = yield* readCache.invalidate(refScope(ref)).pipe(
           Effect.andThen(method(input)),
           Effect.ensuring(readCache.invalidate(refScope(ref))),
           Effect.tap(() =>
@@ -3235,6 +3436,7 @@ export const make = Effect.gen(function* () {
           ),
         );
         yield* SubscriptionRef.set(pullRequestRefreshes, listingsEpoch);
+        return result;
       });
   const runActionAndInvalidate: PullRequestService["Service"]["runAction"] = Effect.fn(
     "PullRequestService.runActionAndInvalidate",
@@ -3405,8 +3607,11 @@ export const make = Effect.gen(function* () {
     ),
     runAction: runActionAndInvalidate,
     update: invalidatedByMutation(update),
+    uploadAttachment,
     comment: invalidatedByMutation(comment),
     updateComment: invalidatedByMutation(updateComment),
+    saveDraftComment: invalidatedByMutation(saveDraftComment),
+    discardDraftComment: invalidatedByMutation(discardDraftComment),
     submitReview: invalidatedByMutation(submitReview),
     replyToThread: invalidatedByMutation(replyToThread),
     setThreadResolution: invalidatedByMutation(setThreadResolution),

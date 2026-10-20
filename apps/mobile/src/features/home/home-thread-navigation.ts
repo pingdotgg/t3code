@@ -9,6 +9,7 @@ import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { useCallback, useEffect, useRef } from "react";
 import { Platform } from "react-native";
 import { useAndroidWorkspaceSelection } from "../workspace/useAndroidWorkspaceSelection";
+import { rememberedThreadWorkspaceNavigationState } from "../workspace/threadWorkspaceNavigationMemory";
 
 type ThreadSelection = Pick<EnvironmentThreadShell, "environmentId" | "id">;
 
@@ -16,12 +17,15 @@ export function createHomeThreadNavigationAction(input: {
   readonly state: Pick<NavigationState, "index" | "routes">;
   readonly dismissingRouteKey: string | null;
   readonly thread: ThreadSelection;
+  readonly rememberedState?: ReturnType<typeof rememberedThreadWorkspaceNavigationState>;
 }) {
   const currentRoute = input.state.routes[input.state.index];
   const params = {
     environmentId: input.thread.environmentId,
     threadId: input.thread.id,
   };
+
+  if (input.rememberedState) return CommonActions.reset(input.rememberedState);
 
   // Native swipe-back pops the outgoing route after its animation. Reusing
   // that key would also discard this selection when the dismissal arrives.
@@ -73,6 +77,10 @@ export function useHomeThreadSelection() {
           state,
           dismissingRouteKey: dismissingRouteKey.current,
           thread,
+          rememberedState: rememberedThreadWorkspaceNavigationState(state, {
+            environmentId: String(thread.environmentId),
+            threadId: String(thread.id),
+          }),
         }),
       );
     },

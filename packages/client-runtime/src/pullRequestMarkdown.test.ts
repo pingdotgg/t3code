@@ -164,3 +164,16 @@ describe("media on custom hosts", () => {
     ]);
   });
 });
+
+it("renders a safely quoted hosted recording link as a video", () => {
+  expect(
+    splitPullRequestBody("[recording.mp4](<https://github.com/user-attachments/assets/1234-abcd>)"),
+  ).toEqual([
+    {
+      id: "attachment:0",
+      kind: "attachment",
+      url: "https://github.com/user-attachments/assets/1234-abcd",
+      media: "video",
+    },
+  ]);
+});

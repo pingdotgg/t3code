@@ -8,10 +8,11 @@ import type {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  reviewThreadReplyTarget,
   canEditPullRequestChangeRequest,
   canEditPullRequestComment,
   canResolvePullRequestThread,
-} from "./pullRequestEditing.logic";
+} from "./reviewEditing.ts";
 
 type Subject = Pick<PullRequestDetail, "author" | "capabilities" | "viewer" | "viewerPermissions">;
 
@@ -232,5 +233,35 @@ describe("canResolvePullRequestThread", () => {
         canResolve: true,
       }),
     ).toBe(false);
+  });
+});
+
+describe("reviewThreadReplyTarget", () => {
+  it("carries private ownership while leaving published replies immediate", () => {
+    const thread = {
+      id: "t1",
+      path: "a.ts",
+      line: 2,
+      side: "right" as const,
+      isResolved: false,
+      isOutdated: false,
+      comments: [],
+    };
+    expect(reviewThreadReplyTarget(thread)).toEqual({ threadId: "t1" });
+    expect(
+      reviewThreadReplyTarget({
+        ...thread,
+        comments: [
+          {
+            id: "c1",
+            body: "Draft",
+            url: null,
+            author: null,
+            createdAt: "2026-10-20T00:00:00Z",
+            pendingReviewId: "private-review",
+          },
+        ],
+      }),
+    ).toEqual({ threadId: "t1", pendingReviewId: "private-review" });
   });
 });

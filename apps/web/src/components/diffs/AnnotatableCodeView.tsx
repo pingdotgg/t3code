@@ -8,10 +8,11 @@ import type {
 } from "@pierre/diffs";
 import type { CodeViewHandle } from "@pierre/diffs/react";
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { useState, type ReactNode, type Ref } from "react";
+import { useEffect, useState, type ReactNode, type Ref } from "react";
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { fnv1a32, resolveFileDiffPath, resolveFileDiffPreviousPath } from "~/lib/diffRendering";
+import { readLocalApi } from "~/localApi";
 import {
   buildDiffReviewComment,
   restoreDiffReviewCommentRange,
@@ -32,6 +33,7 @@ interface DiffCommentAnnotationEntry {
 
 interface DiffCommentAnnotationGroup {
   entries: DiffCommentAnnotationEntry[];
+  hunkIndex?: number;
 }
 
 type DiffCommentLineAnnotation = DiffLineAnnotation<DiffCommentAnnotationGroup>;
@@ -40,6 +42,41 @@ const EMPTY_REVIEW_COMMENTS: ReadonlyArray<ReviewCommentContext> = [];
 
 function annotationSide(range: SelectedLineRange): AnnotationSide {
   return (range.endSide ?? range.side) === "deletions" ? "deletions" : "additions";
+}
+
+function selectionPoint(line: HTMLElement) {
+  const lineNumber = Number(
+    line.getAttribute("data-line") ?? line.getAttribute("data-column-number"),
+  );
+  if (!Number.isInteger(lineNumber) || lineNumber < 1) return null;
+  const type = line.getAttribute("data-line-type");
+  const side: AnnotationSide =
+    type === "change-deletion" ||
+    (type !== "change-addition" && line.closest("[data-code]")?.hasAttribute("data-deletions"))
+      ? "deletions"
+      : "additions";
+  return { lineNumber, side };
+}
+
+/** Native text dragging and the viewer's gutter selection share the same line actions. */
+function selectedTextLines(line: HTMLElement): SelectedLineRange | null {
+  const root = line.getRootNode();
+  const selection =
+    root instanceof ShadowRoot && "getSelection" in root
+      ? (root as ShadowRoot & { getSelection(): Selection | null }).getSelection()
+      : window.getSelection();
+  if (!selection || selection.isCollapsed || !selection.containsNode(line, true)) return null;
+  const lineOf = (node: Node | null) =>
+    (node instanceof Element ? node : node?.parentElement)?.closest<HTMLElement>("[data-line]");
+  const anchor = lineOf(selection.anchorNode);
+  const focus = lineOf(selection.focusNode);
+  if (!anchor || !focus || anchor.getRootNode() !== root || focus.getRootNode() !== root)
+    return null;
+  const start = selectionPoint(anchor);
+  const end = selectionPoint(focus);
+  return start && end
+    ? { start: start.lineNumber, side: start.side, end: end.lineNumber, endSide: end.side }
+    : null;
 }
 
 function appendAnnotationEntry(
@@ -90,6 +127,12 @@ interface AnnotatableCodeViewProps {
   renderCodeViewFooter?: () => ReactNode;
   unsafeCSSExtra?: string;
   renderHeaderMetadata?: (fileDiff: FileDiffMetadata) => ReactNode;
+  renderHunkAction?: ((fileDiff: FileDiffMetadata, hunkIndex: number) => ReactNode) | undefined;
+  stageLinesAction?: "stage" | "unstage" | undefined;
+  onStageLines?: ((fileDiff: FileDiffMetadata, range: SelectedLineRange) => void) | undefined;
+  canStageLines?: ((fileDiff: FileDiffMetadata, range: SelectedLineRange) => boolean) | undefined;
+  onRevertLines?: ((fileDiff: FileDiffMetadata, range: SelectedLineRange) => void) | undefined;
+  canRevertLines?: ((fileDiff: FileDiffMetadata, range: SelectedLineRange) => boolean) | undefined;
   renderHeaderFilenameSuffix: (fileDiff: FileDiffMetadata) => ReactNode;
   renderHeaderPrefix: (
     fileDiff: FileDiffMetadata,
@@ -116,6 +159,12 @@ export function AnnotatableCodeView({
   renderCodeViewFooter,
   unsafeCSSExtra,
   renderHeaderMetadata,
+  renderHunkAction,
+  stageLinesAction,
+  onStageLines,
+  canStageLines,
+  onRevertLines,
+  canRevertLines,
   renderHeaderFilenameSuffix,
   renderHeaderPrefix,
   onRevealSearchMatch,
@@ -136,6 +185,7 @@ export function AnnotatableCodeView({
     annotation: DiffCommentLineAnnotation;
   } | null>(null);
   const [draftText, setDraftText] = useState("");
+  const [container, setContainer] = useState<HTMLDivElement | null>(null);
 
   const filesByKey = new Map(files.map((file) => [file.fileKey, file]));
   if (
@@ -152,8 +202,8 @@ export function AnnotatableCodeView({
     setDraftText("");
     setSelectedLines(null);
   }
-  const items: CodeViewDiffItem<DiffCommentAnnotationGroup>[] = files.map(
-    ({ fileDiff, filePath, fileKey, fileVersion, collapsed }) => {
+  const items = ((): CodeViewDiffItem<DiffCommentAnnotationGroup>[] =>
+      files.map(({ fileDiff, filePath, fileKey, fileVersion, collapsed }) => {
       const persisted = reviewComments
         .filter(
           (comment) =>
@@ -173,6 +223,27 @@ export function AnnotatableCodeView({
           });
         }, []);
       const annotations = draft?.fileKey === fileKey ? [...persisted, draft.annotation] : persisted;
+        if (renderHunkAction) {
+          fileDiff.hunks.forEach((hunk, hunkIndex) => {
+            const change = hunk.hunkContent.findLast((content) => content.type === "change");
+            if (!change || change.type !== "change") return;
+            const additions = change.additions > 0;
+            const count = additions ? change.additions : change.deletions;
+            if (count === 0) return;
+            const lineIndex = additions ? change.additionLineIndex : change.deletionLineIndex;
+            const hunkLineIndex = additions ? hunk.additionLineIndex : hunk.deletionLineIndex;
+            annotations.push({
+              side: additions ? "additions" : "deletions",
+              lineNumber:
+                (additions ? hunk.additionStart : hunk.deletionStart) +
+                lineIndex -
+                hunkLineIndex +
+                count -
+                1,
+              metadata: { entries: [], hunkIndex },
+            });
+          });
+        }
       return {
         id: fileKey,
         type: "diff",
@@ -181,16 +252,16 @@ export function AnnotatableCodeView({
         collapsed,
         version: fnv1a32(
           `${fileVersion}:${collapsed ? "1" : "0"}:${annotations
-            .flatMap((annotation) =>
-              annotation.metadata.entries.map(
+              .flatMap((annotation) => [
+                String(annotation.metadata.hunkIndex ?? ""),
+                ...annotation.metadata.entries.map(
                 (entry) => `${entry.id}:${entry.rangeLabel}:${entry.text}`,
               ),
-            )
+              ])
             .join(":")}`,
         ),
       };
-    },
-  );
+    }))();
 
   const removeEntry = (entryId: string) => {
     setSelectedLines(null);
@@ -254,6 +325,75 @@ export function AnnotatableCodeView({
     });
   };
 
+  const hasOpenComment = draft !== null;
+  useEffect(() => {
+    if (!container || (!onStageLines && !onRevertLines)) return;
+    const onContextMenu = (event: MouseEvent) => {
+      const path = event
+        .composedPath()
+        .filter((entry): entry is HTMLElement => entry instanceof HTMLElement);
+      const line = path.find(
+        (entry) => entry.hasAttribute("data-line") || entry.hasAttribute("data-column-number"),
+      );
+      const host = path.find((entry) => entry.dataset.t3DiffFileKey !== undefined);
+      const file = host ? filesByKey.get(host.dataset.t3DiffFileKey ?? "") : undefined;
+      if (!line || !file) return;
+      const point = selectionPoint(line);
+      if (!point) return;
+      const range =
+        selectedTextLines(line) ??
+        (selectedLines?.id === file.fileKey && line.hasAttribute("data-selected-line")
+          ? selectedLines.range
+          : { start: point.lineNumber, end: point.lineNumber, side: point.side });
+      const stageAvailable =
+        onStageLines && stageLinesAction && (!canStageLines || canStageLines(file.fileDiff, range));
+      const revertAvailable =
+        onRevertLines && (!canRevertLines || canRevertLines(file.fileDiff, range));
+      if (!stageAvailable && !revertAvailable) return;
+      const api = readLocalApi();
+      if (!api) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setSelectedLines({ id: file.fileKey, range });
+      const label = stageLinesAction === "stage" ? "Stage" : "Unstage";
+      const singleLine = range.start === range.end && (range.endSide ?? range.side) === range.side;
+      void api.contextMenu
+        .show(
+          [
+            ...(stageAvailable
+              ? [
+            {
+              id: "stage-lines",
+                    label: `${label} ${singleLine ? "line" : "selected lines"}`,
+            },
+                ]
+              : []),
+            ...(revertAvailable
+              ? [{ id: "revert-lines", label: `Revert ${singleLine ? "line" : "selected lines"}` }]
+              : []),
+          ],
+          { x: event.clientX, y: event.clientY },
+        )
+        .then((action) => {
+          if (action !== "stage-lines" && action !== "revert-lines") return;
+          setSelectedLines(null);
+          if (action === "stage-lines") onStageLines?.(file.fileDiff, range);
+          else onRevertLines?.(file.fileDiff, range);
+        });
+    };
+    container.addEventListener("contextmenu", onContextMenu);
+    return () => container.removeEventListener("contextmenu", onContextMenu);
+  }, [
+    container,
+    filesByKey,
+    selectedLines,
+    onStageLines,
+    stageLinesAction,
+    canStageLines,
+    onRevertLines,
+    canRevertLines,
+  ]);
+
   return (
     <StyledDiffCodeView<DiffCommentAnnotationGroup>
       key={codeViewKey}
@@ -268,6 +408,7 @@ export function AnnotatableCodeView({
         : {})}
       {...(renderCodeViewFooter ? { renderCodeViewFooter } : {})}
       items={items}
+      containerRef={setContainer}
       selectedLines={selectedLines}
       onSelectedLinesChange={setSelectedLines}
       onRevealSearchMatch={(item) => onRevealSearchMatch(item.id)}
@@ -276,6 +417,9 @@ export function AnnotatableCodeView({
         enableGutterUtility: draft === null,
         enableLineSelection: draft === null,
         onGutterUtilityClick: beginComment,
+        onPostRender: (node, _instance, _phase, context) => {
+          node.dataset.t3DiffFileKey = context.item.id;
+        },
       }}
       renderHeaderFilenameSuffix={(item) =>
         item.type === "diff" ? renderHeaderFilenameSuffix(item.fileDiff) : null
@@ -285,7 +429,10 @@ export function AnnotatableCodeView({
           ? renderHeaderPrefix(item.fileDiff, item.id, item.collapsed === true)
           : null
       }
-      renderAnnotation={(annotation) => {
+      renderAnnotation={(annotation, item) => {
+        if (annotation.metadata.hunkIndex !== undefined && item.type === "diff") {
+          return renderHunkAction?.(item.fileDiff, annotation.metadata.hunkIndex);
+        }
         const hasDraft = annotation.metadata.entries.some((entry) => entry.kind === "draft");
         return (
           <div

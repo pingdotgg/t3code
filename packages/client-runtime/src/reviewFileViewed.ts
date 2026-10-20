@@ -72,3 +72,11 @@ export function toFileViewedBatch(
 ): ReadonlyArray<{ readonly path: string; readonly viewed: boolean }> {
   return [...overlay].map(([path, viewed]) => ({ path, viewed }));
 }
+
+export function countViewedFiles(
+  paths: readonly string[],
+  states: FileViewedStates | null,
+  overlay: FileViewedOverlay,
+): number {
+  return paths.filter((path) => isFileViewed(path, states, overlay)).length;
+}

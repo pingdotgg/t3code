@@ -33,19 +33,23 @@ describe("PR agent tasks", () => {
     expect(appendPullRequestAgentPrompt("Why this change?", "ask")).toBe("Why this change?");
   });
   it("appends a task without duplicating it on repeated presses", () => {
-    const text = appendPullRequestAgentPrompt("Keep my own instructions", "explain");
-    expect(text).toBe(`Keep my own instructions\n\n${pullRequestAgentPrompt("explain")}`);
-    expect(appendPullRequestAgentPrompt(text, "explain")).toBe(text);
+    const text = appendPullRequestAgentPrompt("Keep my own instructions", "feedback");
+    expect(text).toBe(`Keep my own instructions\n\n${pullRequestAgentPrompt("feedback")}`);
+    expect(appendPullRequestAgentPrompt(text, "feedback")).toBe(text);
   });
   it("replaces the helper's own text when switching tasks, keeping user edits", () => {
-    const first = appendPullRequestAgentPrompt("My question", "explain");
-    const next = appendPullRequestAgentPrompt(first, "feedback", pullRequestAgentPrompt("explain"));
-    expect(next).toBe(`My question\n\n${pullRequestAgentPrompt("feedback")}`);
-    expect(appendPullRequestAgentPrompt(next, "ask", pullRequestAgentPrompt("feedback"))).toBe(
+    const first = appendPullRequestAgentPrompt("My question", "feedback");
+    const next = appendPullRequestAgentPrompt(
+      first,
+      "conflicts",
+      pullRequestAgentPrompt("feedback"),
+    );
+    expect(next).toBe(`My question\n\n${pullRequestAgentPrompt("conflicts")}`);
+    expect(appendPullRequestAgentPrompt(next, "ask", pullRequestAgentPrompt("conflicts"))).toBe(
       "My question",
     );
     const edited = `${first} with my own edit`;
-    expect(appendPullRequestAgentPrompt(edited, "ask", pullRequestAgentPrompt("explain"))).toBe(
+    expect(appendPullRequestAgentPrompt(edited, "ask", pullRequestAgentPrompt("feedback"))).toBe(
       edited,
     );
   });

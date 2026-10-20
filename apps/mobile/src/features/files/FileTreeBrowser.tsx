@@ -3,7 +3,7 @@ import { LegendList } from "@legendapp/list/react-native";
 import type { ProjectEntry } from "@t3tools/contracts";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { SymbolView } from "../../components/ui/AppSymbol";
-import { useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Platform, Pressable, RefreshControl, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -119,6 +119,8 @@ export function FileTreeBrowser(props: {
   readonly onPreviewFile?: (path: string) => void;
   readonly onRefresh: () => void;
   readonly onSelectFile: (path: string) => void;
+  readonly toolbar?: ReactNode;
+  readonly pinnedToolbar?: boolean;
 }) {
   const [expandedPaths, setExpandedPaths] = useState<ReadonlySet<string>>(() => new Set());
   const [pendingSelection, setPendingSelection] = useState<{
@@ -220,28 +222,40 @@ export function FileTreeBrowser(props: {
 
   // UIKit owns the header inset on every supported iOS version. Keep the
   // list as direct screen content so automatic inset adjustment can find it.
-  return (
+  const list = (
     <LegendList
-      contentInsetStartAdjustment={headerInset}
+      contentInsetStartAdjustment={props.pinnedToolbar ? 0 : headerInset}
       alwaysBounceVertical
       className="flex-1"
       data={visibleNodes}
       keyExtractor={(item) => item.node.path}
-      contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
-      automaticallyAdjustsScrollIndicatorInsets={Platform.OS === "ios"}
+      contentInsetAdjustmentBehavior={
+        Platform.OS === "ios" && !props.pinnedToolbar ? "automatic" : "never"
+      }
+      automaticallyAdjustsScrollIndicatorInsets={Platform.OS === "ios" && !props.pinnedToolbar}
       keyboardDismissMode="on-drag"
       keyboardShouldPersistTaps="handled"
       estimatedItemSize={42}
       recycleItems
       maintainVisibleContentPosition
       extraData={extraData}
-      contentContainerStyle={{ paddingTop: 8, paddingBottom: 8 }}
+      contentContainerStyle={{
+        paddingTop: 8,
+        paddingBottom:
+          8 + (props.pinnedToolbar ? (columnMetrics?.safeArea.bottom ?? insets.bottom) : 0),
+      }}
+      scrollIndicatorInsets={
+        props.pinnedToolbar
+          ? { bottom: columnMetrics?.safeArea.bottom ?? insets.bottom }
+          : undefined
+      }
       refreshControl={
         <RefreshControl refreshing={props.isRefreshing} onRefresh={props.onRefresh} />
       }
       renderItem={renderItem}
       ListHeaderComponent={
         <>
+          {props.pinnedToolbar ? null : props.toolbar}
           {props.error && props.entries.length > 0 ? (
             <Text accessibilityRole="alert" className="mx-4 my-2 text-xs text-foreground-muted">
               {props.error}
@@ -289,5 +303,13 @@ export function FileTreeBrowser(props: {
         </View>
       }
     />
+  );
+  return props.pinnedToolbar ? (
+    <View className="flex-1">
+      <View style={{ paddingTop: headerInset }}>{props.toolbar}</View>
+      {list}
+    </View>
+  ) : (
+    list
   );
 }

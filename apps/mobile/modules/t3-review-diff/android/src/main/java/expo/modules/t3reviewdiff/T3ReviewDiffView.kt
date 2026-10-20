@@ -29,7 +29,10 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
   private val onVisibleFileChange by EventDispatcher()
   private val onToggleFile by EventDispatcher()
   private val onToggleViewedFile by EventDispatcher()
+  private val onPressHunk by EventDispatcher()
+  private val onPressFileAction by EventDispatcher()
   private val onPressLine by EventDispatcher()
+  private val onSelectLineRange by EventDispatcher()
   private val onToggleComment by EventDispatcher()
   private var rows: List<DiffRow> = emptyList()
   private var visibleRows: List<DiffRow> = emptyList()
@@ -66,6 +69,9 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
       )
     }
     canvasView.onRowTap = { row, gesture, target -> handleRowTap(row, gesture, target) }
+    canvasView.onSelectLineRange = { start, end ->
+      onSelectLineRange(mapOf("startRowId" to start, "endRowId" to end))
+    }
     canvasView.onVisibleRowsChanged = { first, last ->
       onDebug(
         mapOf(
@@ -115,6 +121,18 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
   fun setSelectedRowIdsJson(value: String) {
     selectedRowIds = parseStringSet(value)
     canvasView.selectedRowIds = selectedRowIds
+  }
+
+  fun setEnableLineRangeSelection(enabled: Boolean) {
+    canvasView.enableLineRangeSelection = enabled
+  }
+
+  fun setShowViewedCheckbox(shown: Boolean) {
+    canvasView.showViewedCheckbox = shown
+  }
+
+  fun setViewedCheckboxEnabled(enabled: Boolean) {
+    canvasView.viewedCheckboxEnabled = enabled
   }
 
   fun setCollapsedCommentIdsJson(value: String) {
@@ -223,6 +241,7 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
 
   @Suppress("NestedBlockDepth", "ReturnCount")
   override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
+    if (canvasView.isRangeDragging) return false
     when (event.actionMasked) {
       MotionEvent.ACTION_DOWN -> {
         verticalScroller.forceFinished(true)
@@ -373,9 +392,19 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
 
   private fun handleRowTap(row: DiffRow, gesture: String, target: RowTapTarget) {
     when (row.kind) {
+      "hunk" -> if (gesture == "tap") handleHunkTap(row, target)
       "file" -> {
         if (gesture != "tap") return
-        if (target == RowTapTarget.VIEWED_CHECKBOX) {
+        if (target == RowTapTarget.FILE_ACTION) {
+          if (!row.fileActionDisabled) {
+            onPressFileAction(
+              mapOf(
+                "fileId" to row.resolvedFileId,
+                "rowId" to row.id
+              )
+            )
+          }
+        } else if (target == RowTapTarget.VIEWED_CHECKBOX) {
           onToggleViewedFile(mapOf("fileId" to row.resolvedFileId))
         } else {
           onToggleFile(mapOf("fileId" to row.resolvedFileId))
@@ -393,6 +422,14 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
         row.newLineNumber?.let { payload["newLineNumber"] = it }
         onPressLine(payload)
       }
+    }
+  }
+
+  private fun handleHunkTap(row: DiffRow, target: RowTapTarget) {
+    if (target == RowTapTarget.HUNK_REVERT && !row.hunkRevertActionDisabled) {
+      onPressHunk(mapOf("rowId" to row.id, "action" to "revert"))
+    } else if (target == RowTapTarget.HUNK_ACTION && !row.hunkActionDisabled) {
+      onPressHunk(mapOf("rowId" to row.id, "action" to "stage"))
     }
   }
 
@@ -443,7 +480,10 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
 
 private enum class RowTapTarget {
   ROW,
-  VIEWED_CHECKBOX
+  VIEWED_CHECKBOX,
+  HUNK_ACTION,
+  HUNK_REVERT,
+  FILE_ACTION
 }
 
 private enum class HorizontalPanKind {
@@ -473,10 +513,21 @@ internal data class DiffRow(
   val wordDiffRanges: List<DiffWordDiffRange>,
   val commentText: String,
   val commentRangeLabel: String,
-  val commentSectionTitle: String
+  val commentSectionTitle: String,
+  val commentPending: Boolean = false,
+  val commentResolvedSummary: String? = null,
+  val renameSegments: List<DiffRenameSegment> = emptyList(),
+  val hunkAction: String? = null,
+  val hunkActionDisabled: Boolean = false,
+  val hunkRevertAction: Boolean = false,
+  val hunkRevertActionDisabled: Boolean = false,
+  val fileAction: String? = null,
+  val fileActionDisabled: Boolean = false
 ) {
   val resolvedFileId: String get() = fileId.ifEmpty { id }
 }
+
+internal data class DiffRenameSegment(val text: String, val kind: String)
 
 internal data class DiffWordDiffRange(
   val start: Int,
@@ -684,15 +735,39 @@ private class DiffCanvasView(context: Context) : View(context) {
 
       override fun onSingleTapUp(event: MotionEvent): Boolean {
         rowHitAt(event.y)?.let { hit ->
-          val target = if (
-            hit.row.kind == "file" &&
+          if (enableLineRangeSelection && hit.row.kind == "line" && lineRange.startIndex != null) {
+            val index = rows.indexOf(hit.row)
+            if (rows[lineRange.startIndex!!].resolvedFileId == hit.row.resolvedFileId) {
+              updateNativeRange(lineRange.startIndex!!, index)
+              return@let
+            }
+          }
+          if (hit.row.kind == "line") clearNativeRange()
+          val target = if (hit.row.kind == "hunk" && hit.row.hunkAction != null &&
+            event.x >= width - 112 * density
+          ) {
+            RowTapTarget.HUNK_ACTION
+          } else if (hit.row.kind == "hunk" && hit.row.hunkRevertAction &&
+            event.x >= width - 224 * density
+          ) {
+            RowTapTarget.HUNK_REVERT
+          } else if (hit.row.kind == "file" && hit.row.fileAction != null &&
+            event.x >= width - 100 * density
+          ) {
+            RowTapTarget.FILE_ACTION
+          } else if (
+            showViewedCheckbox && hit.row.kind == "file" &&
             drawing.fileHeaderCheckboxRect(
               hit.top,
               hit.bottom,
               width,
               style
-            ).contains(event.x, event.y)
+            ).apply {
+              inset(-12f * density, -12f * density)
+              intersect(0f, hit.top.toFloat(), width.toFloat(), hit.bottom.toFloat())
+            }.contains(event.x, event.y)
           ) {
+            if (!viewedCheckboxEnabled) return@let
             RowTapTarget.VIEWED_CHECKBOX
           } else {
             RowTapTarget.ROW
@@ -703,9 +778,13 @@ private class DiffCanvasView(context: Context) : View(context) {
       }
 
       override fun onLongPress(event: MotionEvent) {
-        rowHitAt(event.y)?.row
-          ?.takeIf { it.kind == "line" }
-          ?.let { onRowTap?.invoke(it, "longPress", RowTapTarget.ROW) }
+        val row = rowHitAt(event.y)?.row?.takeIf { it.kind == "line" } ?: return
+        if (enableLineRangeSelection) {
+          beginNativeRange(rows.indexOf(row))
+          parent?.requestDisallowInterceptTouchEvent(true)
+        } else {
+          onRowTap?.invoke(row, "longPress", RowTapTarget.ROW)
+        }
       }
     },
   )
@@ -720,6 +799,7 @@ private class DiffCanvasView(context: Context) : View(context) {
   private var lastVisibleRange: Pair<Int, Int>? = null
   var rows: List<DiffRow> = emptyList()
     set(value) {
+      clearNativeRange()
       field = value
       headerPathOffsetsByFileId.keys.retainAll(
         value.asSequence().filter { it.kind == "file" }.map { it.resolvedFileId }.toSet(),
@@ -755,7 +835,30 @@ private class DiffCanvasView(context: Context) : View(context) {
   var selectedRowIds: Set<String> = emptySet()
     set(value) {
       field = value
+      if (value.isEmpty() && !isRangeDragging) clearNativeRange()
       invalidate()
+    }
+  var enableLineRangeSelection = false
+    set(value) {
+      field = value
+      if (!value) clearNativeRange()
+    }
+  var showViewedCheckbox = true
+    set(value) {
+      field = value
+      clampHeaderPathOffsets()
+      invalidate()
+    }
+  var viewedCheckboxEnabled = true
+    set(value) {
+      field = value
+      invalidate()
+    }
+  private val lineRange = ReviewDiffLineRange()
+  var isRangeDragging: Boolean
+    get() = lineRange.isDragging
+    private set(value) {
+      lineRange.isDragging = value
     }
   var theme: DiffTheme = DiffTheme.fallback("light")
     set(value) {
@@ -770,6 +873,7 @@ private class DiffCanvasView(context: Context) : View(context) {
       rebuildOffsets()
     }
   var onRowTap: ((DiffRow, String, RowTapTarget) -> Unit)? = null
+  var onSelectLineRange: ((String, String) -> Unit)? = null
   var onVisibleRowsChanged: ((Int, Int) -> Unit)? = null
   var onContentHeightChanged: ((Int) -> Unit)? = null
 
@@ -811,11 +915,70 @@ private class DiffCanvasView(context: Context) : View(context) {
       )
     }
     drawStickyFileHeader(canvas, first)
+    rangeHandleCenters()?.let { (start, end) ->
+      backgroundPaint.color = Color.rgb(48, 118, 237)
+      canvas.drawCircle(start.first, start.second, 5f * density, backgroundPaint)
+      canvas.drawCircle(end.first, end.second, 5f * density, backgroundPaint)
+    }
     drawHorizontalScrollIndicator(canvas)
     emitVisibleRange()
   }
 
-  override fun onTouchEvent(event: MotionEvent): Boolean = gestureDetector.onTouchEvent(event)
+  override fun onTouchEvent(event: MotionEvent): Boolean {
+    val startedDrag = if (enableLineRangeSelection &&
+      event.actionMasked == MotionEvent.ACTION_DOWN
+    ) {
+      rangeHandleAt(event.x, event.y)?.let { lineRange.dragHandle(it) } == true
+    } else {
+      false
+    }
+    return if (startedDrag) {
+      parent?.requestDisallowInterceptTouchEvent(true)
+      true
+    } else if (isRangeDragging) {
+      when (event.actionMasked) {
+        MotionEvent.ACTION_MOVE -> {
+          val start = lineRange.startIndex
+          val index = rowIndexAt(verticalOffset + event.y.toInt())
+          if (start != null) updateNativeRange(start, nearestRangeLine(index))
+        }
+        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+          isRangeDragging = false
+          parent?.requestDisallowInterceptTouchEvent(false)
+          val cancel = MotionEvent.obtain(event)
+          cancel.action = MotionEvent.ACTION_CANCEL
+          gestureDetector.onTouchEvent(cancel)
+          cancel.recycle()
+        }
+      }
+      true
+    } else {
+      gestureDetector.onTouchEvent(event)
+    }
+  }
+
+  private fun beginNativeRange(index: Int) {
+    if (lineRange.begin(index, rows)) updateNativeRange(index, index)
+  }
+
+  private fun updateNativeRange(start: Int, end: Int) {
+    lineRange.update(start, end, rows)?.let { (first, last) ->
+      onSelectLineRange?.invoke(first, last)
+      invalidate()
+    }
+  }
+
+  private fun nearestRangeLine(index: Int): Int = lineRange.nearestLine(index)
+
+  private fun clearNativeRange() = lineRange.clear()
+
+  private fun rangeHandleCenters(): Pair<Pair<Float, Float>, Pair<Float, Float>>? {
+    val x = max(12f * density, style.changeBarWidthPx + style.gutterWidthPx - 6f * density)
+    return lineRange.centers(rows, rowOffsets, verticalOffset, x)
+  }
+
+  private fun rangeHandleAt(x: Float, y: Float): Boolean? =
+    lineRange.handleAt(x, y, 22f * density, rangeHandleCenters())
 
   fun rowTop(index: Int): Int = rowOffsets[index.coerceIn(0, max(0, rowOffsets.size - 2))]
 
@@ -905,12 +1068,19 @@ private class DiffCanvasView(context: Context) : View(context) {
   private fun rowHeight(row: DiffRow): Int = when (row.kind) {
     "file" -> style.fileHeaderHeightPx.toInt()
     "notice" -> max((style.rowHeightPx * 2f).toInt(), (44 * density).toInt())
-    "comment" -> if (collapsedCommentIds.contains(row.id)) {
+    "comment" -> if (collapsedCommentIds.contains(row.id) || row.commentResolvedSummary != null) {
       (44 * density).toInt()
     } else {
       (124 * density).toInt()
     }
     "line" -> codeWrap.rowHeight(row.id, style.rowHeightPx.toInt())
+    "hunk" -> if (row.hunkAction !=
+      null
+    ) {
+      max(style.rowHeightPx.toInt(), (44 * density).toInt())
+    } else {
+      style.rowHeightPx.toInt()
+    }
     else -> style.rowHeightPx.toInt()
   }.coerceAtLeast(1)
 
@@ -970,91 +1140,26 @@ private class DiffCanvasView(context: Context) : View(context) {
   }
 
   private fun drawFileRow(canvas: Canvas, row: DiffRow, top: Int, bottom: Int) {
-    fill(canvas, theme.headerBackground, 0f, top.toFloat(), width.toFloat(), bottom.toFloat())
-
-    val chevronRect = drawing.fileHeaderChevronRect(top, bottom, style)
-    val iconRect = drawing.fileHeaderIconRect(top, bottom, style)
-    val checkboxRect = drawing.fileHeaderCheckboxRect(top, bottom, width, style)
-    drawing.drawDisclosureChevron(
+    drawing.drawFileHeader(
       canvas,
-      chevronRect,
-      theme.mutedText,
-      collapsed = collapsedFileIds.contains(row.resolvedFileId),
+      row,
+      RectF(0f, top.toFloat(), width.toFloat(), bottom.toFloat()),
+      style,
+      FileHeaderDrawingState(
+        collapsed = collapsedFileIds.contains(row.resolvedFileId),
+        viewed = viewedFileIds.contains(row.resolvedFileId),
+        showViewedCheckbox = showViewedCheckbox,
+        viewedCheckboxEnabled = viewedCheckboxEnabled,
+        pathOffset = headerPathOffsetsByFileId[row.resolvedFileId] ?: 0,
+      ),
     )
-    drawing.drawFileIcon(canvas, iconRect, row.changeType)
-    drawing.drawViewedCheckbox(
-      canvas,
-      checkboxRect,
-      viewedFileIds.contains(row.resolvedFileId),
-    )
-
-    drawing.configureUiPaint(
-      paint = boldTextPaint,
-      color = theme.deleteText,
-      size = style.fileHeaderMetaFontSizePx,
-      weight = style.fileHeaderMetaFontWeight,
-    )
-    val deleteText = "-${row.deletions}"
-    val deleteWidth = boldTextPaint.measureText(deleteText)
-    val addText = "+${row.additions}"
-    val addWidth = boldTextPaint.measureText(addText)
-    val countGap = 4f * density
-    val countsX = checkboxRect.left - 10f * density - deleteWidth - countGap - addWidth
-    val baseline = centeredBaseline(top, bottom, boldTextPaint)
-    canvas.drawText(deleteText, countsX, baseline, boldTextPaint)
-    boldTextPaint.color = theme.addText
-    canvas.drawText(addText, countsX + deleteWidth + countGap, baseline, boldTextPaint)
-
-    val pathLayout = fileHeaderPathLayout(row, top, bottom, iconRect, countsX)
-    val maxPathOffset = maxHeaderPathOffset(pathLayout)
-    val pathOffset = (headerPathOffsetsByFileId[row.resolvedFileId] ?: 0)
-      .coerceIn(0, maxPathOffset)
-    canvas.save()
-    canvas.clipRect(pathLayout.rect)
-    canvas.drawText(
-      pathLayout.displayPath,
-      pathLayout.rect.left - pathOffset,
-      centeredBaseline(top, bottom, boldTextPaint),
-      boldTextPaint,
-    )
-    canvas.restore()
-    drawing.drawFileHeaderPathScrollFades(
-      canvas,
-      pathLayout.rect,
-      pathOffset,
-      maxPathOffset,
-    )
-    drawBottomBorder(canvas, bottom)
   }
 
   private fun fileHeaderPathLayout(
     row: DiffRow,
-    top: Int,
-    bottom: Int,
     iconRect: RectF,
     countsX: Float
-  ): FileHeaderPathLayout {
-    drawing.configureUiPaint(
-      paint = boldTextPaint,
-      color = theme.text,
-      size = style.fileHeaderFontSizePx,
-      weight = style.fileHeaderFontWeight,
-    )
-    val pathX = iconRect.right + 10f * density
-    val pathWidth = max(24f * density, countsX - pathX - 12f * density)
-    val centerY = (top + bottom) / 2f
-    val displayPath = if (
-      !row.previousPath.isNullOrEmpty() && row.previousPath != row.filePath
-    ) {
-      "${row.previousPath} -> ${row.filePath}"
-    } else {
-      row.filePath
-    }
-    return FileHeaderPathLayout(
-      displayPath = displayPath,
-      rect = RectF(pathX, centerY - 10f * density, pathX + pathWidth, centerY + 10f * density),
-    )
-  }
+  ): FileHeaderPathLayout = drawing.fileHeaderPathLayout(row, iconRect, countsX, style)
 
   private fun maxHeaderPathOffset(fileId: String): Int {
     val row = rows.firstOrNull { it.kind == "file" && it.resolvedFileId == fileId } ?: return 0
@@ -1068,10 +1173,17 @@ private class DiffCanvasView(context: Context) : View(context) {
       size = style.fileHeaderMetaFontSizePx,
       weight = style.fileHeaderMetaFontWeight,
     )
-    val countsX = checkboxRect.left - 10f * density -
+    val countsRight = if (row.fileAction != null) {
+      width - 110f * density
+    } else if (showViewedCheckbox) {
+      checkboxRect.left - 10f * density
+    } else {
+      width - 16f * density
+    }
+    val countsX = countsRight -
       boldTextPaint.measureText("-${row.deletions}") - 4f * density -
       boldTextPaint.measureText("+${row.additions}")
-    return maxHeaderPathOffset(fileHeaderPathLayout(row, top, bottom, iconRect, countsX))
+    return maxHeaderPathOffset(fileHeaderPathLayout(row, iconRect, countsX))
   }
 
   private fun maxHeaderPathOffset(layout: FileHeaderPathLayout): Int = max(
@@ -1099,99 +1211,32 @@ private class DiffCanvasView(context: Context) : View(context) {
   }
 
   private fun drawHunkRow(canvas: Canvas, row: DiffRow, top: Int, bottom: Int) {
-    fill(canvas, theme.hunkBackground, 0f, top.toFloat(), width.toFloat(), bottom.toFloat())
-    drawing.configureMonospacePaint(
-      color = theme.hunkText,
-      size = style.hunkFontSizePx,
-      weight = style.hunkFontWeight,
+    drawing.drawHunkRow(
+      canvas,
+      row,
+      RectF(0f, top.toFloat(), width.toFloat(), bottom.toFloat()),
+      style,
+      horizontalOffset,
     )
-    drawScrollableCode(canvas, top, bottom) { codeX ->
-      canvas.drawText(
-        row.text.ifEmpty { row.content },
-        codeX,
-        centeredBaseline(top, bottom, textPaint),
-        textPaint,
-      )
-    }
   }
 
   private fun drawNoticeRow(canvas: Canvas, row: DiffRow, top: Int, bottom: Int) {
-    fill(canvas, theme.background, 0f, top.toFloat(), width.toFloat(), bottom.toFloat())
-    val iconSize = 16f * density
-    val iconRect = RectF(
-      style.fileHeaderHorizontalPaddingPx + 2f * density,
-      (top + bottom - iconSize) / 2f,
-      style.fileHeaderHorizontalPaddingPx + 2f * density + iconSize,
-      (top + bottom + iconSize) / 2f,
+    drawing.drawNoticeRow(
+      canvas,
+      row,
+      RectF(0f, top.toFloat(), width.toFloat(), bottom.toFloat()),
+      style,
     )
-    drawing.drawNoticeIcon(canvas, iconRect, theme.mutedText)
-    drawing.configureUiPaint(
-      paint = textPaint,
-      color = theme.mutedText,
-      size = style.fileHeaderSubtextFontSizePx,
-      weight = style.fileHeaderSubtextFontWeight,
-    )
-    val textX = iconRect.right + 10f * density
-    canvas.drawText(
-      ellipsize(row.text, textPaint, width - textX - style.fileHeaderHorizontalPaddingPx),
-      textX,
-      centeredBaseline(top, bottom, textPaint),
-      textPaint,
-    )
-    drawBottomBorder(canvas, bottom)
   }
 
   private fun drawCommentRow(canvas: Canvas, row: DiffRow, top: Int, bottom: Int) {
-    fill(canvas, theme.background, 0f, top.toFloat(), width.toFloat(), bottom.toFloat())
-    val cardRect = RectF(
-      8f * density,
-      top + 5f * density,
-      width - 8f * density,
-      bottom - 5f * density,
+    drawing.drawCommentRow(
+      canvas,
+      row,
+      RectF(0f, top.toFloat(), width.toFloat(), bottom.toFloat()),
+      style,
+      collapsedCommentIds.contains(row.id) || row.commentResolvedSummary != null,
     )
-    backgroundPaint.color = theme.headerBackground
-    canvas.drawRoundRect(cardRect, 10f * density, 10f * density, backgroundPaint)
-    borderPaint.style = Paint.Style.STROKE
-    borderPaint.color = withAlpha(theme.border, 217)
-    borderPaint.strokeWidth = density
-    canvas.drawRoundRect(cardRect, 10f * density, 10f * density, borderPaint)
-    borderPaint.style = Paint.Style.FILL
-
-    val collapsed = collapsedCommentIds.contains(row.id)
-    val chevronRect = RectF(
-      cardRect.left + 10f * density,
-      cardRect.top + 11f * density,
-      cardRect.left + 26f * density,
-      cardRect.top + 27f * density,
-    )
-    drawing.drawDisclosureChevron(canvas, chevronRect, theme.mutedText, collapsed)
-    drawing.configureUiPaint(
-      paint = textPaint,
-      color = theme.mutedText,
-      size = style.fileHeaderSubtextFontSizePx,
-      weight = style.fileHeaderSubtextFontWeight,
-    )
-    val title = "Comment on ${row.commentRangeLabel.ifEmpty { "line" }}"
-    canvas.drawText(
-      ellipsize(title, textPaint, cardRect.right - chevronRect.right - 20f * density),
-      chevronRect.right + 10f * density,
-      cardRect.top + 22f * density,
-      textPaint,
-    )
-    if (!collapsed) {
-      textPaint.color = theme.text
-      val bodyX = cardRect.left + 18f * density
-      canvas.drawText(
-        ellipsize(
-          row.commentText.ifEmpty { "Comment" },
-          textPaint,
-          cardRect.right - bodyX - 18f * density
-        ),
-        bodyX,
-        cardRect.top + 58f * density,
-        textPaint,
-      )
-    }
   }
 
   @Suppress("CyclomaticComplexMethod")
@@ -1221,9 +1266,16 @@ private class DiffCanvasView(context: Context) : View(context) {
         )
       }
     }
-    val selected = selectedRowIds.contains(row.id)
+    val selected = selectedRowIds.contains(row.id) || lineRange.selectedRowIds.contains(row.id)
     if (selected) {
-      // Keep the diff and syntax colors intact; selection lives in the gutter.
+      fill(
+        canvas,
+        withAlpha(Color.rgb(48, 118, 237), 25),
+        0f,
+        top.toFloat(),
+        width.toFloat(),
+        bottom.toFloat()
+      )
       fill(
         canvas,
         withAlpha(theme.hunkText, 242),
@@ -1328,24 +1380,9 @@ private class DiffCanvasView(context: Context) : View(context) {
     canvas.drawRect(left, top, right, bottom, backgroundPaint)
   }
 
-  private fun drawBottomBorder(canvas: Canvas, bottom: Int) {
-    borderPaint.color = theme.border
-    borderPaint.strokeWidth = density
-    canvas.drawLine(0f, bottom - density / 2f, width.toFloat(), bottom - density / 2f, borderPaint)
-  }
-
   private fun centeredBaseline(top: Int, bottom: Int, paint: Paint): Float {
     val metrics = paint.fontMetrics
     return (top + bottom) / 2f - (metrics.ascent + metrics.descent) / 2f
-  }
-
-  private fun ellipsize(value: String, paint: Paint, width: Float): String {
-    if (paint.measureText(value) <= width) return value
-    val suffix = "..."
-    val available = max(0f, width - paint.measureText(suffix))
-    var end = value.length
-    while (end > 0 && paint.measureText(value, 0, end) > available) end -= 1
-    return value.substring(0, end) + suffix
   }
 
   private data class StickyFileHeader(
@@ -1358,11 +1395,6 @@ private class DiffCanvasView(context: Context) : View(context) {
     val row: DiffRow,
     val top: Int,
     val bottom: Int
-  )
-
-  private data class FileHeaderPathLayout(
-    val displayPath: String,
-    val rect: RectF
   )
 }
 
@@ -1379,10 +1411,22 @@ private fun parseRows(value: String): List<DiffRow> = try {
       fileId = row.optString("fileId"),
       filePath = row.optString("filePath"),
       previousPath = row.optNullableString("previousPath"),
+      renameSegments = row.optJSONArray("renameSegments")?.let { parts ->
+        List(parts.length()) { index ->
+          val part = parts.getJSONObject(index)
+          DiffRenameSegment(part.getString("text"), part.getString("kind"))
+        }
+      }.orEmpty(),
       changeType = row.optString("changeType"),
       additions = row.optInt("additions"),
       deletions = row.optInt("deletions"),
       text = row.optString("text"),
+      hunkAction = row.optNullableString("hunkAction"),
+      hunkActionDisabled = row.optBoolean("hunkActionDisabled", false),
+      hunkRevertAction = row.optBoolean("hunkRevertAction", false),
+      hunkRevertActionDisabled = row.optBoolean("hunkRevertActionDisabled", false),
+      fileAction = row.optNullableString("fileAction"),
+      fileActionDisabled = row.optBoolean("fileActionDisabled", false),
       content = row.optString("content"),
       change = row.optString("change", "context"),
       oldLineNumber = row.optNullableInt("oldLineNumber"),
@@ -1390,6 +1434,8 @@ private fun parseRows(value: String): List<DiffRow> = try {
       wordDiffRanges = row.optJSONArray("wordDiffRanges")?.let(::parseWordDiffRanges).orEmpty(),
       commentText = row.optString("commentText"),
       commentRangeLabel = row.optString("commentRangeLabel"),
+      commentPending = row.optBoolean("commentPending", false),
+      commentResolvedSummary = row.optNullableString("commentResolvedSummary"),
       commentSectionTitle = row.optString("commentSectionTitle"),
     )
   }

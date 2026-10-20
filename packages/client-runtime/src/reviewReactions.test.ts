@@ -4,7 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   applyPendingPullRequestReactions,
   pullRequestReactionTooltip,
-} from "./pullRequestReactions.logic";
+} from "./reviewReactions.ts";
 
 function reaction(overrides: Partial<PullRequestReaction> = {}): PullRequestReaction {
   return {

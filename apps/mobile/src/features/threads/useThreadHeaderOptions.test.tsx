@@ -1,5 +1,5 @@
 import type { VcsStatusResult } from "@t3tools/contracts";
-import { act } from "react";
+import { act, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -9,6 +9,7 @@ const harness = vi.hoisted(() => ({
   setOptionsCalls: 0,
   renderedRightItems: [] as Array<ReadonlyArray<Record<string, unknown>>>,
   navigatedRoutes: [] as string[],
+  gitActions: [] as Array<{ title: string; subtitle?: string; onPress: () => void }>,
 }));
 
 vi.mock("@react-navigation/native", () => {
@@ -59,6 +60,7 @@ vi.mock("../settings/appearance/AppearancePreferencesProvider", () => ({
 }));
 
 import { ThreadHeader } from "./ThreadHeader";
+import { useThreadGitMenuDefinition } from "./ThreadGitControls";
 
 const projectScripts: never[] = [];
 
@@ -86,6 +88,18 @@ function status(
 }
 
 function Header(props: { readonly gitStatus: VcsStatusResult | null; readonly title?: string }) {
+  const menu = useThreadGitMenuDefinition({
+    environmentId: "environment-1",
+    threadId: "thread-1",
+    currentBranch: "master",
+    gitStatus: props.gitStatus,
+    gitOperationLabel: null,
+    onPull: async () => {},
+    onRunAction: async () => null,
+  });
+  useEffect(() => {
+    harness.gitActions = menu?.items.flatMap((item) => ("items" in item ? [] : [item])) ?? [];
+  }, [menu]);
   return (
     <ThreadHeader
       title={props.title ?? "Thread"}
@@ -120,20 +134,8 @@ function Header(props: { readonly gitStatus: VcsStatusResult | null; readonly ti
   );
 }
 
-function renderedGitMenuItems(): Array<{
-  description?: unknown;
-  label?: unknown;
-  onPress?: () => void;
-}> {
-  const items = harness.renderedRightItems.at(-1) ?? [];
-  const git = items.find((item) => item.identifier === "thread-right-git") as
-    | { menu: { items: Array<{ description?: unknown; label?: unknown; onPress?: () => void }> } }
-    | undefined;
-  return git?.menu.items ?? [];
-}
-
 function renderedGitStatusDescription(): unknown {
-  return renderedGitMenuItems()[0]?.description;
+  return harness.gitActions[0]?.subtitle;
 }
 
 let root: Root | null = null;
@@ -150,10 +152,11 @@ afterEach(() => {
   harness.setOptionsCalls = 0;
   harness.renderedRightItems = [];
   harness.navigatedRoutes = [];
+  harness.gitActions = [];
 });
 
 describe("ThreadHeader", () => {
-  it("re-applies native header items when Git status changes", () => {
+  it("keeps the Git action menu current as status changes", () => {
     render(<Header gitStatus={status([])} />);
     expect(renderedGitStatusDescription()).toBe("Clean");
 
@@ -162,6 +165,19 @@ describe("ThreadHeader", () => {
 
     render(<Header gitStatus={status([])} />);
     expect(renderedGitStatusDescription()).toBe("Clean");
+  });
+
+  it("opens Git directly instead of opening another review menu", () => {
+    render(<Header gitStatus={status(["audit.txt"])} />);
+    const git = harness.renderedRightItems
+      .at(-1)
+      ?.find((item) => item.identifier === "thread-right-git");
+    expect(git?.menu).toBeUndefined();
+    const openGit = git?.onPress;
+    expect(typeof openGit).toBe("function");
+    if (typeof openGit === "function") act(() => openGit());
+    expect(harness.navigatedRoutes).toEqual(["ThreadReview"]);
+    expect(harness.gitActions.some((item) => item.title === "Review changes")).toBe(false);
   });
 
   it("does not re-apply options for re-renders with equivalent header content", () => {
@@ -183,11 +199,11 @@ describe("ThreadHeader", () => {
         pr: { state: "open", url: "https://example.com/pr/1" },
       } as Partial<VcsStatusResult>);
     render(<Header gitStatus={pushable(false)} />);
-    expect(renderedGitMenuItems()[1]?.label).toBe("Push");
+    expect(harness.gitActions[1]?.title).toBe("Push");
 
     render(<Header gitStatus={pushable(true)} />);
-    expect(renderedGitMenuItems()[1]?.label).toBe("Push");
-    await act(async () => renderedGitMenuItems()[1]?.onPress?.());
+    expect(harness.gitActions[1]?.title).toBe("Push");
+    await act(async () => harness.gitActions[1]?.onPress());
     expect(harness.navigatedRoutes).toEqual(["GitConfirm"]);
   });
 });

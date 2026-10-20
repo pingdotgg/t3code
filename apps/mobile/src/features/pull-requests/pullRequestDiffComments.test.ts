@@ -43,6 +43,17 @@ describe("PR comments in continuous native diffs", () => {
       "discussion:right",
     ]);
   });
+  it("displays a persisted host range at its end without losing its start", () => {
+    const annotated = annotatePullRequestDiff(
+      data,
+      [{ ...thread, startLine: 1, startSide: "left" }],
+      [],
+      "abc",
+    );
+    expect(annotated.rows.find((row) => row.id === "discussion:t")?.commentRangeLabel).toBe(
+      "Old lines 1–2",
+    );
+  });
   it("keeps outdated and unloaded anchors off the current code", () => {
     const annotated = annotatePullRequestDiff(
       data,

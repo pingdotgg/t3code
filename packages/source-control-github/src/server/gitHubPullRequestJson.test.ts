@@ -72,6 +72,7 @@ const row = (fields: Record<string, unknown>) => ({
   state: "OPEN",
   isDraft: false,
   mergeable: "UNKNOWN",
+  mergeStateStatus: "UNKNOWN",
   reviewDecision: null,
   latestReviews: { nodes: [] },
   createdAt: "2026-07-01T00:00:00Z",
@@ -125,6 +126,7 @@ const reactionGroups = (groups: ReadonlyArray<Json> | undefined) =>
   }));
 const remark = ({ author, reactionGroups: groups, ...raw }: Json) => ({
   body: "",
+  pullRequestReview: null,
   lastEditedAt: null,
   url: "https://github.com/acme/web/pull/1#discussion",
   ...raw,
@@ -207,6 +209,8 @@ const withReviewDefaults = (raw: string): string => {
           isOutdated: false,
           line: null,
           diffSide: "RIGHT",
+          startLine: null,
+          startDiffSide: null,
           ...thread,
           comments: threadCommentsOf(thread["comments"]),
         })),
@@ -493,7 +497,7 @@ describe("pull request detail decoding", () => {
             state: "OPEN",
             isDraft: false,
             mergeable: "MERGEABLE",
-            mergeStateStatus: "BLOCKED",
+            mergeStateStatus: "UNKNOWN",
             reviewDecision: null,
             additions: 0,
             deletions: 0,
@@ -537,6 +541,24 @@ describe("pull request detail decoding", () => {
     rollup: ReadonlyArray<Record<string, unknown>>,
     pullRequest?: Record<string, unknown>,
   ) => expectSuccess(decodePullRequestCoreJson(coreJson(rollup, pullRequest)));
+
+  it.each([
+    ["CLEAN", true],
+    ["HAS_HOOKS", true],
+    ["BLOCKED", false],
+    ["BEHIND", false],
+    ["UNSTABLE", true],
+    ["UNKNOWN", undefined],
+  ] as const)(
+    "preserves GitHub merge requirements for %s independently of CI",
+    (mergeStateStatus, expected) => {
+      expect(
+        detailOf([check({ name: "build", status: "COMPLETED", conclusion: "SUCCESS" })], {
+          mergeStateStatus,
+        }).mergeRequirementsSatisfied,
+      ).toBe(expected);
+    },
+  );
 
   /** The conversation the activity read carries, in the flat shape the tests below write. */
   const detailJson = JSON.stringify({
@@ -583,6 +605,7 @@ describe("pull request detail decoding", () => {
                   url: "https://github.com/r",
                   author: null,
                   submittedAt: null,
+                  commit: null,
                   ...review,
                 }),
               ),
@@ -1555,6 +1578,29 @@ describe("review thread decoding", () => {
     ).toBe("2026-07-02T00:00:00Z");
   });
 
+  it("retains both sides and endpoints of a multiline conversation", () => {
+    const decoded = expectSuccess(
+      decodeReviewThreadsJson(
+        threadsJson([
+          {
+            id: "PRRT_range",
+            path: "src/a.ts",
+            line: 53,
+            diffSide: "RIGHT",
+            startLine: 48,
+            startDiffSide: "LEFT",
+            comments: { totalCount: 1, nodes: [comment("range", "Review these lines")] },
+          },
+        ]),
+      ),
+    );
+    expect(decoded.threads[0]?.thread).toMatchObject({
+      line: 53,
+      side: "right",
+      startLine: 48,
+      startSide: "left",
+    });
+  });
   it("leaves an outdated thread without a line rather than pinning it to a stale one", () => {
     const reviewThreads = expectSuccess(
       decodeReviewThreadsJson(
@@ -1566,6 +1612,8 @@ describe("review thread decoding", () => {
             path: "src/a.ts",
             line: null,
             diffSide: "RIGHT",
+            startLine: null,
+            startDiffSide: null,
             comments: { totalCount: 1, nodes: [comment("c3", "stale")] },
           },
         ]),
@@ -1588,6 +1636,8 @@ describe("review thread decoding", () => {
             path: "src/a.ts",
             line: 7,
             diffSide: "RIGHT",
+            startLine: null,
+            startDiffSide: null,
             comments: { totalCount: 1, nodes: [comment("c4", "done")] },
           },
         ]),
@@ -1889,6 +1939,44 @@ describe("review submission payload", () => {
         { path: "src/b.ts", line: 3, side: "LEFT", body: "why remove?" },
       ],
     });
+  });
+
+  it("keeps both ends and sides of multiline comments in the GitHub review payload", () => {
+    expect(
+      buildReviewSubmission({
+        verdict: "comment",
+        body: "",
+        comments: [
+          {
+            path: "src/a.ts",
+            body: "Range",
+            position: { kind: "added", newLine: 12, startLine: 8, startSide: "right" },
+          },
+          {
+            path: "src/b.ts",
+            body: "Removed range",
+            position: { kind: "deleted", oldLine: 7, startLine: 3, startSide: "left" },
+          },
+        ],
+      }).comments,
+    ).toEqual([
+      {
+        path: "src/a.ts",
+        body: "Range",
+        line: 12,
+        side: "RIGHT",
+        start_line: 8,
+        start_side: "RIGHT",
+      },
+      {
+        path: "src/b.ts",
+        body: "Removed range",
+        line: 7,
+        side: "LEFT",
+        start_line: 3,
+        start_side: "LEFT",
+      },
+    ]);
   });
 
   it("sends an approval with no words and no comments", () => {
@@ -2265,6 +2353,7 @@ describe("batched pull request summaries", () => {
     state: "MERGED",
     isDraft: false,
     mergeable: "UNKNOWN",
+    mergeStateStatus: "UNKNOWN",
     reviewDecision: null,
     additions: 0,
     deletions: 0,
@@ -2321,6 +2410,7 @@ describe("pull request watch fingerprints", () => {
       readonly reviews: number;
     }) => ({
       state: "OPEN",
+      mergeStateStatus: "UNKNOWN",
       mergeable: "MERGEABLE",
       headRefOid: "abc123",
       comments: { totalCount: 1, nodes: [{ lastEditedAt: input.commentEditedAt }] },
@@ -2353,6 +2443,14 @@ describe("pull request watch fingerprints", () => {
     const summaryEdited = fingerprint({ ...base, commentEditedAt: "2026-10-05T23:47:43Z" });
     const replied = fingerprint({ ...base, reviews: 2 });
 
+    const requirementsMet = toPullRequestWatchFingerprint(
+      decodeWatched({ ...pullRequest(base), mergeStateStatus: "CLEAN" }),
+    );
+    const reviewRequired = toPullRequestWatchFingerprint(
+      decodeWatched({ ...pullRequest(base), mergeStateStatus: "BLOCKED" }),
+    );
+    expect(requirementsMet.status).not.toBe(reviewRequired.status);
+    expect(requirementsMet.remarks).toBe(reviewRequired.remarks);
     expect(checkFinished.status).not.toBe(before.status);
     expect(checkFinished.remarks).toBe(before.remarks);
     expect(summaryEdited.remarks).not.toBe(before.remarks);

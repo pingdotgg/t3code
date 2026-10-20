@@ -1,3 +1,4 @@
+import { hideWhitespaceChanges } from "@t3tools/client-runtime/review-diff-whitespace";
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import type { ChangeTypes, FileDiffMetadata } from "@pierre/diffs/types";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
@@ -9,7 +10,6 @@ import * as Order from "effect/Order";
 export type ReviewSectionKind = "turn" | "working-tree" | "branch-range";
 
 const CHANGES_SECTION_ID = "git:branch-range";
-const CHANGES_TITLE = "Changes";
 const UNCOMMITTED_SUBTITLE = "Staged, unstaged, and untracked files";
 
 export interface ReviewSectionItem {
@@ -372,7 +372,7 @@ function buildRenderableRows(file: FileDiffMetadata): ReadonlyArray<ReviewRender
   return rows;
 }
 
-function mapRenderableFile(file: FileDiffMetadata): ReviewRenderableFile {
+export function mapRenderableFile(file: FileDiffMetadata): ReviewRenderableFile {
   const path = file.name || file.prevName || "";
   const previousPath = file.prevName || null;
   const additions = file.hunks.reduce((total, hunk) => total + hunk.additionLines, 0);
@@ -442,14 +442,15 @@ export function buildReviewSectionItems(input: {
     truncated: section.truncated,
     isLoading: false,
   }));
-  const hasChangesItem = gitItems.some((item) => item.id === CHANGES_SECTION_ID);
+  // Keep the initial uncommitted comparison selected as its preview arrives.
+  const hasChangesItem = gitItems.some((item) => item.kind === "working-tree");
   const visibleGitItems =
     input.loadingGitSections && !hasChangesItem
       ? [
           {
-            id: CHANGES_SECTION_ID,
-            kind: "branch-range",
-            title: CHANGES_TITLE,
+            id: "git:working-tree",
+            kind: "working-tree",
+            title: "Uncommitted changes",
             subtitle: null,
             diff: null,
             isLoading: true,
@@ -461,15 +462,23 @@ export function buildReviewSectionItems(input: {
   return [...turnItems, ...visibleGitItems];
 }
 
+/** Opens Git on uncommitted changes, with branch and turn fallbacks for other sources. */
 export function getDefaultReviewSectionId(
   sections: ReadonlyArray<ReviewSectionItem>,
 ): string | null {
-  return (sections.find((section) => section.id === CHANGES_SECTION_ID) ?? sections[0])?.id ?? null;
+  return (
+    (
+      sections.find((section) => section.kind === "working-tree") ??
+      sections.find((section) => section.id === CHANGES_SECTION_ID) ??
+      sections[0]
+    )?.id ?? null
+  );
 }
 
 export function buildReviewParsedDiff(
   diff: string | null | undefined,
   cacheScope: string,
+  ignoreWhitespace = false,
 ): ReviewParsedDiff {
   const normalized = diff?.trim();
   if (!normalized) {
@@ -492,7 +501,7 @@ export function buildReviewParsedDiff(
     const files = pipe(
       parsedPatches,
       Arr.flatMap((patch) => patch.files),
-      Arr.map(mapRenderableFile),
+      Arr.map((file) => mapRenderableFile(ignoreWhitespace ? hideWhitespaceChanges(file) : file)),
     );
 
     if (files.length === 0) {

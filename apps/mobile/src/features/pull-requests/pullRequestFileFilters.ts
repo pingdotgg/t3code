@@ -1,11 +1,9 @@
 import { classifyChangedFile } from "@t3tools/shared/changedFileKind";
 import type { ReviewParsedDiff } from "../review/reviewModel";
 
-/** Test support such as fixtures and snapshots is hidden along with the tests. */
-export function isPullRequestTestFile(path: string): boolean {
-  const kind = classifyChangedFile(path);
-  return kind === "tests" || kind === "mocks";
-}
+import { isReviewTestFile } from "@t3tools/shared/reviewFileClassification";
+
+export const isPullRequestTestFile = isReviewTestFile;
 
 export function filterPullRequestTestFiles(
   parsed: ReviewParsedDiff,

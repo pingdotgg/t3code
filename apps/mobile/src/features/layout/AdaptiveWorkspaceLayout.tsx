@@ -15,6 +15,7 @@ import {
 import {
   createContext,
   use,
+  useCallback,
   useEffect,
   useEffectEvent,
   useMemo,
@@ -66,6 +67,10 @@ import {
 } from "../workspace/AndroidWorkspaceNavigation";
 import { AndroidWorkspaceSidebar } from "../workspace/AndroidWorkspaceSidebar";
 import { useAndroidWorkspaceSelection } from "../workspace/useAndroidWorkspaceSelection";
+import {
+  rememberedThreadWorkspaceNavigationState,
+  useRememberThreadWorkspaceLocation,
+} from "../workspace/threadWorkspaceNavigationMemory";
 import { HomeListOptionsProvider } from "../home/home-list-options";
 import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
 import { ThreadNavigationSidebar } from "../threads/ThreadNavigationSidebar";
@@ -243,6 +248,7 @@ function AdaptiveWorkspaceLayoutContent(
   // auxiliary panes hide.
   const workspacePage = Platform.OS === "android" && pathname.startsWith("/settings");
   const navigation = useNavigation();
+  useRememberThreadWorkspaceLocation();
   const activeRoleOwner = useRef<symbol | null>(null);
   const [primarySidebarPreferredVisible, setPrimarySidebarPreferredVisible] = useState(true);
   const [supplementaryPanePreferredVisible, setSupplementaryPanePreferredVisible] = useState(true);
@@ -644,16 +650,28 @@ function AdaptiveWorkspaceLayoutContent(
   );
 
   const selectAndroidWorkspace = useAndroidWorkspaceSelection();
-  const handleSelectThread = (thread: EnvironmentThreadShell) => {
+  const handleSelectThread = useCallback(
+    (thread: EnvironmentThreadShell) => {
     const params = {
       environmentId: String(thread.environmentId),
       threadId: String(thread.id),
     };
+      if (scopedThreadKey(thread.environmentId, thread.id) === selectedThreadKey) return;
     if (Platform.OS === "android") {
+        // Thread selection restores its remembered workspace destination.
       setFileInspectorPreferredVisible(false);
       selectAndroidWorkspace({ name: "Thread", params });
       return;
     }
+      const rememberedState = rememberedThreadWorkspaceNavigationState(
+        navigation.getState(),
+        params,
+      );
+      if (rememberedState) {
+        setFileInspectorPreferredVisible(false);
+        navigation.dispatch(CommonActions.reset(rememberedState));
+        return;
+      }
     const navigationAction = resolveThreadSelectionNavigationAction({
       usesSplitView: layout.usesSplitView,
       pathname,
@@ -684,7 +702,16 @@ function AdaptiveWorkspaceLayoutContent(
       return;
     }
     navigation.navigate("Thread", params);
-  };
+    },
+    [
+      layout.usesSplitView,
+      pathname,
+      navigation,
+      selectedThreadKey,
+      props.workspaceRouteKey,
+      selectAndroidWorkspace,
+    ],
+  );
 
   const contextValue = {
     layout,

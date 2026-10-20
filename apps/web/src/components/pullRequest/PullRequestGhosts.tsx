@@ -377,26 +377,7 @@ export function PullRequestPeopleGhost({ rows = 4 }: { rows?: number }) {
   );
 }
 
-export function PullRequestTimelineGhost({ rows = 6 }: { rows?: number }) {
-  return (
-    <div
-      role="status"
-      aria-label="Loading timeline"
-      className="motion-safe:animate-skeleton px-4 py-5"
-    >
-      <div className="relative ml-2 border-l border-border/70 pl-5">
-        {Array.from({ length: rows }, (_, index) => (
-          <div key={index} className="relative pb-5">
-            <GhostBar className="absolute -left-[1.55rem] top-1 size-2 rounded-full" />
-            <GhostBar className={cn("h-3.5", TITLE_WIDTHS[index % TITLE_WIDTHS.length])} />
-            <GhostBar className="mt-1.5 w-16" />
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
+/** A compact placeholder for the conversation while the core detail is already readable. */
 export function PullRequestConversationGhost({ rows = 3 }: { rows?: number }) {
   return (
     <div

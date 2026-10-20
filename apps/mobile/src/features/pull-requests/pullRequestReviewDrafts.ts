@@ -65,6 +65,7 @@ function samePosition(
   left: PendingReviewComment["position"],
   right: PendingReviewComment["position"],
 ) {
+  if (left.startLine !== right.startLine || left.startSide !== right.startSide) return false;
   if (left.kind === "added" && right.kind === "added") return left.newLine === right.newLine;
   if (left.kind === "deleted" && right.kind === "deleted") return left.oldLine === right.oldLine;
   return (

@@ -12,12 +12,14 @@ import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "../files/f
 import { Button } from "../ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { Menu, MenuItem, MenuPopup } from "../ui/menu";
 import {
   buildDiffFileTreeUpdates,
   compareDiffFileTreeEntries,
   collectDirectoryPaths,
   diffFileTreeModel,
   diffFileTreePositions,
+  diffFileTreeReviewEntries,
   type DiffFileTreeEntry,
 } from "./diffFileTree.logic";
 
@@ -25,6 +27,9 @@ export type { DiffFileTreeEntry } from "./diffFileTree.logic";
 
 interface DiffFileTreeProps {
   readonly entries: ReadonlyArray<DiffFileTreeEntry>;
+  /** All files affected by review actions, including folder descendants hidden by filters. */
+  readonly reviewEntries?: ReadonlyArray<DiffFileTreeEntry>;
+  /** Called with the file's path when the reader picks a file row. */
   readonly onSelectFile: (path: string) => void;
   readonly selectedPath?: string | null;
   readonly revealRequestId?: number;
@@ -32,10 +37,13 @@ interface DiffFileTreeProps {
   readonly headerAccessory?: ReactNode;
   readonly footer?: ReactNode;
   readonly className?: string;
+  readonly headerLabel?: string;
+  readonly onReviewFiles?: ((paths: ReadonlyArray<string>, reviewed: boolean) => void) | undefined;
 }
 
 export function DiffFileTree({
   entries,
+  reviewEntries = entries,
   onSelectFile,
   selectedPath = null,
   revealRequestId = 0,
@@ -43,6 +51,8 @@ export function DiffFileTree({
   headerAccessory,
   footer,
   className,
+  headerLabel = "Files",
+  onReviewFiles,
 }: DiffFileTreeProps) {
   const { resolvedTheme } = useTheme();
   const paths = entries.map((entry) => entry.path);
@@ -80,6 +90,22 @@ export function DiffFileTree({
     }
   });
 
+  const renderRowDecoration = useStableCallback(
+    ({ item }: { item: { kind: string; path: string } }) => {
+      const matches = entries.filter((entry) =>
+        item.kind === "directory"
+          ? entry.path.startsWith(item.path.endsWith("/") ? item.path : `${item.path}/`)
+          : entry.path === item.path,
+      );
+      const count = matches.reduce((total, entry) => total + (entry.unresolvedComments ?? 0), 0);
+      const reviewed = matches.length > 0 && matches.every((entry) => entry.reviewed);
+      if (!reviewed && count === 0) return null;
+      return {
+        text: `${reviewed ? "✓" : ""}${count > 0 ? ` ${count}` : ""}`.trim(),
+        title: `${reviewed ? "Reviewed. " : ""}${count > 0 ? `${count} unresolved or pending comments` : ""}`,
+      };
+    },
+  );
   const { model } = useFileTree({
     density: "compact",
     flattenEmptyDirectories: true,
@@ -89,7 +115,15 @@ export function DiffFileTree({
     paths: [],
     search: false,
     sort: ordering.sort,
-    unsafeCSS: PIERRE_TREE_UNSAFE_CSS,
+    unsafeCSS: `${PIERRE_TREE_UNSAFE_CSS}
+      /* Preserve both the review check and count in Pierre's custom decoration lane. */
+      [data-item-section='decoration'] { min-width: max-content; }
+      [data-item-section='decoration'] > span { flex: none; max-width: none; }
+    `,
+    composition: {
+      contextMenu: { enabled: false, triggerMode: "right-click" },
+    },
+    renderRowDecoration,
   });
   const allDirectoriesExpanded = useFileTreeSelector(model, (currentModel) =>
     areAllDirectoriesExpanded(currentModel, directoryPaths),
@@ -141,8 +175,18 @@ export function DiffFileTree({
         model.focusPath(nextFocusedPath);
       }
     }
+  }, [directoryPaths, model, modelPaths, ordering, positions, presented]);
+
+  useEffect(() => {
     model.setGitStatus(gitStatus);
-  }, [directoryPaths, gitStatus, model, modelPaths, ordering, positions, presented]);
+  }, [gitStatus, model]);
+
+  useEffect(() => {
+    // Pierre ignores unchanged git statuses, so reviewed/comment-only updates need a render
+    // of the existing tree. This preserves its scroll, selection, and folder expansion.
+    if (model.getFileTreeContainer()) model.render({});
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Review marks change the row decoration without changing Git status or tree paths.
+  }, [entries, model]);
 
   useEffect(() => {
     if (selectedPath === null) {
@@ -183,7 +227,7 @@ export function DiffFileTree({
         className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 text-xs text-muted-foreground in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent"
         data-surface-subheader
       >
-        <span className="px-1 font-medium text-foreground">Files</span>
+        <span className="px-1 font-medium text-foreground">{headerLabel}</span>
         <span className="ml-auto tabular-nums">{entries.length}</span>
         {headerAccessory}
         {directoryPaths.length > 0 ? (
@@ -242,6 +286,56 @@ export function DiffFileTree({
         }}
         className="min-h-0 flex-1 overflow-hidden"
         style={pierreTreeStyle(resolvedTheme)}
+        {...(onReviewFiles
+          ? {
+              renderContextMenu: (item, context) => {
+                const matches = diffFileTreeReviewEntries(
+                  reviewEntries,
+                  model.getSelectedPaths(),
+                  item.path,
+                );
+                if (matches.length === 0) return null;
+                const paths = matches.map((entry) => entry.path);
+                const canMarkReviewed = matches.some((entry) => !entry.reviewed);
+                const canMarkUnreviewed = matches.some((entry) => entry.reviewed);
+                return (
+                  <Menu
+                    open
+                    onOpenChange={(open) => {
+                      if (!open) context.close();
+                    }}
+                  >
+                    <MenuPopup
+                      anchor={context.anchorElement}
+                      data-file-tree-context-menu-root="true"
+                      align="start"
+                    >
+                      {canMarkReviewed ? (
+                        <MenuItem
+                          onClick={() => {
+                            onReviewFiles(paths, true);
+                            context.close();
+                          }}
+                        >
+                          Mark as reviewed
+                        </MenuItem>
+                      ) : null}
+                      {canMarkUnreviewed ? (
+                        <MenuItem
+                          onClick={() => {
+                            onReviewFiles(paths, false);
+                            context.close();
+                          }}
+                        >
+                          Mark as unreviewed
+                        </MenuItem>
+                      ) : null}
+                    </MenuPopup>
+                  </Menu>
+                );
+              },
+            }
+          : {})}
       />
       {footer}
     </div>

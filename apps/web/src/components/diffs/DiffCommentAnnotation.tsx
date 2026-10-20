@@ -1,5 +1,5 @@
 import { MessageCircle, Trash2 } from "lucide-react";
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Textarea } from "~/components/ui/textarea";
@@ -26,6 +26,13 @@ interface DiffCommentAnnotationProps {
   pending?: boolean;
   secondaryAction?: DiffCommentSecondaryAction;
   focusOnMount?: boolean;
+  renderAttachments?:
+    | ((
+        onTextChange: (text: string) => void,
+        onBusyChange: (busy: boolean) => void,
+        textarea: HTMLTextAreaElement | null,
+      ) => ReactNode)
+    | undefined;
 }
 
 export function DiffCommentAnnotation({
@@ -41,19 +48,22 @@ export function DiffCommentAnnotation({
   pending = false,
   secondaryAction,
   focusOnMount = true,
+  renderAttachments,
 }: DiffCommentAnnotationProps) {
+  const [uploading, setUploading] = useState(false);
+  const blocked = pending || uploading;
   const [localDraftText, setLocalDraftText] = useState("");
   const displayedText = kind === "draft" && !onTextChange ? localDraftText : text;
   const trimmedText = displayedText.trim();
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const [textarea, setTextarea] = useState<HTMLTextAreaElement | null>(null);
 
   useLayoutEffect(() => {
     if (kind !== "draft" || !focusOnMount) return;
     const frame = window.requestAnimationFrame(() => {
-      textareaRef.current?.focus({ preventScroll: true });
+      textarea?.focus({ preventScroll: true });
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [focusOnMount, kind]);
+  }, [focusOnMount, kind, textarea]);
 
   if (kind === "comment") {
     return (
@@ -86,14 +96,16 @@ export function DiffCommentAnnotation({
   return (
     <div
       data-diff-comment-annotation
+      data-review-attachment-composer
       className="px-3 py-2 font-sans text-foreground caret-foreground selection:bg-primary selection:text-primary-foreground"
       contentEditable={false}
       onPointerDown={(event) => event.stopPropagation()}
     >
       <Textarea
-        ref={textareaRef}
+        ref={setTextarea}
         autoFocus={focusOnMount}
         size="sm"
+        disabled={blocked}
         value={displayedText}
         placeholder={placeholder}
         aria-label={`Comment on lines ${rangeLabel}`}
@@ -103,18 +115,23 @@ export function DiffCommentAnnotation({
           event.currentTarget.setSelectionRange(end, end);
         }}
         onKeyDown={(event) => {
-          if (event.key === "Escape") {
+          if (event.key === "Escape" && !blocked) {
             event.preventDefault();
             onCancel();
           }
-          if (isCommentSubmitShortcut(event, trimmedText, pending)) {
+          if (isCommentSubmitShortcut(event, trimmedText, blocked)) {
             event.preventDefault();
-            onComment(trimmedText);
+            if (event.shiftKey && secondaryAction) secondaryAction.onAction(trimmedText);
+            else onComment(trimmedText);
           }
         }}
       />
+      {renderAttachments?.(onTextChange ?? setLocalDraftText, setUploading, textarea)}
       <div className="mt-1.5 flex items-center gap-1">
-        <span className="mr-auto text-3xs text-muted-foreground/70">⌘/Ctrl Enter to send</span>
+        <span className="mr-auto text-3xs text-muted-foreground/70">
+          ⌘/Ctrl Enter: {submitLabel}
+          {secondaryAction ? ` · ⌘/Ctrl Shift Enter: ${secondaryAction.label}` : ""}
+        </span>
         <Button variant="ghost-muted" size="xs" onClick={onCancel}>
           Cancel
         </Button>
@@ -122,14 +139,14 @@ export function DiffCommentAnnotation({
           <Button
             size="xs"
             variant="outline"
-            disabled={!secondaryAction.allowEmpty && !trimmedText}
+            disabled={blocked || (!secondaryAction.allowEmpty && !trimmedText)}
             onClick={() => secondaryAction.onAction(trimmedText)}
           >
             {secondaryAction.icon}
             {secondaryAction.label}
           </Button>
         ) : null}
-        <Button size="xs" disabled={pending || !trimmedText} onClick={() => onComment(trimmedText)}>
+        <Button size="xs" disabled={blocked || !trimmedText} onClick={() => onComment(trimmedText)}>
           {submitLabel}
         </Button>
       </div>

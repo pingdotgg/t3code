@@ -1,5 +1,5 @@
 import { ComponentCatalogScreen } from "./features/development/ComponentCatalogScreen";
-import { PullRequestGuideStopScreen } from "./features/pull-requests/guide/PullRequestGuideScreen";
+import { PullRequestGuideStopScreen } from "./features/pull-requests/guide/PullRequestGuideChapterScreen";
 import { PullRequestInlineCommentScreen } from "./features/pull-requests/PullRequestInlineCommentScreen";
 import { PullRequestDiscussionScreen } from "./features/pull-requests/PullRequestDiscussionScreen";
 import {
@@ -53,7 +53,12 @@ import { useAgentNotificationNavigation } from "./features/agent-awareness/notif
 import { ConnectOnboardingRouteScreen } from "./features/cloud/ConnectOnboardingRouteScreen";
 import { useConnectOnboardingNavigation } from "./features/cloud/connectOnboardingNavigation";
 import { AttachmentFileScreen } from "./features/files/AttachmentFileScreen";
-import { ThreadFilesTreeScreen, ThreadFileScreen } from "./features/files/ThreadFilesRouteScreen";
+import { ThreadFileScreen } from "./features/files/ThreadFilesRouteScreen";
+import {
+  ThreadFilesWorkspaceScreen,
+  ThreadGitWorkspaceScreen,
+  ThreadFileWorkspaceScreen,
+} from "./features/workspace/ThreadWorkspaceScreen";
 import { AdaptiveWorkspaceLayout } from "./features/layout/AdaptiveWorkspaceLayout";
 import { selectedPullRequestKey } from "./features/pull-requests/pullRequestSelection";
 import {
@@ -61,7 +66,6 @@ import {
   HardwareKeyboardCommandProvider,
 } from "./features/keyboard/HardwareKeyboardCommandProvider";
 import { ReviewCommentComposerSheet } from "./features/review/ReviewCommentComposerSheet";
-import { ReviewSheet } from "./features/review/ReviewSheet";
 import { ThreadTerminalRouteScreen } from "./features/terminal/ThreadTerminalRouteScreen";
 import { DevicePreviewRouteScreen } from "./features/devices/DevicePreviewRouteScreen";
 import { BrowserPreviewRouteScreen } from "./features/browser/BrowserPreviewRouteScreen";
@@ -757,7 +761,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
         ...(Platform.OS === "android"
           ? { presentation: "fullScreenModal" as const }
           : FORM_SHEET_PRESENTATION_OPTIONS),
-        sheetAllowedDetents: Platform.OS === "android" ? undefined : [0.75, 0.92],
+        sheetAllowedDetents: Platform.OS === "android" ? "fitToContents" : [0.5],
         sheetGrabberVisible: Platform.OS !== "android",
         headerShown: false,
       },
@@ -802,8 +806,13 @@ const RootStackConfig = createWorkspaceStackNavigator({
       },
     }),
     ThreadReview: createNativeStackScreen({
-      screen: ReviewSheet,
+      screen: ThreadGitWorkspaceScreen,
       linking: `${THREAD_LINKING_PREFIX}/review`,
+      options: GLASS_HEADER_OPTIONS,
+    }),
+    ThreadReviewFile: createNativeStackScreen({
+      screen: ThreadGitWorkspaceScreen,
+      linking: `${THREAD_LINKING_PREFIX}/review/file`,
       options: GLASS_HEADER_OPTIONS,
     }),
     ThreadReviewComment: createNativeStackScreen({
@@ -820,7 +829,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
       },
     }),
     ThreadFiles: createNativeStackScreen({
-      screen: ThreadFilesTreeScreen,
+      screen: ThreadFilesWorkspaceScreen,
       linking: `${THREAD_LINKING_PREFIX}/files`,
       options: {
         ...GLASS_HEADER_OPTIONS,
@@ -828,7 +837,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
       },
     }),
     ThreadFile: createNativeStackScreen({
-      screen: ThreadFileScreen,
+      screen: ThreadFileWorkspaceScreen,
       linking: `${THREAD_LINKING_PREFIX}/files/:path*`,
       options: GLASS_HEADER_OPTIONS,
     }),

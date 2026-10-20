@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useNavigation } from "@react-navigation/native";
 import { AppBar } from "../../components/ui/AppBar";
 import { ScreenHeaderButton } from "../../components/ui/ScreenHeaderButton";
 import type { AppBarAction } from "../../components/ui/AppBar.types";
@@ -21,6 +22,7 @@ export function ThreadHeader(
 ) {
   const goBack = useWorkspaceBackNavigation("threads");
   const { layout, panes, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
+  const navigation = useNavigation();
   const { onOpenTerminal, onMergeBack } = props.gitControls;
   const native = useThreadHeaderOptions(props);
   const androidHeaderActions = useMemo<ReadonlyArray<AppBarAction>>(() => {
@@ -33,12 +35,14 @@ export function ThreadHeader(
       });
     }
     if (props.hasThreadCwd) {
-      const filesVisible = props.inspectorMode === "files" && panes.auxiliaryPaneVisible;
       actions.push({
-        accessibilityLabel: filesVisible ? "Close files" : "Open files",
-        selected: filesVisible,
+        accessibilityLabel: "Open files",
         icon: "folder",
-        onPress: filesVisible ? toggleAuxiliaryPane : props.onOpenFilesInspector,
+        onPress: () =>
+          navigation.navigate("ThreadFiles", {
+            environmentId: String(props.gitControls.environmentId),
+            threadId: String(props.gitControls.threadId),
+          }),
       });
     }
     if (props.hasWorkspaceRoot && props.gitControls.canOpenTerminal) {
@@ -49,9 +53,13 @@ export function ThreadHeader(
       });
     }
     actions.push({
-      accessibilityLabel: "Open git controls",
+      accessibilityLabel: "Open git",
       icon: "point.topleft.down.curvedto.point.bottomright.up",
-      onPress: props.onOpenGitInspector,
+      onPress: () =>
+        navigation.navigate("ThreadReview", {
+          environmentId: String(props.gitControls.environmentId),
+          threadId: String(props.gitControls.threadId),
+        }),
     });
     if (onMergeBack) {
       actions.push({
@@ -64,15 +72,15 @@ export function ThreadHeader(
   }, [
     props.inspectorMode,
     panes.auxiliaryPaneVisible,
-    props.onOpenFilesInspector,
     onOpenTerminal,
     onMergeBack,
-    props.onOpenGitInspector,
-    toggleAuxiliaryPane,
     props.onReturnToThread,
     props.hasThreadCwd,
     props.hasWorkspaceRoot,
     props.gitControls.canOpenTerminal,
+    props.gitControls.environmentId,
+    props.gitControls.threadId,
+    navigation,
   ]);
 
   return (

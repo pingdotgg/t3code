@@ -11,7 +11,11 @@ export function useCodeViewFileReveal<TScope>(
   scope: TScope,
   readyFileKeys?: ReadonlyArray<string>,
 ) {
-  const [request, setRequest] = useState<{ fileKey: string; scope: TScope } | null>(null);
+  const [request, setRequest] = useState<{
+    fileKey: string;
+    scope: TScope;
+    target?: CodeViewScrollTarget;
+  } | null>(null);
   const handledRequest = useRef<typeof request>(null);
 
   useEffect(() => {
@@ -23,9 +27,10 @@ export function useCodeViewFileReveal<TScope>(
     if (!viewer?.getInstance() || (readyFileKeys && !readyFileKeys.includes(request.fileKey)))
       return;
 
-    viewer.scrollTo({ type: "item", id: request.fileKey, align: "start" });
+    viewer.scrollTo(request.target ?? { type: "item", id: request.fileKey, align: "start" });
     handledRequest.current = request;
   }, [request, scope, viewer, readyFileKeys]);
 
-  return (fileKey: string) => setRequest({ fileKey, scope });
+  return (fileKey: string, target?: CodeViewScrollTarget) =>
+    setRequest({ fileKey, scope, ...(target ? { target } : {}) });
 }

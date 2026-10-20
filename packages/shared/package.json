@@ -502,6 +502,10 @@
     "./markdownMath": {
       "types": "./src/markdownMath.ts",
       "import": "./src/markdownMath.ts"
+    },
+    "./reviewFileClassification": {
+      "types": "./src/reviewFileClassification.ts",
+      "import": "./src/reviewFileClassification.ts"
     }
   },
   "scripts": {

@@ -24,6 +24,7 @@ import type {
   PullRequestReaction,
   PullRequestReactionContent,
   PullRequestReviewCommentDraft,
+  PullRequestDraftCommentLink,
   PullRequestReviewDecision,
   PullRequestReviewThread,
   PullRequestThreadCommentsResult,
@@ -179,6 +180,8 @@ export interface ProviderChangeRequestStat {
 }
 
 export interface ProviderChangeRequestDetail extends ProviderChangeRequest {
+  readonly mergeRequirementsSatisfied?: boolean;
+  /** The head commit, where the host's detail read reports it. */
   readonly headSha?: string | null;
   readonly body: string;
   readonly changedFiles: number;
@@ -454,6 +457,8 @@ export interface PullRequestProviderApi {
       readonly expectedStackHeads?: ReadonlyArray<PullRequestStackHead>;
       readonly removeAgentCreditsOnMerge?: boolean;
       readonly mergeMethod?: PullRequestMergeMethod;
+      readonly adminOverride?: boolean;
+      /** Only meaningful for `update-branch`; absent takes the host's own default. */
       readonly updateMethod?: PullRequestUpdateMethod;
     },
   ) => Effect.Effect<void, PullRequestProviderError>;
@@ -475,6 +480,15 @@ export interface PullRequestProviderApi {
     input: ProviderRepositoryRef & { readonly number: number; readonly body: string },
   ) => Effect.Effect<void, PullRequestProviderError>;
 
+  readonly uploadAttachment?: (
+    input: ProviderRepositoryRef & {
+      readonly path: string;
+      readonly name: string;
+      readonly mimeType: string;
+      readonly sizeBytes: number;
+    },
+  ) => Effect.Effect<{ readonly url: string }, PullRequestProviderError>;
+
   /**
    * Whether this remark is the reader's to rewrite is the host's own answer: no read here can
    * settle it, since access can be taken away between the conversation being read and the
@@ -489,10 +503,26 @@ export interface PullRequestProviderApi {
     },
   ) => Effect.Effect<void, PullRequestProviderError>;
 
+  /**
+   * Sends a whole review at once. Only called for a verdict the host declared in
+   * `capabilities.review.verdicts`, and with line comments only where it declared
+   * `inlineComment`.
+   */
+  readonly saveDraftComment?: (
+    input: ProviderRepositoryRef & {
+      readonly number: number;
+      readonly comment: PullRequestReviewCommentDraft;
+    },
+  ) => Effect.Effect<PullRequestDraftCommentLink, PullRequestProviderError>;
+  readonly discardDraftComment?: (
+    input: ProviderRepositoryRef & { readonly number: number } & PullRequestDraftCommentLink,
+  ) => Effect.Effect<void, PullRequestProviderError>;
+
   readonly submitReview: (
     input: ProviderRepositoryRef & {
       readonly number: number;
       readonly verdict: PullRequestReviewVerdict;
+      readonly pendingReviewId?: string;
       readonly body: string;
       readonly comments: ReadonlyArray<PullRequestReviewCommentDraft>;
     },
@@ -534,6 +564,7 @@ export interface PullRequestProviderApi {
     input: ProviderRepositoryRef & {
       readonly number: number;
       readonly threadId: string;
+      readonly pendingReviewId?: string;
       readonly body: string;
     },
   ) => Effect.Effect<void, PullRequestProviderError>;

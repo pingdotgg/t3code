@@ -1,20 +1,23 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import { assert, expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import {
   ProjectId,
   GitCommandError,
+  ProviderInstanceId,
   type PullRequestActivity,
   type PullRequestDetail,
   type PullRequestStack,
   type PullRequestRef,
+  type PullRequestReviewGuide,
 } from "@t3tools/contracts";
 import type { ReviewGuideGenerationInput } from "@t3tools/provider-core/server/textGeneration";
 
@@ -480,6 +483,79 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
       ),
   );
 
+  it.effect(
+    "groups a stored guide's files without rewriting its provenance or running a model",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const repositories = yield* makeRepositories;
+          const cachedRef = { ...reference, host: "github.com", number: 17 };
+          const original: PullRequestReviewGuide = {
+            headSha: repositories.lowerSha,
+            generatedAt: "2026-10-13T12:00:00.000Z",
+            modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+            stops: [
+              {
+                title: "Contract",
+                summary: "Introduce the shape.",
+                attention: null,
+                excerpts: [
+                  { path: "feature.txt", side: "new", start: 1, end: 3, caption: "Shape" },
+                ],
+                files: [],
+                notes: [],
+                questions: [],
+              },
+              {
+                title: "Implementation",
+                summary: "Implement that shape.",
+                attention: null,
+                excerpts: [
+                  { path: "feature.txt", side: "new", start: 7, end: 10, caption: "Logic" },
+                ],
+                files: [],
+                notes: [{ path: "feature.txt", line: 8, title: "Reason", body: "Keep this note." }],
+                questions: [],
+              },
+            ],
+          };
+          const persistenceContext = yield* Layer.build(PullRequestReviewGuides.layer);
+          const repository = Context.get(
+            persistenceContext,
+            PullRequestReviewGuides.PullRequestReviewGuideRepository,
+          );
+          yield* repository.put(cachedRef, original);
+          const stored = yield* Deferred.make<void>();
+          const context = yield* Layer.build(
+            makeLayer({
+              ...repositories,
+              stored,
+              generate: () => Effect.die("reading a stored guide must not run a model"),
+            }),
+          );
+          const service = Context.get(
+            context,
+            PullRequestReviewGuideService.PullRequestReviewGuideService,
+          );
+          const result = yield* service.get(cachedRef);
+          expect(result.currentHeadSha).toBe(repositories.headSha);
+          expect(result.guide).toEqual({
+            ...original,
+            stops: [
+              {
+                ...original.stops[0],
+                excerpts: [...original.stops[0]!.excerpts, ...original.stops[1]!.excerpts],
+                notes: original.stops[1]!.notes,
+              },
+              { ...original.stops[1], excerpts: [], notes: [] },
+            ],
+          });
+          expect(Option.getOrNull(yield* repository.get(cachedRef))).toEqual(original);
+          expect((yield* service.get(cachedRef)).guide).toEqual(result.guide);
+        }),
+      ),
+  );
+
   it.effect.each([
     {
       name: "a branch named like the short head",
@@ -894,6 +970,53 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
         );
         const result = yield* Effect.flip(service.generate(reference));
         assert.include(result.message, "in another repository");
+      }),
+    ),
+  );
+  it.effect("uses the repository's remote when origin is a fork with an older base", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const repositories = yield* makeRepositories;
+        const fork = `${repositories.root}/fork`;
+        yield* git(repositories.root, ["clone", "--quiet", `${repositories.root}/remote`, fork]);
+        yield* git(fork, ["update-ref", "refs/heads/stack-base", `${repositories.lowerSha}^`]);
+        yield* git(repositories.workspace, ["remote", "set-url", "origin", fork]);
+        yield* git(repositories.workspace, [
+          "remote",
+          "add",
+          "upstream",
+          `${repositories.root}/remote`,
+        ]);
+        const stored = yield* Deferred.make<void>();
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        let changed = "";
+        const context = yield* Layer.build(
+          makeLayer({
+            ...repositories,
+            stored,
+            identity: { ...ACME_APP, locator: { ...ACME_APP.locator, remoteName: "upstream" } },
+            generate: (input) =>
+              Effect.gen(function* () {
+                changed = yield* git(input.cwd, [
+                  "diff",
+                  "--name-only",
+                  `${input.baseCommit}...HEAD`,
+                ]).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, driver), Effect.orDie);
+                return { stops: [] };
+              }),
+          }),
+        );
+        const service = Context.get(
+          context,
+          PullRequestReviewGuideService.PullRequestReviewGuideService,
+        );
+        yield* service.generate(reference);
+        yield* Deferred.await(stored);
+        expect(changed).toBe("feature.txt");
+        const result = yield* service.get(reference);
+        expect(
+          result.guide?.stops.flatMap((chapter) => chapter.files.map((file) => file.path)),
+        ).toEqual(["feature.txt"]);
       }),
     ),
   );

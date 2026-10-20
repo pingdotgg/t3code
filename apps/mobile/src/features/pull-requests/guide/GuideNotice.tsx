@@ -6,23 +6,55 @@ import { SymbolView } from "../../../components/ui/AppSymbol";
 import { PR_ROW_EXIT, PR_ROW_LAYOUT } from "../pullRequestAnimations";
 import { guideNoticeState } from "./reviewGuideState";
 import type { useReviewGuide } from "./useReviewGuide";
+import { GuideGeneratingHeading } from "./GuideGeneratingHeading";
 
 const NOTICE_ENTER = FadeIn.delay(180).duration(120).reduceMotion(ReduceMotion.System);
 
-export function GuideNotice({ state }: { readonly state: ReturnType<typeof useReviewGuide> }) {
+/** Keep the action in one place as loading, writing, and retry states change. */
+export function GuideNotice({
+  state,
+  active = true,
+}: {
+  readonly state: ReturnType<typeof useReviewGuide>;
+  readonly active?: boolean;
+}) {
   const notice = guideNoticeState(state);
   if (notice.kind === "ready") return null;
   const compact = state.data?.guide != null;
   const failed = notice.kind === "failed" || notice.kind === "unavailable";
   const busy = notice.kind === "loading" || notice.kind === "writing";
+  if (notice.kind === "loading" || notice.kind === "empty") {
+    return (
+      <View className="mb-3 gap-1 py-2" accessibilityLiveRegion="polite">
+        <Text className="text-base font-t3-semibold text-foreground-muted">
+          {notice.kind === "loading" ? "Loading guide…" : "Waiting to generate guide"}
+        </Text>
+        <Text className="text-xs text-foreground-muted">
+          {notice.kind === "loading"
+            ? "Checking for a saved guide. You can explore the files below."
+            : "The guide starts automatically when connected with write access."}
+        </Text>
+      </View>
+    );
+  }
+  if (notice.kind === "writing") {
+    return (
+      <View className="mb-3 gap-1 py-2">
+        <GuideGeneratingHeading rewriting={compact} visible={active} />
+        <Text className="text-xs text-foreground-muted">
+          {compact
+            ? "Keep reading while the guide updates."
+            : "Explore the files while the guide is written."}
+        </Text>
+      </View>
+    );
+  }
   return (
     <Animated.View
       layout={PR_ROW_LAYOUT}
       entering={compact ? NOTICE_ENTER : undefined}
       exiting={PR_ROW_EXIT}
-      className={
-        compact ? "mb-5 rounded-2xl bg-grouped-card p-4" : "rounded-2xl bg-grouped-card p-5"
-      }
+      className={"mb-3 rounded-xl border border-border-subtle bg-screen p-3"}
       accessibilityLiveRegion="polite"
       accessibilityState={{ busy }}
     >
@@ -36,8 +68,8 @@ export function GuideNotice({ state }: { readonly state: ReturnType<typeof useRe
           {compact ? notice.title : "Review guide"}
         </Text>
       </View>
-      <View style={compact ? undefined : { minHeight: 100 }} className="pt-3 pb-4">
-        <Text className="text-sm leading-6 text-foreground-muted">{notice.description}</Text>
+      <View className="pt-2 pb-3">
+        <Text className="text-sm leading-5 text-foreground-muted">{notice.description}</Text>
       </View>
       <View className="min-h-12 flex-row items-center justify-between gap-3">
         {state.canWrite || busy || notice.kind === "unavailable" ? (
@@ -58,15 +90,6 @@ export function GuideNotice({ state }: { readonly state: ReturnType<typeof useRe
               : "Writing a guide requires a connection and write access."}
           </Text>
         )}
-        {notice.kind === "writing" && state.data?.run?._tag === "Running" ? (
-          <Text className="shrink text-xs text-foreground-muted">
-            Started{" "}
-            {new Date(state.data.run.startedAt).toLocaleTimeString([], {
-              hour: "2-digit",
-              minute: "2-digit",
-            })}
-          </Text>
-        ) : null}
       </View>
     </Animated.View>
   );

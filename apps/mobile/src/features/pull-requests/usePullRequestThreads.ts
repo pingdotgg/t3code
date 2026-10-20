@@ -81,7 +81,11 @@ export function usePullRequestThreads(
     else navigation.navigate("Thread", destination);
   };
   const [busy, setBusy] = useState(false);
-  const ask = async (thread?: LinkedThread, task: PullRequestAgentTask = "ask") => {
+  const ask = async (
+    thread?: LinkedThread,
+    task: PullRequestAgentTask = "ask",
+    commentMarkdown?: string,
+  ) => {
     if (!pr || !canAsk || pending.current) return;
     pending.current = true;
     setBusy(true);
@@ -141,7 +145,13 @@ export function usePullRequestThreads(
       const withContext = getComposerDraftSnapshot(draftKey);
       setComposerDraftText(
         draftKey,
-        appendPullRequestAgentPrompt(withContext.text, task, previousPrompts.current.get(draftKey)),
+        appendPullRequestAgentPrompt(
+          commentMarkdown
+            ? `${withContext.text.trimEnd()}\n\n${commentMarkdown}`
+            : withContext.text,
+          task,
+          previousPrompts.current.get(draftKey),
+        ),
       );
       previousPrompts.current.set(draftKey, pullRequestAgentPrompt(task));
       if (thread) openThread(thread);

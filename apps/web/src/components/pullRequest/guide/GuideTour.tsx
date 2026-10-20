@@ -1,3 +1,7 @@
+import { createPortal } from "react-dom";
+import { useEnvironmentQuery } from "~/state/query";
+import { useAtomValue } from "@effect/atom-react";
+import { usePullRequestFilesViewed } from "../usePullRequestFilesViewed";
 import type { EnvironmentId, PullRequestRef, PullRequestReviewGuide } from "@t3tools/contracts";
 import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 
@@ -9,7 +13,9 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { isCommandPaletteOpen } from "~/commandPaletteBus";
 
 import { GuideRail } from "./GuideRail";
-import { GuideStop } from "./GuideStop";
+import { GuideChapterPanel } from "./GuideChapterPanel";
+import { GuideStop, type GuideStopHandle } from "./GuideStop";
+import { DiffDisplayControls } from "../../diffs/DiffDisplayControls";
 import type { ExcerptCommenting } from "./GuideExcerpt";
 import {
   guideProgressKey,
@@ -18,7 +24,11 @@ import {
   useGuideRunStore,
   type GuideProgress,
 } from "./guideRunStore";
-import { stepTourPosition, stopFilePaths } from "@t3tools/client-runtime/review-guide-tour";
+import {
+  stepTourPosition,
+  stopFilePaths,
+  reviewGuideStopProgress,
+} from "@t3tools/client-runtime/review-guide-tour";
 import { useGuideDiffFiles } from "./useGuideDiffFiles";
 
 export function GuideTour({
@@ -31,7 +41,9 @@ export function GuideTour({
   onAsk,
   onFinish,
   onOpenFile,
+  viewControlsTarget,
 }: {
+  viewControlsTarget: HTMLElement | null;
   environmentId: EnvironmentId;
   reference: PullRequestRef;
   guide: PullRequestReviewGuide;
@@ -51,6 +63,22 @@ export function GuideTour({
   const stopCount = guide.stops.length;
   const position = Math.max(Math.min(tour.position, stopCount - 1), 0);
   const stop = guide.stops[position] ?? null;
+  const detail = useEnvironmentQuery(
+    pullRequestEnvironment.detail({ environmentId, input: reference }),
+  );
+  const allowed = useAtomValue(pullRequestEnvironment.setFilesViewed.permissionAtom(environmentId));
+  const viewed = usePullRequestFilesViewed({
+    environmentId,
+    reference,
+    enabled: Boolean(detail.data?.capabilities.viewedFiles),
+    paths: guide.stops.flatMap(stopFilePaths),
+    headSha: guide.headSha,
+  });
+  const reviewedStops = new Set(
+    guide.stops.flatMap((stop, index) =>
+      reviewGuideStopProgress(stop, viewed.isViewed).reviewed ? [index] : [],
+    ),
+  );
 
   const wantedPaths = stop === null ? [] : stopFilePaths(stop);
   const diff = useGuideDiffFiles({
@@ -68,6 +96,11 @@ export function GuideTour({
   });
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const stopNavigation = useRef<GuideStopHandle>(null);
+  const selectFile = (path: string) => {
+    stopNavigation.current?.revealFile(path);
+    setRailOpen(false);
+  };
   const goTo = (next: number) => {
     update((current) => ({
       position: next,
@@ -94,33 +127,75 @@ export function GuideTour({
   }, [active]);
 
   return (
-    <div ref={scrollRef} className="@container/guide h-full overflow-y-auto scrollbar-gutter-both">
-      <div className="mx-auto grid max-w-[100rem] gap-6 px-4 py-4 @min-[56rem]/guide:grid-cols-[16rem_minmax(0,1fr)] @min-[90rem]/guide:gap-8 @min-[90rem]/guide:px-6">
-        <aside className="sticky top-4 self-start @max-[56rem]/guide:hidden">
-          <GuideRail stops={guide.stops} position={position} seen={tour.seen} onSelect={goTo} />
-        </aside>
-        <main className="flex min-w-0 flex-col gap-4">
-          {banner}
+    // Each pane owns its scroll, so reading the diff leaves the chapter context in place.
+    <div className="@container/guide flex h-full min-h-0 flex-col">
+      {viewControlsTarget ? createPortal(<DiffDisplayControls />, viewControlsTarget) : null}
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        <GuideChapterPanel>
+          <GuideRail
+            files={diff.files}
+            onSelectFile={selectFile}
+            stops={guide.stops}
+            position={position}
+            seen={reviewedStops}
+            isViewed={viewed.isViewed}
+            onSetViewed={
+              allowed && viewed.enabled
+                ? (paths, value) => {
+                    for (const path of paths) viewed.setViewed(path, value);
+                  }
+                : null
+            }
+            onSelect={goTo}
+          />
+        </GuideChapterPanel>
+        <main
+          data-guide-diff-scroll
+          ref={scrollRef}
+          className="min-h-0 min-w-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]"
+        >
+          {banner ? <div className="px-4 py-3">{banner}</div> : null}
           {diff.error !== null ? (
-            <p className="text-xs text-muted-foreground">
+            <p className="px-4 py-3 text-xs text-muted-foreground">
               The diff could not be loaded, so excerpts are missing: {diff.error}
             </p>
           ) : null}
           {stop === null ? (
-            <p className="text-sm text-muted-foreground">This change has no files to tour.</p>
+            <p className="px-4 py-3 text-sm text-muted-foreground">
+              This change has no files to tour.
+            </p>
           ) : (
             <GuideStop
               key={position}
+              navigationRef={stopNavigation}
               stop={stop}
+              isViewed={viewed.isViewed}
+              onSetViewed={
+                allowed && viewed.enabled
+                  ? (paths, value) => {
+                      for (const path of paths) viewed.setViewed(path, value);
+                    }
+                  : null
+              }
               index={position}
               stopCount={stopCount}
               railOpen={railOpen}
               onRailOpenChange={setRailOpen}
               stopList={
                 <GuideRail
+                  files={diff.files}
+                  onSelectFile={selectFile}
                   stops={guide.stops}
                   position={position}
-                  seen={tour.seen}
+                  seen={reviewedStops}
+                  isViewed={viewed.isViewed}
+                  onSetViewed={
+                    allowed && viewed.enabled
+                      ? (paths, value) => {
+                          for (const path of paths) viewed.setViewed(path, value);
+                        }
+                      : null
+                  }
                   onSelect={goTo}
                 />
               }

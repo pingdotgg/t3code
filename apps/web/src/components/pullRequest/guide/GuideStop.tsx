@@ -1,43 +1,37 @@
+import { ReviewPath } from "../../diffs/ReviewPath";
+import { Checkbox } from "../../ui/checkbox";
 import type { FileDiffContentsLoader, FileDiffMetadata } from "@pierre/diffs";
-import type {
-  PullRequestReviewGuideAttention,
-  PullRequestReviewGuideStop,
-} from "@t3tools/contracts";
+import type { PullRequestReviewGuideStop } from "@t3tools/contracts";
 import {
   ArrowRightIcon,
-  ChevronDownIcon,
   ChevronRightIcon,
-  ChevronUpIcon,
-  EyeIcon,
-  FileIcon,
   MessageCircleQuestionIcon,
   MessageSquareIcon,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import { useId, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react";
 
 import { getDiffLineStat } from "~/lib/diffRendering";
-import { cn } from "~/lib/utils";
+import { useTheme } from "~/hooks/useTheme";
+import { PierreEntryIcon } from "../../chat/PierreEntryIcon";
 
 import { DiffWorkerPoolProvider } from "../../DiffWorkerPoolProvider";
-import { Alert, AlertDescription, AlertTitle } from "../../ui/alert";
 import { Button } from "../../ui/button";
-import { Kbd } from "../../ui/kbd";
 import { PullRequestDiffStat } from "../pullRequestPresentation";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../../ui/collapsible";
 import { GuideExcerpt, type ExcerptCommenting } from "./GuideExcerpt";
+import { ReviewChapterHeader } from "../ReviewChapterHeader";
 import { GuideFileDiff } from "./GuideFileDiff";
-import { GuideNotes } from "./GuideNotes";
 import { GuideProse } from "./GuideProse";
-import { letterStopNotes } from "@t3tools/client-runtime/review-guide-tour";
+import { letterStopNotes, stopFilePaths } from "@t3tools/client-runtime/review-guide-tour";
 
-const ATTENTION_LABELS = {
-  tradeoff: "A tradeoff to weigh",
-  contract: "A contract to check",
-  product: "A product call",
-  risk: "A risk to judge",
-  accessibility: "An accessibility call",
-} as const satisfies Record<PullRequestReviewGuideAttention["kind"], string>;
+export interface GuideStopHandle {
+  revealFile: (path: string) => void;
+}
 
+/**
+ * One stop of the tour: what it is about, where to look, and the two things a reader does with
+ * it: comment on its lines for the review, or ask an agent about it.
+ */
 export function GuideStop({
   stop,
   index,
@@ -54,103 +48,85 @@ export function GuideStop({
   onAsk,
   onFinish,
   onOpenFile,
+  isViewed,
+  onSetViewed,
+  navigationRef,
 }: {
+  navigationRef: Ref<GuideStopHandle>;
   stop: PullRequestReviewGuideStop;
   index: number;
   stopCount: number;
+  /** Whether the stop list is folded open under the header, on a narrow panel. */
   railOpen: boolean;
   onRailOpenChange: (open: boolean) => void;
+  /** The tour's stop list, folded under the header on a narrow panel. */
   stopList: ReactNode;
+  /** The following stop's title, null on the last stop. */
   nextTitle: string | null;
   files: ReadonlyMap<string, FileDiffMetadata>;
+  /** Loads a file's unchanged lines for the bars between hunks. */
   loadDiffFiles: FileDiffContentsLoader;
   diffLoading: boolean;
+  /** Commenting on excerpt lines; null where the reader can neither comment nor ask. */
   commenting: ExcerptCommenting | null;
   onStep: (delta: 1 | -1) => void;
+  /** Opens an agent thread about this stop, with the question prefilled or empty. */
   onAsk: ((question: string) => void) | null;
+  /** Opens the review composer, on the last stop. Null where the reader cannot review. */
   onFinish: (() => void) | null;
   onOpenFile: (path: string) => void;
+  isViewed: (path: string) => boolean;
+  onSetViewed: ((paths: ReadonlyArray<string>, viewed: boolean) => void) | null;
 }) {
-  const { lettered, byExcerpt } = letterStopNotes(stop);
-  const excerptPaths = new Set(stop.excerpts.map((excerpt) => excerpt.path));
-  const otherFiles = stop.files.filter((file) => !excerptPaths.has(file.path));
+  const { resolvedTheme } = useTheme();
+  const { byExcerpt } = letterStopNotes(stop);
+  const otherFiles = stopFilePaths(stop).map((path) => ({
+    path,
+    note: stop.files.find((file) => file.path === path)?.note,
+  }));
 
-  const hasNotes = lettered.length > 0;
+  const [filePanels, setFilePanels] = useState<Record<string, { viewed: boolean; open: boolean }>>(
+    {},
+  );
+
+  const reviewCheckboxPrefix = useId();
+  const fileRows = useRef(new Map<string, HTMLLIElement>());
+  useImperativeHandle(
+    navigationRef,
+    () => ({
+      revealFile: (path) => {
+        setFilePanels((current) => ({
+          ...current,
+          [path]: { viewed: isViewed(path), open: true },
+        }));
+        requestAnimationFrame(() => {
+          const row = fileRows.current.get(path);
+          const scroller = row?.closest("[data-guide-diff-scroll]");
+          if (!row || !(scroller instanceof HTMLElement)) return;
+          const top =
+            scroller.scrollTop +
+            row.getBoundingClientRect().top -
+            scroller.getBoundingClientRect().top;
+          scroller.scrollTo({ top: Math.max(top - 8, 0) });
+        });
+      },
+    }),
+    [isViewed],
+  );
 
   return (
-    <div
-      className={cn("grid gap-8", hasNotes && "@min-[90rem]/guide:grid-cols-[minmax(0,1fr)_20rem]")}
-    >
-      <article className="flex min-w-0 flex-col gap-5">
-        <Collapsible open={railOpen} onOpenChange={onRailOpenChange}>
-          <header className="flex items-center justify-between gap-2">
-            <p className="text-xs text-muted-foreground tabular-nums @max-[56rem]/guide:hidden">
-              Stop {index + 1} of {stopCount}
-            </p>
-            <CollapsibleTrigger
-              render={
-                <Button size="xs" variant="ghost-muted" className="@min-[56rem]/guide:hidden" />
-              }
-            >
-              <span className="tabular-nums">
-                Stop {index + 1} of {stopCount}
-              </span>
-              <ChevronDownIcon aria-hidden className={cn(railOpen && "rotate-180")} />
-            </CollapsibleTrigger>
-            <div className="flex items-center gap-1">
-              <Button
-                size="icon-xs"
-                variant="outline"
-                aria-label="Previous stop"
-                disabled={index === 0}
-                onClick={() => onStep(-1)}
-              >
-                <ChevronUpIcon aria-hidden />
-              </Button>
-              <Button
-                size="icon-xs"
-                variant="outline"
-                aria-label="Next stop"
-                disabled={index === stopCount - 1}
-                onClick={() => onStep(1)}
-              >
-                <ChevronDownIcon aria-hidden />
-              </Button>
-              <span
-                aria-hidden
-                className="ml-1 flex items-center gap-0.5 @max-[30rem]/guide:hidden"
-              >
-                <Kbd>J</Kbd>
-                <Kbd>K</Kbd>
-              </span>
-            </div>
-          </header>
-          <CollapsiblePanel className="@min-[56rem]/guide:hidden">
-            <div className="pt-3">{stopList}</div>
-          </CollapsiblePanel>
-        </Collapsible>
-
-        <div className="flex max-w-[60rem] flex-col gap-2">
-          <h2 className="text-lg font-semibold text-foreground">{stop.title}</h2>
-          {stop.summary.trim() !== "" ? (
-            <div className="text-sm text-muted-foreground">
-              <GuideProse text={stop.summary} />
-            </div>
-          ) : null}
-        </div>
-
-        {stop.attention !== null ? (
-          <Alert controlAlignment="first-line">
-            <EyeIcon />
-            <AlertTitle>{ATTENTION_LABELS[stop.attention.kind]}</AlertTitle>
-            <AlertDescription>
-              <div>
-                <GuideProse text={stop.attention.note} />
-              </div>
-            </AlertDescription>
-          </Alert>
-        ) : null}
-
+    <article className="flex min-w-0 flex-col gap-4">
+      <div className="border-b border-border/60 px-4 py-2">
+        <ReviewChapterHeader
+          index={index}
+          count={stopCount}
+          railOpen={railOpen}
+          onRailOpenChange={onRailOpenChange}
+          rail={stopList}
+          onStep={onStep}
+          keyboardHints
+        />
+      </div>
         {stop.excerpts.length > 0 ? (
           <div className="flex min-w-0 flex-col gap-4">
             <DiffWorkerPoolProvider>
@@ -164,38 +140,67 @@ export function GuideStop({
                   commenting={commenting}
                   loadDiffFiles={loadDiffFiles}
                   onOpenFile={onOpenFile}
+                  viewed={isViewed(excerpt.path)}
+                  onSetViewed={onSetViewed ? (value) => onSetViewed([excerpt.path], value) : null}
                 />
               ))}
             </DiffWorkerPoolProvider>
           </div>
         ) : null}
-        <GuideNotes notes={lettered} className="@min-[90rem]/guide:hidden" />
 
         {otherFiles.length > 0 ? (
           <section className="flex flex-col gap-1.5">
-            <h3 className="text-xs font-medium text-muted-foreground">
-              {stop.excerpts.length > 0 ? "Also in this stop" : "Files in this stop"}
-            </h3>
+          <h3 className="px-4 text-xs font-medium text-muted-foreground">Files in this chapter</h3>
             <DiffWorkerPoolProvider>
-              <ul className="flex flex-col overflow-hidden rounded-lg border border-border/60">
+            <ul className="flex flex-col border-y border-border/60">
                 {otherFiles.map((file) => {
                   const diff = files.get(file.path);
                   const stat = diff === undefined ? null : getDiffLineStat([diff]);
+                  const viewed = isViewed(file.path);
+                  const panel = filePanels[file.path];
+                  const open = panel?.viewed === viewed ? panel.open : !viewed;
+                  const reviewCheckboxId = `${reviewCheckboxPrefix}-${encodeURIComponent(file.path)}`;
                   return (
-                    <li key={file.path} className="border-border/60 not-first:border-t">
-                      <Collapsible>
-                        <CollapsibleTrigger className="group flex w-full min-w-0 items-center gap-2 px-3 py-2 text-left text-xs outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset">
+                    <li
+                      key={file.path}
+                      ref={(node) => {
+                        if (node === null) fileRows.current.delete(file.path);
+                        else fileRows.current.set(file.path, node);
+                      }}
+                      className="scroll-mt-4 border-border/60 not-first:border-t"
+                    >
+                      <Collapsible
+                        open={open}
+                        onOpenChange={(open) =>
+                          setFilePanels((current) => ({
+                            ...current,
+                            [file.path]: { viewed, open },
+                          }))
+                        }
+                      >
+                      <div className="flex min-w-0 items-center gap-2 bg-foreground/7 px-3 py-2 text-xs">
+                          <CollapsibleTrigger
+                            render={<Button size="icon-xs" variant="ghost" />}
+                            aria-label={`${open ? "Collapse" : "Expand"} diff for ${file.path}`}
+                          >
                           <ChevronRightIcon
                             aria-hidden
-                            className="size-3.5 shrink-0 text-muted-foreground group-data-panel-open:rotate-90"
+                              className={`size-3.5 shrink-0 text-muted-foreground ${open ? "rotate-90" : ""}`}
                           />
-                          <FileIcon
-                            aria-hidden
-                            className="size-3.5 shrink-0 text-muted-foreground"
+                          </CollapsibleTrigger>
+                        <PierreEntryIcon
+                          pathValue={file.path}
+                          kind="file"
+                          theme={resolvedTheme}
+                          className="size-3.5"
                           />
-                          <span className="min-w-0 truncate font-mono text-foreground">
-                            {file.path}
-                          </span>
+                          <button
+                            type="button"
+                            className="min-w-0 flex-1 truncate text-left font-mono"
+                            onClick={() => onOpenFile(file.path)}
+                          >
+                            <ReviewPath path={file.path} />
+                          </button>
                           {file.note !== undefined && file.note.trim() !== "" ? (
                             <span className="ml-auto min-w-0 truncate text-muted-foreground @max-[30rem]/guide:hidden">
                               <GuideProse text={file.note} plain />
@@ -208,7 +213,23 @@ export function GuideStop({
                               className="shrink-0 font-mono"
                             />
                           ) : null}
-                        </CollapsibleTrigger>
+                          {onSetViewed ? (
+                            <div className="flex shrink-0 items-center gap-1.5">
+                              <Checkbox
+                                id={reviewCheckboxId}
+                                aria-label={`Reviewed ${file.path}`}
+                                checked={viewed}
+                              onCheckedChange={(value) => onSetViewed([file.path], value === true)}
+                              />
+                              <label
+                                htmlFor={reviewCheckboxId}
+                                className="cursor-pointer text-muted-foreground"
+                              >
+                                Viewed
+                              </label>
+                            </div>
+                          ) : null}
+                        </div>
                         <CollapsiblePanel animate={false}>
                           {diff !== undefined ? (
                             <GuideFileDiff file={diff} loadDiffFiles={loadDiffFiles} />
@@ -230,7 +251,7 @@ export function GuideStop({
         ) : null}
 
         {stop.questions.length > 0 || onAsk !== null ? (
-          <section className="flex flex-col gap-1.5">
+        <section className="flex flex-col gap-1.5 px-4">
             {stop.questions.length > 0 ? (
               <h3 className="text-xs font-medium text-muted-foreground">Questions to consider</h3>
             ) : null}
@@ -241,6 +262,7 @@ export function GuideStop({
                     <GuideProse text={question} />
                   </div>
                 ) : (
+                // A question is a sentence, so it wraps rather than truncating as a button would.
                   <button
                     key={question}
                     type="button"
@@ -261,14 +283,14 @@ export function GuideStop({
               {onAsk !== null ? (
                 <Button size="sm" variant="ghost-muted" onClick={() => onAsk("")}>
                   <MessageCircleQuestionIcon aria-hidden />
-                  Ask about this stop
+                  Ask about this chapter
                 </Button>
               ) : null}
             </div>
           </section>
         ) : null}
 
-        <footer className="flex flex-wrap items-center justify-end gap-3 border-t border-border/60 pt-4">
+      <footer className="flex flex-wrap items-center justify-end gap-3 border-t border-border/60 p-4">
           {nextTitle !== null ? (
             <Button className="min-w-0" onClick={() => onStep(1)}>
               <span className="min-w-0 truncate">Next: {nextTitle}</span>
@@ -282,11 +304,5 @@ export function GuideStop({
           ) : null}
         </footer>
       </article>
-      {hasNotes ? (
-        <aside className="hidden @min-[90rem]/guide:block @min-[90rem]/guide:sticky @min-[90rem]/guide:top-4 @min-[90rem]/guide:self-start">
-          <GuideNotes notes={lettered} />
-        </aside>
-      ) : null}
-    </div>
   );
 }
