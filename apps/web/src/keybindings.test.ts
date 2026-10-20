@@ -14,6 +14,7 @@ import {
 import {
   effectiveShortcutsForCommand,
   formatShortcutLabel,
+  formatShortcutLabelParts,
   isDiffToggleShortcut,
   isRichTextBoldShortcut,
   modelPickerJumpCommandForIndex,
@@ -1227,24 +1228,30 @@ describe("resolveShortcutCommand", () => {
 });
 
 describe("formatShortcutLabel", () => {
-  it("formats labels for macOS", () => {
-    assert.strictEqual(
-      formatShortcutLabel(modShortcut("d", { shiftKey: true }), "MacIntel"),
-      "⇧⌘D",
-    );
+  it.each([
+    ["MacIntel", ["⌃", "⌥", "⇧", "⌘", "D"], "⌃⌥⇧⌘D"],
+    ["Linux", ["Ctrl", "Alt", "Shift", "D"], "Ctrl+Alt+Shift+D"],
+    ["Win32", ["Ctrl", "Alt", "Shift", "D"], "Ctrl+Alt+Shift+D"],
+  ] as const)("formats modifier pills and text for %s", (platform, parts, label) => {
+    const shortcut = modShortcut("d", { ctrlKey: true, altKey: true, shiftKey: true });
+
+    assert.strictEqual(formatShortcutLabel(shortcut, platform), label);
+    assert.deepStrictEqual(formatShortcutLabelParts(shortcut, platform), parts);
   });
 
-  it("formats labels for non-macOS", () => {
-    assert.strictEqual(
-      formatShortcutLabel(modShortcut("d", { shiftKey: true }), "Linux"),
-      "Ctrl+Shift+D",
-    );
-  });
+  it.each([
+    ["MacIntel", ["⌘", "+"], "⌘+"],
+    ["Linux", ["Ctrl", "+"], "Ctrl++"],
+    ["Win32", ["Ctrl", "+"], "Ctrl++"],
+  ] as const)(
+    "preserves the literal plus key in pills and text for %s",
+    (platform, parts, label) => {
+      const shortcut = modShortcut("+");
 
-  it("formats labels for plus key", () => {
-    assert.strictEqual(formatShortcutLabel(modShortcut("+"), "MacIntel"), "⌘+");
-    assert.strictEqual(formatShortcutLabel(modShortcut("+"), "Linux"), "Ctrl++");
-  });
+      assert.strictEqual(formatShortcutLabel(shortcut, platform), label);
+      assert.deepStrictEqual(formatShortcutLabelParts(shortcut, platform), parts);
+    },
+  );
 });
 
 describe("isTerminalClearShortcut", () => {
