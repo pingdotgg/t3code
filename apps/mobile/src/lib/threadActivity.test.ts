@@ -794,6 +794,34 @@ describe("buildThreadFeed", () => {
     expect(activities.at(-1)?.prominent).toBe(true);
   });
 
+  it.each(["local", "inherited", "synthetic"] as const)(
+    "labels a %s fork row without exposing its target ID as the label",
+    (visibility) => {
+      const { providerThreadId: _providerThreadId, ...forkBase } = base(
+        "item-fork",
+        "2026-06-20T00:00:03.000Z",
+        2,
+      );
+      const activity = buildThreadFeed([
+        projected(
+          {
+            ...forkBase,
+            type: "fork",
+            source: { type: "run", threadId: sourceThreadId, runId },
+            targetThreadId: threadId,
+          },
+          0,
+          visibility,
+        ),
+      ]).flatMap((entry) => (entry.type === "activity-group" ? entry.activities : []))[0]!;
+
+      expect(workEntryRowLabel(activity.workEntry)).toBe("Thread forked");
+      expect(workEntryRowLabel(activity.workEntry, true)).toBe("Thread forked");
+      expect(activity.canExpand).toBe(true);
+      expect(activity.getFullDetail()).toContain(threadId);
+    },
+  );
+
   it("keeps orchestration relationship cards visible when a completed run is folded", () => {
     const { providerThreadId: _providerThreadId, ...forkBase } = base(
       "item-fork",
