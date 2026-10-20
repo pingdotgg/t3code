@@ -12,6 +12,7 @@ import {
   readHtmlRenderImageRequest,
   readHtmlRenderKeyDown,
   readHtmlRenderLinkRequest,
+  readHtmlRenderPointerHeld,
   readHtmlRenderReference,
 } from "./htmlRender.ts";
 import { T3_CODE_DARK_THEME_COLORS, T3_CODE_LIGHT_THEME_COLORS } from "./themePalettes.ts";
@@ -165,6 +166,23 @@ describe("readHtmlRenderContentHeight", () => {
     expect(readHtmlRenderContentHeight(notification({ height: "412" }))).toBe(undefined);
     expect(readHtmlRenderContentHeight(notification({ height: 0 }))).toBe(undefined);
     expect(readHtmlRenderContentHeight({ ...notification({ height: 412 }), method: "x" })).toBe(
+      undefined,
+    );
+  });
+});
+
+describe("readHtmlRenderPointerHeld", () => {
+  it("reads only a boolean from a pointer-held notification", () => {
+    const notification = (params: unknown) => ({
+      jsonrpc: "2.0",
+      method: "t3/notifications/pointer-held",
+      params,
+    });
+    expect(readHtmlRenderPointerHeld(notification({ held: true }))).toBe(true);
+    expect(readHtmlRenderPointerHeld(notification({ held: false }))).toBe(false);
+    expect(readHtmlRenderPointerHeld(notification({ held: 1 }))).toBe(undefined);
+    expect(readHtmlRenderPointerHeld(notification(null))).toBe(undefined);
+    expect(readHtmlRenderPointerHeld({ ...notification({ held: true }), method: "x" })).toBe(
       undefined,
     );
   });

@@ -16,6 +16,7 @@ import {
   readHtmlRenderImageRequest,
   readHtmlRenderKeyDown,
   readHtmlRenderLinkRequest,
+  readHtmlRenderPointerHeld,
 } from "@t3tools/shared/htmlRender";
 import {
   isMacPlatform,
@@ -270,12 +271,28 @@ export function HtmlRenderDocument(props: {
     window.addEventListener("message", openImage);
     return () => window.removeEventListener("message", openImage);
   }, []);
-  const { onFullscreenChange } = props;
+  // A press inside the page holds the frame still as full screen does: a
+  // thread following its streaming output would scroll the frame out from
+  // under a drag. A touch press is not yet a user activation, so the hold is
+  // not gated on one; a page can at most pause following and keep its row mounted.
+  const [pointerHeld, setPointerHeld] = useState(false);
   useEffect(() => {
-    if (expandedImage === null) return;
+    const hold = (event: MessageEvent) => {
+      const held = readHtmlRenderPointerHeld(event.data);
+      if (held !== undefined && event.source === frameRef.current?.contentWindow) {
+        setPointerHeld(held);
+      }
+    };
+    window.addEventListener("message", hold);
+    return () => window.removeEventListener("message", hold);
+  }, []);
+  const { onFullscreenChange } = props;
+  const holding = expandedImage !== null || pointerHeld;
+  useEffect(() => {
+    if (!holding) return;
     onFullscreenChange?.(true);
     return () => onFullscreenChange?.(false);
-  }, [expandedImage, onFullscreenChange]);
+  }, [holding, onFullscreenChange]);
   const { onContentHeight } = props;
   // A page posts its height once per change, so listen from the commit that
   // inserts the frame; a passive effect could run after a fast page's first post.
