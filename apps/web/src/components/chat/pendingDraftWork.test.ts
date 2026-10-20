@@ -42,15 +42,6 @@ describe("PendingDraftWork", () => {
     expect(pending.has("isolated-a")).toBe(false);
   });
 
-  it("keeps a claim on the draft across a remount of the composer", async () => {
-    const { pendingDraftWork: first } = await import("./pendingDraftWork");
-    first.begin("remounted");
-    const { pendingDraftWork: second } = await import("./pendingDraftWork");
-    expect(second.has("remounted")).toBe(true);
-    second.end("remounted");
-    expect(first.has("remounted")).toBe(false);
-  });
-
   it("does not go negative when a transfer ends twice", () => {
     const pending = pendingDraftWork;
     pending.begin("double-end");

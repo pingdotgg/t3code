@@ -90,7 +90,7 @@ describe("shared mobile pending move", () => {
     expect(getPendingThreadOrder()).toBeNull();
   });
 
-  it.each(["failure", "interruption"])("releases a %s without restoring old canonical keys", () => {
+  it("releases a cancelled move without restoring old canonical keys", () => {
     const { start, upsert } = fixture();
     const move = start();
     upsert("b", "aa");

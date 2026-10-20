@@ -70,13 +70,14 @@ describe("makeWorkspaceFileDropHandlers", () => {
 
   it("forwards dropped files and clears the active state", () => {
     const file = new File(["contents"], "example.txt", { type: "text/plain" });
-    const { host, setDragActive, addFiles } = makeHost();
+    const { host, setDragActive, addFiles, addFolders } = makeHost();
     const { event } = makeDragEvent({ files: [file] });
 
     makeWorkspaceFileDropHandlers(host).onDrop(event);
 
     expect(setDragActive).toHaveBeenCalledWith(false);
     expect(addFiles).toHaveBeenCalledWith([file]);
+    expect(addFolders).not.toHaveBeenCalled();
   });
 
   it("routes mixed drops to files and folders", () => {
@@ -119,16 +120,5 @@ describe("makeWorkspaceFileDropHandlers", () => {
 
     expect(addFiles).not.toHaveBeenCalled();
     expect(addFolders).toHaveBeenCalledWith([folder]);
-  });
-
-  it("uses files when the browser does not expose drag items", () => {
-    const file = new File(["contents"], "example.txt", { type: "text/plain" });
-    const { host, addFiles, addFolders } = makeHost();
-    const { event } = makeDragEvent({ files: [file] });
-
-    makeWorkspaceFileDropHandlers(host).onDrop(event);
-
-    expect(addFiles).toHaveBeenCalledWith([file]);
-    expect(addFolders).not.toHaveBeenCalled();
   });
 });

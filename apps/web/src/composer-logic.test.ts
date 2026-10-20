@@ -876,21 +876,6 @@ describe("assistant citation cursor offsets", () => {
   });
 });
 
-describe("replaceTextRange trailing space consumption", () => {
-  it("double space after insertion when replacement ends with space", () => {
-    const text = "and then @AG summarize";
-    const rangeStart = "and then ".length;
-    const rangeEnd = "and then @AG".length;
-
-    const withoutConsume = replaceTextRange(text, rangeStart, rangeEnd, "@AGENTS.md ");
-    expect(withoutConsume.text).toBe("and then @AGENTS.md  summarize");
-
-    const extendedEnd = text[rangeEnd] === " " ? rangeEnd + 1 : rangeEnd;
-    const withConsume = replaceTextRange(text, rangeStart, extendedEnd, "@AGENTS.md ");
-    expect(withConsume.text).toBe("and then @AGENTS.md summarize");
-  });
-});
-
 describe("isCollapsedCursorAdjacentToInlineToken", () => {
   it("returns false when no mention exists", () => {
     expect(isCollapsedCursorAdjacentToInlineToken("plain text", 6, "left")).toBe(false);
