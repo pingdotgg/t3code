@@ -1,6 +1,13 @@
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { CommandId, type Project, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  CommandId,
+  type Project,
+  ProjectId,
+  type ProjectScript,
+  ProviderInstanceId,
+  ServerSettingsError,
+} from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -11,7 +18,9 @@ import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
+import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as LegacyV1ThreadImporter from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -25,6 +34,14 @@ import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
 import * as ProjectService from "./ProjectService.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
+
+const script = (id: string): ProjectScript => ({
+  id,
+  name: id,
+  command: `run ${id}`,
+  icon: "play",
+  runOnWorktreeCreate: false,
+});
 
 const layerWorkspacePaths = Layer.succeed(WorkspacePaths.WorkspacePaths, {
   normalizeWorkspaceRoot: (workspaceRoot) => Effect.succeed(workspaceRoot.replace(/\/$/, "")),
@@ -56,13 +73,16 @@ const layerTestFor = (
     | ProjectFaviconResolver.ProjectFaviconResolver
     | RepositoryIdentityResolver.RepositoryIdentityResolver
   >,
+  settings?: Parameters<typeof ServerSettings.layerTest>[0],
 ) =>
   RuntimeLayer.layerProjectService.pipe(
     Layer.provideMerge(ProjectEnrichmentService.layer),
     Layer.provideMerge(layerWorkspacePaths),
     Layer.provideMerge(projectMetadataLayer),
     Layer.provideMerge(SqlitePersistence.layerMemory),
-    Layer.provideMerge(ServerSettings.layerTest()),
+    Layer.provideMerge(
+      ServerSettings.layerTest(settings).pipe(Layer.provide(SqlitePersistence.layerMemory)),
+    ),
     Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "project-service-test-" })),
     Layer.provide(NodeServices.layer),
   );
@@ -71,6 +91,7 @@ const layerTest = layerTestFor(layerMetadata);
 
 const layerProjectServiceDependencies = Layer.mergeAll(
   RuntimeLayer.layerEventSink,
+  CommandReceiptStore.layer,
   ProjectStore.layer,
   ProjectionStore.layer,
   IdAllocator.layer,
@@ -81,7 +102,11 @@ const layerProjectServiceDependencies = Layer.mergeAll(
   Layer.provideMerge(layerWorkspacePaths),
   Layer.provideMerge(layerMetadata),
   Layer.provideMerge(SqlitePersistence.layerMemory),
-  Layer.provideMerge(ServerSettings.layerTest()),
+  Layer.provideMerge(
+    ServerSettings.layerTest({ projectSettingsFolded: true }).pipe(
+      Layer.provide(SqlitePersistence.layerMemory),
+    ),
+  ),
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "project-service-race-" })),
   Layer.provide(NodeServices.layer),
 );
@@ -203,6 +228,39 @@ it.layer(layerTest)("ProjectService", (it) => {
     }),
   );
 
+  it.effect("clears a row's legacy model and thread mode before settings are folded", () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const sql = yield* SqlClient.SqlClient;
+      const projectId = ProjectId.make("project:unfolded-reset");
+      yield* service.create({
+        commandId: CommandId.make("command:unfolded-reset:create"),
+        projectId,
+        title: "Unfolded reset",
+        workspaceRoot: "/work/unfolded-reset",
+      });
+      yield* sql`
+        UPDATE projection_projects
+        SET default_model_selection_json = ${JSON.stringify({ instanceId: "codex", model: "gpt-5.5" })},
+          default_thread_env_mode = 'worktree'
+        WHERE project_id = ${projectId}
+      `;
+      assert.equal(
+        Option.getOrThrow(yield* service.getById(projectId)).defaultThreadEnvMode,
+        "worktree",
+      );
+
+      const reset = yield* service.update({
+        commandId: CommandId.make("command:unfolded-reset:reset"),
+        projectId,
+        defaultModelSelection: null,
+        defaultThreadEnvMode: null,
+      });
+      assert.isNull(reset.defaultModelSelection);
+      assert.isNull(reset.defaultThreadEnvMode);
+    }),
+  );
+
   it.effect("rejects active workspace collisions", () =>
     Effect.gen(function* () {
       const service = yield* ProjectService.ProjectService;
@@ -307,27 +365,19 @@ it.layer(layerTest)("ProjectService", (it) => {
         workspaceRoot: "/work/rejected",
       });
       const invalid = {
-        commandId: CommandId.make("command:rejected:script"),
+        commandId: CommandId.make("command:rejected:icon"),
         projectId,
-        scripts: [
-          {
-            id: "Not.Valid",
-            name: "Invalid",
-            command: "true",
-            icon: "play" as const,
-            runOnWorktreeCreate: false,
-          },
-        ],
+        projectIcon: { kind: "monogram" as const, text: "ABC", color: "violet" as const },
       };
       const first = yield* service.update(invalid).pipe(Effect.flip);
       assert.equal(first._tag, "ProjectOperationError");
       const replayed = yield* service
-        .update({ ...invalid, scripts: [{ ...invalid.scripts[0]!, id: "valid" }] })
+        .update({ ...invalid, projectIcon: { ...invalid.projectIcon, text: "AB" } })
         .pipe(Effect.flip);
       assert.equal(replayed._tag, "ProjectOperationError");
       assert.include(
         String(replayed._tag === "ProjectOperationError" && replayed.cause),
-        "Script ID",
+        "monograms",
       );
       const receipts = yield* sql<{ readonly status: string; readonly aggregate_id: string }>`
         SELECT status, aggregate_id FROM orchestration_command_receipts
@@ -338,7 +388,7 @@ it.layer(layerTest)("ProjectService", (it) => {
         SELECT sequence FROM orchestration_events WHERE command_id = ${invalid.commandId}
       `;
       assert.deepEqual(events, []);
-      assert.deepEqual(Option.getOrThrow(yield* service.getById(projectId)).scripts, []);
+      assert.isNull(Option.getOrThrow(yield* service.getById(projectId)).projectIcon);
     }),
   );
 
@@ -416,7 +466,11 @@ it.layer(layerTest)("ProjectService", (it) => {
       });
       const input = { commandId: CommandId.make("command:delete-retry:delete"), projectId };
       const deleted = yield* service.delete(input);
-      assert.deepEqual(yield* service.delete(input), deleted);
+      const retried = yield* service.delete(input);
+      assert.deepEqual(
+        { ...retried, repositoryIdentity: null, faviconPath: null },
+        { ...deleted, repositoryIdentity: null, faviconPath: null },
+      );
       const events = yield* sql<{ readonly command_id: string }>`
         SELECT command_id FROM orchestration_events
         WHERE stream_id = ${projectId} AND event_type = 'project.deleted'
@@ -485,6 +539,171 @@ it.layer(layerTest)("ProjectService", (it) => {
     }),
   );
 });
+
+it.layer(layerTestFor(layerMetadata, { projectSettingsFolded: true }))(
+  "ProjectService with folded project settings",
+  (it) => {
+    const createProject = (service: ProjectService.ProjectService["Service"], name: string) =>
+      service.create({
+        commandId: CommandId.make(`command:${name}:create`),
+        projectId: ProjectId.make(`project:${name}`),
+        title: name,
+        workspaceRoot: `/work/${name}`,
+      });
+
+    it.effect("saves and clears the defaults used by project reads and new threads", () =>
+      Effect.gen(function* () {
+        const service = yield* ProjectService.ProjectService;
+        const settings = yield* ServerSettings.ServerSettingsService;
+        const projectId = ProjectId.make("project:folded");
+        const model = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.5" };
+        const environmentModel = { ...model, model: "gpt-5.6-sol" };
+        yield* settings.updateSettings({
+          defaultModelSelection: environmentModel,
+          defaultThreadEnvMode: "local",
+          projectSettingsOverrides: { [projectId]: { enableAgentBrowserAccess: true } },
+        });
+        const created = yield* service.create({
+          commandId: CommandId.make("command:folded:create"),
+          projectId,
+          title: "Folded",
+          workspaceRoot: "/work/folded",
+          defaultModelSelection: model,
+          scripts: [script("setup")],
+        });
+        assert.deepInclude(created, { defaultModelSelection: model, scripts: [script("setup")] });
+        assert.deepEqual((yield* settings.getSettings).projectSettingsOverrides[projectId], {
+          enableAgentBrowserAccess: true,
+          defaultModelSelection: model,
+          defaultProjectScripts: [script("setup")],
+        });
+
+        const updated = yield* service.update({
+          commandId: CommandId.make("command:folded:update"),
+          projectId,
+          scripts: [script("check")],
+          defaultModelSelection: environmentModel,
+          defaultThreadEnvMode: "worktree",
+          autoPull: true,
+        });
+        assert.deepEqual((yield* settings.getSettings).projectSettingsOverrides[projectId], {
+          enableAgentBrowserAccess: true,
+          defaultModelSelection: environmentModel,
+          defaultProjectScripts: [script("check")],
+          defaultThreadEnvMode: "worktree",
+          defaultAutoPull: true,
+        });
+        const expected = {
+          defaultModelSelection: environmentModel,
+          scripts: [script("check")],
+          defaultThreadEnvMode: "worktree" as const,
+          autoPull: true,
+        };
+        for (const project of [
+          updated,
+          Option.getOrThrow(yield* service.getById(projectId)),
+          (yield* service.snapshot).projects.find((project) => project.id === projectId),
+        ])
+          assert.deepInclude(project, expected);
+
+        const cleared = yield* service.update({
+          commandId: CommandId.make("command:folded:clear"),
+          projectId,
+          defaultModelSelection: null,
+          defaultThreadEnvMode: null,
+          scripts: [],
+          autoPull: false,
+        });
+        assert.deepEqual((yield* settings.getSettings).projectSettingsOverrides[projectId], {
+          enableAgentBrowserAccess: true,
+          defaultProjectScripts: [],
+          defaultAutoPull: false,
+        });
+        assert.deepInclude(cleared, {
+          defaultModelSelection: environmentModel,
+          defaultThreadEnvMode: "local",
+          scripts: [],
+          autoPull: false,
+        });
+      }),
+    );
+
+    it.effect("validates new script IDs while keeping legacy scripts editable and removable", () =>
+      Effect.gen(function* () {
+        const service = yield* ProjectService.ProjectService;
+        const settings = yield* ServerSettings.ServerSettingsService;
+        const project = yield* createProject(service, "script-ids");
+        for (const id of [
+          "install-javascript-dependencies",
+          "A",
+          "a.b",
+          "a b",
+          "-a",
+          "a".repeat(25),
+        ]) {
+          const error = yield* service
+            .update({
+              commandId: CommandId.make(`command:script-ids:${id}`),
+              projectId: project.id,
+              scripts: [script("lint"), script(id)],
+            })
+            .pipe(Effect.flip);
+          assert.instanceOf(error, ProjectService.ProjectScriptIdError);
+          assert.include(error.message, "Script IDs must be 1-24");
+        }
+        assert.isUndefined((yield* settings.getSettings).projectSettingsOverrides[project.id]);
+
+        const longest = yield* service.update({
+          commandId: CommandId.make("command:script-ids:longest"),
+          projectId: project.id,
+          scripts: [script("a".repeat(24))],
+        });
+        assert.deepEqual(longest.scripts, [script("a".repeat(24))]);
+        const legacy = script("install-javascript-dependencies");
+        yield* settings.updateSettings({
+          projectSettingsOverrides: { [project.id]: { defaultProjectScripts: [legacy] } },
+        });
+        const update = (scripts: ReadonlyArray<ProjectScript>, suffix: string) =>
+          service.update({
+            commandId: CommandId.make(`command:legacy-script:${suffix}`),
+            projectId: project.id,
+            scripts,
+          });
+
+        const edited = [{ ...legacy, command: "vp install" }, script("lint")];
+        assert.deepEqual((yield* update(edited, "edit")).scripts, edited);
+        assert.instanceOf(
+          yield* update([...edited, script("another.invalid.id")], "invalid").pipe(Effect.flip),
+          ProjectService.ProjectScriptIdError,
+        );
+        assert.deepEqual((yield* update([], "remove")).scripts, []);
+      }),
+    );
+
+    it.effect("does not bring back a deleted project's settings when its create is retried", () =>
+      Effect.gen(function* () {
+        const service = yield* ProjectService.ProjectService;
+        const settings = yield* ServerSettings.ServerSettingsService;
+        const input = {
+          commandId: CommandId.make("command:retried-create:create"),
+          projectId: ProjectId.make("project:retried-create"),
+          title: "Retried create",
+          workspaceRoot: "/work/retried-create",
+          scripts: [script("setup")],
+        };
+        yield* service.create(input);
+        yield* service.delete({
+          commandId: CommandId.make("command:retried-create:delete"),
+          projectId: input.projectId,
+        });
+
+        const replayed = yield* service.create(input);
+        assert.isNotNull(replayed.deletedAt);
+        assert.isUndefined((yield* settings.getSettings).projectSettingsOverrides[input.projectId]);
+      }),
+    );
+  },
+);
 
 it.effect(
   "returns project mutations before slow enrichment and shares the eventual result across reads",
@@ -795,5 +1014,284 @@ it.effect("rejects an update that waited on the lock while its project was delet
       Option.getOrThrow(yield* service.getById(projectId, { includeDeleted: true })).title,
       "Update race",
     );
+  }).pipe(Effect.provide(layerProjectServiceDependencies)),
+);
+
+it.effect("finishes an update's settings write before a delete cleans the project up", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:settings-race");
+    const eventSink = yield* EventSink.EventSinkV2;
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const deleteCommitted = yield* Ref.make(false);
+    const updateReachedSettings = yield* Deferred.make<void>();
+    const releaseUpdate = yield* Deferred.make<void>();
+    const gatedSink = EventSink.EventSinkV2.of({
+      ...eventSink,
+      commitProjectCommand: (input) =>
+        eventSink
+          .commitProjectCommand(input)
+          .pipe(
+            Effect.tap(() =>
+              input.commandType === "project.delete" ? Ref.set(deleteCommitted, true) : Effect.void,
+            ),
+          ),
+    });
+    const gatedSettings = ServerSettings.ServerSettingsService.of({
+      ...settings,
+      syncProjectSettings: Deferred.succeed(updateReachedSettings, undefined).pipe(
+        Effect.andThen(Deferred.await(releaseUpdate)),
+        Effect.andThen(settings.syncProjectSettings),
+      ),
+    });
+    const service = yield* ProjectService.make.pipe(
+      Effect.provideService(EventSink.EventSinkV2, gatedSink),
+      Effect.provideService(ServerSettings.ServerSettingsService, gatedSettings),
+    );
+    yield* service.create({
+      commandId: CommandId.make("command:settings-race:create"),
+      projectId,
+      title: "Settings race",
+      workspaceRoot: "/work/settings-race",
+    });
+
+    const update = yield* service
+      .update({
+        commandId: CommandId.make("command:settings-race:update"),
+        projectId,
+        autoPull: true,
+      })
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    yield* Deferred.await(updateReachedSettings);
+    const deletion = yield* service
+      .delete({ commandId: CommandId.make("command:settings-race:delete"), projectId })
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    yield* Effect.yieldNow;
+    assert.isFalse(yield* Ref.get(deleteCommitted));
+
+    yield* Deferred.succeed(releaseUpdate, undefined);
+    assert.isTrue((yield* Fiber.join(update)).autoPull);
+    assert.isNotNull((yield* Fiber.join(deletion)).deletedAt);
+    assert.isUndefined((yield* settings.getSettings).projectSettingsOverrides[projectId]);
+  }).pipe(Effect.provide(layerProjectServiceDependencies)),
+);
+
+it.effect(
+  "keeps accepted settings visible when an update is cancelled waiting for the settings permit",
+  () =>
+    Effect.gen(function* () {
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+      const syncStarted = yield* Deferred.make<void>();
+      const snapshotHeld = yield* Deferred.make<void>();
+      const releaseSnapshot = yield* Deferred.make<void>();
+      const service = yield* ProjectService.make.pipe(
+        Effect.provideService(ServerSettings.ServerSettingsService, {
+          ...settings,
+          syncProjectSettings: Deferred.succeed(syncStarted, undefined).pipe(
+            Effect.andThen(settings.syncProjectSettings),
+          ),
+        }),
+      );
+      const projectId = ProjectId.make("project:cancelled-settings");
+      yield* service.create({
+        commandId: CommandId.make("command:cancelled-settings:create"),
+        projectId,
+        title: "Cancelled settings",
+        workspaceRoot: "/work/cancelled-settings",
+      });
+      const warm = yield* settings.getSettings;
+      assert.isUndefined(warm.projectSettingsOverrides[projectId]);
+      const snapshot = yield* settings
+        .withSettingsSnapshot(() =>
+          Deferred.succeed(snapshotHeld, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseSnapshot)),
+          ),
+        )
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(snapshotHeld);
+
+      const input = {
+        commandId: CommandId.make("command:cancelled-settings:update"),
+        projectId,
+        autoPull: true,
+        defaultThreadEnvMode: "worktree" as const,
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "accepted-model",
+        },
+        scripts: [script("setup")],
+      };
+      const update = yield* service
+        .update(input)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(syncStarted);
+      const receipt = Option.getOrThrow(yield* receipts.getProjectByCommandId(input.commandId));
+      assert.equal(receipt.status, "accepted");
+      assert.equal(receipt.projectId, projectId);
+      assert.equal(receipt.commandType, "project.meta.update");
+      assert.strictEqual(
+        (yield* settings.getSettings).projectSettingsOverrides,
+        warm.projectSettingsOverrides,
+      );
+
+      // Start cancellation before releasing the permit; joining first would block a protected save.
+      const cancellation = yield* Fiber.interrupt(update).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Deferred.succeed(releaseSnapshot, undefined);
+      yield* Fiber.join(snapshot);
+      yield* Fiber.join(cancellation);
+
+      const after = yield* settings.getSettings;
+      const project = Option.getOrThrow(yield* service.getById(projectId));
+      assert.deepEqual(
+        {
+          override: after.projectSettingsOverrides[projectId],
+          project: {
+            autoPull: project.autoPull,
+            defaultThreadEnvMode: project.defaultThreadEnvMode,
+            defaultModelSelection: project.defaultModelSelection,
+            scripts: project.scripts,
+          },
+        },
+        {
+          override: {
+            defaultAutoPull: input.autoPull,
+            defaultThreadEnvMode: input.defaultThreadEnvMode,
+            defaultModelSelection: input.defaultModelSelection,
+            defaultProjectScripts: input.scripts,
+          },
+          project: {
+            autoPull: input.autoPull,
+            defaultThreadEnvMode: input.defaultThreadEnvMode,
+            defaultModelSelection: input.defaultModelSelection,
+            scripts: input.scripts,
+          },
+        },
+      );
+    }).pipe(
+      Effect.provide(
+        ServerSettings.layer.pipe(
+          Layer.provide(ServerSecretStore.layer),
+          Layer.provide(
+            ServerConfig.layerTest(process.cwd(), { prefix: "project-settings-cancel-" }),
+          ),
+          Layer.provideMerge(layerProjectServiceDependencies),
+          Layer.provide(NodeServices.layer),
+        ),
+      ),
+    ),
+);
+
+it.effect.each(["create", "update"] as const)(
+  "retries an accepted %s after a failed settings save despite invalid changed scripts",
+  (operation) =>
+    Effect.gen(function* () {
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const writeError = new ServerSettingsError({
+        operation: "write-file",
+        settingsPath: "/test/settings.json",
+        cause: "disk full",
+      });
+      const failingService = yield* ProjectService.make.pipe(
+        Effect.provideService(ServerSettings.ServerSettingsService, {
+          ...settings,
+          syncProjectSettings: Effect.fail(writeError),
+        }),
+      );
+      const projectId = ProjectId.make("project:failed-settings");
+      const create = {
+        commandId: CommandId.make("command:failed-settings:create"),
+        projectId,
+        title: "Failed settings",
+        workspaceRoot: "/work/failed-settings",
+        defaultModelSelection: null,
+      };
+      if (operation === "update") {
+        assert.isNull((yield* failingService.create(create)).defaultModelSelection);
+      }
+      const input = {
+        ...create,
+        commandId: CommandId.make(`command:failed-settings:${operation}`),
+        ...(operation === "update" ? { autoPull: true } : {}),
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "accepted-model",
+        },
+        scripts: [script("setup")],
+      };
+      assert.instanceOf(
+        yield* failingService[operation](input).pipe(Effect.flip),
+        ProjectService.ProjectOperationError,
+      );
+      assert.isUndefined((yield* settings.getSettings).projectSettingsOverrides[projectId]);
+
+      const restarted = yield* ProjectService.make;
+      const retried = yield* restarted[operation]({
+        ...input,
+        ...(operation === "update" ? { autoPull: false } : {}),
+        defaultModelSelection: { ...input.defaultModelSelection, model: "changed-model" },
+        scripts: [script("invalid script id")],
+      });
+      if (operation === "update") assert.isTrue(retried.autoPull);
+      assert.deepEqual(retried.defaultModelSelection, input.defaultModelSelection);
+      assert.deepEqual(retried.scripts, input.scripts);
+      assert.deepEqual((yield* settings.getSettings).projectSettingsOverrides[projectId], {
+        ...(operation === "update" ? { defaultAutoPull: true } : {}),
+        defaultModelSelection: input.defaultModelSelection,
+        defaultProjectScripts: input.scripts,
+      });
+    }).pipe(Effect.provide(layerProjectServiceDependencies)),
+);
+
+it.effect("accepted create and update retries preserve newer service and UI settings", () =>
+  Effect.gen(function* () {
+    const service = yield* ProjectService.make;
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const projectId = ProjectId.make("project:stale-retry");
+    const create = {
+      commandId: CommandId.make("command:stale-retry:create"),
+      projectId,
+      title: "Stale retry",
+      workspaceRoot: "/work/stale-retry",
+      scripts: [{ ...script("setup"), runOnWorktreeCreate: true }],
+      defaultModelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.5" },
+    };
+    yield* service.create(create);
+    const update = {
+      commandId: CommandId.make("command:stale-retry:update"),
+      projectId,
+      scripts: create.scripts,
+      defaultModelSelection: create.defaultModelSelection,
+      defaultThreadEnvMode: "worktree" as const,
+      autoPull: true,
+    };
+    yield* service.update(update);
+    yield* service.update({
+      commandId: CommandId.make("command:stale-retry:clear"),
+      projectId,
+      scripts: [],
+      defaultModelSelection: null,
+      defaultThreadEnvMode: null,
+      autoPull: false,
+    });
+    const newer = (yield* settings.getSettings).projectSettingsOverrides[projectId]!;
+    const restarted = yield* ProjectService.make;
+    const retriedCreate = yield* restarted.create(create);
+    const afterCreateRetry = (yield* settings.getSettings).projectSettingsOverrides[projectId];
+    yield* settings.updateSettings({ projectSettingsOverrides: { [projectId]: newer } });
+    const retriedUpdate = yield* restarted.update(update);
+    assert.deepEqual(
+      [afterCreateRetry, (yield* settings.getSettings).projectSettingsOverrides[projectId]],
+      [newer, newer],
+    );
+    for (const project of [retriedCreate, retriedUpdate]) {
+      assert.deepInclude(project, {
+        scripts: [],
+        defaultModelSelection: null,
+        defaultThreadEnvMode: null,
+        autoPull: false,
+      });
+    }
   }).pipe(Effect.provide(layerProjectServiceDependencies)),
 );

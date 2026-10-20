@@ -15,6 +15,8 @@ import { ProjectToolkit } from "./tools.ts";
 
 function projectFailure(error: Project.ProjectServiceError) {
   if (error._tag === "ProjectOperationError") return unavailable();
+  if (error._tag === "ProjectScriptIdError")
+    return new OrchestratorMcpFailure({ code: "invalid_request", message: error.message });
   const message =
     error._tag === "ProjectNotFoundError"
       ? "The project was not found."
@@ -208,8 +210,8 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
     Effect.gen(function* () {
       const projects = yield* Project.ProjectService;
       if (workspaceRoot === undefined) {
-        // Project creation records no model default (only an update does), so
-        // reject what this mode would otherwise drop silently.
+        // A named project is made from its title alone, so reject what this
+        // mode would otherwise drop silently.
         if (
           input.scripts !== undefined ||
           input.createWorkspaceRootIfMissing !== undefined ||

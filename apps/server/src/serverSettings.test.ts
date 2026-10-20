@@ -1,5 +1,8 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  type ApplicationEventMetadata,
+  CommandId,
+  EventId,
   DEFAULT_SERVER_SETTINGS,
   ModelSelection,
   ProjectId,
@@ -13,6 +16,7 @@ import {
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { assert, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
@@ -23,6 +27,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -30,6 +35,10 @@ import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import { sourceControlHostSecretName } from "./sourceControl/sourceControlHostSecrets.ts";
 import * as ServerConfig from "./config.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
+import * as EventSink from "./orchestration-v2/EventSink.ts";
+import * as RuntimeLayer from "./orchestration-v2/runtimeLayer.ts";
+import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
+import { planProjectCommand, type ProjectCommand } from "./orchestration-v2/ProjectCommands.ts";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as ServerSettingsModule from "./serverSettings.ts";
 import { resolveProviderInstanceTerminalEnvironment } from "./terminal/Manager.ts";
@@ -63,6 +72,41 @@ const layerServerSettingsWithSecrets = () =>
       ),
     ),
   );
+
+const layerProjectJournal = () =>
+  Layer.merge(RuntimeLayer.layerEventSink, ProjectStore.layer).pipe(
+    Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
+    Layer.provideMerge(
+      Layer.fresh(ServerConfig.layerTest(process.cwd(), { prefix: "project-settings-journal-" })),
+    ),
+  );
+
+const acceptProjectSettings = Effect.fn("ServerSettingsTest.acceptProjectSettings")(function* (
+  command: ProjectCommand,
+  settings: NonNullable<ApplicationEventMetadata["projectSettings"]>,
+) {
+  const sink = yield* EventSink.EventSinkV2;
+  const projects = yield* ProjectStore.ProjectStoreV2;
+  const now = yield* DateTime.now;
+  const event = Result.getOrThrow(
+    planProjectCommand({
+      command,
+      now,
+      eventId: EventId.make(`${command.commandId}:event`),
+      state: {
+        project: Option.getOrUndefined(yield* projects.get(command.projectId)),
+        workspaceOwner: undefined,
+      },
+    }),
+  );
+  return yield* sink.commitProjectCommand({
+    commandId: command.commandId,
+    projectId: command.projectId,
+    commandType: command.type,
+    acceptedAt: now,
+    event: { ...event, metadata: { projectSettings: settings } },
+  });
+});
 
 const layerFailingSecretStore = (cause: ServerSecretStore.SecretStoreError) =>
   Layer.succeed(
@@ -129,6 +173,274 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       ]);
       assert.deepEqual(settings.providerModelPreferences?.[provider]?.modelOrder, ["luna", "sol"]);
     }).pipe(Effect.provide(layerServerSettings())),
+  );
+  it.effect("serializes pending project defaults with concurrent settings edits", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const projectId = ProjectId.make("project:concurrent-override");
+      yield* service.updateSettings({
+        projectSettingsOverrides: { [projectId]: { defaultAutoPull: true } },
+      });
+      const scripts = [
+        { id: "a", name: "a", command: "a", icon: "play" as const, runOnWorktreeCreate: false },
+      ];
+      yield* acceptProjectSettings(
+        {
+          type: "project.create",
+          commandId: CommandId.make("command:concurrent:create"),
+          projectId,
+          title: "Concurrent",
+          workspaceRoot: "/work/concurrent",
+        },
+        { scripts },
+      );
+      yield* acceptProjectSettings(
+        {
+          type: "project.meta.update",
+          commandId: CommandId.make("command:concurrent:update"),
+          projectId,
+        },
+        { defaultThreadEnvMode: "worktree" },
+      );
+      const otherId = ProjectId.make("project:other");
+      yield* Effect.all(
+        [
+          service.syncProjectSettings,
+          service.updateSettings({
+            projectSettingsOverrides: { [otherId]: { defaultAutoPull: false } },
+          }),
+        ],
+        { concurrency: "unbounded" },
+      );
+      const settings = yield* service.getSettings;
+      assert.deepEqual(settings.projectSettingsOverrides[projectId], {
+        defaultAutoPull: true,
+        defaultProjectScripts: scripts,
+        defaultThreadEnvMode: "worktree",
+      });
+      assert.deepEqual(settings.projectSettingsOverrides[otherId], { defaultAutoPull: false });
+      yield* service.updateSettings({ projectSettingsOverrides: { [projectId]: null } });
+      yield* service.syncProjectSettings;
+      assert.isUndefined((yield* service.getSettings).projectSettingsOverrides[projectId]);
+    }).pipe(
+      Effect.provide(
+        ServerSettingsModule.layer.pipe(
+          Layer.provide(ServerSecretStore.layer),
+          Layer.provideMerge(layerProjectJournal()),
+        ),
+      ),
+    ),
+  );
+  it.effect("recovers accepted project settings across disk failures and restarts", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const config = yield* ServerConfig.ServerConfig;
+      const projectId = ProjectId.make("project:durable-settings");
+      const layerSettings = ServerSettingsModule.layer.pipe(Layer.provide(ServerSecretStore.layer));
+      const read = ServerSettingsModule.ServerSettingsService.pipe(
+        Effect.flatMap((service) => service.getSettings),
+      );
+      yield* ServerSettingsModule.ServerSettingsService.pipe(
+        Effect.flatMap((service) => service.updateSettings({ defaultAutoPull: false })),
+        Effect.provide(Layer.fresh(layerSettings)),
+      );
+      yield* acceptProjectSettings(
+        {
+          type: "project.create",
+          commandId: CommandId.make("command:durable-settings:create"),
+          projectId,
+          title: "Durable",
+          workspaceRoot: "/work/durable",
+        },
+        { autoPull: true, defaultThreadEnvMode: "worktree" },
+      );
+      const error = PlatformError.systemError({
+        _tag: "PermissionDenied",
+        module: "FileSystem",
+        method: "rename",
+        description: "Forced settings write failure.",
+      });
+      const failingFs = FileSystem.FileSystem.of({
+        ...fs,
+        rename: (from, to) =>
+          to === config.settingsPath ? Effect.fail(error) : fs.rename(from, to),
+      });
+      const pending = yield* read.pipe(
+        Effect.provide(
+          Layer.fresh(layerSettings).pipe(
+            Layer.provide(Layer.succeed(FileSystem.FileSystem, failingFs)),
+          ),
+        ),
+      );
+      assert.deepEqual(pending.projectSettingsOverrides[projectId], {
+        defaultAutoPull: true,
+        defaultThreadEnvMode: "worktree",
+      });
+      const beforeRetry = yield* decodeServerSettingsJson(
+        yield* fs.readFileString(config.settingsPath),
+      );
+      assert.isUndefined(beforeRetry.projectSettingsOverrides[projectId]);
+      const recovered = yield* read.pipe(Effect.provide(Layer.fresh(layerSettings)));
+      assert.deepEqual(recovered.projectSettingsOverrides[projectId], {
+        defaultAutoPull: true,
+        defaultThreadEnvMode: "worktree",
+      });
+      const newer = { defaultAutoPull: false, defaultThreadEnvMode: "local" as const };
+      yield* ServerSettingsModule.ServerSettingsService.pipe(
+        Effect.flatMap((service) =>
+          service.updateSettings({ projectSettingsOverrides: { [projectId]: newer } }),
+        ),
+        Effect.provide(Layer.fresh(layerSettings)),
+      );
+      // Older servers and shared dotfiles preserve user settings without a local replay cursor.
+      yield* fs.writeFileString(
+        config.settingsPath,
+        JSON.stringify({
+          projectSettingsFolded: true,
+          projectSettingsOverrides: { [projectId]: newer },
+        }),
+      );
+      const afterRestart = yield* ServerSettingsModule.ServerSettingsService.pipe(
+        Effect.flatMap((service) => service.syncProjectSettings),
+        Effect.provide(Layer.fresh(layerSettings)),
+      );
+      assert.deepEqual(afterRestart.projectSettingsOverrides[projectId], newer);
+      yield* ServerSettingsModule.ServerSettingsService.pipe(
+        Effect.flatMap((service) =>
+          service.updateSettings({ projectSettingsOverrides: { [projectId]: null } }),
+        ),
+        Effect.provide(Layer.fresh(layerSettings)),
+      );
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`
+          INSERT INTO orchestration_events (
+            event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at,
+            actor_kind, payload_json, metadata_json
+          ) VALUES (
+            'event:unrelated-thread', 'thread', 'thread:unrelated', 1, 'thread.deleted',
+            '2026-10-19T00:00:00.000Z', 'system',
+            '{"threadId":"thread:unrelated","deletedAt":"2026-10-19T00:00:00.000Z"}', '{}'
+          )
+        `;
+      const unchanged = yield* read.pipe(
+        Effect.provide(
+          Layer.fresh(layerSettings).pipe(
+            Layer.provide(Layer.succeed(FileSystem.FileSystem, failingFs)),
+          ),
+        ),
+      );
+      assert.isUndefined(unchanged.projectSettingsOverrides[projectId]);
+    }).pipe(Effect.provide(layerProjectJournal())),
+  );
+  it.effect("preserves newer UI settings across interrupted project settings replay", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const sql = yield* SqlClient.SqlClient;
+      const config = yield* ServerConfig.ServerConfig;
+      const projectId = ProjectId.make("project:interrupted-settings");
+      const layerSettings = ServerSettingsModule.layer.pipe(Layer.provide(ServerSecretStore.layer));
+      const read = ServerSettingsModule.ServerSettingsService.pipe(
+        Effect.flatMap((service) => service.getSettings),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        yield* service.getSettings;
+        yield* acceptProjectSettings(
+          {
+            type: "project.create",
+            commandId: CommandId.make("command:interrupted-settings:create"),
+            projectId,
+            title: "Interrupted",
+            workspaceRoot: "/work/interrupted",
+          },
+          { autoPull: true },
+        );
+        // Fail the durable progress write without mocking SQL reads or the replay itself.
+        yield* sql`
+          CREATE TRIGGER fail_settings_cursor_insert
+          BEFORE INSERT ON orchestration_v2_projection_metadata
+          WHEN NEW.projection_name = 'project-settings'
+          BEGIN SELECT RAISE(ABORT, 'Forced settings cursor write failure'); END
+        `;
+        yield* sql`
+          CREATE TRIGGER fail_settings_cursor_update
+          BEFORE UPDATE ON orchestration_v2_projection_metadata
+          WHEN NEW.projection_name = 'project-settings'
+          BEGIN SELECT RAISE(ABORT, 'Forced settings cursor write failure'); END
+        `;
+        const failed = yield* service
+          .updateSettings({
+            projectSettingsOverrides: { [projectId]: { defaultAutoPull: false } },
+          })
+          .pipe(Effect.result);
+        const saved = yield* decodeServerSettingsJson(
+          yield* fs.readFileString(config.settingsPath),
+        );
+        assert.deepEqual(saved.projectSettingsOverrides[projectId], { defaultAutoPull: true });
+        assert.equal(failed._tag, "Failure");
+        yield* sql`DROP TRIGGER fail_settings_cursor_insert`;
+        yield* sql`DROP TRIGGER fail_settings_cursor_update`;
+        assert.deepEqual((yield* service.getSettings).projectSettingsOverrides[projectId], {
+          defaultAutoPull: true,
+        });
+      }).pipe(Effect.provide(Layer.fresh(layerSettings)));
+      const recovered = yield* read.pipe(Effect.provide(Layer.fresh(layerSettings)));
+      assert.deepEqual(recovered.projectSettingsOverrides[projectId], { defaultAutoPull: true });
+
+      const newer = { defaultAutoPull: false, defaultThreadEnvMode: "local" as const };
+      const failingFs = FileSystem.FileSystem.of({
+        ...fs,
+        rename: (from, to) =>
+          Effect.gen(function* () {
+            yield* fs.rename(from, to);
+            if (to !== config.settingsPath) return;
+            const saved = yield* decodeServerSettingsJson(yield* fs.readFileString(to)).pipe(
+              Effect.orDie,
+            );
+            if (saved.projectSettingsOverrides[projectId]?.defaultThreadEnvMode === "local") {
+              return yield* Effect.fail(
+                PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "rename",
+                  description: "Lost response after committing the newer UI settings.",
+                }),
+              );
+            }
+          }),
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        yield* service.getSettings;
+        yield* acceptProjectSettings(
+          {
+            type: "project.meta.update",
+            commandId: CommandId.make("command:interrupted-settings:update"),
+            projectId,
+          },
+          { autoPull: true, defaultThreadEnvMode: "worktree" },
+        );
+        const failed = yield* service
+          .updateSettings({
+            projectSettingsOverrides: { [projectId]: newer },
+          })
+          .pipe(Effect.result);
+        assert.equal(failed._tag, "Failure");
+        const saved = yield* decodeServerSettingsJson(
+          yield* fs.readFileString(config.settingsPath),
+        );
+        assert.deepEqual(saved.projectSettingsOverrides[projectId], newer);
+        assert.deepEqual((yield* service.getSettings).projectSettingsOverrides[projectId], newer);
+      }).pipe(
+        Effect.provide(
+          Layer.fresh(layerSettings).pipe(
+            Layer.provide(Layer.succeed(FileSystem.FileSystem, failingFs)),
+          ),
+        ),
+      );
+      const afterRestart = yield* read.pipe(Effect.provide(Layer.fresh(layerSettings)));
+      assert.deepEqual(afterRestart.projectSettingsOverrides[projectId], newer);
+    }).pipe(Effect.provide(layerProjectJournal())),
   );
   it.effect("persists and broadcasts model preferences to other connected clients", () =>
     Effect.scoped(

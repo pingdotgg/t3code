@@ -14,7 +14,7 @@ import {
 import { RepositoryIdentity, ThreadEnvMode } from "./environment.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import type { OrchestrationV2StoredEvent } from "./orchestrationV2.ts";
-import { ProjectScript, StoredProjectIcon } from "./project.ts";
+import { ProjectScript, ProjectUpdatePayload, StoredProjectIcon } from "./project.ts";
 
 export const OrchestrationClientOrigin = Schema.Struct({
   surface: Schema.optional(ClientSurface),
@@ -30,6 +30,14 @@ export const ApplicationEventMetadata = Schema.Struct({
   requestId: Schema.optional(ApprovalRequestId),
   ingestedAt: Schema.optional(IsoDateTime),
   origin: Schema.optional(OrchestrationClientOrigin),
+  projectSettings: Schema.optional(
+    Schema.Struct({
+      defaultModelSelection: ProjectUpdatePayload.fields.defaultModelSelection,
+      defaultThreadEnvMode: ProjectUpdatePayload.fields.defaultThreadEnvMode,
+      autoPull: ProjectUpdatePayload.fields.autoPull,
+      scripts: ProjectUpdatePayload.fields.scripts,
+    }),
+  ),
 });
 export type ApplicationEventMetadata = typeof ApplicationEventMetadata.Type;
 

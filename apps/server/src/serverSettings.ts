@@ -1,4 +1,5 @@
 import {
+  ApplicationEventMetadata,
   DEFAULT_SERVER_SETTINGS,
   ModelSelection,
   ProjectId,
@@ -20,6 +21,7 @@ import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
 import * as Effect from "effect/Effect";
@@ -182,6 +184,8 @@ export class ServerSettingsService extends Context.Service<
       patch: ServerSettingsPatch,
     ) => Effect.Effect<ServerSettings, ServerSettingsError>;
 
+    readonly syncProjectSettings: Effect.Effect<ServerSettings, ServerSettingsError>;
+
     readonly updateProviderInstance: (
       mutation: ProviderInstanceMutation,
       patch?: ServerSettingsPatch,
@@ -203,6 +207,86 @@ export class ServerSettingsService extends Context.Service<
   static readonly layerTest = (overrides: DeepPartial<ServerSettings> = {}) => layerTest(overrides);
 }
 
+const decodeProjectSettingsMetadata = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(ApplicationEventMetadata),
+);
+
+const readPendingProjectSettings = Effect.fn("ServerSettings.readPendingProjectSettings")(
+  function* (settings: ServerSettings) {
+    const sql = yield* SqlClient.SqlClient;
+    const [cursor] = yield* sql<{ readonly last_sequence: number }>`
+      SELECT last_sequence FROM orchestration_v2_projection_metadata
+      WHERE projection_name = 'project-settings'
+    `;
+    const afterSequence = cursor?.last_sequence ?? 0;
+    const [highWater] = yield* sql<{ readonly sequence: number }>`
+      SELECT COALESCE(MAX(sequence), 0) AS sequence FROM orchestration_events
+      WHERE aggregate_kind = 'project'
+    `;
+    const throughSequence = highWater?.sequence ?? afterSequence;
+    if (throughSequence <= afterSequence)
+      return { settings, sequence: afterSequence, replayed: false };
+    const rows = yield* sql<{
+      readonly project_id: ProjectId;
+      readonly metadata_json: string;
+      readonly deleted_at: string | null;
+    }>`
+      SELECT e.stream_id AS project_id, e.metadata_json, p.deleted_at
+      FROM orchestration_events AS e INDEXED BY idx_orch_events_stream_sequence
+      JOIN projection_projects AS p ON p.project_id = e.stream_id
+      WHERE e.aggregate_kind = 'project' AND e.sequence > ${afterSequence} AND e.sequence <= ${throughSequence}
+        AND (e.event_type = 'project.deleted'
+          OR json_type(e.metadata_json, '$.projectSettings') = 'object')
+      ORDER BY e.sequence
+    `;
+    let next = settings;
+    for (const row of rows) {
+      if (row.deleted_at !== null) {
+        next = applyServerSettingsPatch(next, {
+          projectSettingsOverrides: { [row.project_id]: null },
+        });
+        continue;
+      }
+      const input = (yield* decodeProjectSettingsMetadata(row.metadata_json)).projectSettings;
+      if (input === undefined) continue;
+      const entry: {
+        -readonly [K in keyof ProjectSettingsOverrides]: ProjectSettingsOverrides[K];
+      } = {
+        ...next.projectSettingsOverrides[row.project_id],
+      };
+      if (input.defaultModelSelection === null) delete entry.defaultModelSelection;
+      else if (input.defaultModelSelection !== undefined)
+        entry.defaultModelSelection = input.defaultModelSelection;
+      if (input.defaultThreadEnvMode === null) delete entry.defaultThreadEnvMode;
+      else if (input.defaultThreadEnvMode !== undefined)
+        entry.defaultThreadEnvMode = input.defaultThreadEnvMode;
+      if (input.autoPull !== undefined) entry.defaultAutoPull = input.autoPull;
+      if (input.scripts !== undefined) entry.defaultProjectScripts = input.scripts;
+      next = applyServerSettingsPatch(next, {
+        projectSettingsOverrides: {
+          [row.project_id]: Object.keys(entry).length === 0 ? null : entry,
+        },
+      });
+    }
+    return { settings: next, sequence: throughSequence, replayed: true };
+  },
+);
+
+const saveProjectSettingsSequence = Effect.fn("ServerSettings.saveProjectSettingsSequence")(
+  function* (sequence: number) {
+    const sql = yield* SqlClient.SqlClient;
+    const now = DateTime.formatIso(yield* DateTime.now);
+    yield* sql`
+      INSERT INTO orchestration_v2_projection_metadata (
+        projection_name, schema_version, last_sequence, updated_at
+      ) VALUES ('project-settings', 1, ${sequence}, ${now})
+      ON CONFLICT(projection_name) DO UPDATE SET
+        last_sequence = excluded.last_sequence,
+        updated_at = excluded.updated_at
+    `;
+  },
+);
+
 const makeTest = Effect.fn("serverSettings.makeTest")(function* (
   overrides: DeepPartial<ServerSettings> = {},
 ) {
@@ -219,6 +303,7 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
       : {}),
   });
   const currentSettingsRef = yield* Ref.make<ServerSettings>(initialSettings);
+  const sql = yield* Effect.serviceOption(SqlClient.SqlClient);
   const writeSemaphore = yield* Semaphore.make(1);
   const getSettings = Ref.get(currentSettingsRef).pipe(Effect.map(resolveTextGenerationProvider));
 
@@ -226,12 +311,39 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
     update: (current: ServerSettings) => Effect.Effect<ServerSettings, ServerSettingsError>,
   ): Effect.Effect<ServerSettings, ServerSettingsError> =>
     writeSemaphore.withPermits(1)(
-      Ref.get(currentSettingsRef).pipe(
-        Effect.flatMap(update),
-        Effect.flatMap(normalizeServerSettings),
-        Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
-        Effect.map(resolveTextGenerationProvider),
-      ),
+      Effect.gen(function* () {
+        const current = yield* Ref.get(currentSettingsRef);
+        const pending = Option.isSome(sql)
+          ? yield* readPendingProjectSettings(current).pipe(
+              Effect.provideService(SqlClient.SqlClient, sql.value),
+              Effect.mapError(
+                (cause) =>
+                  new ServerSettingsError({
+                    settingsPath: "<memory>",
+                    operation: "read-project-settings",
+                    cause,
+                  }),
+              ),
+            )
+          : { settings: current, sequence: 0, replayed: false };
+        if (pending.replayed && Option.isSome(sql)) {
+          yield* Ref.set(currentSettingsRef, pending.settings);
+          yield* saveProjectSettingsSequence(pending.sequence).pipe(
+            Effect.provideService(SqlClient.SqlClient, sql.value),
+            Effect.mapError(
+              (cause) =>
+                new ServerSettingsError({
+                  settingsPath: "<memory>",
+                  operation: "write-project-settings",
+                  cause,
+                }),
+            ),
+          );
+        }
+        const next = yield* normalizeServerSettings(yield* update(pending.settings));
+        yield* Ref.set(currentSettingsRef, next);
+        return resolveTextGenerationProvider(next);
+      }),
     );
 
   return {
@@ -242,6 +354,7 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
       updateTestSettings((currentSettings) =>
         Effect.succeed(applyServerSettingsPatch(currentSettings, patch)),
       ),
+    syncProjectSettings: updateTestSettings(Effect.succeed),
     updateProviderInstance: (mutation, patch = {}) =>
       updateTestSettings((currentSettings) =>
         Effect.gen(function* () {
@@ -772,15 +885,48 @@ const make = Effect.gen(function* () {
     const sourceControlMigration = hasLegacySourceControl
       ? migrateLegacySourceControlSettings(folded, legacySourceControl)
       : { settings: folded, secretMoves: [] };
-    const migrated = settingsFileTrusted
+    const migratedBeforePending = settingsFileTrusted
       ? yield* moveInlineSettingsSecrets(sourceControlMigration.settings)
       : folded;
+    const pending = settingsFileTrusted
+      ? yield* readPendingProjectSettings(migratedBeforePending).pipe(
+          Effect.provideService(SqlClient.SqlClient, sql),
+          Effect.mapError(
+            (cause) =>
+              new ServerSettingsError({ settingsPath, operation: "read-project-settings", cause }),
+          ),
+        )
+      : { settings: migratedBeforePending, sequence: 0, replayed: false };
+    const migrated = pending.settings;
     if (
+      pending.replayed ||
       migrated !== loaded ||
       (settingsFileTrusted && legacyProviders !== undefined) ||
       hasLegacySourceControl
     ) {
-      yield* writeSettingsAtomically(migrated);
+      const persisted = yield* writeSettingsAtomically(migrated).pipe(
+        Effect.as(true),
+        Effect.catchTags({
+          ServerSettingsError: (error) =>
+            pending.replayed
+              ? Effect.logWarning("failed to persist replayed project settings", {
+                  path: settingsPath,
+                  cause: error,
+                }).pipe(Effect.as(false))
+              : Effect.fail(error),
+        }),
+      );
+      // Keep reads available without checkpointing values that exist only in memory.
+      if (!persisted) return { settings: migrated, parseFailure };
+      if (pending.replayed) {
+        yield* saveProjectSettingsSequence(pending.sequence).pipe(
+          Effect.provideService(SqlClient.SqlClient, sql),
+          Effect.mapError(
+            (cause) =>
+              new ServerSettingsError({ settingsPath, operation: "write-project-settings", cause }),
+          ),
+        );
+      }
       for (const move of sourceControlMigration.secretMoves) {
         yield* secretStore.remove(move.from).pipe(Effect.ignore);
       }
@@ -1008,8 +1154,35 @@ const make = Effect.gen(function* () {
             cause: parseFailure.value,
           });
         }
-        const updated = yield* update(current);
-        const persisted = yield* persistSettingsSecrets(current, updated);
+        const pending = yield* readPendingProjectSettings(current).pipe(
+          Effect.provideService(SqlClient.SqlClient, sql),
+          Effect.mapError(
+            (cause) =>
+              new ServerSettingsError({ settingsPath, operation: "read-project-settings", cause }),
+          ),
+        );
+        if (pending.replayed) {
+          // Checkpoint accepted values before a newer patch can reach disk. A crash
+          // before the DB write can then only replay these same values.
+          yield* writeSettingsAtomically(pending.settings);
+          yield* saveProjectSettingsSequence(pending.sequence).pipe(
+            Effect.provideService(SqlClient.SqlClient, sql),
+            Effect.mapError(
+              (cause) =>
+                new ServerSettingsError({
+                  settingsPath,
+                  operation: "write-project-settings",
+                  cause,
+                }),
+            ),
+          );
+          yield* Cache.set(settingsCache, cacheKey, {
+            settings: pending.settings,
+            parseFailure: Option.none(),
+          });
+        }
+        const updated = yield* update(pending.settings);
+        const persisted = yield* persistSettingsSecrets(pending.settings, updated);
         const next = yield* normalizeServerSettings(persisted.settings);
         const materialized = yield* Effect.uninterruptibleMask(() =>
           Effect.gen(function* () {
@@ -1030,7 +1203,11 @@ const make = Effect.gen(function* () {
         yield* Cache.set(settingsCache, cacheKey, { settings: next, parseFailure: Option.none() });
         yield* emitChange(next);
         return resolveTextGenerationProvider(materialized);
-      }),
+      }).pipe(
+        // A rename can commit and still report failure; reload the file rather
+        // than keeping a snapshot from before either persistence step.
+        Effect.tapCause(() => Cache.invalidate(settingsCache, cacheKey)),
+      ),
     );
 
   const withSettingsSnapshot: ServerSettingsService["Service"]["withSettingsSnapshot"] = (use) =>
@@ -1156,6 +1333,7 @@ const make = Effect.gen(function* () {
       updateAndPersistSettings((current) =>
         Effect.succeed(applyServerSettingsPatch(current, patch)),
       ),
+    syncProjectSettings: updateAndPersistSettings(Effect.succeed),
     updateProviderInstance: (mutation, patch = {}) =>
       updateAndPersistSettings((current) =>
         Effect.gen(function* () {
