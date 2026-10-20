@@ -7,7 +7,7 @@ import {
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it, vi } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 
 import {
@@ -108,6 +108,27 @@ function interruptRow(
     sourceItemId: item.id,
     item,
   };
+}
+
+function assistantRow(
+  text: string,
+  visibility: "local" | "inherited" = "local",
+): OrchestrationV2ProjectedTurnItem {
+  const row = makeRow(0);
+  const sourceThreadId = visibility === "local" ? THREAD : ThreadId.make("parent-thread");
+  return {
+    ...row,
+    visibility,
+    sourceThreadId,
+    item: {
+      ...row.item,
+      threadId: sourceThreadId,
+      type: "assistant_message",
+      messageId: MessageId.make("answer-0"),
+      text,
+      streaming: false,
+    },
+  } as OrchestrationV2ProjectedTurnItem;
 }
 
 function makeProjection(visibleTurnItems: OrchestrationV2ProjectedTurnItem[]) {
@@ -716,6 +737,43 @@ describe("threadHistoryPaging", () => {
     expect(bounded.payloadBudgetExceeded).toBe(true);
     expect(bounded.projection.plans[0]).toEqual(actionable.plans[0]);
     expect(bounded.projection.visibleTurnItems).toEqual(actionable.visibleTurnItems);
+  });
+
+  it("reports overflow from timeline text alone without serializing the projection", () => {
+    // A local item is encoded twice (visible row and turnItems): 2 x 20k chars > 30k bytes.
+    const projection = makeProjection([assistantRow("a".repeat(20_000))]);
+    const stringify = vi.spyOn(JSON, "stringify");
+    try {
+      const bounded = buildBoundedThreadProjection({
+        projection,
+        snapshotSequence: 1,
+        policy: { maxItems: 75, maxEncodedBytes: 30_000 },
+      });
+      expect(bounded.payloadBudgetExceeded).toBe(true);
+      // Skipping this encode is the shortcut's only observable effect.
+      expect(stringify).not.toHaveBeenCalledWith(bounded.projection);
+    } finally {
+      stringify.mockRestore();
+    }
+  });
+
+  it("flips overflow at the exact encoded size when timeline text fits the budget", () => {
+    // Inherited rows are encoded once, local rows twice; neither may overflow early.
+    for (const visibility of ["local", "inherited"] as const) {
+      const projection = makeProjection([assistantRow("a".repeat(20_000), visibility)]);
+      const build = (maxEncodedBytes: number) =>
+        buildBoundedThreadProjection({
+          projection,
+          snapshotSequence: 1,
+          policy: { maxItems: 75, maxEncodedBytes },
+        });
+      const bytes = Buffer.byteLength(
+        JSON.stringify(build(Number.MAX_SAFE_INTEGER).projection),
+        "utf8",
+      );
+      expect(build(bytes).payloadBudgetExceeded).toBe(false);
+      expect(build(bytes - 1).payloadBudgetExceeded).toBe(true);
+    }
   });
 
   it("keeps agent-only turns visible when checkpoint file lists fill the byte budget", () => {
