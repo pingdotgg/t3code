@@ -377,6 +377,7 @@ it.effect.each(
         projectThreads.find((candidate) => candidate.id === existing?.threadId) ??
         projectThreads[0];
       assert.isDefined(thread);
+      assert.equal(result.threadId, thread!.id);
       const projection = yield* threads.getThreadProjection(thread!.id);
       const wire = yield* encodeThreadProjection(projection);
       assert.equal(wire.messages[0]?.text, task.prompt);
@@ -388,6 +389,45 @@ it.effect.each(
       );
       assert.equal(turnItem?.text, task.prompt);
       assert.equal(turnItem?.scheduledTaskId, task.id);
+    }).pipe(Effect.provide(Layer.mergeAll(harness.layer, layerScheduledTasks)));
+  },
+);
+
+it.effect(
+  "returns no dispatched thread when sending an automation to a missing thread fails",
+  () => {
+    const harness = makeHarness();
+    const layerScheduledTasks = ScheduledTasks.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          harness.layer,
+          NodeCrypto.layer,
+          Scheduler.layer,
+          Layer.mock(SecretRequests.SecretRequests)({}),
+        ),
+      ),
+    );
+    return Effect.gen(function* () {
+      const tasks = yield* ScheduledTasks.ScheduledTaskService;
+      const threadId = ThreadId.make("thread:missing");
+      const { task } = yield* tasks.upsert({
+        title: "Daily audit",
+        prompt: "Audit performance and crashes.",
+        enabled: false,
+        schedule: { type: "interval", everyMs: 60_000 },
+        projectId,
+        threadId,
+        workspaceStrategy: { type: "root" },
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const result = yield* tasks.runNow({ id: task.id });
+      assert.equal(result.task.lastRunStatus, "failed");
+      assert.isNull(result.threadId);
+      assert.equal(result.task.threadId, threadId);
     }).pipe(Effect.provide(Layer.mergeAll(harness.layer, layerScheduledTasks)));
   },
 );
