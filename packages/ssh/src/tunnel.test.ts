@@ -1460,7 +1460,17 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
           ),
         );
         process.kill(zombie, "SIGKILL");
-        assert.include((yield* runScript(home, ["-c", `ps -o stat= -p ${zombie}`])).stdout, "Z");
+        // SIGKILL delivery is asynchronous; establish the zombie fixture before launching.
+        const zombieState = yield* runScript(home, [
+          "-c",
+          `attempt=0; while [ "$attempt" -lt 100 ]; do
+            state=$(ps -o stat= -p ${zombie}) || exit 1
+            case "$state" in *Z*) printf '%s\\n' "$state"; exit 0;; esac
+            attempt=$((attempt + 1))
+          done; printf '%s\\n' "$state"; exit 1`,
+        ]);
+        assert.equal(zombieState.exitCode, 0, zombieState.stdout);
+        assert.include(zombieState.stdout, "Z");
         yield* fs.writeFileString(`${stateDir}/pid`, `${zombie}\n`);
         yield* fs.writeFileString(
           `${home}/.t3/userdata/server-runtime.json`,

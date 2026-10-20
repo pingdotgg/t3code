@@ -64,6 +64,50 @@ describe("timeline minimap previews", () => {
     expect(resolveTimelineMinimapPreview(null)).toBeNull();
   });
 
+  it("renders assistant markdown only when resolving a preview and keeps user text literal", () => {
+    const userText = "Explain **operators** and [x] in [the docs](https://example.com/docs)";
+    const assistantText = [
+      "## Operators",
+      "Use **either** option from [the docs](https://example.com/docs).",
+      "",
+      "| Operator | Meaning |",
+      "| --- | :---: |",
+      "| `a \\| b` | either |",
+      "",
+      "- [x] Match `**/*.ts` files",
+      "",
+      "[x] deployment complete",
+      "",
+      "> Note: ~~old~~ new  ",
+      "> Next line",
+      "",
+      "```sh",
+      "# install deps",
+      "- **not bold**",
+      "const snake_case = a * b;",
+      "```",
+      "",
+      "foo<br>bar",
+      "",
+      "<div>Critical <em>answer</em></div>",
+    ].join("\n");
+    const [item] = deriveTimelineMinimapItems(
+      rows([
+        ["user", userText],
+        ["assistant", assistantText],
+      ]),
+    );
+
+    expect(item).toMatchObject({ userText, assistantText });
+    expect(resolveTimelineMinimapPreview(item!)).toEqual({
+      ...item,
+      userText,
+      assistantText:
+        "Operators Use either option from the docs. Operator Meaning a | b either Match **/*.ts files [x] deployment complete Note: old new Next line # install deps - **not bold** const snake_case = a * b; foo bar Critical answer",
+    });
+    expect(item).toMatchObject({ userText, assistantText });
+  });
+
   it("shows fresh streaming text without changing the jump target", () => {
     const first = deriveTimelineMinimapItems(
       rows([
