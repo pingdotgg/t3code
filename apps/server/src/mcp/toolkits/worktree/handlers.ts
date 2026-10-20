@@ -36,6 +36,13 @@ const handlers = {
         .pipe(Effect.mapError(unavailable));
     }),
   ),
+  t3_thread_diff: McpToolAccess.reads((input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const service = yield* WorktreeMcpService.WorktreeMcpService;
+      return yield* service.getThreadDiff(scope, input);
+    }),
+  ),
   t3_worktree_handoff: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;

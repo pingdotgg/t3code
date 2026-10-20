@@ -225,7 +225,7 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
     Schema.Struct({ requestId: RuntimeRequestId, kind: ProviderRequestKind, runId: RunId }),
   ).annotate({
     description:
-      "Identity of the oldest pending live approval for this task's own unfinished work, or null. Ends mode=wait without cancelling the child; completion still wakes this thread. This grants no approval authority. Read the fresh full request in childThreadId before responding: the record can outlive its provider callback. Decisions remain with the child's existing approval holder; pending request tools answer questions only.",
+      "Identity of the oldest pending live approval for this task's own unfinished work, or null. Ends mode=wait without cancelling the child; completion still wakes this thread. This grants no approval authority. Read the fresh full request in childThreadId before responding: the record can outlive its provider callback. Use t3_pending_request_read to read the fresh request and t3_pending_request_respond with decision to respond; accepting needs a full-access/default caller, while declining or cancelling does not.",
   }),
   waitTimedOut: Schema.Boolean.annotate({
     description:

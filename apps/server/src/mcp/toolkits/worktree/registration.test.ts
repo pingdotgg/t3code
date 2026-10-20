@@ -5,8 +5,11 @@ import * as ServerConfig from "../../../config.ts";
 import { expect, it } from "@effect/vitest";
 import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { HttpBody, HttpClient, HttpRouter } from "effect/http";
@@ -18,6 +21,7 @@ import * as ThreadManagementService from "../../../orchestration-v2/ThreadManage
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
 import * as ProjectSetupScriptRunner from "../../../project/ProjectSetupScriptRunner.ts";
+import * as ReviewService from "../../../review/ReviewService.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../../../secrets/SecretRequests.ts";
@@ -34,6 +38,17 @@ import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import * as PreviewBrowser from "../../../preview/PreviewBrowser.ts";
+import * as ProjectStore from "../../../orchestration-v2/ProjectStore.ts";
+import * as SqlitePersistence from "../../../persistence/Sqlite.ts";
+import * as VcsProcess from "../../../vcs/VcsProcess.ts";
+import * as VcsDriverRegistry from "../../../vcs/VcsDriverRegistry.ts";
+import * as KnownWorkspaces from "../../../workspace/KnownWorkspaces.ts";
+import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as McpToolAccess from "../../McpToolAccess.ts";
+import * as McpToolAccessTestkit from "../../McpToolAccess.testkit.ts";
+import * as WorktreeMcpService from "../../WorktreeMcpService.ts";
+import * as WorktreeHandlers from "./handlers.ts";
+import { WorktreeToolkit } from "./tools.ts";
 
 const layerStubServices = Layer.mergeAll(
   Layer.mock(Orchestrator.OrchestratorV2)({}),
@@ -50,6 +65,7 @@ const layerStubServices = Layer.mergeAll(
   Layer.mock(GitWorkflowService.GitWorkflowService)({}),
   Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
   Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({}),
+  Layer.mock(ReviewService.ReviewService)({}),
   Layer.mock(GitVcsDriver.GitVcsDriver)({}),
   Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
   Layer.mock(PreviewManager.PreviewManager)({}),
@@ -168,4 +184,169 @@ it.effect("production mcp layer lists worktree tools over http", () =>
       ),
     ),
   ),
+);
+
+it.effect("reads another thread checkout with selected and bounded diff sources", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-mcp-diff-" });
+    const serverCwd = `${root}/server`;
+    const cwd = `${root}/project`;
+    const checkout = `${cwd}/checkout`;
+    yield* fs.makeDirectory(serverCwd);
+    yield* fs.makeDirectory(cwd);
+    const targetId = ThreadId.make("thread:diff-target");
+    const shell = {
+      ...McpToolAccessTestkit.liveThreadShell(targetId),
+      projectId: ProjectId.make("project:diff"),
+      worktreePath: checkout,
+    };
+    const config = ServerConfig.layerTest(serverCwd, `${root}/state`);
+    const gitLayer = GitVcsDriver.layer.pipe(
+      Layer.provide(config),
+      Layer.provide(NodeServices.layer),
+    );
+    const dependencies = Layer.mergeAll(
+      ReviewService.layer.pipe(
+        Layer.provide(KnownWorkspaces.layer),
+        Layer.provide(VcsDriverRegistry.layer),
+        Layer.provide(VcsProcess.layer),
+        Layer.provide(gitLayer),
+        Layer.provide(config),
+        Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(SqlitePersistence.layerMemory),
+        Layer.provide(
+          Layer.mock(ProjectStore.ProjectStoreV2)({
+            listShells: () =>
+              Effect.succeed([
+                {
+                  id: shell.projectId,
+                  title: "Diff",
+                  workspaceRoot: cwd,
+                  defaultModelSelection: null,
+                  scripts: [],
+                  createdAt: "2026-01-01T00:00:00.000Z",
+                  updatedAt: "2026-01-01T00:00:00.000Z",
+                },
+              ]),
+          }),
+        ),
+        Layer.provide(NodeServices.layer),
+      ),
+      Layer.mock(ThreadManagementService.ThreadManagementService)({
+        getThreadShell: (id) =>
+          Effect.succeed(id === targetId ? shell : McpToolAccessTestkit.liveThreadShell(id)),
+        getProjectThreadRecords: () =>
+          Effect.succeed(McpToolAccessTestkit.idleThreadProjection(shell)),
+      }),
+      Layer.mock(ProjectService.ProjectService)({
+        getById: () =>
+          Effect.succeed(
+            Option.some({
+              id: shell.projectId,
+              title: "Diff",
+              workspaceRoot: cwd,
+              deletedAt: null,
+              defaultModelSelection: null,
+              scripts: [],
+              createdAt: "2026-01-01T00:00:00.000Z",
+              updatedAt: "2026-01-01T00:00:00.000Z",
+            }),
+          ),
+      }),
+      Layer.mock(GitWorkflowService.GitWorkflowService)({}),
+      Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
+      Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({}),
+      ServerSettings.layerTest(),
+      Layer.succeed(McpInvocationContext.McpInvocationContext, {
+        environmentId: EnvironmentId.make("environment:diff"),
+        requestNamespace: "diff-session",
+        thread: {
+          threadId: ThreadId.make("thread:diff-caller"),
+          providerSessionId: "diff-session",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+        },
+        client: undefined,
+        issuedAt: 0,
+        capabilities: new Set(["orchestration" as const, "worktree" as const]),
+      }),
+    );
+    const git = yield* GitVcsDriver.GitVcsDriver.pipe(Effect.provide(gitLayer));
+    const run = (at: string, args: ReadonlyArray<string>) =>
+      git.execute({ cwd: at, args, operation: "mcp-diff-test" });
+    yield* run(cwd, ["init", "-b", "main"]);
+    yield* run(cwd, ["config", "user.name", "Test"]);
+    yield* run(cwd, ["config", "user.email", "test@example.com"]);
+    yield* fs.writeFileString(`${cwd}/file.txt`, "original\n");
+    yield* run(cwd, ["add", "file.txt"]);
+    yield* run(cwd, ["commit", "-m", "base"]);
+    yield* run(cwd, ["worktree", "add", "-b", "feature", checkout]);
+    yield* fs.writeFileString(`${checkout}/file.txt`, "committed change\n");
+    yield* run(checkout, ["commit", "-am", "feature"]);
+    yield* fs.writeFileString(`${checkout}/file.txt`, "working change\n");
+
+    yield* Effect.gen(function* () {
+      const toolkit = yield* WorktreeToolkit;
+      const read = (
+        input: {
+          source?: "working-tree" | "branch-range";
+          baseRef?: string;
+          maxCharacters?: number;
+        } = {},
+      ) =>
+        toolkit.handle("t3_thread_diff", { threadId: targetId, baseRef: "main", ...input }).pipe(
+          Stream.unwrap,
+          Stream.runCollect,
+          Effect.map((chunks) => chunks.at(-1)!.result),
+        );
+      const all = yield* read();
+      expect(all).toMatchObject({ threadId: targetId, cwd: checkout });
+      if (!("sources" in all)) throw new Error("Expected a diff result");
+      expect(all.sources.map((source) => source.kind)).toEqual(["working-tree", "branch-range"]);
+      const working = all.sources[0]!;
+      const branch = all.sources[1]!;
+      expect(working.diff).toContain("+working change");
+      expect(working.diff).toContain("-committed change");
+      expect(branch.diff).toContain("+working change");
+      expect(branch.diff).toContain("-original");
+      expect(branch.diff).not.toContain("-committed change");
+      expect(working.files).toEqual([expect.objectContaining({ additions: 1, deletions: 1 })]);
+      expect(working.truncated).toBe(false);
+      expect(branch.truncated).toBe(false);
+      expect(yield* read({ source: "working-tree" })).toEqual({ ...all, sources: [working] });
+      expect(yield* read({ source: "working-tree", baseRef: "missing-base" })).toEqual({
+        ...all,
+        sources: [working],
+      });
+      expect(yield* read({ baseRef: "missing-base" })).toMatchObject({
+        code: "invalid_request",
+        message: "Could not find a common commit between 'missing-base' and HEAD.",
+      });
+      expect(yield* read({ source: "branch-range", baseRef: "missing-base" })).toMatchObject({
+        code: "invalid_request",
+        message: "Could not find a common commit between 'missing-base' and HEAD.",
+      });
+      expect(yield* read({ source: "branch-range" })).toEqual({ ...all, sources: [branch] });
+      expect(yield* read({ source: "branch-range", maxCharacters: 24 })).toEqual({
+        ...all,
+        sources: [{ ...branch, diff: branch.diff.slice(0, 24), truncated: true }],
+      });
+      yield* Effect.forEach(
+        Array.from({ length: 500 }, (_, index) => index),
+        (index) => fs.writeFileString(`${checkout}/extra-${index}.txt`, "extra\n"),
+      );
+      const capped = yield* read({ source: "working-tree", maxCharacters: 100_000 });
+      if (!("sources" in capped)) throw new Error("Expected a diff result");
+      expect(capped.sources[0]!.files).toHaveLength(500);
+      expect(capped.sources[0]!.diff.length).toBeLessThan(100_000);
+      expect(capped.sources[0]!.truncated).toBe(true);
+    }).pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(WorktreeHandlers.layer).pipe(
+          Layer.provideMerge(WorktreeMcpService.layer.pipe(Layer.provide(dependencies))),
+          Layer.provideMerge(dependencies),
+        ),
+      ),
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
 );

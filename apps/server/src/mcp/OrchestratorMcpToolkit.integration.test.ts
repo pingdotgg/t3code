@@ -1745,6 +1745,21 @@ describe("orchestrator MCP toolkit", () => {
               result: delegatedResult,
             });
             const child = yield* orchestrator.getThreadProjection(delegated.childThreadId);
+            const organizeChild = (action: string) =>
+              invoke("t3_thread_organize", { threadId: delegated.childThreadId, action });
+            expect((yield* organizeChild("mark_unread")).isError).toBe(false);
+            const unread = yield* orchestrator.getThreadShell(delegated.childThreadId);
+            expect(unread?.lastVisitedAt).toEqual(
+              DateTime.subtract(child.runs.at(-1)!.completedAt!, { milliseconds: 1 }),
+            );
+            expect((yield* organizeChild("mark_read")).isError).toBe(false);
+            expect(
+              (yield* orchestrator.getThreadShell(delegated.childThreadId))?.lastVisitedAt,
+            ).toEqual(unread?.updatedAt);
+            expect((yield* organizeChild("mark_unread")).isError).toBe(false);
+            expect(
+              (yield* orchestrator.getThreadShell(delegated.childThreadId))?.lastVisitedAt,
+            ).toEqual(unread?.lastVisitedAt);
             expect(child.thread.lineage).toEqual({
               parentThreadId,
               relationshipToParent: "subagent",

@@ -2,6 +2,10 @@ import {
   CommandId,
   MessageId,
   type ProjectId,
+  OrchestratorMcpFailure,
+  type ReviewDiffFileStat,
+  type ReviewDiffPreviewSourceKind,
+  type ThreadId,
   WorktreeMcpFailure,
   type WorktreeMcpContinuationStatus,
   type WorktreeMcpHandoffInput,
@@ -20,19 +24,46 @@ import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import * as ReviewService from "../review/ReviewService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
-import type { McpInvocationScope, McpThreadInvocationScope } from "./McpInvocationContext.ts";
+import * as McpInvocationContext from "./McpInvocationContext.ts";
+import { readThread, unavailable } from "./threadAccess.ts";
+
+const MAX_DIFF_FILES = 500;
 
 export class WorktreeMcpService extends Context.Service<
   WorktreeMcpService,
   {
+    readonly getThreadDiff: (
+      scope: McpInvocationContext.McpInvocationScope,
+      input: {
+        readonly threadId?: ThreadId | undefined;
+        readonly baseRef?: string | undefined;
+        readonly source?: ReviewDiffPreviewSourceKind | undefined;
+        readonly maxCharacters?: number | undefined;
+      },
+    ) => Effect.Effect<
+      {
+        readonly threadId: ThreadId;
+        readonly cwd: string;
+        readonly sources: ReadonlyArray<{
+          readonly kind: ReviewDiffPreviewSourceKind;
+          readonly baseRef: string | null;
+          readonly headRef: string | null;
+          readonly files: ReadonlyArray<ReviewDiffFileStat> | null;
+          readonly diff: string;
+          readonly truncated: boolean;
+        }>;
+      },
+      OrchestratorMcpFailure
+    >;
     readonly handoff: (
-      scope: McpInvocationScope,
+      scope: McpInvocationContext.McpInvocationScope,
       input: WorktreeMcpHandoffInput,
     ) => Effect.Effect<WorktreeMcpHandoffResult, WorktreeMcpFailure>;
     readonly status: (
-      scope: McpInvocationScope,
+      scope: McpInvocationContext.McpInvocationScope,
     ) => Effect.Effect<WorktreeMcpStatusResult, WorktreeMcpFailure>;
   }
 >()("t3/mcp/WorktreeMcpService") {}
@@ -56,6 +87,7 @@ const asOperationFailed = (prefix: string) =>
 
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
+  const review = yield* ReviewService.ReviewService;
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
   const projects = yield* ProjectService.ProjectService;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -63,12 +95,68 @@ const make = Effect.gen(function* () {
   const setupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
 
+  const getThreadDiff: WorktreeMcpService["Service"]["getThreadDiff"] = Effect.fn(
+    "WorktreeMcpService.getThreadDiff",
+  )(function* (scope, input) {
+    const {
+      projection: { thread },
+    } = yield* readThread(input.threadId).pipe(
+      Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+      Effect.provideService(ThreadManagementService.ThreadManagementService, threadManagement),
+    );
+    const project = yield* projects.getById(thread.projectId).pipe(Effect.mapError(unavailable));
+    if (Option.isNone(project))
+      return yield* new OrchestratorMcpFailure({
+        code: "invalid_request",
+        message: "The project was not found.",
+      });
+    const preview = yield* review
+      .getDiffPreview({
+        cwd: thread.worktreePath ?? project.value.workspaceRoot,
+        ...(input.baseRef === undefined ? {} : { baseRef: input.baseRef }),
+        ...(input.source === undefined ? {} : { sourceKind: input.source }),
+      })
+      .pipe(
+        Effect.mapError((error) =>
+          error._tag === "VcsRepositoryDetectionError" ||
+          error._tag === "VcsUnsupportedOperationError" ||
+          (error._tag === "GitCommandError" &&
+            input.baseRef !== undefined &&
+            error.operation === "GitVcsDriver.resolveReviewMergeBase" &&
+            error.exitCode !== undefined)
+            ? new OrchestratorMcpFailure({ code: "invalid_request", message: error.detail })
+            : unavailable(),
+        ),
+      );
+    if (preview.sources.length === 0)
+      return yield* new OrchestratorMcpFailure({
+        code: "invalid_request",
+        message: "The thread's checkout is not a repository.",
+      });
+    const maxCharacters = input.maxCharacters ?? 20_000;
+    return {
+      threadId: thread.id,
+      cwd: preview.cwd,
+      sources: preview.sources.map((source) => ({
+        kind: source.kind,
+        baseRef: source.baseRef,
+        headRef: source.headRef,
+        files: source.files?.slice(0, MAX_DIFF_FILES) ?? null,
+        diff: source.diff.slice(0, maxCharacters),
+        truncated:
+          source.truncated ||
+          source.diff.length > maxCharacters ||
+          (source.files?.length ?? 0) > MAX_DIFF_FILES,
+      })),
+    };
+  });
+
   // Serializes handoffs per thread: two concurrent calls could otherwise both
   // pass the worktreePath === null check and each create a worktree, leaving
   // one untracked on disk.
   const handoffThreadsInFlight = new Set<string>();
 
-  const requireThreadScope = (scope: McpInvocationScope) =>
+  const requireThreadScope = (scope: McpInvocationContext.McpInvocationScope) =>
     scope.thread === undefined
       ? Effect.fail(
           failure(
@@ -76,16 +164,16 @@ const make = Effect.gen(function* () {
             "Worktree handoff and status act as the calling T3 thread, so they need an agent running inside T3 Code.",
           ),
         )
-      : Effect.succeed(scope as McpThreadInvocationScope);
+      : Effect.succeed(scope as McpInvocationContext.McpThreadInvocationScope);
 
-  const requireCapability = (scope: McpInvocationScope) =>
+  const requireCapability = (scope: McpInvocationContext.McpInvocationScope) =>
     scope.capabilities.has("worktree")
       ? Effect.void
       : Effect.fail(
           failure("capability_denied", "This MCP credential does not grant worktree capabilities."),
         );
 
-  const loadThread = (scope: McpThreadInvocationScope) =>
+  const loadThread = (scope: McpInvocationContext.McpThreadInvocationScope) =>
     threadManagement.getThreadRecords(scope.thread.threadId, []).pipe(
       Effect.mapError((error) =>
         error._tag === "OrchestratorProjectionError"
@@ -101,7 +189,10 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  const loadProject = (scope: McpThreadInvocationScope, projectId: ProjectId) =>
+  const loadProject = (
+    scope: McpInvocationContext.McpThreadInvocationScope,
+    projectId: ProjectId,
+  ) =>
     projects.getById(projectId).pipe(
       asOperationFailed(`Unable to read project ${projectId}`),
       Effect.flatMap(
@@ -123,7 +214,7 @@ const make = Effect.gen(function* () {
     asOperationFailed("Unable to read server settings"),
   );
 
-  const handoffIds = (scope: McpThreadInvocationScope) =>
+  const handoffIds = (scope: McpInvocationContext.McpThreadInvocationScope) =>
     crypto.randomUUIDv4().pipe(
       Effect.map((uuid) => {
         const part = (kind: string, operation: string) =>
@@ -140,7 +231,7 @@ const make = Effect.gen(function* () {
     );
 
   const performHandoff = Effect.fn("WorktreeMcpService.performHandoff")(function* (
-    scope: McpThreadInvocationScope,
+    scope: McpInvocationContext.McpThreadInvocationScope,
     input: WorktreeMcpHandoffInput,
   ) {
     const alreadyInWorktree = (worktreePath: string) =>
@@ -447,13 +538,14 @@ const make = Effect.gen(function* () {
     },
   );
 
-  return WorktreeMcpService.of({ handoff, status });
+  return WorktreeMcpService.of({ getThreadDiff, handoff, status });
 });
 
 export const layer: Layer.Layer<
   WorktreeMcpService,
   never,
   | Crypto.Crypto
+  | ReviewService.ReviewService
   | ThreadManagementService.ThreadManagementService
   | ProjectService.ProjectService
   | ServerSettings.ServerSettingsService
