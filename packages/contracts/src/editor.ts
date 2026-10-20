@@ -181,6 +181,7 @@ export const buildRemoteOpenUrl = (input: {
   readonly editor: EditorId;
   readonly host: string;
   readonly absolutePath: string;
+  readonly isFile?: boolean;
 }): string | undefined => {
   const scheme = remoteSchemeForEditor(input.editor);
   if (scheme === undefined) {
@@ -210,7 +211,8 @@ export const buildRemoteOpenUrl = (input: {
     return `${scheme}://ssh/${encodedHost}${encodedZedPath}`;
   }
   const encodedPath = rootedPath.split("/").map(encodeURIComponent).join("/");
-  return `${scheme}://vscode-remote/ssh-remote+${encodedHost}${encodedPath}`;
+  // VS Code opens a bare vscode-remote path as a folder; a trailing position makes it open the file.
+  return `${scheme}://vscode-remote/ssh-remote+${encodedHost}${encodedPath}${input.isFile ? ":1:1" : ""}`;
 };
 
 export const RemoteOpenTargetKind = Schema.Literals(["tailscale", "mdns"]);

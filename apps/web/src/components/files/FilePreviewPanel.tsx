@@ -1243,6 +1243,7 @@ export default function FilePreviewPanel({
               availableEditors={availableEditors}
               enableShortcut={openInShortcutEnabled}
               openInCwd={absolutePath}
+              openInCwdIsFile={file.isFile}
               compact
               revealFileManager={revealsInFileManager}
             />

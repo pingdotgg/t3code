@@ -177,6 +177,33 @@ describe("buildRemoteOpenUrl", () => {
     );
   });
 
+  it("adds a file position only for confirmed VS Code-family file targets", () => {
+    const targets = [
+      ["vscode", true, "vscode://vscode-remote/ssh-remote+sol/tmp/my%20file.md:1:1"],
+      ["cursor", true, "cursor://vscode-remote/ssh-remote+sol/tmp/my%20file.md:1:1"],
+      ["vscode", false, "vscode://vscode-remote/ssh-remote+sol/tmp/my%20file.md"],
+      ["vscode", undefined, "vscode://vscode-remote/ssh-remote+sol/tmp/my%20file.md"],
+      ["zed", true, "zed://ssh/sol/tmp/my%20file.md"],
+      [
+        "pycharm",
+        true,
+        "jetbrains://gateway/ssh/environment?h=sol&launchIde=true&ideHint=PY&projectHint=%2Ftmp%2Fmy+file.md",
+      ],
+    ] as const;
+
+    for (const [editor, isFile, expected] of targets) {
+      expect(
+        buildRemoteOpenUrl({
+          editor,
+          host: "sol",
+          absolutePath: "/tmp/my file.md",
+          ...(isFile === undefined ? {} : { isFile }),
+        }),
+        `${editor}, isFile=${isFile}`,
+      ).toBe(expected);
+    }
+  });
+
   it("returns undefined for editors without remote support", () => {
     expect(buildRemoteOpenUrl({ editor: "kiro", host: "sol", absolutePath: "/tmp/x" })).toBe(
       undefined,
