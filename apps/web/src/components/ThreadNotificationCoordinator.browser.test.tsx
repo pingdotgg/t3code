@@ -2,6 +2,7 @@ import type { ClientSettings } from "@t3tools/contracts/settings";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { pendingSubagentRequestsByThread } from "@t3tools/client-runtime/state/threads";
 
 import { render, stubGlobal, type Screen } from "../../test/render";
 
@@ -22,6 +23,7 @@ const state = vi.hoisted(() => ({
   subagent: false,
   background: [] as Array<{ taskId: string; kind: "command" | "monitor" }>,
   delegatedChild: null as "running" | "approval" | null,
+  noDelegated: new Set<string>(),
   add: vi.fn(
     (_toast: { title: string; description: string; actionProps: { onClick: () => void } }) =>
       "toast-1",
@@ -112,10 +114,13 @@ function mockThreads() {
 
 vi.mock(import("@effect/atom-react"), async (original) => ({
   ...(await original()),
-  useAtomValue: (() => ({
-    status: state.live ? "live" : "disconnected",
-    snapshot: Option.some({ threads: mockThreads() }),
-  })) as never,
+  useAtomValue: ((atom: unknown) =>
+    atom === "subagent-requests:env-1"
+      ? pendingSubagentRequestsByThread(mockThreads() as never)
+      : {
+          status: state.live ? "live" : "disconnected",
+          snapshot: Option.some({ threads: mockThreads() }),
+        }) as never,
 }));
 vi.mock(import("@tanstack/react-router"), async (original) => ({
   ...(await original()),
@@ -134,6 +139,21 @@ vi.mock(import("../hooks/useSettings"), async (original) => ({
 vi.mock(import("../state/environments"), async (original) => ({
   ...(await original()),
   useEnvironmentIds: (() => ["env-1"]) as never,
+}));
+vi.mock(import("../state/threads"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    environmentThreadShells: {
+      ...actual.environmentThreadShells,
+      pendingSubagentRequestsAtom: ((environmentId: string) =>
+        `subagent-requests:${environmentId}`) as never,
+    },
+  };
+});
+vi.mock(import("../state/entities"), async (original) => ({
+  ...(await original()),
+  useDelegatedUnderParent: (() => state.noDelegated) as never,
 }));
 vi.mock(import("../threadNotifications"), async (original) => ({
   ...(await original()),

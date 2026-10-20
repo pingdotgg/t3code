@@ -2,6 +2,10 @@ import {
   type EnvironmentId,
   OrchestratorMcpFailure,
   type OrchestratorMcpEnvironmentLinksResult,
+  OrchestratorMcpThreadInterruptInput,
+  OrchestratorMcpThreadInterruptResult,
+  OrchestratorMcpThreadReadInput,
+  OrchestratorMcpThreadReadResult,
   OrchestratorMcpThreadWaitInput,
   OrchestratorMcpThreadWaitResult,
 } from "@t3tools/contracts";
@@ -51,6 +55,18 @@ export class PeerForwarding extends Context.Service<
       environmentId: EnvironmentId,
       params: Tool.Parameters<T>,
     ) => Effect.Effect<Tool.Success<T>, OrchestratorMcpFailure>;
+    /** `t3_thread_read` there. */
+    readonly readThread: (
+      scope: Scope,
+      environmentId: EnvironmentId,
+      input: OrchestratorMcpThreadReadInput,
+    ) => Effect.Effect<OrchestratorMcpThreadReadResult, OrchestratorMcpFailure>;
+    /** `t3_thread_interrupt` there. */
+    readonly interruptThread: (
+      scope: Scope,
+      environmentId: EnvironmentId,
+      input: OrchestratorMcpThreadInterruptInput,
+    ) => Effect.Effect<OrchestratorMcpThreadInterruptResult, OrchestratorMcpFailure>;
     /** `t3_thread_wait` there, in pieces short enough to survive any route. */
     readonly waitForThread: (
       scope: Scope,
@@ -133,6 +149,30 @@ const make = Effect.gen(function* () {
     });
   });
 
+  const readThread: PeerForwarding["Service"]["readThread"] = (scope, environmentId, input) =>
+    forward<OrchestratorMcpThreadReadResult>(
+      scope,
+      "t3_thread_read",
+      OrchestratorMcpThreadReadInput,
+      OrchestratorMcpThreadReadResult,
+      environmentId,
+      input,
+    );
+
+  const interruptThread: PeerForwarding["Service"]["interruptThread"] = (
+    scope,
+    environmentId,
+    input,
+  ) =>
+    forward<OrchestratorMcpThreadInterruptResult>(
+      scope,
+      "t3_thread_interrupt",
+      OrchestratorMcpThreadInterruptInput,
+      OrchestratorMcpThreadInterruptResult,
+      environmentId,
+      input,
+    );
+
   const waitForThread: PeerForwarding["Service"]["waitForThread"] = Effect.fn(
     "PeerForwarding.waitForThread",
   )(function* (scope, environmentId, input) {
@@ -149,7 +189,14 @@ const make = Effect.gen(function* () {
         OrchestratorMcpThreadWaitInput,
         OrchestratorMcpThreadWaitResult,
         environmentId,
-        { threadId: input.threadId, ...(runId === undefined ? {} : { runId }), timeoutMs: chunk },
+        {
+          threadId: input.threadId,
+          ...(runId === undefined ? {} : { runId }),
+          timeoutMs: chunk,
+          ...(input.untilDelegatedWorkSettled === undefined
+            ? {}
+            : { untilDelegatedWorkSettled: input.untilDelegatedWorkSettled }),
+        },
       );
       remaining -= chunk;
       if (!result.timedOut || remaining <= 0) return result;
@@ -190,7 +237,13 @@ const make = Effect.gen(function* () {
     },
   );
 
-  return PeerForwarding.of({ call, waitForThread, links: listLinks });
+  return PeerForwarding.of({
+    call,
+    readThread,
+    interruptThread,
+    waitForThread,
+    links: listLinks,
+  });
 });
 
 export const layer = Layer.effect(PeerForwarding, make);

@@ -1067,16 +1067,15 @@ describe("MessagesTimeline history and thread links", () => {
   });
 
   it("opens the parent thread from the top of an empty subagent timeline", async () => {
-    const onOpenThread = vi.fn();
+    const open = vi.fn();
     await using screen = await renderTimeline([], {
-      onOpenThread,
-      parentThreadLink: { threadId: ThreadId.make("thread-parent"), title: "Architecture audit" },
+      parentThreadLink: { title: "Architecture audit", open },
     });
     expect(screen.text()).toContain("Subagent of");
     expect(screen.text()).toContain("Architecture audit");
     expect(screen.text()).not.toContain("Send a message to start the conversation");
     await click(screen.button("Open parent thread"));
-    expect(onOpenThread).toHaveBeenCalledWith("thread-parent");
+    expect(open).toHaveBeenCalledOnce();
   });
 
   it("opens a thread at its newest message after an empty pane and restores it on return", async () => {
