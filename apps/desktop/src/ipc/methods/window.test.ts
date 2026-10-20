@@ -27,6 +27,7 @@ import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import {
   getLocalEnvironmentBootstraps,
+  getRelayTelemetryEnabled,
   getWindowFullscreenState,
   pasteAsText,
   pickProjectFavicon,
@@ -196,6 +197,25 @@ describe("getLocalEnvironmentBootstraps", () => {
       assert.deepEqual(result, []);
     }).pipe(Effect.provide(bootstrapsLayer([stoppedInstance])));
   });
+});
+
+describe("getRelayTelemetryEnabled", () => {
+  it.effect("reads the desktop host opt-out before returning the renderer policy", () =>
+    Effect.gen(function* () {
+      assert.isFalse(
+        yield* getRelayTelemetryEnabled.handler().pipe(
+          Effect.provideService(HostProcess.Environment, {
+            T3CODE_TELEMETRY_ENABLED: "false",
+          }),
+        ),
+      );
+      assert.isTrue(
+        yield* getRelayTelemetryEnabled
+          .handler()
+          .pipe(Effect.provideService(HostProcess.Environment, {})),
+      );
+    }),
+  );
 });
 
 describe("getWindowFullscreenState", () => {
