@@ -1593,6 +1593,54 @@ describe("MessagesTimeline scroll position", () => {
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     expect(composerState()).toBe("collapsed");
   });
+
+  it("reveals a tool call expanded just above the composer", async () => {
+    const props = baseProps();
+    const composerOverlayHeight = 200;
+    await renderElement(
+      <MessagesTimeline
+        {...props}
+        composerOverlayHeight={composerOverlayHeight}
+        timelineEntries={[
+          ...tallEntries.slice(0, 6),
+          work("tool-near-composer", {
+            label: "Example tool",
+            toolTitle: "Example tool",
+            tone: "tool",
+            itemType: "dynamic_tool",
+            toolLifecycleStatus: "completed",
+            toolData: { input: { query: `${"x".repeat(1200)} TOOL_INPUT_END` } },
+          }),
+          ...tallEntries.slice(6),
+        ]}
+      />,
+    );
+    const viewport = await waitForList(props);
+    const header = () => button("Example tool");
+    const visibleBottom = () => viewport.getBoundingClientRect().bottom - composerOverlayHeight;
+    // Rows below the tool measure lazily, so position it once layout settles.
+    const placeHeaderAboveComposer = async () => {
+      await act(async () => {
+        viewport.scrollTop += header().getBoundingClientRect().bottom - (visibleBottom() - 8);
+      });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    };
+    await placeHeaderAboveComposer();
+    await placeHeaderAboveComposer();
+    expect(header().getBoundingClientRect().bottom).toBeLessThanOrEqual(visibleBottom());
+
+    await click(header());
+    const inputEnd = () =>
+      Array.from(container.querySelectorAll<HTMLElement>("*")).findLast((element) =>
+        element.textContent?.includes("TOOL_INPUT_END"),
+      )!;
+    await vi.waitFor(() =>
+      expect(inputEnd().getBoundingClientRect().bottom).toBeLessThanOrEqual(visibleBottom() + 1),
+    );
+    expect(header().getBoundingClientRect().top).toBeGreaterThanOrEqual(
+      viewport.getBoundingClientRect().top,
+    );
+  });
 });
 
 describe("MessagesTimeline send anchor", () => {

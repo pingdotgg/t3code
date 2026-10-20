@@ -145,6 +145,32 @@ export function getAnchoredTurnMetrics({
   };
 }
 
+/**
+ * Scroll needed so a row that just expanded is not left under the composer
+ * overlay. Never scrolls the row's top past the top anchor inset, so a row
+ * taller than the usable viewport stays readable from its header.
+ */
+export function resolveDisclosureRevealScrollDelta({
+  rowTop,
+  rowBottom,
+  viewportTop,
+  viewportBottom,
+  composerOverlayHeight,
+  anchorOffset,
+}: {
+  readonly rowTop: number;
+  readonly rowBottom: number;
+  readonly viewportTop: number;
+  readonly viewportBottom: number;
+  readonly composerOverlayHeight: number;
+  readonly anchorOffset: number;
+}): number {
+  const hiddenBelow = rowBottom - (viewportBottom - composerOverlayHeight);
+  if (!(hiddenBelow > 0)) return 0;
+  const roomAbove = rowTop - (viewportTop + anchorOffset);
+  return Math.max(0, Math.min(hiddenBelow, roomAbove));
+}
+
 export interface RememberedTimelinePosition {
   readonly rowId: string;
   readonly offsetWithinRow: number;
