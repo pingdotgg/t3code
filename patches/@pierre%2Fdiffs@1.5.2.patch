@@ -694,6 +694,43 @@ index 0000000..29370ad
 +export { CodeViewSearch, collectMatches };
 +
 +//# sourceMappingURL=CodeViewSearch.js.map
+diff --git a/dist/components/FileDiff.js b/dist/components/FileDiff.js
+index 6f66bd3..3125fac 100644
+--- a/dist/components/FileDiff.js
++++ b/dist/components/FileDiff.js
+@@ -1,5 +1,6 @@
+-import { CUSTOM_HEADER_SLOT_ID, DEFAULT_THEMES, EMPTY_RENDER_RANGE, HEADER_FILENAME_SUFFIX_SLOT_ID, HEADER_METADATA_SLOT_ID, HEADER_PREFIX_SLOT_ID } from "../constants.js";
++import { CUSTOM_HEADER_SLOT_ID, DEFAULT_THEMES, HEADER_FILENAME_SUFFIX_SLOT_ID, HEADER_METADATA_SLOT_ID, HEADER_PREFIX_SLOT_ID } from "../constants.js";
+ import { getThemes } from "../utils/getThemes.js";
++import { getHighlighterThemeStyles } from "../utils/getHighlighterThemeStyles.js";
+ import { getHighlighterIfLoaded, getSharedHighlighter } from "../highlighter/shared_highlighter.js";
+ import { dequeueRender, queueRender } from "../managers/UniversalRenderingManager.js";
+ import { areThemesEqual } from "../utils/areThemesEqual.js";
+@@ -691,11 +692,20 @@ var FileDiff = class {
+ 			this.removeRenderedCode();
+ 			this.clearAuxiliaryNodes();
+ 			try {
+-				const hunksResult = this.hunksRenderer.renderDiff(latestDiff, EMPTY_RENDER_RANGE);
+-				if (hunksResult != null) this.applyThemeState(fileContainer, hunksResult.themeStyles, themeType, hunksResult.baseThemeType);
+-				if (hunksResult?.headerElement != null) this.applyHeaderToDOM(hunksResult.headerElement, fileContainer, hunksResult.fileDiff);
++				// An empty render range still highlights the full diff. Headers only need the theme.
++				const theme = this.getTheme();
++				const highlighter = getHighlighterIfLoaded({ theme, lang: "text" });
++				if (highlighter != null) this.applyThemeState(fileContainer, getHighlighterThemeStyles({ theme, highlighter }), themeType, typeof theme === "string" ? highlighter.getTheme(theme).type : void 0);
++				else getSharedHighlighter({
++					themes: getThemes(theme),
++					langs: ["text"],
++					preferredHighlighter: this.workerManager?.getPreferredHighlighter() ?? this.options.preferredHighlighter
++				}).then(() => {
++					if (this.enabled && this.fileContainer === fileContainer && this.options.collapsed && areThemesEqual(theme, this.getTheme())) this.rerender();
++				}).catch((error) => console.error(error));
++				if (!disableFileHeader) this.applyHeaderToDOM(this.hunksRenderer.renderHeader(latestDiff), fileContainer, latestDiff);
+ 				this.renderSeparators([]);
+-				this.renderedDiff = hunksResult?.fileDiff ?? latestDiff;
++				this.renderedDiff = latestDiff;
+ 				this.injectUnsafeCSS();
+ 			} catch (error) {
+ 				if (disableErrorHandling) throw error;
 diff --git a/dist/components/VirtualizedFile.d.ts b/dist/components/VirtualizedFile.d.ts
 index 5e68e35..79dcd88 100644
 --- a/dist/components/VirtualizedFile.d.ts
@@ -773,6 +810,28 @@ index d1f57cd..5908ad7 100644
  		const file = this.getRenderedFile();
  		if (!this.isSimpleMode()) this.computeApproximateSize(true);
  		else if (shouldUpdateBuffer && previousRenderRange != null && file != null) {
+diff --git a/dist/components/VirtualizedFileDiff.js b/dist/components/VirtualizedFileDiff.js
+index 96f970f..1bb59c6 100644
+--- a/dist/components/VirtualizedFileDiff.js
++++ b/dist/components/VirtualizedFileDiff.js
+@@ -552,7 +552,7 @@ var VirtualizedFileDiff = class extends FileDiff {
+ 	rerender() {
+ 		if (!this.enabled || this.fileDiff == null && this.additionFile == null && this.deletionFile == null) return;
+ 		const latestDiff = this.getLatestDiff();
+-		const nextRenderDiff = latestDiff == null ? void 0 : this.hunksRenderer.getDiffForNextRender(latestDiff);
++		const nextRenderDiff = latestDiff == null || this.options.collapsed === true ? latestDiff : this.hunksRenderer.getDiffForNextRender(latestDiff);
+ 		if (this.isSimpleMode()) this.pendingRender = void 0;
+ 		this.forceRenderOverride = true;
+ 		this.virtualizer.instanceChanged(this, !areDiffTargetsEqual(this.getRenderedDiff(), nextRenderDiff));
+@@ -724,7 +724,7 @@ var VirtualizedFileDiff = class extends FileDiff {
+ 		const previousRenderedDiff = this.getRenderedDiff();
+ 		const { pendingRender } = this;
+ 		const previousLayoutDiff = pendingRender?.diff ?? previousRenderedDiff;
+-		const pendingRenderDiff = this.hunksRenderer.getDiffForNextRender(latestDiff);
++		const pendingRenderDiff = this.options.collapsed === true ? latestDiff : this.hunksRenderer.getDiffForNextRender(latestDiff);
+ 		this.pendingRender = {
+ 			latestDiff,
+ 			diff: pendingRenderDiff
 diff --git a/dist/components/web-components.js b/dist/components/web-components.js
 index 6e7b486..5b7290f 100644
 --- a/dist/components/web-components.js
