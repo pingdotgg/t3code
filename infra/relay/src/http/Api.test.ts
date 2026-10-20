@@ -1196,6 +1196,40 @@ describe("relay request tracing", () => {
       }),
   );
 
+  it.effect("records the Cloudflare edge a request entered through on its server span", () =>
+    Effect.gen(function* () {
+      const spans: Array<Tracer.NativeSpan> = [];
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+          return span;
+        },
+      });
+      const source = new Request("https://relay.test/v1/environments/env-1/connect", {
+        method: "POST",
+      });
+      Object.defineProperty(source, "cf", {
+        value: { colo: "JNB", country: "ZA", continent: "AF", asn: 37_100 },
+      });
+
+      yield* traceRelayHttpRequestWith(
+        Effect.succeed(HttpServerResponse.empty({ status: 204 })),
+        Layer.succeed(Tracer.Tracer, tracer),
+      ).pipe(
+        Effect.provideService(
+          HttpServerRequest.HttpServerRequest,
+          HttpServerRequest.fromWeb(source),
+        ),
+      );
+
+      const server = spans.find((span) => span.kind === "server");
+      expect(server?.attributes.get("relay.edge.colo")).toBe("JNB");
+      expect(server?.attributes.get("relay.edge.country")).toBe("ZA");
+      expect(server?.attributes.get("relay.edge.continent")).toBe("AF");
+    }),
+  );
+
   it.effect("records one server span inside the worker's disabled HTTP tracer", () =>
     Effect.gen(function* () {
       const spans: Array<Tracer.NativeSpan> = [];
