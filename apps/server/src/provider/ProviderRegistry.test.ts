@@ -70,6 +70,7 @@ import type {
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 import { ProviderDriverError } from "./Errors.ts";
+import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import {
   makeManualOnlyProviderMaintenanceCapabilities,
   makeProviderMaintenanceCapabilities,
@@ -4105,9 +4106,84 @@ it.layer(
             apiKeySource: "none",
             apiProvider: "firstParty",
           }),
+          { ANTHROPIC_BASE_URL: "" },
         );
         assert.strictEqual(status.status, "error");
         assert.strictEqual(status.auth.status, "unauthenticated");
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
+    it.effect.each([
+      { source: "inherited HTTPS endpoint", baseUrl: "https://proxy.example/api", overrides: [] },
+      {
+        source: "instance HTTP endpoint overriding Anthropic",
+        baseUrl: "https://api.anthropic.com",
+        overrides: [
+          { name: "ANTHROPIC_BASE_URL", value: "http://localhost:8080", sensitive: false },
+        ],
+      },
+    ])("keeps Claude ready with an empty first-party account: $source", ({ baseUrl, overrides }) =>
+      Effect.gen(function* () {
+        const environment = yield* mergeProviderInstanceEnvironment(overrides, {
+          ANTHROPIC_BASE_URL: baseUrl,
+        });
+        const status = yield* checkClaudeProviderStatus(
+          defaultClaudeSettings,
+          claudeCapabilities({
+            tokenSource: "none",
+            apiKeySource: "none",
+            apiProvider: "firstParty",
+          }),
+          environment,
+        );
+        assert.strictEqual(status.status, "ready");
+        assert.strictEqual(status.auth.status, "authenticated");
+        assert.strictEqual(status.auth.type, "customEndpoint");
+        assert.strictEqual(status.auth.label, "Custom API endpoint");
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
+    it.effect.each([
+      "https://api.anthropic.com",
+      "https://api.anthropic.com:443",
+      "https://api.anthropic.com:8443",
+      "openrouter.ai/api",
+      "localhost:8080",
+      "ftp://proxy.example",
+    ])("keeps Claude logged out when the instance endpoint is %s", (baseUrl) =>
+      Effect.gen(function* () {
+        const environment = yield* mergeProviderInstanceEnvironment(
+          [{ name: "ANTHROPIC_BASE_URL", value: baseUrl, sensitive: false }],
+          { ANTHROPIC_BASE_URL: "https://proxy.example/api" },
+        );
+        const status = yield* checkClaudeProviderStatus(
+          defaultClaudeSettings,
+          claudeCapabilities({
+            tokenSource: "none",
+            apiKeySource: "none",
+            apiProvider: "firstParty",
+          }),
+          environment,
+        );
+        assert.strictEqual(status.status, "error");
+        assert.strictEqual(status.auth.status, "unauthenticated");
+        assert.strictEqual(status.auth.type, undefined);
       }).pipe(
         Effect.provide(
           layerMockSpawner((args) => {
