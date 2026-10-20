@@ -1,4 +1,5 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { useEffect, useState } from "react";
 
 interface TerminalLocationLike {
   readonly cwd: string;
@@ -65,20 +66,55 @@ export function resolveTerminalOpenLocation(input: {
   readonly cwd: string;
   readonly worktreePath: string | null;
 } {
+  const sessionLocation = input.terminalLocation ?? input.activeSessionLocation;
+
+  // Keep cwd paired with its identity; null identifies the project checkout.
+  if (sessionLocation !== null) {
+    return { cwd: sessionLocation.cwd, worktreePath: sessionLocation.worktreePath };
+  }
   const preferredThreadWorktreePath = resolvePreferredThreadWorktreePath({
     threadShellWorktreePath: input.threadShellWorktreePath,
     threadDetailWorktreePath: input.threadDetailWorktreePath,
   });
-
   return {
-    cwd:
-      input.terminalLocation?.cwd ??
-      input.activeSessionLocation?.cwd ??
-      preferredThreadWorktreePath ??
-      input.workspaceRoot,
-    worktreePath:
-      input.terminalLocation?.worktreePath ??
-      input.activeSessionLocation?.worktreePath ??
-      preferredThreadWorktreePath,
+    cwd: preferredThreadWorktreePath ?? input.workspaceRoot,
+    worktreePath: preferredThreadWorktreePath,
   };
+}
+
+export function useInitialTerminalLaunchLocation(input: {
+  readonly targetKey: string | null;
+  readonly pendingLaunch: PendingTerminalLaunch | null;
+  readonly hasResolvedPendingLaunch: boolean;
+  readonly isAuthenticated: boolean;
+  readonly canRead: boolean;
+  readonly canOperate: boolean;
+  readonly hasLoadedSessions: boolean;
+  readonly location: Parameters<typeof resolveTerminalOpenLocation>[0] | null;
+}) {
+  let candidate: TerminalLocationLike | null = null;
+  if (
+    input.location !== null &&
+    input.hasResolvedPendingLaunch &&
+    input.isAuthenticated &&
+    (input.canRead || input.canOperate)
+  ) {
+    if (input.pendingLaunch !== null) {
+      candidate = {
+        cwd: input.pendingLaunch.cwd,
+        worktreePath: input.pendingLaunch.worktreePath,
+      };
+    } else if (!input.canRead || input.hasLoadedSessions) {
+      // Metadata must establish whether this target has a location before we retain a fallback.
+      candidate = resolveTerminalOpenLocation(input.location);
+    }
+  }
+  const [entry, setEntry] = useState(() => ({ key: input.targetKey, location: candidate }));
+  useEffect(() => {
+    if (entry.key === input.targetKey && (entry.location !== null || candidate === null)) {
+      return;
+    }
+    setEntry({ key: input.targetKey, location: candidate });
+  }, [candidate, entry.key, entry.location, input.targetKey]);
+  return entry.key === input.targetKey ? entry.location : null;
 }

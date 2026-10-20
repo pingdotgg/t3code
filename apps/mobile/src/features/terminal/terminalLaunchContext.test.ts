@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vite-plus/test";
+import * as NodeModule from "node:module";
+import { act, createElement, useEffect, type ReactNode } from "react";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 import {
@@ -6,6 +8,7 @@ import {
   resolveTerminalOpenLocation,
   stagePendingTerminalLaunch,
   takePendingTerminalLaunch,
+  useInitialTerminalLaunchLocation,
 } from "./terminalLaunchContext";
 
 describe("resolvePreferredThreadWorktreePath", () => {
@@ -60,6 +63,34 @@ describe("resolveTerminalOpenLocation", () => {
       cwd: "/repo/worktrees/feature",
       worktreePath: "/repo/worktrees/feature",
     });
+  });
+
+  it("preserves checkout cwd and identity from the selected terminal or active session", () => {
+    const checkout = { cwd: "/repo/root/packages/app", worktreePath: null };
+    const threadLocation = {
+      workspaceRoot: "/repo/root",
+      threadShellWorktreePath: "/repo/worktrees/feature",
+      threadDetailWorktreePath: "/repo/worktrees/feature",
+    };
+
+    expect(
+      resolveTerminalOpenLocation({
+        ...threadLocation,
+        terminalLocation: checkout,
+        activeSessionLocation: {
+          cwd: "/repo/worktrees/other",
+          worktreePath: "/repo/worktrees/other",
+        },
+      }),
+    ).toEqual(checkout);
+
+    expect(
+      resolveTerminalOpenLocation({
+        ...threadLocation,
+        terminalLocation: null,
+        activeSessionLocation: checkout,
+      }),
+    ).toEqual(checkout);
   });
 });
 
@@ -118,5 +149,100 @@ describe("pending terminal launches", () => {
       env: undefined,
       initialInput: "pnpm i\r",
     });
+  });
+});
+
+describe("initial terminal launch location", () => {
+  it("waits for session metadata before retaining a location for each route target", async () => {
+    const { createRoot } = NodeModule.createRequire(import.meta.url)("react-dom/client") as {
+      createRoot(container: Element): {
+        render(children: ReactNode): void;
+        unmount(): void;
+      };
+    };
+    const document = { nodeType: 9, addEventListener() {}, removeEventListener() {} };
+    const container = {
+      nodeType: 1,
+      tagName: "DIV",
+      namespaceURI: "http://www.w3.org/1999/xhtml",
+      ownerDocument: document,
+      addEventListener() {},
+      removeEventListener() {},
+    };
+    vi.stubGlobal("document", document);
+    vi.stubGlobal("window", { document, HTMLIFrameElement: EventTarget });
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const root = createRoot(container as unknown as HTMLElement);
+    type Input = Parameters<typeof useInitialTerminalLaunchLocation>[0];
+    let location: ReturnType<typeof useInitialTerminalLaunchLocation> = null;
+    function Probe(input: Input) {
+      const selectedLocation = useInitialTerminalLaunchLocation(input);
+      useEffect(() => {
+        location = selectedLocation;
+      }, [selectedLocation]);
+      return null;
+    }
+    const threadLocation = {
+      terminalLocation: null,
+      activeSessionLocation: null,
+      workspaceRoot: "/repo/root",
+      threadShellWorktreePath: "/repo/worktrees/feature",
+      threadDetailWorktreePath: "/repo/worktrees/feature",
+    };
+    const checkout = { cwd: "/repo/root/packages/app", worktreePath: null };
+    const input: Input = {
+      targetKey: "environment:thread:term-1",
+      pendingLaunch: null,
+      hasResolvedPendingLaunch: true,
+      isAuthenticated: true,
+      canRead: true,
+      canOperate: true,
+      hasLoadedSessions: false,
+      location: threadLocation,
+    };
+    const render = (changes: Partial<Input> = {}) =>
+      act(() => root.render(createElement(Probe, { ...input, ...changes })));
+    try {
+      // Thread/project are ready before authentication and the metadata snapshot.
+      await render({ isAuthenticated: false, canRead: false, canOperate: false });
+      expect(location).toBeNull();
+      await render();
+      expect(location).toBeNull();
+      await render({
+        hasLoadedSessions: true,
+        canOperate: false,
+        location: { ...threadLocation, terminalLocation: checkout },
+      });
+      expect(location).toEqual(checkout);
+
+      // Reconnects and subsequent thread changes must not move the selected terminal.
+      await render({ location: { ...threadLocation, threadDetailWorktreePath: "/repo/other" } });
+      expect(location).toEqual(checkout);
+
+      const nextTarget = { targetKey: "environment:thread:term-2" };
+      await render(nextTarget);
+      expect(location).toBeNull();
+      // A loaded empty session list permits the fresh-open thread fallback.
+      await render({ ...nextTarget, hasLoadedSessions: true });
+      expect(location).toEqual({
+        cwd: "/repo/worktrees/feature",
+        worktreePath: "/repo/worktrees/feature",
+      });
+
+      await render({ targetKey: "environment:thread:term-3", hasResolvedPendingLaunch: false });
+      expect(location).toBeNull();
+      await render({ targetKey: "environment:thread:term-3", pendingLaunch: checkout });
+      expect(location).toEqual(checkout);
+
+      // Operate-only grants cannot load metadata, so they still use the thread default.
+      await render({ targetKey: "environment:thread:term-4", canRead: false });
+      expect(location).toEqual({
+        cwd: "/repo/worktrees/feature",
+        worktreePath: "/repo/worktrees/feature",
+      });
+    } finally {
+      await act(() => root.unmount());
+      vi.unstubAllGlobals();
+    }
   });
 });

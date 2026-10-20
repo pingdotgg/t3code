@@ -3,6 +3,8 @@ import {
   EnvironmentId,
   type TerminalAttachInput,
   type TerminalAttachStreamEvent,
+  type TerminalMetadataStreamEvent,
+  type TerminalSummary,
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -388,6 +390,83 @@ describe("finite environment subscription lifecycle", () => {
 });
 
 describe("environment query lifecycle", () => {
+  it.effect(
+    "terminal metadata waits for snapshots and retains known sessions across restarts",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeEnvironmentQueryHarness(Effect.void);
+        const started = yield* Queue.unbounded<void>();
+        const events = yield* Queue.unbounded<TerminalMetadataStreamEvent>();
+        const receivedCheckout = yield* Deferred.make<void>();
+        const receivedEmpty = yield* Deferred.make<void>();
+        const checkout: TerminalSummary = {
+          threadId: "thread-1",
+          terminalId: "terminal-1",
+          cwd: "/repo/root/packages/app",
+          worktreePath: null,
+          status: "running",
+          pid: 123,
+          exitCode: null,
+          exitSignal: null,
+          hasRunningSubprocess: false,
+          label: "Terminal 1",
+          updatedAt: "2026-04-01T00:00:00.000Z",
+        };
+        const client = {
+          [WS_METHODS.subscribeTerminalMetadata]: () =>
+            Stream.fromEffect(Queue.offer(started, undefined)).pipe(
+              Stream.drain,
+              Stream.concat(Stream.fromQueue(events)),
+            ),
+        } as unknown as RpcSession.RpcSession["client"];
+        const session = { ...QUERY_RPC_SESSION, client };
+        yield* SubscriptionRef.set(harness.supervisorSession, Option.some(session));
+        const atoms = createTerminalEnvironmentAtoms(harness.runtime);
+        const atom = atoms.metadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: null,
+        });
+        const registry = AtomRegistry.make();
+        const observed: Array<ReadonlyArray<TerminalSummary>> = [];
+        const unsubscribe = registry.subscribe(
+          atom,
+          (result) => {
+            if (!AsyncResult.isSuccess(result)) return;
+            observed.push(result.value);
+            if (result.value.length > 0) Deferred.doneUnsafe(receivedCheckout, Exit.void);
+            else Deferred.doneUnsafe(receivedEmpty, Exit.void);
+          },
+          { immediate: true },
+        );
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            unsubscribe();
+            registry.dispose();
+          }),
+        );
+
+        yield* Queue.take(started);
+        expect(selectEnvironmentQueryData(registry.get(atom))).toBeNull();
+        expect(observed).toEqual([]);
+
+        yield* Queue.offer(events, { type: "snapshot", terminals: [checkout] });
+        yield* Deferred.await(receivedCheckout);
+        expect(selectEnvironmentQueryData(registry.get(atom))).toEqual([checkout]);
+
+        yield* SubscriptionRef.set(harness.supervisorSession, Option.some({ ...session }));
+        yield* Queue.take(started);
+        expect(selectEnvironmentQueryData(registry.get(atom))).toEqual([checkout]);
+
+        yield* SubscriptionRef.update(harness.streamGeneration, (generation) => generation + 1);
+        yield* Queue.take(started);
+        expect(selectEnvironmentQueryData(registry.get(atom))).toEqual([checkout]);
+
+        yield* Queue.offer(events, { type: "snapshot", terminals: [] });
+        yield* Deferred.await(receivedEmpty);
+        expect(selectEnvironmentQueryData(registry.get(atom))).toEqual([]);
+      }),
+  );
+
   it.effect("terminal attach resubscribes with resume only after the stream replied", () =>
     Effect.gen(function* () {
       const harness = yield* makeEnvironmentQueryHarness(Effect.void);
