@@ -59,6 +59,7 @@ import { t3OrchestrationPromptForFirstRun } from "@t3tools/provider-core/server/
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
+import { tokenCount } from "@t3tools/provider-core/server/usage";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import {
   isProviderNativeImageAttachment,
@@ -2035,11 +2036,13 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               hasSubagents,
             };
           }
-          const count = (tokens: number) => Math.max(0, Math.round(tokens));
           // Cursor's inputTokens already includes cache reads and writes: every SDK run matched
           // to its dashboard event had inputTokens = uncached + cacheRead + cacheWrite.
-          const inputTokens = count(context.usage.inputTokens);
-          const cachedInputTokens = Math.min(count(context.usage.cacheReadTokens), inputTokens);
+          const inputTokens = tokenCount(context.usage.inputTokens);
+          const cachedInputTokens = Math.min(
+            tokenCount(context.usage.cacheReadTokens),
+            inputTokens,
+          );
           const reasoningTokens = context.usage.reasoningTokens;
           return {
             usageScope: "main_agent" as const,
@@ -2047,11 +2050,13 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             inputTokens,
             cachedInputTokens,
             cacheCreationTokens: Math.min(
-              count(context.usage.cacheWriteTokens),
+              tokenCount(context.usage.cacheWriteTokens),
               inputTokens - cachedInputTokens,
             ),
-            outputTokens: count(context.usage.outputTokens),
-            ...(reasoningTokens === undefined ? {} : { reasoningTokens: count(reasoningTokens) }),
+            outputTokens: tokenCount(context.usage.outputTokens),
+            ...(reasoningTokens === undefined
+              ? {}
+              : { reasoningTokens: tokenCount(reasoningTokens) }),
             hasSubagents,
           };
         };
