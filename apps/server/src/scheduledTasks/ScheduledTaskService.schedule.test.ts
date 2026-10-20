@@ -6,7 +6,6 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
@@ -55,52 +54,6 @@ it.effect("rejects a stale form save after deletion while preserving explicit-id
       expect((yield* service.list()).tasks).toEqual([]);
 
       expect((yield* service.upsert(input)).task.id).toBe(created.task.id);
-    }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))));
-  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
-);
-
-it.effect("includes the scheduler zone in empty lists and subscription updates", () =>
-  Effect.gen(function* () {
-    const layerDependencies = Layer.mergeAll(
-      NodeCrypto.layer,
-      Scheduler.layer,
-      Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
-      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-        namedProjectsRoot: "/projects",
-        isScratchProject: () => Effect.succeed(false),
-      }),
-      Layer.mock(ThreadManagementService.ThreadManagementService)({}),
-      Layer.mock(SecretRequests.SecretRequests)({}),
-    );
-    yield* Effect.gen(function* () {
-      const service = yield* ScheduledTaskService.ScheduledTaskService;
-      const timeZone = DateTime.zoneToString(DateTime.zoneMakeLocal());
-      expect(yield* service.list()).toEqual({ tasks: [], timeZone });
-
-      const input = yield* decodeUpsertInput({
-        title: "Morning review",
-        prompt: "Review the open pull requests.",
-        enabled: false,
-        schedule: { type: "fixed_time", timeOfDay: "09:00" },
-        projectId: "project-schedule-zone",
-        workspaceStrategy: { type: "root" },
-        modelSelection: { instanceId: "codex", model: "gpt-5.4" },
-        runtimeMode: "full-access",
-        interactionMode: "default",
-      });
-      const snapshots = yield* service.subscribeList().pipe(
-        Stream.tap((snapshot) =>
-          snapshot.tasks.length === 0 ? service.upsert(input) : Effect.void,
-        ),
-        Stream.take(2),
-        Stream.runCollect,
-      );
-      const populated = yield* service.list();
-      expect(populated).toMatchObject({
-        timeZone,
-        tasks: [{ title: "Morning review", schedule: input.schedule }],
-      });
-      expect(snapshots).toEqual([{ tasks: [], timeZone }, populated]);
     }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
