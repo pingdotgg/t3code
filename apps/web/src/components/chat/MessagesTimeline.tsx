@@ -119,6 +119,7 @@ import {
 import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
 import ChatMarkdown, { ChatMarkdownAssetImage } from "../ChatMarkdown";
 import { T3Wordmark } from "../T3Wordmark";
+import { EnvironmentContextChip } from "../EnvironmentContextChip";
 import { ThreadContextChip } from "../ThreadContextChip";
 import {
   ArrowRightIcon,
@@ -4405,6 +4406,16 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
       render: (record, context) =>
         record.kind === "thread" ? (
           <ThreadContextChip record={record} copyMarkdown={context.copyMarkdown} />
+        ) : (
+          <UnavailableUserMessageContextChip {...context} />
+        ),
+    },
+    {
+      kind: "environment",
+      canRender: (record) => record.kind === "environment",
+      render: (record, context) =>
+        record.kind === "environment" ? (
+          <EnvironmentContextChip record={record} copyMarkdown={context.copyMarkdown} />
         ) : (
           <UnavailableUserMessageContextChip {...context} />
         ),

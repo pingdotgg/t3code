@@ -34,6 +34,7 @@ import type {
   PreviewAnnotationPayload,
   ProviderApprovalDecision,
   ThreadContextRecord,
+  EnvironmentContextRecord,
   ProviderInteractionMode,
   ResolvedKeybindingsConfig,
   RuntimeMode,
@@ -259,12 +260,18 @@ import {
   terminalContextRecord,
   threadContextRecord,
   threadContextReference,
+  environmentContextRecord,
+  environmentContextReference,
 } from "~/lib/composerContextRecords";
 import {
   copiedComposerAttachmentFile,
   rememberCopiedComposerAttachments,
 } from "~/lib/copiedComposerAttachments";
-import { matchComposerThreadItems } from "@t3tools/client-runtime/composerThreadItems";
+import {
+  matchComposerEnvironmentItems,
+  matchComposerThreadItems,
+} from "@t3tools/client-runtime/composerThreadItems";
+import { useEnvironmentIdentities, useEnvironmentMachines } from "~/state/environments";
 import { useThreadContextDrop, threadContextDropTargetProps } from "./threadContextDrag";
 import { readThreadShell, useThreadShells } from "~/state/entities";
 import { requestConfirmDialog } from "~/confirmDialog";
@@ -1479,6 +1486,7 @@ export interface ChatComposerHandle {
     previewAnnotations: PreviewAnnotationPayload[];
     reviewComments: ReviewCommentContext[];
     threadContexts: ThreadContextRecord[];
+    environmentContexts: EnvironmentContextRecord[];
     selectedPromptEffort: string | null;
     selectedModelOptionsForDispatch: unknown;
     selectedModelSelection: ModelSelection;
@@ -2101,6 +2109,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerPreviewAnnotations = composerDraft.previewAnnotations;
   const composerReviewComments = composerDraft.reviewComments;
   const composerThreadContexts = attachmentDraft.threadContexts;
+  const composerEnvironmentContexts = composerDraft.environmentContexts;
   const {
     pendingSnapShotAnimations,
     pendingSnapShotIds,
@@ -2151,6 +2160,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     reviewComments: composerReviewComments,
     previewAnnotations: composerPreviewAnnotations,
     threadContexts: composerThreadContexts,
+    environmentContexts: composerEnvironmentContexts,
     images: composerImages,
     files: composerFiles,
     uploadsByImageId,
@@ -2576,6 +2586,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     pullRequestTextQuery === debouncedPullRequestTextQuery ? pullRequestTextQuery : null;
   const isPathTrigger = composerTriggerKind === "path";
   const environmentThreadShells = useThreadShells(isPathTrigger);
+  // The user's machines feed `@` machine matches; the catalog summary is cheap and stable.
+  const environmentIdentities = useEnvironmentIdentities();
+  const environmentMachines = useEnvironmentMachines();
+  const mentionableEnvironments = environmentIdentities.map((identity) => ({
+    ...identity,
+    machine: environmentMachines.get(identity.environmentId) ?? ("server" as const),
+  }));
   const workspaceEntries = useComposerPathSearch({
     environmentId,
     cwd: isPathTrigger ? gitCwd : null,
@@ -2660,6 +2677,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           excludeThreadId: activeThreadId,
           query: composerTrigger.query,
         }),
+        // An answer to an agent's question carries thread links, not machines.
+        ...(questionAttachmentTarget === null
+          ? matchComposerEnvironmentItems({
+              environments: mentionableEnvironments,
+              environmentId,
+              query: composerTrigger.query,
+            })
+          : []),
         ...workspaceEntries.entries.map((entry) => ({
           id: `path:${entry.kind}:${entry.path}`,
           type: "path" as const,
@@ -3008,6 +3033,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
   const addComposerDraftThreadContexts = useComposerDraftStore((store) => store.addThreadContexts);
   const setComposerDraftThreadContexts = useComposerDraftStore((store) => store.setThreadContexts);
+  const addComposerDraftEnvironmentContexts = useComposerDraftStore(
+    (store) => store.addEnvironmentContexts,
+  );
+  const setComposerDraftEnvironmentContexts = useComposerDraftStore(
+    (store) => store.setEnvironmentContexts,
+  );
   const buildContextClipboardFragment = (contextIds: ReadonlyArray<string>): string | null => {
     const wanted = new Set(contextIds);
     const copiedFiles = new Map<string, File>();
@@ -3024,6 +3055,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         .filter((c) => wanted.has(terminalContextReference(c).contextId))
         .map(terminalContextRecord),
       ...composerThreadContexts.filter((record) => wanted.has(record.contextId)),
+      ...composerEnvironmentContexts.filter((record) => wanted.has(record.contextId)),
       ...composerReviewComments
         .filter((c) => wanted.has(reviewCommentContextId(c.id)))
         .map(reviewCommentContextRecord),
@@ -3256,7 +3288,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     ? existing.record.id
                     : undefined,
                 })
-              : existing?.kind === "thread"
+              : existing?.kind === "thread" || existing?.kind === "environment"
                 ? existing.record
                 : existing
                   ? (uploadedContextRecordFromDraft(existing) ?? undefined)
@@ -3313,6 +3345,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           // The agent can only read threads on its own server; a pasted foreign one is dropped.
           if (record.environmentId !== environmentId) break;
           addComposerDraftThreadContexts(threadDraftTarget, [record], {
+            appendReference: false,
+          });
+          rewritten.set(record.contextId, record.contextId);
+          break;
+        }
+        case "environment": {
+          // A machine means the same machine from any thread, so a pasted one is kept,
+          // but not in an answer to an agent's question, which carries no machines.
+          if (questionAttachmentTarget !== null) break;
+          addComposerDraftEnvironmentContexts(composerDraftTarget, [record], {
             appendReference: false,
           });
           rewritten.set(record.contextId, record.contextId);
@@ -3660,6 +3702,28 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       setComposerDraftThreadContexts(composerDraftTarget, nextThreads);
     }
 
+    const liveEnvironmentIds = new Set<string>(
+      composerEnvironmentContexts.map((record) => record.contextId),
+    );
+    const restoredEnvironments = [...referenced].flatMap((contextId) => {
+      if (liveEnvironmentIds.has(contextId)) return [];
+      const record = retained.environments.get(contextId);
+      return record ? [record] : [];
+    });
+    const nextEnvironments = [
+      ...composerEnvironmentContexts.filter((record) => referenced.has(record.contextId)),
+      ...restoredEnvironments,
+    ];
+    for (const record of composerEnvironmentContexts) {
+      if (!referenced.has(record.contextId)) retained.environments.set(record.contextId, record);
+    }
+    if (
+      nextEnvironments.length !== composerEnvironmentContexts.length ||
+      restoredEnvironments.length > 0
+    ) {
+      setComposerDraftEnvironmentContexts(composerDraftTarget, nextEnvironments);
+    }
+
     for (const comment of composerReviewComments) {
       const contextId = reviewCommentContextId(comment.id);
       if (!referenced.has(contextId)) {
@@ -3952,6 +4016,26 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       });
       if (applied) {
         addComposerDraftThreadContexts(attachmentDraftTarget, [record], {
+          appendReference: false,
+        });
+        setComposerHighlightedItemId(null);
+      }
+      return;
+    }
+    if (item.type === "environment") {
+      if (trigger.kind !== "path") return;
+      const record = environmentContextRecord(item.environmentId, item.label);
+      const replacement = `${formatInlineContextReference(environmentContextReference(record))} `;
+      const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+        snapshot.value,
+        trigger.rangeEnd,
+        replacement,
+      );
+      const applied = applyPromptReplacement(trigger.rangeStart, replacementRangeEnd, replacement, {
+        expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
+      });
+      if (applied) {
+        addComposerDraftEnvironmentContexts(composerDraftTarget, [record], {
           appendReference: false,
         });
         setComposerHighlightedItemId(null);
@@ -6305,6 +6389,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         previewAnnotations: composerPreviewAnnotations,
         reviewComments: composerReviewComments,
         threadContexts: composerThreadContexts,
+        environmentContexts: composerEnvironmentContexts,
         selectedPromptEffort,
         selectedModelOptionsForDispatch,
         selectedModelSelection,
@@ -6358,6 +6443,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerTerminalContextsRef,
       composerPreviewAnnotations,
       composerReviewComments,
+      composerThreadContexts,
+      composerEnvironmentContexts,
       focusComposer,
       environmentId,
       primaryEnvironmentId,

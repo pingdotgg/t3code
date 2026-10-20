@@ -40,6 +40,8 @@ const CONTEXT_CHIP_PRESENTATIONS = {
     symbol: "bubble.left.and.bubble.right",
     icon: "messages-square",
   },
+  // A machine: the record carries only its identity, so every machine wears one glyph.
+  environment: { accent: "#3f9a4f", symbol: "server.rack", icon: null },
 } as const satisfies Record<string, ContextChipPresentation>;
 
 export const UNAVAILABLE_CONTEXT_CHIP_PRESENTATION: ContextChipPresentation = {
