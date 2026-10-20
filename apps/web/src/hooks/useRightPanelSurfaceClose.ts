@@ -108,7 +108,21 @@ export function useRightPanelSurfaceClose(input: {
     terminalLabelsById.get(terminalId) ?? getTerminalLabel(terminalId);
   const closeSurfaces = (toClose: readonly RightPanelSurface[]) => {
     if (!threadRef) return;
-    closeAfterAgentBrowserConfirmation(toClose, () => finishClose(toClose));
+    closeAfterAgentBrowserConfirmation(toClose, () => {
+      const labels = readEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope)
+        ? toClose.flatMap((surface) =>
+            surface.kind === "terminal" ? surface.terminalIds.map(labelFor) : [],
+          )
+        : [];
+      const first = labels[0];
+      if (first === undefined) {
+        finishClose(toClose);
+        return;
+      }
+      void confirmTerminalClose([first, ...labels.slice(1)]).then((confirmed) => {
+        if (confirmed) finishClose(toClose);
+      });
+    });
   };
 
   const closeSurface = useStableCallback((surface: RightPanelSurface) => {

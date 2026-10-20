@@ -149,6 +149,18 @@ describe("storage cleanup settings", () => {
   });
 });
 
+describe("ClientSettings terminal close confirmation", () => {
+  it("keeps confirmation enabled for settings without a saved preference", () => {
+    expect(decodeClientSettings({}).confirmTerminalClose).toBe(true);
+  });
+
+  it("preserves an explicit opt-out through patches and persistence", () => {
+    const preference = { confirmTerminalClose: false };
+    expect(decodeClientSettingsPatch(preference)).toEqual(preference);
+    expect(encodeClientSettings(decodeClientSettings(preference))).toMatchObject(preference);
+  });
+});
+
 describe("ClientSettings rich text composer", () => {
   it("keeps math opt-in and preserves its preference through patches and persistence", () => {
     expect(decodeClientSettings({}).mathRenderingEnabled).toBe(false);
