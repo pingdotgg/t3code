@@ -7,6 +7,7 @@ import {
   EnvironmentId,
   ThreadId,
   type OrchestrationMessageContext,
+  type ServerProviderSkill,
 } from "@t3tools/contracts";
 import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
 import {
@@ -18,6 +19,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 import {
   composerContextEditorTokens,
+  composerSkillLabels,
   composerContextSendBlockReason,
   composerMentionPath,
   createComposerContextHistory,
@@ -162,10 +164,66 @@ describe("mobile composer context", () => {
   });
   it("keeps exact source positions and repeated references alongside existing native tokens", () => {
     const reference = formatComposerContextReference(terminal);
-    const text = `Use $playwright and [app.ts](src/app.ts) with ${reference} then ${reference}`;
-    const tokens = composerContextEditorTokens(text, collectComposerInlineTokens(text));
-    expect(tokens.map((token) => token.type)).toEqual(["skill", "mention", "context", "context"]);
+    const text = `Use $babysit with $disabled $agentOnly $HOME $PATH $anything $notaskill $20 $20k and [app.ts](src/app.ts) with ${reference} then ${reference}`;
+    const babysit: ServerProviderSkill = {
+      name: "babysit",
+      path: "/skills/babysit",
+      enabled: true,
+    };
+    const disabled = { ...babysit, name: "disabled", enabled: false };
+    const agentOnly = { ...babysit, name: "agentOnly", userInvocable: false };
+    const skills = [babysit, disabled, agentOnly];
+    const tokens = composerContextEditorTokens(
+      text,
+      collectComposerInlineTokens(text),
+      composerSkillLabels(skills),
+    );
+    expect(tokens.map((token) => token.source)).toEqual([
+      "$babysit",
+      "[app.ts](src/app.ts)",
+      reference,
+      reference,
+    ]);
     for (const token of tokens) expect(text.slice(token.start, token.end)).toBe(token.source);
+    expect(
+      composerContextEditorTokens(
+        text,
+        collectComposerInlineTokens(text),
+        composerSkillLabels([]),
+      ).map((token) => token.type),
+    ).toEqual(["mention", "context", "context"]);
+    expect(
+      composerContextEditorTokens(
+        text,
+        collectComposerInlineTokens(text),
+        composerSkillLabels([{ ...babysit, name: "HOME" }]),
+      )
+        .filter((token) => token.type === "skill")
+        .map((token) => token.source),
+    ).toEqual(["$HOME"]);
+    const promoted = [
+      babysit,
+      { ...disabled, enabled: true },
+      { ...agentOnly, userInvocable: true },
+    ];
+    expect(
+      composerContextEditorTokens(
+        text,
+        collectComposerInlineTokens(text),
+        composerSkillLabels(promoted),
+      )
+        .filter((token) => token.type === "skill")
+        .map((token) => token.source),
+    ).toEqual(["$babysit", "$disabled", "$agentOnly"]);
+    expect(
+      composerContextEditorTokens(
+        text,
+        collectComposerInlineTokens(text),
+        composerSkillLabels(skills),
+      )
+        .filter((token) => token.type === "skill")
+        .map((token) => token.source),
+    ).toEqual(["$babysit"]);
   });
 
   it("removes deleted payloads but keeps the screenshot linked to a remaining annotation", () => {

@@ -36,7 +36,10 @@ export interface ComposerEditorProps {
     },
   ) => void;
   readonly skills?: ReadonlyArray<
-    Pick<ServerProviderSkill, "name" | "displayName" | "shortDescription" | "description"> &
+    Pick<
+      ServerProviderSkill,
+      "name" | "displayName" | "shortDescription" | "description" | "enabled" | "userInvocable"
+    > &
       Partial<Pick<ServerProviderSkill, "path">>
   >;
   readonly selection?: ComposerEditorSelection;
