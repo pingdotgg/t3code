@@ -92,6 +92,7 @@ import { AsyncResult } from "effect/reactivity";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { prepareTurnAttachments } from "../lib/attachmentUpload";
 import { DEFAULT_FOLLOW_UP_BEHAVIOR } from "../lib/followUpBehavior";
+import { usePastedTextAttachmentThreshold } from "../lib/usePastedTextAttachmentThreshold";
 import { mobilePreferencesAtom } from "./preferences";
 import { environmentThreadDetails } from "./threads";
 import {
@@ -281,6 +282,7 @@ export function useThreadComposerState() {
   }, [acknowledgedMessages, selectedThreadMessages]);
 
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const pastedTextAttachmentThreshold = usePastedTextAttachmentThreshold();
   const followUpBehavior = AsyncResult.isSuccess(preferencesResult)
     ? (preferencesResult.value.followUpBehavior ?? DEFAULT_FOLLOW_UP_BEHAVIOR)
     : DEFAULT_FOLLOW_UP_BEHAVIOR;
@@ -809,6 +811,7 @@ export function useThreadComposerState() {
           text: result.text,
           wouldExceedInputLimit,
           canAttach: true,
+          thresholdBytes: pastedTextAttachmentThreshold,
         }) === "attachment";
       const canAttach =
         maxBytes !== null &&

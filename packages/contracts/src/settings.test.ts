@@ -149,6 +149,31 @@ describe("storage cleanup settings", () => {
   });
 });
 
+describe("ClientSettings large paste threshold", () => {
+  it("keeps the 32 KiB threshold for settings without a saved preference", () => {
+    expect(decodeClientSettings({}).pastedTextAttachmentThreshold).toBe(32_768);
+  });
+
+  it.each([1_000, 5_000, 32_768])("round-trips the %d character preset", (threshold) => {
+    const preference = { pastedTextAttachmentThreshold: threshold };
+    expect(decodeClientSettingsPatch(preference)).toEqual(preference);
+    expect(encodeClientSettings(decodeClientSettings(preference))).toMatchObject(preference);
+  });
+
+  it("rejects thresholds outside the presets in patches", () => {
+    expect(() => decodeClientSettingsPatch({ pastedTextAttachmentThreshold: 2_000 })).toThrow();
+  });
+
+  it("falls back to the default for a stored preset this build no longer offers", () => {
+    const settings = decodeClientSettings({
+      pastedTextAttachmentThreshold: 4_000,
+      sendShortcut: "mod-enter",
+    });
+    expect(settings.pastedTextAttachmentThreshold).toBe(32_768);
+    expect(settings.sendShortcut).toBe("mod-enter");
+  });
+});
+
 describe("ClientSettings rich text composer", () => {
   it("keeps math opt-in and preserves its preference through patches and persistence", () => {
     expect(decodeClientSettings({}).mathRenderingEnabled).toBe(false);

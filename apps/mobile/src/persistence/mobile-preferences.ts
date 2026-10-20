@@ -10,6 +10,8 @@ import {
   PullRequestInvolvement,
   PullRequestListFilters,
   PullRequestListState,
+  PASTED_TEXT_ATTACHMENT_THRESHOLDS,
+  type PastedTextAttachmentThreshold,
   type ProviderInstanceId,
   type PullRequestMergeMethod,
   type SidebarProjectGroupingMode,
@@ -71,6 +73,7 @@ export interface Preferences {
   /** What the Return key does in the composer on a hardware keyboard. iOS only. */
   readonly composerEnterBehavior?: ComposerEnterBehavior;
   readonly followUpBehavior?: FollowUpBehavior;
+  readonly pastedTextAttachmentThreshold?: PastedTextAttachmentThreshold;
   readonly microphones?: ReadonlyArray<MicrophoneEntry>;
   readonly projectGroupingEnabled?: boolean;
   readonly projectGroupingMode?: SidebarProjectGroupingMode;
@@ -144,6 +147,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     dismissedDatabaseStorageNotices?: readonly string[];
     composerEnterBehavior?: ComposerEnterBehavior;
     followUpBehavior?: FollowUpBehavior;
+    pastedTextAttachmentThreshold?: PastedTextAttachmentThreshold;
     microphones?: ReadonlyArray<MicrophoneEntry>;
     projectGroupingEnabled?: boolean;
     projectGroupingMode?: SidebarProjectGroupingMode;
@@ -230,6 +234,14 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (parsed.followUpBehavior === "queue" || parsed.followUpBehavior === "steer") {
     preferences.followUpBehavior = parsed.followUpBehavior;
+  }
+  if (
+    typeof parsed.pastedTextAttachmentThreshold === "number" &&
+    (PASTED_TEXT_ATTACHMENT_THRESHOLDS as readonly number[]).includes(
+      parsed.pastedTextAttachmentThreshold,
+    )
+  ) {
+    preferences.pastedTextAttachmentThreshold = parsed.pastedTextAttachmentThreshold;
   }
   if (Array.isArray(parsed.microphones)) {
     preferences.microphones = parsed.microphones.flatMap((entry): MicrophoneEntry[] => {

@@ -64,11 +64,12 @@ const render = () => act(async () => root.render(<Probe />));
 
 describe("restoring V2 settings", () => {
   it.each([
-    ["persistComposerContextStrip", "Composer context"],
-    ["autoResumeLimitedThreads", "Auto-resume limited threads"],
-    ["snoozeLimitedThreads", "Snooze limited threads"],
-  ] as const)("restores %s when it is the only changed setting", async (key, label) => {
-    state.settings = { ...DEFAULT_UNIFIED_SETTINGS, [key]: true };
+    ["persistComposerContextStrip", true, "Composer context"],
+    ["autoResumeLimitedThreads", true, "Auto-resume limited threads"],
+    ["snoozeLimitedThreads", true, "Snooze limited threads"],
+    ["pastedTextAttachmentThreshold", 1_000, "Large paste threshold"],
+  ] as const)("restores %s when it is the only changed setting", async (key, value, label) => {
+    state.settings = { ...DEFAULT_UNIFIED_SETTINGS, [key]: value };
     await render();
 
     expect(restore.changedSettingLabels).toEqual([label]);

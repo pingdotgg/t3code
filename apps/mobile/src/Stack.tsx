@@ -101,6 +101,7 @@ import { SettingsAuthRouteScreen } from "./features/settings/SettingsAuthRouteSc
 import { SettingsEnvironmentDetailRouteScreen } from "./features/settings/SettingsEnvironmentDetailRouteScreen";
 import { SettingsEnvironmentsRouteScreen } from "./features/settings/SettingsEnvironmentsRouteScreen";
 import { SettingsFollowUpRouteScreen } from "./features/settings/SettingsFollowUpRouteScreen";
+import { SettingsLargePastesRouteScreen } from "./features/settings/SettingsLargePastesRouteScreen";
 import {
   SettingsEnvironmentAgentBehaviorRouteScreen,
   SettingsEnvironmentMaintenanceRouteScreen,
@@ -337,6 +338,13 @@ const SettingsContentStack = createV5SheetStackNavigator({
       linking: "follow-ups",
       options: {
         title: "Follow-ups",
+      },
+    }),
+    SettingsLargePastes: createNativeStackScreen({
+      screen: SettingsLargePastesRouteScreen,
+      linking: "large-pastes",
+      options: {
+        title: "Large pastes",
       },
     }),
     SettingsScheduledTasks: createNativeStackScreen({

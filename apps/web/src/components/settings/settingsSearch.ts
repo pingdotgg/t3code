@@ -434,6 +434,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["enter return command ctrl multiline prompt new line composer"],
   },
   {
+    id: "large-paste-threshold",
+    title: "Large paste threshold",
+    to: "/settings/general",
+    searchTerms: ["paste clipboard long text file attachment fold size limit composer"],
+  },
+  {
     id: "follow-up-behavior",
     title: "Follow-up behavior",
     to: "/settings/general",

@@ -6,11 +6,15 @@ include a skill when the task needs more context.
 Messages can contain up to 120,000 characters. Longer drafts stay in the composer
 so you can shorten them or split them into several messages.
 
-Pasting 32 KiB or more of text adds that fragment as a text-file attachment so
-the agent can inspect it without filling the model context. A smaller paste also
-becomes an attachment when inserting it would exceed the message limit. On a
-hardware keyboard, use `Cmd+Shift+V` on Apple devices or `Ctrl+Shift+V` elsewhere
-to keep a large paste editable in the composer instead.
+Pasting 32 KB (about 32,000 characters) or more of text adds that fragment as a
+text-file attachment so the agent can inspect it without filling the model
+context. To turn shorter pastes into attachments, choose 1 KB or 5 KB under
+**Settings → General → Large paste threshold** on web and desktop, or **Settings
+→ Large pastes** on mobile. Sizes count bytes, so non-Latin text and emoji reach
+them with fewer characters. A smaller paste also becomes an attachment when
+inserting it would exceed the message limit. On a hardware keyboard, use
+`Cmd+Shift+V` on Apple devices or `Ctrl+Shift+V` elsewhere to keep a large paste
+editable in the composer instead.
 
 ## Formatting
 

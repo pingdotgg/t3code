@@ -1,42 +1,73 @@
+import {
+  DEFAULT_PASTED_TEXT_ATTACHMENT_THRESHOLD,
+  PASTED_TEXT_ATTACHMENT_THRESHOLDS,
+} from "@t3tools/contracts/settings";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   nextPastedTextFileName,
-  PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES,
   isPasteAsTextShortcut,
   pastedTextDisposition,
+  pastedTextThresholdLabel,
   replaceTextSelection,
   wouldTextPasteExceedLimit,
 } from "./textPaste.ts";
 
+const thresholdBytes = DEFAULT_PASTED_TEXT_ATTACHMENT_THRESHOLD;
+
 describe("pasted text disposition", () => {
-  it("keeps ordinary text inline and folds at the 32 KiB boundary", () => {
+  it("keeps ordinary text inline and folds at the default 32 KiB boundary", () => {
     expect(
       pastedTextDisposition({
-        text: "x".repeat(PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES - 1),
+        text: "x".repeat(thresholdBytes - 1),
         canAttach: true,
+        thresholdBytes,
       }),
     ).toBe("inline");
     expect(
-      pastedTextDisposition({
-        text: "x".repeat(PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES),
-        canAttach: true,
-      }),
+      pastedTextDisposition({ text: "x".repeat(thresholdBytes), canAttach: true, thresholdBytes }),
     ).toBe("attachment");
   });
 
+  it("folds at each selectable threshold", () => {
+    for (const threshold of PASTED_TEXT_ATTACHMENT_THRESHOLDS) {
+      expect(
+        pastedTextDisposition({
+          text: "x".repeat(threshold - 1),
+          canAttach: true,
+          thresholdBytes: threshold,
+        }),
+      ).toBe("inline");
+      expect(
+        pastedTextDisposition({
+          text: "x".repeat(threshold),
+          canAttach: true,
+          thresholdBytes: threshold,
+        }),
+      ).toBe("attachment");
+    }
+  });
+
+  it("counts bytes at the 1 KB preset, so non-Latin text folds with fewer characters", () => {
+    const text = "日本語".repeat(120);
+    expect(text.length).toBeLessThan(1_000);
+    expect(pastedTextDisposition({ text, canAttach: true, thresholdBytes: 1_000 })).toBe(
+      "attachment",
+    );
+  });
+
   it("measures UTF-8 bytes instead of UTF-16 characters", () => {
-    const text = "🙂".repeat(PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES / 4);
-    expect(text.length).toBeLessThan(PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES);
-    expect(pastedTextDisposition({ text, canAttach: true })).toBe("attachment");
+    const text = "🙂".repeat(thresholdBytes / 4);
+    expect(text.length).toBeLessThan(thresholdBytes);
+    expect(pastedTextDisposition({ text, canAttach: true, thresholdBytes })).toBe("attachment");
   });
 
   it("keeps text inline for the explicit bypass or without attachment support", () => {
-    const text = "x".repeat(PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES);
-    expect(pastedTextDisposition({ text, canAttach: true, bypassAutoAttachment: true })).toBe(
-      "inline",
-    );
-    expect(pastedTextDisposition({ text, canAttach: false })).toBe("inline");
+    const text = "x".repeat(thresholdBytes);
+    expect(
+      pastedTextDisposition({ text, canAttach: true, thresholdBytes, bypassAutoAttachment: true }),
+    ).toBe("inline");
+    expect(pastedTextDisposition({ text, canAttach: false, thresholdBytes })).toBe("inline");
   });
 
   it("folds a smaller paste when the resulting prompt would exceed the input limit", () => {
@@ -44,9 +75,20 @@ describe("pasted text disposition", () => {
       pastedTextDisposition({
         text: "small paste",
         canAttach: true,
+        thresholdBytes,
         wouldExceedInputLimit: true,
       }),
     ).toBe("attachment");
+  });
+});
+
+describe("pasted text threshold labels", () => {
+  it("leads with the size and approximates the character count", () => {
+    expect(PASTED_TEXT_ATTACHMENT_THRESHOLDS.map(pastedTextThresholdLabel)).toEqual([
+      "1 KB (~1,000 chars)",
+      "5 KB (~5,000 chars)",
+      "32 KB (~32,000 chars)",
+    ]);
   });
 });
 
