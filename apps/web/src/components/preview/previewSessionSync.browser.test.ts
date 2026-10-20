@@ -26,6 +26,8 @@ const harness = vi.hoisted(() => ({
   events: new Map<string, Atom.Writable<EventResult>>(),
 }));
 
+vi.mock("~/env", () => ({ isElectron: true }));
+
 vi.mock("~/state/preview", async () => {
   const { AsyncResult, Atom } = await import("effect/reactivity");
   return {
@@ -74,7 +76,7 @@ import {
 } from "~/previewStateStore";
 import { AppAtomRegistryProvider, appAtomRegistry } from "~/rpc/atomRegistry";
 import { previewEnvironment } from "~/state/preview";
-import { usePreviewSession } from "./usePreviewSession";
+import { useDesktopHostedPreviewSessions, usePreviewSession } from "./usePreviewSession";
 
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
@@ -107,11 +109,16 @@ const result = (
   })),
 });
 
-async function mount() {
+function DesktopSessionSync() {
+  useDesktopHostedPreviewSessions(ref.environmentId);
+  return null;
+}
+
+async function mount(Component = SessionSync) {
   container = document.body.appendChild(document.createElement("div"));
   root = createRoot(container);
   await act(async () => {
-    root!.render(createElement(AppAtomRegistryProvider, null, createElement(SessionSync)));
+    root!.render(createElement(AppAtomRegistryProvider, null, createElement(Component)));
   });
 }
 
@@ -134,6 +141,47 @@ afterEach(async () => {
 });
 
 describe("native preview session synchronization", () => {
+  it("discovers and closes a server tab in a background thread without mounting its chat", async () => {
+    await mount(DesktopSessionSync);
+    expect(readThreadPreviewState(ref).sessions).toEqual({});
+    previewEnvironment.events({ environmentId: ref.environmentId, input: {} });
+    const events = harness.events.get(ref.environmentId)!;
+    const baseline = result(1, ["agent-tab"]);
+    const snapshot = baseline.sessions[0]!;
+    await act(async () => {
+      appAtomRegistry.set(
+        events,
+        AsyncResult.success({
+          type: "opened",
+          threadId: ref.threadId,
+          tabId: snapshot.tabId,
+          snapshot,
+          serverEpoch: baseline.serverEpoch,
+          revision: baseline.revision,
+          createdAt: snapshot.updatedAt,
+        }),
+      );
+    });
+    expect(readThreadPreviewState(ref).sessions).toEqual({ "agent-tab": snapshot });
+    appAtomRegistry.set(listAtom(), AsyncResult.success(baseline));
+    expect(readThreadPreviewState(ref).listLoaded).toBe(true);
+    expect(readThreadPreviewState(ref).snapshot).toEqual(snapshot);
+
+    appAtomRegistry.set(
+      events,
+      AsyncResult.success({
+        type: "closed",
+        threadId: ref.threadId,
+        tabId: snapshot.tabId,
+        serverEpoch: baseline.serverEpoch,
+        revision: 2,
+        createdAt: snapshot.updatedAt,
+      }),
+    );
+    expect(readThreadPreviewState(ref).sessions).toEqual({});
+    expect(readThreadPreviewState(ref).activeTabId).toBeNull();
+  });
+
   it("evaluates the lazy list once and restores sessions that predate mounting", async () => {
     const atom = listAtom();
     await mount();
