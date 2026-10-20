@@ -14,6 +14,9 @@ type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
  * even where they differ from the method prefix.
  */
 const RPC_AGGREGATES = {
+  [WS_METHODS.peerEnvironmentsWaitForThread]: "peerEnvironments",
+  [WS_METHODS.peerEnvironmentsConnect]: "peerEnvironments",
+  [WS_METHODS.peerEnvironmentsRespond]: "peerEnvironments",
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: "orchestrationV2",
   [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: "orchestration",
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: "orchestration",

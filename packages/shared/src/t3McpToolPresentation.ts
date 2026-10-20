@@ -49,6 +49,8 @@ export type T3McpToolSummaryAction =
   | "project-update"
   | "project-delete"
   | "project-clone"
+  | "environment-list"
+  | "environment-catalog"
   | "environment-read"
   | "environment-update"
   | "attachment-prepare"
@@ -312,6 +314,14 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_environment_preferences_update: tool(
     ["Update", "Updating", "Updated", "environment preferences"],
     "environment-update",
+  ),
+  t3_environment_list: tool(
+    ["List", "Listing", "Listed", "connected environments"],
+    "environment-list",
+  ),
+  t3_environment_catalog: tool(
+    ["Read", "Reading", "Read", "another environment's projects and providers"],
+    "environment-catalog",
   ),
   t3_thread_launch: tool(["Launch", "Launching", "Launched", "a project thread"], "thread-create"),
   t3_project_list: tool(["List", "Listing", "Listed", "projects"], "project-list"),

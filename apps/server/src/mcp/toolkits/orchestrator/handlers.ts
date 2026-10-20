@@ -6,6 +6,7 @@ import { readCaller } from "../../threadAccess.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
+import * as PeerEnvironmentService from "../../PeerEnvironmentService.ts";
 import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
 
 const handlers = {
@@ -111,6 +112,10 @@ const handlers = {
   t3_thread_read: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
+      if (PeerEnvironmentService.isPeerSelector(scope, input.environmentId)) {
+        const peers = yield* PeerEnvironmentService.PeerEnvironmentService;
+        return yield* peers.readThread(scope, { ...input, environmentId: input.environmentId });
+      }
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
       return yield* service.readThread(scope, input);
     }),
@@ -136,6 +141,10 @@ const handlers = {
   t3_thread_wait: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
+      if (PeerEnvironmentService.isPeerSelector(scope, input.environmentId)) {
+        const peers = yield* PeerEnvironmentService.PeerEnvironmentService;
+        return yield* peers.waitForThread(scope, { ...input, environmentId: input.environmentId });
+      }
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
       return yield* service.waitForThread(scope, input);
     }),

@@ -1,3 +1,4 @@
+import * as PeerEnvironmentService from "./PeerEnvironmentService.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { expect, it } from "@effect/vitest";
@@ -170,6 +171,7 @@ const layerRecordingTools = (calls: Array<unknown>) => {
       Layer.mergeAll(
         McpToolAccessTestkit.liveThreadsLayer,
         Layer.mock(OrchestratorMcpService.OrchestratorMcpService)({}),
+        Layer.mock(PeerEnvironmentService.PeerEnvironmentService)({}),
         Layer.mock(ProjectService.ProjectService)({}),
         NodeServices.layer,
       ),

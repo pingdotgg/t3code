@@ -1,3 +1,4 @@
+import * as PeerEnvironmentBroker from "./mcp/PeerEnvironmentBroker.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -623,6 +624,12 @@ it.effect(
             {},
             yield* PreviewAutomationBroker.PreviewAutomationBroker,
             yield* ServerBrowser.ServerBrowser,
+            PeerEnvironmentBroker.PeerEnvironmentBroker.of({
+              connect: () => Effect.die("unused"),
+              respond: () => Effect.die("unused"),
+              invoke: () => Effect.die("unused"),
+              list: Effect.die("unused"),
+            }),
           ).pipe(Layer.provide(configRpcServices)),
         ),
       );
