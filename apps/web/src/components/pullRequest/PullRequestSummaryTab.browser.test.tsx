@@ -1,5 +1,10 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
-import { EnvironmentId, ProjectId, type PullRequestDetailView } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  type PullRequestDetailView,
+  type PullRequestComment,
+} from "@t3tools/contracts";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
@@ -218,4 +223,63 @@ it("hides bot and resolved comments until the filter shows them, and remembers t
   expect(commentTexts()).toContain("Bot report 11");
   await userEvent.click(filterButton());
   expect(filterItem("Bot comments").getAttribute("aria-checked")).toBe("true");
+});
+
+it("reveals whole older conversations with honest partial reply counts and a host link", async () => {
+  const comment = (index: number): PullRequestComment => ({
+    id: `comment-${index}`,
+    kind: "issue-comment",
+    author: detail.author,
+    body: `Comment ${index}`,
+    createdAt: `2026-09-01T00:00:${String(index).padStart(2, "0")}Z`,
+    url: `${detail.url}#comment-${index}`,
+    path: null,
+    reviewState: null,
+  });
+  const finding = { ...comment(0), kind: "review-comment" as const, body: "Review finding" };
+  const reply = { ...comment(12), kind: "review-comment" as const, body: "Loaded reply" };
+  const thread = {
+    id: "partial-thread",
+    path: "src/index.ts",
+    line: 1,
+    side: "right" as const,
+    isResolved: true,
+    isOutdated: false,
+    comments: [finding, reply],
+    nextCommentsCursor: "next-page",
+  };
+  const value: PullRequestDetailView = {
+    ...detail,
+    comments: [finding, ...Array.from({ length: 10 }, (_, index) => comment(index + 1)), reply],
+    commentCount: 15,
+    reviewThreads: [{ ...thread, commentCount: 5 }],
+  };
+  await render(value);
+  await toggleFilter("Resolved or dismissed");
+  await userEvent.keyboard("{Escape}");
+  const older = [...container.querySelectorAll("button")].find((button) =>
+    button.textContent?.startsWith("Show 1 older"),
+  )!;
+  expect(older).toBeDefined();
+  expect.soft(older.textContent).toMatch(/1 older conversation.*1 hidden/);
+  expect(commentTexts()).not.toContain(reply.body);
+  await userEvent.click(older);
+  const resolved = [...container.querySelectorAll("button")].find(
+    (button) => button.textContent === "Resolved",
+  )!;
+  expect(resolved.getAttribute("aria-expanded")).toBe("false");
+  expect(commentTexts()).not.toContain(reply.body);
+  expect.soft(visibleText()).toContain("4 replies");
+  await userEvent.click(resolved);
+  expect(commentTexts().slice(-2)).toEqual([finding.body, reply.body]);
+  expect.soft(visibleText()).toContain("3 more replies");
+  const hostLink = [...container.querySelectorAll("a")].find(
+    (link) =>
+      link.href === finding.url && /host/i.test(link.textContent ?? "") && link.checkVisibility(),
+  );
+  expect.soft(hostLink, "visible link to the unloaded replies on the host").toBeDefined();
+
+  await render({ ...value, reviewThreads: [thread] });
+  expect.soft(visibleText()).toMatch(/more replies/i);
+  expect(visibleText()).not.toContain("3 more replies");
 });

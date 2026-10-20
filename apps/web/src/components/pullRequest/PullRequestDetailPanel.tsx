@@ -531,7 +531,15 @@ function usePullRequestDetail(
           author: activity?.author ?? coreDetail.author,
           reviewers: activity?.reviewers ?? coreDetail.reviewers,
           comments: activity?.comments ?? [],
-          commentCount: activity?.commentCount ?? 0,
+          commentCount: Math.max(
+            activity?.commentCount ?? 0,
+            new Set([
+              ...(activity?.comments.map((comment) => comment.id) ?? []),
+              ...(activity?.reviewThreads.flatMap((thread) =>
+                thread.comments.map((comment) => comment.id),
+              ) ?? []),
+            ]).size,
+          ),
           commentsTruncated: activity?.commentsTruncated ?? false,
           reviewThreads: activity?.reviewThreads ?? [],
           commits: activity?.commits ?? [],
