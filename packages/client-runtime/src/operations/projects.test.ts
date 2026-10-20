@@ -283,7 +283,7 @@ describe("add project shared logic", () => {
 });
 
 describe("new project publish targets", () => {
-  const readyHost = (kind: string, account: string | null) => ({
+  const readyHost = (kind: string, account: string | null, host: string | null = null) => ({
     kind: SourceControlProviderKind.make(kind),
     label: kind,
     status: "available" as const,
@@ -293,7 +293,7 @@ describe("new project publish targets", () => {
     auth: {
       status: "authenticated" as const,
       account: Option.fromNullOr(account),
-      host: Option.none(),
+      host: Option.fromNullOr(host),
       detail: Option.none(),
     },
   });
@@ -312,5 +312,41 @@ describe("new project publish targets", () => {
     expect(
       getNewProjectPublishTarget(targets, SourceControlProviderKind.make("gitlab"))?.owner,
     ).toBe("group");
+
+    const targetsForAccount = (account: string) =>
+      getNewProjectPublishTargets({
+        versionControlSystems: [],
+        sourceControlProviders: [
+          readyHost("github", account, "github.com"),
+          readyHost("gitlab", "group", "gitlab.com"),
+        ],
+      }).map((target) => ({ kind: target.definition.kind, owner: target.owner }));
+    expect(targetsForAccount("octocat")).toEqual([
+      { kind: "github", owner: "octocat" },
+      { kind: "gitlab", owner: "group" },
+    ]);
+    expect(targetsForAccount("example[bot]")).toEqual([{ kind: "gitlab", owner: "group" }]);
+
+    const enterpriseDiscovery: SourceControlDiscoveryResult = {
+      versionControlSystems: [],
+      sourceControlProviders: [
+        readyHost("github", "enterprise-user", "enterprise.example"),
+        readyHost("gitlab", "group", "gitlab.example"),
+      ],
+    };
+    expect(
+      buildAddProjectRemoteSourceReadiness(enterpriseDiscovery)(
+        SourceControlProviderKind.make("github"),
+      ).ready,
+    ).toBe(true);
+    expect(
+      getNewProjectPublishTargets(enterpriseDiscovery).map((target) => ({
+        kind: target.definition.kind,
+        owner: target.owner,
+      })),
+    ).toEqual([
+      { kind: "github", owner: "enterprise-user" },
+      { kind: "gitlab", owner: "group" },
+    ]);
   });
 });

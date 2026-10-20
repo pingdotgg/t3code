@@ -1,0 +1,7 @@
+# REST /user rejects GitHub App installation tokens; viewer identifies their bot.
+query GitHubViewer {
+  viewer {
+    login
+    databaseId
+  }
+}

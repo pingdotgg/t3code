@@ -17,8 +17,6 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import {
   resolvePullRequestAuthorFilter,
-  PositiveInt,
-  TrimmedNonEmptyString,
   type PullRequestAction,
   type PullRequestStackHead,
   type PullRequestActor,
@@ -43,6 +41,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as GitHubRest from "./GitHubRest.ts";
+import { makeGitHubViewerReader } from "./gitHubViewer.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubGraphQlClient from "./gitHubGraphQlClient.ts";
 import { PullRequestBatchesGraphQLGroup } from "./pullRequestBatches.graphql.ts";
@@ -876,6 +875,7 @@ const IMMEDIATELY_MERGEABLE = new Set(["CLEAN", "HAS_HOOKS", "UNSTABLE"]);
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
+  const readGitHubViewer = yield* makeGitHubViewerReader;
   const api = yield* GitHubRest.GitHubRest;
   const policy = yield* GitHubRequestPolicy.GitHubRequestPolicy;
   const httpClient = yield* HttpClient.HttpClient;
@@ -890,14 +890,6 @@ export const make = Effect.gen(function* () {
     }
   >();
   const identityLocks = new Map<string, { gate: Semaphore.Semaphore; users: number }>();
-  const decodeRoutingIdentity = Schema.decodeUnknownEffect(
-    Schema.fromJsonString(
-      Schema.Struct({
-        id: PositiveInt,
-        login: TrimmedNonEmptyString,
-      }),
-    ),
-  );
   const captureVerifiedCredential = Effect.fn("GitHubPullRequestApi.captureVerifiedCredential")(
     function* (input: { readonly cwd: string; readonly host: string }) {
       const unavailable = () => new GitHubViewerLoginUnavailableError({ cwd: input.cwd });
@@ -919,14 +911,14 @@ export const make = Effect.gen(function* () {
               if (cached !== undefined && now - cached.at < 10 * 60_000)
                 return { ...credential, ...cached.value };
               // Pin this read so an auth switch cannot poison its cache entry.
-              const response = yield* api
-                .rest({ host, operation: "getRoutingIdentity", path: "user", allowReserve: true })
-                .pipe(
-                  Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, credential),
-                  Effect.provideService(SourceControlRateLimit.CredentialScope, key),
-                );
-              const identity = yield* decodeRoutingIdentity(response.body).pipe(
-                Effect.mapError(unavailable),
+              const identity = yield* readGitHubViewer({
+                host,
+                operation: "getRoutingIdentity",
+                allowReserve: true,
+              }).pipe(
+                Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, credential),
+                Effect.provideService(SourceControlRateLimit.CredentialScope, key),
+                Effect.catchTags({ GitHubViewerResponseError: () => Effect.fail(unavailable()) }),
               );
               const value = { accountId: String(identity.id), viewer: identity.login };
               if (routingIdentities.size >= 128)
@@ -2069,7 +2061,6 @@ export const make = Effect.gen(function* () {
             .pipe(graphql(target), Effect.map(toReviewThreadPage), Effect.flatMap(found(target)));
         const entries: GitHubReviewThreadEntry[] = [];
         const avatarsByLogin = new Map<string, string>();
-        const botLogins = new Set<string>();
         const commitStats = new Map<
           string,
           { readonly additions: number; readonly deletions: number }
@@ -2087,7 +2078,6 @@ export const make = Effect.gen(function* () {
         do {
           const read: GitHubReviewThreadPage = yield* threadPage(cursor);
           entries.push(...read.threads);
-          for (const login of read.botLogins) botLogins.add(login);
           for (const [login, avatarUrl] of read.avatarsByLogin)
             avatarsByLogin.set(login, avatarUrl);
           if (page === 0) {
@@ -2152,7 +2142,6 @@ export const make = Effect.gen(function* () {
           editedAtById,
           reviewers,
           avatarsByLogin,
-          botLogins,
           commitStats,
           commits,
           viewer,

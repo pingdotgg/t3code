@@ -74,6 +74,14 @@ export const PullRequestRowRepositoryRepository = Schema.Struct({
 })
 export interface PullRequestRowRepositoryRepository extends Schema.Struct.Type<typeof PullRequestRowRepositoryRepository.fields> {}
 
+/** A special type of user which takes actions on behalf of GitHub Apps. */
+export const Bot = Schema.Struct({
+  __typename: Schema.Literal("Bot"),
+  /** The username of the actor. */
+  login: Schema.String
+})
+export interface Bot extends Schema.Struct.Type<typeof Bot.fields> {}
+
 /** A user is an individual's account on GitHub that owns repositories and can make new content. */
 export const RequestedReviewerUser = Schema.Struct({
   __typename: Schema.Literal("User"),
@@ -92,7 +100,7 @@ export interface Team extends Schema.Struct.Type<typeof Team.fields> {}
 
 /** Types that can be requested reviewers. */
 export const RequestedReviewerOther = Schema.Struct({
-  __typename: GraphQL.otherTypename<Shared.Typename.RequestedReviewer>()(["User", "Team"])
+  __typename: GraphQL.otherTypename<Shared.Typename.RequestedReviewer>()(["Bot", "User", "Team"])
 })
 export interface RequestedReviewerOther extends Schema.Struct.Type<typeof RequestedReviewerOther.fields> {}
 
@@ -100,6 +108,7 @@ export interface RequestedReviewerOther extends Schema.Struct.Type<typeof Reques
 export const ReviewRequest = Schema.Struct({
   /** The reviewer that is requested. */
   requestedReviewer: Schema.NullOr(Schema.Union([
+    Bot,
     RequestedReviewerUser,
     Team,
     RequestedReviewerOther
@@ -266,7 +275,7 @@ export const PullRequestSearch = GraphQL.query("PullRequestSearch", {
       { name: "search", body: ["(query:$", "q", " type:ISSUE first:$", "first", " after:$", "after", "){pageInfo{hasNextPage endCursor}nodes{__typename...", "PullRequestRow", "}}"] }
     ],
     fragments: [
-      { name: "PullRequestRow", body: ["on PullRequest{stack@include(if:$", "stacks", "){number size baseRefName}stackEntry@include(if:$", "stacks", "){position}number title url author{__typename login avatarUrl...on User{name}}headRefName baseRefName state isDraft mergeable reviewDecision latestReviews(first:20){nodes{state author{__typename login}}}additions@include(if:$", "stats", ")deletions@include(if:$", "stats", ")createdAt updatedAt mergedAt repository{nameWithOwner}reviewRequests(first:20){nodes{requestedReviewer{__typename...on User{login}...on Team{slug}}}}labels(first:20){nodes{name color}}commits(last:1){nodes{commit{statusCheckRollup{state}}}}}"] }
+      { name: "PullRequestRow", body: ["on PullRequest{stack@include(if:$", "stacks", "){number size baseRefName}stackEntry@include(if:$", "stacks", "){position}number title url author{__typename login avatarUrl...on User{name}}headRefName baseRefName state isDraft mergeable reviewDecision latestReviews(first:20){nodes{state author{__typename login}}}additions@include(if:$", "stats", ")deletions@include(if:$", "stats", ")createdAt updatedAt mergedAt repository{nameWithOwner}reviewRequests(first:20){nodes{requestedReviewer{__typename...on Bot{login}...on User{login}...on Team{slug}}}}labels(first:20){nodes{name color}}commits(last:1){nodes{commit{statusCheckRollup{state}}}}}"] }
     ]
   },
   variables: {
@@ -318,7 +327,7 @@ export const PullRequestList = GraphQL.query("PullRequestList", {
       { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequests(first:$", "first", " after:$", "after", " states:$", "states", " orderBy:{field:CREATED_AT direction:DESC}){pageInfo{hasNextPage endCursor}nodes{...", "PullRequestRow", "}}}"] }
     ],
     fragments: [
-      { name: "PullRequestRow", body: ["on PullRequest{stack@include(if:$", "stacks", "){number size baseRefName}stackEntry@include(if:$", "stacks", "){position}number title url author{__typename login avatarUrl...on User{name}}headRefName baseRefName state isDraft mergeable reviewDecision latestReviews(first:20){nodes{state author{__typename login}}}additions@include(if:$", "stats", ")deletions@include(if:$", "stats", ")createdAt updatedAt mergedAt repository{nameWithOwner}reviewRequests(first:20){nodes{requestedReviewer{__typename...on User{login}...on Team{slug}}}}labels(first:20){nodes{name color}}commits(last:1){nodes{commit{statusCheckRollup{state}}}}}"] }
+      { name: "PullRequestRow", body: ["on PullRequest{stack@include(if:$", "stacks", "){number size baseRefName}stackEntry@include(if:$", "stacks", "){position}number title url author{__typename login avatarUrl...on User{name}}headRefName baseRefName state isDraft mergeable reviewDecision latestReviews(first:20){nodes{state author{__typename login}}}additions@include(if:$", "stats", ")deletions@include(if:$", "stats", ")createdAt updatedAt mergedAt repository{nameWithOwner}reviewRequests(first:20){nodes{requestedReviewer{__typename...on Bot{login}...on User{login}...on Team{slug}}}}labels(first:20){nodes{name color}}commits(last:1){nodes{commit{statusCheckRollup{state}}}}}"] }
     ]
   },
   variables: {

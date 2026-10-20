@@ -110,6 +110,7 @@ interface LabelFields {
 }
 
 interface ReviewRequestFields {
+  readonly __typename?: string | undefined;
   readonly login?: string | null | undefined;
   readonly slug?: string | null | undefined;
   readonly name?: string | null | undefined;
@@ -202,15 +203,13 @@ function toReactions(
   for (const group of groups ?? []) {
     const content = REACTION_CONTENT_BY_GITHUB[trimmed(group.content)?.toUpperCase() ?? ""];
     if (content === undefined) continue;
-    const logins = nodesOf(group.reactors).flatMap((node) =>
-      "login" in node ? (trimmed(node.login) ?? []) : [],
-    );
+    const logins = nodesOf(group.reactors).flatMap((node) => {
+      const login = "login" in node ? trimmed(node.login) : null;
+      return login === null ? [] : [gitHubActorLogin(login, node.__typename === "Bot")];
+    });
     const count = Math.max(group.reactors.totalCount, logins.length);
     if (count <= 0) continue;
-    const actors =
-      normalizedViewer === null
-        ? logins
-        : logins.filter((login) => login.toLowerCase() !== normalizedViewer);
+    const actors = logins.filter((login) => login.toLowerCase() !== normalizedViewer);
     reactions.push({ content, count, actors, viewerHasReacted: group.viewerHasReacted });
   }
   return reactions;
@@ -243,7 +242,8 @@ export function toActorAvatars(result: ActorAvatars.Result): ReadonlyMap<string,
     if (node === null || !("login" in node)) continue;
     const login = trimmed(node.login);
     const avatarUrl = trimmed(node.avatarUrl);
-    if (login !== null && avatarUrl !== null) avatarsByLogin.set(login, avatarUrl);
+    if (login !== null && avatarUrl !== null)
+      avatarsByLogin.set(gitHubActorLogin(login, node.__typename === "Bot"), avatarUrl);
   }
   return avatarsByLogin;
 }
@@ -448,12 +448,17 @@ function toPullRequestViewerFields(
   return { canUpdate: raw?.viewerCanUpdate !== false, didAuthor: raw?.viewerDidAuthor === true };
 }
 
+/** GitHub Bot actors can omit the suffix used by their authenticated viewer. */
+function gitHubActorLogin(login: string, isBot: boolean): string {
+  return isBot && !login.endsWith("[bot]") ? `${login}[bot]` : login;
+}
+
 function toActor(raw: ActorFields | null | undefined): PullRequestActor | null {
   const login = trimmed(raw?.login);
   return login === null
     ? null
     : {
-        login,
+        login: gitHubActorLogin(login, raw?.__typename === "Bot"),
         name: trimmed(raw?.name),
         avatarUrl: trimmed(raw?.avatarUrl),
         ...(raw?.__typename === "Bot" ? { isBot: true } : {}),
@@ -580,7 +585,7 @@ function toReviewRequestLogins(
 ): ReadonlyArray<string> {
   return (raw ?? []).flatMap((request) => {
     const login = trimmed(request.login);
-    return login === null ? [] : [login];
+    return login === null ? [] : [gitHubActorLogin(login, request.__typename === "Bot")];
   });
 }
 
@@ -916,7 +921,7 @@ function toRow(
       const reviewer = request.requestedReviewer;
       if (reviewer === null) return [];
       const login = "login" in reviewer ? trimmed(reviewer.login) : null;
-      if (login !== null) return [{ login }];
+      if (login !== null) return [{ __typename: reviewer.__typename, login }];
       const slug = "slug" in reviewer ? trimmed(reviewer.slug) : null;
       return slug === null ? [] : [{ slug }];
     },
@@ -1117,6 +1122,7 @@ export function toPullRequestCore(result: PullRequestCore.Result): GitHubPullReq
             ? []
             : [
                 {
+                  __typename: requestedReviewer.__typename,
                   login: "login" in requestedReviewer ? requestedReviewer.login : null,
                   slug: "slug" in requestedReviewer ? requestedReviewer.slug : null,
                   name:
@@ -1282,7 +1288,6 @@ export interface GitHubReviewThreadComments {
   readonly editedAtById: ReadonlyMap<string, string>;
   readonly reviewers: ReadonlyArray<PullRequestActor>;
   readonly avatarsByLogin: ReadonlyMap<string, string>;
-  readonly botLogins: ReadonlySet<string>;
   readonly commitStats: ReadonlyMap<
     string,
     { readonly additions: number; readonly deletions: number }
@@ -1310,7 +1315,6 @@ export interface GitHubReviewThreadPage {
   readonly editedAtById: ReadonlyMap<string, string>;
   readonly reviewers: ReadonlyArray<PullRequestActor>;
   readonly avatarsByLogin: ReadonlyMap<string, string>;
-  readonly botLogins: ReadonlySet<string>;
   readonly commitStats: ReadonlyMap<
     string,
     { readonly additions: number; readonly deletions: number }
@@ -1420,7 +1424,6 @@ export function toReviewThreadPage(result: ReviewThreads.Result): GitHubReviewTh
   const comments = nodesOf(pullRequest.comments);
   const reviews = nodesOf(pullRequest.reviews);
   const avatarsByLogin = new Map<string, string>();
-  const botLogins = new Set<string>();
   for (const raw of [
     pullRequest.author,
     ...comments.map((node) => node.author),
@@ -1429,10 +1432,9 @@ export function toReviewThreadPage(result: ReviewThreads.Result): GitHubReviewTh
     ...latestReviews.map((node) => node.author),
     ...threadNodes.flatMap((thread) => nodesOf(thread.comments).map((comment) => comment.author)),
   ]) {
-    const login = trimmed(raw?.login);
-    const avatarUrl = trimmed(raw?.avatarUrl);
-    if (login !== null && avatarUrl !== null) avatarsByLogin.set(login, avatarUrl);
-    if (login !== null && toActor(raw)?.isBot) botLogins.add(login);
+    const actor = toActor(raw);
+    if (actor !== null && actor.avatarUrl !== null)
+      avatarsByLogin.set(actor.login, actor.avatarUrl);
   }
   const reviewers = new Map<string, PullRequestActor>();
   for (const raw of [...requestedReviewers, ...latestReviews.map((node) => node.author)]) {
@@ -1480,7 +1482,6 @@ export function toReviewThreadPage(result: ReviewThreads.Result): GitHubReviewTh
     editedAtById,
     reviewers: [...reviewers.values()],
     avatarsByLogin,
-    botLogins,
     commitStats,
     commits,
     viewer: toPullRequestViewerFields(pullRequest),
@@ -1559,12 +1560,12 @@ export function toReviewerCandidates(
   const repository = result.repository;
   if (repository == null) return null;
   const pullRequest = repository.pullRequest;
-  const author = trimmed(pullRequest?.author?.login);
+  const author = toActor(pullRequest?.author)?.login ?? null;
   const candidates = new Map<string, PullRequestReviewerCandidate>();
   for (const { requestedReviewer: raw } of nodesOf(pullRequest?.reviewRequests)) {
     if (raw === null) continue;
     const slug = "slug" in raw ? trimmed(raw.slug) : null;
-    const id = slug ?? ("login" in raw ? trimmed(raw.login) : null);
+    const id = slug ?? toActor(raw)?.login ?? null;
     if (id === null) continue;
     candidates.set(`${slug === null ? "user" : "team"} ${id}`, {
       id,

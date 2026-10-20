@@ -1,6 +1,6 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { assert, describe, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -88,6 +88,7 @@ interface GraphQlCall {
   readonly host: string;
   readonly operationName: string;
   readonly query: string;
+  readonly authorization: string | undefined;
   readonly lookups: ReadonlyArray<Readonly<Record<string, unknown>>>;
 }
 
@@ -130,6 +131,7 @@ function graphQlHttp(respond: GraphQlRespond, calls: Array<GraphQlCall>) {
         host: new URL(request.url).hostname.replace(/^api\./, ""),
         operationName: sent.operationName,
         query: sent.query,
+        authorization: request.headers["authorization"],
         lookups,
       };
       calls.push(call);
@@ -172,6 +174,7 @@ function harness(input: {
   readonly localBranches?: ReadonlyArray<string>;
   readonly resolved?: string;
   readonly gitFailure?: unknown;
+  readonly process?: SourceControlHost.SourceControlHost["Service"]["process"];
 }) {
   const git: Array<readonly [string, unknown]> = [];
   const graphqlCalls: Array<GraphQlCall> = [];
@@ -206,7 +209,7 @@ function harness(input: {
   };
   const host = TestSourceControlHost.layer({
     git: hostGit,
-    process: {
+    process: input.process ?? {
       run: (args) =>
         Effect.succeed(
           args.args[0] === "remote"
@@ -242,7 +245,11 @@ function harness(input: {
   );
   const layer = Layer.mergeAll(
     host,
-    Layer.mock(GitHubRest.GitHubRest)(input.api ?? {}),
+    Layer.mock(GitHubRest.GitHubRest)({
+      credential: (host) =>
+        Effect.succeed({ token: Redacted.make("token"), fingerprint: `${host}:token` }),
+      ...input.api,
+    }),
     policy,
     Layer.succeed(HttpClient.HttpClient, graphQlHttp(graphql, graphqlCalls)),
     NodeServices.layer,
@@ -264,6 +271,194 @@ const githubContext = (host: string) => ({
   remoteName: "origin",
   remoteUrl: `git@${host}:acme/web.git`,
 });
+
+it.effect("discovers enterprise authentication with and without a default host override", () => {
+  let cliAuth = processOutput("", 1);
+  const { layer, graphqlCalls } = harness({
+    remotes: "",
+    process: {
+      run: ({ args }) =>
+        Effect.succeed(args[0] === "--version" ? processOutput("gh version 2.80.0") : cliAuth),
+    },
+    api: {
+      credential: (host) =>
+        Effect.succeed({ token: Redacted.make("app-token"), fingerprint: `${host}:app` }),
+      rest: () =>
+        Effect.fail(
+          new GitHubRequestPolicy.GitHubApiResponseError({
+            host: "enterprise.example",
+            operation: "discovery",
+            status: 403,
+          }),
+        ),
+    },
+    graphql: () =>
+      new Response(encodeJson({ data: { viewer: { login: "example[bot]", databaseId: 123 } } }), {
+        headers: { "content-type": "application/json" },
+      }),
+  });
+  return Effect.gen(function* () {
+    const discovery = yield* GitHubSourceControlProvider.makeDiscovery;
+    const result = yield* discovery.probe("/repo");
+    assert.strictEqual(result.auth.status, "authenticated");
+    assert.deepStrictEqual(result.auth.account, Option.some("example[bot]"));
+    assert.deepStrictEqual(result.auth.host, Option.some("enterprise.example"));
+    assert.strictEqual(graphqlCalls[0]?.host, "enterprise.example");
+
+    const withoutDefaultHost = yield* GitHubSourceControlProvider.makeDiscovery.pipe(
+      Effect.provideService(HostProcess.Environment, {}),
+    );
+    cliAuth = processOutput(
+      encodeJson({
+        hosts: {
+          "enterprise.example": [
+            {
+              state: "success",
+              active: true,
+              host: "enterprise.example",
+              login: "enterprise-user",
+            },
+          ],
+        },
+      }),
+    );
+    const cliOnly = yield* withoutDefaultHost.probe("/repo");
+    expect.soft(cliOnly).toMatchObject({
+      status: "available",
+      auth: {
+        status: "authenticated",
+        account: Option.some("enterprise-user"),
+        host: Option.some("enterprise.example"),
+      },
+    });
+    expect.soft(cliOnly.auth.accounts).toEqual([
+      expect.objectContaining({
+        host: "enterprise.example",
+        account: "enterprise-user",
+        active: true,
+        authenticated: true,
+      }),
+    ]);
+
+    cliAuth = processOutput("", 1);
+    const settings = yield* TestSourceControlHost.TestSourceControlHostSettings;
+    yield* settings.update({
+      sourceControlHosts: { github: { tokens: { "enterprise.example": "app-token" } } },
+    });
+    const savedApp = yield* withoutDefaultHost.probe("/repo");
+    expect.soft(savedApp).toMatchObject({
+      status: "available",
+      auth: {
+        status: "authenticated",
+        account: Option.some("example[bot]"),
+        host: Option.some("enterprise.example"),
+      },
+    });
+    expect.soft(savedApp.auth.accounts).toEqual([
+      expect.objectContaining({
+        host: "enterprise.example",
+        account: "example[bot]",
+        active: true,
+        authenticated: true,
+      }),
+    ]);
+    expect
+      .soft(graphqlCalls.map((call) => call.host))
+      .toEqual(["enterprise.example", "enterprise.example"]);
+  }).pipe(
+    Effect.provide(layer),
+    Effect.provideService(HostProcess.Environment, {
+      GH_HOST: "enterprise.example",
+      GH_ENTERPRISE_TOKEN: "app-token",
+    }),
+  );
+});
+
+it.effect(
+  "prefers the creation host's CLI account over a saved enterprise account unless overridden",
+  () => {
+    const checkedHosts: string[] = [];
+    const { layer } = harness({
+      remotes: "",
+      process: {
+        run: ({ args }) =>
+          Effect.succeed(
+            processOutput(
+              args[0] === "--version"
+                ? "gh version 2.80.0"
+                : encodeJson({
+                    hosts: {
+                      "github.com": [
+                        {
+                          state: "success",
+                          active: true,
+                          host: "github.com",
+                          login: "public-user",
+                        },
+                      ],
+                    },
+                  }),
+            ),
+          ),
+      },
+      api: {
+        rest: ({ host }) => {
+          checkedHosts.push(host);
+          return host === "enterprise.example"
+            ? Effect.succeed(restResponse({ login: "enterprise-user", id: 123 }))
+            : Effect.fail(
+                new GitHubRequestPolicy.GitHubApiAuthenticationError({
+                  host,
+                  operation: "discovery",
+                }),
+              );
+        },
+      },
+    });
+    return Effect.gen(function* () {
+      const settings = yield* TestSourceControlHost.TestSourceControlHostSettings;
+      yield* settings.update({
+        sourceControlHosts: { github: { tokens: { "enterprise.example": "saved-enterprise" } } },
+      });
+      const discovery = yield* GitHubSourceControlProvider.makeDiscovery;
+      const result = yield* discovery.probe("/repo");
+      expect.soft(result.auth.status).toBe("authenticated");
+      expect.soft(result.auth.account).toEqual(Option.some("public-user"));
+      expect.soft(result.auth.host).toEqual(Option.some("github.com"));
+      expect.soft(result.auth.accounts).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            host: "github.com",
+            account: "public-user",
+            authenticated: true,
+          }),
+          expect.objectContaining({
+            host: "enterprise.example",
+            account: "enterprise-user",
+            authenticated: true,
+          }),
+        ]),
+      );
+      expect.soft(checkedHosts).toEqual(["enterprise.example"]);
+
+      yield* settings.update({
+        sourceControlHosts: {
+          github: { tokens: { "enterprise.example": "saved-enterprise", "github.com": "refused" } },
+        },
+      });
+      const overridden = yield* discovery.probe("/repo");
+      expect.soft(checkedHosts).toContain("github.com");
+      expect.soft(overridden.auth.account).not.toEqual(Option.some("public-user"));
+      expect
+        .soft(overridden.auth.accounts)
+        .toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ host: "github.com", account: "public-user", active: false }),
+          ]),
+        );
+    }).pipe(Effect.provide(layer), Effect.provideService(HostProcess.Environment, {}));
+  },
+);
 
 describe("GitHubSourceControlProvider repository resolution", () => {
   it.effect("reads the repository gh would pick from the remotes", () => {
@@ -582,6 +777,72 @@ describe("GitHubSourceControlProvider.getChangeRequest", () => {
 });
 
 describe("GitHubSourceControlProvider writes", () => {
+  it.effect("creates an App fork PR without granting fork edits and pins the acting token", () => {
+    let current = "before";
+    const posts: Array<GitHubRest.GitHubRestInput> = [];
+    const pinnedTokens: Array<string | null> = [];
+    const { layer, graphqlCalls } = harness({
+      remotes: remotesOutput(["origin", "git@github.com:acme/web.git"]),
+      api: {
+        credential: (host) =>
+          Effect.succeed({
+            token: Redacted.make(current),
+            fingerprint: `${host}:${current}`,
+          }),
+        rest: (input) =>
+          Effect.gen(function* () {
+            if (input.method === "POST") {
+              const pinned = yield* GitHubRequestPolicy.PinnedGitHubCredential;
+              pinnedTokens.push(pinned === null ? null : Redacted.value(pinned.token));
+              posts.push(input);
+              return restResponse({ number: 1 }, 201);
+            }
+            current = "after";
+            return yield* Effect.fail(
+              new GitHubRequestPolicy.GitHubApiResponseError({
+                host: input.host,
+                operation: "getViewer",
+                status: 403,
+              }),
+            );
+          }),
+      },
+      graphql: () =>
+        new Response(
+          encodeJson({
+            data: { viewer: { login: "example[bot]", databaseId: 123 } },
+          }),
+          { headers: { "content-type": "application/json" } },
+        ),
+    });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const bodyFile = yield* fs.makeTempFileScoped({ suffix: ".md" });
+      yield* fs.writeFileString(bodyFile, "Body");
+      const provider = yield* GitHubSourceControlProvider.make;
+      yield* provider.createChangeRequest({
+        cwd: "/repo",
+        baseRefName: "main",
+        headSelector: "other:feature",
+        title: "Title",
+        bodyFile,
+      });
+      assert.strictEqual(posts.length, 1);
+      assert.deepStrictEqual(posts[0]?.body, {
+        base: "main",
+        head: "other:feature",
+        title: "Title",
+        body: "Body",
+        maintainer_can_modify: false,
+      });
+      assert.deepStrictEqual(pinnedTokens, ["before"]);
+      assert.deepStrictEqual(
+        graphqlCalls.map((call) => call.authorization),
+        ["Bearer before"],
+      );
+    }).pipe(Effect.provide(Layer.merge(layer, NodeServices.layer)), Effect.scoped);
+  });
+
   it.effect("creates a cross-repository pull request with an owner:branch head", () => {
     const requests: Array<GitHubRest.GitHubRestInput> = [];
     const { layer } = harness({
@@ -592,6 +853,7 @@ describe("GitHubSourceControlProvider writes", () => {
       api: {
         rest: (input) =>
           Effect.sync(() => {
+            if (input.path === "user") return restResponse({ id: 123, login: "me" });
             requests.push(input);
             return restResponse({ number: 1 }, 201);
           }),
@@ -631,7 +893,7 @@ describe("GitHubSourceControlProvider writes", () => {
           Effect.sync(() => {
             requests.push(`${input.method ?? "GET"} ${input.path}`);
             return input.path === "user"
-              ? restResponse({ login: "me" })
+              ? restResponse({ id: 123, login: "me" })
               : restResponse({
                   full_name: "acme/new",
                   html_url: "https://github.com/acme/new",
@@ -664,7 +926,7 @@ describe("GitHubSourceControlProvider writes", () => {
           Effect.sync(() => {
             requests.push(`${input.host} ${input.method ?? "GET"} ${input.path}`);
             return input.path === "user"
-              ? restResponse({ login: "me" })
+              ? restResponse({ id: 123, login: "me" })
               : restResponse({
                   full_name: "me/notes",
                   html_url: `https://${input.host}/me/notes`,
@@ -694,6 +956,273 @@ describe("GitHubSourceControlProvider writes", () => {
       }
       assert.strictEqual(requests.length, 2);
     });
+  });
+});
+
+it.effect(
+  "pins an explicit enterprise clone URL to its own host instead of the checkout host",
+  () => {
+    const credentials: string[] = [];
+    const { layer } = harness({
+      remotes: remotesOutput(["origin", "git@github.com:acme/web.git"]),
+      api: {
+        credential: (host) => {
+          credentials.push(host);
+          return Effect.succeed({ token: Redacted.make("token"), fingerprint: `${host}:token` });
+        },
+        rest: (input) =>
+          Effect.gen(function* () {
+            const pinned = yield* GitHubRequestPolicy.PinnedGitHubCredential;
+            assert.strictEqual(pinned?.host, "enterprise.example");
+            assert.strictEqual(input.host, "enterprise.example");
+            return restResponse({
+              full_name: "acme/notes",
+              html_url: "https://enterprise.example/acme/notes",
+              ssh_url: "git@enterprise.example:acme/notes.git",
+            });
+          }),
+      },
+    });
+    return Effect.gen(function* () {
+      const provider = yield* GitHubSourceControlProvider.make;
+      const result = yield* provider.getRepositoryCloneUrls({
+        cwd: "/repo",
+        repository: "https://enterprise.example/acme/notes",
+      });
+      assert.strictEqual(result.url, "https://enterprise.example/acme/notes");
+      assert.deepStrictEqual(credentials, ["enterprise.example"]);
+    }).pipe(Effect.provide(layer), Effect.provideService(HostProcess.Environment, {}));
+  },
+);
+
+describe("GitHub App repository ownership", () => {
+  const appHarness = (options: {
+    owners: ReadonlyArray<string>;
+    paginated?: boolean;
+    personal?: boolean;
+    returnsRepository?: boolean;
+    mutationError?: { readonly type: string; readonly message: string };
+    host?: string;
+  }) => {
+    const host = options.host ?? "github.com";
+    let token = "before";
+    const requests: Array<{ path: string; host: string; token: string | null }> = [];
+    const { layer, graphqlCalls } = harness({
+      remotes: "",
+      api: {
+        credential: (host) =>
+          Effect.succeed({ token: Redacted.make(token), fingerprint: `${host}:${token}` }),
+        rest: (input) =>
+          Effect.gen(function* () {
+            const pinned = yield* GitHubRequestPolicy.PinnedGitHubCredential;
+            requests.push({
+              path: input.path,
+              host: input.host,
+              token: pinned === null ? null : Redacted.value(pinned.token),
+            });
+            if (input.path === "user") {
+              token = `${token}-renewed`;
+              return yield* Effect.fail(
+                new GitHubRequestPolicy.GitHubApiResponseError({
+                  host: input.host,
+                  operation: "getViewer",
+                  status: 403,
+                }),
+              );
+            }
+            if (input.path.startsWith("installation/repositories"))
+              return restResponse({
+                repositories:
+                  options.paginated && input.path.endsWith("page=1")
+                    ? Array.from({ length: 100 }, (_, index) => ({
+                        full_name: `acme/repo${index}`,
+                      }))
+                    : options.owners.map((owner) => ({ full_name: `${owner}/notes` })),
+              });
+            return restResponse({
+              full_name: "acme/notes",
+              html_url: `https://${host}/acme/notes`,
+              ssh_url: `git@${host}:acme/notes.git`,
+            });
+          }),
+      },
+      graphql: (_, call) =>
+        new Response(
+          encodeJson({
+            ...(options.returnsRepository === false &&
+            call.operationName === "CreateInstallationRepository"
+              ? {
+                  errors: [
+                    options.mutationError ?? {
+                      type: "NOT_FOUND",
+                      message: "Could not resolve the new repository.",
+                    },
+                  ],
+                }
+              : {}),
+            data:
+              call.operationName === "GitHubViewer"
+                ? { viewer: { login: "example[bot]", databaseId: 123 } }
+                : call.operationName === "InstallationRepositoryOwner"
+                  ? {
+                      repositoryOwner: {
+                        __typename: options.personal ? "User" : "Organization",
+                        id: options.personal ? "USER_acme" : "ORG_acme",
+                        login: "acme",
+                      },
+                    }
+                  : {
+                      createRepository: {
+                        repository:
+                          options.returnsRepository === false
+                            ? null
+                            : {
+                                nameWithOwner: "acme/notes",
+                                url: `https://${host}/acme/notes`,
+                                sshUrl: `git@${host}:acme/notes.git`,
+                              },
+                      },
+                    },
+          }),
+          { headers: { "content-type": "application/json" } },
+        ),
+    });
+    return { layer, requests, graphqlCalls };
+  };
+
+  it.effect(
+    "resolves a bare clone name from the installation owner with one captured token",
+    () => {
+      const { layer, requests, graphqlCalls } = appHarness({ owners: ["acme"], paginated: true });
+      return Effect.gen(function* () {
+        const provider = yield* GitHubSourceControlProvider.make;
+        const result = yield* provider.getRepositoryCloneUrls({
+          cwd: "/repo",
+          repository: "notes",
+        });
+        assert.deepStrictEqual(result, {
+          nameWithOwner: "acme/notes",
+          url: "https://github.com/acme/notes",
+          sshUrl: "git@github.com:acme/notes.git",
+        });
+        assert.deepStrictEqual(
+          requests.map((request) => request.path),
+          [
+            "user",
+            "installation/repositories?per_page=100&page=1",
+            "installation/repositories?per_page=100&page=2",
+            "repos/acme/notes",
+          ],
+        );
+        assert.isTrue(
+          requests.every((request) => request.host === "github.com" && request.token === "before"),
+        );
+        assert.deepStrictEqual(
+          graphqlCalls.map((call) => call.authorization),
+          ["Bearer before"],
+        );
+      }).pipe(Effect.provide(layer), Effect.provideService(HostProcess.Environment, {}));
+    },
+  );
+
+  it.effect(
+    "requires an explicit owner for an empty installation and creates under its verified personal ID",
+    () => {
+      const host = "enterprise.example";
+      const { layer, requests, graphqlCalls } = appHarness({ owners: [], personal: true, host });
+      return Effect.gen(function* () {
+        const provider = yield* GitHubSourceControlProvider.make;
+        const error = yield* provider
+          .createRepository({ cwd: "/repo", repository: "notes", visibility: "private" })
+          .pipe(Effect.flip);
+        assert.include(error.message, "Specify owner/repo");
+        assert.deepStrictEqual(
+          graphqlCalls.map((call) => call.operationName),
+          ["GitHubViewer"],
+        );
+        const result = yield* provider.createRepository({
+          cwd: "/repo",
+          repository: "acme/notes",
+          visibility: "private",
+        });
+        assert.deepStrictEqual(result, {
+          nameWithOwner: "acme/notes",
+          url: `https://${host}/acme/notes`,
+          sshUrl: `git@${host}:acme/notes.git`,
+        });
+        assert.deepStrictEqual(
+          graphqlCalls.map((call) => call.operationName),
+          [
+            "GitHubViewer",
+            "GitHubViewer",
+            "InstallationRepositoryOwner",
+            "CreateInstallationRepository",
+          ],
+        );
+        assert.deepStrictEqual(graphqlCalls.at(-1)?.lookups, [
+          { ownerId: "USER_acme", name: "notes", visibility: "PRIVATE" },
+        ]);
+        assert.deepStrictEqual(
+          graphqlCalls.map((call) => call.authorization),
+          [
+            "Bearer before",
+            "Bearer before-renewed",
+            "Bearer before-renewed",
+            "Bearer before-renewed",
+          ],
+        );
+        assert.isTrue(graphqlCalls.every((call) => call.host === host));
+        assert.deepStrictEqual(requests, [
+          { host, path: "user", token: "before" },
+          { host, path: "installation/repositories?per_page=100&page=1", token: "before" },
+          { host, path: "user", token: "before-renewed" },
+        ]);
+      }).pipe(
+        Effect.provide(layer),
+        Effect.provideService(HostProcess.Environment, { GH_HOST: host }),
+      );
+    },
+  );
+
+  it.effect(
+    "reports possible creation without retrying when the token cannot read the result",
+    () => {
+      const { layer, graphqlCalls } = appHarness({ owners: ["acme"], returnsRepository: false });
+      return Effect.gen(function* () {
+        const provider = yield* GitHubSourceControlProvider.make;
+        const error = yield* provider
+          .createRepository({ cwd: "/repo", repository: "notes", visibility: "private" })
+          .pipe(Effect.flip);
+        assert.include(error.message, "acme/notes may already have been created");
+        assert.include(error.message, "Check the repository and token access before retrying");
+        const mutations = graphqlCalls.filter(
+          (call) => call.operationName === "CreateInstallationRepository",
+        );
+        assert.strictEqual(mutations.length, 1);
+        assert.strictEqual(mutations[0]?.lookups[0]?.ownerId, "ORG_acme");
+        assert.isTrue(graphqlCalls.every((call) => call.authorization === "Bearer before"));
+      }).pipe(Effect.provide(layer), Effect.provideService(HostProcess.Environment, {}));
+    },
+  );
+
+  it.effect("shows GitHub's creation refusal without retrying the mutation", () => {
+    const message = "Resource not accessible by integration";
+    const { layer, graphqlCalls } = appHarness({
+      owners: ["acme"],
+      returnsRepository: false,
+      mutationError: { type: "FORBIDDEN", message },
+    });
+    return Effect.gen(function* () {
+      const provider = yield* GitHubSourceControlProvider.make;
+      const error = yield* provider
+        .createRepository({ cwd: "/repo", repository: "notes", visibility: "private" })
+        .pipe(Effect.flip);
+      assert.strictEqual(
+        graphqlCalls.filter((call) => call.operationName === "CreateInstallationRepository").length,
+        1,
+      );
+      assert.include(error.message, message);
+    }).pipe(Effect.provide(layer), Effect.provideService(HostProcess.Environment, {}));
   });
 });
 
@@ -1284,6 +1813,7 @@ it.effect.each([
       api: {
         rest: (input) =>
           Effect.sync(() => {
+            if (input.path === "user") return restResponse({ id: 123, login: "me" });
             targets.push(`${input.host}/${input.path}`);
             return restResponse({
               full_name: expected,

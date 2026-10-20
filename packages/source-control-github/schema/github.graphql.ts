@@ -17,6 +17,9 @@ export const GitObjectID = Schema.String
 /** A fully qualified reference name (e.g. `refs/heads/master`). */
 export const GitRefname = Schema.String
 
+/** Git SSH string */
+export const GitSSHRemote = Schema.String
+
 /**
  * The possible states for a check suite or run conclusion.
  *
@@ -189,6 +192,16 @@ export type ReactionContent = typeof ReactionContent.Type
  */
 export const RepositoryPermission = Schema.Literals(["ADMIN", "MAINTAIN", "READ", "TRIAGE", "TRIAGE_PLUS", "WRITE"])
 export type RepositoryPermission = typeof RepositoryPermission.Type
+
+/**
+ * The repository's visibility level.
+ *
+ * - `INTERNAL`: The repository is visible only to users in the same enterprise.
+ * - `PRIVATE`: The repository is visible only to those with explicit access.
+ * - `PUBLIC`: The repository is visible to everyone.
+ */
+export const RepositoryVisibility = Schema.Literals(["INTERNAL", "PRIVATE", "PUBLIC"])
+export type RepositoryVisibility = typeof RepositoryVisibility.Type
 
 /**
  * The possible commit status states.

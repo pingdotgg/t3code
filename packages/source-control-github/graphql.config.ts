@@ -8,6 +8,7 @@ export default defineConfig({
   documents: ["src/**/*.graphql"],
   scalars: {
     GitObjectID: "effect/Schema#String",
+    GitSSHRemote: "effect/Schema#String",
     // A fully qualified ref name such as `refs/heads/main`.
     GitRefname: "effect/Schema#String",
     // Kept as GitHub sends it: callers compare these strings with other reads of the same field.

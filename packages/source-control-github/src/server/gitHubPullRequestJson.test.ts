@@ -863,11 +863,10 @@ describe("review thread decoding", () => {
       ),
     );
 
-    expect(result.botLogins).toEqual(new Set(["macroscopeapp"]));
     expect(result.reviewers).toEqual([
       { login: "julius", name: "Julius", avatarUrl: "https://avatars/j.png" },
       {
-        login: "macroscopeapp",
+        login: "macroscopeapp[bot]",
         name: null,
         avatarUrl: "https://avatars/in/900172.png",
         isBot: true,
@@ -2279,7 +2278,7 @@ describe("batched pull request summaries", () => {
       number: 7,
       state: "merged",
       mergedAt: "2026-08-24T00:00:00Z",
-      author: { login: "renovate", isBot: true },
+      author: { login: "renovate[bot]", isBot: true },
       checksState: "failing",
       mergeability: "unknown",
       additions: 0,

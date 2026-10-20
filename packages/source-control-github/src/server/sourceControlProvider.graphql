@@ -55,3 +55,25 @@ query PullRequestByNumber($owner: String!, $name: String!, $number: Int!) {
     }
   }
 }
+
+# An explicit destination also works when an App installation has no repositories yet.
+query InstallationRepositoryOwner($login: String!) {
+  repositoryOwner(login: $login) {
+    id
+    login
+  }
+}
+
+mutation CreateInstallationRepository(
+  $ownerId: ID!
+  $name: String!
+  $visibility: RepositoryVisibility!
+) {
+  createRepository(input: { ownerId: $ownerId, name: $name, visibility: $visibility }) {
+    repository {
+      nameWithOwner
+      url
+      sshUrl
+    }
+  }
+}
