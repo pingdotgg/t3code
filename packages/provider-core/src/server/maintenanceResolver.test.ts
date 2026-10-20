@@ -161,9 +161,11 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
   );
 
   it.effect("does not fetch latest provider versions when update checks are disabled", () =>
-    enrichProviderSnapshotWithVersionAdvisory(installedPackageToolProvider, manualPackageTool, {
-      enableProviderUpdateChecks: false,
-    }).pipe(
+    enrichProviderSnapshotWithVersionAdvisory(
+      { ...installedPackageToolProvider, installedVersion: "1.1.0" },
+      manualPackageTool,
+      { enableProviderUpdateChecks: false },
+    ).pipe(
       Effect.provide(ProviderLatestVersions.layer),
       Effect.provideService(
         HttpClient.HttpClient,
@@ -174,7 +176,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       Effect.map((provider) => {
         expect(provider.versionAdvisory).toMatchObject({
           status: "unknown",
-          currentVersion: "1.0.0",
+          currentVersion: "1.1.0",
           latestVersion: null,
           checkedAt: "2026-04-10T00:00:00.000Z",
         });

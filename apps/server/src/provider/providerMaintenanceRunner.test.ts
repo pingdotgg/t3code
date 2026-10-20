@@ -28,6 +28,7 @@ import * as ModelManifest from "./ModelManifest.ts";
 import * as ProviderMaintenanceRunner from "./providerMaintenanceRunner.ts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import {
+  enrichProviderSnapshotWithVersionAdvisory,
   makeProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilities,
 } from "@t3tools/provider-core/server/maintenanceResolver";
@@ -1015,6 +1016,113 @@ describe("providerMaintenanceRunner", () => {
     );
   });
 });
+
+it.effect.each([
+  {
+    mode: "default",
+    version: "1.14.19",
+    installation: { installedVersion: "1.14.20" },
+    status: "succeeded",
+  },
+  {
+    mode: "targeted",
+    version: "1.14.19",
+    installation: { installedVersion: "1.14.20" },
+    status: "succeeded",
+  },
+  {
+    mode: "unknown",
+    version: "1.14.20",
+    installation: { installedVersion: null },
+    status: "unchanged",
+  },
+  { mode: "legacy", version: "1.14.20", installation: {}, status: "succeeded" },
+] as const)(
+  "verifies the $mode OpenCode update using the refreshed installation",
+  ({ mode, version, installation, status }) => {
+    const calls: string[] = [];
+    const capabilities = lifecycleFor(OPENCODE_DRIVER);
+    const pinnedCapabilities = {
+      ...capabilities,
+      update: { ...capabilities.update!, lockKey: "npm-global:/fixture" },
+    };
+    const manifest: ModelManifest.ModelManifestData = {
+      version: 1,
+      currentModels: {},
+      compatibility: [
+        {
+          driver: OPENCODE_DRIVER,
+          t3CodeRange: ">=0.0.42",
+          recommendedVersion: "1.14.20",
+          ranges: [{ range: "=1.14.20", status: "supported" }],
+        },
+      ],
+    };
+    return Effect.gen(function* () {
+      const { registry, providersRef } = yield* makeRegistry({ ...baseOpenCodeProvider, version });
+      const httpClient = yield* HttpClient.HttpClient;
+      const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
+      const updater = yield* makeTestRunner(
+        {
+          ...registry,
+          getProviderMaintenanceCapabilitiesForInstance: () => Effect.succeed(pinnedCapabilities),
+          refreshInstance: () =>
+            Effect.gen(function* () {
+              assert.strictEqual(calls.length, 1);
+              const refreshed = yield* enrichProviderSnapshotWithVersionAdvisory(
+                { ...baseOpenCodeProvider, version, ...installation },
+                pinnedCapabilities,
+              ).pipe(
+                Effect.provideService(HttpClient.HttpClient, httpClient),
+                Effect.provideService(
+                  ProviderLatestVersions.ProviderLatestVersions,
+                  latestVersions,
+                ),
+              );
+              return yield* Ref.updateAndGet(providersRef, (providers) =>
+                providers.map((provider) => ({ ...provider, ...refreshed })),
+              );
+            }),
+        },
+        manifest,
+      );
+
+      const result = yield* updater.updateProvider({
+        provider: OPENCODE_DRIVER,
+        ...(mode === "default" ? {} : { targetVersion: "1.14.20" }),
+      });
+
+      assert.deepStrictEqual(calls, [
+        `npm install -g opencode-ai@${mode === "default" ? "latest" : "1.14.20"}`,
+      ]);
+      const provider = result.providers[0];
+      assert.ok(provider);
+      assert.strictEqual(provider.updateState?.status, status);
+      assert.strictEqual(provider.version, version);
+      assert.strictEqual("installedVersion" in provider, mode !== "legacy");
+      assert.strictEqual(
+        provider.versionAdvisory?.status,
+        mode === "unknown" ? "unknown" : "current",
+      );
+      assert.strictEqual(
+        provider.versionAdvisory?.currentVersion,
+        mode === "unknown" ? null : "1.14.20",
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerNonWindowsPlatform,
+          ProviderLatestVersions.layer,
+          layerLatestVersionHttpClient("1.14.20"),
+          layerMockSpawner((command, args) => {
+            calls.push([command, ...args].join(" "));
+            return { stdout: "installed" };
+          }),
+        ),
+      ),
+    );
+  },
+);
 
 it.effect("refuses incompatible latest versions and unapproved or unpinnable targets", () => {
   const calls: string[] = [];

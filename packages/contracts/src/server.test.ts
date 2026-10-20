@@ -32,6 +32,19 @@ const baseProviderSnapshot = {
 };
 
 describe("ServerProvider", () => {
+  it("preserves installed-version presence through the provider wire codec", () => {
+    const encode = Schema.encodeSync(ServerProvider);
+    for (const installation of [{}, { installedVersion: null }, { installedVersion: "1.2.3" }]) {
+      const decoded = decodeServerProvider({ ...baseProviderSnapshot, ...installation });
+      const wire = JSON.parse(JSON.stringify(encode(decoded)));
+      expect(wire).toMatchObject({ version: "1.0.0", ...installation });
+      expect(Object.hasOwn(wire, "installedVersion")).toBe(
+        Object.hasOwn(installation, "installedVersion"),
+      );
+      expect(decodeServerProvider(wire)).toEqual(decoded);
+    }
+  });
+
   it.each([undefined, true, false])("decodes workspace command discovery pending=%s", (pending) => {
     const workspace = {
       cwd: "/workspace/project",

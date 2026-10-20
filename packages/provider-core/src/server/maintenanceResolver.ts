@@ -899,17 +899,19 @@ export const enrichProviderSnapshotWithVersionAdvisory = Effect.fn(
 ) {
   const capabilities =
     maintenanceCapabilities ?? makeManualProviderMaintenanceCapabilities(snapshot.driver);
+  const currentVersion =
+    snapshot.installedVersion !== undefined ? snapshot.installedVersion : snapshot.version;
   const shouldResolveLatestVersion =
     options?.enableProviderUpdateChecks !== false &&
     snapshot.enabled &&
     snapshot.installed &&
-    Boolean(snapshot.version);
+    Boolean(currentVersion);
   if (!shouldResolveLatestVersion) {
     return {
       ...snapshot,
       versionAdvisory: createProviderVersionAdvisory({
         driver: snapshot.driver,
-        currentVersion: snapshot.version,
+        currentVersion,
         checkedAt: snapshot.checkedAt,
         maintenanceCapabilities: capabilities,
       }),
@@ -921,7 +923,7 @@ export const enrichProviderSnapshotWithVersionAdvisory = Effect.fn(
     ...snapshot,
     versionAdvisory: createProviderVersionAdvisory({
       driver: snapshot.driver,
-      currentVersion: snapshot.version,
+      currentVersion,
       latestVersion,
       checkedAt: DateTime.formatIso(yield* DateTime.now),
       maintenanceCapabilities: capabilities,

@@ -257,6 +257,9 @@ export const ServerProvider = Schema.Struct({
   enabled: Schema.Boolean,
   installed: Schema.Boolean,
   version: Schema.NullOr(TrimmedNonEmptyString),
+  // Version reported by the installed CLI for a local provider with a separate
+  // server. Null means unknown; absence keeps legacy snapshots on `version`.
+  installedVersion: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
   status: ServerProviderState,
   auth: ServerProviderAuth,
   checkedAt: IsoDateTime,
