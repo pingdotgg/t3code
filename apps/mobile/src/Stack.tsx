@@ -100,6 +100,7 @@ import { SettingsProviderAccountsRouteScreen } from "./features/settings/Setting
 import { SettingsAuthRouteScreen } from "./features/settings/SettingsAuthRouteScreen";
 import { SettingsEnvironmentDetailRouteScreen } from "./features/settings/SettingsEnvironmentDetailRouteScreen";
 import { SettingsEnvironmentsRouteScreen } from "./features/settings/SettingsEnvironmentsRouteScreen";
+import { SettingsDictationLanguageRouteScreen } from "./features/settings/SettingsDictationLanguageRouteScreen";
 import { SettingsFollowUpRouteScreen } from "./features/settings/SettingsFollowUpRouteScreen";
 import {
   SettingsEnvironmentAgentBehaviorRouteScreen,
@@ -330,6 +331,13 @@ const SettingsContentStack = createV5SheetStackNavigator({
       linking: "microphone",
       options: {
         title: "Microphone",
+      },
+    }),
+    SettingsDictationLanguage: createNativeStackScreen({
+      screen: SettingsDictationLanguageRouteScreen,
+      linking: "dictation-language",
+      options: {
+        title: "Dictation language",
       },
     }),
     SettingsFollowUp: createNativeStackScreen({

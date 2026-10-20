@@ -72,6 +72,8 @@ export interface Preferences {
   readonly composerEnterBehavior?: ComposerEnterBehavior;
   readonly followUpBehavior?: FollowUpBehavior;
   readonly microphones?: ReadonlyArray<MicrophoneEntry>;
+  /** A BCP 47 tag the device can transcribe, or null for the device language. */
+  readonly voiceInputLocale?: string | null;
   readonly projectGroupingEnabled?: boolean;
   readonly projectGroupingMode?: SidebarProjectGroupingMode;
   readonly planModeEnabled?: boolean;
@@ -124,6 +126,13 @@ export class MobilePreferencesStore extends Context.Service<
   }
 >()("@t3tools/mobile/persistence/MobilePreferencesStore") {}
 
+// Shape only; whether the device can transcribe the tag is checked when preparing voice input.
+const LANGUAGE_TAG = /^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$/;
+
+function isLanguageTag(value: unknown): value is string {
+  return typeof value === "string" && LANGUAGE_TAG.test(value);
+}
+
 function sanitizePreferences(parsed: Preferences): Preferences {
   const preferences: {
     pullRequestHideTestFiles?: boolean;
@@ -145,6 +154,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     composerEnterBehavior?: ComposerEnterBehavior;
     followUpBehavior?: FollowUpBehavior;
     microphones?: ReadonlyArray<MicrophoneEntry>;
+    voiceInputLocale?: string | null;
     projectGroupingEnabled?: boolean;
     projectGroupingMode?: SidebarProjectGroupingMode;
     planModeEnabled?: boolean;
@@ -239,6 +249,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
         ? [{ kind: entry.kind, uid: entry.uid, name: entry.name }]
         : [];
     });
+  }
+  if (parsed.voiceInputLocale === null || isLanguageTag(parsed.voiceInputLocale)) {
+    preferences.voiceInputLocale = parsed.voiceInputLocale;
   }
   if (typeof parsed.projectGroupingEnabled === "boolean") {
     preferences.projectGroupingEnabled = parsed.projectGroupingEnabled;

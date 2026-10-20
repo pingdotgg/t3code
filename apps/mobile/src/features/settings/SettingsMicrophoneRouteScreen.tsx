@@ -11,6 +11,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { type AppSymbolName, SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { cn } from "../../lib/cn";
+import { dictationLanguageLabel, useDictationLanguages } from "../../lib/dictationLanguages";
 import {
   isMicrophoneDevice,
   type MicrophoneEntry,
@@ -21,6 +22,7 @@ import {
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { SettingsActionRow } from "./components/SettingsActionRow";
 import { SettingsDragHandle } from "./components/SettingsDragHandle";
+import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 
 const REMOVE_SIZE = 20;
@@ -91,6 +93,7 @@ export function SettingsMicrophoneRouteScreen() {
   const insets = useSafeAreaInsets();
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const dictationLanguages = useDictationLanguages();
   const ready = AsyncResult.isSuccess(preferencesResult) && !preferencesResult.waiting;
   const entries = microphoneOrder(
     AsyncResult.isSuccess(preferencesResult) ? preferencesResult.value.microphones : undefined,
@@ -214,6 +217,19 @@ export function SettingsMicrophoneRouteScreen() {
           devices are added by name after you use voice input with them connected; until then, the
           Other row ranks them.
         </Text>
+        <SettingsSection title="Language">
+          <SettingsRow
+            icon="globe"
+            label="Dictation language"
+            value={dictationLanguageLabel(
+              dictationLanguages,
+              AsyncResult.isSuccess(preferencesResult)
+                ? preferencesResult.value.voiceInputLocale
+                : undefined,
+            )}
+            target="SettingsDictationLanguage"
+          />
+        </SettingsSection>
       </ScrollView>
     </View>
   );

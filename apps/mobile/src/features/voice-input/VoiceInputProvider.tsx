@@ -153,7 +153,14 @@ function useVoiceInputRuntime() {
     recorderRef.current = recorder;
     sessionRef.current = new VoiceInputSession({
       recorder,
-      getTranscriber: getLocalVoiceTranscriber,
+      getTranscriber: () => {
+        const preferences = registry.get(mobilePreferencesAtom);
+        return getLocalVoiceTranscriber(
+          AsyncResult.isSuccess(preferences)
+            ? (preferences.value.voiceInputLocale ?? undefined)
+            : undefined,
+        );
+      },
       requestPermission: async () => {
         const permission = await requestRecordingPermissionsAsync();
         return { granted: permission.granted, canAskAgain: permission.canAskAgain };

@@ -1,5 +1,18 @@
+diff --git a/ios/transcription/AppleTranscription.mm b/ios/transcription/AppleTranscription.mm
+index c0f036ce7d9905cf7a54c80199e4d6039f64ef30..fac31400a57098527637161cde70fbbd92b5652e 100644
+--- a/ios/transcription/AppleTranscription.mm
++++ b/ios/transcription/AppleTranscription.mm
+@@ -116,4 +116,8 @@ - (void)prepare:(nonnull NSString *)language resolve:(nonnull RCTPromiseResolveB
+   [_transcription prepare:language resolve:resolve reject:reject];
+ }
+ 
++- (void)supportedLanguages:(nonnull RCTPromiseResolveBlock)resolve reject:(nonnull RCTPromiseRejectBlock)reject {
++  [_transcription supportedLanguages:resolve];
++}
++
+ @end
 diff --git a/ios/transcription/AppleTranscriptionImpl.swift b/ios/transcription/AppleTranscriptionImpl.swift
-index 188371a5f55fadae19187108c4a688569d0223e3..3e1cdd77b0bb8ae6c97a40d29c1854200d931eee 100644
+index 188371a5f55fadae19187108c4a688569d0223e3..0baaed8196491d2791f97fd6b861163f1ff10491 100644
 --- a/ios/transcription/AppleTranscriptionImpl.swift
 +++ b/ios/transcription/AppleTranscriptionImpl.swift
 @@ -12,6 +12,11 @@ import UniformTypeIdentifiers
@@ -44,7 +57,30 @@ index 188371a5f55fadae19187108c4a688569d0223e3..3e1cdd77b0bb8ae6c97a40d29c185420
            @unknown default:
              reject ("AppleTranscription", "Unknown asset inventory status", nil)
            }
-@@ -83,57 +86,77 @@ public class AppleTranscriptionImpl: NSObject {
+@@ -73,6 +76,22 @@ public class AppleTranscriptionImpl: NSObject {
+     }
+   }
+ 
++  @objc
++  public func supportedLanguages(_ resolve: @escaping (Any?) -> Void) {
++    guard #available(iOS 26, *) else {
++      resolve([])
++      return
++    }
++    Task {
++      let languages = await SpeechTranscriber.supportedLocales.map { locale -> [String: String] in
++        let id = locale.identifier(.bcp47)
++        let name = locale.localizedString(forIdentifier: locale.identifier) ?? id
++        return ["id": id, "label": name.prefix(1).uppercased(with: locale) + name.dropFirst()]
++      }
++      resolve(languages)
++    }
++  }
++
+   @objc
+   public func transcribe(_ audioData: Data, language: String, resolve: @escaping ([String: Any]) -> Void, reject: @escaping (String, String, Error?) -> Void) {
+     if #available(iOS 26, *) {
+@@ -83,57 +102,77 @@ public class AppleTranscriptionImpl: NSObject {
        do {
          try audioData.write(to: fileURL)
          
@@ -153,21 +189,25 @@ index 188371a5f55fadae19187108c4a688569d0223e3..3e1cdd77b0bb8ae6c97a40d29c185420
          reject("AppleTranscription", "Failed to write audio data: \(error.localizedDescription)", error)
        }
      } else {
-@@ -141,4 +164,3 @@ public class AppleTranscriptionImpl: NSObject {
+@@ -141,4 +180,3 @@ public class AppleTranscriptionImpl: NSObject {
      }
    }
  }
 -
 diff --git a/lib/typescript/NativeAppleTranscription.d.ts b/lib/typescript/NativeAppleTranscription.d.ts
-index 985b6b3593a884c41d689346be9d73d86c55eae1..86e7936f23a8673d099f7fe18af9a31abae5a13a 100644
+index 985b6b3593a884c41d689346be9d73d86c55eae1..e030c91e6b1b6bb856c92aa9144434c775734852 100644
 --- a/lib/typescript/NativeAppleTranscription.d.ts
 +++ b/lib/typescript/NativeAppleTranscription.d.ts
-@@ -10,14 +10,14 @@ export interface TranscriptionResult {
+@@ -10,14 +10,22 @@ export interface TranscriptionResult {
  }
  export interface Spec extends TurboModule {
      isAvailable(language: string): boolean;
 -    prepare(language: string): Promise<void>;
 +    prepare(language: string): Promise<string>;
++    supportedLanguages(): Promise<ReadonlyArray<{
++        id: string;
++        label: string;
++    }>>;
  }
  declare global {
      function __apple__llm__transcribe__(data: ArrayBufferLike, language: string): Promise<TranscriptionResult>;
@@ -176,19 +216,31 @@ index 985b6b3593a884c41d689346be9d73d86c55eae1..86e7936f23a8673d099f7fe18af9a31a
      transcribe: (data: ArrayBufferLike, language: string) => Promise<TranscriptionResult>;
 -    prepare: (language: string) => Promise<void>;
 +    prepare: (language: string) => Promise<string>;
++    supportedLanguages: () => Promise<ReadonlyArray<{
++        id: string;
++        label: string;
++    }>>;
      isAvailable: (language: string) => boolean;
  };
  export default _default;
 diff --git a/src/NativeAppleTranscription.ts b/src/NativeAppleTranscription.ts
-index 13332a0176000b60b6f6f043de681db55a7b4bef..5389fb4b3a53de48721c307d2145b6770624c852 100644
+index 13332a0176000b60b6f6f043de681db55a7b4bef..8bb7b281b3f03dedfa3758f4d4354a7d2af72b85 100644
 --- a/src/NativeAppleTranscription.ts
 +++ b/src/NativeAppleTranscription.ts
-@@ -14,7 +14,7 @@ export interface TranscriptionResult {
+@@ -14,7 +14,8 @@ export interface TranscriptionResult {
  
  export interface Spec extends TurboModule {
    isAvailable(language: string): boolean
 -  prepare(language: string): Promise<void>
 +  prepare(language: string): Promise<string>
++  supportedLanguages(): Promise<ReadonlyArray<{ id: string; label: string }>>
  }
  
  declare global {
+@@ -32,5 +33,6 @@ export default {
+   transcribe: (data: ArrayBufferLike, language: string) =>
+     globalThis.__apple__llm__transcribe__(data, language),
+   prepare: NativeAppleTranscription.prepare,
++  supportedLanguages: NativeAppleTranscription.supportedLanguages,
+   isAvailable: NativeAppleTranscription.isAvailable,
+ }

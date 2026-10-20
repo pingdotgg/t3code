@@ -27,7 +27,9 @@ vi.mock("../lib/runtime", async () => {
 });
 
 import { createMobilePreferencesState } from "./preferences";
+import * as MobileDatabase from "../persistence/mobile-database";
 import * as MobilePreferences from "../persistence/mobile-preferences";
+import * as MobileSecureStorage from "../persistence/mobile-secure-storage";
 
 function deferred<A>() {
   let resolve!: (value: A) => void;
@@ -59,6 +61,56 @@ function makePreferencesState(
     Atom.runtime(Layer.succeed(MobilePreferences.MobilePreferencesStore, completeService)),
   );
 }
+
+function makePreferencesStore(initialPayload: MobilePreferences.Preferences) {
+  const row = { payload: JSON.stringify(initialPayload), updatedAt: 1 };
+  const unused = Effect.die("unused in preferences tests");
+  return MobilePreferences.make().pipe(
+    Effect.provideService(
+      MobileDatabase.MobileDatabase,
+      MobileDatabase.MobileDatabase.of({
+        loadCache: () => unused,
+        listCache: () => unused,
+        saveCache: () => unused,
+        removeCache: () => unused,
+        clearCacheKind: () => unused,
+        clearEnvironmentCache: () => unused,
+        clearAllCaches: unused,
+        inspectCaches: unused,
+        loadPreferencesJson: Effect.sync(() => Option.some({ ...row })),
+        savePreferencesJson: (payload, updatedAt) =>
+          Effect.sync(() => {
+            row.payload = payload;
+            row.updatedAt = updatedAt;
+          }),
+      }),
+    ),
+    Effect.provideService(
+      MobileSecureStorage.MobileSecureStorage,
+      MobileSecureStorage.MobileSecureStorage.of({
+        getItem: () => Effect.succeed(null),
+        setItem: () => Effect.void,
+        removeItem: () => Effect.void,
+      }),
+    ),
+    Effect.map((store) => ({ store, storedPayload: () => JSON.parse(row.payload) as unknown })),
+  );
+}
+
+describe("mobile preferences store", () => {
+  it.effect("keeps a null or well-formed dictation language and drops a malformed one", () =>
+    Effect.gen(function* () {
+      const cleared = yield* makePreferencesStore({ voiceInputLocale: null });
+      expect(yield* cleared.store.load).toEqual({ voiceInputLocale: null });
+
+      const chosen = yield* makePreferencesStore({ voiceInputLocale: "yue-Hant-HK" });
+      expect(yield* chosen.store.load).toEqual({ voiceInputLocale: "yue-Hant-HK" });
+
+      const malformed = yield* makePreferencesStore({ voiceInputLocale: "Portuguese" });
+      expect(yield* malformed.store.load).toEqual({});
+    }),
+  );
+});
 
 describe("mobile preferences state", () => {
   it.effect("shares one preference load across consumers", () =>
@@ -349,6 +401,37 @@ describe("mobile preferences state", () => {
           );
         }),
       );
+
+      unmountUpdate();
+      unmountPreferences();
+      registry.dispose();
+    }),
+  );
+
+  it.effect("keeps the device dictation language after another preference saves", () =>
+    Effect.gen(function* () {
+      const { store, storedPayload } = yield* makePreferencesStore({ voiceInputLocale: "pt-BR" });
+      const state = createMobilePreferencesState(
+        Atom.runtime(Layer.succeed(MobilePreferences.MobilePreferencesStore, store)),
+      );
+      const registry = AtomRegistry.make();
+      const unmountPreferences = registry.mount(state.preferencesAtom);
+      const unmountUpdate = registry.mount(state.updatePreferencesAtom);
+      const save = (patch: Partial<MobilePreferences.Preferences>) => {
+        registry.set(state.updatePreferencesAtom, patch);
+        return AtomRegistry.getResult(registry, state.updatePreferencesAtom, {
+          suspendOnWaiting: true,
+        });
+      };
+
+      yield* AtomRegistry.getResult(registry, state.preferencesAtom, { suspendOnWaiting: true });
+      yield* save({ voiceInputLocale: null });
+      yield* save({ baseFontSize: 18 });
+
+      expect(
+        yield* AtomRegistry.getResult(registry, state.preferencesAtom, { suspendOnWaiting: true }),
+      ).toEqual({ voiceInputLocale: null, baseFontSize: 18 });
+      expect(storedPayload()).toEqual({ voiceInputLocale: null, baseFontSize: 18 });
 
       unmountUpdate();
       unmountPreferences();
