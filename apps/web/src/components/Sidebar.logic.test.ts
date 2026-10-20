@@ -15,6 +15,7 @@ import {
   pinOrderKeyBetween,
   resolveProjectStatusIndicator,
   resolveSidebarSweepKeys,
+  resolveSidebarStatusBumps,
   resolveSidebarThreadStatus,
   resolveSidebarV2TopStatus,
   resolveThreadStatusPill,
@@ -23,6 +24,7 @@ import {
   shouldRecedeSidebarThread,
   sortInboxThreadsByReturn,
   resolveSidebarDropTarget,
+  planSidebarStatusBumps,
   planSidebarThreadDrop,
   sortPinnedThreadsForSidebar,
   sortProjectsForSidebar,
@@ -239,6 +241,134 @@ describe("orderItemsByPreferredIds", () => {
   });
 });
 
+describe("sidebar status bumps", () => {
+  const runtime = (status: "running" | "idle") => ({
+    status,
+    activeRunId: null,
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    providerName: "Codex",
+    lastError: null,
+    updatedAt: "2026-03-09T10:00:00.000Z",
+  });
+  const done = { hasPendingApprovals: false, hasPendingUserInput: false, runtime: null };
+  const working = { ...done, runtime: runtime("running") };
+  const waiting = { ...done, runtime: runtime("idle") };
+  const approval = { ...working, hasPendingApprovals: true };
+
+  it("bumps a thread when it starts working, needs you, or finishes", () => {
+    const first = resolveSidebarStatusBumps({
+      previousGroups: new Map(),
+      threads: [
+        ["a", done],
+        ["b", working],
+        ["c", working],
+        ["d", working],
+      ],
+      openThreadKey: null,
+    });
+    expect(first.bumpedKeys).toEqual([]);
+    expect(
+      resolveSidebarStatusBumps({
+        previousGroups: first.groups,
+        threads: [
+          ["a", working],
+          ["b", approval],
+          ["c", done],
+          ["d", waiting],
+        ],
+        openThreadKey: null,
+      }).bumpedKeys,
+    ).toEqual(["a", "b", "c"]);
+  });
+
+  it("does not bump the open thread when it finishes", () => {
+    expect(
+      resolveSidebarStatusBumps({
+        previousGroups: new Map([["a", "busy"]]),
+        threads: [["a", done]],
+        openThreadKey: "a",
+      }).bumpedKeys,
+    ).toEqual([]);
+  });
+
+  const plan = (
+    bumpedKeys: readonly string[],
+    keys: ReadonlyArray<readonly [string, string | null]>,
+    options: {
+      readonly hidden?: ReadonlyArray<readonly [string, string]>;
+      readonly canWrite?: (key: string) => boolean;
+    } = {},
+  ) =>
+    planSidebarStatusBumps({
+      bumpedKeys,
+      activeOrder: keys.map(([id]) => id),
+      activeKeysById: new Map([...keys, ...(options.hidden ?? [])]),
+      canWrite: options.canWrite ?? (() => true),
+    });
+  const arranged = [
+    ["a", "f"],
+    ["b", "m"],
+    ["c", "t"],
+  ] as const;
+
+  it("writes one order key above the first thread when the list is arranged", () => {
+    const { order, writes } = plan(["c"], arranged);
+    expect(order).toEqual(["c", "a", "b"]);
+    expect(writes.map(({ id }) => id)).toEqual(["c"]);
+    expect(writes[0]!.orderKey < "f").toBe(true);
+  });
+
+  it("writes nothing for a thread already on top or one it cannot reorder", () => {
+    expect(plan(["a"], arranged).writes).toEqual([]);
+    expect(plan(["c"], arranged, { canWrite: (key) => key !== "c" }).writes).toEqual([]);
+  });
+
+  it("keys only the unarranged threads above the first arranged one", () => {
+    const { order, writes } = plan(["b"], [["new1", null], ["new2", null], ...arranged]);
+    expect(order).toEqual(["b", "new1", "new2", "a", "c"]);
+    const keyById = new Map(writes.map(({ id, orderKey }) => [id, orderKey]));
+    expect([...keyById.keys()].toSorted()).toEqual(["b", "new1", "new2"]);
+    expect(keyById.get("b")! < keyById.get("new1")!).toBe(true);
+    expect(keyById.get("new1")! < keyById.get("new2")!).toBe(true);
+    expect(keyById.get("new2")! < "f").toBe(true);
+  });
+
+  it("keeps unarranged threads it cannot write on top instead of skipping the bump", () => {
+    const { order, writes } = plan(["c"], [["old", null], ...arranged], {
+      canWrite: (key) => key !== "old",
+    });
+    expect(order).toEqual(["old", "c", "a", "b"]);
+    expect(writes.map(({ id }) => id)).toEqual(["c"]);
+  });
+
+  it("does not reuse a key held by a pinned, snoozed, or filtered-out thread", () => {
+    const visibleOnly = plan(["c"], arranged).writes[0]!.orderKey;
+    const { writes } = plan(["c"], arranged, { hidden: [["snoozed", visibleOnly]] });
+    expect(writes[0]!.orderKey).not.toBe(visibleOnly);
+    expect(writes[0]!.orderKey < "f").toBe(true);
+  });
+
+  it("respaces the list instead of growing the head key without bound", () => {
+    const head = "a".repeat(40) + "m";
+    const { order, writes } = plan(
+      ["c"],
+      [
+        ["a", head],
+        ["b", "m"],
+        ["c", "t"],
+      ],
+    );
+    expect(order).toEqual(["c", "a", "b"]);
+    const keyById = new Map(writes.map(({ id, orderKey }) => [id, orderKey]));
+    expect(order.every((id) => (keyById.get(id) ?? "").length <= 4)).toBe(true);
+    expect(keyById.get("c")! < keyById.get("a")!).toBe(true);
+    expect(keyById.get("a")! < keyById.get("b")!).toBe(true);
+  });
+
+  it("puts the last bump first when several threads change at once", () => {
+    expect(plan(["b", "c"], arranged).order).toEqual(["c", "b", "a"]);
+  });
+});
 describe("resolveSidebarThreadStatus", () => {
   const runtime = {
     status: "running" as const,

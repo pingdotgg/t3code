@@ -434,6 +434,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.sidebarWorkingShelfEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
       ? ["Working section"]
       : []),
+    ...(settings.sidebarStatusBumpEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarStatusBumpEnabled
+      ? ["Bump threads on status change"]
+      : []),
     ...(settings.sidebarAutoSettleAfterDays !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
       ? ["Auto-settle inactive threads"]
       : []),
@@ -603,6 +606,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
+      sidebarStatusBumpEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarStatusBumpEnabled,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
@@ -990,6 +994,33 @@ export function GeneralSettingsPanel() {
                 updateSettings({ sidebarWorkingShelfEnabled: Boolean(checked) })
               }
               aria-label="Working section (beta)"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("bump-threads-on-status-change")}
+          description="Move an active thread to the top when it starts working, needs you, or finishes. Paused while the Working section is on."
+          resetAction={
+            settings.sidebarStatusBumpEnabled !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarStatusBumpEnabled ? (
+              <SettingResetButton
+                label="bump threads on status change"
+                onClick={() =>
+                  updateSettings({
+                    sidebarStatusBumpEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarStatusBumpEnabled,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sidebarStatusBumpEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ sidebarStatusBumpEnabled: Boolean(checked) })
+              }
+              aria-label="Bump threads on status change"
             />
           }
         />

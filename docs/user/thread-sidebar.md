@@ -96,8 +96,8 @@ after the drop.
 
 New threads appear above the active threads you have arranged. Settling clears a thread's active
 position, so using **Un-settle** returns it to the top. Pinning and snoozing preserve its active
-position until you move it again. Thread activity does not change the order. The settled shelf
-continues to use settlement time.
+position until you move it again. Thread activity does not change the order unless you turn on
+**Bump threads on status change**. The settled shelf continues to use settlement time.
 
 If dragging is unavailable for one environment, update the T3 Code server running in that
 environment. Pinned and active reordering require server support. Threads from older servers keep
@@ -123,6 +123,14 @@ device keeps its own choice.
 
 While this is on, the active list is ordered by when each thread last came back to you, so you
 cannot drag or move threads within it. Your saved order returns when you turn it off.
+
+### Bump threads on status change
+
+Turn on **Settings → General → Bump threads on status change** on web and desktop to move an active
+thread to the top of the active list when it starts working, needs an approval or answer, or
+finishes. A thread that finishes while you have it open stays where it is. A bump saves the order
+the same way dragging does, so your other devices show it too. With a project filter on, a thread
+moves to the top of that project's threads. Bumps pause while the Working section is on.
 
 ## Settle finished work
 
