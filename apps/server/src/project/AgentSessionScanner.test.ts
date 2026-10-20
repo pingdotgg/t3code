@@ -978,9 +978,12 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           path.join(repo, ".git", "config"),
           '[core]\n\tbare = false\n[remote "origin"]\n\turl = git@github.com:pingdotgg/t3code.git\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n',
         );
+        const worktreeGitDir = path.join(repo, ".git", "worktrees", "wt");
+        yield* fileSystem.makeDirectory(worktreeGitDir, { recursive: true });
+        yield* fileSystem.writeFileString(path.join(worktreeGitDir, "commondir"), "../..\n");
         yield* fileSystem.writeFileString(
           path.join(worktree, ".git"),
-          `gitdir: ${path.join(repo, ".git", "worktrees", "wt")}\n`,
+          `gitdir: ${worktreeGitDir}\n`,
         );
         yield* fileSystem.makeDirectory(path.join(noRemote, ".git"));
         yield* fileSystem.writeFileString(path.join(noRemote, ".git", "config"), "[core]\n");
@@ -1020,6 +1023,75 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           },
         ]);
       }),
+    );
+
+    it.effect(
+      "offers bare-repository worktrees separately and imports only their own sessions",
+      () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+          yield* TestClock.setTime(nowMs);
+          const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+          const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+          const configBaseDir = yield* makeTempDir("t3code-scanner-base-");
+          const bare = yield* makeTempDir("t3code-workspace-bare-");
+          const bareGitDir = path.join(bare, ".git");
+          yield* fileSystem.makeDirectory(bareGitDir);
+          yield* fileSystem.writeFileString(
+            path.join(bareGitDir, "config"),
+            '[core] bare = "true" ; bare repository\n[remote "origin"]\nurl = git@github.com:pingdotgg/t3code.git\n',
+          );
+          const dev = path.join(bare, "dev");
+          const prod = path.join(bare, "prod");
+          const managed = path.join(configBaseDir, "worktrees", "t3code", "sandbox");
+          for (const [index, cwd] of [bare, dev, prod, managed].entries()) {
+            if (cwd !== bare) {
+              const gitDir = path.join(bareGitDir, "worktrees", path.basename(cwd));
+              yield* fileSystem.makeDirectory(gitDir, { recursive: true });
+              yield* fileSystem.writeFileString(path.join(gitDir, "commondir"), "../..\n");
+              yield* fileSystem.makeDirectory(cwd, { recursive: true });
+              yield* fileSystem.writeFileString(path.join(cwd, ".git"), `gitdir: ${gitDir}\n`);
+            }
+            yield* writeTranscript({
+              filePath: path.join(
+                codexHomePath,
+                "sessions",
+                "2026",
+                "08",
+                "24",
+                `rollout-${index}.jsonl`,
+              ),
+              contents: [
+                encodeTranscriptRecord({
+                  type: "session_meta",
+                  payload: { id: `session-${index}`, cwd },
+                }),
+                encodeTranscriptRecord({
+                  type: "event_msg",
+                  payload: { type: "user_message", message: `Work in ${cwd}` },
+                }),
+              ].join("\n"),
+              mtimeMs: nowMs - index * 1_000,
+            });
+          }
+
+          const input = { claudeHomePath, codexHomePath, configBaseDir };
+          const result = yield* runScan(input);
+          const git = { remoteKey: "github.com/pingdotgg/t3code", repository: "pingdotgg/t3code" };
+          expect(
+            result.candidates.map((candidate) => ({ path: candidate.path, git: candidate.git })),
+          ).toEqual([
+            { path: bare, git },
+            { path: dev, git },
+            { path: prod, git },
+          ]);
+          const threads = yield* runRecentThreads({ ...input, workspaceRoot: dev });
+          expect(threads.map((thread) => thread.providerSessionId)).toEqual(["session-1"]);
+          const managedThreads = yield* runRecentThreads({ ...input, workspaceRoot: managed });
+          expect(managedThreads).toEqual([]);
+        }),
     );
 
     it.effect("excludes sandboxes under the configured worktrees dir without .t3 in the path", () =>

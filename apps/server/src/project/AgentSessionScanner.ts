@@ -26,6 +26,7 @@ import * as Stream from "effect/Stream";
 
 import {
   normalizeGitRemoteUrl,
+  isBareGitConfig,
   parseGitHubRepositoryNameWithOwnerFromRemoteUrl,
   parseOriginUrlFromGitConfig,
 } from "@t3tools/shared/git";
@@ -687,11 +688,6 @@ export const make = Effect.gen(function* () {
     return `path:${normalizeProjectPathForComparison(realPath)}`;
   });
 
-  /**
-   * When it points into a `worktrees/` directory the checkout is a linked worktree, which
-   * onboarding skips because its history belongs to the main checkout. Submodules use the same
-   * pointer shape but live under `modules/`, and are offered like any other repository.
-   */
   const readGitIdentity = Effect.fn("AgentSessionScanner.readGitIdentity")(function* (
     directory: string,
   ): Effect.fn.Return<
@@ -710,11 +706,21 @@ export const make = Effect.gen(function* () {
       const target = /^gitdir:\s*(.+)$/m.exec(pointer)?.[1]?.trim();
       if (target === undefined || target.length === 0) return { _tag: "NotGit" } as const;
       gitDir = path.resolve(directory, target);
-      if (/[\\/]worktrees[\\/][^\\/]+[\\/]?$/.test(gitDir)) return { _tag: "Worktree" } as const;
+    }
+    const linkedWorktree =
+      gitStats.value.type !== "Directory" && /[\\/]worktrees[\\/][^\\/]+[\\/]?$/.test(gitDir);
+    if (linkedWorktree) {
+      const commonDir = yield* fileSystem
+        .readFileString(path.join(gitDir, "commondir"))
+        .pipe(Effect.orElseSucceed(() => ""));
+      if (commonDir.trim().length === 0) return { _tag: "Worktree" } as const;
+      gitDir = path.resolve(gitDir, commonDir.trim());
     }
     const configText = yield* fileSystem
       .readFileString(path.join(gitDir, "config"))
       .pipe(Effect.orElseSucceed(() => ""));
+    // Bare repositories have no main checkout, so offer their linked worktrees independently.
+    if (linkedWorktree && !isBareGitConfig(configText)) return { _tag: "Worktree" } as const;
     const originUrl = parseOriginUrlFromGitConfig(configText);
     return {
       _tag: "Repository",
