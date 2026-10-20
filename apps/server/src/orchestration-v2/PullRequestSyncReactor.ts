@@ -37,6 +37,11 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import { isTerminalRunStatus } from "./ThreadManagementService.ts";
 
 const SLOW_SYNC_INTERVAL_MS = 15 * 60 * 1_000;
+// Every server polls every open linked pull request, and most of them sit untouched for days.
+// One nobody has updated for QUIET_AFTER_MS is read on the quiet cadence instead of each sweep;
+// requested refreshes, watches and `gh pr merge` still read it at once.
+const QUIET_AFTER_MS = 30 * 60 * 1_000;
+const QUIET_SYNC_INTERVAL_MS = 5 * 60 * 1_000;
 const PULL_REQUEST_CLOSE_COMMAND = /\b(?:gh\s+pr|glab\s+mr)\s+(?:merge|close)\b/u;
 
 const isPullRequestProviderError = Schema.is(PullRequestProviderError);
@@ -177,9 +182,17 @@ export const make = Effect.gen(function* () {
     ) {
       return false;
     }
-    if (active.some((entry) => entry.link.snapshot?.state === "open")) return true;
     const last = lastSyncedAt.get(key);
-    return last === undefined || nowMs - last >= SLOW_SYNC_INTERVAL_MS;
+    const sinceLastMs = last === undefined ? Number.POSITIVE_INFINITY : nowMs - last;
+    const open = active.filter((entry) => entry.link.snapshot?.state === "open");
+    if (open.length > 0) {
+      const quiet = open.every((entry) => {
+        const updatedAt = entry.link.snapshot?.updatedAt;
+        return updatedAt != null && nowMs - Date.parse(updatedAt) >= QUIET_AFTER_MS;
+      });
+      return !quiet || sinceLastMs >= QUIET_SYNC_INTERVAL_MS;
+    }
+    return sinceLastMs >= SLOW_SYNC_INTERVAL_MS;
   };
 
   const logSkipped =
