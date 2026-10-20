@@ -87,6 +87,7 @@ export interface AntigravityProfile {
   readonly tokenPath: string;
   readonly tempDirectory: string;
   readonly browserCommand: string;
+  readonly caBundlePath?: string;
 }
 
 export interface AntigravityAuthConfig {
@@ -221,6 +222,11 @@ function antigravityEnvironment(
   return {
     ...environment,
     ...credential,
+    ...(profile.caBundlePath !== undefined &&
+    baseEnv.SSL_CERT_FILE === undefined &&
+    baseEnv.SSL_CERT_DIR === undefined
+      ? { SSL_CERT_FILE: profile.caBundlePath }
+      : {}),
     GEMINI_HOME: profile.geminiHome,
     AGY_ACP_FORCE_FILE_STORAGE: "1",
     BROWSER: profile.browserCommand,
@@ -327,6 +333,27 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
   const geminiHome = path.resolve(input.profileDirectory);
   const acpDirectory = path.join(geminiHome, "antigravity-acp");
   const tempDirectory = input.tempDirectory ?? path.join(acpDirectory, "tmp");
+  let caBundlePath: string | undefined;
+  if (platform === "linux") {
+    // Bundled Python may look for certificates at paths absent on this distribution.
+    // Relative paths would resolve differently when the agent runs in the project directory.
+    for (const candidate of [
+      (input.baseEnv ?? process.env).NIX_SSL_CERT_FILE,
+      "/etc/ssl/certs/ca-bundle.crt",
+      "/etc/ssl/certs/ca-certificates.crt",
+      "/etc/pki/tls/certs/ca-bundle.crt",
+      "/etc/ssl/cert.pem",
+    ]) {
+      if (
+        candidate &&
+        path.isAbsolute(candidate) &&
+        (yield* fs.exists(candidate).pipe(Effect.orElseSucceed(() => false)))
+      ) {
+        caBundlePath = candidate;
+        break;
+      }
+    }
+  }
   const profile: AntigravityProfile = {
     platform,
     geminiHome,
@@ -334,6 +361,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
     tokenPath: path.join(acpDirectory, "acp_token.json"),
     tempDirectory,
     browserCommand,
+    ...(caBundlePath === undefined ? {} : { caBundlePath }),
   };
   const environment = antigravityEnvironment(profile, input.baseEnv ?? process.env, auth);
   yield* Effect.gen(function* () {
