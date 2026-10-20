@@ -1450,6 +1450,16 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
             yield* parent.stdout.pipe(Stream.decodeText(), Stream.splitLines, Stream.runHead),
           ),
         );
+        // Until the parent execs, the shell still reaps its children, and a child killed then
+        // never becomes a zombie. Wait for the parent to be the non-reaping sleep.
+        const parentExec = yield* runScript(home, [
+          "-c",
+          `attempt=0; while [ "$attempt" -lt 1000 ]; do
+            case "$(ps -o comm= -p ${parent.pid})" in *sleep) exit 0;; esac
+            attempt=$((attempt + 1))
+          done; exit 1`,
+        ]);
+        assert.equal(parentExec.exitCode, 0);
         process.kill(zombie, "SIGKILL");
         // SIGKILL delivery is asynchronous; establish the zombie fixture before launching.
         const zombieState = yield* runScript(home, [
