@@ -16,6 +16,7 @@ import {
 import { useEffect, useRef } from "react";
 
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
+import { isWindowsPlatform } from "../lib/utils";
 import { useEnvironmentIds } from "../state/environments";
 import { environmentShell } from "../state/shell";
 import {
@@ -221,6 +222,10 @@ function EnvironmentNotifications({
           body: thread.title,
           tag: threadNotificationTag(environmentId, thread.id),
           silent: true,
+          // Windows drops clicks once a toast times out into Notification Center, so keep
+          // completions on screen until clicked or cleared on focus. Attention alerts still time
+          // out because another client can resolve them while this window stays unfocused.
+          requireInteraction: kind === "completion" && isWindowsPlatform(navigator.platform),
         });
         onNotification(environmentId, notification);
         notification.addEventListener("click", () => {

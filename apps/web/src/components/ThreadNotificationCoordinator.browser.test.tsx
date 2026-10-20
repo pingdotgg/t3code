@@ -11,6 +11,7 @@ const state = vi.hoisted(() => ({
   active: { environmentId: "env-1", threadId: "other-thread" },
   focused: true,
   visible: "visible",
+  platform: "MacIntel",
   live: true,
   completedAt: null as string | null,
   archivedAt: null as string | null,
@@ -160,6 +161,7 @@ function setup() {
     active: { environmentId: "env-1", threadId: "other-thread" },
     focused: true,
     visible: "visible",
+    platform: "MacIntel",
     live: true,
     completedAt: null,
     archivedAt: null,
@@ -180,6 +182,9 @@ function setup() {
       .mockImplementation(() => state.visible as DocumentVisibilityState),
   );
   stack.use(vi.spyOn(document, "hasFocus").mockImplementation(() => state.focused));
+  stack.use(
+    vi.spyOn(Navigator.prototype, "platform", "get").mockImplementation(() => state.platform),
+  );
   stack.use(
     stubGlobal("Notification", Object.assign(state.notification, { permission: "granted" })),
   );
@@ -290,6 +295,7 @@ describe("thread notifications", () => {
       body: "Fix the login form",
       tag: expect.any(String),
       silent: true,
+      requireInteraction: false,
     });
   });
 
@@ -370,7 +376,35 @@ describe("thread notifications", () => {
       body: "Fix the login form",
       tag: expect.any(String),
       silent: true,
+      requireInteraction: false,
     });
+  });
+
+  it("keeps Windows completion alerts on screen so a click still reaches the app", async () => {
+    await using app = setup();
+    state.mode = "notifications";
+    state.focused = false;
+    state.platform = "Win32";
+    await app.render();
+    await app.complete();
+    expect(state.notification).toHaveBeenCalledWith(
+      "Thread completed",
+      expect.objectContaining({ requireInteraction: true }),
+    );
+  });
+
+  it("lets Windows attention alerts time out since another client may resolve them", async () => {
+    await using app = setup();
+    state.mode = "notifications";
+    state.focused = false;
+    state.platform = "Win32";
+    await app.render();
+    state.input = true;
+    await app.render();
+    expect(state.notification).toHaveBeenCalledWith(
+      "Input needed",
+      expect.objectContaining({ requireInteraction: false }),
+    );
   });
 
   it("reveals the desktop window and opens the thread when a system alert is clicked", async () => {
