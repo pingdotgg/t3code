@@ -187,6 +187,102 @@ describe("device listing compatibility", () => {
   });
 });
 
+describe("Cloudflare rate-limit retry hint", () => {
+  const provisioningFailed = (cause?: unknown) =>
+    new ManagedEndpointProvider.ManagedEndpointProvisioningFailed({
+      userId: "user-1",
+      environmentId: "env-1",
+      stage: "ensure-tunnel",
+      ...(cause === undefined
+        ? {}
+        : {
+            cause: new ManagedEndpointProvider.ManagedEndpointTunnelClientError({
+              operation: "list",
+              cause,
+            }),
+          }),
+    });
+
+  const linkResponse = (failure: ManagedEndpointProvider.ManagedEndpointProvisioningFailed) => {
+    const layerHandlers = RelayHttpApi.layerClientApi.pipe(
+      HttpRouter.provideRequest(
+        Layer.mergeAll(
+          Layer.mock(EnvironmentCredentials.EnvironmentCredentials, {}),
+          Layer.mock(EnvironmentLinks.EnvironmentLinks, {}),
+          Layer.mock(ManagedEndpointProvider.ManagedEndpointProvider, {}),
+          Layer.mock(RelayDb.RelayTransactions, {}),
+          Layer.mock(HookInbox.HookInbox, {}),
+        ),
+      ),
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.succeed(RelayConfiguration.RelayConfiguration, relaySettings),
+          NodeCryptoLayer.layer,
+          Layer.mock(RelayTokens.RelayTokens, { resolveDpopAccessTokenScopes: () => null }),
+          Layer.mock(EnvironmentLinker.EnvironmentLinker, { link: () => Effect.fail(failure) }),
+          Layer.mock(EnvironmentLinks.EnvironmentLinks, {}),
+          Layer.mock(ManagedEndpointProvider.ManagedEndpointProvider, {}),
+          Layer.mock(Devices.Devices, {}),
+        ),
+      ),
+      Layer.provideMerge(
+        Layer.succeed(RelayClientAuth, {
+          clientBearer: (effect) =>
+            Effect.provideService(effect, RelayClientPrincipal, {
+              userId: "user-1",
+              token: "test-token",
+            }),
+        }),
+      ),
+    );
+    return Effect.acquireRelease(
+      Effect.sync(() =>
+        HttpRouter.toWebHandler(
+          HttpApiBuilder.layer(HttpApi.make("RelayApi").add(RelayApi.groups.client)).pipe(
+            Layer.provide(layerHandlers),
+            Layer.provide(HttpServer.layerServices),
+          ),
+          { disableLogger: true },
+        ),
+      ),
+      (app) => Effect.promise(() => app.dispose()),
+    ).pipe(
+      Effect.flatMap((app) =>
+        Effect.promise(() =>
+          app.handler(
+            new Request("https://relay.example.test/v1/client/environment-links", {
+              method: "POST",
+              headers: { authorization: "Bearer test-token", "content-type": "application/json" },
+              body: JSON.stringify({
+                proof: "signed-proof",
+                notificationsEnabled: true,
+                liveActivitiesEnabled: true,
+                managedTunnelsEnabled: true,
+              }),
+            }),
+          ),
+        ),
+      ),
+    );
+  };
+
+  it.effect("tells a link refused during a Cloudflare pause when to retry", () =>
+    Effect.gen(function* () {
+      const paused = yield* linkResponse(
+        provisioningFailed(
+          new ManagedEndpointProvider.CloudflareApiPaused({ retryAfterMillis: 24_100 }),
+        ),
+      );
+      expect(paused.status).toBe(503);
+      expect(paused.headers.get("retry-after")).toBe("25");
+
+      const other = yield* linkResponse(provisioningFailed());
+      expect(other.status).toBe(503);
+      expect(other.headers.get("retry-after")).toBeNull();
+    }).pipe(Effect.scoped),
+  );
+});
+
 describe("relay client authentication", () => {
   it.effect("preserves the existing Clerk session JWT path", () =>
     Effect.gen(function* () {

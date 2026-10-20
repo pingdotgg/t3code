@@ -6,6 +6,9 @@ settings:
 
 catalogs:
   default:
+    '@distilled.cloud/cloudflare':
+      specifier: 1.0.0-rc.13
+      version: 1.0.0-rc.13
     '@effect/graphql-generator':
       specifier: 4.0.5
       version: 4.0.5
@@ -1064,6 +1067,9 @@ importers:
       '@clerk/backend':
         specifier: 3.25.0
         version: 3.25.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@distilled.cloud/cloudflare':
+        specifier: 'catalog:'
+        version: 1.0.0-rc.13(effect@4.0.5)
       '@effect/sql-pg':
         specifier: 4.0.5
         version: 4.0.5(effect@4.0.5)

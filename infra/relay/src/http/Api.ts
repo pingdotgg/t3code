@@ -102,6 +102,17 @@ const appendRelayCredentialResponseHeaders = HttpEffect.appendPreResponseHandler
     ),
 );
 
+// T3 Code hosts never retry sooner than Retry-After, so during a Cloudflare
+// rate limit they wait out the pause instead of retrying into it.
+const appendCloudflareRetryAfter = (error: unknown) => {
+  const retryAfterMillis = ManagedEndpointProvider.cloudflareRetryAfterMillis(error);
+  if (retryAfterMillis === undefined) return Effect.void;
+  const seconds = String(Math.max(1, Math.ceil(retryAfterMillis / 1000)));
+  return HttpEffect.appendPreResponseHandler((_request, response) =>
+    Effect.succeed(HttpServerResponse.setHeader(response, "retry-after", seconds)),
+  );
+};
+
 const appendRelayDpopChallengeHeader = HttpEffect.appendPreResponseHandler((_request, response) =>
   Effect.succeed(
     response.status === 401
@@ -693,6 +704,7 @@ export const recoverEnvironmentTunnelRecord = Effect.fn(
     userId: input.userId,
     environmentId: input.environmentId,
     origin: input.origin,
+    reuseReadyTunnel: true,
   });
   const recoveredTunnelId = recovered.runtime.tunnelId;
   if (
@@ -873,6 +885,7 @@ export const layerClientApi = HttpApiBuilder.group(
               cloudMintPublicKey: config.cloudMintPublicKey,
             };
           },
+          Effect.tapError(appendCloudflareRetryAfter),
           mapErrorTags({
             EnvironmentLinkProofExpired: (_error, traceId) =>
               new RelayEnvironmentLinkProofExpiredError({
@@ -1334,6 +1347,7 @@ export const layerServerApi = HttpApiBuilder.group(
               origin: payload.origin,
             });
           },
+          Effect.tapError(appendCloudflareRetryAfter),
           Effect.catchTags({
             ManagedEndpointOriginNotAllowed: () => Effect.fail(new HttpApiError.Unauthorized({})),
             ManagedEndpointProvisioningNotConfigured: () =>
@@ -1369,6 +1383,7 @@ export const layerServerApi = HttpApiBuilder.group(
               origin: payload.origin,
             });
           },
+          Effect.tapError(appendCloudflareRetryAfter),
           Effect.catchTags({
             ManagedEndpointOriginNotAllowed: () => Effect.fail(new HttpApiError.Unauthorized({})),
             ManagedEndpointProvisioningNotConfigured: () =>
