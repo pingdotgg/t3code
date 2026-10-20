@@ -79,6 +79,7 @@ function candidate(
         { role: "assistant" as const, text: "Fixed", createdAt: timestamp },
       ],
     },
+    worktree: { path: "/workspace/project-feature", branch: "feature" },
   } satisfies AgentSessionScanner.AgentSessionRecentThread;
 }
 
@@ -297,6 +298,8 @@ it.effect(
         ]);
         expect(records.messages.map((message) => message.text)).toEqual(["Fix it", "Fixed"]);
         expect(records.thread.historyOrigin).toBe("v1_import");
+        expect(records.thread.worktreePath).toBe("/workspace/project-feature");
+        expect(records.thread.branch).toBe("feature");
         expect(records.thread.activeProviderThreadId).toBe(records.providerThreads[0]?.id);
         expect(records.providerThreads[0]?.nativeThreadRef?.nativeId).toBe(
           source.source.providerSessionId,
