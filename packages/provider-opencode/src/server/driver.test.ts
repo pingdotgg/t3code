@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import { createOpencodeClient } from "@opencode-ai/sdk/v2";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import type { OpenCodeSettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -22,6 +23,7 @@ import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEve
 import * as ProviderMaintenance from "@t3tools/provider-core/server/maintenanceResolver";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import {
+  OPENCODE_1_RESPONSES,
   OPENCODE_2_RESPONSES,
   OPENCODE_2_WORKSPACE_RESPONSES,
   replayOpenCodeServer,
@@ -69,6 +71,92 @@ const create = (config: Partial<OpenCodeSettings>, http: HttpClient.HttpClient) 
   }).pipe(Effect.provideService(HttpClient.HttpClient, http));
 
 const noHttp = HttpClient.make(() => Effect.die("A local binary must not be probed over HTTP"));
+
+const createOpenCode1WorkspaceDriver = (client: ReturnType<typeof createOpencodeClient>) =>
+  create(
+    { serverUrl: "http://127.0.0.1:4096" },
+    replayOpenCodeServer(OPENCODE_1_RESPONSES, ""),
+  ).pipe(
+    Effect.provide(
+      Layer.mock(OpenCodeRuntime.OpenCodeRuntime)({
+        connectToOpenCodeServer: () =>
+          Effect.succeed({
+            url: "http://127.0.0.1:4096",
+            version: "1.18.32",
+            exitCode: null,
+            external: true,
+          }),
+        createOpenCodeSdkClient: () => client,
+        loadOpenCodeSkills: () =>
+          Effect.succeed([
+            {
+              name: "workspace-skill",
+              location: "/work/.opencode/skills/workspace-skill/SKILL.md",
+            },
+          ]),
+      }),
+    ),
+  );
+
+it.layer(layer)("OpenCodeDriver 1.x workspace commands", (it) => {
+  it.effect("keeps skills and marks commands pending on a timed-out probe, then loads them", () =>
+    Effect.gen(function* () {
+      const requested = Promise.withResolvers<void>();
+      let ready = false;
+      const client = createOpencodeClient({
+        baseUrl: "http://127.0.0.1:4096",
+        throwOnError: true,
+        fetch: () => {
+          requested.resolve();
+          return ready
+            ? Promise.resolve(Response.json([{ name: "hello", hints: [] }]))
+            : new Promise<Response>(() => {});
+        },
+      });
+      const instance = yield* createOpenCode1WorkspaceDriver(client);
+      const probe = yield* instance.snapshotForCwd!("/work").pipe(Effect.forkChild);
+      yield* Effect.promise(() => requested.promise);
+      yield* TestClock.adjust("10 seconds");
+
+      const pending = yield* Fiber.join(probe);
+      assert.deepStrictEqual(
+        pending.skills.map((skill) => skill.name),
+        ["workspace-skill"],
+      );
+      assert.strictEqual(pending.slashCommandsPending, true);
+
+      ready = true;
+      const workspace = yield* instance.snapshotForCwd!("/work");
+      assert.deepStrictEqual(
+        workspace.slashCommands.map((command) => command.name),
+        ["compact", "hello"],
+      );
+      assert.strictEqual(workspace.slashCommandsPending, false);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps skills and defers command fallback to provider health on an SDK error", () =>
+    Effect.gen(function* () {
+      const client = createOpencodeClient({
+        baseUrl: "http://127.0.0.1:4096",
+        throwOnError: true,
+        fetch: () => Promise.resolve(Response.json({ message: "unavailable" }, { status: 500 })),
+      });
+      const instance = yield* createOpenCode1WorkspaceDriver(client);
+      const workspace = yield* instance.snapshotForCwd!("/work");
+
+      assert.deepStrictEqual(
+        workspace.slashCommands.map((command) => command.name),
+        ["compact"],
+      );
+      assert.deepStrictEqual(
+        workspace.skills.map((skill) => skill.name),
+        ["workspace-skill"],
+      );
+      assert.strictEqual(workspace.slashCommandsPending, undefined);
+    }).pipe(Effect.scoped),
+  );
+});
 
 it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
   it.effect("never starts a 1.x server for an OpenCode 2 instance", () =>
