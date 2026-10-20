@@ -614,6 +614,13 @@ export const ServerConfig = Schema.Struct({
   scratchWorkspaceRoot: Schema.optionalKey(TrimmedNonEmptyString),
   newProjectsRoot: Schema.optionalKey(TrimmedNonEmptyString),
   /**
+   * The xdg-user-dirs Projects directory (`XDG_PROJECTS_DIR`), present only
+   * when it exists. The Add Project browser starts here while
+   * `addProjectBaseDirectory` is empty. Paths under home start with `~`, and
+   * every path ends in `/`.
+   */
+  userProjectsRoot: Schema.optionalKey(TrimmedNonEmptyString),
+  /**
    * Never sent in a config snapshot: the theme stream emits the current set
    * before any change, so a snapshot carrying it too would hand every
    * subscriber the same array twice per connect.

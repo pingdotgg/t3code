@@ -42,6 +42,14 @@ describe("add project shared logic", () => {
     expect(getAddProjectInitialQuery("C:\\work")).toBe("C:\\work\\");
   });
 
+  it("starts in the environment's projects directory when the setting is empty", () => {
+    expect(getAddProjectInitialQuery("", "~/Projects/")).toBe("~/Projects/");
+    expect(getAddProjectInitialQuery("  ", "/srv/code/")).toBe("/srv/code/");
+    expect(getAddProjectInitialQuery("", "~/ Projects /")).toBe("~/ Projects /");
+    expect(getAddProjectInitialQuery(null, null)).toBe("~/");
+    expect(getAddProjectInitialQuery("/work", "~/Projects")).toBe("/work/");
+  });
+
   it("derives the clone folder name from the repository name with owner", () => {
     expect(getCloneDirectoryName("owner/repo")).toBe("repo");
     expect(getCloneDirectoryName("org/project/repo")).toBe("repo");

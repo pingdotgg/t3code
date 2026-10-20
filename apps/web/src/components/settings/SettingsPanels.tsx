@@ -17,6 +17,7 @@ import {
   type SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { getAddProjectInitialQuery } from "@t3tools/client-runtime/operations/projects";
 import { presentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
   isAtomCommandInterrupted,
@@ -2151,6 +2152,14 @@ export function GeneralSettingsPanel() {
   const backgroundActivityProfileOption = resolveBackgroundActivityProfileOption(settings);
   const mixedBackgroundActivity = useScopedSettingsMixed(["backgroundActivity"]);
   const mixedAddProjectBaseDirectory = useScopedSettingsMixed(["addProjectBaseDirectory"]);
+  const addProjectDefaultQueries = new Set(
+    connectedEnvironments.map((target) =>
+      getAddProjectInitialQuery(null, target.serverConfig?.userProjectsRoot),
+    ),
+  );
+  // Each environment in scope can have its own projects directory
+  const addProjectDefaultQuery =
+    addProjectDefaultQueries.size > 1 ? null : (Array.from(addProjectDefaultQueries)[0] ?? "~/");
   const mixedTextGenerationModel = useScopedSettingsMixed(["textGenerationModelSelection"]);
   const backgroundActivityDescription =
     backgroundActivityProfileOption === "advanced"
@@ -2999,7 +3008,11 @@ export function GeneralSettingsPanel() {
           serverScoped
           settingKeys={["addProjectBaseDirectory"]}
           {...searchableSetting("add-project-starts-in")}
-          description='Leave empty to use "~/" when the Add Project browser opens.'
+          description={
+            addProjectDefaultQuery === null
+              ? "Leave empty to start in each environment's projects directory, or its home directory."
+              : `Leave empty to use "${addProjectDefaultQuery}" when the Add Project browser opens.`
+          }
           resetAction={
             settings.addProjectBaseDirectory !==
             DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory ? (
@@ -3019,7 +3032,11 @@ export function GeneralSettingsPanel() {
               className="w-full sm:w-72"
               value={mixedAddProjectBaseDirectory ? "" : settings.addProjectBaseDirectory}
               onCommit={(next) => updateSettings({ addProjectBaseDirectory: next })}
-              placeholder={mixedAddProjectBaseDirectory ? "Mixed" : "~/"}
+              placeholder={
+                mixedAddProjectBaseDirectory || addProjectDefaultQuery === null
+                  ? "Mixed"
+                  : addProjectDefaultQuery
+              }
               spellCheck={false}
               aria-label="Add project base directory"
             />

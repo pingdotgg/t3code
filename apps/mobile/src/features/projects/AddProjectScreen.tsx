@@ -98,6 +98,7 @@ interface EnvironmentOption {
   readonly platform: string;
   readonly machine: EnvironmentMachineKind;
   readonly baseDirectory: string | null;
+  readonly userProjectsRoot: string | null;
   readonly newProjectsRoot: string | null;
   readonly connectionState: EnvironmentConnectionPhase;
   readonly connectionError: string | null;
@@ -287,10 +288,11 @@ function ProjectPathInput(props: {
 function useBrowsePathInput(environment: EnvironmentOption | null, pinnedDirectoryName = "") {
   const environmentId = environment?.environmentId ?? null;
   const environmentBaseDirectory = environment?.baseDirectory ?? null;
+  const environmentUserProjectsRoot = environment?.userProjectsRoot ?? null;
   const clonePathCaseSensitive = !isWindowsPlatform(environment?.platform ?? "");
   const [pathInput, commitPathInput] = useState(() =>
     getCloneDestinationPath(
-      getAddProjectInitialQuery(environmentBaseDirectory),
+      getAddProjectInitialQuery(environmentBaseDirectory, environmentUserProjectsRoot),
       pinnedDirectoryName,
     ),
   );
@@ -350,12 +352,18 @@ function useBrowsePathInput(environment: EnvironmentOption | null, pinnedDirecto
       previousEnvironmentIdRef.current = environmentId;
       setPathInput(
         getCloneDestinationPath(
-          getAddProjectInitialQuery(environmentBaseDirectory),
+          getAddProjectInitialQuery(environmentBaseDirectory, environmentUserProjectsRoot),
           pinnedDirectoryName,
         ),
       );
     }
-  }, [environmentBaseDirectory, environmentId, pinnedDirectoryName, setPathInput]);
+  }, [
+    environmentBaseDirectory,
+    environmentId,
+    environmentUserProjectsRoot,
+    pinnedDirectoryName,
+    setPathInput,
+  ]);
 
   useEffect(
     () => () => {
@@ -385,6 +393,7 @@ function useEnvironmentOptions(): ReadonlyArray<EnvironmentOption> {
         platform: platformFromOs(config?.environment.platform.os ?? null),
         machine: resolveEnvironmentMachineKind(config ?? null),
         baseDirectory: config?.settings.addProjectBaseDirectory ?? null,
+        userProjectsRoot: config?.userProjectsRoot ?? null,
         newProjectsRoot: config?.newProjectsRoot ?? null,
         connectionState: runtime?.connectionState ?? "available",
         connectionError: runtime?.connectionError ?? null,

@@ -156,8 +156,11 @@ export function buildAddProjectRemoteSourceReadiness(
   };
 }
 
-export function getAddProjectInitialQuery(baseDirectory: string | null | undefined): string {
-  const trimmed = baseDirectory?.trim() ?? "";
+export function getAddProjectInitialQuery(
+  baseDirectory: string | null | undefined,
+  userProjectsRoot?: string | null,
+): string {
+  const trimmed = baseDirectory?.trim() || userProjectsRoot?.trim() || "";
   return trimmed.length === 0 ? "~/" : ensureBrowseDirectoryPath(trimmed);
 }
 
