@@ -433,3 +433,54 @@ describe("queued task operation access", () => {
     },
   );
 });
+
+describe("queued attachment failures", () => {
+  it("restores a timed-out message and releases delivery for another thread", async () => {
+    state.grantedEnvironments.add("secondary");
+    const failed = message({
+      attachments: [
+        {
+          id: "image",
+          type: "image",
+          name: "screenshot.png",
+          mimeType: "image/png",
+          sizeBytes: 3,
+          dataUrl: "data:image/png;base64,YWJj",
+          previewUri: "file:///images/screenshot.png",
+        },
+      ],
+    });
+    const next = message({
+      threadId: ThreadId.make("next-thread"),
+      messageId: MessageId.make("next-message"),
+      commandId: CommandId.make("next-command"),
+      createdAt: "2026-09-05T00:00:01.000Z",
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+      creation: {
+        projectId: ProjectId.make("project"),
+        projectCwd: "/repo",
+        workspaceMode: "local",
+        branch: null,
+        worktreePath: null,
+      },
+    });
+    await state.manager.enqueue(failed);
+    await state.manager.enqueue(next);
+    state.prepare.mockRejectedValueOnce(
+      new Error("'screenshot.png' took too long to upload. Try a smaller file."),
+    );
+
+    await runDrain();
+
+    expect(remaining()).toEqual([next]);
+    expect(state.draftText).toContain(failed.text);
+    expect(state.start).not.toHaveBeenCalled();
+    expect(appAtomRegistry.get(dispatchingQueuedMessageIdAtom)).toBeNull();
+
+    await runDrain();
+
+    expect(state.start).toHaveBeenCalledOnce();
+    expect(state.start.mock.calls[0]?.[0].input.threadId).toBe(next.threadId);
+    expect(remaining()).toEqual([]);
+  });
+});
