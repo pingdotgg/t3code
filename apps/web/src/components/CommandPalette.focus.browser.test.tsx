@@ -21,6 +21,7 @@ vi.mock("@effect/atom-react", async (importOriginal) => {
   };
 });
 vi.mock("../hooks/useTheme", () => ({
+  useRenderedAppearance: () => "light",
   useTheme: () => ({ theme: "default", resolvedTheme: "light", appearanceMode: "light" }),
 }));
 vi.mock("../hooks/useCustomThemes", () => ({ useCustomThemes: () => [] }));

@@ -39,7 +39,7 @@ const testState = vi.hoisted(() => ({
 
 vi.mock(import("../../hooks/useTheme"), async (original) => ({
   ...(await original()),
-  useTheme: (() => ({ resolvedTheme: "dark" })) as never,
+  useRenderedAppearance: (() => "dark") as never,
 }));
 
 // Wraps Pierre's real worker so the suite can count workers, read requests and hold startup.

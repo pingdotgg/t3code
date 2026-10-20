@@ -38,7 +38,7 @@ import {
 
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useClientSettings, updateClientSettings } from "~/hooks/useSettings";
-import { useTheme } from "~/hooks/useTheme";
+import { useRenderedAppearance } from "~/hooks/useTheme";
 import { areAllDiffFilesCollapsed } from "~/lib/diffCollapse";
 import { pullRequestFindingKey, type PullRequestFinding } from "./pullRequestDetail.logic";
 import { canEditPullRequestComment, canResolvePullRequestThread } from "./pullRequestEditing.logic";
@@ -270,7 +270,7 @@ function PullRequestCodeTab({
   backgroundRefreshToken?: number;
   revealRequest?: { readonly path: string; readonly nonce: number } | null;
 }) {
-  const { resolvedTheme } = useTheme();
+  const resolvedTheme = useRenderedAppearance();
   const settings = useClientSettings((settings) => ({
     diffFilesCollapsed: settings.diffFilesCollapsed,
     diffIgnoreWhitespace: settings.diffIgnoreWhitespace,

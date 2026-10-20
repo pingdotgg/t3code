@@ -1,3 +1,4 @@
+import { useRenderedAppearance } from "../../hooks/useTheme";
 import type { Root, RootContent } from "mdast";
 import { ThreadFindTimelineContext } from "./ThreadFindProvider";
 import { shallow } from "zustand/vanilla/shallow";
@@ -4683,6 +4684,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
 });
 
 function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentContext }) {
+  const renderedAppearance = useRenderedAppearance();
   const ctx = use(TimelineRowCtx);
   const fenceLanguage = comment.fenceLanguage ?? "diff";
   const renderablePatch = getRenderablePatch(
@@ -4729,7 +4731,7 @@ function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentConte
               options={{
                 collapsed: false,
                 diffStyle: "unified",
-                theme: resolveDiffThemeName(ctx.resolvedTheme),
+                theme: resolveDiffThemeName(renderedAppearance),
                 preferredHighlighter: PREFERRED_HIGHLIGHTER,
               }}
             />

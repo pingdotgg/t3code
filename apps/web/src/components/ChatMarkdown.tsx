@@ -165,7 +165,7 @@ import { createIncrementalHighlightedDocument } from "../lib/incrementalHighligh
 import { HighlightedCodeLines } from "./chat/HighlightedCodeLines";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
 import { MermaidDiagram } from "./chat/MermaidDiagram";
-import { useTheme } from "../hooks/useTheme";
+import { useRenderedAppearance } from "../hooks/useTheme";
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import {
   chatMarkdownClipboardPayload,
@@ -2383,7 +2383,7 @@ function useChatMarkdownState({
   headingLevelOffset = 0,
   githubMedia = false,
 }: ChatMarkdownProps) {
-  const { resolvedTheme } = useTheme();
+  const resolvedTheme = useRenderedAppearance();
   const markdownRef = useRef<HTMLElement>(null);
   const mediaRequestId = useRef(0);
   // A preview opened from another thread or workspace never carries over.
@@ -2488,7 +2488,7 @@ function useChatMarkdownState({
             target !== null &&
             resolveRemoteOpenState({
               target,
-              sshAlias: null,
+              sshTarget: null,
               remoteOpenTargets: undefined,
               isDesktopRenderer: window.desktopBridge !== undefined,
             }).mode !== "local-exec"

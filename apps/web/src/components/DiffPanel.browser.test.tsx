@@ -44,7 +44,10 @@ vi.mock("../hooks/useSettings", () => ({
   }),
   updateClientSettings: vi.fn(),
 }));
-vi.mock("../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
+vi.mock("../hooks/useTheme", () => ({
+  useRenderedAppearance: () => "dark",
+  useTheme: () => ({ resolvedTheme: "dark" }),
+}));
 vi.mock("../editorPreferences", () => ({ useOpenInPreferredEditor: () => vi.fn() }));
 vi.mock("../fileContextMenu", () => ({ useFileContextMenuHandler: () => vi.fn() }));
 vi.mock("../lib/checkpointDiffState", () => ({
