@@ -19,6 +19,8 @@ import { appAtomRegistry } from "./atom-registry";
 import { queuedEditDraftKey } from "./queued-edit-draft-key";
 import {
   clearComposerDraft,
+  getComposerDraftSnapshot,
+  mergeComposerDraftContent,
   setComposerDraftContext,
   setComposerDraftText,
 } from "./use-composer-drafts";
@@ -91,6 +93,35 @@ export function endQueuedRunEdit(
   if (edit === null) return;
   clearComposerDraft(queuedEditDraftKey(threadKey, edit.runId), options);
   setQueuedRunEdit(threadKey, null);
+}
+
+export function recoverQueuedRunEdit(
+  threadKey: string,
+  runId: RunId,
+): "kept" | "discarded" | "clean" | null {
+  const edit = getQueuedRunEdit(threadKey);
+  if (edit === null || edit.runId !== runId) return null;
+  const editDraft = getComposerDraftSnapshot(queuedEditDraftKey(threadKey, runId));
+  const dirty = editDraft.text !== edit.originalText || editDraft.attachments.length > 0;
+  if (!dirty) {
+    // Untouched text was already sent; restoring it would duplicate the message.
+    endQueuedRunEdit(threadKey);
+    return "clean";
+  }
+  const threadDraft = getComposerDraftSnapshot(threadKey);
+  const keepable =
+    editDraft.text.trim().length > 0 &&
+    threadDraft.text.trim().length === 0 &&
+    threadDraft.attachments.length === 0;
+  if (keepable) {
+    void mergeComposerDraftContent(threadKey, {
+      text: editDraft.text,
+      attachments: editDraft.attachments,
+      ...(editDraft.context ? { context: editDraft.context } : {}),
+    });
+  }
+  endQueuedRunEdit(threadKey, { deferAttachmentCleanup: keepable });
+  return keepable ? "kept" : "discarded";
 }
 
 /**
