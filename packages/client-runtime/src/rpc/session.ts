@@ -214,6 +214,14 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     const protocolContext = yield* Layer.build(layerProtocol).pipe(
       Effect.withSpan("environment.websocket.connect"),
     );
+    // Building the protocol only starts the socket; this span times the
+    // handshake up to the first open, without making `connect` wait for it.
+    yield* Deferred.await(connected).pipe(
+      Effect.raceFirst(Deferred.await(disconnected)),
+      Effect.withSpan("environment.websocket.open"),
+      Effect.ignore,
+      Effect.forkScoped,
+    );
     const protocolClient = yield* makeWsRpcProtocolClient.pipe(Effect.provide(protocolContext));
     const initialConfigDeferred = yield* Deferred.make<ServerConfig>();
     const serverConfigExit = yield* Deferred.make<void, ServerConfigSubscriptionError>();

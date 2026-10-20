@@ -1,8 +1,10 @@
 import { AuthStandardClientScopes, EnvironmentId, type ServerConfig } from "@t3tools/contracts";
 import { RelayClientTracer } from "@t3tools/shared/relayTracing";
 import { describe, expect, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Random from "effect/Random";
@@ -294,7 +296,7 @@ describe("retryDelayMs", () => {
 });
 
 describe("EnvironmentSupervisor", () => {
-  it.effect("exports each relay setup as a standalone linked trace that ends at readiness", () =>
+  it.effect("exports each relay setup as a standalone linked trace with its outcome", () =>
     Effect.gen(function* () {
       const spans: Array<Tracer.NativeSpan> = [];
       const tracer = Tracer.make({
@@ -308,9 +310,10 @@ describe("EnvironmentSupervisor", () => {
           return span;
         },
       });
+      const firstFailure = transient();
       const harness = yield* makeHarness({
-        prepare: (attempt) =>
-          attempt === 1 ? Effect.fail(transient()) : Effect.succeed(PREPARED_CONNECTION),
+        prepare: (attempt, target) =>
+          attempt === 1 ? Effect.fail(firstFailure) : Effect.succeed(preparedFor(target)),
       });
       const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
         initiallyDesired: true,
@@ -334,6 +337,23 @@ describe("EnvironmentSupervisor", () => {
       expect(attempts[0]?.traceId).not.toBe(attempts[1]?.traceId);
       expect(attempts[1]?.links.map((link) => link.span.spanId)).toContain(attempts[0]?.spanId);
       expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+
+      const [failed, connected] = attempts;
+      // The exporter derives the status message from the failure, so it must
+      // be the connection error rather than a wrapper object.
+      const failedExit = failed?.status._tag === "Ended" ? failed.status.exit : undefined;
+      expect(failedExit && Exit.isFailure(failedExit) ? Cause.squash(failedExit.cause) : null).toBe(
+        firstFailure,
+      );
+      expect(Object.fromEntries(failed?.attributes ?? [])).toMatchObject({
+        "connection.outcome": "failed",
+        "connection.failure.tag": "ConnectionTransientError",
+        "connection.failure.reason": "transport",
+      });
+      expect(Object.fromEntries(connected?.attributes ?? [])).toMatchObject({
+        "connection.outcome": "connected",
+        "connection.route": "relay",
+      });
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
