@@ -1,6 +1,9 @@
+import * as NodeChildProcess from "node:child_process";
+import * as NodeEvents from "node:events";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeVM from "node:vm";
 
 import { assert, describe, it } from "vite-plus/test";
 
@@ -150,4 +153,94 @@ describe("electron development launcher", () => {
     assert.match(production.sourceIconPath, /assets[\\/]prod[\\/]black-macos-1024\.png$/);
     assert.equal(production.generatedIconPath, "/runtime/icon-prod.icns");
   });
+});
+
+async function startupCleanupPattern(desktopDir) {
+  const source = NodeFS.readFileSync(new URL("./dev-electron.mjs", import.meta.url), "utf8");
+  let pattern;
+  // Supply inert imports so the real startup runs without launching Electron or signalling processes.
+  await NodeVM.runInNewContext(
+    `(async () => { ${source.replace(/^import\s[\s\S]*?;\n/gm, "")} })()`,
+    {
+      NodeChildProcess: {
+        execFileSync: () => undefined,
+        spawnSync: (command, args) => {
+          if (command === "pkill" && args.includes("-f")) pattern = args.at(-1);
+        },
+        spawn: () => new NodeEvents.EventEmitter(),
+      },
+      NodeFS: { watch: () => ({ close: () => undefined }) },
+      NodeOS: { platform: () => "linux" },
+      NodePath,
+      desktopDir,
+      resolveDevProtocolClient: () => null,
+      resolveElectronLaunchCommand: (args) => ({ electronPath: "electron", args }),
+      waitForResources: async () => undefined,
+      URL,
+      process: {
+        env: { VITE_DEV_SERVER_URL: "http://localhost:1234" },
+        execPath: "node",
+        once: () => undefined,
+      },
+    },
+  );
+  assert.isString(pattern);
+  return pattern;
+}
+
+it
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- Native pgrep is unavailable on Windows.
+  .skipIf(NodeOS.platform() === "win32")
+  .each([
+    "/tmp/t3-feature.one/apps/desktop",
+    "/tmp/t3-feature.one [two](three)+?^${four}|back\\slash*/apps/desktop",
+  ])("dev cleanup matches only the literal root argument: %s", async (desktopDir) => {
+  const pattern = await startupCleanupPattern(desktopDir);
+  const flag = `--t3code-dev-root=${desktopDir}`;
+  const argvCases = [
+    [flag],
+    [flag, "main.cjs"],
+    [flag.replace(".one", "Xone")],
+    [`${flag}-two`],
+    [`prefix${flag}`],
+    [`--t3code-dev-root=/other${desktopDir}`],
+  ];
+  const children = [];
+  try {
+    for (const args of argvCases) {
+      const child = NodeChildProcess.spawn(
+        process.execPath,
+        ["-e", "process.send('ready'); setInterval(() => {}, 1000)", "--", ...args],
+        { stdio: ["ignore", "ignore", "inherit", "ipc"] },
+      );
+      children.push(child);
+      await Promise.race([
+        NodeEvents.once(child, "message"),
+        NodeEvents.once(child, "exit").then(() => {
+          throw new Error("Fixture exited before readiness");
+        }),
+      ]);
+    }
+    // Use the native ERE engine, but never execute the launcher's signal-producing command.
+    const result = NodeChildProcess.spawnSync(
+      "pgrep",
+      ["-P", String(process.pid), "-f", "--", pattern],
+      { encoding: "utf8" },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    const matches = result.stdout.trim().split(/\s+/).map(Number);
+    assert.sameMembers(
+      matches,
+      children.slice(0, 2).map((child) => child.pid),
+    );
+  } finally {
+    await Promise.all(
+      children.map(async (child) => {
+        if (child.exitCode !== null || child.signalCode !== null) return;
+        const exited = NodeEvents.once(child, "exit");
+        child.kill("SIGTERM");
+        await exited;
+      }),
+    );
+  }
 });
