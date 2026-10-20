@@ -1,5 +1,6 @@
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
+import { useComposerUsageLimitSources } from "./ComposerUsageLimits";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
@@ -435,18 +436,22 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     });
   };
   const { onSendMessage, onChangeDraftMessage, onShowUsageLimits } = props;
+  const usageLimitSources = useComposerUsageLimitSources(
+    props.environmentId,
+    props.serverConfig?.usageLimitSources,
+  );
   const usageLimitsOffered =
     selectedProviderStatus !== null &&
     hasProviderUsageLimits(
       selectedProviderStatus.driver,
       props.serverConfig?.providers ?? [],
-      props.serverConfig?.usageLimitSources ?? [],
+      usageLimitSources,
     );
   const openUsageLimits = () => {
     const report = collectProviderUsageLimits(
       currentModelSelection.instanceId,
       props.serverConfig?.providers ?? [],
-      props.serverConfig?.usageLimitSources ?? [],
+      usageLimitSources,
       Date.now(),
     );
     onShowUsageLimits(report);

@@ -127,7 +127,7 @@ import type {
 import { PendingApprovalCard } from "./PendingApprovalCard";
 import { ComposerErrorNotice } from "./ComposerErrorNotice";
 import { ComposerFeedback } from "./ComposerFeedback";
-import { ComposerUsageLimits } from "./ComposerUsageLimits";
+import { ComposerUsageLimits, useComposerUsageLimitSources } from "./ComposerUsageLimits";
 import { PendingUserInputCard } from "./PendingUserInputCard";
 import { ProviderSubagentBar } from "./ProviderSubagentBar";
 import { ThreadCreationFailedCard } from "./ThreadCreationFailedCard";
@@ -634,12 +634,16 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
   if (usageLimitsPanel !== null && usageLimitsPanel.key !== usageLimitsKey) {
     setUsageLimitsPanel(null);
   }
+  const usageLimitSources = useComposerUsageLimitSources(
+    props.environmentId,
+    props.serverConfig?.usageLimitSources,
+  );
   const usageLimitsReport =
     usageLimitsPanel !== null && usageLimitsPanel.key === usageLimitsKey
       ? collectProviderUsageLimits(
           props.selectedThread.modelSelection.instanceId,
           props.serverConfig?.providers ?? [],
-          props.serverConfig?.usageLimitSources ?? [],
+          usageLimitSources,
           usageLimitsPanel.now,
         )
       : null;

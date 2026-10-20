@@ -4,6 +4,7 @@ import {
   type EnvironmentId,
   type ServerConfig,
   type ServerProvider,
+  type UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -152,6 +153,21 @@ export function createEnvironmentPresentationAtoms<E>(input: {
     return previous !== null && mapsEqual(previous, next) ? previous : next;
   }).pipe(Atom.withLabel("environment-providers"));
 
+  // Hub snapshots per environment, so a composer can show hubs its own environment lacks.
+  const usageLimitSourcesByEnvironmentAtom = Atom.make((get) => {
+    const next = new Map<EnvironmentId, UsageLimitSourceSnapshots>();
+    for (const environmentId of enabledEnvironmentIds(get(input.catalogValueAtom))) {
+      const sources = get(input.serverConfigValueAtom(environmentId))?.usageLimitSources;
+      if (sources !== undefined && sources.length > 0) {
+        next.set(environmentId, sources);
+      }
+    }
+    const previous = Option.getOrNull(
+      get.self<ReadonlyMap<EnvironmentId, UsageLimitSourceSnapshots>>(),
+    );
+    return previous !== null && mapsEqual(previous, next) ? previous : next;
+  }).pipe(Atom.withLabel("environment-usage-limit-sources"));
+
   // Usage limits ride on provider statuses, so these surfaces rebuild on every push by design.
   const presentationsWithProvidersAtom = Atom.make((get) => {
     const previous = Option.getOrNull(
@@ -179,6 +195,7 @@ export function createEnvironmentPresentationAtoms<E>(input: {
     presentationsAtom,
     serverConfigsAtom,
     providersByEnvironmentAtom,
+    usageLimitSourcesByEnvironmentAtom,
     presentationsWithProvidersAtom,
   };
 }

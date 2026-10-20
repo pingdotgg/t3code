@@ -11,6 +11,7 @@ import {
   type LimitAccount,
   isUsageLimitsCommand,
   collectProviderUsageLimits,
+  composerUsageLimitSources,
   sameUsageLimitCommandCoverage,
   withUsageLimitsCommands,
   collectLimitAccounts,
@@ -1430,6 +1431,113 @@ describe("/usage-limits", () => {
     );
     expect(sourceOnly?.accounts).toEqual([]);
     expect(sourceOnly?.notices).toEqual(["Accounts: token expired"]);
+  });
+
+  it("adds other environments' hubs, redeems their credits there and lists a shared account once", () => {
+    const threadEnvironment = EnvironmentId.make("thread-environment");
+    const hubEnvironment = EnvironmentId.make("hub-environment");
+    const pooled = {
+      id: "pooled",
+      driver: selected.driver,
+      email: "pool@example.com",
+      usageLimits: {
+        ...limits,
+        resetCredits: { availableCount: 1, nextCreditId: "pooled-credit" },
+      },
+    };
+    const duplicate = {
+      ...sources[0]!.accounts[0]!,
+      usageLimits: { ...limits, resetCredits: { availableCount: 2, nextCreditId: "dup-credit" } },
+    };
+    const remoteHub = {
+      ...sources[0]!,
+      id: UsageLimitSourceId.make("remote-hub"),
+      accounts: [duplicate, pooled],
+    };
+    const byEnvironment = new Map([
+      [threadEnvironment, sources],
+      [hubEnvironment, [remoteHub]],
+    ]);
+
+    // The thread environment's entry in the map is ignored in favour of the passed-in list.
+    const remoteOnly = collectProviderUsageLimits(
+      selected.instanceId,
+      [selected],
+      composerUsageLimitSources(threadEnvironment, [], byEnvironment),
+      now,
+    );
+    expect(remoteOnly?.accounts.map((account) => account.id)).toEqual([
+      "codex",
+      "hub-environment:remote-hub:pooled",
+    ]);
+    expect(remoteOnly?.accounts[0]).toMatchObject({
+      resetCreditInput: { sourceId: "remote-hub", accountId: "duplicate", creditId: "dup-credit" },
+      resetCreditEnvironmentId: hubEnvironment,
+    });
+    expect(remoteOnly?.accounts[1]).toMatchObject({
+      resetCreditInput: { sourceId: "remote-hub", accountId: "pooled", creditId: "pooled-credit" },
+      resetCreditEnvironmentId: hubEnvironment,
+    });
+
+    const sharedHub = collectProviderUsageLimits(
+      selected.instanceId,
+      [selected],
+      composerUsageLimitSources(
+        threadEnvironment,
+        [{ ...sources[0]!, accounts: [pooled] }],
+        byEnvironment,
+      ),
+      now,
+    );
+    expect(sharedHub?.accounts.map((account) => account.id)).toEqual(["codex", "hub:pooled"]);
+    expect(sharedHub?.accounts[1]?.resetCreditEnvironmentId).toBeUndefined();
+
+    // A local hub that cannot read the account gives way to a remote hub that can.
+    const unreadableLocal = collectProviderUsageLimits(
+      selected.instanceId,
+      [selected],
+      composerUsageLimitSources(
+        threadEnvironment,
+        [
+          {
+            ...sources[0]!,
+            accounts: [
+              {
+                ...pooled,
+                usageLimits: { ...limits, windows: [], unavailable: { reason: "probeFailed" } },
+              },
+            ],
+          },
+        ],
+        byEnvironment,
+      ),
+      now,
+    );
+    expect(unreadableLocal?.accounts.map((account) => account.id)).toEqual([
+      "codex",
+      "hub-environment:remote-hub:pooled",
+    ]);
+
+    // A readable local copy without a credit stays, but redeems the remote copy's credit.
+    const creditOnlyRemote = collectProviderUsageLimits(
+      selected.instanceId,
+      [selected],
+      composerUsageLimitSources(
+        threadEnvironment,
+        [{ ...sources[0]!, accounts: [{ ...pooled, usageLimits: limits }] }],
+        byEnvironment,
+      ),
+      now,
+    );
+    expect(creditOnlyRemote?.accounts.map((account) => account.id)).toEqual([
+      "codex",
+      "hub:pooled",
+    ]);
+    expect(creditOnlyRemote?.accounts[1]).toMatchObject({
+      resetCreditInput: { sourceId: "remote-hub", accountId: "pooled", creditId: "pooled-credit" },
+      resetCreditEnvironmentId: hubEnvironment,
+      limits: { resetCredits: { nextCreditId: "pooled-credit" } },
+    });
   });
 
   it("advertises global and workspace commands only for providers present in Limits", () => {
