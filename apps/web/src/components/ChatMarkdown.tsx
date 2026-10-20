@@ -48,6 +48,7 @@ import {
 } from "lucide-react";
 import { Check, Copy, Maximize2, Minimize2 } from "lucide";
 import {
+  AssetWorkspaceAssetNotFoundError,
   AuthPreviewOperateScope,
   type AssetResource,
   type EditorId,
@@ -78,6 +79,7 @@ import { MISSING_FILE_ACCESS_MESSAGE } from "@t3tools/client-runtime/state/asset
 import { mediaKindFromPath, mediaMimeTypeFromExtension } from "@t3tools/shared/filePreview";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
 import React, {
   Children,
@@ -183,7 +185,11 @@ import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
 import { useAssetUrlRefresh, useAssetUrlState } from "../assets/assetUrls";
 import { cn } from "../lib/utils";
-import { useRemoteOpenResolution, type RemoteOpenMode } from "../remoteOpen";
+import {
+  resolveRemoteOpenState,
+  useRemoteOpenResolution,
+  type RemoteOpenMode,
+} from "../remoteOpen";
 import { useRightPanelStore } from "../rightPanelStore";
 import { readThreadShell, useProjects } from "../state/entities";
 import { serverEnvironment } from "../state/server";
@@ -227,6 +233,8 @@ import {
 } from "../browser/openFileInPreview";
 import { resolveLinkTarget } from "../browser/browserLinkTarget";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
+
+const isAssetNotFoundError = Schema.is(AssetWorkspaceAssetNotFoundError);
 
 interface ChatMarkdownProps {
   /** Compact markdown transforms remove blocks before rendering inside a label. */
@@ -2466,14 +2474,34 @@ function useChatMarkdownState({
       },
       (error: unknown) => {
         if (mediaRequestId.current !== requestId) return;
+        let description =
+          error instanceof Error
+            ? error.message
+            : "The file could not be loaded. It may have been moved or deleted.";
+        if (
+          isAssetNotFoundError(error) &&
+          error.resource._tag === "media-file" &&
+          environmentId !== null
+        ) {
+          // The connection may resolve while the media lookup is pending.
+          const target = readPreparedConnection(environmentId)?.target ?? null;
+          if (
+            target !== null &&
+            resolveRemoteOpenState({
+              target,
+              sshAlias: null,
+              remoteOpenTargets: undefined,
+              isDesktopRenderer: window.desktopBridge !== undefined,
+            }).mode !== "local-exec"
+          ) {
+            description = `The file was not found on ${target.label} at ${error.checkedPath ?? error.resource.path}.`;
+          }
+        }
         toastManager.add(
           stackedThreadToast({
             type: "error",
             title: "Media unavailable",
-            description:
-              error instanceof Error
-                ? error.message
-                : "The file could not be loaded. It may have been moved or deleted.",
+            description,
           }),
         );
       },
