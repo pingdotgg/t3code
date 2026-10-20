@@ -10,11 +10,24 @@ import { ComposerBannerStack } from "./ComposerBannerStack";
 let root: Root;
 let container: HTMLDivElement;
 
-beforeEach(() => {
+// The Playwright pointer keeps its page position across the test files that share
+// a browser session, and Chrome re-hit-tests under a stationary pointer after
+// layout. A pointer left near the top of the page by an earlier file would hover
+// the stack the moment it mounts and expand it before the first assertion runs.
+async function parkPointerAway() {
+  const parking = document.createElement("div");
+  parking.style.cssText = "position:fixed;right:0;bottom:0;width:4px;height:4px";
+  document.body.append(parking);
+  await userEvent.hover(parking);
+  parking.remove();
+}
+
+beforeEach(async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
+  await parkPointerAway();
 });
 
 afterEach(async () => {
