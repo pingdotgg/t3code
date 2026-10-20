@@ -1,5 +1,6 @@
 import { presentThreadShell } from "@t3tools/client-runtime/state/models";
 import * as DateTime from "effect/DateTime";
+import * as Schema from "effect/Schema";
 import { planPinnedMove } from "@t3tools/client-runtime/state/thread-sort";
 import {
   createPendingThreadOrder,
@@ -17,6 +18,7 @@ import {
   CommandId,
   EnvironmentId,
   MessageId,
+  OrchestrationV2ThreadShell,
   ProjectId,
   ProviderInstanceId,
   RunId,
@@ -43,6 +45,7 @@ import {
 } from "./threadListV2";
 
 const environmentId = EnvironmentId.make("environment-1");
+const decodeThreadShell = Schema.decodeUnknownSync(OrchestrationV2ThreadShell);
 
 function makeThread(
   input: Partial<EnvironmentThreadShell> & Pick<EnvironmentThreadShell, "id" | "title">,
@@ -111,6 +114,30 @@ describe("resolveThreadListV2SnoozeMenuSelection", () => {
 });
 
 describe("resolveThreadListV2Status", () => {
+  it("presents decoded thread waits as Waiting while preserving requests and older servers", () => {
+    const raw = makeRawThreadShell({
+      status: "running",
+      activeRunId: RunId.make("run-wait"),
+      latestRunId: RunId.make("run-wait"),
+    });
+    const present = (shell: unknown) => presentThreadShell(environmentId, decodeThreadShell(shell));
+
+    expect(resolveThreadListV2Status(present(raw))).toBe("working");
+    const blocked = present({ ...raw, blockedOnThreadWait: true });
+    expect(
+      resolveThreadListV2Status({
+        ...blocked,
+        hasPendingApprovals: true,
+        hasPendingUserInput: true,
+      }),
+    ).toBe("approval");
+    expect(resolveThreadListV2Status({ ...blocked, hasPendingUserInput: true })).toBe("input");
+    expect(resolveThreadListV2Status(blocked)).toBe("waiting");
+    expect(resolveThreadListV2Status(present({ ...raw, blockedOnThreadWait: false }))).toBe(
+      "working",
+    );
+  });
+
   it("distinguishes usage limits from ordinary failures and clears the label after recovery", () => {
     const thread = makeThread({
       id: ThreadId.make("limited"),
