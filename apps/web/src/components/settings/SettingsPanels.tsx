@@ -50,7 +50,7 @@ import {
   SidebarProjectSortOrder,
 } from "@t3tools/contracts/settings";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
-import { createModelSelection } from "@t3tools/shared/model";
+import { createModelSelection, resolveModelPick } from "@t3tools/shared/model";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
 import * as Schema from "effect/Schema";
@@ -3242,7 +3242,9 @@ export function GeneralSettingsPanel() {
                       textGenerationModelSelection: resolveAppModelSelectionState(
                         {
                           ...settings,
-                          textGenerationModelSelection: createModelSelection(instanceId, model),
+                          textGenerationModelSelection:
+                            resolveModelPick(textGenerationModelSelection, instanceId, model) ??
+                            textGenerationModelSelection,
                         },
                         textGenerationProviders,
                       ),

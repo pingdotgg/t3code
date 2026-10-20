@@ -490,6 +490,16 @@ export function createModelSelection(
   return selections.length > 0 ? { ...base, options: selections } : base;
 }
 
+export function resolveModelPick(
+  current: ModelSelection | null | undefined,
+  instanceId: ProviderInstanceId,
+  model: string,
+  options?: ReadonlyArray<ProviderOptionSelection> | null,
+): ModelSelection | null {
+  if (current?.instanceId === instanceId && current.model === model) return null;
+  return createModelSelection(instanceId, model, options);
+}
+
 export function resolvePromptInjectedEffort(
   caps: ModelCapabilities,
   rawEffort: string | null | undefined,
