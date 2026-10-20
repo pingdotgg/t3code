@@ -72,11 +72,29 @@ describe("model price entry", () => {
   });
 
   it("lets price cells take only numbers while typing", () => {
-    for (const price of ["0.075", ".5", "15", "1e-7", " 2.5 "])
+    for (const price of ["0.075", "0,075", ".5", ",5", "15", "1e-7", " 2.5 "])
       for (let end = 1; end <= price.length; end++)
         expect(isUsagePriceEdit(price.slice(0, end - 1), price.slice(0, end))).toBe(true);
-    for (const next of ["a", "3a", "$3", "-1", "1.2.3", "e", "1,000"])
+    for (const next of ["a", "3a", "$3", "-1", "1.2.3", "1,2,3", "1.2,3", "e"])
       expect(isUsagePriceEdit("", next)).toBe(false);
+  });
+
+  it("reads a comma as the decimal point", () => {
+    const form = usagePriceForm("example-model", {
+      inputCostPerMillionTokens: 2,
+      outputCostPerMillionTokens: 8,
+    });
+    expect(
+      parseUsagePriceForm({
+        ...form,
+        inputCostPerMillionTokens: "2,5",
+        outputCostPerMillionTokens: "0,075",
+      }),
+    ).toEqual({
+      model: "example-model",
+      price: { inputCostPerMillionTokens: 2.5, outputCostPerMillionTokens: 0.075 },
+    });
+    expect(parseUsagePriceForm({ ...form, inputCostPerMillionTokens: "1,2,3" })).toBeNull();
   });
 
   it("never blocks deleting part of a price, but blocks replacing it with a non-number", () => {
