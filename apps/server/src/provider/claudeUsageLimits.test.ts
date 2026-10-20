@@ -126,6 +126,121 @@ describe("claudeUsageResponseToLimits", () => {
       },
     ]);
   });
+
+  const enterpriseResponse = {
+    rate_limits_available: true,
+    rate_limits: {
+      five_hour: null,
+      seven_day: null,
+      spend: {
+        enabled: true,
+        used: { amount_minor: 4_631, currency: "USD", exponent: 2 },
+        limit: { amount_minor: 50_000, currency: "USD", exponent: 2 },
+        percent: 9,
+      },
+      extra_usage: {
+        is_enabled: true,
+        used_credits: 4_631,
+        monthly_limit: 50_000,
+        utilization: 9.261999999999999,
+        currency: "USD",
+        decimal_places: 2,
+      },
+    },
+  };
+  const monthlyWindow = {
+    id: "monthly_spend",
+    kind: "monthly",
+    label: "Monthly spend",
+    usedPercent: expect.closeTo(9.262, 10),
+  };
+
+  it("maps the captured Enterprise budget precisely, preferring spend beside rolling windows", () => {
+    expect(claudeUsageResponseToLimits({ checkedAt, response: enterpriseResponse }).limits).toEqual(
+      {
+        checkedAt,
+        windows: [monthlyWindow],
+      },
+    );
+    const response = {
+      ...enterpriseResponse,
+      rate_limits: {
+        ...enterpriseResponse.rate_limits,
+        five_hour: { utilization: 12, resets_at: null },
+        extra_usage: {
+          ...enterpriseResponse.rate_limits.extra_usage,
+          used_credits: 30_000,
+          utilization: 60,
+        },
+      },
+    };
+    expect(claudeUsageResponseToLimits({ checkedAt, response }).limits.windows).toEqual([
+      {
+        id: "five_hour",
+        kind: "session",
+        label: "Session",
+        usedPercent: 12,
+        windowDurationMins: 300,
+      },
+      monthlyWindow,
+    ]);
+  });
+
+  it("falls back to enabled extra usage amounts or utilization when spend is unusable", () => {
+    const response = {
+      ...enterpriseResponse,
+      rate_limits: {
+        ...enterpriseResponse.rate_limits,
+        spend: {
+          ...enterpriseResponse.rate_limits.spend,
+          enabled: false,
+          used: { amount_minor: 30_000, currency: "USD", exponent: 2 },
+        },
+        extra_usage: { ...enterpriseResponse.rate_limits.extra_usage, utilization: 9 },
+      },
+    };
+    expect(claudeUsageResponseToLimits({ checkedAt, response }).limits.windows).toEqual([
+      monthlyWindow,
+    ]);
+    const utilizationOnly = {
+      ...response,
+      rate_limits: {
+        ...response.rate_limits,
+        spend: { enabled: true, used: null, limit: null, percent: 9 },
+        extra_usage: {
+          ...enterpriseResponse.rate_limits.extra_usage,
+          used_credits: null,
+          monthly_limit: null,
+        },
+      },
+    };
+    expect(
+      claudeUsageResponseToLimits({ checkedAt, response: utilizationOnly }).limits.windows,
+    ).toEqual([monthlyWindow]);
+  });
+
+  it("omits disabled budgets and refuses invalid money without an enabled fallback", () => {
+    const rateLimits = enterpriseResponse.rate_limits;
+    const response = {
+      ...enterpriseResponse,
+      rate_limits: {
+        ...rateLimits,
+        spend: { ...rateLimits.spend, enabled: false },
+        extra_usage: { ...rateLimits.extra_usage, is_enabled: false },
+      },
+    };
+    expect(claudeUsageResponseToLimits({ checkedAt, response }).limits.windows).toEqual([]);
+    response.rate_limits.spend = {
+      ...rateLimits.spend,
+      limit: { ...rateLimits.spend.limit, currency: "EUR" },
+    };
+    expect(claudeUsageResponseToLimits({ checkedAt, response }).limits.windows).toEqual([]);
+    response.rate_limits.spend = {
+      ...rateLimits.spend,
+      limit: { ...rateLimits.spend.limit, amount_minor: 0 },
+    };
+    expect(claudeUsageResponseToLimits({ checkedAt, response }).limits.windows).toEqual([]);
+  });
 });
 
 describe("claudeRateLimitEventToUpdate", () => {

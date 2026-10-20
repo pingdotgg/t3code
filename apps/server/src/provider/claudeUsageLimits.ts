@@ -8,6 +8,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 
 import {
   clampPercent,
@@ -34,6 +35,16 @@ const WINDOWS: Readonly<
  */
 const OVERAGE_INCLUDED_EVENT_TYPE = "seven_day_overage_included";
 
+// The SDK does not yet type the spend budget returned by `get_usage`.
+const SpendMoney = Schema.Struct({
+  amount_minor: Schema.Natural,
+  currency: Schema.NonEmptyString,
+  exponent: Schema.Natural,
+});
+const decodeSpendBudget = Schema.decodeUnknownOption(
+  Schema.Struct({ enabled: Schema.Boolean, used: SpendMoney, limit: SpendMoney }),
+);
+
 export interface ClaudeScopedLimitNames {
   readonly overageIncluded: string | undefined;
 }
@@ -59,6 +70,44 @@ function scopedWindow(
     usedPercent: clampPercent(usedPercent),
     ...(resetsAt ? { resetsAt } : {}),
   };
+}
+
+function percentFromAmounts(used: number | null | undefined, limit: number | null | undefined) {
+  if (
+    typeof used !== "number" ||
+    typeof limit !== "number" ||
+    !Number.isFinite(used) ||
+    !Number.isFinite(limit) ||
+    used < 0 ||
+    limit <= 0
+  ) {
+    return undefined;
+  }
+  const percent = (used / limit) * 100;
+  return Number.isFinite(percent) ? clampPercent(percent) : undefined;
+}
+
+function readSpendPercent(rateLimits: NonNullable<SDKControlGetUsageResponse["rate_limits"]>) {
+  const spend = Option.getOrUndefined(
+    decodeSpendBudget((rateLimits as { readonly spend?: unknown }).spend),
+  );
+  // Minor-unit ratios require matching currency and scale; spend.percent is rounded.
+  if (
+    spend?.enabled &&
+    spend.used.currency.trim().length > 0 &&
+    spend.used.currency.trim() === spend.limit.currency.trim() &&
+    spend.used.exponent === spend.limit.exponent
+  ) {
+    const percent = percentFromAmounts(spend.used.amount_minor, spend.limit.amount_minor);
+    if (percent !== undefined) return percent;
+  }
+
+  const extra = rateLimits.extra_usage;
+  if (extra?.is_enabled !== true) return undefined;
+  const percent = percentFromAmounts(extra.used_credits, extra.monthly_limit) ?? extra.utilization;
+  return typeof percent === "number" && Number.isFinite(percent) && percent >= 0
+    ? clampPercent(percent)
+    : undefined;
 }
 
 /**
@@ -164,6 +213,15 @@ export function claudeUsageResponseToLimits(input: {
       scopedWindow(entry.display_name, entry.utilization, isoFromString(entry.resets_at)),
     );
     overageIncluded ??= entry.display_name;
+  }
+  const spendPercent = readSpendPercent(response.rate_limits);
+  if (spendPercent !== undefined) {
+    windows.push({
+      id: "monthly_spend",
+      kind: "monthly",
+      label: "Monthly spend",
+      usedPercent: spendPercent,
+    });
   }
   return {
     limits: makeUsageLimits({ checkedAt, windows }),
