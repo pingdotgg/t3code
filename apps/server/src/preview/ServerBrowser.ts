@@ -795,7 +795,11 @@ const make = Effect.gen(function* () {
       navigationGenerations.set(request, ++tab.navigationGeneration);
       clearAbortedNavigation(tab);
       tab.loading = true;
-      report(tab, { _tag: "Loading", url: request.url().slice(0, 2048), title: "" });
+      report(tab, {
+        _tag: "Loading",
+        url: ServerBrowserPage.withoutDataPayload(request.url()).slice(0, 2048),
+        title: "",
+      });
     });
     page.on("load", () => {
       tab.loading = false;
@@ -811,7 +815,7 @@ const make = Effect.gen(function* () {
     page.on("requestfailed", (request) => {
       const errorText = request.failure()?.errorText ?? "";
       pushBounded(tab.networkEntries, {
-        url: request.url(),
+        url: ServerBrowserPage.withoutDataPayload(request.url()),
         method: request.method(),
         status: null,
         failed: true,
@@ -844,7 +848,7 @@ const make = Effect.gen(function* () {
       const { code, description } = ServerBrowserPage.parseNetError(errorText);
       report(tab, {
         _tag: "LoadFailed",
-        url: request.url().slice(0, 2048),
+        url: ServerBrowserPage.withoutDataPayload(request.url()).slice(0, 2048),
         title: "",
         code,
         description,
@@ -852,7 +856,7 @@ const make = Effect.gen(function* () {
     });
     page.on("response", (response) => {
       pushBounded(tab.networkEntries, {
-        url: response.url(),
+        url: ServerBrowserPage.withoutDataPayload(response.url()),
         method: response.request().method(),
         status: response.status(),
         failed: false,
@@ -862,7 +866,7 @@ const make = Effect.gen(function* () {
     page.on("console", (message) => {
       pushBounded(tab.consoleEntries, {
         level: message.type(),
-        text: message.text().slice(0, 2_000),
+        text: ServerBrowserPage.consoleText(message).slice(0, 2_000),
         timestamp: new Date().toISOString(),
       });
     });
@@ -932,7 +936,7 @@ const make = Effect.gen(function* () {
     }
     report(tab, {
       _tag: "LoadFailed",
-      url: url.slice(0, 2048),
+      url: ServerBrowserPage.withoutDataPayload(url).slice(0, 2048),
       title: "",
       code: -3,
       description: "ERR_ABORTED",
@@ -949,8 +953,12 @@ const make = Effect.gen(function* () {
     let offered: { readonly id: string; readonly fileName: string } | undefined;
     try {
       if (await download.failure()) return;
-      await NodeFSP.mkdir(downloadDir(tab), { recursive: true });
+      await NodeFSP.mkdir(downloadDir(tab), { recursive: true, mode: 0o700 });
+      // mkdir leaves the mode of a folder that already exists, such as one an older build made.
+      await NodeFSP.chmod(downloadDir(tab), 0o700);
       await download.saveAs(path);
+      // saveAs copies with the process umask; a download should stay readable by its owner only.
+      await NodeFSP.chmod(path, 0o600);
       const { size } = await NodeFSP.stat(path);
       if (tab.closing || size > DOWNLOAD_MAX_BYTES) {
         await NodeFSP.rm(path, { force: true });
@@ -961,7 +969,7 @@ const make = Effect.gen(function* () {
         fileName: download.suggestedFilename().slice(0, 255) || "download",
         path,
         sizeBytes: size,
-        url: download.url().slice(0, 2048),
+        url: ServerBrowserPage.withoutDataPayload(download.url()).slice(0, 2048),
         completedAt: new Date().toISOString(),
       };
       tab.downloads.push(saved);

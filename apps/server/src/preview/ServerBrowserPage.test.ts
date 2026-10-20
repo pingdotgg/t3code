@@ -178,6 +178,64 @@ describe("server browser element refs", () => {
     expect(cut.slice(-8)).toBe("xxx•••••");
   });
 
+  it("shows a data: link or blocked data: navigation by media type only", async () => {
+    // Chromium keeps raw spaces and quotes in both, so a payload can't be cut at either.
+    await page.setContent(`
+      <a download href="data:text/plain;charset=&quot;a,b&quot;,head PAYLOAD'tail">Key</a>
+      <a href="https://example.com/data:report,2026">Report</a>
+      <a href="#">data:text/plain,label</a>
+      <a href='"data:text/plain,relative'>Relative</a>
+      <a href=" data:text/plain,PAYLOAD">Spaced</a>
+      <a href="da&#9;ta:text/plain,PAYLOAD">Tabbed</a>
+      <a href="data:text/plain,head&#x2028;PAYLOAD">Separated</a>
+      <a href="data:PAYLOAD,x">Typeless</a>
+      <a href="&#11;data:text/plain,PAYLOAD">Vertical tab</a>
+      <a href="&#8;data:text/plain,PAYLOAD">Backspace</a>
+      <a id="controlled">Controlled</a>
+      <a id="escaped">Escaped</a>
+      <script>
+        controlled.href = "\\x01data:text/plain,PAYLOAD";
+        escaped.href = "\\x02da\\tta:text/plain,PAYLOAD";
+      </script>`);
+    const tree = String((await takeSnapshot()).accessibilityTree);
+    expect(tree.match(/\/url: data:text\/plain,…$/gm)).toHaveLength(8);
+    expect(tree).toContain("/url: data:,…");
+    expect(tree).toContain("/url: https://example.com/data:report,2026");
+    expect(tree).toMatch(/link "data:text\/plain,label" \[ref=t3-/);
+    expect(tree).not.toMatch(/PAYLOAD|tail|charset|\u2028/);
+    expect(tree).toContain('/url: "\\"data:text/plain,relative"');
+  });
+
+  it("redacts a data: link whose scheme a password value would mask", async () => {
+    await page.setContent(`
+      <input type="password" aria-label="Scheme" value="data">
+      <a download href="data:text/plain,PAYLOAD">Key</a>`);
+    const tree = String((await takeSnapshot()).accessibilityTree);
+    expect(tree).toContain("/url: ••••••••:text/plain,…");
+    expect(tree).not.toContain("PAYLOAD");
+  });
+
+  it("shows data: URLs in Chromium's console messages by media type, and page logs as written", async () => {
+    const logged: Array<string> = [];
+    page.on("console", (message) => logged.push(ServerBrowserPage.consoleText(message)));
+    await page.setContent(`
+      <meta http-equiv="Content-Security-Policy" content="img-src 'self'">
+      <script>console.log("Downloaded data:text/plain,example")</script>
+      <img src="data:image/png;base64,S0VZ">`);
+    // Chromium opens a data: URL whose type is malformed too, and quotes it unchanged.
+    for (const url of ["data:text/plain,head PAYLOAD'tail x", "data:text/plain charset,PAYLOAD"]) {
+      const blocked = page.waitForEvent("console");
+      await page.evaluate(`location.href = ${JSON.stringify(url)}`);
+      await blocked;
+    }
+    expect(logged).toEqual([
+      "Downloaded data:text/plain,example",
+      "Loading the image 'data:image/png,…",
+      "Not allowed to navigate top frame to data URL: data:text/plain,…",
+      "Not allowed to navigate top frame to data URL: data:,…",
+    ]);
+  });
+
   it("rejects refs from another tab", async () => {
     await page.setContent("<button>same label</button>");
     const locator = buttonLocator((await takeSnapshot()).accessibilityTree, "same label");
