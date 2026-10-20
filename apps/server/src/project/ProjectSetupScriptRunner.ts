@@ -158,12 +158,6 @@ function resolveCompletionShell(
   return "posix";
 }
 
-/**
- * The command runs inside a block and the block closes on its own line, so a trailing `# comment`
- * or a heredoc terminator in the command cannot swallow the sentinel. The shell reads the whole
- * block before running any of it, so a script that reads stdin cannot consume the sentinel line
- * either.
- */
 function wrapCommandForCompletion(
   command: string,
   shell: CompletionShell,
@@ -175,8 +169,54 @@ function wrapCommandForCompletion(
       return `$global:LASTEXITCODE = $null; & {\r${body}\r}; if ($null -ne $LASTEXITCODE) { $__t3c = $LASTEXITCODE } elseif ($?) { $__t3c = 0 } else { $__t3c = 1 }; Write-Host "${sentinel}$__t3c"`;
     case "fish":
       return `begin\r${body}\rend; printf '\\n${sentinel}%s\\n' $status`;
-    case "posix":
-      return `( ${body}\r); printf '\\n${sentinel}%s\\n' "$?"`;
+    case "posix": {
+      const normalized = command.replace(/\r\n/g, "\n");
+      const encode = (text: string) => {
+        let encoded = "";
+        for (const character of text) {
+          const code = character.charCodeAt(0);
+          if (character === "'") {
+            encoded += "'\\''";
+          } else if (character === "\\" || code <= 0x1f || code === 0x7f) {
+            encoded += `\\0${code.toString(8).padStart(3, "0")}`;
+          } else {
+            encoded += character;
+          }
+        }
+        return encoded;
+      };
+      // The suffix preserves trailing newlines; the subshell contains exits and syntax errors.
+      const evaluate = (payload: string) =>
+        `( __t3_command=$(printf '%b_' ${payload}); eval "\${__t3_command%_}" ); printf '\\n${sentinel}%s\\n' "$?"`;
+      const inline = evaluate(`'${encode(normalized)}'`);
+      const utf8 = new TextEncoder();
+      const maxLineBytes = 1_023;
+      if (utf8.encode(` ${inline}\r`).byteLength <= maxLineBytes) return inline;
+
+      // Before readline starts, canonical TTY limits apply. Line editors also need each
+      // submission to be complete, so accumulate encoded text with standalone assignments.
+      const append = '__t3_command="$__t3_command"';
+      const maxChunkBytes = maxLineBytes - utf8.encode(` ${append}''\r`).byteLength;
+      const lines: string[] = [];
+      let prefix = "__t3_command=";
+      let chunk = "";
+      let chunkBytes = 0;
+      for (const character of normalized) {
+        const encoded = encode(character);
+        const bytes = utf8.encode(encoded).byteLength;
+        if (chunkBytes + bytes > maxChunkBytes) {
+          lines.push(`${prefix}'${chunk}'`);
+          prefix = append;
+          chunk = "";
+          chunkBytes = 0;
+        }
+        chunk += encoded;
+        chunkBytes += bytes;
+      }
+      lines.push(`${prefix}'${chunk}'`, `${evaluate('"$__t3_command"')}; unset __t3_command`);
+      // Each physical line gets the same history suppression as a short command.
+      return lines.join("\r ");
+    }
   }
 }
 
