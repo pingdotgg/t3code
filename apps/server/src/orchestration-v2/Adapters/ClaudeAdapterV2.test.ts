@@ -4798,6 +4798,70 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   );
 
   it.effect.each([
+    { failure: "authentication_failed", apiErrorStatus: undefined, opensFreshProcess: true },
+    { failure: "server_error", apiErrorStatus: undefined, opensFreshProcess: false },
+    { failure: "authentication_failed", apiErrorStatus: 403, opensFreshProcess: false },
+  ] as const)(
+    "after a turn fails with $failure (API status: $apiErrorStatus), the next turn opens a fresh process: $opensFreshProcess",
+    ({ failure, apiErrorStatus, opensFreshProcess }) =>
+      Effect.gen(function* () {
+        let closeCount = 0;
+        const harness = yield* makeWakeHarnessWithOptions({
+          freshQueueOnReopen: true,
+          close: () =>
+            Effect.sync(() => {
+              closeCount += 1;
+            }),
+        });
+        const now = yield* DateTime.now;
+        const startTurn = (attempt: string, text: string) =>
+          harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make(attempt),
+              text,
+              attachments: [],
+            }),
+          );
+
+        yield* startTurn("attempt-claude-relogin-1", "Continue.");
+        yield* Queue.offerAll(harness.sdkMessages, [
+          makeAssistantErrorFrame({ uuid: "00000000-0000-4000-8000-000000000611", error: failure }),
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000612",
+            result: "API Error",
+            ...(apiErrorStatus === undefined ? {} : { apiErrorStatus }),
+            terminalReason: "api_error",
+            isError: true,
+          }),
+        ]);
+        const failed = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(failed.status, "failed");
+
+        yield* startTurn("attempt-claude-relogin-2", "Try again.");
+        assert.equal(harness.processQueues.length, opensFreshProcess ? 2 : 1);
+        assert.equal(closeCount, opensFreshProcess ? 1 : 0);
+        if (opensFreshProcess) {
+          // The fresh process resumes the same Claude conversation.
+          assert.equal(harness.getOpenedOptions()?.resume, WAKE_NATIVE_SESSION);
+          assert.isUndefined(harness.getOpenedOptions()?.sessionId);
+        }
+        yield* Queue.offer(
+          harness.processQueues.at(-1)!,
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000613", result: "Done." }),
+        );
+        const completed = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(completed.status, "completed");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
+
+  it.effect.each([
     { recovered: false, expected: "Claude usage limit reached" },
     { recovered: true, expected: "Claude gave up after repeated API errors" },
   ])("tracks whether a rejected usage window recovered ($recovered)", ({ recovered, expected }) =>
