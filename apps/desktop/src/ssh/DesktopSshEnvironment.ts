@@ -26,6 +26,7 @@ import * as Path from "effect/Path";
 import * as HttpClient from "effect/http/HttpClient";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
 import * as DesktopSshPasswordPrompts from "./DesktopSshPasswordPrompts.ts";
 
 export type DesktopSshEnvironmentRuntimeServices =
@@ -128,6 +129,7 @@ const makePasswordPrompt = (
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const manager = yield* SshTunnel.SshEnvironmentManager;
+  const shellEnvironment = yield* DesktopShellEnvironment.DesktopShellEnvironment;
   const prompts = yield* DesktopSshPasswordPrompts.DesktopSshPasswordPrompts;
   const runtimeContext = yield* Effect.context<DesktopSshEnvironmentRuntimeServices>();
   const passwordPrompt = SshAuth.SshPasswordPrompt.of(makePasswordPrompt(prompts));
@@ -139,18 +141,18 @@ export const make = Effect.gen(function* () {
         Effect.withSpan("desktop.ssh.discoverHosts"),
       ),
     resolveHost: (alias) =>
-      resolveSshTarget(alias.trim()).pipe(
+      shellEnvironment.installIntoProcess.pipe(
+        Effect.andThen(() => resolveSshTarget(alias.trim())),
         Effect.provide(runtimeContext),
         Effect.withSpan("desktop.ssh.resolveHost"),
       ),
     ensureEnvironment: (target, ensureOptions) =>
-      manager
-        .ensureEnvironment(target, ensureOptions)
-        .pipe(
-          Effect.provideService(SshAuth.SshPasswordPrompt, passwordPrompt),
-          Effect.provide(runtimeContext),
-          Effect.withSpan("desktop.ssh.ensureEnvironment"),
-        ),
+      shellEnvironment.installIntoProcess.pipe(
+        Effect.andThen(() => manager.ensureEnvironment(target, ensureOptions)),
+        Effect.provideService(SshAuth.SshPasswordPrompt, passwordPrompt),
+        Effect.provide(runtimeContext),
+        Effect.withSpan("desktop.ssh.ensureEnvironment"),
+      ),
     disconnectEnvironment: (target) =>
       manager
         .disconnectEnvironment(target)

@@ -21,6 +21,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -1005,6 +1006,7 @@ const stopRemoteServer = Effect.fn("ssh/tunnel.stopRemoteServer")(function* (
     stateKey,
   });
   yield* runSshCommand(target, {
+    preHostArgs: ["-o", `HostName=${target.hostname}`],
     remoteCommandArgs: ["sh", "-s"],
     stdin: buildRemoteStopScript(stateKey),
     ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
@@ -1362,11 +1364,18 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
 ): Effect.fn.Return<SshEnvironmentManagerShape, never, Scope.Scope> {
   const managerScope = yield* Scope.Scope;
   const tunnels = new Map<string, SshTunnelEntry>();
+  const preparedTargets = new Map<
+    string,
+    {
+      readonly lastTarget: DesktopSshEnvironmentTarget;
+      readonly owned: Map<string, DesktopSshEnvironmentTarget>;
+    }
+  >();
   const targetLocks = yield* KeyedLock.make<string>();
   const authSecrets = new Map<string, string>();
 
-  // Keep one lock per target so reconnect cannot reuse a server while stop is pending.
-  const withTargetLock = Effect.fn("ssh/tunnel.withTargetLock")(function* <A, E, R>(
+  // Include alias resolution so cleanup also waits for preparation whose caller was interrupted.
+  const withAliasLock = Effect.fn("ssh/tunnel.withAliasLock")(function* <A, E, R>(
     key: string,
     effect: Effect.Effect<A, E, R>,
   ): Effect.fn.Return<A, E, R> {
@@ -1697,27 +1706,32 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       ...sshTargetLogFields(target),
       issuePairingToken: requestOptions?.issuePairingToken === true,
     });
-    const baseResolved = yield* resolveSshTarget(target.alias || target.hostname);
-    const resolvedTarget: DesktopSshEnvironmentTarget = {
-      ...baseResolved,
-      ...(target.username !== null ? { username: target.username } : {}),
-      ...(target.port !== null ? { port: target.port } : {}),
-    };
-    const key = targetConnectionKey(resolvedTarget);
-    yield* Effect.logDebug("ssh.environment.target.resolved", {
-      ...sshTargetLogFields(resolvedTarget),
-      key,
-    });
-    const runner =
-      options.resolveCliRunner === undefined ? undefined : yield* options.resolveCliRunner;
-    yield* Effect.logDebug("ssh.environment.runner.resolved", {
-      ...sshTargetLogFields(resolvedTarget),
-      ...sshRunnerLogFields(runner),
-      key,
-    });
-    return yield* withTargetLock(
-      key,
+    return yield* withAliasLock(
+      (target.alias || target.hostname).trim(),
       Effect.gen(function* () {
+        const baseResolved = yield* resolveSshTarget(target.alias || target.hostname);
+        const resolvedTarget: DesktopSshEnvironmentTarget = {
+          ...baseResolved,
+          ...(target.username !== null ? { username: target.username } : {}),
+          ...(target.port !== null ? { port: target.port } : {}),
+        };
+        const key = targetConnectionKey(resolvedTarget);
+        yield* Effect.logDebug("ssh.environment.target.resolved", {
+          ...sshTargetLogFields(resolvedTarget),
+          key,
+        });
+        const runner =
+          options.resolveCliRunner === undefined ? undefined : yield* options.resolveCliRunner;
+        yield* Effect.logDebug("ssh.environment.runner.resolved", {
+          ...sshTargetLogFields(resolvedTarget),
+          ...sshRunnerLogFields(runner),
+          key,
+        });
+        const requestKey = targetConnectionKey(target);
+        const owned =
+          preparedTargets.get(requestKey)?.owned ?? new Map<string, DesktopSshEnvironmentTarget>();
+        owned.set(key, resolvedTarget);
+        preparedTargets.set(requestKey, { lastTarget: resolvedTarget, owned });
         const entry = yield* ensureTunnelEntry(key, resolvedTarget, runner);
 
         const pairingResult = requestOptions?.issuePairingToken
@@ -1754,38 +1768,71 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     target: DesktopSshEnvironmentTarget,
   ): Effect.fn.Return<void, SshEnvironmentEffectError, SshEnvironmentEffectContext> {
     yield* Effect.logInfo("ssh.environment.disconnect.start", sshTargetLogFields(target));
-    const baseResolved = yield* resolveSshTarget(target.alias || target.hostname);
-    const resolvedTarget: DesktopSshEnvironmentTarget = {
-      ...baseResolved,
-      ...(target.username !== null ? { username: target.username } : {}),
-      ...(target.port !== null ? { port: target.port } : {}),
-    };
-    const key = targetConnectionKey(resolvedTarget);
-    yield* withTargetLock(
-      key,
+    yield* withAliasLock(
+      (target.alias || target.hostname).trim(),
       Effect.gen(function* () {
-        const entry = tunnels.get(key) ?? null;
-        yield* Effect.logDebug("ssh.environment.disconnect.targetResolved", {
-          ...sshTargetLogFields(resolvedTarget),
-          key,
-          hasTunnel: entry !== null,
-        });
-        if (entry !== null) {
-          // Explicit disconnect owns the remote stop so its failure reaches the caller.
-          yield* Effect.gen(function* () {
-            tunnels.delete(key);
-            yield* closeTunnelEntry(entry);
-          }).pipe(Effect.uninterruptible);
+        const requestKey = targetConnectionKey(target);
+        let prepared = preparedTargets.get(requestKey);
+        const directEntry = tunnels.get(requestKey);
+        if (prepared !== undefined && directEntry !== undefined) {
+          prepared.owned.set(requestKey, directEntry.target);
         }
-        yield* runWithSshAuth({
-          key,
-          target: resolvedTarget,
-          operation: (authOptions) => stopRemoteServer(resolvedTarget, authOptions),
-        });
-        yield* Effect.logInfo("ssh.environment.disconnect.succeeded", {
-          ...sshTargetLogFields(resolvedTarget),
-          key,
-        });
+        if (
+          prepared === undefined &&
+          directEntry === undefined &&
+          target.hostname === target.alias &&
+          target.username === null &&
+          target.port === null
+        ) {
+          const resolvedTarget = yield* resolveSshTarget(target.alias);
+          if (
+            resolvedTarget.hostname !== target.alias ||
+            resolvedTarget.username !== null ||
+            resolvedTarget.port !== null
+          ) {
+            prepared = {
+              lastTarget: resolvedTarget,
+              owned: new Map([[targetConnectionKey(resolvedTarget), resolvedTarget]]),
+            };
+            preparedTargets.set(requestKey, prepared);
+          }
+        }
+        const targets =
+          prepared !== undefined && prepared.owned.size > 0
+            ? [...prepared.owned.values()]
+            : [prepared?.lastTarget ?? target];
+        let firstFailure: SshEnvironmentEffectError | undefined;
+        for (const resolvedTarget of targets) {
+          const key = targetConnectionKey(resolvedTarget);
+          const entry = tunnels.get(key) ?? null;
+          yield* Effect.logDebug("ssh.environment.disconnect.targetResolved", {
+            ...sshTargetLogFields(resolvedTarget),
+            key,
+            hasTunnel: entry !== null,
+          });
+          if (entry !== null) {
+            // Explicit disconnect owns the remote stop so its failure reaches the caller.
+            yield* Effect.gen(function* () {
+              tunnels.delete(key);
+              yield* closeTunnelEntry(entry);
+            }).pipe(Effect.uninterruptible);
+          }
+          const stopped = yield* runWithSshAuth({
+            key,
+            target: resolvedTarget,
+            operation: (authOptions) => stopRemoteServer(resolvedTarget, authOptions),
+          }).pipe(Effect.result);
+          if (Result.isFailure(stopped)) {
+            firstFailure ??= stopped.failure;
+            continue;
+          }
+          for (const binding of preparedTargets.values()) binding.owned.delete(key);
+          yield* Effect.logInfo("ssh.environment.disconnect.succeeded", {
+            ...sshTargetLogFields(resolvedTarget),
+            key,
+          });
+        }
+        if (firstFailure !== undefined) return yield* firstFailure;
       }),
     );
   });

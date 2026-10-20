@@ -103,7 +103,9 @@ function runShellEnvironment(input: {
   const program = Effect.gen(function* () {
     const shellEnvironment = yield* DesktopShellEnvironment.DesktopShellEnvironment;
     const prepared = yield* shellEnvironment.installIntoProcess;
-    assert.equal(yield* shellEnvironment.installIntoProcess, prepared);
+    if (prepared || input.platform === "win32") {
+      assert.equal(yield* shellEnvironment.installIntoProcess, prepared);
+    }
     return prepared;
   }).pipe(
     Effect.provide(

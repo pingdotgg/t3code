@@ -8,6 +8,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
+import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
 import * as DesktopSshEnvironment from "./DesktopSshEnvironment.ts";
 import * as DesktopSshPasswordPrompts from "./DesktopSshPasswordPrompts.ts";
 
@@ -115,6 +116,11 @@ describe("sshEnvironment", () => {
     }).pipe(
       Effect.provide(
         DesktopSshEnvironment.layer().pipe(
+          Layer.provide(
+            Layer.succeed(DesktopShellEnvironment.DesktopShellEnvironment, {
+              installIntoProcess: Effect.succeed(true),
+            }),
+          ),
           Layer.provideMerge(
             Layer.succeed(DesktopSshPasswordPrompts.DesktopSshPasswordPrompts, {
               request: () => Effect.die("unexpected password prompt request"),

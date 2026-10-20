@@ -21,6 +21,7 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as SshAuth from "./auth.ts";
+import { resolveSshTarget } from "./command.ts";
 import { SshCommandError } from "./errors.ts";
 import * as SshTunnel from "./tunnel.ts";
 
@@ -604,7 +605,7 @@ describe("ssh tunnel scripts", () => {
         assert.include(firstTunnelArgs, "ControlPersist=no");
         assert.deepEqual(firstTunnelArgs?.slice(-2), ["--", "julius@devbox"]);
 
-        const disconnected = yield* Effect.result(manager.disconnectEnvironment(target));
+        const disconnected = yield* Effect.result(manager.disconnectEnvironment(first.target));
         if (mode === "failed stop") {
           assert.isTrue(Result.isFailure(disconnected));
           if (Result.isFailure(disconnected)) {
@@ -621,7 +622,7 @@ describe("ssh tunnel scripts", () => {
         assert.equal(stopCommandCount, 1);
 
         if (mode === "failed stop") {
-          yield* manager.disconnectEnvironment(target);
+          yield* manager.disconnectEnvironment(first.target);
           assert.equal(tunnelKillCount, 1);
           assert.equal(stopCommandCount, 2);
         }
@@ -874,13 +875,358 @@ describe("ssh tunnel scripts", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
+  it.effect.each([
+    { mode: "disconnect first", cleanup: "bootstrap" },
+    { mode: "resolve before disconnect", cleanup: "bootstrap" },
+    { mode: "failed stop", cleanup: "bootstrap" },
+    { mode: "disconnect first", cleanup: "legacy" },
+    { mode: "resolve before disconnect", cleanup: "legacy" },
+    { mode: "failed stop", cleanup: "legacy" },
+    { mode: "disconnect first", cleanup: "stale" },
+    { mode: "resolve before disconnect", cleanup: "stale" },
+    { mode: "failed stop", cleanup: "stale" },
+  ] as const)(
+    "keeps cleanup bound to the connected host after alias routing changes: $mode / $cleanup",
+    ({ mode, cleanup }) => {
+      let recovered = false;
+      let resolutions = 0;
+      let kills = 0;
+      const stops: Array<ReadonlyArray<string>> = [];
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.sync(() => {
+          const args = commandArgs(command);
+          if (args.includes("-G")) {
+            resolutions += 1;
+            return makeSuccessfulProcess(
+              `hostname ${recovered ? "other.example.com" : "connected.example.com"}\nuser alice\nport 2222\n`,
+            );
+          }
+          if (args.includes("-N"))
+            return makeRunningProcess(() => {
+              kills += 1;
+            });
+          if (args.some((arg, index) => arg === "-s" && args[index + 1] === "--")) {
+            return makeSuccessfulProcess('{"remotePort":3773}\n');
+          }
+          stops.push(args);
+          const stop = makeSuccessfulProcess('{"stopped":true}\n');
+          return mode === "failed stop" && stops.length === 1
+            ? { ...stop, exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)) }
+            : stop;
+        }),
+      );
+      const layer = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(HttpClient.HttpClient, testHttpClient),
+        Layer.succeed(NetService.NetService, testNetService),
+        SshAuth.SshPasswordPrompt.disabledLayer,
+        SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+      );
+      return Effect.gen(function* () {
+        const manager = yield* SshTunnel.SshEnvironmentManager;
+        const request = {
+          alias: "devbox",
+          hostname: cleanup === "stale" ? "previous.example.com" : "devbox",
+          username: null,
+          port: null,
+        };
+        const connected = yield* manager.ensureEnvironment(request);
+        const cleanupTarget = cleanup === "bootstrap" ? connected.target : request;
+        assert.equal(connected.target.hostname, "connected.example.com");
+        recovered = true;
+        if (mode === "resolve before disconnect") {
+          assert.equal((yield* resolveSshTarget("devbox")).hostname, "other.example.com");
+        }
+        const result = yield* Effect.result(manager.disconnectEnvironment(cleanupTarget));
+        if (mode === "failed stop") {
+          assert.isTrue(Result.isFailure(result));
+          yield* manager.disconnectEnvironment(cleanupTarget);
+        } else {
+          assert.isTrue(Result.isSuccess(result));
+        }
+        assert.equal(kills, 1);
+        assert.equal(resolutions, mode === "resolve before disconnect" ? 2 : 1);
+        assert.equal(stops.length, mode === "failed stop" ? 2 : 1);
+        for (const args of stops) {
+          assert.include(args, "HostName=connected.example.com");
+          assert.include(args, "alice@devbox");
+          assert.deepEqual(args.slice(args.indexOf("-p"), args.indexOf("-p") + 2), ["-p", "2222"]);
+        }
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    },
+  );
+
+  it.effect.each(["resolution", "pairing", "failed pairing", "failed launch"] as const)(
+    "keeps cleanup bound while preparation is pending at %s",
+    (stage) =>
+      Effect.gen(function* () {
+        const paused = yield* Deferred.make<void>();
+        const resume = yield* Deferred.make<void>();
+        const pause = Deferred.succeed(paused, undefined).pipe(
+          Effect.andThen(Deferred.await(resume)),
+        );
+        let kills = 0;
+        let resolutions = 0;
+        const stops: Array<ReadonlyArray<string>> = [];
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.sync(() => {
+            const args = commandArgs(command);
+            if (args.includes("-G")) {
+              resolutions += 1;
+              const result = makeSuccessfulProcess(
+                `hostname ${resolutions === 1 ? "connected.example.com" : "other.example.com"}\nuser alice\nport 2222\n`,
+              );
+              return stage === "resolution"
+                ? { ...result, exitCode: pause.pipe(Effect.andThen(result.exitCode)) }
+                : result;
+            }
+            if (args.includes("-N"))
+              return makeRunningProcess(() => {
+                kills += 1;
+              });
+            if (args.some((arg, index) => arg === "-s" && args[index + 1] === "--")) {
+              const result = makeSuccessfulProcess('{"remotePort":3773}\n');
+              return stage === "failed launch"
+                ? { ...result, exitCode: pause.pipe(Effect.as(ChildProcessSpawner.ExitCode(1))) }
+                : result;
+            }
+            if (args.some((arg) => arg.startsWith("HostName="))) {
+              stops.push(args);
+              return makeSuccessfulProcess('{"stopped":true}\n');
+            }
+            const result = makeSuccessfulProcess('{"credential":"pairing-token"}\n');
+            return {
+              ...result,
+              exitCode: pause.pipe(
+                Effect.as(ChildProcessSpawner.ExitCode(stage === "failed pairing" ? 1 : 0)),
+              ),
+            };
+          }),
+        );
+        const layer = Layer.mergeAll(
+          NodeServices.layer,
+          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Layer.succeed(HttpClient.HttpClient, testHttpClient),
+          Layer.succeed(NetService.NetService, testNetService),
+          SshAuth.SshPasswordPrompt.disabledLayer,
+          SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+        );
+        yield* Effect.gen(function* () {
+          const manager = yield* SshTunnel.SshEnvironmentManager;
+          const request = { alias: "devbox", hostname: "devbox", username: null, port: null };
+          const preparing = yield* Effect.forkChild(
+            Effect.result(
+              manager.ensureEnvironment(request, {
+                issuePairingToken: stage !== "resolution",
+              }),
+            ),
+          );
+          yield* Deferred.await(paused);
+          const stopping = yield* Effect.forkChild(manager.disconnectEnvironment(request), {
+            startImmediately: true,
+          });
+          yield* TestClock.adjust(Duration.zero);
+          const stopsWhilePreparing = stops.length;
+          yield* Deferred.succeed(resume, undefined);
+          const prepared = yield* Fiber.join(preparing);
+          yield* Fiber.join(stopping);
+          assert.equal(stopsWhilePreparing, 0);
+          assert.equal(
+            prepared._tag,
+            stage === "failed pairing" || stage === "failed launch" ? "Failure" : "Success",
+          );
+          assert.equal(kills, stage === "failed launch" ? 0 : 1);
+          assert.equal(resolutions, 1);
+          assert.equal(stops.length, 1);
+          assert.include(stops[0]!, "HostName=connected.example.com");
+          assert.include(stops[0]!, "alice@devbox");
+        }).pipe(
+          Effect.ensuring(Deferred.succeed(resume, undefined)),
+          Effect.provide(layer),
+          Effect.scoped,
+        );
+      }),
+  );
+
+  it.effect.each([
+    "original request",
+    "persisted bootstrap",
+    "failed first stop",
+    "canonical before legacy",
+  ] as const)(
+    "keeps cleanup bound to every host prepared for a request, not another alias: %s",
+    (nextRequest) =>
+      Effect.gen(function* () {
+        let recovered = nextRequest === "canonical before legacy";
+        const killed: string[] = [];
+        const stops: Array<ReadonlyArray<string>> = [];
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.sync(() => {
+            const args = commandArgs(command);
+            if (args.includes("-G"))
+              return makeSuccessfulProcess(
+                `hostname ${recovered ? "second.example.com" : "first.example.com"}\nuser alice\nport 2222\n`,
+              );
+            if (args.includes("-N"))
+              return makeRunningProcess(() => {
+                killed.push(args.at(-1) ?? "");
+              });
+            if (args.some((arg, index) => arg === "-s" && args[index + 1] === "--")) {
+              return makeSuccessfulProcess('{"remotePort":3773}\n');
+            }
+            stops.push(args);
+            const result = makeSuccessfulProcess('{"stopped":true}\n');
+            return nextRequest === "failed first stop" && stops.length === 1
+              ? { ...result, exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)) }
+              : result;
+          }),
+        );
+        const layer = Layer.mergeAll(
+          NodeServices.layer,
+          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Layer.succeed(HttpClient.HttpClient, testHttpClient),
+          Layer.succeed(NetService.NetService, testNetService),
+          SshAuth.SshPasswordPrompt.disabledLayer,
+          SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+        );
+        yield* Effect.gen(function* () {
+          const manager = yield* SshTunnel.SshEnvironmentManager;
+          const request = { alias: "devbox", hostname: "devbox", username: null, port: null };
+          const initialRequest =
+            nextRequest === "canonical before legacy"
+              ? { ...request, hostname: "first.example.com", username: "alice", port: 2222 }
+              : request;
+          const first = yield* manager.ensureEnvironment(initialRequest);
+          recovered = nextRequest !== "canonical before legacy";
+          const cleanupTarget =
+            nextRequest === "persisted bootstrap" ? first.target : initialRequest;
+          const second = yield* manager.ensureEnvironment(
+            nextRequest === "canonical before legacy" ? request : cleanupTarget,
+          );
+          recovered = true;
+          const other = yield* manager.ensureEnvironment({
+            ...request,
+            alias: "other",
+            hostname: "other",
+          });
+          assert.equal(
+            first.target.hostname,
+            nextRequest === "canonical before legacy" ? "second.example.com" : "first.example.com",
+          );
+          assert.equal(
+            second.target.hostname,
+            nextRequest === "canonical before legacy" ? "first.example.com" : "second.example.com",
+          );
+          assert.equal(other.target.hostname, "second.example.com");
+          const anotherUser = yield* manager.ensureEnvironment({
+            ...request,
+            username: "bob",
+            port: 3333,
+          });
+          assert.equal(anotherUser.target.username, "bob");
+          assert.equal(anotherUser.target.port, 3333);
+          const result = yield* Effect.result(manager.disconnectEnvironment(cleanupTarget));
+          assert.equal(result._tag, nextRequest === "failed first stop" ? "Failure" : "Success");
+          assert.deepEqual(killed, ["alice@devbox", "alice@devbox"]);
+          assert.equal(stops.length, 2);
+          assert.deepEqual(
+            stops.flatMap((args) => args.filter((arg) => arg.startsWith("HostName="))).toSorted(),
+            ["HostName=first.example.com", "HostName=second.example.com"],
+          );
+          assert.include(stops[0]!, "alice@devbox");
+          assert.include(stops[1]!, "alice@devbox");
+          if (nextRequest === "failed first stop") {
+            yield* manager.disconnectEnvironment(cleanupTarget);
+            assert.equal(stops.length, 3);
+            assert.include(stops[2]!, "HostName=first.example.com");
+            assert.deepEqual(killed, ["alice@devbox", "alice@devbox"]);
+          }
+        }).pipe(Effect.provide(layer), Effect.scoped);
+      }),
+  );
+
+  it.effect.each([
+    "legacy",
+    "legacy failed stop",
+    "legacy failed resolution",
+    "canonical",
+    "canonical same name",
+  ] as const)("cleans a cold %s profile without redirecting canonical targets", (profile) => {
+    const legacy = profile.startsWith("legacy");
+    let resolutions = 0;
+    const stops: Array<ReadonlyArray<string>> = [];
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.sync(() => {
+        const args = commandArgs(command);
+        if (args.includes("-G")) {
+          resolutions += 1;
+          const result = makeSuccessfulProcess(
+            "hostname connected.example.com\nuser alice\nport 2222\n",
+          );
+          return profile === "legacy failed resolution" && resolutions === 1
+            ? { ...result, exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)) }
+            : result;
+        }
+        stops.push(args);
+        const result = makeSuccessfulProcess('{"stopped":true}\n');
+        return (profile === "legacy failed stop" || profile === "legacy failed resolution") &&
+          stops.length === 1
+          ? { ...result, exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)) }
+          : result;
+      }),
+    );
+    const layer = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Layer.succeed(HttpClient.HttpClient, testHttpClient),
+      Layer.succeed(NetService.NetService, testNetService),
+      SshAuth.SshPasswordPrompt.disabledLayer,
+      SshTunnel.SshEnvironmentManager.layer(),
+    );
+    return Effect.gen(function* () {
+      const manager = yield* SshTunnel.SshEnvironmentManager;
+      const target = legacy
+        ? { alias: "devbox", hostname: "devbox", username: null, port: null }
+        : {
+            alias: "devbox",
+            hostname: profile === "canonical same name" ? "devbox" : "saved.example.com",
+            username: "bob",
+            port: 3333,
+          };
+      const first = yield* Effect.result(manager.disconnectEnvironment(target));
+      assert.equal(
+        first._tag,
+        profile === "legacy failed stop" || profile === "legacy failed resolution"
+          ? "Failure"
+          : "Success",
+      );
+      if (legacy) yield* manager.disconnectEnvironment(target);
+      assert.equal(resolutions, profile === "legacy failed resolution" ? 2 : legacy ? 1 : 0);
+      assert.equal(stops.length, legacy ? 2 : 1);
+      for (const args of profile === "legacy failed resolution" ? stops.slice(1) : stops)
+        assert.include(
+          args,
+          legacy
+            ? "HostName=connected.example.com"
+            : profile === "canonical same name"
+              ? "HostName=devbox"
+              : "HostName=saved.example.com",
+        );
+      assert.include(stops.at(-1)!, legacy ? "alice@devbox" : "bob@devbox");
+      assert.deepEqual(
+        stops.at(-1)!.slice(stops.at(-1)!.indexOf("-p"), stops.at(-1)!.indexOf("-p") + 2),
+        ["-p", legacy ? "2222" : "3333"],
+      );
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
   it.effect.each(["local tunnel", "remote server"] as const)(
     "waits for %s shutdown before reconnecting the same target",
     (stalledStep) =>
       Effect.gen(function* () {
         const shutdownStarted = yield* Deferred.make<void>();
         const finishShutdown = yield* Deferred.make<void>();
-        const reconnectsStarted = yield* Deferred.make<void>();
         const pauseShutdown = Deferred.succeed(shutdownStarted, undefined).pipe(
           Effect.andThen(Deferred.await(finishShutdown)),
         );
@@ -891,13 +1237,11 @@ describe("ssh tunnel scripts", () => {
         let remoteRunning = false;
         const target = { alias: "devbox", hostname: "devbox", username: null, port: null };
         const spawner = ChildProcessSpawner.make((command) =>
-          Effect.gen(function* () {
+          Effect.sync(() => {
             const args = commandArgs(command);
             const isTarget = args.includes(target.alias);
             if (args.includes("-G")) {
-              if (isTarget && ++resolutions === 4) {
-                yield* Deferred.succeed(reconnectsStarted, undefined);
-              }
+              if (isTarget) resolutions += 1;
               return makeSuccessfulProcess("");
             }
             if (args.includes("-N")) {
@@ -947,9 +1291,12 @@ describe("ssh tunnel scripts", () => {
           yield* manager.ensureEnvironment(target);
           const disconnect = yield* Effect.forkChild(manager.disconnectEnvironment(target));
           yield* Deferred.await(shutdownStarted);
-          const firstReconnect = yield* Effect.forkChild(manager.ensureEnvironment(target));
-          const secondReconnect = yield* Effect.forkChild(manager.ensureEnvironment(target));
-          yield* Deferred.await(reconnectsStarted);
+          const firstReconnect = yield* Effect.forkChild(manager.ensureEnvironment(target), {
+            startImmediately: true,
+          });
+          const secondReconnect = yield* Effect.forkChild(manager.ensureEnvironment(target), {
+            startImmediately: true,
+          });
 
           yield* manager.ensureEnvironment({
             alias: "other",
@@ -959,12 +1306,15 @@ describe("ssh tunnel scripts", () => {
           });
           yield* TestClock.adjust(Duration.zero);
           const launchesBeforeShutdown = launches;
+          const resolutionsBeforeShutdown = resolutions;
           yield* Deferred.succeed(finishShutdown, undefined);
           yield* Fiber.join(disconnect);
           const first = yield* Fiber.join(firstReconnect);
           const second = yield* Fiber.join(secondReconnect);
 
           assert.equal(launchesBeforeShutdown, 1);
+          assert.equal(resolutionsBeforeShutdown, 1);
+          assert.equal(resolutions, 3);
           assert.equal(launches, 2);
           assert.equal(tunnels, 2);
           assert.isTrue(remoteRunning);
