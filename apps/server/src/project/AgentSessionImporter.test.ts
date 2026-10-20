@@ -5,12 +5,14 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  MessageId,
   ThreadId,
   type ApplicationStoredEvent,
   type OrchestrationV2AppThread,
   type OrchestrationV2ProviderThread,
 } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -240,7 +242,11 @@ const makeImporter = Effect.fn(function* (
     ),
   );
   const importer = Context.get(context, AgentSessionImporter.AgentSessionImporter);
-  return { run: importer.importRecentAgentThreads({ projectId }), published };
+  return {
+    run: importer.importRecentAgentThreads({ projectId }),
+    importNativeHistory: importer.importNativeHistory,
+    published,
+  };
 });
 
 it.effect(
@@ -399,4 +405,77 @@ it.effect(
         runtimePayload: { importedTranscripts: [source.source] },
       });
     }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
+it.effect("copies the history a native session load replays into the imported thread", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const source = candidate(CODEX_MODEL_SELECTION, "native-history");
+    const threadId = yield* seedOwner(source);
+    const importer = yield* makeImporter([]);
+    const opened: Array<ProviderAdapter.ProviderAdapterV2OpenSessionInput> = [];
+    let closed = false;
+    const replayed = (role: "user" | "assistant", text: string) => ({
+      createdBy: role === "user" ? ("user" as const) : ("agent" as const),
+      creationSource: "provider" as const,
+      id: MessageId.make(`replayed:${text}`),
+      threadId,
+      runId: null,
+      nodeId: null,
+      role,
+      text,
+      attachments: [],
+      streaming: false,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const adapter = {
+      openSession: (input: ProviderAdapter.ProviderAdapterV2OpenSessionInput) =>
+        Effect.acquireRelease(
+          Effect.sync(() => {
+            opened.push(input);
+            return {
+              readThreadSnapshot: ({ providerThread }) =>
+                Effect.succeed({
+                  providerThread,
+                  providerTurns: [],
+                  runtimeRequests: [],
+                  messages: [
+                    replayed("user", "Fix the build"),
+                    replayed("assistant", "Fixed it"),
+                    replayed("assistant", " "),
+                  ],
+                }),
+            } as Pick<ProviderAdapter.ProviderAdapterV2SessionRuntime, "readThreadSnapshot">;
+          }),
+          () =>
+            Effect.sync(() => {
+              closed = true;
+            }),
+        ),
+    } as unknown as ProviderAdapter.ProviderAdapterV2["Service"];
+
+    expect(
+      yield* importer.importNativeHistory({
+        threadId,
+        adapter,
+        workspaceRoot: "/workspace/project",
+      }),
+    ).toBe(2);
+    expect(opened).toMatchObject([
+      {
+        threadId,
+        initialNativeThreadId: source.source.providerSessionId,
+        runtimePolicy: { cwd: "/workspace/project" },
+      },
+    ]);
+    expect(closed).toBe(true);
+    const page = yield* projections.getTimelinePage(threadId, { view: "messages", limit: 10 });
+    expect(
+      page.items.map(({ item }) => [item.type, item.runId, "text" in item ? item.text : undefined]),
+    ).toEqual([
+      ["user_message", null, "Fix the build"],
+      ["assistant_message", null, "Fixed it"],
+    ]);
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
 );

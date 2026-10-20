@@ -1488,7 +1488,7 @@ export const layerWsRpc = (
       ) {
         return yield* acpRegistryRuntimeCoordinator.withSessionMutation(
           Effect.gen(function* () {
-            yield* acpRegistryProject(input.projectId);
+            const project = yield* acpRegistryProject(input.projectId);
             const { instance } = yield* acpSessionManager(input.instanceId);
             const providerSnapshot = yield* instance.snapshot.getSnapshot;
             if (
@@ -1571,6 +1571,22 @@ export const layerWsRpc = (
                 cause: launched.failure,
               });
             }
+            // The thread is usable without its history, so a failed read only logs.
+            yield* agentSessionImporter
+              .importNativeHistory({
+                threadId,
+                adapter: instance.orchestrationAdapter,
+                workspaceRoot: project.workspaceRoot,
+              })
+              .pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning("Could not import ACP session history", {
+                    instanceId: input.instanceId,
+                    sessionId: input.sessionId,
+                    cause,
+                  }),
+                ),
+              );
             return { threadId, imported: true } as const;
           }),
         );

@@ -33,6 +33,7 @@ import * as Stream from "effect/Stream";
 
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.ts";
 import * as AgentSessionScanner from "./AgentSessionScanner.ts";
@@ -404,7 +405,70 @@ const make = Effect.gen(function* () {
     return { importedCount, skippedCount } satisfies AgentSessionImportResult;
   });
 
-  return { importRecentAgentThreads };
+  /**
+   * A thread bound to an existing native session starts empty. Loading the
+   * session replays its history only into the adapter's own snapshot, so copy
+   * that snapshot into the thread as run-less history, as transcript imports do.
+   */
+  const importNativeHistory = Effect.fn("importNativeHistoryV2")(function* (input: {
+    readonly threadId: ThreadId;
+    readonly adapter: ProviderAdapter.ProviderAdapterV2["Service"];
+    readonly workspaceRoot: string;
+  }) {
+    const { thread, providerThreads } = yield* orchestrator.getThreadRecords(input.threadId, [
+      "providerThreads",
+    ]);
+    const providerThread = providerThreads.find(
+      (candidate) => candidate.appThreadId === input.threadId && candidate.nativeThreadRef !== null,
+    );
+    const nativeThreadId = providerThread?.nativeThreadRef?.nativeId;
+    if (providerThread === undefined || nativeThreadId == null) return 0;
+    const providerSessionId = yield* idAllocator.allocate.providerSession({
+      providerInstanceId: providerThread.providerInstanceId,
+      threadId: input.threadId,
+    });
+    const snapshot = yield* input.adapter
+      .openSession({
+        threadId: input.threadId,
+        providerSessionId,
+        modelSelection: thread.modelSelection,
+        runtimePolicy: {
+          runtimeMode: thread.runtimeMode,
+          interactionMode: thread.interactionMode,
+          cwd: thread.worktreePath ?? input.workspaceRoot,
+        },
+        initialNativeThreadId: nativeThreadId,
+        ...(providerThread.nativeMetadata?.itemIdentityVersion === undefined
+          ? {}
+          : {
+              initialProviderItemIdentityVersion: providerThread.nativeMetadata.itemIdentityVersion,
+            }),
+      })
+      .pipe(
+        Effect.flatMap((session) => session.readThreadSnapshot({ providerThread })),
+        Effect.scoped,
+      );
+    const messages = snapshot.messages.flatMap((message) =>
+      (message.role === "user" || message.role === "assistant") && message.text.trim() !== ""
+        ? [
+            {
+              role: message.role,
+              text: message.text,
+              createdAt: DateTime.formatIso(message.createdAt),
+            },
+          ]
+        : [],
+    );
+    if (messages.length === 0) return 0;
+    yield* eventSink.write({
+      events: messages.flatMap((message, index) =>
+        messageEvents({ threadId: input.threadId, index, message }),
+      ),
+    });
+    return messages.length;
+  });
+
+  return { importRecentAgentThreads, importNativeHistory };
 });
 
 type AgentSessionImporterShape = Effect.Success<typeof make>;
