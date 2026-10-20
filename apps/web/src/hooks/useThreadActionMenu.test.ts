@@ -21,6 +21,9 @@ const state = vi.hoisted(() => ({
   granted: new Set<string>(),
   effects: [] as string[],
   completed: deferred<void>(),
+  handoffTargets: null as Promise<
+    ReadonlyArray<{ environmentId: string; label: string; reason: string | null }>
+  > | null,
   show: vi.fn<
     (
       items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>>,
@@ -35,9 +38,16 @@ function recordEffect(action: string) {
 }
 
 vi.mock("../components/CustomSnoozeDialog", () => ({ requestCustomSnooze: vi.fn() }));
+vi.mock("../components/threadHandoffMenu", () => ({
+  readThreadHandoffSupported: () => state.handoffTargets !== null,
+  readThreadHandoffTargets: () => state.handoffTargets ?? Promise.resolve([]),
+  startThreadHandoff: async () => recordEffect("continue-on"),
+}));
 vi.mock("react", () => ({
   useCallback: (callback: unknown) => callback,
+  useEffect: () => {},
   useMemo: (factory: () => unknown) => factory(),
+  useRef: (current: unknown) => ({ current }),
 }));
 vi.mock("@tanstack/react-router", () => ({
   useRouter: () => ({ navigate: async () => recordEffect("project-settings") }),
@@ -162,7 +172,43 @@ beforeEach(() => {
   state.granted = new Set(["primary"]);
   state.effects = [];
   state.completed = deferred<void>();
+  state.handoffTargets = null;
   state.show.mockReset().mockResolvedValue(null);
+});
+
+describe("thread menu while move targets load", () => {
+  const targets = [{ environmentId: "box", label: "Box", reason: null }];
+
+  it("shows the menu once the targets arrive", async () => {
+    state.handoffTargets = Promise.resolve(targets);
+    createMenu().openMenu(position);
+    await vi.waitFor(() => expect(state.show).toHaveBeenCalledTimes(1));
+    expect(state.show.mock.calls[0]![0].some((item) => item.id === "continue-on")).toBe(true);
+  });
+
+  it("drops an open the user closed or replaced before the targets arrived", async () => {
+    const first = deferred<typeof targets>();
+    state.handoffTargets = first.promise;
+    const menu = createMenu();
+    menu.openMenu(position);
+    menu.closeMenu();
+    first.resolve(targets);
+    await first.promise;
+    await Promise.resolve();
+    expect(state.show).not.toHaveBeenCalled();
+
+    const stale = deferred<typeof targets>();
+    state.handoffTargets = stale.promise;
+    menu.openMenu(position);
+    state.handoffTargets = Promise.resolve(targets);
+    menu.openMenu({ x: 30, y: 40 });
+    stale.resolve(targets);
+    await vi.waitFor(() => expect(state.show).toHaveBeenCalledTimes(1));
+    await stale.promise;
+    await Promise.resolve();
+    expect(state.show).toHaveBeenCalledTimes(1);
+    expect(state.show.mock.calls[0]![1]).toEqual({ x: 30, y: 40 });
+  });
 });
 
 describe("thread menu permissions", () => {

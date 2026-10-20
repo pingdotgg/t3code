@@ -8,6 +8,7 @@ import {
   useThreadShell,
 } from "../../state/entities";
 import { UsageLimitRecoveryCard } from "./UsageLimitRecoveryCard";
+import { ThreadHandoffCard, threadHandoffClosesComposer } from "./ThreadHandoffCard";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import type { WorktreeSetupCardProps } from "./worktree-setup-card";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
@@ -617,7 +618,9 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
     useState<RuntimeRequestId | null>(null);
   const activeUserInputRequestId = props.activePendingUserInput?.requestId ?? null;
   const composerSlotHidden =
-    activeUserInputRequestId !== null || props.creationState?.kind === "failed";
+    activeUserInputRequestId !== null ||
+    props.creationState?.kind === "failed" ||
+    threadHandoffClosesComposer(props.selectedThread);
   const [usageLimitsPanel, setUsageLimitsPanel] = useState<{
     readonly key: string;
     readonly threadKey: string;
@@ -1261,6 +1264,16 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
                       />
                     </Animated.View>
                   ) : null}
+                  <View
+                    // With the composer closed, the card pads the home indicator itself.
+                    style={
+                      threadHandoffClosesComposer(props.selectedThread)
+                        ? { paddingBottom: composerBottomInset }
+                        : undefined
+                    }
+                  >
+                    <ThreadHandoffCard thread={props.selectedThread} />
+                  </View>
                   <UsageLimitRecoveryCard
                     key={props.selectedThread.latestRun?.runId}
                     thread={props.selectedThread}

@@ -91,6 +91,8 @@ export type ThreadGitMenuProps = {
   readonly onOpenFilesInspector?: () => void;
   readonly onOpenGitInspector?: () => void;
   readonly onMergeBack?: () => void;
+  /** Present only when the thread can move to a linked environment. */
+  readonly onContinueOn?: () => void;
   readonly onPull: () => Promise<void>;
   readonly onRunAction: (input: GitActionRequestInput) => Promise<GitRunStackedActionResult | null>;
 };
@@ -378,6 +380,17 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
                 },
               ]
             : []),
+          ...(props.onContinueOn
+            ? [
+                {
+                  description: "Move this thread and its work to a linked environment",
+                  icon: { name: "arrow.up.right", type: "sfSymbol" as const },
+                  label: "Continue on…",
+                  onPress: props.onContinueOn,
+                  type: "action" as const,
+                },
+              ]
+            : []),
           {
             description: "Commit, files, branches",
             icon: { name: "ellipsis", type: "sfSymbol" },
@@ -544,6 +557,17 @@ function threadGitMenuDefinition(
         subtitle: "Turn diffs and worktree changes",
         onPress: model.openReview,
       },
+      ...(props.onContinueOn
+        ? [
+            {
+              id: "git-continue-on",
+              title: "Continue on…",
+              icon: "arrow.up.right",
+              subtitle: "Move this thread and its work to a linked environment",
+              onPress: props.onContinueOn,
+            },
+          ]
+        : []),
       {
         id: "git-more",
         title: "More",

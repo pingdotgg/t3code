@@ -13,6 +13,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
+import { useEffect, useRef } from "react";
 
 import { resolveSnoozePresets } from "../components/Sidebar.snooze";
 import {
@@ -20,6 +21,11 @@ import {
   threadActionRequiresOperate,
   type ThreadActionMenuId,
 } from "../components/threadActionMenu.logic";
+import {
+  readThreadHandoffSupported,
+  readThreadHandoffTargets,
+  startThreadHandoff,
+} from "../components/threadHandoffMenu";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { threadEnvironment } from "../state/threads";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
@@ -111,8 +117,19 @@ export function useThreadActionMenu(input: {
     onError: (error) => failureToast("Failed to copy thread ID", error),
   });
 
+  // Waiting for move targets can outlast the open that asked for them: a newer
+  // open, a close, or a switch to another thread each make the pending one stale.
+  const latestOpenRef = useRef(0);
+  useEffect(() => {
+    if (threadRef === null) return;
+    return () => {
+      latestOpenRef.current += 1;
+    };
+  }, [threadRef]);
+
   const openMenu = (position: { x: number; y: number }) => {
     if (threadRef === null) return;
+    const open = ++latestOpenRef.current;
     void (async () => {
       const api = readLocalApi();
       if (!api) return;
@@ -128,6 +145,13 @@ export function useThreadActionMenu(input: {
       };
       const isRegeneratingTitle = thread.titleRegeneration != null;
       const snoozePresets = resolveSnoozePresets(now, timestampFormat);
+      // Only an environment that can move threads makes the menu wait for targets.
+      const handoffTargets =
+        readThreadHandoffSupported(threadRef.environmentId) &&
+        (thread.handoff == null || thread.handoff.state === "failed")
+          ? await readThreadHandoffTargets(threadRef.environmentId, threadRef.threadId)
+          : [];
+      if (open !== latestOpenRef.current) return;
       const items = buildThreadActionMenuItems({
         canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
         branch: thread.branch ?? null,
@@ -141,6 +165,7 @@ export function useThreadActionMenu(input: {
         isRunning: !threadRuntimeCanArchive(thread.runtime),
         supports,
         snoozePresets,
+        handoffTargets,
       });
       const clicked = await settlePromise(() => api.contextMenu.show(items, position));
       if (clicked._tag === "Failure" || clicked.value === null) return;
@@ -152,6 +177,14 @@ export function useThreadActionMenu(input: {
         failureToast(
           "Thread action unavailable",
           new Error("This connection cannot change threads."),
+        );
+        return;
+      }
+      if (action.startsWith("continue-on:")) {
+        await startThreadHandoff(
+          threadRef.environmentId,
+          threadRef.threadId,
+          action.slice("continue-on:".length),
         );
         return;
       }
@@ -320,6 +353,7 @@ export function useThreadActionMenu(input: {
   };
 
   const closeMenu = () => {
+    latestOpenRef.current += 1;
     void readLocalApi()?.contextMenu.close();
   };
 

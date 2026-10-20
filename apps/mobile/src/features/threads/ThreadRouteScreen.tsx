@@ -74,6 +74,7 @@ import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-s
 import { useSelectedThreadRequests } from "../../state/use-selected-thread-requests";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
+import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/models";
 import { resolveMergeBackTargetThreadId } from "@t3tools/client-runtime/state/thread-relationships";
 import { resolveLatestMergeBackRun } from "@t3tools/client-runtime/state/thread-workflows";
 import { threadEnvironment } from "../../state/threads";
@@ -724,6 +725,20 @@ function ThreadRouteContent(
     onMergeBack:
       mergeBackTargetThreadId !== null && mergeBackRun !== null
         ? () => void handleMergeBack()
+        : undefined,
+    onContinueOn:
+      selectedThread !== null &&
+      selectedThread !== undefined &&
+      canOperateThread &&
+      routeEnvironmentRuntime?.serverConfig?.environment.capabilities.peerLinks === true &&
+      (selectedThread.handoff === null || selectedThread.handoff.state === "failed") &&
+      // The server refuses to move a thread while any of its turns is live or queued.
+      !threadRuntimeIsActive(selectedThread.runtime)
+        ? () =>
+            navigation.navigate("ThreadHandoff", {
+              environmentId: selectedThread.environmentId,
+              threadId: selectedThread.id,
+            })
         : undefined,
     currentBranch: selectedThread?.branch ?? null,
     gitStatus: gitStatus.data,
