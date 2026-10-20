@@ -137,10 +137,13 @@ export const make = Effect.gen(function* () {
   );
   yield* Effect.forever(
     interval.pipe(
-      Effect.flatMap((wait) =>
-        Effect.sleep(Duration.toMillis(Duration.fromInputUnsafe(wait)) <= 0 ? "60 seconds" : wait),
+      Effect.flatMap((wait) => Effect.sleep(Duration.isPositive(wait) ? wait : "60 seconds")),
+      Effect.andThen(interval),
+      Effect.flatMap((current) =>
+        Duration.isPositive(current)
+          ? backgroundPolicy.shouldRunScopeWork({ type: "provider-status" })
+          : Effect.succeed(false),
       ),
-      Effect.andThen(backgroundPolicy.shouldRunScopeWork({ type: "provider-status" })),
       Effect.flatMap((shouldRun) => (shouldRun ? refresh : Effect.void)),
       Effect.ignoreCause({ log: true }),
     ),
