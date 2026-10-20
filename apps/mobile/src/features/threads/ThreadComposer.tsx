@@ -835,7 +835,8 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 ref={inputRef}
                 multiline
                 value={draftMessage}
-                readOnly={voiceInput.freezesEditor}
+                // The save uses a draft snapshot; further typing would be discarded on success.
+                readOnly={voiceInput.freezesEditor || queuedEdit?.saving === true}
                 skills={composerMenu.skills}
                 selection={composerMenu.selection}
                 onChangeText={props.onChangeDraftMessage}
