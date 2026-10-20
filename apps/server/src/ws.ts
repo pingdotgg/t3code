@@ -91,9 +91,6 @@ import {
   type ProviderDriverKind,
   type ProviderInstanceId,
   ThreadId,
-  type TerminalAttachStreamEvent,
-  type TerminalError,
-  type TerminalEvent,
   type TerminalMetadataStreamEvent,
   type PullRequestRef,
   WS_METHODS,
@@ -177,7 +174,7 @@ import * as ServerSettings from "./serverSettings.ts";
 import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
-import { withTerminalOutputWindow } from "./terminal/OutputProtocol.ts";
+import { terminalOutputStream, withTerminalOutputWindow } from "./terminal/OutputProtocol.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as DeviceService from "./device/DeviceService.ts";
@@ -2824,11 +2821,11 @@ const layerWsRpc = (
         [WS_METHODS.reviewGetDiffFileContents]: (input) => review.getDiffFileContents(input),
         [WS_METHODS.terminalOpen]: (input) => terminalManager.open(input),
         [WS_METHODS.terminalAttach]: (input) =>
-          Stream.callback<TerminalAttachStreamEvent, TerminalError>((queue) =>
-            Effect.acquireRelease(
-              terminalManager.attachStream(input, (event) => Queue.offer(queue, event)),
-              (unsubscribe) => Effect.sync(unsubscribe),
-            ).pipe(Effect.catchCause((cause) => Queue.failCause(queue, cause))),
+          terminalOutputStream(
+            (listener, registerCleanup) =>
+              terminalManager.attachStream(input, listener, registerCleanup),
+            (listener, registerCleanup) =>
+              terminalManager.resyncStream(input, listener, registerCleanup),
           ),
         [WS_METHODS.terminalWrite]: (input) => terminalManager.write(input),
         [WS_METHODS.terminalResize]: (input) => terminalManager.resize(input),
@@ -2836,19 +2833,14 @@ const layerWsRpc = (
         [WS_METHODS.terminalRestart]: (input) => terminalManager.restart(input),
         [WS_METHODS.terminalClose]: (input) => terminalManager.close(input),
         [WS_METHODS.terminalObserve]: (input) =>
-          Stream.callback<TerminalAttachStreamEvent, TerminalError>((queue) =>
-            Effect.acquireRelease(
-              terminalManager.observeStream(input, (event) => Queue.offer(queue, event)),
-              (unsubscribe) => Effect.sync(unsubscribe),
-            ).pipe(Effect.catchCause((cause) => Queue.failCause(queue, cause))),
+          terminalOutputStream(
+            (listener, registerCleanup) =>
+              terminalManager.observeStream(input, listener, registerCleanup),
+            (listener, registerCleanup) =>
+              terminalManager.resyncStream(input, listener, registerCleanup),
           ),
         [WS_METHODS.subscribeTerminalEvents]: (_input) =>
-          Stream.callback<TerminalEvent>((queue) =>
-            Effect.acquireRelease(
-              terminalManager.subscribe((event) => Queue.offer(queue, event)),
-              (unsubscribe) => Effect.sync(unsubscribe),
-            ),
-          ),
+          terminalOutputStream(terminalManager.subscribe),
         [WS_METHODS.subscribeTerminalMetadata]: (_input) =>
           Stream.callback<TerminalMetadataStreamEvent>((queue) =>
             Effect.acquireRelease(

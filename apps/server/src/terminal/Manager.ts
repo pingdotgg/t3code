@@ -163,11 +163,19 @@ export class TerminalManager extends Context.Service<
     readonly attachStream: (
       input: TerminalAttachInput,
       listener: (event: TerminalAttachStreamEvent) => Effect.Effect<void>,
+      registerCleanup?: (stop: () => void) => void,
     ) => Effect.Effect<() => void, TerminalError>;
 
     readonly observeStream: (
       input: TerminalObserveInput,
       listener: (event: TerminalAttachStreamEvent) => Effect.Effect<void>,
+      registerCleanup?: (stop: () => void) => void,
+    ) => Effect.Effect<() => void, TerminalError>;
+
+    readonly resyncStream: (
+      input: TerminalObserveInput,
+      listener: (event: TerminalAttachStreamEvent) => Effect.Effect<void>,
+      registerCleanup?: (stop: () => void) => void,
     ) => Effect.Effect<() => void, TerminalError>;
 
     readonly write: (input: TerminalWriteInput) => Effect.Effect<void, TerminalError>;
@@ -195,6 +203,7 @@ export class TerminalManager extends Context.Service<
 
     readonly subscribe: (
       listener: (event: TerminalEvent) => Effect.Effect<void>,
+      registerCleanup?: (stop: () => void) => void,
     ) => Effect.Effect<() => void>;
 
     readonly subscribeMetadata: (
@@ -2761,60 +2770,56 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       resolveLaunchInputEnvironment(input).pipe(Effect.flatMap(openLocked)),
     );
 
-  const openOrAttachForStream = (input: TerminalAttachInput) =>
-    withThreadLock(
-      input.threadId,
-      Effect.gen(function* () {
-        const terminalId = input.terminalId;
-        const existing = yield* getSession(input.threadId, terminalId);
+  const openOrAttachForStream = Effect.fnUntraced(function* (input: TerminalAttachInput) {
+    const terminalId = input.terminalId;
+    const existing = yield* getSession(input.threadId, terminalId);
 
-        if (Option.isNone(existing)) {
-          if (input.resume && closedSessionKeys.has(toSessionKey(input.threadId, terminalId))) {
-            return null;
-          }
-          if (!input.cwd) {
-            return yield* new TerminalSessionLookupError({
-              threadId: input.threadId,
-              terminalId,
-            });
-          }
+    if (Option.isNone(existing)) {
+      if (input.resume && closedSessionKeys.has(toSessionKey(input.threadId, terminalId))) {
+        return null;
+      }
+      if (!input.cwd) {
+        return yield* new TerminalSessionLookupError({
+          threadId: input.threadId,
+          terminalId,
+        });
+      }
 
-          const resolvedInput = yield* resolveLaunchInputEnvironment({
-            ...input,
-            terminalId,
-            cwd: input.cwd,
-          });
-          return yield* openLocked(resolvedInput);
-        }
+      const resolvedInput = yield* resolveLaunchInputEnvironment({
+        ...input,
+        terminalId,
+        cwd: input.cwd,
+      });
+      return yield* Effect.uninterruptible(openLocked(resolvedInput));
+    }
 
-        const session = existing.value;
-        const targetCols = input.cols ?? session.cols;
-        const targetRows = input.rows ?? session.rows;
+    const session = existing.value;
+    const targetCols = input.cols ?? session.cols;
+    const targetRows = input.rows ?? session.rows;
 
-        if (!input.resume && !session.process && input.cwd && input.restartIfNotRunning === true) {
-          const resolvedInput = yield* resolveLaunchInputEnvironment({
-            ...input,
-            terminalId,
-            cwd: input.cwd,
-          });
-          return yield* openLocked(resolvedInput);
-        }
+    if (!input.resume && !session.process && input.cwd && input.restartIfNotRunning === true) {
+      const resolvedInput = yield* resolveLaunchInputEnvironment({
+        ...input,
+        terminalId,
+        cwd: input.cwd,
+      });
+      return yield* Effect.uninterruptible(openLocked(resolvedInput));
+    }
 
-        if (
-          session.process &&
-          session.status === "running" &&
-          (session.cols !== targetCols || session.rows !== targetRows)
-        ) {
-          const process = session.process;
-          yield* resizePtyProcess(session, process, targetCols, targetRows);
-          session.cols = targetCols;
-          session.rows = targetRows;
-          session.updatedAt = yield* nowIso;
-        }
+    if (
+      session.process &&
+      session.status === "running" &&
+      (session.cols !== targetCols || session.rows !== targetRows)
+    ) {
+      const process = session.process;
+      yield* resizePtyProcess(session, process, targetCols, targetRows);
+      session.cols = targetCols;
+      session.rows = targetRows;
+      session.updatedAt = yield* nowIso;
+    }
 
-        return snapshot(session);
-      }),
-    );
+    return snapshot(session);
+  });
 
   const readAllTerminalMetadata = () =>
     readManagerState.pipe(
@@ -2838,38 +2843,70 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       Effect.map((session) => (Option.isSome(session) ? summary(session.value) : null)),
     );
 
-  const subscribe: TerminalManager["Service"]["subscribe"] = (listener) =>
+  const subscribe: TerminalManager["Service"]["subscribe"] = (listener, registerCleanup) =>
     Effect.sync(() => {
       terminalEventListeners.add(listener);
-      return () => {
+      const stop = () => {
         terminalEventListeners.delete(listener);
       };
+      // Transfer ownership before an interrupt can discard the returned handle.
+      registerCleanup?.(stop);
+      return stop;
     });
 
+  // Subscribe after taking the lock so contention cannot accumulate an unbounded replay.
+  // Snapshot listeners run under that lock and must not block.
   const streamSession = (
     input: TerminalObserveInput,
     initial: Effect.Effect<TerminalSessionSnapshot | null, TerminalError>,
     listener: (event: TerminalAttachStreamEvent) => Effect.Effect<void>,
+    registerCleanup?: (stop: () => void) => void,
   ) => {
     let unsubscribe: (() => void) | null = null;
+    const stop = () => {
+      unsubscribe?.();
+      unsubscribe = null;
+    };
 
     return Effect.gen(function* () {
       const bufferedEvents: TerminalEvent[] = [];
       let deliverLive = false;
+      let snapshotFloor: number | null = null;
 
-      unsubscribe = yield* subscribe((event) => {
-        if (event.threadId !== input.threadId || event.terminalId !== input.terminalId) {
-          return Effect.void;
-        }
+      yield* subscribe(
+        (event) => {
+          if (event.threadId !== input.threadId || event.terminalId !== input.terminalId) {
+            return Effect.void;
+          }
 
-        if (!deliverLive) {
-          bufferedEvents.push(event);
-          return Effect.void;
-        }
+          if (!deliverLive) {
+            bufferedEvents.push(event);
+            return Effect.void;
+          }
 
-        const attachEvent = terminalEventToAttachEvent(event);
-        return attachEvent ? listener(attachEvent) : Effect.void;
-      });
+          // Fanout can finish after a snapshot that already includes the event.
+          // Keep only its sequence, not its history, until the session changes.
+          if (snapshotFloor !== null) {
+            if (
+              event.type === "started" ||
+              event.type === "restarted" ||
+              event.type === "error" ||
+              event.type === "closed"
+            ) {
+              snapshotFloor = null;
+            } else if (typeof event.sequence === "number" && event.sequence <= snapshotFloor) {
+              return Effect.void;
+            }
+          }
+
+          const attachEvent = terminalEventToAttachEvent(event);
+          return attachEvent ? listener(attachEvent) : Effect.void;
+        },
+        (cleanup) => {
+          unsubscribe = cleanup;
+          registerCleanup?.(stop);
+        },
+      );
 
       const initialSnapshot = yield* initial;
 
@@ -2889,36 +2926,48 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           yield* listener(attachEvent);
         }
       }
+      // The live listener keeps this closure, so release replayed output.
+      bufferedEvents.length = 0;
 
+      snapshotFloor = initialSnapshot?.sequence ?? null;
       deliverLive = true;
-      return () => {
-        unsubscribe?.();
-        unsubscribe = null;
-      };
+      return stop;
     }).pipe(
-      Effect.catchCause((cause) =>
-        Effect.flatMap(
-          Effect.sync(() => {
-            unsubscribe?.();
-            unsubscribe = null;
-          }),
-          () => Effect.failCause(cause),
-        ),
-      ),
+      (effect) => withThreadLock(input.threadId, effect),
+      Effect.onError(() => Effect.sync(stop)),
     );
   };
 
-  const attachStream: TerminalManager["Service"]["attachStream"] = (input, listener) =>
-    streamSession(input, openOrAttachForStream(input), listener);
+  const attachStream: TerminalManager["Service"]["attachStream"] = (
+    input,
+    listener,
+    registerCleanup,
+  ) => streamSession(input, openOrAttachForStream(input), listener, registerCleanup);
 
-  const observeStream: TerminalManager["Service"]["observeStream"] = (input, listener) =>
+  const observeStream: TerminalManager["Service"]["observeStream"] = (
+    input,
+    listener,
+    registerCleanup,
+  ) =>
     streamSession(
       input,
-      withThreadLock(
-        input.threadId,
-        requireSession(input.threadId, input.terminalId).pipe(Effect.map(snapshot)),
+      requireSession(input.threadId, input.terminalId).pipe(Effect.map(snapshot)),
+      listener,
+      registerCleanup,
+    );
+
+  const resyncStream: TerminalManager["Service"]["resyncStream"] = (
+    input,
+    listener,
+    registerCleanup,
+  ) =>
+    streamSession(
+      input,
+      getSession(input.threadId, input.terminalId).pipe(
+        Effect.map((session) => (Option.isSome(session) ? snapshot(session.value) : null)),
       ),
       listener,
+      registerCleanup,
     );
 
   const metadataEventFromTerminalEvent = (
@@ -3228,6 +3277,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     open,
     attachStream,
     observeStream,
+    resyncStream,
     write,
     resize,
     clear,

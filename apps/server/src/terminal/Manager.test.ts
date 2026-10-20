@@ -45,6 +45,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TerminalManager from "./Manager.ts";
+import { terminalOutputStream } from "./OutputProtocol.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 import {
   applyTerminalAttachStreamEvent,
@@ -182,6 +183,44 @@ class FakePtyAdapter {
       });
     }
     return Effect.succeed(process);
+  }
+}
+
+// Publishes 9 MiB of output, past a stream's 8 MiB budget, while nothing pulls.
+const publishPastOutputBudget = (
+  manager: TerminalManager.TerminalManager["Service"],
+  process: FakePtyProcess,
+) =>
+  Effect.gen(function* () {
+    const published = yield* Deferred.make<void>();
+    const unsubscribe = yield* manager.subscribe((event) =>
+      event.type === "output" && event.data === "last\n"
+        ? Deferred.succeed(published, undefined).pipe(Effect.asVoid)
+        : Effect.void,
+    );
+    for (let index = 0; index < 9; index++) process.emitData("x".repeat(1024 * 1024));
+    process.emitData("last\n");
+    yield* Deferred.await(published);
+    unsubscribe();
+  });
+
+// Holds the next spawn, and with it the thread lock, until `release` succeeds.
+class GatedPtyAdapter extends FakePtyAdapter {
+  gate: {
+    readonly spawning: Deferred.Deferred<void>;
+    readonly release: Deferred.Deferred<void>;
+  } | null = null;
+
+  override spawn(
+    input: PtyAdapter.PtySpawnInput,
+  ): Effect.Effect<PtyAdapter.PtyProcess, PtyAdapter.PtySpawnError> {
+    const gate = this.gate;
+    this.gate = null;
+    if (!gate) return super.spawn(input);
+    return Deferred.succeed(gate.spawning, undefined).pipe(
+      Effect.andThen(Deferred.await(gate.release)),
+      Effect.andThen(super.spawn(input)),
+    );
   }
 }
 
@@ -3204,6 +3243,154 @@ it.layer(
         const events = yield* Ref.get(attachEvents);
         expect(events.filter((event) => event.type === "snapshot")).toHaveLength(1);
       }),
+  );
+
+  it.effect("finishes shell startup when its creating attachment is cancelled", () =>
+    Effect.gen(function* () {
+      const ptyAdapter = new GatedPtyAdapter();
+      const { manager } = yield* createManager(5, { ptyAdapter });
+      const input = openInput();
+      const gate = {
+        spawning: yield* Deferred.make<void>(),
+        release: yield* Deferred.make<void>(),
+      };
+      ptyAdapter.gate = gate;
+      const consumer = yield* Stream.runDrain(
+        terminalOutputStream(
+          (listener, registerCleanup) => manager.attachStream(input, listener, registerCleanup),
+          (listener, registerCleanup) => manager.resyncStream(input, listener, registerCleanup),
+        ),
+      ).pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(gate.spawning);
+      const cancelled = yield* Fiber.interrupt(consumer).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Deferred.succeed(gate.release, undefined);
+      yield* Fiber.join(cancelled);
+
+      const snapshots: TerminalAttachStreamEvent[] = [];
+      const stop = yield* manager.attachStream(input, (event) =>
+        Effect.sync(() => {
+          snapshots.push(event);
+        }),
+      );
+      stop();
+      expect(snapshots).toMatchObject([
+        { type: "snapshot", snapshot: { status: "running", pid: ptyAdapter.processes[0]?.pid } },
+      ]);
+      expect(ptyAdapter.processes).toHaveLength(1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("resyncs bounded history and follows close/reopen across a stalled stream", () =>
+    Effect.gen(function* () {
+      const ptyAdapter = new GatedPtyAdapter();
+      const historyByteLimit = 64 * 1024;
+      const { manager } = yield* createManager(5, { ptyAdapter, historyByteLimit });
+      const input = openInput();
+      const pull = yield* Stream.toPull(
+        terminalOutputStream(
+          (listener, registerCleanup) => manager.attachStream(input, listener, registerCleanup),
+          (listener, registerCleanup) => manager.resyncStream(input, listener, registerCleanup),
+        ),
+      );
+      expect(yield* pull).toMatchObject([{ type: "snapshot", snapshot: { history: "" } }]);
+      const process = ptyAdapter.processes[0]!;
+      yield* publishPastOutputBudget(manager, process);
+
+      const resumed = yield* pull;
+      expect(resumed).toHaveLength(1);
+      expect(resumed[0]?.type).toBe("snapshot");
+      if (resumed[0]?.type !== "snapshot") throw new Error("Expected a recovery snapshot");
+      expect(Buffer.byteLength(resumed[0].snapshot.history)).toBeLessThanOrEqual(historyByteLimit);
+      expect(resumed[0].snapshot.history.endsWith("last\n")).toBe(true);
+      process.emitData("after recovery\n");
+      expect(yield* pull).toMatchObject([{ type: "output", data: "after recovery\n" }]);
+      expect(ptyAdapter.spawnInputs).toHaveLength(1);
+
+      yield* publishPastOutputBudget(manager, process);
+      yield* manager.close(input);
+      expect(yield* pull).toEqual([
+        { type: "closed", threadId: input.threadId, terminalId: input.terminalId },
+      ]);
+      expect(ptyAdapter.spawnInputs).toHaveLength(1);
+      yield* manager.open(input);
+      expect(yield* pull).toMatchObject([
+        { type: "snapshot", snapshot: { status: "running", pid: ptyAdapter.processes[1]!.pid } },
+      ]);
+      const reopenedProcess = ptyAdapter.processes[1]!;
+      reopenedProcess.emitData("after reopen\n");
+      expect(yield* pull).toMatchObject([{ type: "output", data: "after reopen\n" }]);
+
+      yield* publishPastOutputBudget(manager, reopenedProcess);
+      // Queue close/reopen ahead of recovery while another spawn owns the thread lock.
+      const gate = {
+        spawning: yield* Deferred.make<void>(),
+        release: yield* Deferred.make<void>(),
+      };
+      ptyAdapter.gate = gate;
+      const holder = yield* manager
+        .open(openInput({ terminalId: "other" }))
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(gate.spawning);
+      const closed = yield* manager.close(input).pipe(Effect.forkChild({ startImmediately: true }));
+      const reopened = yield* manager
+        .open(input)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      const recovery = yield* pull.pipe(Effect.forkChild({ startImmediately: true }));
+      reopenedProcess.emitData("old session\n");
+      yield* Deferred.succeed(gate.release, undefined);
+      yield* Fiber.join(holder);
+      yield* Fiber.join(closed);
+      yield* Fiber.join(reopened);
+
+      const batch = yield* Fiber.join(recovery);
+      expect(batch).toHaveLength(1);
+      expect(batch[0]).toMatchObject({
+        type: "snapshot",
+        snapshot: { status: "running", pid: ptyAdapter.processes.at(-1)!.pid },
+      });
+      ptyAdapter.processes.at(-1)!.emitData("new session only\n");
+      expect(yield* pull).toMatchObject([{ type: "output", data: "new session only\n" }]);
+      expect(ptyAdapter.spawnInputs).toHaveLength(4);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("does not replay in-flight output already included in an observer snapshot", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      const input = openInput();
+      yield* manager.open(input);
+      const reached = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const delivered = yield* Deferred.make<void>();
+      // The snapshot sees history before this earlier fanout listener releases it.
+      const unsubscribe = yield* manager.subscribe((event) =>
+        event.type === "output" && event.data === "in flight\n"
+          ? Deferred.succeed(reached, undefined).pipe(Effect.andThen(Deferred.await(release)))
+          : Effect.void,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+      ptyAdapter.processes[0]!.emitData("in flight\n");
+      yield* Deferred.await(reached);
+      const observed: TerminalAttachStreamEvent[] = [];
+      const stopObserving = yield* manager.observeStream(input, (event) =>
+        Effect.gen(function* () {
+          observed.push(event);
+          if (event.type === "output" && event.data === "after\n") {
+            yield* Deferred.succeed(delivered, undefined);
+          }
+        }),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(stopObserving));
+      expect(observed).toMatchObject([{ type: "snapshot", snapshot: { history: "in flight\n" } }]);
+      yield* Deferred.succeed(release, undefined);
+      ptyAdapter.processes[0]!.emitData("after\n");
+      yield* Deferred.await(delivered);
+      expect(observed.filter((event) => event.type === "output")).toMatchObject([
+        { data: "after\n" },
+      ]);
+    }).pipe(Effect.scoped),
   );
 
   it.effect("observes terminal history and live output without changing the process", () =>
