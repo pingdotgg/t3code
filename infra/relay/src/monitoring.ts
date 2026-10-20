@@ -14,6 +14,11 @@ const LINK_ROUTE = `"/v1/client/environment-links"`;
 const TUNNEL_ROUTES = `"/v1/environments/:environmentId/tunnel", "/v1/environments/:environmentId/tunnel/recovery"`;
 const CLOUDFLARE_API = `['attributes.url.full'] startswith "https://api.cloudflare.com"`;
 const STATUS = `toint(['attributes.http.response.status_code'])`;
+// The tunnel reaper records its counters on this span every five minutes,
+// including while cleanup is off.
+const SWEEP = `name == "relay.managed_endpoint_reaper.sweep"`;
+const sweepCounter = (field: string) =>
+  `toint(['attributes.custom']['relay.managed_endpoint_reaper.${field}'])`;
 
 // Status codes, not span errors: a request cut off by the relay deadline ends
 // as an interrupted span with no error flag, but still answers 504.
@@ -173,6 +178,33 @@ const relayMonitors: ReadonlyArray<RelayMonitor> = [
     rangeMinutes: 15,
     triggerFromNRuns: 2,
   },
+  {
+    id: "RelayTunnelCleanupStoppedMonitor",
+    severity: "warn",
+    name: "T3 Connect relay: tunnel cleanup stopped",
+    description:
+      "Tunnel cleanup sweeps that finished in 30 min. Healthy: 6. The cron is not running, or every sweep fails, as during the 2026-10-19 Cloudflare 429s when listing tunnels timed out. Idle tunnels pile up and are billed meanwhile.",
+    query: (dataset) =>
+      `['${dataset}']\n| where ${SWEEP} and error != true\n| summarize sweeps = count()`,
+    operator: "Below",
+    threshold: 1,
+    rangeMinutes: 30,
+    triggerFromNRuns: 2,
+    alertOnNoData: true,
+  },
+  {
+    id: "RelayTunnelCleanupFailingMonitor",
+    severity: "warn",
+    name: "T3 Connect relay: tunnel deletions failing",
+    description:
+      "Cloudflare tunnel deletions that failed in 30 min. Healthy: 0; the worst 30 min so far had 3. The relay logs a warning with the Cloudflare error for each.",
+    query: (dataset) =>
+      `['${dataset}']\n| where ${SWEEP}\n| summarize failed = sum(${sweepCounter("failed")})`,
+    operator: "Above",
+    threshold: 10,
+    rangeMinutes: 30,
+    triggerFromNRuns: 2,
+  },
 ];
 
 interface QueryChart {
@@ -229,6 +261,18 @@ const relayDashboardCharts = (dataset: string): ReadonlyArray<QueryChart> => {
       "push",
       "Push delivery jobs",
       `${source}\n| where name in ("relay.apns_deliveries.process_signed_job", "relay.fcm.process")\n| summarize delivered = countif(error != true), failed = countif(error == true) by bin_auto(_time), service = iff(name == "relay.fcm.process", "fcm", "apns")`,
+    ),
+    timeSeries(
+      "tunnel-cleanup",
+      "Tunnel cleanup per sweep",
+      `${source}\n| where ${SWEEP}\n| summarize deleted = sum(${sweepCounter("deleted")}), deleted_legacy = sum(${sweepCounter("deletedLegacy")}), would_delete = sum(${sweepCounter("wouldDelete")}), would_delete_legacy = sum(${sweepCounter("wouldDeleteLegacy")}), failed = sum(${sweepCounter("failed")}), sweeps_failed = countif(error == true) by bin_auto(_time)`,
+    ),
+    // Cloudflare's own counts for this stage, including tunnels the reaper
+    // skips, so this is the idle tunnels still billed.
+    timeSeries(
+      "tunnel-backlog",
+      "Idle tunnels in Cloudflare",
+      `${source}\n| where ${SWEEP}\n| summarize down = max(${sweepCounter("totalDown")}), never_connected = max(${sweepCounter("totalInactive")}) by bin_auto(_time)`,
     ),
     timeSeries(
       "server-errors",
