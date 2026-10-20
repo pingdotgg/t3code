@@ -138,6 +138,7 @@ const layerService = (input: {
   ).pipe(
     Layer.provideMerge(AntigravityUsage.layer),
     Layer.provideMerge(ProviderHostLive.layer),
+    Layer.provideMerge(CodexUsageHistory.layer.pipe(Layer.provideMerge(Sqlite.layerMemory))),
     Layer.provideMerge(Layer.mock(BackgroundPolicy.BackgroundPolicy)({})),
     Layer.provideMerge(Layer.mock(ServerSecretStore.ServerSecretStore)({})),
     Layer.provideMerge(
@@ -448,6 +449,7 @@ describe("Codex usage history", () => {
         yield* sql`ALTER TABLE orchestration_events RENAME TO unavailable_events`;
         const error = yield* Effect.flip(history.resolve([input]));
         assert.instanceOf(error, CodexUsageHistory.CodexUsageHistoryReadError);
+        assert.strictEqual(error.requestedTurnCount, 1);
         yield* sql`ALTER TABLE unavailable_events RENAME TO orchestration_events`;
         assert.strictEqual((yield* history.resolve([input])).get(input), "fast");
       }).pipe(Effect.provide(historyLayer)),
@@ -455,6 +457,158 @@ describe("Codex usage history", () => {
 });
 
 describe("UsageService", () => {
+  it.live(
+    "repairs initial Codex prices after unchanged-file retries, persists evidence and corrections, and honors later native tiers",
+    () =>
+      Effect.gen(function* () {
+        const { home, settings } = yield* setup;
+        const sessions = NodePath.join(home, "codex", "sessions");
+        const fastPath = NodePath.join(sessions, "fast.jsonl");
+        const ultraPath = NodePath.join(sessions, "ultra.jsonl");
+        const meta = (id: string) => ({
+          type: "session_meta",
+          payload: { id, model_provider: "openai" },
+        });
+        const context = (turn_id?: string) => ({
+          type: "turn_context",
+          payload: { model: "gpt-6-astra", turn_id },
+        });
+        const usage = (output_tokens: number) => ({
+          type: "event_msg",
+          timestamp: "2026-08-01T10:00:00Z",
+          payload: {
+            type: "token_count",
+            info: { last_token_usage: { input_tokens: 0, output_tokens } },
+          },
+        });
+        const tier = (service_tier?: string) => ({
+          type: "event_msg",
+          payload: { type: "thread_settings_applied", thread_settings: { service_tier } },
+        });
+        const lines = (records: readonly unknown[]) =>
+          records.map((record) => encodeUnknownJsonString(record)).join("\n") + "\n";
+        const verify = (summary: UsageSummary, output: number, cost: number) => {
+          assert.strictEqual(totalOutputTokens(summary), output);
+          assert.strictEqual(
+            summary.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0),
+            cost,
+          );
+        };
+        yield* Effect.promise(async () => {
+          await NodeFSP.mkdir(sessions, { recursive: true });
+          await NodeFSP.writeFile(
+            fastPath,
+            lines([meta("fast-session"), context("fast-turn"), usage(1)]) +
+              encodeUnknownJsonString(usage(2)),
+          );
+          await NodeFSP.writeFile(
+            ultraPath,
+            lines([meta("ultra-session"), context("ultra-turn"), usage(4)]),
+          );
+        });
+        yield* Effect.gen(function* () {
+          const first = yield* UsageService.make;
+          verify(yield* first.readSummary(WINDOW), 7, 7);
+          yield* first.awaitPersisted;
+          const pending = yield* UsageService.make;
+          verify(yield* pending.readSummary(WINDOW), 7, 7);
+          yield* seedCodexHistory({ id: "fast-turn", sessionId: "fast-session" });
+          yield* seedCodexHistory({
+            id: "ultra-turn",
+            sessionId: "ultra-session",
+            options: [{ id: "serviceTier", value: "ultrafast" }],
+          });
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`ALTER TABLE orchestration_events RENAME TO unavailable_events`;
+          verify(yield* pending.readSummary(WINDOW), 7, 7);
+          yield* pending.awaitPersisted;
+          const retry = yield* UsageService.make;
+          verify(yield* retry.readSummary(WINDOW), 7, 7);
+          yield* sql`ALTER TABLE unavailable_events RENAME TO orchestration_events`;
+          // History repair must touch both the committed record and tentative tail.
+          verify(yield* retry.readSummary(WINDOW), 7, 30);
+          yield* retry.awaitPersisted;
+          yield* sql`ALTER TABLE orchestration_events RENAME TO resolved_events`;
+          verify(yield* retry.readSummary(WINDOW), 7, 30);
+          const resolved = yield* UsageService.make;
+          verify(yield* resolved.readSummary(WINDOW), 7, 30);
+          yield* sql`ALTER TABLE resolved_events RENAME TO orchestration_events`;
+
+          // Completing the tail reparses it; neither an absent turn ID nor a new
+          // turn with no retained attempt may inherit the inferred Fast speed.
+          yield* Effect.promise(() =>
+            NodeFSP.appendFile(
+              fastPath,
+              "\n" + lines([context(), usage(3), context("unretained-turn"), usage(4)]),
+            ),
+          );
+          verify(yield* resolved.readSummary(WINDOW), 14, 37);
+          yield* seedCodexHistory({
+            id: "native-turn",
+            sessionId: "fast-session",
+            options: [{ id: "serviceTier", value: "ultrafast" }],
+          });
+          yield* seedCodexHistory({ id: "later-native-turn", sessionId: "fast-session" });
+          yield* Effect.promise(() =>
+            NodeFSP.appendFile(
+              fastPath,
+              lines([
+                context("native-turn"),
+                tier(),
+                usage(5),
+                context("later-native-turn"),
+                usage(6),
+                tier("priority"),
+              ]) + encodeUnknownJsonString(usage(7)),
+            ),
+          );
+          verify(yield* resolved.readSummary(WINDOW), 32, 62);
+          yield* resolved.awaitPersisted;
+          const native = yield* UsageService.make;
+          verify(yield* native.readSummary(WINDOW), 32, 62);
+          yield* seedCodexHistory({
+            id: "after-restart-native",
+            sessionId: "fast-session",
+            options: [{ id: "serviceTier", value: "ultrafast" }],
+          });
+          yield* Effect.promise(() =>
+            NodeFSP.appendFile(
+              fastPath,
+              "\n" +
+                lines([context("after-restart-native"), usage(8), tier("ultrafast"), usage(9)]),
+            ),
+          );
+          verify(yield* native.readSummary(WINDOW), 49, 132);
+          yield* native.awaitPersisted;
+          yield* Effect.promise(async () => {
+            await NodeFSP.rm(fastPath);
+            await NodeFSP.rm(ultraPath);
+          });
+          yield* sql`DELETE FROM orchestration_events`;
+          const deleted = yield* UsageService.make;
+          verify(yield* deleted.readSummary(WINDOW), 49, 132);
+        }).pipe(
+          Effect.provide(
+            layerService({
+              prefix: "usage-initial-tier",
+              home,
+              settings,
+              ratesDocument: {
+                "gpt-6-astra": {
+                  input_cost_per_token: 0,
+                  output_cost_per_token: 1,
+                  input_cost_per_token_priority: 0,
+                  output_cost_per_token_priority: 2,
+                  input_cost_per_token_ultrafast: 0,
+                  output_cost_per_token_ultrafast: 6,
+                },
+              },
+            }),
+          ),
+        );
+      }).pipe(Effect.scoped),
+  );
+
   it.live(
     "reads Pi per-model usage and auxiliary costs once across forks and repeated entries",
     () =>
@@ -1898,7 +2052,7 @@ describe("UsageService", () => {
       }).pipe(Effect.scoped),
   );
 
-  it.live.each([4, 5])(
+  it.live.each([4, 5, 6])(
     "upgrades a v%s cache: reparses live Codex usage, keeps deleted rollouts and the old file",
     (version) =>
       Effect.gen(function* () {
@@ -1939,7 +2093,7 @@ describe("UsageService", () => {
           const cachePath = NodePath.join(stateDir, SCAN_CACHE_FILE_NAME);
           const legacyPath = NodePath.join(
             stateDir,
-            version === 4 ? "usage-scan-cache.json" : "usage-scan-cache-v5.json",
+            version === 4 ? "usage-scan-cache.json" : `usage-scan-cache-v${version}.json`,
           );
           const first = yield* UsageService.make;
           yield* first.readSummary(WINDOW);
@@ -1957,12 +2111,25 @@ describe("UsageService", () => {
                 version === 4 ? 0 : 1,
               ]);
               if (version === 4) delete file.cs.speed;
-              delete file.cs.lastCumulativeUsage;
-              delete file.cs.malformedRecords;
+              if (version < 6) {
+                delete file.cs.lastCumulativeUsage;
+                delete file.cs.malformedRecords;
+              }
             }
             const text = encodeUnknownJsonString({ ...document, version });
             await NodeFSP.rm(cachePath);
             await NodeFSP.writeFile(legacyPath, text);
+            if (version === 6) {
+              for (const [name, olderVersion] of [
+                ["usage-scan-cache-v5.json", 5],
+                ["usage-scan-cache.json", 4],
+              ] as const) {
+                await NodeFSP.writeFile(
+                  NodePath.join(stateDir, name),
+                  encodeUnknownJsonString({ ...document, version: olderVersion, files: {} }),
+                );
+              }
+            }
             await NodeFSP.rm(deleted);
             return text;
           });
@@ -1975,7 +2142,7 @@ describe("UsageService", () => {
             60 + 20 * (version === 4 ? 1 : 2),
           );
           yield* upgraded.awaitPersisted;
-          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v6.json");
+          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v7.json");
           assert.strictEqual(
             yield* Effect.promise(() => NodeFSP.readFile(legacyPath, "utf8")),
             legacy,

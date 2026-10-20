@@ -13,6 +13,7 @@ import {
 } from "@t3tools/provider-core/server/usage";
 import type { UsageTokenTotals } from "@t3tools/contracts";
 
+import * as CodexUsageHistory from "../../usage/CodexUsageHistory.ts";
 import { resolveCodexHomeLayout } from "./CodexHomeLayout.ts";
 
 const TokenCount = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
@@ -72,6 +73,9 @@ export const CodexScanState = Schema.Struct({
   lastCumulativeUsage: Schema.mutableKey(Schema.NullOr(CodexTokenUsage)),
   malformedRecords: Schema.mutableKey(TokenCount),
   sawSessionMeta: Schema.mutableKey(Schema.Boolean),
+  modelProvider: Schema.mutableKey(Schema.String),
+  turnId: Schema.mutableKey(Schema.String),
+  sawThreadSettings: Schema.mutableKey(Schema.Boolean),
   suppressingForkCopies: Schema.mutableKey(Schema.Boolean),
   forkCopyAnchorMs: Schema.mutableKey(Schema.Finite),
 });
@@ -86,6 +90,9 @@ export function initialCodexScanState(): CodexScanState {
     lastCumulativeUsage: null,
     malformedRecords: 0,
     sawSessionMeta: false,
+    modelProvider: "",
+    turnId: "",
+    sawThreadSettings: false,
     suppressingForkCopies: false,
     forkCopyAnchorMs: 0,
   };
@@ -141,6 +148,9 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord |
     state.sawSessionMeta = true;
     const id = payloadRecord["id"] ?? payloadRecord["session_id"];
     if (typeof id === "string") state.sessionId = id;
+    if (typeof payloadRecord["model_provider"] === "string") {
+      state.modelProvider = payloadRecord["model_provider"];
+    }
     const metaTimestampMs = parseTimestampMs(record["timestamp"]);
     if (metaTimestampMs !== null && isForkedSessionMeta(payloadRecord)) {
       state.suppressingForkCopies = true;
@@ -151,10 +161,18 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord |
 
   if (record["type"] === "turn_context") {
     if (typeof payloadRecord["model"] === "string") state.model = payloadRecord["model"];
+    // Model carry is useful for usage, but history recovery needs this context's own identity.
+    state.turnId =
+      typeof payloadRecord["turn_id"] === "string" &&
+      typeof payloadRecord["model"] === "string" &&
+      payloadRecord["model"].length > 0
+        ? payloadRecord["turn_id"]
+        : "";
     return null;
   }
 
   if (payloadType === "thread_settings_applied") {
+    state.sawThreadSettings = true;
     const settings = payloadRecord["thread_settings"];
     if (typeof settings === "object" && settings !== null) {
       state.speed = codexSpeed((settings as Record<string, unknown>)["service_tier"]);
@@ -270,6 +288,12 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord |
     totals,
     reportedCostUsd: null,
     speed: state.speed,
+    ...(!state.sawThreadSettings &&
+    state.modelProvider === "openai" &&
+    state.sessionId.length > 0 &&
+    state.turnId.length > 0
+      ? { unresolvedServiceTierTurnId: state.turnId }
+      : {}),
     dedupeKey: null,
   };
 }
@@ -295,6 +319,8 @@ export const codexUsageFormat: TranscriptUsageFormat<CodexScanState> = {
       type: true,
       id: true,
       session_id: true,
+      model_provider: true,
+      turn_id: true,
       model: true,
       thread_settings: { service_tier: true },
       forked_from_id: true,
@@ -313,10 +339,40 @@ export const codexUsageFormat: TranscriptUsageFormat<CodexScanState> = {
   sharedSessionsAcrossFiles: true,
 };
 
-export const codexUsageReader: ProviderUsageReader<CodexSettings, Path.Path> = {
+export const codexUsageReader: ProviderUsageReader<
+  CodexSettings,
+  Path.Path | CodexUsageHistory.CodexUsageHistory
+> = {
   kind: "transcripts",
   provider: "codex",
   format: codexUsageFormat,
+  resolveServiceTiers: Effect.fn("codexUsageReader.resolveServiceTiers")(function* (records) {
+    const history = yield* CodexUsageHistory.CodexUsageHistory;
+    const requests = new Map<CodexUsageHistory.CodexUsageHistoryRequest, UsageRecord>();
+    for (const record of records) {
+      if (record.unresolvedServiceTierTurnId === undefined) continue;
+      requests.set(
+        {
+          sessionId: record.sessionId,
+          nativeTurnId: record.unresolvedServiceTierTurnId,
+          model: record.model,
+        },
+        record,
+      );
+    }
+    const resolved = yield* history.resolve([...requests.keys()]).pipe(
+      Effect.catchTags({
+        CodexUsageHistoryReadError: () =>
+          Effect.succeed(new Map<CodexUsageHistory.CodexUsageHistoryRequest, UsageSpeed>()),
+      }),
+    );
+    const speeds = new Map<UsageRecord, UsageSpeed>();
+    for (const [request, speed] of resolved) {
+      const record = requests.get(request);
+      if (record !== undefined) speeds.set(record, speed);
+    }
+    return speeds;
+  }),
   directories: Effect.fn("codexUsageReader.directories")(function* ({ config, environment }) {
     if (config === undefined) return [];
     const path = yield* Path.Path;

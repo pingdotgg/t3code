@@ -12,7 +12,7 @@ import { getCodexServiceTierOptionValue } from "../codexModelOptions.ts";
 
 export class CodexUsageHistoryReadError extends Schema.TaggedError<CodexUsageHistoryReadError>()(
   "CodexUsageHistoryReadError",
-  { cause: Schema.Defect() },
+  { requestedTurnCount: Schema.Number, cause: Schema.Defect() },
 ) {
   override get message(): string {
     return "Could not read historical Codex usage tiers.";
@@ -84,7 +84,9 @@ const make = Effect.gen(function* () {
         )
     `.pipe(
       NodeSqliteClient.readOnly,
-      Effect.mapError((cause) => new CodexUsageHistoryReadError({ cause })),
+      Effect.mapError(
+        (cause) => new CodexUsageHistoryReadError({ requestedTurnCount: requests.length, cause }),
+      ),
     );
 
     // Keep duplicates ambiguous even when an attempt is missing or its destination differs.
