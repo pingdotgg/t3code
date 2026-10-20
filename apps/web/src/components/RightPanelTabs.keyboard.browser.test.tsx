@@ -249,3 +249,34 @@ describe("right panel new-tab shortcut", () => {
     expect(document.querySelector('[role="menu"]:not([data-closed])')).toBeNull();
   });
 });
+
+describe("right panel tab middle click", () => {
+  it("cancels middle-button defaults and closes once while preserving other buttons", async () => {
+    const onActivate = vi.fn();
+    const onCloseSurface = vi.fn();
+    const files = { id: "files" as const, kind: "files" as const };
+    await renderPanel({ surfaces: [files], activeSurfaceId: files.id, onActivate, onCloseSurface });
+    const tabLabel = container.querySelector("[data-active-tab] span.truncate")!;
+    const mouse = async (type: string, button: number) => {
+      const event = new MouseEvent(type, { button, bubbles: true, cancelable: true });
+      await act(() => tabLabel.dispatchEvent(event));
+      return event;
+    };
+
+    expect((await mouse("mousedown", 0)).defaultPrevented).toBe(false);
+    expect((await mouse("mouseup", 0)).defaultPrevented).toBe(false);
+    expect((await mouse("click", 0)).defaultPrevented).toBe(false);
+    expect(onActivate).toHaveBeenCalledExactlyOnceWith(files);
+    expect((await mouse("mousedown", 2)).defaultPrevented).toBe(false);
+    expect((await mouse("mouseup", 2)).defaultPrevented).toBe(false);
+    expect((await mouse("auxclick", 2)).defaultPrevented).toBe(false);
+    expect(onCloseSurface).not.toHaveBeenCalled();
+
+    expect((await mouse("mousedown", 1)).defaultPrevented).toBe(true);
+    expect((await mouse("mouseup", 1)).defaultPrevented).toBe(true);
+    expect(onCloseSurface).not.toHaveBeenCalled();
+    expect((await mouse("auxclick", 1)).defaultPrevented).toBe(true);
+    expect(onCloseSurface).toHaveBeenCalledExactlyOnceWith(files);
+    expect(onActivate).toHaveBeenCalledTimes(1);
+  });
+});

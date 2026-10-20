@@ -802,7 +802,8 @@ interface RightPanelTabHandlers {
   onFinishRename: (surfaceId: string, title: string) => void;
 }
 
-function handleTabMouseDown(event: ReactMouseEvent) {
+// Chromium on Linux only suppresses primary-selection paste when mouseup is cancelled.
+function preventTabMiddleButtonDefault(event: ReactMouseEvent) {
   if (event.button !== 1) return;
   event.preventDefault();
 }
@@ -938,7 +939,8 @@ function RightPanelTab(
   return (
     <div
       data-active-tab={props.active}
-      onMouseDown={handleTabMouseDown}
+      onMouseDown={preventTabMiddleButtonDefault}
+      onMouseUp={preventTabMiddleButtonDefault}
       onAuxClick={(event) => onAuxClick(event, surface)}
       onContextMenu={(event) => onContextMenu(event, surface)}
       {...listeners}
