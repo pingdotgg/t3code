@@ -694,6 +694,13 @@ export const make = Effect.gen(function* () {
     });
 
     if (environment.platform === "darwin") {
+      // macOS delivers a mouse's Back/Forward action (Logitech's included) as a
+      // swipe-between-pages gesture rather than DOM button 3/4 events.
+      window.on("swipe", (_event, direction) => {
+        const history = window.webContents.navigationHistory;
+        if (direction === "left" && history.canGoBack()) history.goBack();
+        else if (direction === "right" && history.canGoForward()) history.goForward();
+      });
       window.on("enter-full-screen", () => {
         window.webContents.send(WINDOW_FULLSCREEN_STATE_CHANNEL, true);
       });
