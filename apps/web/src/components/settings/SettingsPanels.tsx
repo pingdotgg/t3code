@@ -12,6 +12,7 @@ import {
   managedUpdatesMessage,
   ProviderDriverKind,
   type ProviderInstanceId,
+  resolveModelCatalogUpdatesEnabled,
   type SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
 import {
@@ -542,6 +543,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.enableProviderUpdateChecks !== DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks
       ? ["Provider update checks"]
       : []),
+    ...(settings.enableModelCatalogUpdates !== DEFAULT_UNIFIED_SETTINGS.enableModelCatalogUpdates
+      ? ["Download new models"]
+      : []),
     ...(settings.continueThreadsAfterServerUpdate !==
     DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate
       ? ["Continue threads after restarts"]
@@ -665,6 +669,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       snoozePresets: DEFAULT_UNIFIED_SETTINGS.snoozePresets,
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
+      enableModelCatalogUpdates: DEFAULT_UNIFIED_SETTINGS.enableModelCatalogUpdates,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
       backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
@@ -1957,7 +1962,7 @@ export function MaintenanceSettingsPanel() {
           serverScoped
           settingKeys={["enableProviderUpdateChecks"]}
           {...searchableSetting("provider-update-checks")}
-          description="Check installed provider CLIs for newer available versions and fetch model catalog updates. When off, new models may not appear."
+          description="Check installed provider CLIs for newer available versions."
           resetAction={
             settings.enableProviderUpdateChecks !==
             DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks ? (
@@ -1979,6 +1984,35 @@ export function MaintenanceSettingsPanel() {
                 updateSettings({ enableProviderUpdateChecks: Boolean(checked) })
               }
               aria-label="Check provider versions"
+            />
+          }
+        />
+        <SettingsRow
+          serverScoped
+          settingKeys={["enableModelCatalogUpdates"]}
+          {...searchableSetting("download-new-models")}
+          description="Download the latest T3 Code model catalog so new models appear between releases. Follows Provider update checks until you change it."
+          resetAction={
+            settings.enableModelCatalogUpdates !==
+            DEFAULT_UNIFIED_SETTINGS.enableModelCatalogUpdates ? (
+              <SettingResetButton
+                label="download new models"
+                onClick={() =>
+                  updateSettings({
+                    enableModelCatalogUpdates: DEFAULT_UNIFIED_SETTINGS.enableModelCatalogUpdates,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <ScopedSwitch
+              settingKeys={["enableModelCatalogUpdates", "enableProviderUpdateChecks"]}
+              checked={resolveModelCatalogUpdatesEnabled(settings)}
+              onCheckedChange={(checked) =>
+                updateSettings({ enableModelCatalogUpdates: Boolean(checked) })
+              }
+              aria-label="Download new models"
             />
           }
         />
