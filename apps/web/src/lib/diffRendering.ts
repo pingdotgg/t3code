@@ -213,7 +213,8 @@ export function resolveFileDiffPreviousPath(fileDiff: FileDiffMetadata): string 
 
 /**
  * A type change (regular file to symlink) arrives as a deletion and an addition
- * of the same path, so the change type is part of the identity.
+ * of the same path, so the change type is part of the identity. Repeated blocks
+ * still share this key.
  */
 export function buildFileDiffIdentityKey(fileDiff: FileDiffMetadata): string {
   return `${resolveFileDiffPreviousPath(fileDiff)}\u0000${resolveFileDiffPath(fileDiff)}\u0000${fileDiff.type}`;
@@ -284,6 +285,30 @@ export function buildFileDiffContentVersion(fileDiff: FileDiffMetadata): number 
   }
 
   return hash;
+}
+
+const fileEntryCache = new WeakMap<
+  FileDiffMetadata,
+  { fileDiff: FileDiffMetadata; fileKey: string; fileVersion: number }
+>();
+
+/** Give repeated blocks independent viewer state without tying identity to patch content. */
+export function buildFileDiffEntries(files: ReadonlyArray<FileDiffMetadata>) {
+  const occurrences = new Map<string, number>();
+  return files.map((fileDiff) => {
+    let entry = fileEntryCache.get(fileDiff);
+    if (!entry) {
+      entry = {
+        fileDiff,
+        fileKey: buildFileDiffIdentityKey(fileDiff),
+        fileVersion: buildFileDiffContentVersion(fileDiff),
+      };
+      fileEntryCache.set(fileDiff, entry);
+    }
+    const occurrence = occurrences.get(entry.fileKey) ?? 0;
+    occurrences.set(entry.fileKey, occurrence + 1);
+    return occurrence === 0 ? entry : { ...entry, fileKey: `${entry.fileKey}\u0000${occurrence}` };
+  });
 }
 
 export function getDiffCollapseIconClassName(fileDiff: FileDiffMetadata): string {

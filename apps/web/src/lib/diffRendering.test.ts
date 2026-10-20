@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { resolveDiffReviewPosition } from "../reviewCommentContext";
 import {
   buildFileDiffContentVersion,
+  buildFileDiffEntries,
   buildFileDiffIdentityKey,
   buildFileDiffRenderKey,
   buildPatchCacheKey,
@@ -246,6 +247,50 @@ describe("getRenderablePatch", () => {
 });
 
 describe("diff file reconciliation", () => {
+  it("retains repeated blocks and their keys when content changes or other files appear", () => {
+    const parse = (blocks: [string, string][]) => {
+      const parsed = getRenderablePatch(
+        blocks
+          .map(([path, content]) =>
+            [
+              `diff --git a/${path} b/${path}`,
+              `--- a/${path}`,
+              `+++ b/${path}`,
+              "@@ -1 +1 @@",
+              "-before",
+              `+${content}`,
+              "",
+            ].join("\n"),
+          )
+          .join(""),
+      );
+      if (parsed?.kind !== "files") throw new Error("Expected file diffs");
+      return parsed.files;
+    };
+    const files = parse([
+      ["same.ts", "first"],
+      ["same.ts", "second"],
+    ]);
+    const before = buildFileDiffEntries([...files, files[1]!]);
+    expect(before.map((entry) => entry.fileDiff)).toEqual([...files, files[1]]);
+    expect(new Set(before.map((entry) => entry.fileKey)).size).toBe(3);
+    expect(before[0]?.fileKey).toBe(buildFileDiffIdentityKey(files[0]!));
+    expect(buildFileDiffEntries([...files, files[1]!])).toEqual(before);
+
+    const after = buildFileDiffEntries(
+      parse([
+        ["unrelated.ts", "new"],
+        ["same.ts", "first"],
+        ["same.ts", "updated second"],
+        ["same.ts", "second"],
+      ]),
+    ).slice(1);
+    expect(after.map((entry) => entry.fileKey)).toEqual(before.map((entry) => entry.fileKey));
+    expect(after[0]?.fileVersion).toBe(before[0]?.fileVersion);
+    expect(after[1]?.fileVersion).not.toBe(before[1]?.fileVersion);
+    expect(after[2]?.fileVersion).toBe(before[2]?.fileVersion);
+  });
+
   it("keeps Pierre's render key stable when a partial diff hydrates", () => {
     const patch = [
       "diff --git a/example.ts b/example.ts",
