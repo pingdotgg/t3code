@@ -91,10 +91,6 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     questionId: string;
     optionValue: string;
   } | null>(null);
-  const [focusedOption, setFocusedOption] = useState<{
-    questionId: string;
-    optionIndex: number;
-  } | null>(null);
   const [collapsedQuestionId, setCollapsedQuestionId] = useState<string | null>(null);
   // The active question keys the shortcut listener, so it must keep its identity across renders.
   const progress = derivePendingUserInputProgress(prompt.questions, answers, questionIndex);
@@ -106,23 +102,6 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       !customAnswerActive && progress.selectedOptionValues.includes(option.value ?? option.label),
   );
   const isCollapsed = collapsedQuestionId !== null && collapsedQuestionId === activeQuestion?.id;
-  const selectedOptionValue = progress.selectedOptionValues.at(-1);
-  const savedOptionMatches = activeQuestion?.options.filter(
-    (option) => (option.value ?? option.label) === selectedOptionValue,
-  );
-  const previewOption = customAnswerActive
-    ? undefined
-    : focusedOption && focusedOption.questionId === activeQuestion?.id
-      ? activeQuestion?.options[focusedOption.optionIndex]
-      : selectedOptionValue === undefined
-        ? activeQuestion?.options[0]
-        : savedOptionMatches?.length === 1
-          ? savedOptionMatches[0]
-          : undefined;
-
-  if (focusedOption && (focusedOption.questionId !== activeQuestion?.id || customAnswerActive)) {
-    setFocusedOption(null);
-  }
 
   // The optimistic pick is dropped once the draft confirms it or the question moves on.
   if (
@@ -148,9 +127,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     return clearAutoAdvance;
   }, [activeQuestion?.id, disabled]);
 
-  const handleOptionSelection = (questionId: string, optionValue: string, optionIndex: number) => {
+  const handleOptionSelection = (questionId: string, optionValue: string) => {
     if (disabled || isResponding) return;
-    setFocusedOption({ questionId, optionIndex });
     if (activeQuestion?.multiSelect) {
       onToggleOption(questionId, optionValue);
       return;
@@ -189,7 +167,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       const option = activeQuestion.options[optionIndex];
       if (!option) return;
       event.preventDefault();
-      selectOptionFromShortcut(activeQuestion.id, option.value ?? option.label, optionIndex);
+      selectOptionFromShortcut(activeQuestion.id, option.value ?? option.label);
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
@@ -305,19 +283,11 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                 );
                 return (
                   <button
-                    // Options keep their positions within a question and may share answer values.
-                    // oxlint-disable-next-line react/no-array-index-key
-                    key={`${activeQuestion.id}:${index}`}
+                    key={`${activeQuestion.id}:${optionValue}`}
                     type="button"
                     disabled={disabled || isResponding}
-                    onMouseEnter={() =>
-                      setFocusedOption({ questionId: activeQuestion.id, optionIndex: index })
-                    }
-                    onFocus={() =>
-                      setFocusedOption({ questionId: activeQuestion.id, optionIndex: index })
-                    }
                     onClick={() => {
-                      handleOptionSelection(activeQuestion.id, optionValue, index);
+                      handleOptionSelection(activeQuestion.id, optionValue);
                     }}
                     className={className}
                   >
@@ -326,23 +296,6 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                 );
               })}
             </div>
-            {previewOption?.preview?.trim() ? (
-              <section
-                aria-label={`Preview: ${previewOption.label}`}
-                className="mt-2 min-w-0 rounded-md border border-border/60 bg-muted/25 p-2.5"
-              >
-                <p className="mb-1.5 text-3xs font-medium text-muted-foreground">
-                  Preview · {previewOption.label}
-                </p>
-                <ChatMarkdown
-                  key={`${activeQuestion.id}:${activeQuestion.options.indexOf(previewOption)}`}
-                  text={previewOption.preview}
-                  cwd={cwd}
-                  threadRef={threadRef}
-                  parseRawHtml={false}
-                />
-              </section>
-            ) : null}
           </ComposerBanner.Body>
         </ComposerBanner.Scroll>
       </CollapsiblePanel>
