@@ -159,46 +159,109 @@ describe("environment maintenance access", () => {
 
 describe("environment release checks", () => {
   const signal = new AbortController().signal;
+  const feed = (...tags: ReadonlyArray<string>) =>
+    new Response(
+      `<feed><id>tag:github.com,2008:https://github.com/pingdotgg/t3code/releases</id>${tags
+        .map((tag) => `<entry><id>tag:github.com,2008:Repository/1/${tag}</id></entry>`)
+        .join("")}</feed>`,
+    );
 
-  it("keeps stable hosts on stable releases and ignores drafts", async () => {
+  it("checks stable updates as JSON without using the anonymous API quota", async () => {
     vi.stubGlobal(
       "fetch",
-      vi
-        .fn()
-        .mockImplementation(async () =>
-          Response.json([
-            { tag_name: "v2.0.0-nightly.20260923.1" },
-            { tag_name: "v1.2.0", draft: true },
-            { tag_name: "v1.1.0" },
-          ]),
-        ),
+      vi.fn(async (url: string, init?: RequestInit) =>
+        url === "https://github.com/pingdotgg/t3code/releases/latest" &&
+        new Headers(init?.headers).get("Accept") === "application/json"
+          ? Response.json({ tag_name: "v1.1.0" })
+          : new Response(null, { status: 403 }),
+      ),
     );
     expect(await findEnvironmentUpdate("1.0.0", signal)).toBe("1.1.0");
     expect(await findEnvironmentUpdate("1.1.0", signal)).toBeNull();
     expect(await findEnvironmentUpdate("1.3.0", signal)).toBeNull();
   });
 
-  it("walks release pages to find the host's channel", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(
-        Response.json(Array.from({ length: 100 }, () => ({ tag_name: "v2.0.0" }))),
-      )
-      .mockResolvedValueOnce(Response.json([{ tag_name: "v1.0.0-preview.20260923.2" }]));
-    vi.stubGlobal("fetch", fetchMock);
-    expect(await findEnvironmentUpdate("1.0.0-preview.20260923.1", signal)).toBe(
-      "1.0.0-preview.20260923.2",
+  it("keeps nightly and preview hosts on their channel without using the anonymous API quota", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        url === "https://github.com/pingdotgg/t3code/releases.atom"
+          ? feed(
+              "desktop-preview",
+              "v1.0.0-preview.20260924.3",
+              "v1.0.0-nightly.20260924.2",
+              "v1.0.0",
+              "v1.0.0-nightly.20260923.1",
+            )
+          : new Response(null, { status: 403 }),
+      ),
     );
-    expect(fetchMock.mock.calls[1]?.[0]).toContain("page=2");
-    expect(fetchMock.mock.calls[1]?.[1]).toEqual({ signal });
+    expect(await findEnvironmentUpdate("1.0.0-nightly.20260923.1", signal)).toBe(
+      "1.0.0-nightly.20260924.2",
+    );
+    expect(await findEnvironmentUpdate("1.0.0-nightly.20260924.2", signal)).toBeNull();
+    expect(await findEnvironmentUpdate("1.0.0-preview.20260923.1", signal)).toBe(
+      "1.0.0-preview.20260924.3",
+    );
+    expect(await findEnvironmentUpdate("1.0.0-preview.20260925.1", signal)).toBeNull();
+  });
+
+  it("finds a published preview beyond the ten-entry feed and first API page", async () => {
+    const nightlies = Array.from({ length: 10 }, (_, i) => `v1.0.0-nightly.20260930.${i}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url === "https://github.com/pingdotgg/t3code/releases.atom") return feed(...nightlies);
+        if (url === "https://api.github.com/repos/pingdotgg/t3code/releases?per_page=100&page=1") {
+          return Response.json(Array.from({ length: 100 }, () => ({ tag_name: "v2.0.0" })));
+        }
+        if (url === "https://api.github.com/repos/pingdotgg/t3code/releases?per_page=100&page=2") {
+          return Response.json([
+            { tag_name: "v1.0.0-preview.20260925.1", draft: true },
+            { tag_name: "v1.0.0-preview.20260924.3" },
+          ]);
+        }
+        throw new Error(`Unexpected release request: ${url}`);
+      }),
+    );
+    expect(await findEnvironmentUpdate("1.0.0-preview.20260923.1", signal)).toBe(
+      "1.0.0-preview.20260924.3",
+    );
   });
 
   it("reports failed checks instead of claiming the server is current", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 403 })));
-    await expect(findEnvironmentUpdate("1.0.0", signal)).rejects.toThrow("403");
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json([])));
-    await expect(findEnvironmentUpdate("1.0.0", signal)).rejects.toThrow("No stable release");
+    for (const status of [403, 429]) {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status })));
+      await expect(findEnvironmentUpdate("1.0.0", signal)).rejects.toThrow(String(status));
+    }
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        url.endsWith(".atom") ? feed("v1.0.0") : Response.json([{ tag_name: "v1.0.0" }]),
+      ),
+    );
+    await expect(findEnvironmentUpdate("1.0.0-nightly.20260923.1", signal)).rejects.toThrow(
+      "No nightly release",
+    );
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ error: "invalid" })));
     await expect(findEnvironmentUpdate("1.0.0", signal)).rejects.toThrow();
   });
+
+  it.each(["1.0.0", "1.0.0-nightly.20260923.1", "1.0.0-preview.20260923.1"])(
+    "cancels the release request for %s, including the API fallback",
+    async (currentVersion) => {
+      const controller = new AbortController();
+      const abort = new DOMException("Update check cancelled", "AbortError");
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string, init?: RequestInit) => {
+          if (currentVersion.includes("preview") && url.endsWith(".atom")) return feed("v1.0.0");
+          controller.abort(abort);
+          init?.signal?.throwIfAborted();
+          return new Response(null, { status: 500 });
+        }),
+      );
+      await expect(findEnvironmentUpdate(currentVersion, controller.signal)).rejects.toBe(abort);
+    },
+  );
 });
