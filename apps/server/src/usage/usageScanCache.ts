@@ -9,7 +9,7 @@ import * as Schema from "effect/Schema";
 import { CLAUDE_SYNTHETIC_MODEL } from "../provider/Drivers/claudeUsage.ts";
 import { GUARD_LENGTH, type TranscriptParsePosition } from "./usageTranscriptReader.ts";
 
-const USAGE_SCAN_CACHE_VERSION = 5 as const;
+const USAGE_SCAN_CACHE_VERSION = 6 as const;
 const SPEED_COMPATIBLE_SINCE_VERSION = 4;
 
 /**
@@ -17,8 +17,11 @@ const SPEED_COMPATIBLE_SINCE_VERSION = 4;
  * replace it, dropping saved usage for deleted transcripts. Separate files keep
  * both.
  */
-export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v5.json";
-export const LEGACY_SCAN_CACHE_FILE_NAME = "usage-scan-cache.json";
+export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v6.json";
+export const LEGACY_SCAN_CACHE_FILE_NAMES = [
+  "usage-scan-cache-v5.json",
+  "usage-scan-cache.json",
+] as const;
 
 const SPEEDS: readonly UsageSpeed[] = ["standard", "fast", "ultrafast"];
 
@@ -295,10 +298,8 @@ export function decodeScanCache(
     ) {
       continue;
     }
-    // v4 records of stateful formats (Codex) predate service tiers, so they
-    // all priced as standard. Keep them, because the rollout may be gone, but
-    // make a live rollout re-parse whole: no file has size -1, and a zero
-    // position cannot resume.
+    // Older stateful reducers have different semantics. Keep their history for deleted rollouts,
+    // but force live files to re-parse: no file has size -1 and a zero position cannot resume.
     const legacy = format.state !== undefined && version < USAGE_SCAN_CACHE_VERSION;
     // A corrupt state disqualifies the entry: resuming with it would attach
     // appended usage to the wrong model or replay fork-copied history.

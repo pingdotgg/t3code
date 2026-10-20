@@ -7,6 +7,7 @@ import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 
 import { assert, describe, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { mergeUsage } from "@t3tools/shared/usageMerge";
@@ -16,6 +17,7 @@ import {
   ProviderInstanceId,
   UsageDay,
   type UsageSource,
+  type UsageSummary,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
@@ -43,7 +45,9 @@ import * as AntigravityUsage from "../provider/Drivers/AntigravityUsage.ts";
 import * as ProviderHostLive from "../provider/ProviderHostLive.ts";
 import { totalTokens, type UsageRecord } from "@t3tools/provider-core/server/usage";
 import * as UsageService from "./UsageService.ts";
-import { encodeScanCache } from "./usageScanCache.ts";
+import { encodeScanCache, SCAN_CACHE_FILE_NAME } from "./usageScanCache.ts";
+
+vi.mock("node:fs/promises", { spy: true });
 
 const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -1529,6 +1533,129 @@ describe("UsageService", () => {
   );
 
   it.live(
+    "retains Codex reconciliation and partial coverage through persisted restart, append and repair",
+    () =>
+      Effect.gen(function* () {
+        const { home, settings } = yield* setup;
+        const dir = NodePath.join(home, "codex", "sessions");
+        const transcript = NodePath.join(dir, "rollout.jsonl");
+        const usage = (input: number, output: number) => ({
+          input_tokens: input,
+          output_tokens: output,
+          total_tokens: input + output,
+        });
+        const counted = (input: number, output: number, totalInput: number, totalOutput: number) =>
+          encodeUnknownJsonString({
+            type: "event_msg",
+            timestamp: "2026-08-01T10:00:00Z",
+            payload: {
+              type: "token_count",
+              info: {
+                last_token_usage: usage(input, output),
+                total_token_usage: usage(totalInput, totalOutput),
+              },
+            },
+          });
+        const tier = (service_tier: string) =>
+          encodeUnknownJsonString({
+            type: "event_msg",
+            payload: { type: "thread_settings_applied", thread_settings: { service_tier } },
+          });
+        const bad = counted(10, 2, 130, 28);
+        // Cross the reader's projection threshold so cumulative fields must survive selection.
+        const stale = counted(20, 5, 100, 20).replace(
+          '"payload":',
+          '"padding":' + encodeUnknownJsonString("x".repeat(9 * 1024 * 1024)) + ',"payload":',
+        );
+        let content = [
+          encodeUnknownJsonString({ type: "turn_context", payload: { model: "gpt-6-astra" } }),
+          counted(100, 20, 100, 20),
+          stale,
+          tier("priority"),
+          bad,
+        ].join("\n");
+        yield* Effect.promise(async () => {
+          await NodeFSP.mkdir(dir, { recursive: true });
+          await NodeFSP.writeFile(transcript, content);
+        });
+        yield* Effect.gen(function* () {
+          const verify = (
+            summary: UsageSummary,
+            output: number,
+            cost: number,
+            malformed: number,
+          ) => {
+            assert.strictEqual(totalOutputTokens(summary), output);
+            assert.strictEqual(
+              summary.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0),
+              cost,
+            );
+            const source = summary.sources.find(
+              (source) => source.fingerprint.provider === "codex",
+            );
+            assert.strictEqual(source?.status, malformed === 0 ? "ok" : "partial");
+            assert.strictEqual(source?.malformedRecords, malformed);
+            if (malformed > 0) assert.match(source?.message ?? "", /1 malformed or inconsistent/);
+            else assert.notMatch(source?.message ?? "", /malformed|inconsistent/);
+          };
+          const open = vi.spyOn(NodeFSP, "open");
+          open.mockClear();
+          yield* Effect.addFinalizer(() => Effect.sync(() => open.mockRestore()));
+          const first = yield* UsageService.make;
+          const cold = yield* first.readSummary(WINDOW);
+          assert.isTrue(open.mock.calls.some(([path]) => path === transcript));
+          verify(cold, 20, 20, 1);
+          yield* first.awaitPersisted;
+          const restarted = yield* UsageService.make;
+          open.mockClear();
+          verify(yield* first.readSummary(WINDOW), 20, 20, 1);
+          verify(yield* restarted.readSummary(WINDOW), 20, 20, 1);
+          assert.isFalse(open.mock.calls.some(([path]) => path === transcript));
+          open.mockRestore();
+
+          const append = "\n" + counted(10, 2, 140, 30) + "\n";
+          content += append;
+          yield* Effect.promise(() => NodeFSP.appendFile(transcript, append));
+          verify(yield* restarted.readSummary(WINDOW), 22, 24, 1);
+          yield* restarted.awaitPersisted;
+          const resumed = yield* UsageService.make;
+          verify(yield* resumed.readSummary(WINDOW), 22, 24, 1);
+          const next = tier("ultrafast") + "\n" + counted(10, 2, 150, 32) + "\n";
+          content += next;
+          yield* Effect.promise(() => NodeFSP.appendFile(transcript, next));
+          verify(yield* resumed.readSummary(WINDOW), 24, 36, 1);
+
+          const repaired = content.replace(bad, counted(30, 8, 130, 28));
+          assert.strictEqual(Buffer.byteLength(repaired), Buffer.byteLength(content));
+          yield* Effect.promise(async () => {
+            const stat = await NodeFSP.stat(transcript);
+            await NodeFSP.writeFile(transcript, repaired);
+            await NodeFSP.utimes(transcript, stat.atime, stat.mtimeMs / 1000 + 1);
+          });
+          verify(yield* resumed.readSummary(WINDOW), 32, 52, 0);
+        }).pipe(
+          Effect.provide(
+            layerService({
+              prefix: "usage-codex-reconciliation",
+              home,
+              settings,
+              ratesDocument: {
+                "gpt-6-astra": {
+                  input_cost_per_token: 0,
+                  output_cost_per_token: 1,
+                  input_cost_per_token_priority: 0,
+                  output_cost_per_token_priority: 2,
+                  input_cost_per_token_ultrafast: 0,
+                  output_cost_per_token_ultrafast: 6,
+                },
+              },
+            }),
+          ),
+        );
+      }).pipe(Effect.scoped),
+  );
+
+  it.live(
     "keeps large-record totals and costs exact through append, dedupe, restart and cleanup",
     () =>
       Effect.gen(function* () {
@@ -1583,9 +1710,9 @@ describe("UsageService", () => {
       }).pipe(Effect.scoped),
   );
 
-  it.live(
-    "upgrades a v4 cache: reprices live Codex tiers, keeps deleted rollouts, leaves v4 intact",
-    () =>
+  it.live.each([4, 5])(
+    "upgrades a v%s cache: reparses live Codex usage, keeps deleted rollouts and the old file",
+    (version) =>
       Effect.gen(function* () {
         const { home, settings } = yield* setup;
         const sessions = NodePath.join(home, "codex", "sessions");
@@ -1621,33 +1748,46 @@ describe("UsageService", () => {
 
         yield* Effect.gen(function* () {
           const { stateDir } = yield* ServerConfig.ServerConfig;
-          const cachePath = NodePath.join(stateDir, "usage-scan-cache-v5.json");
-          const legacyPath = NodePath.join(stateDir, "usage-scan-cache.json");
+          const cachePath = NodePath.join(stateDir, SCAN_CACHE_FILE_NAME);
+          const legacyPath = NodePath.join(
+            stateDir,
+            version === 4 ? "usage-scan-cache.json" : "usage-scan-cache-v5.json",
+          );
           const first = yield* UsageService.make;
           yield* first.readSummary(WINDOW);
           yield* first.awaitPersisted;
 
           const legacy = yield* Effect.promise(async () => {
             const document = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
-              files: Record<string, { r: unknown[][]; cs: { speed?: unknown } }>;
+              files: Record<string, { r: unknown[][]; cs: Record<string, unknown> }>;
             };
-            for (const file of Object.values(document.files)) {
-              file.r = file.r.map((row) => [...row.slice(0, 10), 0]);
-              delete file.cs.speed;
+            for (const [path, file] of Object.entries(document.files)) {
+              file.r = file.r.map((row) => [
+                ...row.slice(0, 6),
+                path === live ? 99 : row[6],
+                ...row.slice(7, 10),
+                version === 4 ? 0 : 1,
+              ]);
+              if (version === 4) delete file.cs.speed;
+              delete file.cs.lastCumulativeUsage;
+              delete file.cs.malformedRecords;
             }
-            const text = encodeUnknownJsonString({ ...document, version: 4 });
-            await NodeFSP.writeFile(legacyPath, text);
+            const text = encodeUnknownJsonString({ ...document, version });
             await NodeFSP.rm(cachePath);
+            await NodeFSP.writeFile(legacyPath, text);
             await NodeFSP.rm(deleted);
             return text;
           });
 
-          const summary = yield* (yield* UsageService.make).readSummary(WINDOW);
+          const upgraded = yield* UsageService.make;
+          const summary = yield* upgraded.readSummary(WINDOW);
           assert.strictEqual(totalOutputTokens(summary), 30);
           assert.strictEqual(
             summary.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0),
-            80,
+            60 + 20 * (version === 4 ? 1 : 2),
           );
+          yield* upgraded.awaitPersisted;
+          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v6.json");
           assert.strictEqual(
             yield* Effect.promise(() => NodeFSP.readFile(legacyPath, "utf8")),
             legacy,
@@ -1655,13 +1795,15 @@ describe("UsageService", () => {
         }).pipe(
           Effect.provide(
             layerService({
-              prefix: "usage-service-v4-upgrade-test",
+              prefix: "usage-service-cache-upgrade-test",
               home,
               settings,
               ratesDocument: {
                 "gpt-6-astra": {
                   input_cost_per_token: 0,
                   output_cost_per_token: 1,
+                  input_cost_per_token_priority: 0,
+                  output_cost_per_token_priority: 2,
                   input_cost_per_token_ultrafast: 0,
                   output_cost_per_token_ultrafast: 6,
                 },
@@ -1911,7 +2053,7 @@ describe("UsageService", () => {
         yield* Effect.promise(async () => {
           await NodeFSP.mkdir(stateDir, { recursive: true });
           await NodeFSP.writeFile(
-            NodePath.join(stateDir, "usage-scan-cache-v5.json"),
+            NodePath.join(stateDir, SCAN_CACHE_FILE_NAME),
             encodeUnknownJsonString(cache),
           );
         });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { initialCodexScanState, parseCodexLine } from "./codexUsage.ts";
+import { codexUsageFormat, initialCodexScanState, parseCodexLine } from "./codexUsage.ts";
 
 describe("parseCodexLine", () => {
   const sessionMeta = JSON.stringify({
@@ -28,6 +28,23 @@ describe("parseCodexLine", () => {
             reasoning_output_tokens: reasoning,
           },
         },
+      },
+    });
+  const counters = (input: number, output: number) => ({
+    input_tokens: input,
+    cached_input_tokens: 0,
+    cache_write_input_tokens: 0,
+    output_tokens: output,
+    reasoning_output_tokens: 0,
+    total_tokens: input + output,
+  });
+  const counted = (last: unknown, total?: unknown, extra = {}) =>
+    JSON.stringify({
+      type: "event_msg",
+      timestamp: "2026-08-01T05:17:49.919Z",
+      payload: {
+        type: "token_count",
+        info: { last_token_usage: last, total_token_usage: total, ...extra },
       },
     });
 
@@ -60,11 +77,158 @@ describe("parseCodexLine", () => {
     expect(parseCodexLine(tokenCount(100, 0, 10, 0), state)).toBeNull();
   });
 
-  it("does not let a pre-model event poison the duplicate signature", () => {
+  it("does not consume counters before the model and timestamp are valid", () => {
     const state = initialCodexScanState();
     expect(parseCodexLine(tokenCount(100, 0, 10, 0), state)).toBeNull();
     parseCodexLine(turnContext, state);
     expect(parseCodexLine(tokenCount(100, 0, 10, 0), state)).not.toBeNull();
+
+    const cumulativeState = initialCodexScanState();
+    const line = counted(counters(100, 20), counters(100, 20));
+    expect(parseCodexLine(line, cumulativeState)).toBeNull();
+    parseCodexLine(turnContext, cumulativeState);
+    expect(
+      parseCodexLine(line.replace("2026-08-01T05:17:49.919Z", "invalid"), cumulativeState),
+    ).toBeNull();
+    expect(parseCodexLine(line, cumulativeState)?.totals.outputTokens).toBe(20);
+    expect(codexUsageFormat.readMalformedRecords?.(cumulativeState)).toBe(0);
+  });
+
+  it("ignores stale changed requests but counts equal requests when totals advance across contexts", () => {
+    const state = initialCodexScanState();
+    parseCodexLine(turnContext, state);
+    const request = counters(100, 20);
+    expect(parseCodexLine(counted(request, request), state)?.totals.outputTokens).toBe(20);
+    expect(parseCodexLine(counted(counters(20, 5), request), state)).toBeNull();
+    expect(
+      parseCodexLine(
+        counted({ ...counters(0, 0), total_tokens: 20330 }, request, {
+          model_context_window: 258400,
+        }),
+        state,
+      ),
+    ).toBeNull();
+    expect(parseCodexLine(counted(request, counters(200, 40)), state)?.totals.outputTokens).toBe(
+      20,
+    );
+
+    for (const [index, tier] of ["priority", "ultrafast"].entries()) {
+      parseCodexLine(
+        JSON.stringify({ type: "turn_context", payload: { model: "gpt-6-astra" } }),
+        state,
+      );
+      parseCodexLine(
+        JSON.stringify({
+          type: "event_msg",
+          payload: { type: "thread_settings_applied", thread_settings: { service_tier: tier } },
+        }),
+        state,
+      );
+      const record = parseCodexLine(
+        counted(request, counters(100 * (index + 3), 20 * (index + 3))),
+        state,
+      );
+      expect(record).toMatchObject({
+        model: "gpt-6-astra",
+        speed: tier === "priority" ? "fast" : "ultrafast",
+        totals: { uncachedInputTokens: 100, outputTokens: 20 },
+      });
+    }
+    expect(codexUsageFormat.readMalformedRecords?.(state)).toBe(0);
+  });
+
+  it.each([false, true])(
+    "does not rebill legacy requests or drop the next cumulative delta (initial cumulative=%s)",
+    (initialCumulative) => {
+      const state = initialCodexScanState();
+      parseCodexLine(turnContext, state);
+      const first = counters(100, 20);
+      expect(
+        parseCodexLine(counted(first, initialCumulative ? first : undefined), state)?.totals
+          .outputTokens,
+      ).toBe(20);
+      expect(parseCodexLine(counted(first), state)).toBeNull();
+      expect(parseCodexLine(counted(counters(20, 5)), state)?.totals.outputTokens).toBe(5);
+      expect(parseCodexLine(counted(counters(20, 5), counters(120, 25)), state)).toBeNull();
+      expect(
+        parseCodexLine(counted(counters(10, 2), counters(130, 27)), state)?.totals.outputTokens,
+      ).toBe(2);
+      expect(codexUsageFormat.readMalformedRecords?.(state)).toBe(0);
+    },
+  );
+
+  it("checks every cumulative component and recovers using an inconsistent pair's valid baseline", () => {
+    const request = {
+      ...counters(100, 20),
+      cached_input_tokens: 30,
+      cache_write_input_tokens: 10,
+      reasoning_output_tokens: 5,
+    };
+    const fields = Object.keys(request) as (keyof typeof request)[];
+    for (const field of fields) {
+      const state = initialCodexScanState();
+      parseCodexLine(turnContext, state);
+      expect(parseCodexLine(counted(request, request), state)?.totals).toEqual({
+        uncachedInputTokens: 60,
+        cachedInputTokens: 30,
+        cacheCreationTokens: 10,
+        outputTokens: 20,
+        reasoningTokens: 5,
+      });
+      const total = { ...request };
+      for (const key of fields) total[key] *= 2;
+      total[field] += 1;
+      if (field === "input_tokens" || field === "output_tokens") total.total_tokens += 1;
+      expect(parseCodexLine(counted(request, total), state), field).toBeNull();
+      expect(codexUsageFormat.readMalformedRecords?.(state), field).toBe(1);
+      for (const key of fields) total[key] += request[key];
+      expect(parseCodexLine(counted(request, total), state)?.totals.outputTokens, field).toBe(20);
+      expect(codexUsageFormat.readMalformedRecords?.(state), field).toBe(1);
+    }
+  });
+
+  it.each(["request", "cumulative"])("skips malformed %s counters and recovers", (malformed) => {
+    const state = initialCodexScanState();
+    parseCodexLine(turnContext, state);
+    const request = counters(100, 20);
+    parseCodexLine(counted(request, request), state);
+    expect(
+      parseCodexLine(
+        counted(
+          malformed === "request" ? { ...request, cached_input_tokens: -1 } : request,
+          malformed === "cumulative"
+            ? { ...counters(200, 40), output_tokens: "40" }
+            : counters(200, 40),
+        ),
+        state,
+      ),
+    ).toBeNull();
+    expect(codexUsageFormat.readMalformedRecords?.(state)).toBe(1);
+    expect(
+      parseCodexLine(
+        counted(request, malformed === "request" ? counters(300, 60) : counters(200, 40)),
+        state,
+      )?.totals.outputTokens,
+    ).toBe(20);
+    expect(codexUsageFormat.readMalformedRecords?.(state)).toBe(1);
+  });
+
+  it("does not bill a context-window estimate or lose the following real request", () => {
+    const state = initialCodexScanState();
+    parseCodexLine(turnContext, state);
+    parseCodexLine(counted(counters(100, 20), counters(100, 20)), state);
+    const estimate = { ...counters(0, 0), total_tokens: 1000 };
+    expect(
+      parseCodexLine(
+        counted({ ...estimate, total_tokens: 880 }, estimate, { model_context_window: 1000 }),
+        state,
+      ),
+    ).toBeNull();
+    expect(
+      parseCodexLine(counted(counters(10, 2), { ...counters(10, 2), total_tokens: 1012 }), state)
+        ?.totals.outputTokens,
+    ).toBe(2);
+    expect(codexUsageFormat.readMalformedRecords?.(state)).toBe(0);
   });
 
   it("carries the service tier from the latest thread settings", () => {
@@ -139,24 +303,32 @@ describe("parseCodexLine", () => {
       parseCodexLine(stamped(forkInstant, turnContext), state);
 
       expect(
-        parseCodexLine(stamped("2026-08-01T05:00:00.001Z", tokenCount(100, 0, 10, 0)), state),
+        parseCodexLine(
+          stamped("2026-08-01T05:00:00.001Z", counted(counters(100, 10), counters(100, 10))),
+          state,
+        ),
       ).toBeNull();
       expect(
-        parseCodexLine(stamped("2026-08-01T05:00:00.002Z", tokenCount(200, 0, 20, 0)), state),
+        parseCodexLine(
+          stamped("2026-08-01T05:00:00.002Z", counted(counters(200, 20), counters(300, 30))),
+          state,
+        ),
       ).toBeNull();
 
       const real = parseCodexLine(
-        stamped("2026-08-01T05:00:06.000Z", tokenCount(300, 0, 30, 0)),
+        stamped("2026-08-01T05:00:06.000Z", counted(counters(200, 20), counters(500, 50))),
         state,
       );
       expect(real).not.toBeNull();
-      expect(real?.totals.outputTokens).toBe(30);
+      expect(real?.sessionId).toBe("child");
+      expect(real?.totals.outputTokens).toBe(20);
 
       const next = parseCodexLine(
-        stamped("2026-08-01T05:00:06.100Z", tokenCount(400, 0, 40, 0)),
+        stamped("2026-08-01T05:00:06.100Z", counted(counters(400, 40), counters(900, 90))),
         state,
       );
       expect(next).not.toBeNull();
+      expect(codexUsageFormat.readMalformedRecords?.(state)).toBe(0);
     });
 
     it("recognizes subagent spawns without forked_from_id", () => {
