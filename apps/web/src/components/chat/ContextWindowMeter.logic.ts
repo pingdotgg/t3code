@@ -104,7 +104,7 @@ export function formatContextWindowCompactionMessage(
   autoCompactThreshold?: number | null,
 ): string {
   if (typeof autoCompactThreshold === "number" && autoCompactThreshold > 0) {
-    return `Compacts automatically at ${autoCompactThreshold.toLocaleString("en-US")} tokens.`;
+    return `Compacts automatically at about ${autoCompactThreshold.toLocaleString("en-US")} tokens.`;
   }
   return modelDisplayName
     ? `Context for ${modelDisplayName} compacts automatically when needed.`

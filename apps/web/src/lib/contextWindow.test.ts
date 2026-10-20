@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
+import { OrchestrationV2ProviderTurnTokenUsage } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+import { formatContextWindowCompactionMessage } from "../components/chat/ContextWindowMeter.logic";
 import * as DateTime from "effect/DateTime";
 import {
   ContextTransferId,
@@ -14,6 +17,8 @@ import {
   formatContextWindowTokens,
   latestProviderTurnTokenUsage,
 } from "./contextWindow";
+
+const decodeTokenUsage = Schema.decodeSync(OrchestrationV2ProviderTurnTokenUsage);
 
 describe("V2 context window presentation", () => {
   it("uses retained compaction token data when available", () => {
@@ -81,18 +86,24 @@ describe("V2 context window presentation", () => {
 
 describe("live provider-turn usage (#8144)", () => {
   it("prefers the provider's live report over compaction items", () => {
-    const snapshot = deriveLatestContextWindowSnapshot([], {
+    const usage = decodeTokenUsage({
       usedTokens: 42_000,
       maxTokens: 200_000,
       inputTokens: 40_000,
       outputTokens: 2_000,
+      autoCompactThreshold: 150_000,
       updatedAt: "2026-08-27T00:00:00.000Z",
     });
+    const snapshot = deriveLatestContextWindowSnapshot([], usage);
     expect(snapshot).not.toBeNull();
     expect(snapshot?.usedTokens).toBe(42_000);
     expect(snapshot?.maxTokens).toBe(200_000);
     expect(snapshot?.remainingTokens).toBe(158_000);
     expect(snapshot?.usedPercentage).toBe(21);
+    expect(snapshot?.autoCompactThreshold).toBe(150_000);
+    expect(
+      formatContextWindowCompactionMessage("Claude Sonnet 4.6", snapshot?.autoCompactThreshold),
+    ).toBe("Compacts automatically at about 150,000 tokens.");
   });
 
   it("handles a report without a known context window", () => {
@@ -102,6 +113,10 @@ describe("live provider-turn usage (#8144)", () => {
     });
     expect(snapshot?.maxTokens).toBeNull();
     expect(snapshot?.usedPercentage).toBeNull();
+    expect(snapshot?.autoCompactThreshold).toBeNull();
+    expect(formatContextWindowCompactionMessage(null, snapshot?.autoCompactThreshold)).toBe(
+      "Context compacts automatically when needed.",
+    );
   });
 });
 

@@ -205,6 +205,14 @@ function claudePromptCacheTtlMs(
   return undefined;
 }
 
+// Claude caps the window at the model's context, so a setting at or above it never applies.
+function claudeAutoCompactThreshold(autoCompactWindow: string, maxTokens: number | null) {
+  const threshold = Number(autoCompactWindow);
+  return threshold > 0 && (maxTokens === null || threshold < maxTokens)
+    ? { autoCompactThreshold: threshold }
+    : {};
+}
+
 function claudeMessageInputTokens(usage: {
   readonly input_tokens: number;
   readonly cache_creation_input_tokens?: number | null;
@@ -227,18 +235,21 @@ export function claudeProviderTurnTokenUsage(
   },
   modelSelection: ModelSelection,
   updatedAt: string,
+  autoCompactWindow = "",
 ) {
   const inputTokens = claudeMessageInputTokens(usage);
   const outputTokens = usage.output_tokens;
   const promptCacheTtlMs = claudePromptCacheTtlMs(usage.cache_creation);
+  const maxTokens = claudeContextWindow(modelSelection);
   return {
     usedTokens: inputTokens + outputTokens,
-    maxTokens: claudeContextWindow(modelSelection),
+    maxTokens,
     inputTokens,
     cachedInputTokens: usage.cache_read_input_tokens ?? 0,
     outputTokens,
     reasoningOutputTokens: 0,
     ...(promptCacheTtlMs === undefined ? {} : { promptCacheTtlMs }),
+    ...claudeAutoCompactThreshold(autoCompactWindow, maxTokens),
     updatedAt,
   };
 }
@@ -3963,6 +3974,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             usage,
             context.input.modelSelection,
             DateTime.formatIso(now),
+            adapterOptions.settings.autoCompactWindow,
           );
           if (tokenUsage.inputTokens <= 0) return;
           yield* emitProviderEvent({
@@ -7439,6 +7451,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ? Math.round(postTokens)
                 : undefined;
             if (afterTokenCount !== undefined) {
+              const maxTokens = claudeContextWindow(context.input.modelSelection);
               yield* emitProviderEvent({
                 type: "provider_turn.updated",
                 driver: CLAUDE_PROVIDER,
@@ -7459,7 +7472,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   completedAt: null,
                   tokenUsage: {
                     usedTokens: afterTokenCount,
-                    maxTokens: claudeContextWindow(context.input.modelSelection),
+                    maxTokens,
+                    ...claudeAutoCompactThreshold(
+                      adapterOptions.settings.autoCompactWindow,
+                      maxTokens,
+                    ),
                     updatedAt: DateTime.formatIso(now),
                   },
                 },

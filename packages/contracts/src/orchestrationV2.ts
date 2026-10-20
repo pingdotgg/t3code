@@ -171,6 +171,7 @@ export const OrchestrationV2ProviderTurnTokenUsage = Schema.Struct({
   outputTokens: Schema.optional(NonNegativeInt),
   reasoningOutputTokens: Schema.optional(NonNegativeInt),
   promptCacheTtlMs: Schema.optional(PositiveInt),
+  autoCompactThreshold: Schema.optional(PositiveInt),
   updatedAt: Schema.String,
 });
 export type OrchestrationV2ProviderTurnTokenUsage =
