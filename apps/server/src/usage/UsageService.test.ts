@@ -985,6 +985,85 @@ describe("UsageService", () => {
       }).pipe(Effect.scoped),
   );
 
+  it.live("includes host and merged OpenCode instance histories once across list aliases", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const hostRoot = NodePath.join(home, "opencode");
+      const instanceRoot = NodePath.join(home, "opencode-work");
+      const alias = NodePath.join(home, "opencode-alias");
+      const dataHome = NodePath.join(home, "data");
+      const xdgRoot = NodePath.join(dataHome, "opencode");
+      const histories = [
+        { root: hostRoot, id: "host", output: 5 },
+        { root: instanceRoot, id: "work", output: 7 },
+        { root: xdgRoot, id: "xdg", output: 11 },
+      ];
+      yield* Effect.promise(async () => {
+        for (const { root, id, output } of histories) {
+          const directory = NodePath.join(root, "storage", "message", "session-1");
+          await NodeFSP.mkdir(directory, { recursive: true });
+          await NodeFSP.writeFile(
+            NodePath.join(directory, `${id}.json`),
+            encodeUnknownJsonString({
+              role: "assistant",
+              modelID: "example-model",
+              time: { created: Date.parse("2026-08-01T10:00:00Z") },
+              tokens: { input: 10, output },
+            }),
+          );
+        }
+        await NodeFSP.symlink(instanceRoot, alias, "junction");
+      });
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-opencode-instances",
+            home,
+            environment: { XDG_DATA_HOME: dataHome },
+            settings: {
+              ...settings,
+              providerInstances: {
+                ...settings.providerInstances,
+                [ProviderInstanceId.make("opencode-work")]: {
+                  driver: ProviderDriverKind.make("opencode"),
+                  environment: [
+                    {
+                      name: "OPENCODE_DATA_DIR",
+                      value: ` ${instanceRoot}, ${alias} `,
+                      sensitive: false,
+                    },
+                  ],
+                },
+                [ProviderInstanceId.make("opencode-xdg")]: {
+                  driver: ProviderDriverKind.make("opencode"),
+                  environment: [{ name: "OPENCODE_DATA_DIR", value: "", sensitive: false }],
+                },
+              },
+            },
+          }),
+        ),
+      );
+      const summary = yield* service.readSummary(WINDOW);
+      const sources = summary.sources.filter(
+        (source) => source.fingerprint.provider === "opencode",
+      );
+      const expectedRoots = yield* Effect.promise(() =>
+        Promise.all(histories.map(({ root }) => NodeFSP.realpath(root))),
+      );
+      assert.deepStrictEqual(
+        sources.map((source) => source.fingerprint.resolvedHomePath).sort(),
+        expectedRoots.sort(),
+      );
+      assert.deepStrictEqual(
+        summary.buckets
+          .filter((bucket) => bucket.provider === "opencode")
+          .map((bucket) => bucket.totals.outputTokens)
+          .sort((a, b) => a - b),
+        [5, 7, 11],
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.live("counts aliased OpenCode and Antigravity directories once", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
