@@ -542,12 +542,9 @@ import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { Button, InlineButton } from "./ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
-import { ServerUpdateAction } from "./ServerUpdateAction";
+import { ServerUpdateAction, serverUpdateStageLabel } from "./ServerUpdateAction";
 import { useAutoBalanceUpdateBanner } from "./chat/useAutoBalanceUpdateBanner";
-import {
-  ComposerServerUpdateIcon,
-  ComposerServerUpdateStatus,
-} from "./chat/ComposerServerUpdateStatus";
+import { ComposerServerUpdateIcon } from "./chat/ComposerServerUpdateStatus";
 import {
   dismissServerUpdateFailure,
   isServerUpdateFailureDismissed,
@@ -2328,12 +2325,11 @@ export default function ChatView(props: ChatViewProps) {
         variant: updateFailed ? "error" : "default",
         priority: updateInProgress ? "urgent" : "notice",
         icon: <ComposerServerUpdateIcon status={serverUpdateState.status} />,
-        title: (
-          <ComposerServerUpdateStatus
-            state={serverUpdateState}
-            serverLabel={versionMismatchServerLabel}
-          />
-        ),
+        title: `${updateFailed ? "Could not update" : "Updating"} ${versionMismatchServerLabel}`,
+        description:
+          serverUpdateState.status === "failed"
+            ? serverUpdateState.message
+            : serverUpdateStageLabel(serverUpdateState.stage),
         actions: updateInProgress ? (
           disconnectAction
         ) : !versionMismatch ||
