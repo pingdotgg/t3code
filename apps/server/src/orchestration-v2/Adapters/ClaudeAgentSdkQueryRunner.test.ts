@@ -151,6 +151,13 @@ it.effect("forks a session stored under the instance's own CLAUDE_CONFIG_DIR", (
       );
       assert.include(transcript, '"content":"hello"');
       assert.include(transcript, '"text":"hi"');
+      const inheritedHead = transcript
+        .trim()
+        .split("\n")
+        .findLast((line) => line.includes('"type":"assistant"'))
+        ?.match(/"uuid"\s*:\s*"([^"]+)"/)?.[1];
+      assert.isString(inheritedHead);
+      assert.equal(forked.headMessageId, inheritedHead);
       assert.equal(process.env.CLAUDE_CONFIG_DIR, hostConfigDir);
       assert.equal(inProcessFork.mock.calls.length, 0);
     }).pipe(Effect.provide(forkRunnerLayer)),
@@ -185,6 +192,52 @@ const realQueryRunner = layerQueryRunner.pipe(
     }),
   ),
   Layer.provide(NodeServices.layer),
+);
+
+it.effect.each(["readable", "unreadable"] as const)(
+  "forks with a %s transcript, retaining the inherited head when available",
+  (transcript) =>
+    Effect.gen(function* () {
+      let forkCompleted = false;
+      const fork = vi.spyOn(ClaudeSdk, "forkSession").mockImplementation(async () => {
+        forkCompleted = true;
+        return { sessionId: "forked-session" };
+      });
+      const read = vi.spyOn(ClaudeSdk, "getSessionMessages").mockImplementation(async () => {
+        assert.isTrue(forkCompleted);
+        if (transcript === "unreadable") throw new Error("transcript unreadable");
+        return ["remapped-user", "remapped-assistant"].map((uuid) => ({
+          type: "assistant" as const,
+          uuid,
+          session_id: "forked-session",
+          message: { role: "assistant", content: uuid },
+          parent_tool_use_id: null,
+          parent_agent_id: null,
+        }));
+      });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          fork.mockRestore();
+          read.mockRestore();
+        }),
+      );
+      const runner = yield* ClaudeAgentSdkQueryRunner;
+      const forked = yield* runner.forkSession({
+        sessionId: "source-session",
+        options: { dir: "/workspace", upToMessageId: "source-assistant" },
+        environment: process.env,
+        threadId: ThreadId.make("thread-fork-head"),
+        providerSessionId: ProviderSessionId.make("session-fork-head"),
+      });
+      assert.deepEqual(forked, {
+        sessionId: "forked-session",
+        ...(transcript === "readable" ? { headMessageId: "remapped-assistant" } : {}),
+      });
+      assert.deepEqual(fork.mock.calls, [
+        ["source-session", { dir: "/workspace", upToMessageId: "source-assistant" }],
+      ]);
+      assert.deepEqual(read.mock.calls, [["forked-session", { dir: "/workspace" }]]);
+    }).pipe(Effect.provide(realQueryRunner)),
 );
 
 function fakeClaudeCli(script: string): string {
