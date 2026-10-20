@@ -2055,6 +2055,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       for (let ordinal = 1; ordinal <= 1_000; ordinal += 1) {
         const id = `turn-item:bounded-sql-history:${ordinal}`;
         const runId = `run:bounded-sql-history:${ordinal}`;
+        const message = ordinal === 1 || ordinal === 1_000;
         yield* sql`
           INSERT INTO orchestration_v2_projection_runs (
             run_id, thread_id, ordinal, provider, provider_thread_id, status,
@@ -2086,7 +2087,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             parent_item_id, ordinal, type, status, updated_at, payload_json
           ) VALUES (
             ${id}, ${threadId}, ${runId}, NULL, NULL, NULL, NULL, ${ordinal},
-            'command_execution', 'completed', ${nowIso},
+            ${message ? "user_message" : "command_execution"}, 'completed', ${nowIso},
             ${encodeUnknownJsonString({
               id,
               threadId,
@@ -2105,11 +2106,86 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
               startedAt: nowIso,
               completedAt: nowIso,
               updatedAt: nowIso,
-              type: "command_execution",
+              ...(message
+                ? {
+                    type: "user_message",
+                    createdBy: "user",
+                    creationSource: "web",
+                    messageId: `message:bounded-sql-history:${ordinal}`,
+                    inputIntent: "turn_start",
+                    text: `Turn ${ordinal}`,
+                    attachments: [],
+                  }
+                : { type: "command_execution" }),
             })}
           )
         `;
       }
+
+      for (const ordinal of [1, 1_000]) {
+        yield* projectionStore.apply({
+          id: EventId.make(`event:bounded-sql-history:message:${ordinal}`),
+          type: "message.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            createdBy: "user",
+            creationSource: "web",
+            id: MessageId.make(`message:bounded-sql-history:${ordinal}`),
+            threadId,
+            runId: RunId.make(`run:bounded-sql-history:${ordinal}`),
+            nodeId: NodeId.make(`node:bounded-sql-history:${ordinal}`),
+            role: "user",
+            text: `Turn ${ordinal}`,
+            attachments: [],
+            streaming: false,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+      }
+      const scopeId = CheckpointScopeId.make("scope:bounded-sql-history:root");
+      const baselineId = CheckpointId.make("checkpoint:bounded-sql-history:baseline");
+      yield* projectionStore.apply({
+        id: EventId.make("event:bounded-sql-history:scope"),
+        type: "checkpoint-scope.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: scopeId,
+          threadId,
+          runId: RunId.make("run:bounded-sql-history:1000"),
+          nodeId: NodeId.make("node:bounded-sql-history:1000"),
+          parentScopeId: null,
+          providerThreadId: null,
+          kind: "root_run",
+          ordinalWithinParent: 0,
+          advancesAppRunCount: true,
+          cwd: "/repo/worktree",
+          createdAt: now,
+        },
+      });
+      // A reused root scope can retain its original baseline on a node outside the window.
+      yield* projectionStore.apply({
+        id: EventId.make("event:bounded-sql-history:baseline"),
+        type: "checkpoint.captured",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: baselineId,
+          threadId,
+          scopeId,
+          runId: null,
+          nodeId: NodeId.make("node:bounded-sql-history:1"),
+          parentCheckpointId: null,
+          ordinalWithinScope: 0,
+          appRunOrdinal: null,
+          ref: CheckpointRef.make("refs/t3/bounded-sql-history/0"),
+          status: "ready",
+          files: [],
+          capturedAt: now,
+        },
+      });
 
       const snapshots = yield* Effect.all(
         Array.from({ length: 4 }, () =>
@@ -2123,6 +2199,18 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         assert.lengthOf(snapshot.projection.visibleTurnItems, 76);
         assert.strictEqual(snapshot.projection.turnItems[0]?.ordinal, 925);
         assert.strictEqual(snapshot.projection.turnItems.at(-1)?.ordinal, 1_000);
+        assert.deepEqual(
+          snapshot.projection.messages.map((message) => message.id),
+          [MessageId.make("message:bounded-sql-history:1000")],
+        );
+        assert.deepEqual(
+          snapshot.projection.checkpointScopes.map((scope) => scope.id),
+          [scopeId],
+        );
+        assert.deepEqual(
+          snapshot.projection.checkpoints.map((checkpoint) => checkpoint.id),
+          [baselineId],
+        );
       }
       const retainedRequestPlan = yield* sql<{ readonly detail: string }>`
         EXPLAIN QUERY PLAN
