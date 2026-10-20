@@ -193,6 +193,7 @@ const relayDashboardCharts = (dataset: string): ReadonlyArray<QueryChart> => {
   const source = `['${dataset}']`;
   const linkRequests = `${source}\n| where kind == "server" and ['attributes.http.request.method'] == "POST" and ['attributes.http.route'] == ${LINK_ROUTE}`;
   const tunnelRequests = `${source}\n| where kind == "server" and ['attributes.http.request.method'] == "POST" and ['attributes.http.route'] in (${TUNNEL_ROUTES})`;
+  const clientConnections = `${source}\n| where name == "relay.connection.attempt" and error != true\n| extend surface = tostring(['resource.custom']['t3.client.surface'])\n| where isnotempty(surface)`;
   return [
     timeSeries(
       "links",
@@ -242,6 +243,52 @@ const relayDashboardCharts = (dataset: string): ReadonlyArray<QueryChart> => {
         apl: `${source}\n| where name == "relay.environment_linker.link" and error == true\n| extend message = tostring(['status.message'])\n| summarize failures = count() by reason = case(message contains "failed during '", strcat("provisioning: ", extract("failed during '([^']+)'", 1, message)), message startswith "Managed tunnel limit reached", "managed tunnel limit reached", substring(message, 0, 80))\n| top 10 by failures`,
       },
     },
+    // Connecting, as users see it: web, desktop and mobile export their
+    // connection spans into this dataset, in the same traces as the relay's
+    // and the host's spans. An attempt lasts until initial sync finishes.
+    timeSeries(
+      "connect-time",
+      "Connecting: time to connected by surface (ms)",
+      `${clientConnections}\n| summarize p50 = percentile(duration, 50) / 1000000, p90 = percentile(duration, 90) / 1000000 by bin_auto(_time), surface`,
+    ),
+    timeSeries(
+      "connect-outcomes",
+      "Connecting: attempts by outcome",
+      `${source}\n| where name == "relay.connection.attempt" and isnotempty(['resource.custom']['t3.client.surface'])\n| summarize connected = countif(error != true), failed = countif(error == true) by bin_auto(_time)`,
+    ),
+    {
+      id: "connect-phases",
+      name: "Connecting: where the time goes (ms)",
+      type: "Table",
+      query: {
+        // Failed direct route checks stay in: waiting out an unreachable LAN
+        // address before falling back to the relay is the slowest step.
+        apl: [
+          source,
+          `| where isnotempty(['resource.custom']['t3.client.surface'])`,
+          `| extend url = tostring(['attributes.url.full'])`,
+          `| extend phase = case(`,
+          `    name == "ConnectionDriver.checkRoute", "0. Direct route check, before any relay fallback",`,
+          `    name == "relay.connection.cloudSessionToken.resolve", "1. Clerk session token",`,
+          `    name == "clientRuntime.managedRelay.exchangeAccessToken", "2. Relay token exchange",`,
+          `    kind == "client" and url startswith "https://relay.t3.codes/v1/environments/" and url endswith "/connect", "3. Relay connect, minting a host credential",`,
+          `    name == "environment.authorization.descriptor", "4. Host descriptor",`,
+          `    name == "environment.authorization.accessToken.exchange", "5. Host token exchange",`,
+          `    name == "clientRuntime.connection.remote.createDpopSocketUrl", "6. Socket ticket",`,
+          `    name == "environment.initialSync", "7. Initial sync",`,
+          `    name == "relay.connection.attempt", "Total: time to connected",`,
+          `    "")`,
+          `| where phase != "" and (error != true or phase startswith "0.")`,
+          `| summarize calls = count(), p50_ms = round(percentile(duration, 50) / 1000000, 0), p90_ms = round(percentile(duration, 90) / 1000000, 0) by phase`,
+          `| order by phase asc`,
+        ].join("\n"),
+      },
+    },
+    timeSeries(
+      "relay-latency-by-continent",
+      "Relay token and connect latency by user continent (p50 ms)",
+      `${source}\n| where kind == "server" and ['attributes.http.request.method'] == "POST" and (['attributes.http.route'] == "/v1/client/dpop-token" or ['attributes.http.route'] == "/v1/environments/:environmentId/connect")\n| extend continent = tostring(['attributes.custom']['relay.edge.continent'])\n| where isnotempty(continent)\n| summarize p50 = percentile(duration, 50) / 1000000 by bin_auto(_time), continent`,
+    ),
   ];
 };
 

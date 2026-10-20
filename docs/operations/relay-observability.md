@@ -121,6 +121,12 @@ Monitors count HTTP status codes, not span errors. A request the relay cuts off 
 ends as an interrupted span without an error flag, but still answers 504. `/connect` 502s are
 normal: offline hosts produce most of them, retried by their clients every few seconds.
 
+The dashboard's "Connecting" charts show connections as users see them. Web, desktop, and mobile
+export a root `relay.connection.attempt` span per attempt, which lasts until initial sync finishes, in
+the same trace as the relay's and the host's spans. Most reconnects reuse a cached relay token and go
+straight to the host, so relay latency only affects cold connects. A slow total with fast phases
+usually means the client waited out an unreachable direct (LAN) route before falling back to the relay.
+
 **Links failing / tunnel recovery failing.** Open the dashboard's "Link failures by reason" table.
 `provisioning: ensure-tunnel` or `configure-tunnel` with Cloudflare 429s on the "Cloudflare API calls
 by status" chart is the #16810 failure: the account's Cloudflare API rate limit. Ask Cloudflare to
