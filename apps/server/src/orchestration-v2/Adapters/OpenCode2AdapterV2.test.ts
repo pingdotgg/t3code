@@ -1092,6 +1092,94 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     event("session.execution.started", { sessionID: CHILD }),
   ];
 
+  it.effect("settles a background subagent that fails, so no work is left pending", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...launchedAndRunning,
+        // The parent turn ends, and the background child fails: it reports
+        // nothing back, so its call has to end with the failure.
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        event("session.execution.failed", {
+          sessionID: CHILD,
+          error: { type: "provider.quota", message: "Rate limit exceeded." },
+        }),
+      ]);
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(withLineage(thread));
+      yield* watch.until(
+        () => watch.calls.get("Sleep")?.status === "failed" && watch.state.roster?.length === 0,
+      );
+      assert.deepEqual(watch.state.roster, []);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("settles every call joined to a failed background subagent", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...launchedAndRunning,
+        // A second call joins the running child, so its turn answers for both.
+        ...callAgain({ background: true }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        event("session.execution.failed", {
+          sessionID: CHILD,
+          error: { type: "provider.quota", message: "Rate limit exceeded." },
+        }),
+      ]);
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(withLineage(thread));
+      yield* watch.until(
+        () =>
+          watch.calls.get("Sleep")?.status === "failed" &&
+          watch.calls.get("Again")?.status === "failed" &&
+          watch.state.roster?.length === 0,
+      );
+      assert.deepEqual(watch.state.roster, []);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("settles the background call a foreground call joined to a failed child", () =>
+    Effect.gen(function* () {
+      const again = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: "call-again" };
+      const { runtime, thread } = yield* resumed([
+        ...launchedAndRunning,
+        // A foreground call joins the running background child. It is only
+        // marked background once its own tool call returns, so the child can
+        // fail while this call is still the foreground one.
+        event("session.tool.input.started", { ...again, name: "subagent" }),
+        event("session.tool.called", {
+          ...again,
+          name: "subagent",
+          input: { description: "Again", prompt: "also this", sessionID: CHILD },
+          executed: false,
+        }),
+        event("session.tool.progress", {
+          ...again,
+          metadata: { sessionID: CHILD, status: "running" },
+        }),
+        out("session.update", { sessionID: CHILD, permissions: "<any>" }),
+        reply("session.update", null),
+        // The child fails while the joined call is still the foreground one.
+        event("session.execution.failed", {
+          sessionID: CHILD,
+          error: { type: "provider.quota", message: "Rate limit exceeded." },
+        }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(withLineage(thread));
+      yield* watch.until(
+        () =>
+          watch.calls.get("Sleep")?.status === "failed" &&
+          watch.calls.get("Again")?.status === "failed" &&
+          watch.state.roster?.length === 0,
+      );
+      assert.deepEqual(watch.state.roster, []);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("settles every call that joined a running subagent with its one report", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
