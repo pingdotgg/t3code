@@ -102,10 +102,10 @@ export function buildComposerSlashCommandItems(input: {
     (item) => item.command.includes(query) && (item.command === "model" || allowInteractionMode),
   );
 
-  // Providers expand commands only at the start of a message. T3 commands
-  // change local state and do not have this restriction.
-  if (!input.atMessageStart) return items;
+  // Ordinary provider commands must open the message; advertised `skill:`
+  // commands can also be embedded in a prompt.
   for (const command of input.selectedProviderStatus?.slashCommands ?? []) {
+    if (!input.atMessageStart && !command.name.startsWith("skill:")) continue;
     if (!command.name.toLowerCase().includes(query)) continue;
     if (command.name === "compact" && !input.hasCompactableConversation) continue;
     if (command.name === USAGE_LIMITS_COMMAND.name && input.offersUsageLimits && !input.hasThread) {

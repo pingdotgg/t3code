@@ -177,7 +177,7 @@ describe("searchSlashCommandItems", () => {
     ]);
   });
 
-  it("hides provider commands from slash completion after the first message line", () => {
+  it("keeps provider skill commands inline while hiding ordinary provider commands", () => {
     const items = [
       {
         id: "slash:model",
@@ -193,6 +193,14 @@ describe("searchSlashCommandItems", () => {
         command: { name: "compact" },
         label: "/compact",
         description: "Compact the conversation",
+      },
+      {
+        id: "provider-slash-command:acpRegistry:skill:logo-archive",
+        type: "provider-slash-command",
+        provider: ProviderDriverKind.make("acpRegistry"),
+        command: { name: "skill:logo-archive" },
+        label: "/skill:logo-archive",
+        description: "Find logo references",
       },
       {
         id: "skill:claudeAgent:unslop",
@@ -212,12 +220,19 @@ describe("searchSlashCommandItems", () => {
 
     expect(slashCommandItemsForPromptPosition(items, false).map((item) => item.id)).toEqual([
       "slash:model",
+      "provider-slash-command:acpRegistry:skill:logo-archive",
       "skill:claudeAgent:unslop",
     ]);
     expect(slashCommandItemsForPromptPosition(items, true).map((item) => item.id)).toEqual([
       "slash:model",
       "provider-slash-command:claudeAgent:compact",
+      "provider-slash-command:acpRegistry:skill:logo-archive",
       "skill:claudeAgent:unslop",
     ]);
+    expect(
+      searchSlashCommandItems(slashCommandItemsForPromptPosition(items, false), "skill:logo").map(
+        (item) => item.id,
+      ),
+    ).toEqual(["provider-slash-command:acpRegistry:skill:logo-archive"]);
   });
 });

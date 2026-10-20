@@ -13,9 +13,8 @@ type SlashSearchItem = Extract<
 >;
 
 /**
- * A provider expands a slash command only when it opens the whole message;
- * anywhere else it reaches the agent as literal text, so it is not offered
- * there.
+ * Ordinary provider commands must open the message. Advertised `skill:`
+ * commands can also be embedded in a prompt, like native skill mentions.
  */
 export function slashCommandItemsForPromptPosition(
   items: ReadonlyArray<SlashSearchItem>,
@@ -24,7 +23,9 @@ export function slashCommandItemsForPromptPosition(
   if (isAtPromptStart) {
     return [...items];
   }
-  return items.filter((item) => item.type !== "provider-slash-command");
+  return items.filter(
+    (item) => item.type !== "provider-slash-command" || item.command.name.startsWith("skill:"),
+  );
 }
 
 function scoreSlashCommandItem(item: SlashSearchItem, query: string): number | null {
