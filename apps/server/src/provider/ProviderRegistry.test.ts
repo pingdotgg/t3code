@@ -2447,6 +2447,44 @@ it.layer(
             [latestSkills],
           );
 
+          // With no cached snapshot, an older scan must leave publication and
+          // request deduplication to the forced scan even when it finishes first.
+          const olderStarted = yield* Deferred.make<void>();
+          const releaseOlder = yield* Deferred.make<void>();
+          yield* Ref.set(scanGate, { started: olderStarted, release: releaseOlder });
+          yield* Ref.set(scopedResult, scopedProvider);
+          const olderScan = yield* registry
+            .refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace2" })
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(olderStarted);
+          const newerStarted = yield* Deferred.make<void>();
+          const releaseNewer = yield* Deferred.make<void>();
+          yield* Ref.set(scanGate, { started: newerStarted, release: releaseNewer });
+          yield* Ref.set(scopedResult, { ...scopedProvider, skills: latestSkills });
+          const newerScan = yield* registry
+            .refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace2", fresh: true })
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(newerStarted);
+          yield* Deferred.succeed(releaseOlder, undefined);
+          yield* Fiber.join(olderScan);
+          assert.strictEqual(
+            (yield* registry.getProviders)[0]?.workspaceSnapshots?.find(
+              (snapshot) => snapshot.cwd === "/workspace2",
+            ),
+            undefined,
+          );
+          const callsWhileForced = yield* Ref.get(snapshotCalls);
+          yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace2" });
+          assert.strictEqual(yield* Ref.get(snapshotCalls), callsWhileForced);
+          yield* Deferred.succeed(releaseNewer, undefined);
+          yield* Fiber.join(newerScan);
+          assert.deepStrictEqual(
+            (yield* registry.getProviders)[0]?.workspaceSnapshots?.find(
+              (snapshot) => snapshot.cwd === "/workspace2",
+            )?.skills,
+            latestSkills,
+          );
+
           yield* Ref.set(instancesRef, [rebuiltInstance]);
           yield* PubSub.publish(registryChanges, undefined);
           let rebuilt = yield* registry.getProviders;
