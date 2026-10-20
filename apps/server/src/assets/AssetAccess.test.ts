@@ -816,6 +816,36 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("serves home-relative draft media files from the home folder", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-draft-root-",
+      });
+      const home = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-draft-home-",
+      });
+      const clipPath = path.join(home, "Downloads", "clip.mp4");
+      yield* fileSystem.makeDirectory(path.dirname(clipPath), { recursive: true });
+      yield* fileSystem.writeFileString(clipPath, "video");
+      const canonicalClipPath = yield* fileSystem.realPath(clipPath);
+
+      const result = yield* issueAssetUrl({
+        resource: { _tag: "draft-workspace-file", cwd: root, path: "~/Downloads/clip.mp4" },
+        workspaceRoot: root,
+      }).pipe(Effect.provideService(HostProcess.HomeDirectory, home));
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const token = suffix.slice(0, suffix.indexOf("/"));
+
+      expect(yield* resolveAsset(token, "clip.mp4")).toMatchObject({
+        kind: "file",
+        path: canonicalClipPath,
+        mimeType: "video/mp4",
+      });
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("serves absolute draft media files exactly, wherever they live", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

@@ -105,6 +105,11 @@ export function isAbsolutePath(value: string): boolean {
   return value.startsWith("/") || isWindowsAbsolutePath(value);
 }
 
+/** Home-relative host paths are expanded by the destination server. */
+export function isHostPath(value: string): boolean {
+  return isAbsolutePath(value) || value.startsWith("~/");
+}
+
 export function resolveWorkspaceFilePath(path: string, workspaceRoot: string): string {
   if (isAbsolutePath(path) || path.startsWith("~/") || path.startsWith("~\\")) return path;
   const base = workspaceRoot.replace(/[/\\]+$/, "");

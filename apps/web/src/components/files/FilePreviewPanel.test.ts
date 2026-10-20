@@ -131,6 +131,13 @@ describe("shouldShowFileExplorer", () => {
     ).toBe(false);
     expect(
       shouldShowFileExplorer({
+        relativePath: "~/.claude/CLAUDE.md",
+        explorerOpen: true,
+        attachmentOpen: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowFileExplorer({
         relativePath: "report.pdf",
         explorerOpen: true,
         attachmentOpen: true,
