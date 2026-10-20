@@ -8,6 +8,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import {
   AuthOrchestrationOperateScope,
+  AuthPreviewOperateScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
   ThreadId,
@@ -59,6 +60,35 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
+  it.effect("requires the destination preview grant to close a browser tab", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const close = createCommandPermissions(runtime, WS_METHODS.previewClose);
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(close.permissionAtom(env))).toBe(false);
+        expect((yield* close.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+        registry.set(
+          sessions(env),
+          AsyncResult.success({
+            ...grant(false),
+            scopes: [AuthPreviewOperateScope],
+            permissions: [AuthPreviewOperateScope],
+          }),
+        );
+        expect(registry.get(close.permissionAtom(env))).toBe(true);
+        yield* close.authorize(registry, env);
+        registry.set(sessions(other), AsyncResult.success(grant(false)));
+        expect(registry.get(close.permissionAtom(other))).toBe(false);
+        expect((yield* close.authorize(registry, other).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+      }),
+    ),
+  );
+
   it.effect("requires the destination settings grant to run storage cleanup", () =>
     Effect.scoped(
       Effect.gen(function* () {

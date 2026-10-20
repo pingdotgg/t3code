@@ -271,7 +271,7 @@ function BrowserAddressBar({
       <BrowserTabMenu
         environmentId={environmentId}
         tab={tab}
-        disabled={!streaming}
+        streaming={streaming}
         onPaste={ready ? onPaste : undefined}
       />
     </View>
