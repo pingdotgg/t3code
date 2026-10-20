@@ -26,6 +26,51 @@ export const BUILT_IN_FONT_OPTIONS = [
   { id: "monospace", label: "Monospace" },
 ] as const;
 
+const BUILT_IN_FAMILIES = {
+  ios: {
+    system: { regular: "System", medium: "System", bold: "System" },
+    serif: {
+      regular: "Georgia",
+      medium: "Georgia",
+      bold: "Georgia-Bold",
+      emphasisFaces: { "700": "Georgia-Bold" },
+    },
+    mono: {
+      regular: "Menlo-Regular",
+      medium: "Menlo-Regular",
+      bold: "Menlo-Bold",
+      emphasisFaces: { "700": "Menlo-Bold" },
+    },
+  },
+  android: {
+    system: { regular: "sans-serif", medium: "sans-serif-medium", bold: "sans-serif" },
+    serif: { regular: "serif", medium: "serif", bold: "serif" },
+    mono: { regular: "monospace", medium: "monospace", bold: "monospace" },
+  },
+} as const;
+
+export function reconcileInstalledFonts(
+  previous: ReadonlyMap<string, InstalledMobileFont>,
+  available: ReadonlyMap<string, InstalledMobileFont>,
+): ReadonlyMap<string, InstalledMobileFont> {
+  let changed = previous.size !== available.size;
+  const next = new Map<string, InstalledMobileFont>();
+  for (const [name, font] of available) {
+    const prior = previous.get(name);
+    const same =
+      prior &&
+      (["name", "label", "regular", "medium", "bold"] as const).every(
+        (key) => prior[key] === font[key],
+      ) &&
+      REPLY_EMPHASIS_OPTIONS.every(
+        ({ id }) => prior.emphasisFaces?.[id] === font.emphasisFaces?.[id],
+      );
+    if (!same) changed = true;
+    next.set(name, same ? prior : font);
+  }
+  return changed ? next : previous;
+}
+
 export function normalizeFontSelections(value: unknown): MobileFontSelections {
   const record =
     typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
@@ -51,28 +96,7 @@ export function resolveMobileFonts(
   platform: string,
 ): Readonly<Record<MobileFontRole, MobileFontFamily>> {
   const defaults = FONT_FAMILIES;
-  const system =
-    platform === "ios"
-      ? { regular: "System", medium: "System", bold: "System" }
-      : { regular: "sans-serif", medium: "sans-serif-medium", bold: "sans-serif" };
-  const serif =
-    platform === "ios"
-      ? {
-          regular: "Georgia",
-          medium: "Georgia",
-          bold: "Georgia-Bold",
-          emphasisFaces: { "700": "Georgia-Bold" },
-        }
-      : { regular: "serif", medium: "serif", bold: "serif" };
-  const mono =
-    platform === "ios"
-      ? {
-          regular: "Menlo-Regular",
-          medium: "Menlo-Regular",
-          bold: "Menlo-Bold",
-          emphasisFaces: { "700": "Menlo-Bold" },
-        }
-      : { regular: "monospace", medium: "monospace", bold: "monospace" };
+  const { system, serif, mono } = BUILT_IN_FAMILIES[platform === "ios" ? "ios" : "android"];
   const resolve = (selection: string, fallback: MobileFontFamily): MobileFontFamily => {
     if (selection === "system") return system;
     if (selection === "serif") return serif;

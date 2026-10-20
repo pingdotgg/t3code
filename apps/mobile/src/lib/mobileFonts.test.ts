@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   DEFAULT_FONT_SELECTIONS,
   normalizeFontSelections,
+  reconcileInstalledFonts,
   normalizeReplyEmphasisWeights,
   resolveReplyEmphasis,
   resolveMobileFonts,
@@ -117,4 +118,63 @@ describe("reply emphasis", () => {
     expect(normalizeReplyEmphasisWeights(null)).toEqual({});
     expect(resolveReplyEmphasis(serif, saved["SecondSerif-Regular"])).toBe("ExampleSerif-Semibold");
   });
+});
+
+describe("font refresh identity", () => {
+  it("keeps the map and font references when native descriptors are unchanged or reordered", () => {
+    const second = { ...serif, name: "Other-Regular", regular: "Other-Regular" };
+    const current = new Map([
+      [serif.name, serif],
+      [second.name, second],
+    ]);
+    const refreshed = new Map([
+      [second.name, { ...second }],
+      [serif.name, { ...serif, emphasisFaces: { ...serif.emphasisFaces } }],
+    ]);
+    expect(reconcileInstalledFonts(current, refreshed)).toBe(current);
+  });
+
+  it("applies changed faces and removals while keeping unrelated font references", () => {
+    const second = { ...serif, name: "Other-Regular", regular: "Other-Regular" };
+    const current = new Map([
+      [serif.name, serif],
+      [second.name, second],
+    ]);
+    const changed = {
+      ...serif,
+      emphasisFaces: { ...serif.emphasisFaces, "600": "Replacement-Semibold" },
+    };
+    const next = reconcileInstalledFonts(
+      current,
+      new Map([
+        [serif.name, changed],
+        [second.name, { ...second }],
+      ]),
+    );
+    expect(next).not.toBe(current);
+    expect(next.get(serif.name)?.emphasisFaces?.["600"]).toBe("Replacement-Semibold");
+    expect(next.get(second.name)).toBe(second);
+    expect(current.get(serif.name)?.emphasisFaces?.["600"]).toBe("ExampleSerif-Semibold");
+    const removed = reconcileInstalledFonts(next, new Map([[second.name, second]]));
+    expect(removed.has(serif.name)).toBe(false);
+    const empty = reconcileInstalledFonts(removed, new Map());
+    expect(empty.size).toBe(0);
+    expect(reconcileInstalledFonts(empty, new Map())).toBe(empty);
+  });
+
+  it.each(["ios", "android"])(
+    "reuses built-in family objects across unrelated %s font refreshes",
+    (platform) => {
+      const selections = {
+        interface: "system",
+        reply: "serif",
+        composer: "monospace",
+        code: "monospace",
+      };
+      const before = resolveMobileFonts(selections, new Map(), platform);
+      const after = resolveMobileFonts(selections, new Map([[serif.name, serif]]), platform);
+      for (const role of ["interface", "reply", "composer", "code"] as const)
+        expect(after[role]).toBe(before[role]);
+    },
+  );
 });

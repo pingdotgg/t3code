@@ -21,6 +21,7 @@ import { appAtomRegistry } from "../../../state/atom-registry";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../../state/preferences";
 import {
   normalizeFontSelections,
+  reconcileInstalledFonts,
   normalizeReplyEmphasisWeights,
   resolveReplyEmphasis,
   type ReplyEmphasisWeight,
@@ -269,6 +270,14 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
   useEffect(() => {
     let cancelled = false;
     let generation = 0;
+    const updateUnavailableFonts = (missing: readonly string[]) => {
+      setUnavailableFonts((previous) =>
+        previous.length === missing.length &&
+        previous.every((name, index) => name === missing[index])
+          ? previous
+          : missing,
+      );
+    };
     const refresh = () => {
       generation = generation + 1;
       const request = generation;
@@ -276,13 +285,13 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
         .then((resolved) => {
           if (cancelled || request !== generation) return;
           const available = new Map(resolved.map((font) => [font.name, font]));
-          setInstalledFonts(available);
-          setUnavailableFonts(selectedFontNames.filter((name) => !available.has(name)));
+          setInstalledFonts((previous) => reconcileInstalledFonts(previous, available));
+          updateUnavailableFonts(selectedFontNames.filter((name) => !available.has(name)));
         })
         .catch(() => {
           if (cancelled || request !== generation) return;
-          setInstalledFonts(new Map());
-          setUnavailableFonts(selectedFontNames);
+          setInstalledFonts((previous) => (previous.size ? new Map() : previous));
+          updateUnavailableFonts(selectedFontNames);
         });
     };
     refresh();
