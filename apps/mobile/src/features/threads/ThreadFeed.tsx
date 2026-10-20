@@ -1788,13 +1788,18 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const iconSubtleColor = theme["--color-icon-subtle"];
   const screenColor = theme["--color-screen"];
   const userBubbleColor = theme["--color-user-bubble"];
-  const onMarkdownLinkPress = (href: string, imageEmbed = false) => {
+  const resolveLinkedThread = (href: string) => {
     const linkedThreadId = parseThreadLinkHref(href);
-    if (linkedThreadId) {
-      const source = scopeThreadRef(props.environmentId, linkedThreadId);
-      const target =
-        resolveThreadLinkRef(source, appAtomRegistry.get(environmentThreadShells.threadRefsAtom)) ??
-        source;
+    if (!linkedThreadId) return null;
+    const source = scopeThreadRef(props.environmentId, linkedThreadId);
+    return (
+      resolveThreadLinkRef(source, appAtomRegistry.get(environmentThreadShells.threadRefsAtom)) ??
+      source
+    );
+  };
+  const onMarkdownLinkPress = (href: string, imageEmbed = false) => {
+    const target = resolveLinkedThread(href);
+    if (target) {
       navigation.navigate("Thread", {
         environmentId: String(target.environmentId),
         threadId: String(target.threadId),
@@ -1863,10 +1868,26 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     onImagePress: (href) => onMarkdownLinkPress(href, true),
     resolveImageSource,
     fileContextMenu: (href) => {
+      const thread = resolveLinkedThread(href);
+      if (thread) {
+        return {
+          title:
+            appAtomRegistry.get(environmentThreadShells.threadShellAtom(thread))?.title ?? "Thread",
+          actions: [
+            { id: "open-thread", title: "Open thread" },
+            { id: "copy-thread-link", title: "Copy link" },
+          ],
+        };
+      }
       const target = resolveFileChipTarget(href, props.workspaceRoot);
       return target ? fileChipMenu(target) : undefined;
     },
     onFileContextMenuAction: (href, actionId) => {
+      if (resolveLinkedThread(href)) {
+        if (actionId === "open-thread") onMarkdownLinkPress(href);
+        else if (actionId === "copy-thread-link") copyTextWithHaptic(href);
+        return;
+      }
       const target = resolveFileChipTarget(href, props.workspaceRoot);
       if (!target) return;
       switch (actionId) {
