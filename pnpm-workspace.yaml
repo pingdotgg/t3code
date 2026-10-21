@@ -12,7 +12,9 @@ allowBuilds:
   browser-tabs-lock: false
   bufferutil: false
   core-js: false
-  electron: true
+  # No install script since Electron 44; ensure:electron runs install.js.
+  # Keep the key: pnpm fails installs that still record a removed `true`.
+  electron: false
   electron-winstaller: false
   esbuild: true
   msgpackr-extract: true

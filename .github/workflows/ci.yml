@@ -83,6 +83,14 @@ jobs:
       - name: Setup Vite+
         uses: ./.github/actions/setup-ci-deps
 
+      # electron's install.js (run by ensure:electron) reads this cache before it
+      # downloads from GitHub. The key changes only with the Electron version.
+      - name: Cache Electron download
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/electron
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('node_modules/.pnpm/electron@*/node_modules/electron/package.json') }}
+
       - name: Ensure Electron runtime is installed
         run: vp run --filter @t3tools/desktop ensure:electron
 
@@ -131,6 +139,14 @@ jobs:
 
       - name: Setup Vite+
         uses: ./.github/actions/setup-ci-deps
+
+      # electron's install.js (run by ensure:electron) reads this cache before it
+      # downloads from GitHub. The key changes only with the Electron version.
+      - name: Cache Electron download
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/electron
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('node_modules/.pnpm/electron@*/node_modules/electron/package.json') }}
 
       - name: Ensure Electron runtime is installed
         id: electron
@@ -221,6 +237,14 @@ jobs:
 
       - name: Setup Vite+
         uses: ./.github/actions/setup-ci-deps
+
+      # electron's install.js (run by ensure:electron) reads this cache before it
+      # downloads from GitHub. The key changes only with the Electron version.
+      - name: Cache Electron download
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/electron
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('node_modules/.pnpm/electron@*/node_modules/electron/package.json') }}
 
       - name: Ensure Electron runtime is installed
         run: vp run --filter @t3tools/desktop ensure:electron
