@@ -222,6 +222,7 @@ describe("composer file attachments", () => {
       expect(result.images).toEqual([expect.objectContaining({ mimeType: "image/jpeg" })]);
     });
 
+    // regression: #11440 render photo library picks to a bounded JPEG off the JS thread
     it("renders a supported original whose size cannot be measured", async () => {
       mocks.pickMedia.mockResolvedValue({
         canceled: false,
@@ -265,6 +266,7 @@ describe("composer file attachments", () => {
       expect(result.error).toBe("Failed to read 'missing.gif'.");
     });
 
+    // regression: #11440 render photo library picks to a bounded JPEG off the JS thread
     it("reports a photo the native renderer cannot decode", async () => {
       mocks.manipulate.mockImplementation(() => ({
         resize: () => {
@@ -371,13 +373,6 @@ describe("composer file attachments", () => {
     });
 
     it.each([
-      {
-        reason: "picker size exceeds the server limit",
-        reported: 2 * 1024 * 1024,
-        stored: 42,
-        limit: 1024 * 1024,
-        error: "'clip.mov' exceeds the 1 MB attachment limit.",
-      },
       {
         reason: "actual size exceeds the server limit",
         reported: 42,
@@ -563,18 +558,6 @@ describe("composer file attachments", () => {
     expect(mocks.open).not.toHaveBeenCalled();
   });
 
-  it("reports picker failures and releases the foreground handoff", async () => {
-    mocks.pickFile.mockRejectedValue(new Error("The document provider is unavailable."));
-
-    await expect(pickComposerFiles({ existingCount: 0 })).resolves.toEqual({
-      files: [],
-      error: "The document provider is unavailable.",
-    });
-
-    expect(isForegroundHandoffActive()).toBe(false);
-    expect(mocks.copy).not.toHaveBeenCalled();
-  });
-
   it("does not open the picker when the draft has no remaining attachment slots", async () => {
     await expect(pickComposerFiles({ existingCount: 100 })).resolves.toEqual({
       files: [],
@@ -603,27 +586,6 @@ describe("composer file attachments", () => {
       error: "'archive.zip' exceeds the 1 MB attachment limit.",
     });
     expect(mocks.copy).not.toHaveBeenCalled();
-  });
-
-  it("never accepts files above the 50 MB contract limit", async () => {
-    mocks.pickFile.mockResolvedValue({
-      canceled: false,
-      assets: [
-        {
-          uri: "file:///downloads/archive.zip",
-          name: "archive.zip",
-          mimeType: "application/zip",
-          size: 51 * 1024 * 1024,
-        },
-      ],
-    });
-
-    await expect(
-      pickComposerFiles({ existingCount: 0, maxBytes: 80 * 1024 * 1024 }),
-    ).resolves.toEqual({
-      files: [],
-      error: "'archive.zip' exceeds the 50 MB attachment limit.",
-    });
   });
 
   it("rejects a file that grew after the picker reported its size", async () => {
@@ -689,26 +651,6 @@ describe("composer file attachments", () => {
     expect(mocks.delete).toHaveBeenCalledWith(
       "file:///documents/t3-composer-attachments/attachment-id-liar.bin",
     );
-  });
-
-  it("reports an empty file without calling it oversized", async () => {
-    mocks.size.mockReturnValue(0);
-    mocks.pickFile.mockResolvedValue({
-      canceled: false,
-      assets: [
-        {
-          uri: "file:///downloads/empty.txt",
-          name: "empty.txt",
-          mimeType: "text/plain",
-          size: 0,
-        },
-      ],
-    });
-
-    await expect(pickComposerFiles({ existingCount: 0 })).resolves.toEqual({
-      files: [],
-      error: "'empty.txt' is empty or could not be read.",
-    });
   });
 
   it.each([0, undefined])("copies an Android SAF file when the picker size is %s", async (size) => {

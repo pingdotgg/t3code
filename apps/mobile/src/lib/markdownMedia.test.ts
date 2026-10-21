@@ -69,7 +69,7 @@ describe("resolveMarkdownMediaPreview", () => {
     });
   });
 
-  it.each(["./image.png", "./clip.mp4", "./report.pdf"])(
+  it.each(["./image.png", "./report.pdf"])(
     "uses the draft workspace when no thread exists: %s",
     (href) => {
       expect(

@@ -86,6 +86,7 @@ describe("withAndroidFbjniVersion", () => {
     expect(twice).toBe(once);
   });
 
+  // regression: #20118 fresh Android builds no longer crash on launch
   it("writes Kotlin syntax into a Kotlin build script", async () => {
     const result = await prebuildRootGradle("build.gradle.kts", "plugins {}\n");
 

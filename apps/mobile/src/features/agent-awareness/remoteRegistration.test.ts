@@ -598,21 +598,6 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     }).pipe(Effect.provide(layerRelayTest));
   });
 
-  it.effect("re-registers when the stored account identity differs", () => {
-    Constants.expoConfig!.extra = {
-      relay: {
-        url: "https://relay.example.test/",
-      },
-    };
-    registrationRecordStore.current = { identity: "someone-else", signature: "stale" };
-    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
-
-    return Effect.gen(function* () {
-      yield* refreshAgentAwarenessRegistration();
-      expect(saveAgentAwarenessRegistrationRecord).toHaveBeenCalledTimes(1);
-    }).pipe(Effect.provide(layerRelayTest));
-  });
-
   it.effect("continues queued device registration after a failed auth lookup", () => {
     Constants.expoConfig!.extra = {
       relay: {

@@ -23,6 +23,7 @@ const effortDescriptor: Extract<ProviderOptionDescriptor, { type: "select" }> = 
 };
 
 describe("selectableChoices", () => {
+  // regression: #21406 bring model controls in line with web
   it("includes prompt-injected and workflow choices in declared order", () => {
     expect(selectableChoices(effortDescriptor).map((choice) => choice.id)).toEqual([
       "low",

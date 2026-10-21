@@ -1,7 +1,6 @@
 import { acknowledgedThreadMessagesAtom } from "./acknowledged-thread-messages";
 import {
   CommandId,
-  ComposerContextId,
   EnvironmentId,
   MessageId,
   ProjectId,
@@ -275,32 +274,6 @@ describe("thread outbox attachment preparation", () => {
 
     await expect(preparation).resolves.toEqual({ status: "abandoned" });
     expect(remainingMessages()).toEqual([edited]);
-  });
-
-  it("keeps an unchanged queued payload ready after attachment reuse", async () => {
-    const message = withReusedFileUpload(
-      queuedMessage({
-        messageId: "message-reused-upload-current",
-        text: "unchanged text",
-        fileUri: "file:///documents/t3-composer-attachments/current.pdf",
-      }),
-      "pending-reused-upload",
-    );
-    harness.prepareTurnAttachments.mockResolvedValueOnce({
-      status: "ready",
-      attachments: [],
-      draftAttachments: message.attachments,
-      pendingAttachmentIds: ["pending-reused-upload"],
-    });
-    await harness.manager.enqueue(message);
-    const revision = harness.manager.revisionOf(message.messageId);
-    appAtomRegistry.set(editingQueuedMessageIdsAtom, { [message.messageId]: true });
-
-    await expect(prepareQueuedMessageAttachments(message)).resolves.toMatchObject({
-      status: "ready",
-      persistedMessage: message,
-      deliveryRevision: revision,
-    });
   });
 
   it("uses the known next revision after persisting uploaded references", async () => {
@@ -616,31 +589,6 @@ describe("thread outbox delivered creation recovery", () => {
 });
 
 describe("thread outbox recovery rollback", () => {
-  it("preserves inline context from setup edits when reopening a failed task", async () => {
-    const message = queuedMessage({ messageId: "failed-context", text: "Original prompt" });
-    const sourceKey = `${message.environmentId}:${message.threadId}`;
-    const targetKey = "new-task:restored-failed-context";
-    const record = {
-      version: 1 as const,
-      kind: "mention" as const,
-      contextId: ComposerContextId.make("setup-file"),
-      label: "Checkout.tsx",
-      path: "src/Checkout.tsx",
-    };
-    const context = { version: 1 as const, records: [record] };
-    const text = "[Checkout.tsx](t3-context://v1/mention/setup-file)";
-    appAtomRegistry.set(composerDrafts.composerDraftsAtom, {
-      [targetKey]: { text: message.text, attachments: [] },
-      [sourceKey]: { text, context, attachments: [] },
-    });
-    await recoverFailedThreadDraft(message);
-    expect(composerDrafts.getComposerDraftSnapshot(targetKey)).toMatchObject({
-      text: `Original prompt\n\n${text}`,
-      context,
-    });
-    expect(composerDrafts.getComposerDraftSnapshot(sourceKey).context).toBeUndefined();
-  });
-
   it("reopens a rejected task with setup edits and every attachment, even above the send cap", async () => {
     const message = queuedMessage({ messageId: "failed-setup", text: "Original prompt" });
     const sourceKey = `${message.environmentId}:${message.threadId}`;

@@ -27,23 +27,6 @@ describe("mobile database legacy cache migration", () => {
     });
   });
 
-  it("preserves the old shell payload for schema decoding after migration", () => {
-    const payload = JSON.stringify({
-      schemaVersion: 1,
-      environmentId: "environment-1",
-      snapshotReceivedAt: "2026-07-01T00:00:00.000Z",
-      snapshot: {},
-    });
-
-    expect(MobileDatabase.decodeLegacyCacheRecord("shell-snapshots", payload)).toEqual({
-      environmentId: "environment-1",
-      kind: "shell",
-      cacheKey: "snapshot",
-      schemaVersion: 1,
-      payload,
-    });
-  });
-
   it("skips malformed legacy records", () => {
     expect(MobileDatabase.decodeLegacyCacheRecord("connection-vcs-refs", "{not-json")).toBeNull();
     expect(

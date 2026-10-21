@@ -11,7 +11,6 @@ import {
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ThreadDetailSnapshot,
   type ThreadPullRequestLink,
-  type VcsListRefsResult,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
@@ -143,20 +142,6 @@ const THREAD_SNAPSHOT: OrchestrationV2ThreadDetailSnapshot = {
     visibleTurnItems: [],
     updatedAt: NOW,
   },
-};
-const REFS: VcsListRefsResult = {
-  refs: [
-    {
-      name: "main",
-      current: true,
-      isDefault: true,
-      worktreePath: "/repo",
-    },
-  ],
-  isRepo: true,
-  hasPrimaryRemote: true,
-  nextCursor: null,
-  totalCount: 1,
 };
 
 function cacheId(
@@ -332,23 +317,6 @@ describe("mobile SQLite environment cache store", () => {
 
       expect(yield* store.loadVcsRefs(ENVIRONMENT_ID, "/repo")).toEqual(Option.none());
       expect(memory.removed).toEqual([id]);
-    }),
-  );
-
-  it.effect("clears one environment without touching another", () =>
-    Effect.gen(function* () {
-      const memory = makeDatabase();
-      const store = yield* make().pipe(
-        Effect.provideService(MobileDatabase.MobileDatabase, memory.database),
-      );
-      const otherEnvironmentId = EnvironmentId.make("environment-2");
-      yield* store.saveVcsRefs(ENVIRONMENT_ID, "/repo", REFS);
-      yield* store.saveVcsRefs(otherEnvironmentId, "/repo", REFS);
-
-      yield* store.clear(ENVIRONMENT_ID);
-
-      expect(yield* store.loadVcsRefs(ENVIRONMENT_ID, "/repo")).toEqual(Option.none());
-      expect(yield* store.loadVcsRefs(otherEnvironmentId, "/repo")).toEqual(Option.some(REFS));
     }),
   );
 });

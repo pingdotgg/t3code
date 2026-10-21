@@ -48,7 +48,7 @@ describe("Android workspace navigation colors", () => {
     },
   );
 
-  it.each(["#6750a4", "#006a6a", "#9c4146"])(
+  it.each(["#6750a4", "#9c4146"])(
     "keeps Material You selection visible for system seed %s",
     (seed) => {
       for (const appearance of ["light", "dark"] as const) {

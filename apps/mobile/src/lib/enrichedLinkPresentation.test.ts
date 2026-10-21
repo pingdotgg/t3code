@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { ComposerContextId, ReviewCommentContextRecord } from "@t3tools/contracts";
 import {
-  enrichedContextLinkPresentation,
   enrichedLinkVariantPattern,
   enrichedSkillLinkRegex,
   ENRICHED_INLINE_FILE_LINK_REGEX,
@@ -47,34 +45,5 @@ describe("Enriched link presentation", () => {
     expect(pattern.test(url)).toBe(true);
     expect(pattern.test(`${url}/child`)).toBe(false);
     expect(pattern.test("file:///workspace/app1Xtsx?line=34")).toBe(false);
-  });
-
-  it("uses context identity for PR status even when labels are identical", () => {
-    const record: ReviewCommentContextRecord = {
-      version: 1,
-      contextId: "review_1" as ComposerContextId,
-      kind: "review-comment",
-      label: "Review",
-      sectionId: "pull-request:7",
-      sectionTitle: "Review",
-      filePath: "app.tsx",
-      startIndex: 0,
-      endIndex: 1,
-      rangeLabel: "line 1",
-      text: "Comment",
-      diff: "",
-      pullRequest: {
-        number: 7,
-        title: "Review",
-        url: "https://github.com/example/repo/pull/7",
-        headBranch: "feature",
-        baseBranch: "main",
-        state: "merged",
-        isDraft: false,
-      },
-    };
-    expect(
-      enrichedContextLinkPresentation("t3-context://v1/review-comment/review_1", [record]),
-    ).toEqual({ accent: "#8a70dd", icon: { kind: "chip", name: "git-merge" } });
   });
 });

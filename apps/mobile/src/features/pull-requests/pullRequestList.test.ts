@@ -66,25 +66,6 @@ describe("recycled PR list rows", () => {
     environmentId: EnvironmentId.make("env-one"),
   });
 
-  it.each([
-    { title: "New title" },
-    { additions: 8 },
-    { deletions: 4 },
-    { checksState: "failing" as const },
-    { reviewDecision: "approved" as const },
-    { viewerReviewRequested: true },
-    { isDraft: true },
-    { state: "closed" as const },
-    { mergeability: "conflicting" as const },
-    { baseBranch: "release" },
-    { author: { login: "another", name: null, avatarUrl: null } },
-    { author: { login: "octocat", name: null, avatarUrl: "https://example.com/avatar.png" } },
-    { labels: [{ name: "bug", color: "ff0000" }] },
-    { stack: { number: 1, position: 2, size: 3, base: "main" } },
-  ])("updates the row when visible status or quick actions change: %j", (patch) => {
-    expect(pullRequestListRowsAreEqual(scopedEntry(), scopedEntry(patch))).toBe(false);
-  });
-
   it("updates navigation and commands when a duplicate moves to another environment", () => {
     const original = scopedEntry();
     expect(

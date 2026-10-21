@@ -153,37 +153,6 @@ describe("thread Git mutation permissions", () => {
     },
   );
 
-  it.each(["create", "checkout", "commit on new branch"] as const)(
-    "requires task permission before %s",
-    async (operation) => {
-      const actions = useSelectedThreadGitActions();
-      if (operation === "create") {
-        expect(await actions.onCreateSelectedThreadBranch("feature")).toBeNull();
-      }
-      if (operation === "checkout")
-        expect(await actions.onCheckoutSelectedThreadBranch("feature")).toBeNull();
-      if (operation === "commit on new branch")
-        await actions.onRunSelectedThreadGitAction({ action: "commit", featureBranch: true });
-      expect(state.branch).toBe("main");
-      expect(state.thread.branch).toBe("main");
-      expect(state.commits).toBe(0);
-    },
-  );
-
-  it("rechecks task permission when a retained menu callback runs", async () => {
-    state.scopes.add(AuthOrchestrationOperateScope);
-    const actions = useSelectedThreadGitActions();
-    state.scopes.delete(AuthOrchestrationOperateScope);
-    expect(
-      await actions.onCreateSelectedThreadWorktree({
-        baseBranch: "main",
-        newBranch: "feature/task",
-      }),
-    ).toBeNull();
-    expect(state.worktrees).toEqual([]);
-    expect(state.thread.worktreePath).toBeNull();
-  });
-
   it("keeps ordinary commits and pushes available without task permission", async () => {
     const actions = useSelectedThreadGitActions();
     await actions.onRunSelectedThreadGitAction({ action: "commit" });

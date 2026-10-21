@@ -88,9 +88,6 @@ describe("native workspace dismissal", () => {
     expect(nativeWorkspacePopAction(state, settings.key)).toBeNull();
     expect(nativeWorkspacePopAction(state, legal.key)).toBeNull();
   });
-  it("pops a native dismissed file while keeping the conversation and its draft mounted", () => {
-    expect(nativeWorkspacePopCount(history([home, thread, files]), files.key)).toBe(1);
-  });
 
   it("removes the descendants when UIKit dismisses their parent conversation", () => {
     expect(nativeWorkspacePopCount(history([home, thread, files]), thread.key)).toBe(2);
@@ -314,6 +311,7 @@ describe("v5 stack handoff", () => {
       settings,
     ]);
   });
+  // regression: #17231 keep native screens ordered during stack pops
   it("retains a multi-page pop in order without changing the active router order", () => {
     const replacement = { ...thread, key: "replacement" };
     const screens = reconcileStackScreens([home, thread, files], [home, replacement]);

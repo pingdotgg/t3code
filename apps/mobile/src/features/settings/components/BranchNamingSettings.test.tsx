@@ -89,6 +89,7 @@ describe("BranchNamingSettings", () => {
     });
   });
 
+  // regression: #18381 branch naming text saves when you leave the screen
   it("saves both drafts in one patch when the screen closes", () => {
     render("static");
     act(() => input(PREFIX).onChangeText("feat/"));

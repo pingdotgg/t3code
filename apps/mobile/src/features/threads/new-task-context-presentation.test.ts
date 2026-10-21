@@ -34,6 +34,7 @@ describe("resolveNewTaskWorkspaceSelection", () => {
     },
   );
 
+  // regression: #21404 use current checkout for non-git projects
   it("preserves the selection and defaults for git projects", () => {
     const selection = { mode: "local", branch: "feature", worktreePath: "/worktree" } as const;
     expect(resolveNewTaskWorkspaceSelection({ selection, fallback, isGitRepo: true })).toBe(

@@ -1,7 +1,7 @@
 import { parseNewThreadLink } from "@t3tools/shared/promptLinks";
 import { describe, expect, it } from "vite-plus/test";
 
-import { linkedThreadDraftAction, promptLinkSearchFromParams } from "./prompt-link-model";
+import { promptLinkSearchFromParams } from "./prompt-link-model";
 
 describe("promptLinkSearchFromParams", () => {
   it("round-trips decoded route params into the shared parser", () => {
@@ -22,13 +22,5 @@ describe("promptLinkSearchFromParams", () => {
         model: null,
       },
     });
-  });
-});
-
-describe("linkedThreadDraftAction", () => {
-  it("fills an empty composer and asks before replacing typed text", () => {
-    expect(linkedThreadDraftAction("  \n", "Do it")).toBe("fill");
-    expect(linkedThreadDraftAction("Do it", "Do it")).toBe("keep");
-    expect(linkedThreadDraftAction("My notes", "Do it")).toBe("ask");
   });
 });

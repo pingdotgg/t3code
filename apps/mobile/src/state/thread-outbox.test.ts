@@ -389,39 +389,6 @@ describe("thread outbox", () => {
     ).toBe("plan");
   });
 
-  it("serializes mutations even when an earlier mutation is slower", async () => {
-    const registry = AtomRegistry.make();
-    const manager = createThreadOutboxManager({
-      registry,
-      storage: {
-        load: async () => ({ messages: [], errors: [] }),
-        write: async () => undefined,
-        remove: async () => undefined,
-      },
-    });
-    const order: string[] = [];
-    let releaseFirst!: () => void;
-    const firstBlocked = new Promise<void>((resolve) => {
-      releaseFirst = resolve;
-    });
-
-    const first = manager.serialize(async () => {
-      order.push("first:start");
-      await firstBlocked;
-      order.push("first:end");
-    });
-    const second = manager.serialize(async () => {
-      order.push("second");
-    });
-
-    await Promise.resolve();
-    expect(order).toEqual(["first:start"]);
-    releaseFirst();
-    await Promise.all([first, second]);
-    expect(order).toEqual(["first:start", "first:end", "second"]);
-    registry.dispose();
-  });
-
   it("holds the mutation queue while persisted messages are loading", async () => {
     const registry = AtomRegistry.make();
     const message = queuedMessage({

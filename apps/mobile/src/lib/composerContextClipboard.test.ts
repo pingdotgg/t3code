@@ -244,6 +244,7 @@ describe("mobile context clipboard imports", () => {
     expect(mocks.download).not.toHaveBeenCalled();
   });
 
+  // regression: #18322 don't send or paste attached threads a machine can't read
   it("reports foreign threads and failed files together while keeping the rest of a paste", async () => {
     mocks.download.mockRejectedValueOnce(new Error("source disconnected"));
     const result = await importComposerContextClipboard(

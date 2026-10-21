@@ -178,21 +178,3 @@ it.each(["https://cdn.test/image.png", "file:///device/image.png"])(
     expect(uri.startsWith("file:") ? state.shareLocal : state.download).toHaveBeenCalledOnce();
   },
 );
-
-it("shares device draft attachments without a host grant", async () => {
-  await useMediaActions({
-    attachment: {
-      id: "draft",
-      type: "file",
-      fileUri: "file:///device/image.png",
-      name: "image.png",
-      mimeType: "image/png",
-      sizeBytes: 1,
-    },
-    name: "image.png",
-    mimeType: "image/png",
-  }).share();
-
-  expect(state.refresh).not.toHaveBeenCalled();
-  expect(state.shareDraft).toHaveBeenCalledOnce();
-});

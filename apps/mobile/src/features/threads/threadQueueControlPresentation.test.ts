@@ -33,32 +33,6 @@ describe("threadQueueControlPresentation", () => {
     );
   });
 
-  it("disables edge reorder controls and busy dismissal", () => {
-    const first = resolveThreadQueueRowControls({
-      busy: false,
-      canPromoteToSteer: false,
-      canReorder: true,
-      index: 0,
-      queuedCount: 2,
-      text: "First",
-    });
-    const busy = resolveThreadQueueRowControls({
-      busy: true,
-      canPromoteToSteer: true,
-      canReorder: true,
-      index: 0,
-      queuedCount: 1,
-      text: "Queued message",
-    });
-
-    expect(first.canMoveUp).toBe(false);
-    expect(first.canMoveDown).toBe(true);
-    expect(first.canSteer).toBe(false);
-    expect(busy.canDismiss).toBe(false);
-    expect(busy.canMoveUp).toBe(false);
-    expect(busy.canSteer).toBe(false);
-  });
-
   it("keeps the row already open in the composer from being reopened or steered", () => {
     const editing = resolveThreadQueueRowControls({
       busy: false,

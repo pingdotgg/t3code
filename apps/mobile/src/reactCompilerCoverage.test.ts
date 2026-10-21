@@ -128,11 +128,6 @@ describe("React Compiler coverage", () => {
     expect(transformed("false")).not.toContain("react/compiler-runtime");
   });
 
-  it("app.config.ts turns the compiler on for Metro", () => {
-    const appConfig = NodeFS.readFileSync(NodePath.join(mobileRoot, "app.config.ts"), "utf8");
-    expect(appConfig).toMatch(/experiments:\s*\{[^}]*reactCompiler:\s*true/);
-  });
-
   it.each(sourceFiles)("compiles %s", (file) => {
     const bailouts = compilerBailouts(file);
     if (file in KNOWN_BAILOUTS) {

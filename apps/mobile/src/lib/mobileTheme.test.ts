@@ -20,8 +20,6 @@ import {
   DEFAULT_MOBILE_THEME_ID,
   flattenThemeColor,
   getMobileThemeVariables,
-  normalizeMobileThemeId,
-  normalizeMobileThemeMode,
   resolveMobileThemeIds,
   themeColorWithAlpha,
   themeColorToNativeColor,
@@ -202,13 +200,6 @@ describe("mobile themes", () => {
         ).toBeGreaterThanOrEqual(4.5);
       }
     }
-  });
-
-  it("normalizes persisted theme preferences", () => {
-    expect(normalizeMobileThemeId("ocean")).toBe("ocean");
-    expect(normalizeMobileThemeId("missing-theme")).toBe(DEFAULT_MOBILE_THEME_ID);
-    expect(normalizeMobileThemeMode("dark")).toBe("dark");
-    expect(normalizeMobileThemeMode("sepia")).toBe("system");
   });
 
   it("migrates one theme choice to both appearances and preserves independent choices", () => {

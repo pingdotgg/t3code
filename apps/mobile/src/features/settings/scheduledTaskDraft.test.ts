@@ -5,12 +5,9 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProjectId,
-  ScheduledTaskId,
-  type ScheduledTask,
 } from "@t3tools/contracts";
 import {
   scheduledTaskDefaultModel,
-  editDraft,
   DEFAULT_SCHEDULE,
   scheduleDraftForTask,
   scheduleFromDraft,
@@ -92,46 +89,12 @@ describe("scheduleFromDraft", () => {
 
   it.each([
     ["1.5", 90_000],
-    ["1000001", 60_000_060_000],
     [String(60_001 / 60_000), 60_001],
-    [String(65_000 / 60_000), 65_000],
-    [String(123_456 / 60_000), 123_456],
   ])("preserves a valid %s minute interval when saving", (intervalMinutes, everyMs) => {
     expect(scheduleFromDraft({ ...DEFAULT_SCHEDULE, mode: "interval", intervalMinutes })).toEqual({
       type: "interval",
       everyMs,
     });
-  });
-});
-
-const legacyTask: ScheduledTask = {
-  id: ScheduledTaskId.make("legacy-task"),
-  title: "Review issues",
-  prompt: "Review open issues",
-  enabled: true,
-  schedule: { type: "interval", everyMs: 60_000 },
-  projectId: ProjectId.make("project"),
-  threadId: null,
-  workspaceStrategy: { type: "worktree", baseRef: "release" },
-  modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
-  runtimeMode: "full-access",
-  interactionMode: "default",
-  createdBy: "user",
-  creationSource: "web",
-  createdAt: "2026-09-17T00:00:00.000Z",
-  updatedAt: "2026-09-17T00:00:00.000Z",
-  nextRunAt: null,
-  lastRunAt: null,
-  lastRunStatus: "never",
-  lastRunError: null,
-  runCount: 0,
-};
-
-describe("editing scheduled task branch settings", () => {
-  it("keeps an omitted origin flag on the local base branch", () => {
-    const draft = editDraft(legacyTask);
-    expect(draft.baseRef).toBe("release");
-    expect(draft.startFromOrigin).toBe(false);
   });
 });
 

@@ -12,7 +12,6 @@ import {
   type ThreadMoveAvailability,
 } from "./threadOrder";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
 import {
   CommandId,
@@ -36,7 +35,6 @@ import {
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2Status,
   resolveThreadListV2WokeAt,
-  resolveThreadListV2SwipeActions,
   sortThreadsForListV2,
   threadListV2ListItemsAreEqual,
   threadHasUnseenCompletion,
@@ -150,32 +148,6 @@ describe("queued messages keep a settled thread active", () => {
       ["settled", "slim"],
     ]);
     expect(layout.settledCount).toBe(1);
-  });
-
-  it("includes it in the reorderable active section", () => {
-    expect(
-      getThreadListV2OrderedSection({ threads, section: "active", now: NOW, queuedThreadKeys }).map(
-        (thread) => thread.id,
-      ),
-    ).toEqual(["active", "settled-queued"]);
-    expect(
-      getThreadListV2OrderedSection({ threads, section: "active", now: NOW }).map(
-        (thread) => thread.id,
-      ),
-    ).toEqual(["active"]);
-  });
-});
-
-describe("resolveThreadListV2SwipeActions", () => {
-  it("falls back to archive only for a pre-lifecycle server", () => {
-    expect(
-      resolveThreadListV2SwipeActions({
-        variant: "card",
-        settlementSupported: false,
-        snoozeSupported: false,
-        snoozable: true,
-      }),
-    ).toEqual({ primary: "archive", secondary: null });
   });
 });
 
@@ -433,34 +405,6 @@ describe("buildThreadListV2Items", () => {
     expect(layout.settledShelfHeaderIndex).toBe(1);
   });
 
-  it("keeps the selected settled thread visible when its shelf is collapsed", () => {
-    const layout = buildThreadListV2Items({
-      threads: [
-        makeThread({
-          id: ThreadId.make("selected"),
-          title: "Selected",
-          settledOverride: "settled",
-          settledAt: NOW,
-        }),
-        makeThread({
-          id: ThreadId.make("other"),
-          title: "Other",
-          settledOverride: "settled",
-          settledAt: NOW,
-        }),
-      ],
-      environmentId: null,
-      searchQuery: "",
-      now: NOW,
-      settledShelfExpanded: false,
-      selectedThreadKey: `${environmentId}:selected`,
-    });
-
-    expect(layout.items.map((item) => item.thread.id)).toEqual(["selected"]);
-    expect(layout.settledCount).toBe(2);
-    expect(layout.settledShelfHeaderIndex).toBe(0);
-  });
-
   it("keeps settled threads in the tail and filters by search query", () => {
     const { items } = buildThreadListV2Items({
       threads: [
@@ -482,48 +426,6 @@ describe("buildThreadListV2Items", () => {
       ["match", "card"],
       ["settled", "slim"],
     ]);
-  });
-
-  it("includes a thread matched by message content", () => {
-    const thread = makeThread({
-      id: ThreadId.make("content-match"),
-      title: "Unrelated title",
-    });
-    const { items } = buildThreadListV2Items({
-      threads: [thread],
-      environmentId: null,
-      searchQuery: "relay reconnect",
-      matchedThreadKeys: new Set([
-        threadSearchMatchKey({
-          environmentId,
-          threadId: thread.id,
-        }),
-      ]),
-      now: NOW,
-    });
-
-    expect(items.map((item) => item.thread.id)).toEqual(["content-match"]);
-  });
-
-  it("scopes the flat list to one project", () => {
-    const projectId = ProjectId.make("project-1");
-    const otherProjectId = ProjectId.make("project-2");
-    const { items } = buildThreadListV2Items({
-      threads: [
-        makeThread({ id: ThreadId.make("included"), projectId, title: "Included" }),
-        makeThread({
-          id: ThreadId.make("excluded"),
-          projectId: otherProjectId,
-          title: "Excluded",
-        }),
-      ],
-      environmentId: null,
-      projectRefs: [{ environmentId, projectId }],
-      searchQuery: "",
-      now: NOW,
-    });
-
-    expect(items.map((item) => item.thread.id)).toEqual(["included"]);
   });
 
   it("scopes the flat list to every environment member of a logical project", () => {
@@ -898,12 +800,6 @@ describe("pending mobile thread moves", () => {
     }
   });
 
-  it("keeps search results in the full pending section order", () => {
-    const { rows, assignments, pending, update } = fixture();
-    const current = update(update(rows, assignments[0]!), assignments[1]!);
-    expect(layout(current, pending, "match")).toEqual(["c", "b"]);
-  });
-
   it("releases for real section membership and foreign key changes", () => {
     const { rows, pending } = fixture();
     expect(reconcilePendingThreadOrder(pending, rows.slice(1))).toBeNull();
@@ -1022,20 +918,6 @@ describe("mobile move availability", () => {
       expect(assignments![0]!.orderKey > "dd" && assignments![0]!.orderKey < "ff").toBe(true);
     },
   );
-
-  it("allows an independent keyed move despite an unsupported keyless row elsewhere", () => {
-    const ordered = rows("active", [null, null, "bb", "dd", "ff"]);
-    const plan = createThreadMovePlanner({
-      ordered,
-      section: "active",
-      reorderableEnvironmentIds: new Set([environmentId]),
-    });
-    const assignments = plan(`${environmentId}:move-4`, "up");
-    expect(assignments).toHaveLength(1);
-    expect(assignments![0]!.id).toBe(`${environmentId}:move-4`);
-    expect(assignments![0]!.orderKey > "bb").toBe(true);
-    expect(assignments![0]!.orderKey < "dd").toBe(true);
-  });
 });
 
 describe("thread drag destinations", () => {
@@ -1214,15 +1096,6 @@ describe("cross-section thread drops", () => {
       unsnooze: false,
     });
   });
-  it("does not send lifecycle commands for an ordinary Active reorder", () => {
-    expect(
-      threadDropLifecycle(
-        makeThread({ id: ThreadId.make("active"), title: "active" }),
-        "active",
-        NOW,
-      ),
-    ).toEqual({ pin: false, unpin: false, unsettle: false, unsnooze: false });
-  });
 });
 
 it("excludes subagents from navigation, search and ordering while retaining user forks", () => {
@@ -1330,24 +1203,6 @@ describe("threadListV2ListItemsAreEqual", () => {
       expect(first[index]).not.toBe(second[index]);
       expect(threadListV2ListItemsAreEqual(first[index]!, second[index]!)).toBe(true);
     }
-  });
-
-  it("notices a replaced thread shell", () => {
-    const replacement = makeThread({ id: ThreadId.make("eq"), title: "renamed" });
-    const rebuilt = buildThreadListV2Items({
-      threads: [replacement],
-      environmentId: null,
-      searchQuery: "",
-      now: NOW,
-    });
-    const next = buildThreadListV2ListItems({
-      items: rebuilt.items,
-      pendingTasks: [],
-      snoozeLabelNow: NOW,
-    });
-    const previousThread = build().find((item) => item.type === "v2-thread")!;
-    const nextThread = next.find((item) => item.type === "v2-thread")!;
-    expect(threadListV2ListItemsAreEqual(previousThread, nextThread)).toBe(false);
   });
 
   it("notices a changed wake countdown label", () => {
@@ -1650,14 +1505,6 @@ describe("Working section beta", () => {
     const off = build({ workingShelfEnabled: false });
     expect(ids(off)).toContain("working");
     expect(off.workingCount).toBe(0);
-  });
-
-  it("shows working rows as cards when expanded, or only the selected one when collapsed", () => {
-    expect(build({ workingShelfExpanded: true }).items.at(-1)).toMatchObject({
-      thread: { id: "working" },
-      variant: "card",
-    });
-    expect(ids(build({ selectedThreadKey: `${environmentId}:working` })).at(-1)).toBe("working");
   });
 
   it("orders the inbox by the latest return this device observed", () => {

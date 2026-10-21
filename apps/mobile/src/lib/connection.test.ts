@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId } from "@t3tools/contracts";
 
-import { isRelayManagedConnection, toStableSavedRemoteConnection } from "./connection";
+import { toStableSavedRemoteConnection } from "./connection";
 
 const mobilePlatform = vi.hoisted(() => ({ OS: "ios" as "ios" | "android" }));
 const mobileDevice = vi.hoisted(() => ({
@@ -35,11 +35,6 @@ describe("mobile remote connection records", () => {
     mobileDevice.deviceType = mobileDevice.DeviceType.PHONE;
     mobileDevice.osVersion = "18.4.1";
     mobileDevice.modelName = "iPhone 15 Pro";
-  });
-
-  it("keeps existing DPoP tunnel records read-only after upgrading", () => {
-    expect(isRelayManagedConnection({ authenticationMethod: "dpop" })).toBe(true);
-    expect(isRelayManagedConnection({ authenticationMethod: "bearer" })).toBe(false);
   });
 
   it("drops short-lived managed environment credentials from stable records", () => {

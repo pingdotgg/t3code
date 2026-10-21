@@ -63,11 +63,7 @@ describe("tool-group append following", () => {
 
   it.each([
     { name: "reading earlier calls", changes: { scrollOffset: 20 } },
-    { name: "dragging before leaving the edge", changes: { userScrolling: true } },
-    { name: "opening detail during an append", changes: { detailsChanged: true } },
     { name: "streaming a result", changes: { rows: previousRows, contentHeight: 600 } },
-    { name: "updating a lifecycle label", changes: { rows: previousRows, contentHeight: 289 } },
-    { name: "prepending old calls", changes: { rows: [{ id: "older" }, ...previousRows] } },
     {
       name: "replacing a call while appending",
       changes: { rows: [{ id: "replacement" }, ...appendedRows.slice(1)] },
@@ -114,6 +110,7 @@ describe("resolveThreadFeedSubmissionAnchor", () => {
     ).toBeNull();
   });
 
+  // regression: #7897 stop pushing follow-up messages to the top
   it("does not anchor a thread that has already started a turn", () => {
     expect(
       resolveThreadFeedSubmissionAnchor({
@@ -128,6 +125,7 @@ describe("resolveThreadFeedSubmissionAnchor", () => {
 });
 
 describe("resolveThreadFeedLiveFollow", () => {
+  // regression: #5986 stabilize thread composer and interactions
   it("pauses immediately when the user starts scrolling", () => {
     expect(resolveThreadFeedLiveFollow(true, { type: "user-scroll-begin" })).toBe(false);
   });

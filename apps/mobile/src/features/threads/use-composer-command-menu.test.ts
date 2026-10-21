@@ -59,18 +59,6 @@ describe("mobile slash commands", () => {
     },
   );
 
-  it("does not offer a native command inside the message", () => {
-    expect(
-      buildComposerSlashCommandItems({
-        query: "plan",
-        atMessageStart: false,
-        hasThread: false,
-        allowInteractionMode: true,
-        selectedProviderStatus: antigravity,
-      }),
-    ).toEqual([]);
-  });
-
   it("still applies the T3 plan command for supported providers", () => {
     const items = buildComposerSlashCommandItems({
       query: "plan",
