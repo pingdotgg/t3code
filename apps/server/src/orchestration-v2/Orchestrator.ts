@@ -11826,6 +11826,48 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       Effect.forkDetach,
     );
 
+  // A child whose run ends while its background tasks or its own subagents still run has no
+  // result yet. When that work settles there is no run update to finalize it, so these events
+  // do it (#17512). A background roster counts once it empties after it was seen non-empty.
+  const providerThreadsWithBackgroundWork = new Set<string>();
+  const settlesChildWork = (stored: OrchestrationV2StoredEvent) => {
+    const { event } = stored;
+    if (event.type === "subagent.updated")
+      return !isOrchestrationV2WorkActive(event.payload.status);
+    if (event.type !== "provider-thread.updated") return false;
+    if ((event.payload.pendingBackgroundTasks?.length ?? 0) > 0) {
+      providerThreadsWithBackgroundWork.add(event.payload.id);
+      return false;
+    }
+    return providerThreadsWithBackgroundWork.delete(event.payload.id);
+  };
+  yield* Stream.merge(
+    eventSink.stream({
+      afterSequence: terminalEventsAfterSequence,
+      eventType: "provider-thread.updated",
+    }),
+    eventSink.stream({ afterSequence: terminalEventsAfterSequence, eventType: "subagent.updated" }),
+  ).pipe(
+    Stream.filter(settlesChildWork),
+    Stream.runForEach((stored) =>
+      Effect.gen(function* () {
+        const childThreadId = stored.event.threadId;
+        const parentThreadId = yield* appOwnedSubagentParentThreadId(childThreadId);
+        if (parentThreadId === undefined) return;
+        yield* threadDispatch.withLock(parentThreadId, finalizeAppOwnedSubagent(childThreadId));
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Failed to finalize a delegated child after its work settled", {
+            threadId: stored.event.threadId,
+            sequence: stored.sequence,
+            cause,
+          }),
+        ),
+      ),
+    ),
+    Effect.forkDetach,
+  );
+
   const recoverDelegatedTasks = Effect.gen(function* () {
     yield* projectionStore.getRecoveryThreadIds("subagent-results").pipe(
       Effect.tap((threadIds) =>
