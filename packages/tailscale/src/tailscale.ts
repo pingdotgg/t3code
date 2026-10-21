@@ -168,14 +168,6 @@ function normalizeMagicDnsName(status: TailscaleStatusJson): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
-export const parseTailscaleMagicDnsName = (
-  rawStatusJson: string,
-): Effect.Effect<string | null, TailscaleStatusParseError> =>
-  decodeTailscaleStatusJson(rawStatusJson).pipe(
-    Effect.mapError((cause) => new TailscaleStatusParseError({ cause })),
-    Effect.map(normalizeMagicDnsName),
-  );
-
 export function isTailscaleIpv4Address(address: string): boolean {
   const parts = address.split(".");
   if (parts.length !== 4) {
