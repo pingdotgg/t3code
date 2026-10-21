@@ -207,6 +207,39 @@
   ],
   "packageOverrides": [
     {
+      "name": "saxes",
+      "version": "6.0.0",
+      "license": "ISC",
+      "sourceUrl": "https://github.com/lddubeau/saxes",
+      "generatedNotice": {
+        "licenseId": "ISC",
+        "copyrights": ["Copyright (c) 2018-2021 Louis-Dominique Dubeau"]
+      }
+    },
+    {
+      "name": "worker-f",
+      "version": "0.1.20",
+      "sourceUrl": "https://gitlab.com/catamphetamine/worker-f",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) catamphetamine"]
+      }
+    },
+    {
+      "name": "@betteroffice/fonts",
+      "version": "0.4.0",
+      "license": "Apache-2.0 AND OFL-1.1",
+      "generatedNotices": [
+        { "licenseId": "Apache-2.0" },
+        {
+          "licenseId": "OFL-1.1",
+          "copyrights": [
+            "Copyright 2013 The Carlito Project Authors (https://github.com/googlefonts/carlito), with Reserved Font Name \"Carlito\""
+          ]
+        }
+      ]
+    },
+    {
       "name": "remark-math",
       "version": "6.0.0",
       "sourceUrl": "https://github.com/remarkjs/remark-math/blob/main/license",

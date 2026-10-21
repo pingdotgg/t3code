@@ -5,7 +5,11 @@ import { readFilePreviewResponse } from "@t3tools/client-runtime/file-preview";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
-import { filePreviewKind, FILE_TEXT_PREVIEW_MAX_BYTES } from "@t3tools/shared/filePreview";
+import {
+  filePreviewKind,
+  officePreviewKind,
+  FILE_TEXT_PREVIEW_MAX_BYTES,
+} from "@t3tools/shared/filePreview";
 import { ChevronRightIcon, DownloadIcon, Trash2Icon, WrapTextIcon, XIcon } from "lucide-react";
 import { Check, Code2, Copy, Eye, Table2 } from "lucide";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
@@ -30,6 +34,18 @@ import {
   FileSurfaceNotice,
 } from "./fileSurfaceChrome";
 
+const OfficeFilePreview = lazy(() =>
+  import("./OfficeFilePreview").then((module) => ({ default: module.OfficeFilePreview })),
+);
+
+const FontFilePreview = lazy(() =>
+  import("./FontFilePreview").then((module) => ({ default: module.FontFilePreview })),
+);
+
+const MermaidFilePreview = lazy(() =>
+  import("./MermaidFilePreview").then((module) => ({ default: module.MermaidFilePreview })),
+);
+
 const SourcePreview = lazy(() => import("./ReadOnlySourcePreview"));
 
 const STALE_URL_MS = 5 * 60_000;
@@ -42,7 +58,11 @@ export function ReadOnlySourcePreview(props: { name: string; text: string }) {
   );
 }
 
-function renderedToggleLabel(mode: "markdown" | "html" | "table", rendered: boolean): string {
+function renderedToggleLabel(
+  mode: "markdown" | "mermaid" | "html" | "table",
+  rendered: boolean,
+): string {
+  if (mode === "mermaid") return rendered ? "Show Mermaid source" : "Show rendered diagram";
   if (mode === "markdown") return rendered ? "Show markdown source" : "Show rendered markdown";
   if (mode === "table") return rendered ? "Show source" : "Show table";
   return rendered ? "Show HTML source" : "Show rendered page";
@@ -55,7 +75,10 @@ export function AttachmentFilePreview(props: {
   file?: Blob | null;
   asset?:
     | { environmentId: EnvironmentId; attachmentId: string }
-    | { environmentId: EnvironmentId; resource: Extract<AssetResource, { _tag: "media-file" }> };
+    | {
+        environmentId: EnvironmentId;
+        resource: Extract<AssetResource, { _tag: "media-file" | "draft-workspace-file" }>;
+      };
   htmlRender?: boolean;
   threadRef?: ScopedThreadRef;
   origin?: string;
@@ -63,9 +86,18 @@ export function AttachmentFilePreview(props: {
   onClose?: () => void;
 }) {
   const kind = filePreviewKind(props);
+  const officeKind = officePreviewKind(props);
   const delimiter = filePreviewDelimiter(props);
   const renderedMode =
-    kind === "markdown" ? "markdown" : kind === "html" ? "html" : delimiter ? "table" : null;
+    kind === "mermaid"
+      ? "mermaid"
+      : kind === "markdown"
+        ? "markdown"
+        : kind === "html"
+          ? "html"
+          : delimiter
+            ? "table"
+            : null;
   const attachmentId =
     props.asset && "attachmentId" in props.asset ? props.asset.attachmentId : undefined;
   const { copyToClipboard, isCopied } = useCopyToClipboard({ target: props.name });
@@ -82,7 +114,11 @@ export function AttachmentFilePreview(props: {
             disposition: "inline" as const,
           }
         : null;
-  const downloadResource = resource ? { ...resource, disposition: "attachment" as const } : null;
+  const downloadResource = resource
+    ? resource._tag === "draft-workspace-file"
+      ? resource
+      : { ...resource, disposition: "attachment" as const }
+    : null;
   const refresh = useAssetUrlRefresh(
     props.file ? null : (props.asset?.environmentId ?? null),
     props.file ? null : resource,
@@ -127,7 +163,8 @@ export function AttachmentFilePreview(props: {
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Retry must reauthorize the remote file.
   }, [props.file, refresh, revision]);
   const url = props.file ? localUrl : remoteUrl;
-  const needsText = kind === "text" || kind === "markdown" || (kind === "html" && !rendered);
+  const needsText =
+    kind === "text" || kind === "markdown" || kind === "mermaid" || (kind === "html" && !rendered);
   useEffect(() => {
     if (!needsText || !url) return;
     const controller = new AbortController();
@@ -170,7 +207,7 @@ export function AttachmentFilePreview(props: {
     needsText &&
     content !== null &&
     !(delimiter && rendered) &&
-    !(kind === "markdown" && rendered);
+    !((kind === "markdown" || kind === "mermaid") && rendered);
 
   const save = () => {
     setSaving(true);
@@ -218,6 +255,10 @@ export function AttachmentFilePreview(props: {
   ) : needsText && content ? (
     delimiter && rendered ? (
       <DelimitedTablePreview name={props.name} text={content.text} delimiter={delimiter} />
+    ) : kind === "mermaid" && rendered ? (
+      <Suspense fallback={<FileSurfaceLoading />}>
+        <MermaidFilePreview text={content.text} />
+      </Suspense>
     ) : kind === "markdown" && rendered ? (
       <ScrollArea className="min-h-0 flex-1">
         <ChatMarkdown text={content.text} cwd={undefined} className="mx-auto max-w-4xl px-6 py-5" />
@@ -225,6 +266,19 @@ export function AttachmentFilePreview(props: {
     ) : (
       <ReadOnlySourcePreview name={props.name} text={content.text} />
     )
+  ) : kind === "font" ? (
+    <Suspense fallback={<FileSurfaceLoading />}>
+      <FontFilePreview src={url} name={props.name} />
+    </Suspense>
+  ) : officeKind ? (
+    <Suspense fallback={<FileSurfaceLoading />}>
+      <OfficeFilePreview
+        src={url}
+        name={props.name}
+        kind={officeKind}
+        sizeBytes={props.sizeBytes}
+      />
+    </Suspense>
   ) : kind === "pdf" || kind === "html" ? (
     <BrowserDocumentFrame
       src={url}

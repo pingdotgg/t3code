@@ -110,7 +110,7 @@ export function ComposerContextSheet(props: {
       : undefined;
   if (record && !("payload" in record) && (record.kind === "image" || record.kind === "file")) {
     const mimeType = videoMimeType(record) ?? record.mimeType;
-    const previewKind = filePreviewKind(record);
+    const previewKind = filePreviewKind(record, { richDocuments: false });
     const resource = {
       _tag: "attachment" as const,
       attachmentId: record.attachmentId,

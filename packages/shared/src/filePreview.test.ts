@@ -4,18 +4,87 @@ import {
   filePreviewKind,
   decodeFilePreviewText,
   FILE_TEXT_PREVIEW_MAX_BYTES,
+  hostPreviewMimeTypeFromExtension,
+  isWorkspaceFontPreviewPath,
+  isWorkspaceImagePreviewPath,
   isWorkspacePreviewEntryPath,
   mediaKindFromPath,
+  officePreviewKind,
 } from "./filePreview.ts";
 
 describe("workspace file previews", () => {
-  // regression: #10311 previews classify by the literal filename, not URL-like suffixes
-  it.each(["image.png.ts", "image.png#notes.txt", "image%2Epng"])(
-    "rejects non-preview path %s",
-    (path) => {
-      expect(isWorkspacePreviewEntryPath(path)).toBe(false);
+  it.each(["ttf", "otf", "woff", "woff2"])(
+    "previews %s fonts through signed host assets",
+    (extension) => {
+      expect(
+        filePreviewKind({ name: `sample.${extension}`, mimeType: "application/octet-stream" }),
+      ).toBe("font");
+      expect(filePreviewKind({ name: "download", mimeType: `font/${extension}` })).toBe("font");
+      expect(isWorkspaceFontPreviewPath(`/tmp/sample.${extension.toUpperCase()}`)).toBe(true);
+      expect(isWorkspacePreviewEntryPath(`sample.${extension}`)).toBe(true);
+      expect(hostPreviewMimeTypeFromExtension(`.${extension}`)).toBe(`font/${extension}`);
+      expect(isWorkspaceFontPreviewPath(`sample.${extension}?download=1`)).toBe(false);
+      expect(filePreviewKind({ name: `sample.${extension}`, mimeType: "application/zip" })).toBe(
+        "unsupported",
+      );
     },
   );
+  it.each([
+    [
+      "quarterly-report.DOCX",
+      "docx",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ],
+    [
+      "finance#q4/operating-plan.xlsx",
+      "xlsx",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ],
+    [
+      "slides?review/quarterly-review.pptx",
+      "pptx",
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ],
+  ])("recognizes Office assets at literal path %s", (name, kind, mimeType) => {
+    expect(officePreviewKind({ name })).toBe(kind);
+    expect(filePreviewKind({ name, mimeType: "application/octet-stream" })).toBe(kind);
+    expect(isWorkspacePreviewEntryPath(name)).toBe(true);
+    expect(hostPreviewMimeTypeFromExtension(`.${kind}`)).toBe(mimeType);
+    expect(filePreviewKind({ name: "download", mimeType })).toBe(kind);
+    expect(filePreviewKind({ name, mimeType: "application/zip" })).toBe("unsupported");
+  });
+  // regression: #10311 previews classify by the literal filename, not URL-like suffixes
+  it.each([
+    "image.png.ts",
+    "image.png#notes.txt",
+    "image%2Epng",
+    "report.docx#notes.txt",
+    "report.xlsx?download=1",
+    "slides%2Epptx",
+    "report.docm",
+    "slides.ppt",
+  ])("rejects non-preview path %s", (path) => {
+    expect(isWorkspacePreviewEntryPath(path)).toBe(false);
+  });
+
+  it.each(["picture.bmp", "photo.heic", "scan.tif", "scan.TIFF"])(
+    "recognizes image preview path %s",
+    (path) => {
+      expect(isWorkspaceImagePreviewPath(path)).toBe(true);
+      expect(isWorkspacePreviewEntryPath(path)).toBe(true);
+    },
+  );
+
+  it("serves audio in place from the host like video and browser documents", () => {
+    expect(hostPreviewMimeTypeFromExtension(".m4a")).toBe("audio/mp4");
+    expect(hostPreviewMimeTypeFromExtension(".weba")).toBe("audio/webm");
+    expect(hostPreviewMimeTypeFromExtension(".mp4")).toBe("video/mp4");
+    expect(hostPreviewMimeTypeFromExtension(".txt")).toBeNull();
+    expect(hostPreviewMimeTypeFromExtension(".constructor")).toBeNull();
+    expect(hostPreviewMimeTypeFromExtension(".toString")).toBeNull();
+    expect(hostPreviewMimeTypeFromExtension(".__proto__")).toBeNull();
+    expect(hostPreviewMimeTypeFromExtension(".webm-audio")).toBe("audio/webm");
+  });
 });
 
 describe("media path parsing", () => {
@@ -48,6 +117,17 @@ describe("attachment preview classification", () => {
   it.each([
     ["example.json", "application/octet-stream", "text"],
     ["report.pdf", "application/pdf", "pdf"],
+    ["page.HTML", "", "html"],
+    ["diagram.mmd", "", "mermaid"],
+    ["diagram.MERMAID", "text/plain", "mermaid"],
+    ["download", "text/vnd.mermaid", "mermaid"],
+    ["source-code.otf", "application/vnd.oasis.opendocument.formula-template", "font"],
+    ["notes.rtf", "application/rtf", "text"],
+    ["notes.rtf", "", "text"],
+    ["clip.weba", "", "audio"],
+    ["image.bmp", "application/octet-stream", "image"],
+    ["photo.heic", "application/octet-stream", "image"],
+    ["scan.tiff", "application/octet-stream", "image"],
     ["recording.mp3", "", "audio"],
     ["recording.webm-audio", "", "audio"],
     ["recording.webm", "audio/webm", "audio"],
@@ -61,6 +141,12 @@ describe("attachment preview classification", () => {
     expect(() => decodeFilePreviewText(new Uint8Array([65, 0, 66]))).toThrow("binary");
     expect(() => decodeFilePreviewText(new Uint8Array([255]))).toThrow("UTF-8");
   });
+  it.each(["doc", "xls", "ppt", "odt", "ods", "odp", "epub", "zip", "tar", "gz", "7z", "rar"])(
+    "retains the binary fallback for %s, which opencode does not render",
+    (extension) => {
+      expect(filePreviewKind({ name: `sample.${extension}` })).toBe("unsupported");
+    },
+  );
   it("does not corrupt a multi-byte character at the preview boundary", () => {
     const bytes = new Uint8Array(FILE_TEXT_PREVIEW_MAX_BYTES + 1).fill(97);
     bytes[FILE_TEXT_PREVIEW_MAX_BYTES - 1] = 0xe2;

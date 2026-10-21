@@ -26,20 +26,39 @@ export type FilePreviewKind =
   | "pdf"
   | "html"
   | "markdown"
+  | "mermaid"
+  | "font"
+  | "docx"
+  | "xlsx"
+  | "pptx"
   | "text"
   | "unsupported";
 
-export function filePreviewKind(file: {
-  readonly name: string;
-  readonly mimeType?: string;
-}): FilePreviewKind {
+export function filePreviewKind(
+  file: { readonly name: string; readonly mimeType?: string },
+  options?: { readonly richDocuments?: boolean },
+): FilePreviewKind {
   const mime = file.mimeType?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
   const name = file.name.toLowerCase();
   const extension = name.slice(name.lastIndexOf("."));
   const generic = !mime || mime === "application/octet-stream" || mime === "text/plain";
+  const richDocuments = options?.richDocuments !== false;
+  const office = richDocuments ? officePreviewKind(file) : null;
+  if (office) return office;
   if (mime === "application/pdf") return "pdf";
   if (mime === "text/html") return "html";
   if (mime === "text/markdown" || mime === "text/x-markdown") return "markdown";
+  if (richDocuments && mime === "text/vnd.mermaid") return "mermaid";
+  if (richDocuments && mime.startsWith("font/")) return "font";
+  // Linux's MIME database also assigns .otf to OpenDocument formula templates.
+  // FontFace validates the actual bytes before a specimen is shown.
+  if (
+    richDocuments &&
+    extension === ".otf" &&
+    mime === "application/vnd.oasis.opendocument.formula-template"
+  )
+    return "font";
+  if (richDocuments && mime === "application/rtf") return "text";
   if (mime.startsWith("image/")) return "image";
   if (mime.startsWith("video/")) return "video";
   if (mime.startsWith("audio/")) return "audio";
@@ -47,6 +66,9 @@ export function filePreviewKind(file: {
     if (extension === ".pdf") return "pdf";
     if (/^\.html?$/.test(extension)) return "html";
     if (/^\.(md|markdown|mdown|mkd|mdx)$/.test(extension)) return "markdown";
+    if (richDocuments && /^\.(mmd|mermaid)$/.test(extension)) return "mermaid";
+    if (richDocuments && isWorkspaceFontPreviewPath(name)) return "font";
+    if (richDocuments && extension === ".rtf") return "text";
     const media = mediaMimeTypeFromExtension(extension);
     if (media?.startsWith("image/")) return "image";
     if (media?.startsWith("video/")) return "video";
@@ -73,6 +95,30 @@ export function filePreviewKind(file: {
 
 export const FILE_TEXT_PREVIEW_MAX_BYTES = 1024 * 1024;
 
+const OFFICE_MIME_TYPES = {
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+} as const;
+
+export type OfficePreviewKind = keyof typeof OFFICE_MIME_TYPES;
+
+export function officePreviewKind(file: {
+  readonly name: string;
+  readonly mimeType?: string;
+}): OfficePreviewKind | null {
+  const mime = file.mimeType?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  for (const kind of ["docx", "xlsx", "pptx"] as const) {
+    if (mime === OFFICE_MIME_TYPES[kind]) return kind;
+    if (
+      (!mime || mime === "application/octet-stream" || mime === "text/plain") &&
+      file.name.toLowerCase().endsWith(`.${kind}`)
+    )
+      return kind;
+  }
+  return null;
+}
+
 export function decodeFilePreviewText(bytes: Uint8Array, truncated = false) {
   const bounded = bytes.subarray(0, FILE_TEXT_PREVIEW_MAX_BYTES);
   if (bounded.some((byte) => byte === 0))
@@ -92,23 +138,31 @@ export const WORKSPACE_BROWSER_PREVIEW_EXTENSIONS = [".htm", ".html", ".pdf"] as
 
 export const WORKSPACE_IMAGE_PREVIEW_EXTENSIONS = [
   ".avif",
+  ".bmp",
   ".gif",
   ".ico",
+  ".heic",
   ".jpeg",
   ".jpg",
   ".png",
   ".svg",
+  ".tif",
+  ".tiff",
   ".webp",
 ] as const;
 
 const IMAGE_MIME_TYPE_BY_EXTENSION = new Map([
   [".avif", "image/avif"],
+  [".bmp", "image/bmp"],
+  [".heic", "image/heic"],
   [".gif", "image/gif"],
   [".ico", "image/x-icon"],
   [".jpeg", "image/jpeg"],
   [".jpg", "image/jpeg"],
   [".png", "image/png"],
   [".svg", "image/svg+xml"],
+  [".tif", "image/tiff"],
+  [".tiff", "image/tiff"],
   [".webp", "image/webp"],
 ]);
 
@@ -129,9 +183,21 @@ const AUDIO_MIME_TYPE_BY_EXTENSION = new Map([
   [".opus", "audio/ogg"],
   [".aiff", "audio/aiff"],
   [".webm-audio", "audio/webm"],
+  [".weba", "audio/webm"],
 ]);
 
-export function audioMimeTypeFromExtension(extension: string): string | null {
+const FONT_MIME_TYPE_BY_EXTENSION = new Map([
+  [".ttf", "font/ttf"],
+  [".otf", "font/otf"],
+  [".woff", "font/woff"],
+  [".woff2", "font/woff2"],
+]);
+
+export function isWorkspaceFontPreviewPath(path: string): boolean {
+  return /\.(ttf|otf|woff2?)$/i.test(path);
+}
+
+function audioMimeTypeFromExtension(extension: string): string | null {
   if (!/^\.[a-z0-9-]+$/i.test(extension)) return null;
   return AUDIO_MIME_TYPE_BY_EXTENSION.get(extension.toLowerCase()) ?? null;
 }
@@ -151,6 +217,10 @@ export function hostPreviewMimeTypeFromExtension(extension: string): string | nu
     mediaMimeTypeFromExtension(extension) ??
     audioMimeTypeFromExtension(extension) ??
     BROWSER_MIME_TYPE_BY_EXTENSION.get(extension.toLowerCase()) ??
+    FONT_MIME_TYPE_BY_EXTENSION.get(extension.toLowerCase()) ??
+    (Object.hasOwn(OFFICE_MIME_TYPES, extension.toLowerCase().slice(1))
+      ? OFFICE_MIME_TYPES[extension.toLowerCase().slice(1) as OfficePreviewKind]
+      : null) ??
     null
   );
 }
@@ -215,5 +285,10 @@ export function isWorkspaceAudioPreviewPath(path: string): boolean {
 }
 
 export function isWorkspacePreviewEntryPath(path: string): boolean {
-  return isWorkspaceBrowserPreviewPath(path) || isWorkspaceImagePreviewPath(path);
+  return (
+    isWorkspaceBrowserPreviewPath(path) ||
+    isWorkspaceImagePreviewPath(path) ||
+    isWorkspaceFontPreviewPath(path) ||
+    officePreviewKind({ name: path }) !== null
+  );
 }
