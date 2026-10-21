@@ -30,6 +30,17 @@ function rowKey(row: RelayAgentActivityAggregateRow): string {
   return JSON.stringify([row.environmentId, row.threadId]);
 }
 
+export function rowPhasesChanged(
+  previousAggregate: RelayAgentActivityAggregateState,
+  nextAggregate: RelayAgentActivityAggregateState,
+): boolean {
+  if (previousAggregate.activities.length !== nextAggregate.activities.length) return true;
+  const previousPhases = new Map(
+    previousAggregate.activities.map((row) => [rowKey(row), row.phase]),
+  );
+  return nextAggregate.activities.some((row) => previousPhases.get(rowKey(row)) !== row.phase);
+}
+
 function isAttentionPhase(phase: string): boolean {
   return phase === "waiting_for_approval" || phase === "waiting_for_input";
 }

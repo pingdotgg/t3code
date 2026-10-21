@@ -297,6 +297,7 @@ describe("AgentAwarenessRelay", () => {
       "provider-turn.updated",
       "thread.visited",
       "thread.pinned",
+      "thread.unsettled",
     ] as const) {
       assert.isFalse(AgentAwarenessRelay.shouldPublishAgentAwarenessEvent({ type }));
     }
@@ -312,6 +313,7 @@ describe("AgentAwarenessRelay", () => {
       "thread.archived",
       "thread.unarchived",
       "thread.deleted",
+      "thread.settled",
     ] as const) {
       assert.isTrue(AgentAwarenessRelay.shouldPublishAgentAwarenessEvent({ type }));
     }
@@ -769,6 +771,75 @@ describe("AgentAwarenessRelay", () => {
       yield* TestClock.adjust("5 seconds");
       yield* relay.drain;
       assert.equal(publications.length, 0);
+    }),
+  );
+
+  it.effect.each(["completed", "failed"] as const)(
+    "publishes a tombstone when a %s thread is settled through a domain event",
+    (status) =>
+      Effect.gen(function* () {
+        const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+        const pulls = yield* Queue.unbounded<void>();
+        const { relay, currentShell, publications } = yield* makeTestRelay({
+          domainEvents: Stream.fromEffectRepeat(
+            Queue.offer(pulls, undefined).pipe(Effect.andThen(Queue.take(events))),
+          ),
+        });
+        yield* relay.start();
+        yield* Queue.take(pulls);
+        yield* relay.publishThread(THREAD_ID);
+        const terminal = shell({ status });
+        yield* Ref.set(currentShell, terminal);
+        yield* relay.publishThread(THREAD_ID);
+        assert.equal(publications[1]?.state?.phase, status);
+
+        const now = yield* DateTime.now;
+        const settled = {
+          ...terminal,
+          settledOverride: "settled" as const,
+          settledAt: now,
+          lastVisitedAt: null,
+        };
+        yield* Ref.set(currentShell, settled);
+        yield* Queue.offer(events, {
+          id: EventId.make("event:settled"),
+          type: "thread.settled",
+          threadId: THREAD_ID,
+          occurredAt: now,
+          payload: settled,
+        });
+        yield* Queue.take(pulls);
+        yield* relay.drain;
+        assert.equal(publications.length, 2);
+        yield* TestClock.adjust("5 seconds");
+        yield* relay.drain;
+        assert.equal(publications.length, 3);
+        assert.equal(publications[2]?.state, null);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps settled live work until its monitor finishes", () =>
+    Effect.gen(function* () {
+      const { relay, currentShell, publications } = yield* makeTestRelay();
+      yield* relay.publishThread(THREAD_ID);
+      const held = shell({
+        status: "completed",
+        settledOverride: "settled",
+        pendingBackgroundTasks: [{ taskId: "watch", kind: "monitor" }],
+      });
+      yield* Ref.set(currentShell, held);
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.equal(publications.length, 1);
+      assert.equal(publications[0]?.state?.phase, "running");
+
+      yield* Ref.set(currentShell, { ...held, pendingBackgroundTasks: [] });
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.equal(publications.length, 2);
+      assert.equal(publications[1]?.state, null);
     }),
   );
 
