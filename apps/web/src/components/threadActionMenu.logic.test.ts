@@ -70,7 +70,7 @@ describe("buildThreadActionMenuItems", () => {
   );
 
   it.each([false, true])(
-    "allows read-only clients to toggle the project filter (active: %s)",
+    "allows read-only project filtering without enabling mutations (active: %s)",
     (isActive) => {
       const items = buildThreadActionMenuItems({
         ...baseState,
@@ -82,6 +82,10 @@ describe("buildThreadActionMenuItems", () => {
       });
       expect(items.find((item) => item.id === "filter-by-project")?.disabled).not.toBe(true);
       expect(threadActionRequiresOperate("filter-by-project")).toBe(false);
+      for (const action of ["rename", "archive", "delete"] as const) {
+        expect(items.find((item) => item.id === action)?.disabled).toBe(true);
+        expect(threadActionRequiresOperate(action)).toBe(true);
+      }
     },
   );
 
