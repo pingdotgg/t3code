@@ -26,6 +26,8 @@ describe("inlineCodeFilePathCandidate", () => {
     ["origin/main", null],
     ["z-ai/glm-5.3", null],
     ["share/man/ls.1", "share/man/ls.1"],
+    ["src/main.ts/", null],
+    ["./patches/", "./patches/"],
   ])("distinguishes file paths from code and hostnames in %s", (source, candidate) => {
     expect(inlineCodeFilePathCandidate(source)).toBe(candidate);
   });
@@ -40,12 +42,17 @@ describe("parseMarkdownFileLink", () => {
     expect(parseMarkdownFileLink(href)?.path).toBe(path);
   });
 
-  it.each(["https://example.com/docs", "/chat/settings#L3", "TODO:12"])(
+  it.each(["https://example.com/docs", "/chat/settings#L3", "TODO:12", "patches"])(
     "does not treat %s as a file",
     (href) => {
       expect(parseMarkdownFileLink(href)).toBeNull();
     },
   );
+
+  it("recognizes a relative folder that ends in a slash", () => {
+    expect(parseMarkdownFileLink("patches/")).toEqual({ path: "patches/" });
+    expect(parseMarkdownFileLink("docs/My%20Folder/")?.path).toBe("docs/My Folder/");
+  });
 
   it("accepts conventional extensionless names with or without a position", () => {
     expect(parseMarkdownFileLink("Makefile")).toEqual({ path: "Makefile" });
@@ -89,6 +96,13 @@ describe("extractMarkdownLinkHrefs", () => {
 });
 
 describe("resolveMarkdownFileLinkTarget", () => {
+  it("resolves a relative folder with a trailing slash against cwd", () => {
+    expect(resolveMarkdownFileLinkTarget("patches/", "/repo/project")).toBe(
+      "/repo/project/patches/",
+    );
+    expect(resolveMarkdownFileLinkTarget("patches", "/repo/project")).toBeNull();
+  });
+
   it("does not treat filename line references as external schemes", () => {
     expect(resolveMarkdownFileLinkTarget("script.ts:10", "/Users/julius/project")).toBe(
       "/Users/julius/project/script.ts:10",

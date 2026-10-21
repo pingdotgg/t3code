@@ -9,8 +9,10 @@ import {
 
 const RELATIVE_PATH_PREFIX_PATTERN = /^(~\/|\.{1,2}\/)/;
 
+// The final segment is optional so an explicit folder link may end in `/`
+// (`patches/`, `docs/My Folder/`). A bare name with no slash still fails.
 const RELATIVE_FILE_PATH_PATTERN =
-  /^(?:[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*\/)+[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*(?::\d+){0,2}$/;
+  /^(?:[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*\/)+(?:[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*(?::\d+){0,2})?$/;
 
 const RELATIVE_FILE_NAME_PATTERN =
   /^[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*\.[A-Za-z0-9_-]+(?::\d+){0,2}$/;
@@ -176,6 +178,9 @@ export function inlineCodeFilePathCandidate(codeText: string): string | null {
     isWindowsAbsolutePath(candidate);
   if (!hasExplicitPathShape) {
     const withoutPosition = candidate.replace(POSITION_SUFFIX_PATTERN, "");
+    // Markdown destinations accept `patches/`. Inline code still needs a
+    // file-shaped final segment, so a trailing slash stays plain code.
+    if (withoutPosition.endsWith("/")) return null;
     const firstSegment = withoutPosition.split("/")[0] ?? withoutPosition;
     if (looksLikeHostname(firstSegment, hasPosition)) return null;
     const basename =
