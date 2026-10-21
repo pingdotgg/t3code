@@ -91,6 +91,14 @@ function buttonsLabelled(container: HTMLElement, label: string) {
   );
 }
 
+it("shows unavailable audio when a workspace embed has no thread", async () => {
+  setup();
+  await using screen = await renderText("![recording](clip.wav)");
+  expect(screen.container.textContent).toContain("Audio unavailable");
+  expect(screen.container.textContent).not.toContain("Loading audio");
+  expect(screen.container.querySelector("audio")).toBeNull();
+});
+
 describe("ChatMarkdown favicon privacy", () => {
   it("suppresses private link images while preserving public links across updates", async () => {
     setup();

@@ -1,5 +1,5 @@
 import { filePreviewDelimiter } from "@t3tools/shared/delimitedPreview";
-import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import type { AssetResource, EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { readFilePreviewResponse } from "@t3tools/client-runtime/file-preview";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
@@ -53,7 +53,9 @@ export function AttachmentFilePreview(props: {
   mimeType: string;
   sizeBytes: number;
   file?: Blob | null;
-  asset?: { environmentId: EnvironmentId; attachmentId: string };
+  asset?:
+    | { environmentId: EnvironmentId; attachmentId: string }
+    | { environmentId: EnvironmentId; resource: Extract<AssetResource, { _tag: "media-file" }> };
   htmlRender?: boolean;
   threadRef?: ScopedThreadRef;
   origin?: string;
@@ -64,18 +66,22 @@ export function AttachmentFilePreview(props: {
   const delimiter = filePreviewDelimiter(props);
   const renderedMode =
     kind === "markdown" ? "markdown" : kind === "html" ? "html" : delimiter ? "table" : null;
-  const attachmentId = props.asset?.attachmentId;
+  const attachmentId =
+    props.asset && "attachmentId" in props.asset ? props.asset.attachmentId : undefined;
   const { copyToClipboard, isCopied } = useCopyToClipboard({ target: props.name });
   // useAssetUrlRefresh keys its callback on these objects, so they must stay cached.
-  const resource = attachmentId
-    ? {
-        _tag: "attachment" as const,
-        attachmentId,
-        fileName: props.name,
-        mimeType: props.mimeType,
-        disposition: "inline" as const,
-      }
-    : null;
+  const resource =
+    props.asset && "resource" in props.asset
+      ? props.asset.resource
+      : attachmentId
+        ? {
+            _tag: "attachment" as const,
+            attachmentId,
+            fileName: props.name,
+            mimeType: props.mimeType,
+            disposition: "inline" as const,
+          }
+        : null;
   const downloadResource = resource ? { ...resource, disposition: "attachment" as const } : null;
   const refresh = useAssetUrlRefresh(
     props.file ? null : (props.asset?.environmentId ?? null),

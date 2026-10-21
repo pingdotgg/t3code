@@ -25,6 +25,20 @@ describe("media path parsing", () => {
     ["https://example.com/download?name=recording.mp4", null],
     ["images%2Fresult%2Epng", "image"],
     ["images/result.png%23secret.txt", null],
+    ["/tmp/tone.MP3", "audio"],
+    ["./tone.wav", "audio"],
+    ["tone.ogg", "audio"],
+    ["tone.m4a", "audio"],
+    ["tone.flac", "audio"],
+    ["tone.aac", "audio"],
+    ["tone.opus", "audio"],
+    ["tone.webm-audio", "audio"],
+    ["tone.webm", "video"],
+    ["https://example.com/tone%2Emp3?download=1", "audio"],
+    ["data.csv", null],
+    ["report.pdf", null],
+    ["report.docx", null],
+    ["archive.zip", null],
   ])("classifies the decoded pathname of %s", (source, kind) => {
     expect(mediaKindFromPath(source)).toBe(kind);
   });
@@ -33,6 +47,10 @@ describe("media path parsing", () => {
 describe("attachment preview classification", () => {
   it.each([
     ["example.json", "application/octet-stream", "text"],
+    ["report.pdf", "application/pdf", "pdf"],
+    ["recording.mp3", "", "audio"],
+    ["recording.webm-audio", "", "audio"],
+    ["recording.webm", "audio/webm", "audio"],
     ["payload", "application/problem+json", "text"],
     ["misleading.json", "application/pdf", "pdf"],
     ["misleading.pdf", "application/zip", "unsupported"],
