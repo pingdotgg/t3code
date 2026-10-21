@@ -8,6 +8,7 @@ import * as ClaudeSdk from "@anthropic-ai/claude-agent-sdk";
 import { beforeEach, vi } from "vite-plus/test";
 
 import type {
+  ElicitationRequest,
   Query as ClaudeQuery,
   SDKMessage,
   SDKResultMessage,
@@ -938,6 +939,73 @@ describe("ClaudeAdapterV2 approval cancellation", () => {
       assert.equal(result, "cancel");
     }),
   );
+});
+
+describe("ClaudeAdapterV2 MCP elicitation acceptance", () => {
+  const form = (
+    properties: Record<string, unknown>,
+    required?: ReadonlyArray<string>,
+  ): ElicitationRequest => ({
+    serverName: "deploys",
+    message: "Deploy web?",
+    mode: "form",
+    requestedSchema: { type: "object", properties, ...(required ? { required } : {}) },
+  });
+
+  it("answers an empty-properties form with empty content", () => {
+    assert.deepEqual(ClaudeAdapterV2.claudeMcpElicitationAcceptance(form({})), {
+      action: "accept",
+      content: {},
+    });
+  });
+
+  it("picks the one-time choice however the server spells it", () => {
+    for (const choice of ["allow_once", "Allow", "accept_once", "Approve once"]) {
+      assert.deepEqual(
+        ClaudeAdapterV2.claudeMcpElicitationAcceptance(
+          form({ decision: { type: "string", enum: ["deny", choice, "always"] } }, ["decision"]),
+        ),
+        { action: "accept", content: { decision: choice } },
+      );
+    }
+  });
+
+  it("answers a persistence toggle with false", () => {
+    assert.deepEqual(
+      ClaudeAdapterV2.claudeMcpElicitationAcceptance(
+        form({ remember: { type: "boolean", title: "Always allow" } }, ["remember"]),
+      ),
+      { action: "accept", content: { remember: false } },
+    );
+  });
+
+  it("leaves out optional fields the card does not show", () => {
+    assert.deepEqual(
+      ClaudeAdapterV2.claudeMcpElicitationAcceptance(
+        form({ scope: { type: "string", enum: ["once", "always"], default: "always" } }),
+      ),
+      { action: "accept", content: { scope: "once" } },
+    );
+    assert.deepEqual(
+      ClaudeAdapterV2.claudeMcpElicitationAcceptance(
+        form({ limit: { type: "number", default: 500 } }),
+      ),
+      { action: "accept", content: {} },
+    );
+  });
+
+  it("has no answer for URL mode or a form asking for a value", () => {
+    for (const request of [
+      { serverName: "deploys", message: "Sign in", mode: "url", url: "https://example.com" },
+      form({ reason: { type: "string" } }, ["reason"]),
+      form({ grant: { type: "string", enum: ["always", "session"] } }, ["grant"]),
+      form({ grant: { type: "string", enum: ["deny", "always"], default: "always" } }, ["grant"]),
+      form({ limit: { type: "number", default: 500 } }, ["limit"]),
+      { serverName: "deploys", message: "Deploy web?", mode: "form" },
+    ] satisfies ReadonlyArray<ElicitationRequest>) {
+      assert.isUndefined(ClaudeAdapterV2.claudeMcpElicitationAcceptance(request));
+    }
+  });
 });
 
 const captureSdkExecutablePaths = Effect.fn("captureSdkExecutablePaths")(function* (
@@ -3135,6 +3203,148 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
     ),
   );
+
+  describe("MCP elicitations", () => {
+    const testLayer = Layer.mergeAll(
+      IdAllocator.layer,
+      McpProviderSessions.layer,
+      NodeServices.layer,
+    );
+    const approvalOnly: ElicitationRequest = {
+      serverName: "deploys",
+      message: "Deploy web to production?",
+      mode: "form",
+      requestedSchema: { type: "object", properties: {} },
+      title: "Deploy",
+    };
+
+    const startElicitationTurn = Effect.fnUntraced(function* (
+      options?: Parameters<typeof makeWakeHarnessWithOptions>[0],
+    ) {
+      const harness = yield* makeWakeHarnessWithOptions(options);
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-claude-elicitation"),
+          text: "Deploy web.",
+          attachments: [],
+        }),
+      );
+      const onElicitation = harness.getOpenedOptions()?.onElicitation;
+      if (onElicitation === undefined) throw new Error("The Claude query has no onElicitation.");
+      const runtimeRequests = () =>
+        harness.events.flatMap((event) =>
+          event.type === "runtime_request.updated" ? [event.runtimeRequest] : [],
+        );
+      const elicit = (request: ElicitationRequest, signal = new AbortController().signal) =>
+        Effect.promise(() =>
+          onElicitation(request, { signal, requestId: `sdk-${runtimeRequests().length}` }),
+        ).pipe(Effect.forkScoped);
+      const awaitCard = Effect.fnUntraced(function* (count: number) {
+        yield* awaitUntil(() => runtimeRequests().length === count, `elicitation card ${count}`);
+        return runtimeRequests()[count - 1]!;
+      });
+      return { harness, elicit, awaitCard, runtimeRequests };
+    });
+
+    it.effect("shows an approval-only form and accepts only after Approve", () =>
+      Effect.gen(function* () {
+        const { harness, elicit, awaitCard } = yield* startElicitationTurn();
+        const answer = yield* elicit(approvalOnly);
+        const request = yield* awaitCard(1);
+        assert.equal(request.kind, "mcp-elicitation");
+        const card = harness.events.findLast(
+          (event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "approval_request",
+        );
+        assert.deepInclude(card?.type === "turn_item.updated" ? card.turnItem : undefined, {
+          prompt: "Deploy web to production?",
+          appName: "Deploy",
+          options: [
+            { decision: "cancel", label: "Cancel" },
+            { decision: "decline", label: "Decline" },
+            { decision: "accept", label: "Approve" },
+          ],
+        });
+        assert.isUndefined(answer.pollUnsafe());
+
+        yield* harness.runtime.respondToRuntimeRequest({
+          requestId: request.id,
+          decision: "accept",
+        });
+        assert.deepEqual(yield* Fiber.join(answer), { action: "accept", content: {} });
+
+        // The card is gone, so a second click is an unknown request.
+        const late = yield* Effect.flip(
+          harness.runtime.respondToRuntimeRequest({ requestId: request.id, decision: "decline" }),
+        );
+        assert.include(String(late.cause), "No pending Claude runtime request");
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    );
+
+    it.effect.each(["decline", "cancel"] as const)("answers %s with that action", (decision) =>
+      Effect.gen(function* () {
+        const { harness, elicit, awaitCard } = yield* startElicitationTurn();
+        const answer = yield* elicit(approvalOnly);
+        const request = yield* awaitCard(1);
+        yield* harness.runtime.respondToRuntimeRequest({ requestId: request.id, decision });
+        assert.deepEqual(yield* Fiber.join(answer), { action: decision });
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    );
+
+    it.effect("declines URL and value forms without a card", () =>
+      Effect.gen(function* () {
+        const { elicit, runtimeRequests } = yield* startElicitationTurn();
+        for (const request of [
+          { ...approvalOnly, mode: "url", url: "https://example.com/auth" },
+          {
+            ...approvalOnly,
+            requestedSchema: {
+              type: "object",
+              properties: { reason: { type: "string" } },
+              required: ["reason"],
+            },
+          },
+        ] satisfies ReadonlyArray<ElicitationRequest>) {
+          assert.deepEqual(yield* Fiber.join(yield* elicit(request)), { action: "decline" });
+        }
+        assert.isEmpty(runtimeRequests());
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    );
+
+    it.effect("cancels when the SDK aborted before the card was answered", () =>
+      Effect.gen(function* () {
+        const { harness, elicit, awaitCard } = yield* startElicitationTurn();
+        const aborted = new AbortController();
+        aborted.abort();
+        const answer = yield* elicit(approvalOnly, aborted.signal);
+        const request = yield* awaitCard(1);
+        assert.deepEqual(yield* Fiber.join(answer), { action: "cancel" });
+        yield* Effect.flip(
+          harness.runtime.respondToRuntimeRequest({ requestId: request.id, decision: "accept" }),
+        );
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    );
+
+    it.effect("cancels an open card when the session stops", () =>
+      Effect.gen(function* () {
+        // Like the SDK, the fake query aborts in-flight callbacks when closed.
+        const inFlight = new AbortController();
+        const session = yield* Scope.make();
+        const { elicit, awaitCard } = yield* startElicitationTurn({
+          close: () => Effect.sync(() => inFlight.abort()),
+        }).pipe(Scope.provide(session));
+        const answer = yield* elicit(approvalOnly, inFlight.signal);
+        yield* awaitCard(1);
+        assert.isUndefined(answer.pollUnsafe());
+
+        yield* Scope.close(session, Exit.void);
+        assert.deepEqual(yield* Fiber.join(answer), { action: "cancel" });
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    );
+  });
 
   it.effect(
     "applies model, effort and Fast changes to a process running a background shell, but not thinking or a cleared effort",

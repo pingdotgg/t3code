@@ -76,7 +76,14 @@ function mcpElicitationPersistenceDecision(
   return null;
 }
 
-function mcpElicitationFormFields(payload: EffectCodexSchema.McpServerElicitationRequestParams) {
+// Claude hands over the same MCP request with its own envelope; these are the
+// only fields the response is built from.
+type McpElicitationResponseInput = {
+  readonly mode: string;
+  readonly requestedSchema?: unknown;
+};
+
+function mcpElicitationFormFields(payload: McpElicitationResponseInput) {
   if (payload.mode === "url" || !isMcpElicitationForm(payload.requestedSchema)) {
     return undefined;
   }
@@ -171,7 +178,7 @@ export function describeMcpElicitation(
 }
 
 export function toMcpElicitationResponse(
-  payload: EffectCodexSchema.McpServerElicitationRequestParams,
+  payload: McpElicitationResponseInput,
   decision: ProviderApprovalDecision,
 ): EffectCodexSchema.McpServerElicitationRequestResponse {
   if (decision === "decline" || decision === "cancel") {
