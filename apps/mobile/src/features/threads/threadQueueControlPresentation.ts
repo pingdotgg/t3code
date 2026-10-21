@@ -21,6 +21,7 @@ export function resolveThreadQueueRowControls(input: {
   readonly index: number;
   readonly isEditing?: boolean;
   readonly queuedCount: number;
+  readonly steerRejectionReason: string | null;
   readonly text: string;
 }): ThreadQueueRowControls {
   const mutationEnabled = !input.busy;
@@ -33,7 +34,11 @@ export function resolveThreadQueueRowControls(input: {
     canEdit: mutationEnabled && !isEditing,
     canMoveDown: mutationEnabled && input.canReorder && input.index < input.queuedCount - 1,
     canMoveUp: mutationEnabled && input.canReorder && input.index > 0,
-    canSteer: mutationEnabled && input.canPromoteToSteer && !isEditing,
+    canSteer:
+      mutationEnabled &&
+      input.canPromoteToSteer &&
+      !isEditing &&
+      input.steerRejectionReason === null,
     dismissAccessibilityLabel: REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL,
     // Edit and Steer keep the original text so quoted citations stay linked.
     displayText: assistantCitationsToPlainText(input.text),

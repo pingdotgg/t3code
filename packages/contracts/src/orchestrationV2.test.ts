@@ -5,6 +5,7 @@ import * as Schema from "effect/Schema";
 import { NodeId, RunAttemptId, TrimmedNonEmptyString } from "./index.ts";
 import {
   latestProviderTurnForAttempt,
+  orchestrationV2SteerRejectionReason,
   OrchestrationV2ProviderCapabilities,
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderThreadJson,
@@ -569,5 +570,24 @@ describe("latestProviderTurnForAttempt", () => {
     ];
     expect(latestProviderTurnForAttempt(turns, RunAttemptId.make("goal-attempt"))?.id).toBe("last");
     expect(latestProviderTurnForAttempt(turns, null)).toBeUndefined();
+  });
+});
+
+describe("orchestrationV2SteerRejectionReason", () => {
+  const image = { type: "image", id: "image", name: "a.png", mimeType: "image/png", sizeBytes: 1 };
+
+  it.each([
+    ["/goal finish the refactor", [], "Goal commands must run as a separate turn."],
+    ["  /goal", [], "Goal commands must run as a separate turn."],
+    [" /COMPACT ", [], "Context compaction must run as a separate turn."],
+    ["/logout", [], "Signing out must run as a separate turn."],
+    ["/goalie", [], null],
+    ["please /goal later", [], null],
+    ["/goal with a screenshot", [image], null],
+    ["/compact", [image], null],
+  ] as const)("%j with %j attachments", (text, attachments, reason) => {
+    expect(orchestrationV2SteerRejectionReason({ text, attachments: attachments as never })).toBe(
+      reason,
+    );
   });
 });

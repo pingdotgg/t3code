@@ -25,6 +25,7 @@ describe("threadQueueControlPresentation", () => {
       canReorder: true,
       index: 0,
       queuedCount: 1,
+      steerRejectionReason: null,
       text: `[Assistant quote](${href}) Can we add a backoff here?`,
     });
 
@@ -41,6 +42,7 @@ describe("threadQueueControlPresentation", () => {
       index: 1,
       isEditing: true,
       queuedCount: 3,
+      steerRejectionReason: null,
       text: "Being edited",
     });
 

@@ -1,6 +1,6 @@
 import {
-  type ChatAttachment,
   CommandId,
+  isNativeMaintenanceCommand,
   ModelSelection,
   type OrchestrationV2Command,
   OrchestrationV2ProviderCapabilities,
@@ -116,17 +116,6 @@ type MessageDispatchMode = Extract<
   OrchestrationV2Command,
   { readonly type: "message.dispatch" }
 >["dispatchMode"];
-
-export function isNativeMaintenanceCommand(message: {
-  readonly text: string;
-  readonly attachments: ReadonlyArray<ChatAttachment>;
-  readonly context?: import("@t3tools/contracts").OrchestrationMessageContext | undefined;
-}): boolean {
-  return (
-    message.attachments.length === 0 &&
-    ["/compact", "/logout"].includes(message.text.trim().toLowerCase())
-  );
-}
 
 export function resolveMessageDispatchIntent(
   projection: OrchestrationV2ThreadProjection,

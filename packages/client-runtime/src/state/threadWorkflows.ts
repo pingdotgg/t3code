@@ -1,8 +1,9 @@
-import type {
-  ChatAttachment,
-  OrchestrationV2ProjectedTurnItem,
-  OrchestrationV2ProviderCapabilities,
-  OrchestrationV2ThreadProjection,
+import {
+  type ChatAttachment,
+  type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2ProviderCapabilities,
+  type OrchestrationV2ThreadProjection,
+  orchestrationV2SteerRejectionReason,
 } from "@t3tools/contracts";
 import { copySorted } from "@t3tools/shared/Array";
 
@@ -25,6 +26,8 @@ export interface QueuedThreadRun {
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly messageId: Message["id"];
   readonly context?: Message["context"];
+  /** Set when the server would reject promoting this run to a steer. */
+  readonly steerRejectionReason: string | null;
 }
 
 export interface ThreadQueueWorkflowState {
@@ -139,12 +142,15 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
       left.ordinal - right.ordinal,
   ).map((run) => {
     const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
+    const text = message?.text ?? "Queued message";
+    const attachments = message?.attachments ?? [];
     return {
       run,
-      text: message?.text ?? "Queued message",
-      attachments: message?.attachments ?? [],
+      text,
+      attachments,
       messageId: run.userMessageId,
       ...(message?.context ? { context: message.context } : {}),
+      steerRejectionReason: orchestrationV2SteerRejectionReason({ text, attachments }),
     };
   });
 

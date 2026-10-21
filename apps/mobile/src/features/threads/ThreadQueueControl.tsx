@@ -209,7 +209,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           No messages waiting in this queue.
         </Text>
       ) : null}
-      {queuedRuns.map(({ run, text, attachments }, index) => {
+      {queuedRuns.map(({ run, text, attachments, steerRejectionReason }, index) => {
         const layout = dragRows?.find((row) => row.id === run.id);
         const offset =
           sourceLayout?.y !== undefined &&
@@ -225,6 +225,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           index,
           isEditing: editing?.runId === run.id,
           queuedCount: queuedRuns.length,
+          steerRejectionReason,
           text,
         });
         const title =
@@ -331,6 +332,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                           {
                             id: "steer",
                             title: "Steer now",
+                            ...(steerRejectionReason ? { subtitle: steerRejectionReason } : {}),
                             attributes: { disabled: !controls.canSteer },
                             image: Platform.OS === "ios" ? "arrow.turn.left.up" : "arrow_upward",
                           },
@@ -389,6 +391,9 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                       <Pressable
                         accessibilityRole="button"
                         accessibilityLabel={`Steer with message ${index + 1} now`}
+                        {...(steerRejectionReason
+                          ? { accessibilityHint: steerRejectionReason }
+                          : {})}
                         disabled={!controls.canSteer}
                         onPress={() => void act(run.id, "steer")}
                         className="h-8 shrink-0 justify-center rounded-full bg-primary px-3 active:opacity-70 disabled:opacity-40"
