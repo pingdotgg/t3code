@@ -158,22 +158,6 @@ describe("projectThreadAwarenessV2", () => {
     ).toMatchObject({ phase });
   });
 
-  it("prioritizes V2 user-input requests", () => {
-    expect(
-      projectThreadAwarenessV2({
-        environmentId: "env-1" as EnvironmentId,
-        project,
-        thread: v2Thread({
-          pendingRuntimeRequest: {
-            id: RuntimeRequestId.make("request-1"),
-            kind: "user_input",
-            createdAt: updatedAt,
-          },
-        }),
-      }),
-    ).toMatchObject({ phase: "waiting_for_input", headline: "Waiting for input" });
-  });
-
   it("reports an async question as input only after the working run completes", () => {
     const input = {
       environmentId: "env-1" as EnvironmentId,

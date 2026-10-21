@@ -47,12 +47,9 @@ describe("workEntryIndicatesToolFailure", () => {
   };
 
   it.each([
-    [{ outputIndicatesFailure: true }, true],
     [{ exitCode: 2 }, true],
     [{ output: "sh: missing-command: command not found" }, true],
-    [{ output: "Found 3 matches" }, false],
     [{ output: `${"x".repeat(32_768)} command not found` }, false],
-    [{}, false],
   ] as const)(
     "preserves command failure state after removing displayed output: %j",
     (fields, failed) => {

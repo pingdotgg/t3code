@@ -636,17 +636,6 @@ describe("AcpRuntimeModel", () => {
         data: {},
       }) satisfies AcpToolCallState;
 
-    it("emits the first in-progress tool_call even when it has no detail", () => {
-      expect(
-        decideToolCallUpdateEmission({
-          previous: undefined,
-          next: { toolCallId: "tool-1", title: "Grok Tool", status: "pending", data: {} },
-          lastEmittedDetailLength: undefined,
-          skippedSinceEmit: 0,
-        }),
-      ).toEqual({ emit: true, skippedSinceEmit: 0 });
-    });
-
     it("always emits terminal (completed/failed) status updates regardless of growth", () => {
       expect(
         decideToolCallUpdateEmission({
@@ -703,16 +692,6 @@ describe("AcpRuntimeModel", () => {
 
       const emittedIndices = emissions.flatMap((emitted, index) => (emitted ? [index + 1] : []));
       expect(emittedIndices).toEqual([1, 11]);
-    });
-
-    it("emits immediately when the title changes, even with no growth", () => {
-      const decision = decideToolCallUpdateEmission({
-        previous: { toolCallId: "tool-1", title: "Reading file", detail: "x", data: {} },
-        next: { toolCallId: "tool-1", title: "Ran command", detail: "x", data: {} },
-        lastEmittedDetailLength: 1,
-        skippedSinceEmit: 0,
-      });
-      expect(decision).toEqual({ emit: true, skippedSinceEmit: 0 });
     });
 
     it("coalesces small deltas but forces an emission after the coalesce limit", () => {

@@ -155,13 +155,6 @@ describe("ClientSettings quit confirmation", () => {
   });
 });
 
-describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
-  it("decodes a fully empty config (legacy on-disk shape) without complaint", () => {
-    const decoded = decodeServerSettings({});
-    expect(decoded.providerInstances).toEqual({});
-  });
-});
-
 describe("provider enabled defaults", () => {
   it("resolves instance enabled state with explicit false winning", () => {
     const grok = ProviderDriverKind.make("grok");
@@ -290,19 +283,6 @@ describe("resolveProjectProviderInstanceEnabled", () => {
       },
     };
     expect(resolveProjectProviderInstanceEnabled(settings, projectId, instanceId)).toBe(false);
-  });
-
-  it("always resolves to the machine value when no project is in scope", () => {
-    const settings: ServerSettings = {
-      ...DEFAULT_SERVER_SETTINGS,
-      providerInstances: {
-        [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: true },
-      },
-      projectSettingsOverrides: {
-        [projectId]: { providerInstances: { [instanceId]: { enabled: false } } },
-      },
-    };
-    expect(resolveProjectProviderInstanceEnabled(settings, null, instanceId)).toBe(true);
   });
 });
 

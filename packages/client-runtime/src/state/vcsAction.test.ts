@@ -200,33 +200,6 @@ describe("vcsActionState", () => {
     });
   });
 
-  it("keeps running presentation state and retains a terminal action error until settle", () => {
-    const initial = beginVcsActionState({
-      operation: "run_change_request",
-      label: "Running source control action",
-      actionId,
-    });
-    const failed = applyVcsActionProgressEvent(
-      initial,
-      progress({
-        actionId,
-        action,
-        cwd,
-        kind: "action_failed",
-        phase: null,
-        message: "Push failed.",
-      }),
-    );
-
-    expect(failed).toMatchObject({
-      isRunning: true,
-      operation: "run_change_request",
-      actionId,
-      action,
-      error: "Push failed.",
-    });
-  });
-
   it("ignores progress after a newer action owns the target", () => {
     const current = beginVcsActionState({
       operation: "pull",

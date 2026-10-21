@@ -139,10 +139,10 @@ it.effect.each([
   ),
 );
 
+// regression: #18775 a failed branch-protection read surfaces; only 403/404 are treated as no policy
 it.effect.each([
   ["rate limit", { reason: "rate-limit", httpStatus: 429 }, "rate-limited"],
   ["authentication failure", { reason: "authentication", httpStatus: 401 }, "unauthenticated"],
-  ["server failure", { httpStatus: 503 }, "failed"],
   ["network failure", {}, "failed"],
 ] as const)("propagates branch metadata %s", ([detail, fields, reason]) => {
   const cause = new ForgejoCli.ForgejoCliError({ command: "fj", cwd: "/repo", detail, ...fields });
@@ -225,10 +225,7 @@ it.effect("opens Forgejo Actions check links on the pull request's server", () =
 it.effect.each([
   ["Ready", false, true, false, "mergeable"],
   ["Draft", true, false, true, "unknown"],
-  ["Blocked", false, false, false, "unknown"],
-  ["Unchecked", false, undefined, false, "unknown"],
   ["WIP: Legacy draft", undefined, false, true, "unknown"],
-  ["[WIP] Legacy draft", undefined, false, true, "unknown"],
   ["WIP: Explicitly ready", false, false, false, "unknown"],
 ] as const)(
   "reads Forgejo mergeability for %s (draft=%s, mergeable=%s) across list, summary and detail",

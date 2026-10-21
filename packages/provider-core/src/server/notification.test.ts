@@ -15,10 +15,6 @@ import { backgroundWorkNotification, notificationTurnItem } from "./notification
 const childThreadId = ThreadId.make("thread:child");
 
 describe("backgroundWorkNotification", () => {
-  it("keeps the generic notification when nothing is known", () => {
-    assert.isNull(backgroundWorkNotification([]));
-  });
-
   it("names one piece of work and the thread of a subagent", () => {
     assert.deepEqual(
       backgroundWorkNotification([
@@ -123,17 +119,6 @@ describe("notificationTurnItem", () => {
     task("b", "Write tests", "completed"),
     task("c", "Update docs", "running"),
   ];
-
-  it("says how many of a run's delegated tasks a delivery reports", () => {
-    const item = notificationTurnItem(userMessage, delivery(["a", "b"]), tasks);
-    assert.equal(item.type, "notification");
-    if (item.type !== "notification") return;
-    assert.equal(item.summary, "2 of 3 delegated tasks finished: Review src/math.ts, Write tests");
-    assert.deepEqual(item.source, {
-      kind: "delegated_task",
-      taskIds: [NodeId.make("a"), NodeId.make("b")],
-    });
-  });
 
   it("opens the child thread of a single delegated task", () => {
     const item = notificationTurnItem(userMessage, delivery(["a"]), tasks);

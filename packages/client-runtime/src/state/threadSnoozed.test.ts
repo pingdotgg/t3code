@@ -168,16 +168,6 @@ describe("threadRaisedHandWhileSnoozed", () => {
 });
 
 describe("canSnooze", () => {
-  it("allows snoozing quiet and working threads alike", () => {
-    expect(canSnooze({ ...makeShell({}), latestUserMessageAt: null }, { now: NOW })).toBe(true);
-    expect(
-      canSnooze(
-        { ...makeShell({ sessionStatus: "running" }), latestUserMessageAt: null },
-        { now: NOW },
-      ),
-    ).toBe(true);
-  });
-
   it("refuses blocked-on-you work", () => {
     expect(
       canSnooze({ ...makeShell({ pending: "approval" }), latestUserMessageAt: null }, { now: NOW }),

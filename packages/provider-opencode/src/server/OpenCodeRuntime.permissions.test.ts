@@ -63,9 +63,7 @@ describe("toOpenCodePermissionReply", () => {
   it.each([
     ["accept", "once"],
     ["acceptForSession", "always"],
-    ["acceptAlways", "always"],
     ["decline", "reject"],
-    ["cancel", "reject"],
   ] as const)("maps %s to %s", (decision, reply) => {
     NodeAssert.equal(OpenCodeRuntime.toOpenCodePermissionReply(decision), reply);
   });

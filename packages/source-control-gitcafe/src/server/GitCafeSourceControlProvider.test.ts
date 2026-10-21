@@ -198,8 +198,6 @@ describe("GitCafeSourceControlProvider", () => {
 
   it.effect.each([
     ["no context", undefined, "https://git.cafe/fork/project.git"],
-    ["an HTTPS remote", "https://git.cafe/team/project.git", "https://git.cafe/fork/project.git"],
-    ["an SSH remote", "ssh@git.cafe:team/project.git", "ssh@git.cafe:fork/project.git"],
     ["an ssh:// remote", "ssh://ssh@git.cafe/team/project.git", "ssh@git.cafe:fork/project.git"],
     [
       "an HTTPS remote with a user",

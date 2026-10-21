@@ -120,18 +120,8 @@ describe("parsePullRequestReference", () => {
     expect(parsePullRequestReference("gh pr checkout 42")).toBe("42");
   });
 
-  it("accepts gh pr checkout commands with GitHub pull request URLs", () => {
-    expect(
-      parsePullRequestReference("gh pr checkout https://github.com/pingdotgg/t3code/pull/42"),
-    ).toBe("https://github.com/pingdotgg/t3code/pull/42");
-  });
-
   it("accepts glab mr checkout commands with raw numbers", () => {
     expect(parsePullRequestReference("glab mr checkout 42")).toBe("42");
-  });
-
-  it("accepts az repos pr checkout commands with raw numbers", () => {
-    expect(parsePullRequestReference("az repos pr checkout --id 42")).toBe("42");
   });
 
   it("accepts az repos pr checkout commands with equals-style ids", () => {

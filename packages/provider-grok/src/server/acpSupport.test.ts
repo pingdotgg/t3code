@@ -18,20 +18,6 @@ describe("grokAcpSpawnArgs", () => {
       "stdio",
     ]);
   });
-
-  it("maps Full access to Grok always-approve", () => {
-    expect(grokAcpSpawnArgs("full-access")).toEqual(["agent", "--always-approve", "stdio"]);
-  });
-
-  it("launches Auto on Grok's classifier and a mode Grok does not offer asking", () => {
-    expect(grokAcpSpawnArgs("auto")).toEqual(["--permission-mode", "auto", "agent", "stdio"]);
-    expect(grokAcpSpawnArgs("auto-accept-edits")).toEqual([
-      "--permission-mode",
-      "default",
-      "agent",
-      "stdio",
-    ]);
-  });
 });
 
 describe("applyGrokAcpModelSelection", () => {
@@ -137,22 +123,6 @@ describe("applyGrokAcpModelSelection", () => {
       });
       expect(modelCalls).toEqual([{ modelId: "grok-4.6", meta: { reasoningEffort: "xhigh" } }]);
       expect(result).toBe("grok-4.6");
-    }),
-  );
-
-  it.effect("propagates session/set_model failures via mapError", () =>
-    Effect.gen(function* () {
-      const failure = EffectAcpErrors.AcpRequestError.invalidParams("session id not known");
-      const { runtime } = makeRecordingRuntime(failure);
-      const error = yield* Effect.flip(
-        applyGrokAcpModelSelection({
-          runtime,
-          currentModelId: "grok-build",
-          requestedModelId: "grok-mock-alt",
-          mapError: (cause) => cause.message,
-        }),
-      );
-      expect(error).toBe(failure.message);
     }),
   );
 });

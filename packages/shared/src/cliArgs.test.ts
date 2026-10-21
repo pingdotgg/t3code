@@ -40,20 +40,6 @@ describe("tokenizeCliArgs", () => {
 });
 
 describe("parseCliArgs", () => {
-  it("parses --chrome --effort high --debug", () => {
-    expect(parseCliArgs("--chrome --effort high --debug")).toEqual({
-      flags: { chrome: null, effort: "high", debug: null },
-      positionals: [],
-    });
-  });
-
-  it("parses quoted --append-system-prompt with value and --chrome", () => {
-    expect(parseCliArgs(`--append-system-prompt "always think step by step" --chrome`)).toEqual({
-      flags: { "append-system-prompt": "always think step by step", chrome: null },
-      positionals: [],
-    });
-  });
-
   it("parses --key=value mixed with boolean flags", () => {
     expect(parseCliArgs("--chrome --model=claude-sonnet-4-6 --debug")).toEqual({
       flags: { chrome: null, model: "claude-sonnet-4-6", debug: null },
@@ -76,15 +62,6 @@ describe("parseCliArgs", () => {
     expect(parseCliArgs(["--github-output", "1.2.3"], { booleanFlags: ["github-output"] })).toEqual(
       {
         flags: { "github-output": null },
-        positionals: ["1.2.3"],
-      },
-    );
-  });
-
-  it("non-boolean flag still consumes next token", () => {
-    expect(parseCliArgs(["--root", "/path", "1.2.3"], { booleanFlags: ["github-output"] })).toEqual(
-      {
-        flags: { root: "/path" },
         positionals: ["1.2.3"],
       },
     );

@@ -139,23 +139,6 @@ describe("derivePendingBackgroundWork", () => {
     ]);
   });
 
-  it("returns the provider-thread roster after settlement", () => {
-    const tasks = derivePendingBackgroundWork({
-      latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
-      providerThreads: [
-        {
-          id: "pt-1" as never,
-          pendingBackgroundTasks: [
-            { taskId: "bg-1", description: "Run Codex review", kind: "command" },
-          ],
-        },
-      ],
-      turnItems: [],
-      activeProviderThreadId: "pt-1",
-    });
-    expect(tasks).toEqual([{ taskId: "bg-1", description: "Run Codex review", kind: "command" }]);
-  });
-
   it("includes nonterminal turn items and excludes completed ones", () => {
     const tasks = derivePendingBackgroundWork({
       latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },

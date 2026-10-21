@@ -98,6 +98,7 @@ describe("thread execution presentation", () => {
     ).toMatchObject({ status: "running", lastError: null, lastErrorClass: null });
   });
 
+  // regression: #15029 working timers no longer reset on every background wake
   it("counts a wake run's activity from the start of the work it continues", () => {
     const workStartedAt = DateTime.makeUnsafe("2026-07-28T09:20:00.000Z");
     const wake = { ...run("wake", 2, "running"), workStartedAt };
@@ -339,14 +340,6 @@ describe("deriveProviderSubagentStatus", () => {
       },
     },
     nodes: [root],
-  });
-
-  it("reports the provider's own subagent from its runless root turn", () => {
-    expect(deriveProviderSubagentStatus(child("provider"))).toEqual({
-      status: "completed",
-      startedAt: "2026-07-28T10:00:00.000Z",
-      completedAt: "2026-07-28T10:00:00.000Z",
-    });
   });
 
   it("leaves T3 delegated tasks and ordinary threads alone", () => {

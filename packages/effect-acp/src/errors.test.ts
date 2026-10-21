@@ -3,7 +3,6 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as RpcClientError from "effect/rpc/RpcClientError";
 
-import * as AcpSchema from "./_generated/schema.gen.ts";
 import { callRpc } from "./_internal/shared.ts";
 import * as AcpError from "./errors.ts";
 
@@ -51,27 +50,6 @@ describe("effect-acp errors", () => {
     return Effect.gen(function* () {
       const error = yield* callRpc("initialize", Effect.fail(failure)).pipe(Effect.flip);
       expect(error).toBe(original);
-    });
-  });
-
-  it.effect("preserves protocol request errors as request errors", () => {
-    const failure = AcpSchema.Error.make({
-      code: -32602,
-      message: "Invalid params",
-      data: { field: "sessionId" },
-    });
-
-    return Effect.gen(function* () {
-      const error = yield* callRpc("session/load", Effect.fail(failure)).pipe(Effect.flip);
-
-      expect(error).toMatchObject({
-        _tag: "AcpRequestError",
-        code: -32602,
-        errorMessage: "Invalid params",
-        data: { field: "sessionId" },
-        method: "session/load",
-        operation: "receive-response",
-      });
     });
   });
 

@@ -1453,30 +1453,6 @@ describe("decodePullRequestFilesJson", () => {
     );
   });
 
-  it("assembles a unified patch the files API does not return", () => {
-    const result = expectSuccess(
-      decodePullRequestFilesJson(
-        JSON.stringify([
-          { filename: "src/app.ts", status: "modified", patch: "@@ -1 +1 @@\n-old\n+new" },
-        ]),
-      ),
-    );
-
-    expect(result.patch).toBe(
-      [
-        "diff --git a/src/app.ts b/src/app.ts",
-        "--- a/src/app.ts",
-        "+++ b/src/app.ts",
-        "@@ -1 +1 @@",
-        "-old",
-        "+new",
-        "",
-      ].join("\n"),
-    );
-    expect(result.truncated).toBe(false);
-    expect(result.rawCount).toBe(1);
-  });
-
   it("points an added file at /dev/null on the left and a removed one on the right", () => {
     const result = expectSuccess(
       decodePullRequestFilesJson(

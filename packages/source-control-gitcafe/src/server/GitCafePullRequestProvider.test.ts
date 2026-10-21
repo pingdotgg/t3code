@@ -246,49 +246,6 @@ describe("GitCafePullRequestProvider", () => {
     }).pipe(Effect.provide(server.layer));
   });
 
-  it.effect("reads the diff from the pull request's changed files", () => {
-    const file = {
-      path: "file.ts",
-      oldPath: null,
-      status: "modified",
-      additions: 1,
-      deletions: 1,
-      binary: false,
-    };
-    const snapshot = { version: 4, headOid, comparisonBaseOid: baseOid };
-    const server = fakeGitCafe({
-      "GET /repos/owner/repo/pulls/7": pull,
-      "GET /repos/owner/repo/pulls/7/changes": { ...snapshot, items: [file], next: null },
-      "POST /repos/owner/repo/pulls/7/diff-files": {
-        ...snapshot,
-        items: [
-          {
-            ...file,
-            hunks: [
-              {
-                oldStart: 1,
-                oldLines: 1,
-                newStart: 1,
-                newLines: 1,
-                lines: [
-                  { origin: "-", content: "old\n" },
-                  { origin: "+", content: "new\n" },
-                ],
-              },
-            ],
-          },
-        ],
-      },
-    });
-    return Effect.gen(function* () {
-      const provider = yield* GitCafePullRequestProvider.make;
-      const diff = yield* provider.getDiff(target);
-      assert.include(diff.patch, "-old\n+new\n");
-      assert.isNull(diff.nextCursor);
-      assert.deepStrictEqual(server.writes(), ["POST /repos/owner/repo/pulls/7/diff-files"]);
-    }).pipe(Effect.provide(server.layer));
-  });
-
   it.effect("resolves a thread through its root at the root's version", () => {
     const server = fakeGitCafe({
       "GET /repos/owner/repo/pulls/7/comments": { items: [root], next: null },

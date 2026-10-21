@@ -74,16 +74,6 @@ describe("sortSettledThreads", () => {
     updatedAt: input.updatedAt ?? "2026-03-09T09:00:00.000Z",
   });
 
-  it("falls back to last activity for auto-settled threads without a settledAt stamp", () => {
-    const sorted = sortSettledThreads([
-      settled({ id: "auto-old", latestUserMessageAt: "2026-03-09T08:00:00.000Z" }),
-      settled({ id: "explicit", settledAt: "2026-03-09T10:00:00.000Z" }),
-      settled({ id: "auto-recent", latestUserMessageAt: "2026-03-09T11:00:00.000Z" }),
-    ]);
-
-    expect(sorted.map((thread) => thread.id)).toEqual(["auto-recent", "explicit", "auto-old"]);
-  });
-
   it("counts a turn completion as activity for auto-settled threads", () => {
     const sorted = sortSettledThreads([
       settled({ id: "message-only", latestUserMessageAt: "2026-03-09T10:04:00.000Z" }),

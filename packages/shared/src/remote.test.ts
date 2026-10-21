@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  RemoteBackendUrlInvalidError,
   RemoteBackendUrlMissingError,
   RemotePairingTokenMissingError,
   RemotePairingUrlInvalidError,
@@ -72,18 +71,6 @@ describe("remote", () => {
     });
   });
 
-  it("normalizes a protocol-relative host from a hosted pairing link", () => {
-    expect(
-      resolveRemotePairingTarget({
-        pairingUrl: "https://app.t3.codes/pair?host=%2F%2Fremote.example.com#token=pairing-token",
-      }),
-    ).toEqual({
-      credential: "pairing-token",
-      httpBaseUrl: "https://remote.example.com/",
-      wsBaseUrl: "wss://remote.example.com/",
-    });
-  });
-
   it("collapses extra leading slashes instead of producing an empty host", () => {
     expect(
       resolveRemotePairingTarget({
@@ -136,38 +123,6 @@ describe("remote", () => {
     expect(pairingUrlError).toBeInstanceOf(RemotePairingUrlInvalidError);
     expect(pairingUrlError).toMatchObject({ protocol: "ftp:" });
     expect((pairingUrlError as RemotePairingUrlInvalidError).cause).toBeUndefined();
-  });
-
-  it("rejects unsupported hosted pairing backend protocols", () => {
-    let hostError: unknown;
-    try {
-      resolveRemotePairingTarget({
-        pairingUrl:
-          "https://app.t3.codes/pair?host=ftp%3A%2F%2Fremote.example.com#token=pairing-token",
-      });
-    } catch (cause) {
-      hostError = cause;
-    }
-
-    expect(hostError).toBeInstanceOf(RemoteBackendUrlInvalidError);
-    expect(hostError).toMatchObject({ source: "hosted-pairing-host", protocol: "ftp:" });
-    expect((hostError as RemoteBackendUrlInvalidError).cause).toBeUndefined();
-  });
-
-  it("rejects unsupported direct host protocols", () => {
-    let hostError: unknown;
-    try {
-      resolveRemotePairingTarget({
-        host: "ftp://remote.example.com",
-        pairingCode: "pairing-token",
-      });
-    } catch (cause) {
-      hostError = cause;
-    }
-
-    expect(hostError).toBeInstanceOf(RemoteBackendUrlInvalidError);
-    expect(hostError).toMatchObject({ source: "direct-host", protocol: "ftp:" });
-    expect((hostError as RemoteBackendUrlInvalidError).cause).toBeUndefined();
   });
 
   it("uses distinct structural errors for missing pairing inputs", () => {

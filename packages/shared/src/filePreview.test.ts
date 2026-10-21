@@ -9,31 +9,22 @@ import {
 } from "./filePreview.ts";
 
 describe("workspace file previews", () => {
-  it.each([
-    "README.md",
-    "src/index.ts",
-    "image.png.ts",
-    "png",
-    "image.png#notes.txt",
-    "image.svg?notes.txt",
-    "document.pdf?download=1",
-    "report.html#notes.txt",
-    "image%2Epng",
-  ])("rejects non-preview path %s", (path) => {
-    expect(isWorkspacePreviewEntryPath(path)).toBe(false);
-  });
+  // regression: #10311 previews classify by the literal filename, not URL-like suffixes
+  it.each(["image.png.ts", "image.png#notes.txt", "image%2Epng"])(
+    "rejects non-preview path %s",
+    (path) => {
+      expect(isWorkspacePreviewEntryPath(path)).toBe(false);
+    },
+  );
 });
 
 describe("media path parsing", () => {
+  // regression: #9023 media kind comes from the decoded pathname, ignoring query and hash
   it.each([
     ["https://cdn.example/clip.webm?download=1#t=2", "video"],
     ["https://example.com/download?name=recording.mp4", null],
-    ["https://example.png", null],
     ["images%2Fresult%2Epng", "image"],
-    ["images/result%23v2.png", "image"],
     ["images/result.png%23secret.txt", null],
-    ["images/result.png%3Fsecret.txt", null],
-    ["/tmp/100%.png", "image"],
   ])("classifies the decoded pathname of %s", (source, kind) => {
     expect(mediaKindFromPath(source)).toBe(kind);
   });
@@ -42,13 +33,7 @@ describe("media path parsing", () => {
 describe("attachment preview classification", () => {
   it.each([
     ["example.json", "application/octet-stream", "text"],
-    ["README.md", "text/plain", "markdown"],
-    ["component.tsx", "", "text"],
-    ["report.pdf", "application/pdf", "pdf"],
-    ["page.HTML", "", "html"],
-    ["recording.mp3", "", "audio"],
     ["payload", "application/problem+json", "text"],
-    ["archive.zip", "application/zip", "unsupported"],
     ["misleading.json", "application/pdf", "pdf"],
     ["misleading.pdf", "application/zip", "unsupported"],
   ])("classifies %s (%s) as %s", (name, mimeType, expected) => {

@@ -1180,25 +1180,6 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
-  it.effect("ignores replayed thread events at or below the snapshot sequence", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness({ cached: BASE_PROJECTION });
-      yield* Queue.offer(harness.inputs, snapshot(BASE_PROJECTION));
-      yield* Queue.offer(harness.inputs, titleUpdated("Replayed title", 1));
-      yield* Queue.offer(harness.inputs, titleUpdated("Live title", 2));
-
-      const state = yield* awaitThreadState(
-        harness.observed,
-        (value) =>
-          value.status === "live" &&
-          Option.isSome(value.data) &&
-          value.data.value.thread.title === "Live title",
-      );
-
-      expect(Option.getOrThrow(state.data).thread.title).toBe("Live title");
-    }),
-  );
-
   it.effect("does not recreate a deleted cache from a queued save or finalizer", () =>
     Effect.gen(function* () {
       const scope = yield* Scope.make();

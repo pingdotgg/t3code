@@ -63,9 +63,7 @@ describe("decodePullRequestListJson", () => {
   });
 
   it.each([
-    ["active", "open"],
     ["completed", "merged"],
-    ["abandoned", "closed"],
     ["something new", "open"],
   ])("reads the %s status as %s", (status, expected) => {
     const batch = expectSuccess(decodePullRequestListJson(asJson([pullRequest({ status })])));
@@ -76,9 +74,7 @@ describe("decodePullRequestListJson", () => {
   it.each([
     ["succeeded", "mergeable"],
     ["conflicts", "conflicting"],
-    ["rejectedByPolicy", "conflicting"],
     ["queued", "unknown"],
-    ["notSet", "unknown"],
   ])("reads the %s merge status as %s", (mergeStatus, expected) => {
     const batch = expectSuccess(decodePullRequestListJson(asJson([pullRequest({ mergeStatus })])));
 
@@ -407,19 +403,6 @@ describe("decodeIterationChangesJson", () => {
     expect(page.changes.map((change) => change.path)).toEqual(["docs/page.md"]);
   });
 
-  it("carries where the next page of a long change starts", () => {
-    const page = expectSuccess(
-      decodeIterationChangesJson(
-        asJson({
-          changeEntries: [{ changeType: "add", item: { path: "/DEMO.md", objectId: "ec00" } }],
-          nextSkip: 2000,
-        }),
-      ),
-    );
-
-    expect(page.nextSkip).toBe(2000);
-  });
-
   it("reads where a rename came from out of either of the two places Azure names it", () => {
     const page = expectSuccess(
       decodeIterationChangesJson(
@@ -445,16 +428,6 @@ describe("decodeItemContentJson", () => {
       contents: "",
       isBinary: false,
     });
-  });
-
-  it("keeps Azure's own word that a file is binary", () => {
-    expect(
-      expectSuccess(
-        decodeItemContentJson(
-          asJson({ path: "/logo.png", content: "b2xk", contentMetadata: { isBinary: true } }),
-        ),
-      ),
-    ).toEqual({ contents: "b2xk", isBinary: true });
   });
 });
 

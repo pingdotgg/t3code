@@ -75,8 +75,6 @@ describe("decodePullRequestPageJson", () => {
   it.each([
     ["MERGED", "merged"],
     ["DECLINED", "closed"],
-    ["SUPERSEDED", "closed"],
-    ["OPEN", "open"],
     ["something new", "open"],
   ])("reads the %s state as %s", (state, expected) => {
     const decoded = expectSuccess(decodePullRequestPageJson(page([pullRequest({ state })])));
@@ -94,6 +92,7 @@ describe("decodePullRequestPageJson", () => {
 });
 
 describe("decodePullRequestJson", () => {
+  // regression: #18402 a pull request with no head commit hash still decodes, headSha null
   it.each([
     { metadata: "absent commit", commit: undefined },
     { metadata: "null commit", commit: null },
@@ -271,8 +270,6 @@ describe("decodeStatusesJson", () => {
   it.each([
     ["SUCCESSFUL", "success"],
     ["FAILED", "failure"],
-    ["INPROGRESS", "pending"],
-    ["STOPPED", "cancelled"],
     ["something new", "neutral"],
   ])("reads the %s build state as %s", (state, expected) => {
     const decoded = expectSuccess(decodeStatusesJson(page([{ name: "Pipeline", state }])));

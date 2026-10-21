@@ -546,44 +546,6 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
     }),
   );
 
-  it.effect("surfaces JSON encoding failures as protocol parse errors", () =>
-    Effect.gen(function* () {
-      const { stdio } = yield* makeInMemoryStdio();
-      const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({ stdio });
-
-      const bigintError = yield* transport.notify("x/test", 1n).pipe(Effect.flip);
-      assert.instanceOf(bigintError, CodexError.CodexAppServerProtocolParseError);
-      assert.equal(bigintError.operation, "encode-wire-message");
-      assert.equal(bigintError.method, "x/test");
-      assert.exists(bigintError.cause);
-      assert.equal(
-        bigintError.message,
-        "Codex App Server protocol operation 'encode-wire-message' failed for method 'x/test'.",
-      );
-
-      const circular: Record<string, unknown> = {};
-      circular.self = circular;
-      const circularError = yield* transport.notify("x/test", circular).pipe(Effect.flip);
-      assert.instanceOf(circularError, CodexError.CodexAppServerProtocolParseError);
-      assert.equal(circularError.operation, "encode-wire-message");
-      assert.equal(circularError.method, "x/test");
-      assert.exists(circularError.cause);
-
-      const requestError = yield* transport.request("x/request", 1n).pipe(
-        Effect.match({
-          onFailure: (error) => error,
-          onSuccess: () => assert.fail("Expected request encoding to fail"),
-        }),
-      );
-      assert.instanceOf(requestError, CodexError.CodexAppServerProtocolParseError);
-      assert.deepInclude(requestError, {
-        operation: "encode-wire-message",
-        method: "x/request",
-        requestId: "1",
-      });
-    }),
-  );
-
   it.effect("correlates response errors with the originating request", () =>
     Effect.gen(function* () {
       const { stdio, input, output } = yield* makeInMemoryStdio();

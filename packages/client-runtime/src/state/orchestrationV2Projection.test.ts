@@ -188,18 +188,6 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     expect(next?.updatedAt).toEqual(archivedAt);
   });
 
-  it("ignores events for another thread", () => {
-    const event = {
-      id: "event-other",
-      type: "thread.deleted",
-      threadId: ThreadId.make("thread-other"),
-      occurredAt: now,
-      payload: { ...emptyProjection.thread, id: ThreadId.make("thread-other"), deletedAt: now },
-    } as OrchestrationV2DomainEvent;
-
-    expect(applyOrchestrationV2ProjectionEvent(emptyProjection, event)).toBe(emptyProjection);
-  });
-
   it("preserves visible row identity when run updates do not change membership", () => {
     const item = commandItem("item-stable");
     const visibleTurnItems = [

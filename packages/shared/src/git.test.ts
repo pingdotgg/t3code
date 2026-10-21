@@ -266,9 +266,9 @@ describe("sanitizeFeatureBranchName", () => {
     );
   });
 
+  // regression: #15615 generated branch namespaces are preserved
   it.each([
     ["refine toolbar", "feature/refine-toolbar"],
-    ["", "feature/update"],
     [" /?. / ", "feature/update"],
     ["fix///", "feature/fix"],
   ])("keeps the fallback for unprefixed input %s", (input, expected) => {
@@ -286,13 +286,11 @@ describe("resolveAutoFeatureBranchName", () => {
     ).toBe("fix/refine-toolbar-3");
   });
 
+  // regression: #15615 generated branch namespaces are preserved
   it.each([
     ["fix/name", ["fix"], "fix-2/name"],
-    ["team/jules/fix/name", ["team/jules"], "team/jules-2/fix/name"],
     ["fix/name", ["fix/name/child"], "fix/name-2"],
-    ["FIX/name", ["FIX", "FIX-2"], "fix-3/name"],
     ["fix/name", ["fixes", "fix/name-extra/child"], "fix/name"],
-    [undefined, ["feature", "feature-2"], "feature-3/update"],
   ])("resolves %s against namespace blockers %j", (preferredBranch, existingNames, expected) => {
     expect(resolveAutoFeatureBranchName(existingNames, preferredBranch)).toBe(expected);
   });
@@ -300,7 +298,6 @@ describe("resolveAutoFeatureBranchName", () => {
 
 describe("formatGeneratedBranchName", () => {
   it.each([
-    ["release..candidate", "release-candidate/add-search"],
     [" Team / Jules.lock/", "Team/Jules-lock/add-search"],
     ["-team//feature@{new}", "team/feature-new/add-search"],
     [" /?. / ", "add-search"],

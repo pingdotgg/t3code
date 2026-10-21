@@ -123,6 +123,7 @@ layer("legacy GitLab diff requests through GitLabCli", (it) => {
       expect(run).toHaveBeenCalledTimes(2);
     }),
   );
+  // regression: #15886 the older-GitLab fallback still surfaces its own failure
   it.effect("propagates failure of the legacy endpoint", () =>
     Effect.gen(function* () {
       run.mockReturnValueOnce(failure("not-found"));

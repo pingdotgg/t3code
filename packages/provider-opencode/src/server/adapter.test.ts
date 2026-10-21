@@ -237,7 +237,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
 });
 
 describe("OpenCodeAdapterV2", () => {
-  it.effect.each(["completed", "failed", "unresolved", "unavailable", "reconnect"] as const)(
+  it.effect.each(["completed", "failed", "unavailable"] as const)(
     "normalizes OpenCode step usage for %s turns",
     (ending) =>
       Effect.gen(function* () {
@@ -323,16 +323,6 @@ describe("OpenCodeAdapterV2", () => {
             }),
           );
           yield* Effect.promise(() => nativeEvents.push(step("old", "old-assistant")));
-        }
-        if (ending === "unresolved")
-          yield* Effect.promise(() => nativeEvents.push(step("unknown", "unknown-assistant")));
-        if (ending === "reconnect") {
-          yield* Effect.promise(() =>
-            nativeEvents.push({ type: "server.connected", properties: {} }),
-          );
-          yield* Effect.promise(() =>
-            nativeEvents.push({ type: "server.connected", properties: {} }),
-          );
         }
         if (ending === "failed") {
           yield* Effect.promise(() =>

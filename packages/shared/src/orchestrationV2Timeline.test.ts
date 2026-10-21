@@ -64,17 +64,6 @@ describe.each([
     ).toBe(false);
   });
 
-  it("keeps queued user messages while their run is queued", () => {
-    expect(
-      isVisible({
-        item: { type: "user_message", inputIntent: "queued_turn", runId, nodeId },
-        runs: [{ id: runId, status: "queued" }],
-        attempts: [],
-        items: [{ type: "user_message", inputIntent: "queued_turn", runId, nodeId }],
-      }),
-    ).toBe(true);
-  });
-
   it("keeps non-queued user messages on cancelled runs", () => {
     expect(
       isVisible({

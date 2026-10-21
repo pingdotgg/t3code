@@ -19,6 +19,7 @@ describe("providerInstanceInitials", () => {
 });
 
 describe("normalizeProviderAccentColor", () => {
+  // regression: #9899 a non-hex accent must not render as the account badge color
   it("rejects a non-hex value", () => {
     expect(normalizeProviderAccentColor("blue")).toBeUndefined();
   });

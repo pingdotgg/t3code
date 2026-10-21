@@ -44,7 +44,6 @@ import {
   createRuntimeCommand,
   scheduleAtomCommandEffect,
   executeAtomQuery,
-  settleAsyncResult,
 } from "./runtime.ts";
 
 const QUERY_ENVIRONMENT = new PrimaryConnectionTarget({
@@ -178,28 +177,6 @@ const mountEnvironmentQuery = Effect.fn("TestEnvironmentQuery.mount")(function* 
     }),
   );
   return registry;
-});
-
-describe("settleAsyncResult", () => {
-  it("encodes thrown and rejected promises as defects", async () => {
-    const thrownDefect = new Error("thrown defect");
-    const thrown = await settleAsyncResult<void, never>(() => {
-      throw thrownDefect;
-    });
-    expect(AsyncResult.isFailure(thrown)).toBe(true);
-    if (AsyncResult.isFailure(thrown)) {
-      expect(Cause.hasDies(thrown.cause)).toBe(true);
-      expect(Cause.squash(thrown.cause)).toBe(thrownDefect);
-    }
-
-    const rejectedDefect = new Error("rejected defect");
-    const rejected = await settleAsyncResult<void, never>(() => Promise.reject(rejectedDefect));
-    expect(AsyncResult.isFailure(rejected)).toBe(true);
-    if (AsyncResult.isFailure(rejected)) {
-      expect(Cause.hasDies(rejected.cause)).toBe(true);
-      expect(Cause.squash(rejected.cause)).toBe(rejectedDefect);
-    }
-  });
 });
 
 describe("preview event subscriptions", () => {

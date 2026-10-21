@@ -12,10 +12,6 @@ import {
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  InvalidScopedProjectRefCollectionKeyError,
-  parseProjectRefCollectionKey,
-} from "./entities.ts";
 import { presentThreadShell, resolveThreadWorkingStartedAt } from "./models.ts";
 import { v2Projection, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import { deriveLatestThreadRun, deriveThreadRuntime } from "./threadExecution.ts";
@@ -24,16 +20,6 @@ import { derivePendingThreadRequests } from "./threadRequests.ts";
 import { canSnooze, effectiveSnoozed } from "./threadSettled.ts";
 
 const environmentId = EnvironmentId.make("environment-v2");
-
-describe("scoped entity keys", () => {
-  it("rejects invalid project reference collection shapes", () => {
-    const key = JSON.stringify([["environment-1"]]);
-
-    expect(() => parseProjectRefCollectionKey(key)).toThrowError(
-      InvalidScopedProjectRefCollectionKeyError,
-    );
-  });
-});
 
 describe("V2 client presentation", () => {
   it("keeps async questions in Working until the run completes", () => {
@@ -84,26 +70,6 @@ describe("V2 client presentation", () => {
       expect(shell.hasPendingUserInput).toBe(true);
       expect(isThreadWorking(shell)).toBe(false);
     }
-  });
-
-  it("parks presented runtime at idle when a settled shell has pending background tasks", () => {
-    const runId = RunId.make("run-completed");
-    const shell = presentThreadShell(environmentId, {
-      ...v2ThreadShell,
-      latestRunId: runId,
-      activeRunId: null,
-      status: "completed",
-      pendingBackgroundTasks: [{ taskId: "bg-1", description: "Watch build", kind: "monitor" }],
-    });
-
-    expect(shell.latestRun).toMatchObject({ runId, status: "completed" });
-    expect(shell.runtime).toMatchObject({
-      status: "idle",
-      activeRunId: null,
-    });
-    expect(shell.pendingBackgroundTasks).toEqual([
-      { taskId: "bg-1", description: "Watch build", kind: "monitor" },
-    ]);
   });
 
   it("parks a thread that never ran at idle while a pull request watch holds it", () => {

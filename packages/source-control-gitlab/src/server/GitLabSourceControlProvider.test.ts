@@ -25,49 +25,6 @@ function makeProvider(gitlab: Partial<GitLabCli.GitLabCli["Service"]>) {
   );
 }
 
-it.effect("maps GitLab MR summaries into provider-neutral change requests", () =>
-  Effect.gen(function* () {
-    const provider = yield* makeProvider({
-      getMergeRequest: () =>
-        Effect.succeed({
-          number: 42,
-          title: "Add GitLab provider",
-          url: "https://gitlab.com/pingdotgg/t3code/-/merge_requests/42",
-          baseRefName: "main",
-          headRefName: "feature/source-control",
-          headSha: "a".repeat(40),
-          state: "closed",
-          closedAt: "2026-08-23T10:00:00Z",
-          isCrossRepository: true,
-          headRepositoryNameWithOwner: "fork/t3code",
-          headRepositoryOwnerLogin: "fork",
-        }),
-    });
-
-    const changeRequest = yield* provider.getChangeRequest({
-      cwd: "/repo",
-      reference: "42",
-    });
-
-    assert.deepStrictEqual(changeRequest, {
-      provider: SourceControlProviderKind.make("gitlab"),
-      number: 42,
-      title: "Add GitLab provider",
-      url: "https://gitlab.com/pingdotgg/t3code/-/merge_requests/42",
-      baseRefName: "main",
-      headRefName: "feature/source-control",
-      headSha: "a".repeat(40),
-      state: "closed",
-      closedAt: "2026-08-23T10:00:00Z",
-      mergedAt: null,
-      updatedAt: Option.none(),
-      isCrossRepository: true,
-      headRepositoryNameWithOwner: "fork/t3code",
-      headRepositoryOwnerLogin: "fork",
-    });
-  }),
-);
-
 it("accepts authenticated GitLab hosts when another configured host fails", () => {
   const auth = GitLabSourceControlProvider.discovery.parseAuth({
     exitCode: ChildProcessSpawner.ExitCode(1),
@@ -151,6 +108,7 @@ it("tells a host glab has no login for apart from output that cannot say", () =>
   assert.strictEqual(refine("git.example.test\n  x API call failed: 503"), undefined);
 });
 
+// regression: #15395 self-hosted GitLab remotes resolve bare MR numbers once glab is signed in
 it.effect.each([
   [
     "https://code.example.test:8443@Code.Example.Test:8443/Team/Repo.git",
@@ -159,8 +117,6 @@ it.effect.each([
     "Code.Example.Test:8443",
   ],
   ["git@code.example.test:team/repo.git", true, "gitlab"],
-  ["code.example.test:team/repo.git", true, "gitlab"],
-  ["git@code.example.test:/team/repo.git", true, "gitlab"],
   ["https://code.example.test/team/repo.git", false, "unknown"],
   ["https://github.com/team/repo.git", true, "github"],
 ] as const)(

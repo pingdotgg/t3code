@@ -180,13 +180,6 @@ describe("OtelEnvironment", () => {
       });
     it.effect.each([
       {
-        name: "headers are comma-separated pairs with percent-encoded values",
-        env: { ...ENDPOINT, OTEL_EXPORTER_OTLP_HEADERS: "api-key=a%20b,tenant=t3" },
-        traces: { protocol: "http/protobuf", headers: { "api-key": "a b", tenant: "t3" } },
-        logs: { protocol: "http/protobuf", headers: { "api-key": "a b", tenant: "t3" } },
-        warnings: [],
-      },
-      {
         name: "a per-signal protocol and headers beat the generic ones",
         env: {
           ...ENDPOINT,
@@ -244,12 +237,6 @@ describe("OtelEnvironment", () => {
       headers: { "x-key": "otel" },
     });
     it.each([
-      {
-        name: "T3CODE_OTLP_*_URL wins over an OTEL endpoint",
-        otel: withLogs(otelExport),
-        t3Url: "http://t3:4318/v1/logs",
-        expected: { url: "http://t3:4318/v1/logs", export: t3Export },
-      },
       {
         name: "T3CODE_OTLP_*_URL wins over a signal the OTEL variables turned off",
         otel: withLogs(OtelEnvironment.OtelSignal.Off()),

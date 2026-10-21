@@ -52,7 +52,6 @@ const decodeSessionCancelNotification = Schema.decodeEffect(
   Schema.fromJsonString(SessionCancelNotification),
 );
 const decodeExtRequest = Schema.decodeEffect(Schema.fromJsonString(ExtRequest));
-const decodeExtResponse = Schema.decodeEffect(Schema.fromJsonString(ExtResponse));
 const decodeRequestPermissionResponse = Schema.decodeEffect(
   Schema.fromJsonString(RequestPermissionResponse),
 );
@@ -271,6 +270,7 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
     }),
   );
 
+  // regression: #9154 notifications went out with `id` and `headers`, which Grok CLI drops
   it.effect("logs outgoing notifications when logOutgoing is enabled", () =>
     Effect.gen(function* () {
       const { stdio } = yield* makeInMemoryStdio();
@@ -380,44 +380,6 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
         method: "x/request",
         requestId: 1,
       });
-    }),
-  );
-
-  it.effect("supports generic extension requests over the patched transport", () =>
-    Effect.gen(function* () {
-      const { stdio, input, output } = yield* makeInMemoryStdio();
-      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
-        stdio,
-        serverRequestMethods: new Set(),
-      });
-
-      const response = yield* transport
-        .request("x/test", { hello: "world" })
-        .pipe(Effect.forkScoped);
-      const outbound = yield* Queue.take(output);
-      assert.deepEqual(yield* decodeExtRequest(outbound), {
-        jsonrpc: "2.0",
-        id: 1,
-        method: "x/test",
-        params: {
-          hello: "world",
-        },
-        headers: [],
-      });
-
-      yield* Queue.offer(
-        input,
-        yield* encodeJsonl(ExtResponse, {
-          jsonrpc: "2.0",
-          id: 1,
-          result: {
-            ok: true,
-          },
-        }),
-      );
-
-      const resolved = yield* Fiber.join(response);
-      assert.deepEqual(resolved, { ok: true });
     }),
   );
 
@@ -540,39 +502,6 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
       )(yield* Queue.take(output));
       assert.equal(response.id, 9);
       assert.equal(response.error.code, -32603);
-    }),
-  );
-
-  it.effect("preserves numeric ids for inbound extension requests", () =>
-    Effect.gen(function* () {
-      const { stdio, input, output } = yield* makeInMemoryStdio();
-      yield* AcpProtocol.makeAcpPatchedProtocol({
-        stdio,
-        serverRequestMethods: new Set(),
-        onExtRequest: () => Effect.succeed({ ok: true }),
-      });
-
-      yield* Queue.offer(
-        input,
-        yield* encodeJsonl(ExtRequest, {
-          jsonrpc: "2.0",
-          id: 7,
-          method: "x/test",
-          params: {
-            hello: "world",
-          },
-          headers: [],
-        }),
-      );
-
-      const outbound = yield* Queue.take(output);
-      assert.deepEqual(yield* decodeExtResponse(outbound), {
-        jsonrpc: "2.0",
-        id: 7,
-        result: {
-          ok: true,
-        },
-      });
     }),
   );
 

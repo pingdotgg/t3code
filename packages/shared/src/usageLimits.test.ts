@@ -720,6 +720,7 @@ describe("pooled account columns", () => {
       row.columns.map((member) => (member.window ? member.account.key : null)),
     );
 
+  // regression: #20349 sessions stay visible while the weekly quota is exhausted
   it.each([
     ["claudeAgent", "13:00", 40, "14:00", 100],
     ["codex", "14:00", 100, "14:00", 100],

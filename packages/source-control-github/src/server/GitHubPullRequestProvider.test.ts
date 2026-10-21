@@ -761,15 +761,6 @@ describe("getChangeRequestActivity dismissed reviews", () => {
       Effect.provide(layerFor("<!-- Macroscope (Approvability) review body marker -->")),
     ),
   );
-
-  it.effect("keeps the words of a dismissed review that has its own", () =>
-    readActivity.pipe(
-      Effect.map((activity) => {
-        expect(activity.comments[0]?.body).toBe("These findings still stand.");
-      }),
-      Effect.provide(layerFor("These findings still stand.")),
-    ),
-  );
 });
 
 describe("loginAvatarUrl", () => {

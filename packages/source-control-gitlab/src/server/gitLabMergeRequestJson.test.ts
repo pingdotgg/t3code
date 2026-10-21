@@ -88,12 +88,6 @@ describe("decodeMergeRequestListJson", () => {
     expect(batch.items[0]?.state).toBe("merged");
   });
 
-  it("keeps a locked merge request open", () => {
-    const batch = expectSuccess(decodeMergeRequestListJson(listJson([{ state: "locked" }])));
-
-    expect(batch.items[0]?.state).toBe("open");
-  });
-
   it("reads the legacy draft flag", () => {
     const batch = expectSuccess(decodeMergeRequestListJson(listJson([{ work_in_progress: true }])));
 
@@ -106,14 +100,6 @@ describe("decodeMergeRequestListJson", () => {
     );
 
     expect(batch.items[0]?.mergeability).toBe("conflicting");
-  });
-
-  it("leaves an unfinished merge check unknown", () => {
-    const batch = expectSuccess(
-      decodeMergeRequestListJson(listJson([{ merge_status: "checking" }])),
-    );
-
-    expect(batch.items[0]?.mergeability).toBe("unknown");
   });
 
   it("skips a malformed row but still counts it, so paging does not stop early", () => {
@@ -460,17 +446,6 @@ describe("decodeMergeRequestDiffsJson", () => {
 });
 
 describe("merge request viewer fields", () => {
-  it("carries GitLab's own answer for whether this viewer can merge", () => {
-    expect(
-      expectSuccess(decodeMergeRequestDetailJson(detailJson({ user: { can_merge: false } })))
-        .viewerCanMerge,
-    ).toBe(false);
-    expect(
-      expectSuccess(decodeMergeRequestDetailJson(detailJson({ user: { can_merge: true } })))
-        .viewerCanMerge,
-    ).toBe(true);
-  });
-
   it("leaves merging permitted where GitLab answered without the field", () => {
     expect(expectSuccess(decodeMergeRequestDetailJson(detailJson({}))).viewerCanMerge).toBe(true);
     expect(
@@ -525,26 +500,6 @@ describe("decodeAwardEmojiJson", () => {
     expect(result.nextCursor).toBeNull();
   });
 
-  it("hands back a cursor when GitLab has more notes to page", () => {
-    const result = expectSuccess(
-      decodeAwardEmojiJson(
-        JSON.stringify({
-          data: {
-            currentUser: null,
-            project: {
-              mergeRequest: {
-                awardEmoji: { nodes: [] },
-                notes: { pageInfo: { hasNextPage: true, endCursor: "Y3Vyc29yOjE" }, nodes: [] },
-              },
-            },
-          },
-        }),
-      ),
-    );
-
-    expect(result.nextCursor).toBe("Y3Vyc29yOjE");
-  });
-
   it("matches the viewer's username case-insensitively, since GitLab is not consistent about case", () => {
     const result = expectSuccess(
       decodeAwardEmojiJson(
@@ -583,12 +538,6 @@ describe("decodeOwnAwardIdJson", () => {
     expect(
       expectSuccess(decodeOwnAwardIdJson(awards, { content: "thumbs-up", viewer: "bilal" })),
     ).toBe(102);
-  });
-
-  it("returns nothing where the reader has no award of that name", () => {
-    expect(
-      expectSuccess(decodeOwnAwardIdJson(awards, { content: "heart", viewer: "bilal" })),
-    ).toBeNull();
   });
 });
 

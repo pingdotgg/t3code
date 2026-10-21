@@ -202,6 +202,7 @@ it.effect("lets the writer commit while a read-only transaction is open", () =>
   ),
 );
 
+// regression: #19226 read-only transactions run on the separate reader connection
 it.effect("rejects a write in a read-only transaction", () =>
   withReaderClient((sql) =>
     Effect.gen(function* () {

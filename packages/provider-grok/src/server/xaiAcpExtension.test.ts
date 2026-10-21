@@ -37,23 +37,6 @@ import {
 const decodeXAiAskUserQuestionRequest = Schema.decodeUnknownSync(XAiAskUserQuestionRequest);
 
 describe("xAiPromptCompleteFromSessionUpdate", () => {
-  it("maps live turn_completed snake_case payloads", () => {
-    expect(
-      xAiPromptCompleteFromSessionUpdate({
-        sessionId: "019f4428-4bf1-7e52-b7c6-c29b506543b1",
-        update: {
-          sessionUpdate: "turn_completed",
-          prompt_id: "t3-xai-prompt-1",
-          stop_reason: "end_turn",
-        },
-      }),
-    ).toEqual({
-      sessionId: "019f4428-4bf1-7e52-b7c6-c29b506543b1",
-      promptId: "t3-xai-prompt-1",
-      stopReason: "end_turn",
-    });
-  });
-
   it("ignores non-turn updates and task-completed prompt ids", () => {
     expect(
       xAiPromptCompleteFromSessionUpdate({

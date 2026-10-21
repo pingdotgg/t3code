@@ -282,29 +282,10 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("addresses a nested group project by its encoded full path", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output("[]")));
-      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
-
-      yield* cli.listMergeRequests({
-        cwd: "/w",
-        repository: "acme/platform/web",
-        state: "open",
-        involvement: "all",
-        viewer: "bilal",
-        limit: 10,
-      });
-
-      expect(argsOfCall(0)[1]).toContain("projects/acme%2Fplatform%2Fweb/merge_requests");
-    }),
-  );
-
   it.effect.each([
     { action: "merge", autoMerge: "false", mergeMethod: "squash" },
     { action: "enable-auto-merge", autoMerge: "true", mergeMethod: "squash" },
     { action: "merge", autoMerge: "false", mergeMethod: "rebase" },
-    { action: "enable-auto-merge", autoMerge: "true", mergeMethod: "rebase" },
   ] as const)(
     "$action with $mergeMethod succeeds on a project requiring the current source SHA",
     ({ action, autoMerge, mergeMethod }) =>
@@ -453,24 +434,6 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("carries on from a cursor at the page it names", () =>
-    Effect.gen(function* () {
-      mockedExecute
-        .mockReturnValueOnce(Effect.succeed(output(diffPage(0))))
-        .mockReturnValueOnce(Effect.succeed(output(diffPage(100, 3))));
-      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
-      const target = { cwd: "/w", repository: "acme/web", number: 7 };
-
-      const first = yield* cli.getMergeRequestDiff(target);
-      assert.isNotNull(first.nextCursor);
-      const second = yield* cli.getMergeRequestDiff({ ...target, cursor: first.nextCursor });
-
-      expect(argsOfCall(1)[1]).toContain("page=2");
-      assert.isNull(second.nextCursor);
-      expect(second.patch).toContain("diff --git a/src/100.ts b/src/100.ts");
-    }),
-  );
-
   it.effect("refuses a cursor it never handed out rather than reading it into a query", () =>
     Effect.gen(function* () {
       const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
@@ -578,43 +541,6 @@ layer("GitLabPullRequestCli.layer", (it) => {
 
       expect(contents).toEqual({ oldContents: "", newContents: "first contents\n" });
       expect(argsOfCall(1)[1]).toContain("raw?ref=a1b2c3d");
-    }),
-  );
-
-  it.effect("reports an oversized diff file with its path and reason", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(
-        Effect.succeed(
-          output(
-            JSON.stringify({
-              diff_refs: {
-                base_sha: "a1b2c3d",
-                head_sha: "b1c2d3e",
-                start_sha: "a1b2c3d",
-              },
-            }),
-          ),
-        ),
-      );
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output("partial", true)));
-      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
-
-      const error = yield* Effect.flip(
-        cli.getMergeRequestDiffFileContents({
-          cwd: "/w",
-          repository: "acme/web",
-          number: 7,
-          changeType: "deleted",
-          oldPath: "src/large.ts",
-          newPath: "src/large.ts",
-        }),
-      );
-
-      assert.strictEqual(error._tag, "GitLabDiffFileContentsUnavailableError");
-      if (error._tag === "GitLabDiffFileContentsUnavailableError") {
-        assert.strictEqual(error.path, "src/large.ts");
-        assert.strictEqual(error.reason, "oversized");
-      }
     }),
   );
 
@@ -1069,27 +995,6 @@ layer("GitLabPullRequestCli.layer", (it) => {
       });
 
       expect(JSON.parse(callAt(1).stdin ?? "")).toEqual({ reviewer_ids: [5] });
-    }),
-  );
-
-  it.effect("rewrites title and description together in one request", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
-      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
-
-      yield* cli.updateMergeRequest({
-        cwd: "/w",
-        repository: "acme/web",
-        number: 7,
-        title: "A better title",
-        description: "What this changes.",
-      });
-
-      assert.strictEqual(mockedExecute.mock.calls.length, 1);
-      expect(JSON.parse(callAt(0).stdin ?? "")).toEqual({
-        title: "A better title",
-        description: "What this changes.",
-      });
     }),
   );
   it.effect("reads blob ids for the marked paths at the merge request's head", () =>

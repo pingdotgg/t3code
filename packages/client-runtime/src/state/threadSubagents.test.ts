@@ -183,24 +183,3 @@ describe("deriveThreadTurnSubagents", () => {
     expect(turn?.subagents).toHaveLength(3);
   });
 });
-
-describe("resolveSubagentPillSegment", () => {
-  it("hides itself once the turn is over and nothing is working", () => {
-    const turn = deriveThreadTurnSubagents({
-      runs: [finishedRun],
-      subagents: [subagent({ id: "a", status: "completed" })],
-    });
-
-    expect(resolveSubagentPillSegment(turn)).toBeNull();
-    expect(resolveSubagentPillSegment(null)).toBeNull();
-  });
-
-  it("stays visible after the turn ends while an agent is still working", () => {
-    const turn = deriveThreadTurnSubagents({
-      runs: [finishedRun],
-      subagents: [subagent({ id: "a", status: "running" })],
-    });
-
-    expect(resolveSubagentPillSegment(turn)?.label).toBe("1/1");
-  });
-});

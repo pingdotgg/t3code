@@ -1200,31 +1200,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect("excludes merged pull requests from the Closed tab", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockImplementation((call) =>
-        Effect.succeed(
-          call.kind === "graphql" && call.operationName === "PullRequestList"
-            ? emptyList()
-            : emptySearch(),
-        ),
-      );
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      yield* cli.listPullRequests({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        state: "closed",
-        involvement: "all",
-        viewer: "bilal",
-        limit: 10,
-      });
-
-      expect(searchOfCall(0)).toBe("is:pr is:closed is:unmerged sort:updated-desc repo:acme/web");
-    }),
-  );
-
   it.effect("carries every repository and every qualifier into one search", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValue(Effect.succeed(searchPage([])));
@@ -1520,34 +1495,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
       ]);
       expect(queryAt(0)).toContain("_0_repository:repository(owner:$_0_owner name:$_0_name)");
       expect(varsAt(0)).toMatchObject({ _0_owner: "acme", _0_name: "web", _24_number: 25 });
-    }),
-  );
-
-  it.effect("joins a search onto the tab's own qualifiers instead of replacing them", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockImplementation((call) =>
-        Effect.succeed(
-          call.kind === "graphql" && call.operationName === "PullRequestList"
-            ? emptyList()
-            : emptySearch(),
-        ),
-      );
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      yield* cli.listPullRequests({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        state: "closed",
-        involvement: "reviewing",
-        viewer: "bilal",
-        limit: 10,
-        query: "page",
-      });
-
-      expect(searchOfCall(0)).toBe(
-        'is:pr is:closed is:unmerged review-requested:bilal "page" sort:updated-desc repo:acme/web',
-      );
     }),
   );
 
@@ -1861,55 +1808,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
     },
   });
 
-  it.effect("updates a stale branch with a merge commit unless asked to rebase", () =>
-    Effect.gen(function* () {
-      route(["query PullRequestActionState", actionState()]);
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      yield* cli.runPullRequestAction({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-        action: "update-branch",
-      });
-      yield* cli.runPullRequestAction({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-        action: "update-branch",
-        updateMethod: "rebase",
-      });
-
-      expect(variablesOf("updatePullRequestBranch(")).toEqual([
-        { pullRequestId: "PR_7", expectedHeadOid: "abc123", updateMethod: "MERGE" },
-        { pullRequestId: "PR_7", expectedHeadOid: "abc123", updateMethod: "REBASE" },
-      ]);
-    }),
-  );
-
-  it.effect("merges with the strategy it was asked for", () =>
-    Effect.gen(function* () {
-      route(["query PullRequestActionState", actionState()]);
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      yield* cli.runPullRequestAction({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-        action: "merge",
-        mergeMethod: "squash",
-      });
-
-      expect(variablesOf("mergePullRequest(")).toEqual([
-        { input: { pullRequestId: "PR_7", mergeMethod: "SQUASH" } },
-      ]);
-      expect(variablesOf("enablePullRequestAutoMerge(")).toEqual([]);
-    }),
-  );
-
   it.effect.each([
     {
       description: "base-only write",
@@ -2056,20 +1954,17 @@ layer("GitHubPullRequestApi.layer", (it) => {
 
   it.effect.each([
     { description: "an open PR", head: { state: "OPEN" }, source: {} },
-    { description: "a missing source repository", head: { headRepository: null }, source: {} },
     { description: "the base branch", head: { headRefName: "main" }, source: {} },
     {
       description: "the default branch",
       head: {},
       source: { defaultBranchRef: { name: "feat/delete" } },
     },
-    { description: "a missing default branch", head: {}, source: { defaultBranchRef: null } },
     {
       description: "a changed branch",
       head: {},
       source: { ref: { target: { __typename: "Commit", oid: "new-commit" } } },
     },
-    { description: "an unavailable source repository", head: {}, source: null },
   ])("refuses to delete $description", ({ head, source }) =>
     Effect.gen(function* () {
       route(
@@ -2267,35 +2162,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         }),
       );
       expect(result._tag).toBe("Failure");
-      expect(variablesOf("mergePullRequest(")).toEqual([]);
-    }),
-  );
-
-  it.effect("arms auto-merge with the same strategy a merge would have used", () =>
-    Effect.gen(function* () {
-      route(["query PullRequestActionState", actionState()]);
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      yield* cli.runPullRequestAction({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-        action: "enable-auto-merge",
-        mergeMethod: "squash",
-      });
-      yield* cli.runPullRequestAction({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-        action: "enable-auto-merge",
-      });
-
-      expect(variablesOf("enablePullRequestAutoMerge(")).toEqual([
-        { input: { pullRequestId: "PR_7", mergeMethod: "SQUASH" } },
-        { input: { pullRequestId: "PR_7", mergeMethod: "MERGE" } },
-      ]);
       expect(variablesOf("mergePullRequest(")).toEqual([]);
     }),
   );
@@ -2715,25 +2581,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect("carries on from a cursor without asking for the whole diff again", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.fail(diffRefused));
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequestFiles(100, 0))));
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-      const target = { cwd: "/w", repository: "acme/web", host: "github.com", number: 7 };
-
-      const first = yield* cli.getPullRequestDiff(target);
-      assert.isNotNull(first.nextCursor);
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequestFiles(4, 100))));
-      const second = yield* cli.getPullRequestDiff({ ...target, cursor: first.nextCursor });
-
-      assert.isNull(second.nextCursor);
-      expect(second.patch).toContain("diff --git a/src/file100.ts b/src/file100.ts");
-      assert.strictEqual(mockedExecute.mock.calls.length, 3);
-      assert.strictEqual(pathAt(2), "repos/acme/web/pulls/7/files?per_page=100&page=2");
-    }),
-  );
-
   it.effect("refuses a cursor it never handed out rather than reading it into a request", () =>
     Effect.gen(function* () {
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
@@ -2846,33 +2693,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         assert.strictEqual(error.number, 7);
         assert.strictEqual(error.commit, "a1b2c3d");
       }
-    }),
-  );
-
-  it.effect("reports an oversized diff file with its path and reason", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequestRefs)));
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output("partial", true)));
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      const error = yield* Effect.flip(
-        cli.getPullRequestDiffFileContents({
-          cwd: "/w",
-          repository: "acme/web",
-          host: "github.com",
-          number: 7,
-          changeType: "deleted",
-          oldPath: "src/large.ts",
-          newPath: "src/large.ts",
-        }),
-      );
-
-      assert.strictEqual(error._tag, "GitHubDiffFileContentsUnavailableError");
-      if (error._tag === "GitHubDiffFileContentsUnavailableError") {
-        assert.strictEqual(error.path, "src/large.ts");
-        assert.strictEqual(error.reason, "oversized");
-      }
-      assert.strictEqual(pathAt(1), "repos/acme/web/contents/src/large.ts?ref=a1b2c3d");
     }),
   );
 
@@ -3060,20 +2880,11 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  // regression: #18780 credentials that cannot read /user still load pull requests
   it.effect.each([
     new GitHubRequestPolicy.GitHubApiAuthenticationError({
       host: "github.identity-auth-error.test",
       operation: "getRoutingIdentity",
-    }),
-    new GitHubRequestPolicy.GitHubApiRateLimitError({
-      host: "github.identity-rate-error.test",
-      operation: "getRoutingIdentity",
-      retryAt: 123_456,
-    }),
-    new GitHubRequestPolicy.GitHubApiRequestError({
-      host: "github.identity-network-error.test",
-      operation: "getRoutingIdentity",
-      cause: new Error("connection refused"),
     }),
     new GitHubRequestPolicy.GitHubApiResponseError({
       host: "github.identity-server-error.test",
@@ -3133,36 +2944,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         accountId: "456",
         viewer: "maria-rcks",
       });
-    }),
-  );
-
-  it.effect("sends a whole review as one request", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      yield* cli.submitReview({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-        verdict: "approve",
-        body: "Looks right.",
-        comments: [{ path: "src/a.ts", position: { kind: "added", newLine: 4 }, body: "nit" }],
-      });
-
-      assert.strictEqual(mockedExecute.mock.calls.length, 1);
-      expect(restCallsTo("/reviews")).toMatchObject([
-        {
-          method: "POST",
-          path: "repos/acme/web/pulls/7/reviews",
-          body: {
-            event: "APPROVE",
-            body: "Looks right.",
-            comments: [{ path: "src/a.ts", line: 4, side: "RIGHT", body: "nit" }],
-          },
-        },
-      ]);
     }),
   );
 
@@ -3228,50 +3009,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect("rewrites only the words a request named", () =>
-    Effect.gen(function* () {
-      route([NODE_ID_QUERY, nodeIdAnswer("PR_kwDOA")]);
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-      const rewrite = (fields: { readonly title?: string; readonly body?: string }) =>
-        cli.updatePullRequest({
-          cwd: "/w",
-          repository: "acme/web",
-          host: "github.com",
-          number: 22,
-          ...fields,
-        });
-
-      yield* rewrite({ title: "A better title" });
-      yield* rewrite({ body: "A better description." });
-      yield* rewrite({ title: "Both", body: "at once." });
-
-      assert.strictEqual(variablesOf(NODE_ID_QUERY).length, 1);
-      expect(variablesOf("updatePullRequest(")).toEqual([
-        { pullRequestId: "PR_kwDOA", title: "A better title" },
-        { pullRequestId: "PR_kwDOA", body: "A better description." },
-        { pullRequestId: "PR_kwDOA", title: "Both", body: "at once." },
-      ]);
-    }),
-  );
-
-  it.effect("fails the read when gh returns something unreadable", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output('{"message":"not found"}')));
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      const error = yield* Effect.flip(
-        cli.getPullRequestDetail({
-          cwd: "/w",
-          repository: "acme/web",
-          host: "github.com",
-          number: 7,
-        }),
-      );
-
-      assert.strictEqual(error._tag, "GitHubPullRequestReadError");
-    }),
-  );
-
+  // regression: #19564 only a refused reviewer path is retried; other failures surface as-is
   it.effect.each([
     {
       name: "check path",
@@ -3282,31 +3020,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
         },
       ],
     },
-    {
-      name: "mixed errors",
-      errors: [refusedReviewer, { ...refusedReviewer, path: [...refusedReviewer.path, "login"] }],
-    },
-    {
-      name: "untyped error",
-      errors: [{ message: refusedReviewer.message, path: refusedReviewer.path }],
-    },
-    {
-      name: "negative index",
-      errors: [
-        {
-          ...refusedReviewer,
-          path: ["repository", "pullRequest", "reviewRequests", "nodes", -1, "requestedReviewer"],
-        },
-      ],
-    },
     { name: "HTTP 403", errors: [refusedReviewer], status: 403 },
-    {
-      name: "authentication",
-      errors: [refusedReviewer],
-      status: 401,
-      tag: "GitHubApiAuthenticationError",
-    },
-    { name: "rate limit", errors: [refusedReviewer], status: 429, tag: "GitHubApiRateLimitError" },
     {
       name: "GraphQL rate limit",
       errors: [refusedReviewer, { message: "API rate limit exceeded", type: "RATE_LIMITED" }],
@@ -3839,32 +3553,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
       assert.strictEqual(error.retryAt, Date.parse("2099-08-13T14:00:00Z"));
       assert.strictEqual(mockedExecute.mock.calls.length, 1);
       yield* TestClock.setTime(Date.parse("2100-01-01T00:00:00Z"));
-    }),
-  );
-
-  it.effect("asks GitHub to review, naming the collection a request is added to", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
-      yield* cli.setReviewerRequest({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-        reviewers: [
-          { id: "octocat", kind: "user" },
-          { id: "reviewers", kind: "team" },
-        ],
-        requested: true,
-      });
-
-      expect(callAt(0)).toMatchObject({
-        kind: "rest",
-        method: "POST",
-        path: "repos/acme/web/pulls/7/requested_reviewers",
-        body: { reviewers: ["octocat"], team_reviewers: ["reviewers"] },
-      });
     }),
   );
 

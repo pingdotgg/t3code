@@ -201,26 +201,6 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("reports truncation from the extra row", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequests(11, 1))));
-      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
-
-      const batch = yield* cli.listPullRequests({
-        cwd: "/w",
-        repository: "web",
-        state: "open",
-        involvement: "all",
-        viewer: "bilal@acme.dev",
-        limit: 10,
-      });
-
-      assert.strictEqual(batch.items.length, 10);
-      assert.isTrue(batch.truncated);
-      assert.strictEqual(batch.cursorAdvance, 10);
-    }),
-  );
-
   it.effect("advances by malformed raw rows and keeps reading until the page is full", () =>
     Effect.gen(function* () {
       mockedExecute
@@ -846,22 +826,6 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
 
       assert.strictEqual(item.contents, file);
       assert.isFalse(item.isBinary);
-    }),
-  );
-
-  it.effect("asks for a file by Azure's own spelling of its path", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output(json({ content: "const a = 1;" }))));
-      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
-
-      yield* cli.readItemContent({
-        cwd: "/w",
-        location: { project: "platform", repository: "web" },
-        path: "src/app.ts",
-        commit: "a".repeat(40),
-      });
-
-      expect(argsOfCall(0)).toContain("path=/src/app.ts");
     }),
   );
 

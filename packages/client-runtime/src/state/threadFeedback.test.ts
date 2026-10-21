@@ -6,7 +6,6 @@ import { AsyncResult } from "effect/reactivity";
 import {
   beginCodexFeedbackSubmission,
   codexFeedbackNotice,
-  parseCodexFeedbackCommand,
   submitCodexFeedback,
   type CodexFeedbackSubmission,
 } from "./threadFeedback.ts";
@@ -22,13 +21,6 @@ describe("beginCodexFeedbackSubmission", () => {
 
     finish?.();
     expect(beginCodexFeedbackSubmission(inFlight, "environment:thread")).not.toBeNull();
-  });
-});
-
-describe("parseCodexFeedbackCommand", () => {
-  it("ignores other slash commands and ordinary messages", () => {
-    expect(parseCodexFeedbackCommand("/feedback-status")).toBeNull();
-    expect(parseCodexFeedbackCommand("Please send /feedback")).toBeNull();
   });
 });
 

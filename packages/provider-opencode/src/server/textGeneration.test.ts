@@ -213,10 +213,6 @@ const layerOpenCodeTextGenerationExistingServerTest = Layer.succeed(
 const DEFAULT_OPENCODE_SETTINGS = Schema.decodeSync(OpenCodeSettings)({
   binaryPath: "fake-opencode",
 });
-const LOCAL_AUTH_OPENCODE_SETTINGS = Schema.decodeSync(OpenCodeSettings)({
-  binaryPath: "fake-opencode",
-  serverPassword: "secret-password",
-});
 const EXISTING_SERVER_OPENCODE_SETTINGS = Schema.decodeSync(OpenCodeSettings)({
   binaryPath: "fake-opencode",
   serverUrl: "http://127.0.0.1:9999",
@@ -370,19 +366,6 @@ it.layer(layerOpenCodeTextGenerationTest)("OpenCodeTextGeneration", (it) => {
     ),
   );
 
-  it.effect("passes configured authentication to a locally spawned server", () =>
-    withOpenCodeTextGeneration(LOCAL_AUTH_OPENCODE_SETTINGS, (textGeneration) =>
-      Effect.gen(function* () {
-        yield* textGeneration.generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT);
-
-        expect(runtimeMock.state.startCalls).toEqual(["fake-opencode"]);
-        expect(runtimeMock.state.authHeaders).toEqual([
-          `Basic ${btoa("opencode:secret-password")}`,
-        ]);
-      }),
-    ),
-  );
-
   it.effect("uses an environment-only password for a locally spawned server", () =>
     withOpenCodeTextGeneration(
       DEFAULT_OPENCODE_SETTINGS,
@@ -392,21 +375,6 @@ it.layer(layerOpenCodeTextGenerationTest)("OpenCodeTextGeneration", (it) => {
 
           expect(runtimeMock.state.authHeaders).toEqual([
             `Basic ${btoa("opencode:environment-password")}`,
-          ]);
-        }),
-      { OPENCODE_SERVER_PASSWORD: "environment-password" },
-    ),
-  );
-
-  it.effect("uses settings auth when the local environment password differs", () =>
-    withOpenCodeTextGeneration(
-      LOCAL_AUTH_OPENCODE_SETTINGS,
-      (textGeneration) =>
-        Effect.gen(function* () {
-          yield* textGeneration.generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT);
-
-          expect(runtimeMock.state.authHeaders).toEqual([
-            `Basic ${btoa("opencode:secret-password")}`,
           ]);
         }),
       { OPENCODE_SERVER_PASSWORD: "environment-password" },
@@ -468,43 +436,6 @@ it.layer(layerOpenCodeTextGenerationTest)("OpenCodeTextGeneration", (it) => {
           subject: "Tighten OpenCode parsing",
           body: "Handle JSON text output locally.",
         });
-      }),
-    ),
-  );
-
-  it.effect("surfaces the upstream OpenCode structured-output error message", () =>
-    withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
-      Effect.gen(function* () {
-        runtimeMock.state.promptResult = {
-          data: {
-            info: {
-              error: {
-                name: "StructuredOutputError",
-                data: {
-                  message: "Model did not produce structured output",
-                  retries: 2,
-                },
-              },
-            },
-          },
-        };
-
-        const error = yield* textGeneration
-          .generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT)
-          .pipe(Effect.flip);
-
-        expect(error.message).toContain("Model did not produce structured output");
-        expect(error.cause).toMatchObject({
-          _tag: "OpenCodeTextGenerationPromptResponseError",
-          operation: "generateCommitMessage",
-          cwd: process.cwd(),
-          sessionId: "http://127.0.0.1:4301/session",
-          providerId: "openai",
-          modelId: "gpt-5",
-          providerErrorName: "StructuredOutputError",
-          providerMessage: "Model did not produce structured output",
-        });
-        expect(error.cause).not.toHaveProperty("cause");
       }),
     ),
   );

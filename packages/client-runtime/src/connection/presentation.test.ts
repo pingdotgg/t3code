@@ -86,6 +86,7 @@ describe("connection presentation", () => {
     expect(environmentMcpUrl({ entry })).toBe("http://192.168.4.53:3773/mcp");
   });
 
+  // regression: #16909 Copy MCP URL falls back to an alternate route when the relay route has no address
   it("passes over routes without an address of their own", () => {
     const relay = new RelayConnectionTarget({
       environmentId: TARGET.environmentId,

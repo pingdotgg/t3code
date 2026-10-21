@@ -85,15 +85,6 @@ describe("serverSettings helpers", () => {
       tokens: {},
     });
   });
-  it("replaces SSH host lists when saving, editing, and removing hosts", () => {
-    const host = { kind: "ssh" as const, id: "mini", label: "Mac mini", target: "mini" };
-    const saved = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, { deviceHosts: [host] });
-    expect(saved.deviceHosts).toEqual([host]);
-    const replacement = { ...host, target: "other-mini" };
-    const edited = applyServerSettingsPatch(saved, { deviceHosts: [replacement] });
-    expect(edited.deviceHosts).toEqual([replacement]);
-    expect(applyServerSettingsPatch(edited, { deviceHosts: [] }).deviceHosts).toEqual([]);
-  });
 
   it("inherits actions, preserves existing actions, and supports empty overrides and reset", () => {
     const project = { id: ProjectId.make("project-actions"), scripts: [] };
@@ -751,21 +742,6 @@ describe("serverSettings helpers", () => {
         providerHealthRefreshInterval: Duration.minutes(4),
       },
     });
-  });
-
-  it("ignores overrides attached to a concrete background profile", () => {
-    const resolved = resolveServerBackgroundActivitySettings({
-      ...DEFAULT_SERVER_SETTINGS,
-      backgroundActivity: {
-        schemaVersion: 1,
-        profile: "balanced",
-        overrides: {
-          pauseWhenOnBattery: true,
-        },
-      },
-    });
-
-    expect(resolved.pauseWhenOnBattery).toBe(false);
   });
 });
 

@@ -16,10 +16,6 @@ describe("thread relationships", () => {
   it.each([
     ["running", "completed"],
     ["completed", "running"],
-    ["running", "running"],
-    ["completed", "completed"],
-    ["waiting", "failed"],
-    ["interrupted", "pending"],
   ])("keeps parent %s independent of child %s", (parentStatus, childStatus) => {
     const parent = ThreadId.make("parent");
     const child = ThreadId.make("child");

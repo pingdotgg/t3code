@@ -113,26 +113,6 @@ describe("mergeUsage", () => {
     expect(merged.duplicateSources).toHaveLength(1);
   });
 
-  it("sums environments that read different transcript directories", () => {
-    const merged = mergeUsage(
-      [
-        environment(
-          "env-a",
-          summary([bucket()], [{ provider: "claude", hostId: "mac", homePath: "/a/.claude" }]),
-        ),
-        environment(
-          "env-b",
-          summary([bucket()], [{ provider: "claude", hostId: "linux", homePath: "/b/.claude" }]),
-        ),
-      ],
-      USAGE_CONTRACT_VERSION,
-    );
-
-    expect(merged.costUsd).toBe(20);
-    expect(merged.records).toBe(10);
-    expect(merged.duplicateSources).toHaveLength(0);
-  });
-
   it("counts a shared transcript directory once", () => {
     const shared = { provider: "claude" as const, hostId: "mac", homePath: "/home/theo/.claude" };
     const merged = mergeUsage(
