@@ -327,6 +327,23 @@ describe("settle and snooze Undo", () => {
     });
   });
 
+  it("wakes the thread when undoing a reschedule after the previous wake time passed", async () => {
+    vi.setSystemTime(RESCHEDULE_NOW_MS);
+    const previousWake = wakeIn(60_000);
+    threadShell.snoozedUntil = previousWake;
+    const actions = useThreadActions();
+    await actions.snoozeThread(target, wakeIn(3_600_000));
+    const undo = currentUndo();
+    commands.snooze.mockClear();
+    vi.setSystemTime(RESCHEDULE_NOW_MS + 120_000);
+    await undo();
+    expect(commands.snooze).not.toHaveBeenCalled();
+    expect(commands.unsnooze).toHaveBeenCalledExactlyOnceWith({
+      environmentId: target.environmentId,
+      input: { threadId: target.threadId, reason: "user" },
+    });
+  });
+
   it("ignores an older reschedule Undo once a newer wake time was chosen", async () => {
     vi.setSystemTime(RESCHEDULE_NOW_MS);
     const firstWake = wakeIn(60_000);
