@@ -8,6 +8,7 @@ import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { AttachmentFilePreview } from "../files/AttachmentFilePreview";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
+import { isSvgAttachment } from "@t3tools/shared/image";
 import {
   composerPullRequestsFromLinks,
   filterComposerPullRequestMatches,
@@ -5449,8 +5450,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       const attachmentKind = classifyComposerAttachmentFile(file);
       const fileMimeType =
         attachmentKind === "file"
-          ? (videoMimeType({ name: file.name, mimeType: file.type }) ??
-            (file.type || "application/octet-stream"))
+          ? isSvgAttachment({ name: file.name, mimeType: file.type })
+            ? "image/svg+xml"
+            : (videoMimeType({ name: file.name, mimeType: file.type }) ??
+              (file.type || "application/octet-stream"))
           : file.type;
       const matchingReattachMarker =
         attachmentKind === "file"

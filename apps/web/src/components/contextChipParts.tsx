@@ -1,12 +1,14 @@
 import type { EnvironmentId, PullRequestContextMetadata } from "@t3tools/contracts";
 import { CircleDashedIcon, FilmIcon, ImageIcon } from "lucide-react";
 import {
+  useEffect,
   useState,
   type ComponentProps,
   type CSSProperties,
   type MouseEvent,
   type ReactNode,
 } from "react";
+import { useAssetUrlState } from "~/assets/assetUrls";
 
 import { PULL_REQUEST_STATE_PRESENTATION } from "~/components/pullRequest/pullRequestIcons";
 import type { PullRequestContextDisplayState } from "~/lib/composerContextRecords";
@@ -167,13 +169,17 @@ export function ImageChipButton({
   previewUrl,
   size,
   suffix,
+  disabled,
+  onPreviewError,
   style,
   ...props
 }: Omit<ComponentProps<typeof ContextChip>, "kind" | "render"> & {
   name: string;
   previewUrl: string | undefined;
   size: string;
-  suffix?: string | null;
+  suffix?: string | null | undefined;
+  disabled?: boolean | undefined;
+  onPreviewError?: (() => void) | undefined;
 }) {
   const [sample, setSample] = useState<{ url: string; color: string | undefined }>();
   const [corsFailedUrl, setCorsFailedUrl] = useState<string>();
@@ -181,7 +187,7 @@ export function ImageChipButton({
   return (
     <ContextChip
       kind="image"
-      render={<button type="button" />}
+      render={<button type="button" disabled={disabled} />}
       aria-label={`Image attachment, ${name}, ${size}`}
       style={{ ...style, ...(accent ? { "--context-chip-accent": accent } : {}) } as CSSProperties}
       {...props}
@@ -193,7 +199,10 @@ export function ImageChipButton({
           src={previewUrl}
           alt=""
           className="size-[1.17em] shrink-0 rounded-sm object-cover"
-          onError={() => setCorsFailedUrl(previewUrl)}
+          onError={() => {
+            if (corsFailedUrl === previewUrl) onPreviewError?.();
+            else setCorsFailedUrl(previewUrl);
+          }}
           onLoad={(event) =>
             setSample({ url: previewUrl, color: averageImageColor(event.currentTarget) })
           }
@@ -223,7 +232,15 @@ export function FileChip(props: {
   error?: boolean;
   unresolved?: boolean;
   onOpen?: (() => void) | undefined;
+  svgPreview?:
+    | {
+        file?: Blob | null | undefined;
+        environmentId?: EnvironmentId | undefined;
+        attachmentId?: string | undefined;
+      }
+    | undefined;
 }) {
+  if (props.svgPreview && !props.unresolved) return <SvgFileChip {...props} />;
   const content = <FileChipContent {...props} />;
   const state = props.unresolved
     ? ("unresolved" as const)
@@ -254,6 +271,65 @@ export function FileChip(props: {
               {content}
             </ContextChip>
           )
+        }
+      />
+      <TooltipPopup side="top" className="whitespace-pre-wrap">
+        {props.tooltip}
+      </TooltipPopup>
+    </Tooltip>
+  );
+}
+
+function SvgFileChip(props: ComponentProps<typeof FileChip>) {
+  const preview = props.svgPreview;
+  const [local, setLocal] = useState<{ file: Blob; url: string }>();
+  const [failedPreviewUrl, setFailedPreviewUrl] = useState<string>();
+  const asset = useAssetUrlState(
+    preview?.file ? null : (preview?.environmentId ?? null),
+    preview?.attachmentId
+      ? {
+          _tag: "attachment",
+          attachmentId: preview.attachmentId,
+          fileName: props.name,
+          mimeType: "image/svg+xml",
+          disposition: "inline",
+        }
+      : null,
+  );
+  useEffect(() => {
+    const file = preview?.file;
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    // oxlint-disable-next-line react/set-state-in-effect -- Publish a Blob URL with its cleanup registered.
+    setLocal({ file, url });
+    return () => URL.revokeObjectURL(url);
+  }, [preview?.file]);
+  const url = preview?.file
+    ? local?.file === preview.file
+      ? local.url
+      : undefined
+    : asset._tag === "Success"
+      ? asset.url
+      : undefined;
+  if (url !== undefined && failedPreviewUrl === url) {
+    return <FileChip {...props} svgPreview={undefined} />;
+  }
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <ImageChipButton
+            name={props.name}
+            size={props.size}
+            previewUrl={url}
+            suffix={props.suffix}
+            disabled={props.disabled}
+            onClick={props.onOpen}
+            onPreviewError={() => setFailedPreviewUrl(url)}
+            data-markdown-copy={props.copyMarkdown}
+            aria-label={props.accessibleLabel}
+            {...(props.error ? { state: "invalid" as const } : {})}
+          />
         }
       />
       <TooltipPopup side="top" className="whitespace-pre-wrap">

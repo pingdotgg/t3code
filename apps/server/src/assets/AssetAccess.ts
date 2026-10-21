@@ -78,6 +78,7 @@ const INLINE_VIDEO_MIME_TYPE_PATTERN = /^video\/[\w!#$&^.+-]+$/i;
 // The extension comes from the attachment id the server assigned, never from
 // the client's mime type.
 const INLINE_PREVIEW_MIME_TYPES: Record<string, string> = {
+  svg: "image/svg+xml",
   pdf: "application/pdf",
   html: "text/html",
   htm: "text/html",

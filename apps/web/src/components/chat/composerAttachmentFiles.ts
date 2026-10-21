@@ -11,6 +11,7 @@ import {
 import type { ComposerFileAttachment, ComposerImageAttachment } from "../../composerDraftStore";
 import { isHeicImageFile } from "../../lib/imageCompression";
 import { isVideoAttachment } from "../../types";
+import { isSvgAttachment } from "@t3tools/shared/image";
 
 type ComposerAttachmentFileKind = "image" | "file" | "unsupported-image";
 
@@ -62,6 +63,7 @@ export function normalizeComposerImageFileMimeType(file: File): File {
 export function classifyComposerAttachmentFile(
   file: Pick<File, "name" | "type">,
 ): ComposerAttachmentFileKind {
+  if (isSvgAttachment({ name: file.name, mimeType: file.type })) return "file";
   if (isHeicImageFile(file)) {
     return "image";
   }
@@ -148,7 +150,11 @@ export function shouldHandleComposerAttachmentPaste(input: {
   if (
     input.files.some((file) => {
       const classification = classifyComposerAttachmentFile(file);
-      return classification === "image" || classification === "unsupported-image";
+      return (
+        classification === "image" ||
+        classification === "unsupported-image" ||
+        isSvgAttachment({ name: file.name, mimeType: file.type })
+      );
     })
   ) {
     return true;
