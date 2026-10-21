@@ -1,4 +1,4 @@
-import { EnvironmentId, MessageId } from "@t3tools/contracts";
+import { EnvironmentId, MessageId, RunId, ScheduledTaskId } from "@t3tools/contracts";
 import type { LegendListRef } from "@legendapp/list/react";
 import { createRef, type ComponentProps, type ReactElement } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -9,14 +9,18 @@ import { act, render } from "../../../test/render";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { remarkThoughtPreview } from "./TimelineWorkEntryRow.logic";
 import { parseMarkdownWithMath } from "@t3tools/shared/markdownMath";
+import { collectThreadFindRanges } from "./threadFindHighlights";
 
-const pullRequestQuery = vi.hoisted(() => ({ error: "Pull request not found" }));
+const environmentQuery = vi.hoisted(() => ({
+  error: "Pull request not found",
+  data: null as unknown,
+}));
 vi.mock(import("~/state/query"), async (original) => ({
   ...(await original()),
   useEnvironmentQuery: (() => ({
-    data: null,
+    data: environmentQuery.data,
     dataUpdatedAt: 0,
-    error: pullRequestQuery.error,
+    error: environmentQuery.error,
     failure: null,
     isPending: false,
     isSuccess: false,
@@ -117,6 +121,13 @@ async function click(element: HTMLElement) {
   await act(async () => element.click());
 }
 
+function setup({ scheduledTasks = [] as ReadonlyArray<{ id: string; title: string }> } = {}) {
+  environmentQuery.data = { tasks: scheduledTasks };
+}
+
+const TASK_ID = ScheduledTaskId.make("task-1");
+const AUTOMATION_PROMPT = "Triage the inbox\n\nLabel every new issue and close duplicates.";
+
 describe("MessagesTimeline messages", () => {
   it("preserves XML-like tags and comparisons in user messages as text", async () => {
     const source = [
@@ -161,6 +172,96 @@ describe("MessagesTimeline messages", () => {
     expect(screen.container.innerHTML).not.toContain("javascript:");
     await click(screen.button("Safe details"));
     expect((globalThis as { __t3Xss?: number }).__t3Xss).toBeUndefined();
+  });
+});
+
+describe("MessagesTimeline automation prompts", () => {
+  it("folds an automation prompt into a bubble titled by its task", async () => {
+    setup({ scheduledTasks: [{ id: TASK_ID, title: "Nightly triage" }] });
+    await using screen = await renderTimeline([
+      message(AUTOMATION_PROMPT, { scheduledTaskId: TASK_ID }),
+    ]);
+    const row = screen.button(/^Automation/);
+    expect(row.textContent).toContain("Nightly triage");
+    expect(row.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.text()).not.toContain("close duplicates");
+
+    await click(row);
+    expect(screen.text()).toContain("Label every new issue and close duplicates.");
+    const link = [...screen.container.querySelectorAll("a")].find(
+      (anchor) => anchor.textContent === "Open automation",
+    );
+    expect(link?.getAttribute("href")).toContain(`taskId=${TASK_ID}`);
+    expect(screen.buttons(/copy/i)).not.toHaveLength(0);
+  });
+
+  it("falls back to the prompt's first line without a task title", async () => {
+    setup();
+    await using screen = await renderTimeline([
+      message(AUTOMATION_PROMPT, { scheduledTaskId: TASK_ID }),
+    ]);
+    expect(screen.button(/^Automation/).textContent).toContain("Triage the inbox");
+  });
+
+  it("leaves ordinary user messages as full bubbles", async () => {
+    setup();
+    await using screen = await renderTimeline([message(AUTOMATION_PROMPT)]);
+    expect(screen.buttons(/^Automation/)).toHaveLength(0);
+    expect(screen.text()).toContain("Label every new issue and close duplicates.");
+  });
+
+  it("reveals a find match beyond the folded automation prompt's initial viewport", async () => {
+    setup();
+    const prompt = `${"Inspect the next item.\n\n".repeat(16)}Close duplicates.`;
+    await using screen = await renderTimeline([message(prompt, { scheduledTaskId: TASK_ID })], {
+      findExpanded: true,
+      findQuery: "duplicates",
+      activeFindMatch: { entryId: "entry-message-1", runId: null, occurrence: 0 },
+    });
+    await vi.waitFor(() =>
+      expect(screen.button(/^Automation/).getAttribute("aria-expanded")).toBe("true"),
+    );
+    const { range } = collectThreadFindRanges(screen.container, "duplicates")[0]!;
+    const details = screen.container.querySelector("[data-thread-find-text]")!;
+    expect(range.getBoundingClientRect().top - details.getBoundingClientRect().top).toBeGreaterThan(
+      384,
+    );
+    expect(range.getBoundingClientRect().bottom).toBeLessThanOrEqual(
+      details.getBoundingClientRect().bottom,
+    );
+  });
+
+  it("shows edit-from-here once an automation prompt is expanded", async () => {
+    setup();
+    const runId = RunId.make("run-1");
+    await using screen = await renderTimeline(
+      [
+        message(
+          AUTOMATION_PROMPT,
+          { scheduledTaskId: TASK_ID, runId, inputIntent: "turn_start" },
+          "user-1",
+        ),
+        message("Done", { role: "assistant", runId }, "assistant-1"),
+      ],
+      {
+        supportsConversationRollback: true,
+        threadStartCheckpointReady: true,
+        turnDiffSummaries: [
+          {
+            runId,
+            checkpointTurnCount: 1,
+            checkpointRef: "checkpoint-1" as never,
+            status: "ready",
+            files: [],
+            assistantMessageId: MessageId.make("assistant-1"),
+            completedAt: CREATED_AT,
+          },
+        ],
+      },
+    );
+    expect(screen.buttons("Edit from here")).toHaveLength(0);
+    await click(screen.button(/^Automation/));
+    expect(screen.buttons("Edit from here")).toHaveLength(1);
   });
 });
 
