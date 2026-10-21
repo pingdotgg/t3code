@@ -260,7 +260,7 @@ export function pullRequestRepositoryKey(value: string): string | null {
   try {
     const url = new URL(value);
     const match =
-      /^(.*)(?:\/pull\/|\/-\/merge_requests\/|\/pull-requests\/|\/pullrequest\/)\d+(?:\/.*)?$/iu.exec(
+      /^(.*)(?:\/pulls?\/|\/-\/merge_requests\/|\/pull-requests\/|\/pullrequest\/)\d+(?:\/.*)?$/iu.exec(
         url.pathname,
       );
     if (match?.[1] === undefined) return null;

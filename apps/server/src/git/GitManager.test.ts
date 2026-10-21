@@ -1785,6 +1785,11 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       "gitlab.example.com/group/subgroup/repository",
     ],
     ["https://bitbucket.org/team/repository/pull-requests/42", "bitbucket.org/team/repository"],
+    ["https://codeberg.org/team/repository/pulls/42", "codeberg.org/team/repository"],
+    [
+      "http://code.example:3000/forgejo/team/repository/pulls/42/files",
+      "code.example/forgejo/team/repository",
+    ],
     [
       "https://dev.azure.com/org/project/_git/repository/pullrequest/42",
       "dev.azure.com/org/project/_git/repository",
