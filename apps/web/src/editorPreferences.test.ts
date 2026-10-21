@@ -2,6 +2,7 @@ import {
   AuthOrchestrationOperateScope,
   EnvironmentAuthorizationError,
   EnvironmentId,
+  EditorId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
@@ -108,5 +109,35 @@ it.each([
       environmentId: secondary,
       input: { cwd, position, editor: "vscode" },
     });
+  },
+);
+
+it.each([
+  { stored: null, available: ["file-manager", "qtcreator"], expected: "qtcreator" },
+  { stored: "cursor", available: ["file-manager", "qtcreator"], expected: "qtcreator" },
+  { stored: "file-manager", available: ["file-manager", "qtcreator"], expected: "file-manager" },
+  { stored: "qtcreator", available: ["vscode", "qtcreator"], expected: "qtcreator" },
+  { stored: null, available: ["qtcreator", "vscode", "file-manager"], expected: "vscode" },
+] as const)(
+  "opens $expected with saved preference $stored and available editors $available",
+  async ({ stored, available, expected }) => {
+    state.allowed.add(primary);
+    state.getPreference.mockReturnValue(stored);
+    const open = useOpenInPreferredEditor(primary, available);
+
+    expect(await open("/work/file.cpp:12:4")).toMatchObject({ _tag: "Success", value: expected });
+    expect(state.run).toHaveBeenCalledExactlyOnceWith({
+      environmentId: primary,
+      input: { cwd: "/work/file.cpp:12:4", editor: expected },
+    });
+    if (stored === expected) {
+      expect(state.setPreference).not.toHaveBeenCalled();
+    } else {
+      expect(state.setPreference).toHaveBeenCalledExactlyOnceWith(
+        "t3code:last-editor",
+        expected,
+        EditorId,
+      );
+    }
   },
 );
