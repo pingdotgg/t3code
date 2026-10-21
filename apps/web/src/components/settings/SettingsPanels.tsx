@@ -6,6 +6,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import {
   type DesktopUpdateChannel,
+  IDLE_COMPACTION_MODES,
   ProviderDriverKind,
   type ProviderInstanceId,
   type SidebarProjectGroupingMode,
@@ -997,11 +998,11 @@ export function GeneralSettingsPanel() {
           serverScoped
           settingKeys={["compactIdleThreads"]}
           {...searchableSetting("compact-idle-threads")}
-          description="Compact long idle Claude threads just before their prompt cache expires, so coming back costs less."
+          description="When to compact an idle Claude thread over 200,000 tokens: after you return, just before its prompt cache expires, or never. Each Claude provider can override this."
           resetAction={
             settings.compactIdleThreads !== DEFAULT_UNIFIED_SETTINGS.compactIdleThreads ? (
               <SettingResetButton
-                label="compact idle Claude threads"
+                label="compact idle threads"
                 onClick={() =>
                   updateSettings({
                     compactIdleThreads: DEFAULT_UNIFIED_SETTINGS.compactIdleThreads,
@@ -1011,14 +1012,29 @@ export function GeneralSettingsPanel() {
             ) : null
           }
           control={
-            <ScopedSwitch
-              settingKeys={["compactIdleThreads"]}
-              checked={settings.compactIdleThreads}
-              onCheckedChange={(checked) =>
-                updateSettings({ compactIdleThreads: Boolean(checked) })
-              }
-              aria-label="Compact idle Claude threads (beta)"
-            />
+            <Select
+              value={settings.compactIdleThreads}
+              onValueChange={(value) => {
+                const mode = IDLE_COMPACTION_MODES.find((candidate) => candidate.value === value);
+                if (mode) updateSettings({ compactIdleThreads: mode.value });
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full sm:w-56" aria-label="Compact idle threads">
+                <SelectValue>
+                  {
+                    IDLE_COMPACTION_MODES.find((mode) => mode.value === settings.compactIdleThreads)
+                      ?.label
+                  }
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {IDLE_COMPACTION_MODES.map((mode) => (
+                  <SelectItem hideIndicator key={mode.value} value={mode.value}>
+                    {mode.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
           }
         />
 

@@ -70,6 +70,7 @@ import {
   type RunId,
   type RunAttemptId,
   ProviderInteractionMode,
+  resolveIdleCompaction,
   RuntimeMode,
 } from "@t3tools/contracts";
 import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
@@ -4011,6 +4012,10 @@ export default function ChatView(props: ChatViewProps) {
     : null;
   const resumeCompactionTokens =
     activeContextWindow &&
+    resolveIdleCompaction(
+      settings,
+      activeProviderInstanceId ?? ProviderInstanceId.make("claudeAgent"),
+    ) !== "off" &&
     !resumeCompactionPermanentlyDismissed &&
     !nativeResumeCompactionDismissed &&
     !compactDisabled &&
