@@ -1058,6 +1058,42 @@ it.effect.each([
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect("discovers and launches Qt Creator from its macOS bundle", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editor-native-bundle-" });
+    const executable = path.join(home, "Applications/Qt Creator.app/Contents/MacOS/Qt Creator");
+    yield* fs.makeDirectory(path.dirname(executable), { recursive: true });
+    yield* fs.writeFileString(executable, "#!/bin/sh\n");
+    yield* fs.chmod(executable, 0o755);
+
+    let spawned: ChildProcess.StandardCommand | undefined;
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      assert.include(yield* launcher.resolveAvailableEditors(), "qtcreator");
+      yield* launcher.launchEditor({
+        editor: "qtcreator",
+        cwd: "/workspace with spaces/file.ts:12:4",
+      });
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "darwin",
+          env: { HOME: home, PATH: path.join(home, "empty") },
+          onSpawn: (command) => {
+            spawned = command;
+          },
+        }),
+      ),
+    );
+
+    assert.ok(spawned);
+    assert.equal(spawned.command, executable);
+    assert.deepEqual(spawned.args, ["-client", "/workspace with spaces/file.ts:12:4"]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("matches macOS bundles on the name boundary only", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
