@@ -1,6 +1,12 @@
-import type { ProviderInteractionMode, RuntimeMode } from "@t3tools/contracts";
+import type {
+  ModelSelection,
+  ProviderInstanceId,
+  ProviderInteractionMode,
+  RuntimeMode,
+} from "@t3tools/contracts";
+import { createModelSelection } from "@t3tools/shared/model";
 import { BotIcon, PencilRulerIcon } from "lucide-react";
-import { memo } from "react";
+import { type ComponentProps, memo } from "react";
 
 import type { ContextWindowSnapshot } from "../../lib/contextWindow";
 import { Select, SelectItem, SelectPopup, SelectValue } from "../ui/select";
@@ -14,6 +20,8 @@ import {
 import { useComposerMenuProps } from "./composerEventScope";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ContextWindowMeter, ContextWindowMeterPlaceholder } from "./ContextWindowMeter";
+import { resolveModelPickerSelectedModel } from "./ModelPickerContent";
+import { ProviderModelPicker } from "./ProviderModelPicker";
 import { runtimeModeConfig } from "./runtimeModeConfig";
 import { useComposerMenuState } from "./useComposerMenuState";
 
@@ -225,3 +233,77 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
     </>
   );
 });
+
+/**
+ * The composer's model picker. It owns the single- and multi-model selection
+ * handlers so they are cached against the selection state, not rebuilt on
+ * every ChatComposer render.
+ */
+export function ComposerModelPicker({
+  multipleModelsEnabled,
+  multipleModelSelections,
+  onMultipleModelSelectionsChange,
+  selectedModelSelection,
+  onProviderModelSelect,
+  ...pickerProps
+}: Omit<
+  ComponentProps<typeof ProviderModelPicker>,
+  "selectedModels" | "onToggleModel" | "onInstanceModelChange"
+> & {
+  readonly multipleModelsEnabled: boolean;
+  readonly multipleModelSelections: ReadonlyArray<ModelSelection> | null;
+  readonly onMultipleModelSelectionsChange: (
+    selections: ReadonlyArray<ModelSelection> | null,
+  ) => void;
+  readonly selectedModelSelection: ModelSelection;
+  readonly onProviderModelSelect: (
+    instanceId: ProviderInstanceId,
+    model: string,
+    options?: { focusComposer?: boolean },
+  ) => void;
+}) {
+  const { instanceEntries, modelOptionsByInstance } = pickerProps;
+  const toggleModel = (instanceId: ProviderInstanceId, model: string) => {
+    const current = multipleModelSelections ?? [selectedModelSelection];
+    const matchesModel = (selection: ModelSelection) => {
+      if (selection.instanceId !== instanceId) return false;
+      const entry = instanceEntries.find((entry) => entry.instanceId === selection.instanceId);
+      const resolvedModel = resolveModelPickerSelectedModel({
+        driverKind: entry?.driverKind,
+        model: selection.model,
+        options: modelOptionsByInstance?.get(selection.instanceId) ?? [],
+      });
+      return (resolvedModel?.slug ?? selection.model) === model;
+    };
+    const exists = current.some(matchesModel);
+    const next = exists
+      ? current.filter((selection) => !matchesModel(selection))
+      : [...current, createModelSelection(instanceId, model)];
+    if (next.length > 1) {
+      onMultipleModelSelectionsChange(next);
+    } else {
+      onMultipleModelSelectionsChange(null);
+      const remaining = next[0] ?? selectedModelSelection;
+      onProviderModelSelect(remaining.instanceId, remaining.model, {
+        focusComposer: false,
+      });
+    }
+  };
+  return (
+    <ProviderModelPicker
+      {...pickerProps}
+      {...(multipleModelsEnabled
+        ? {
+            ...(multipleModelSelections !== null
+              ? { selectedModels: multipleModelSelections }
+              : {}),
+            onToggleModel: toggleModel,
+          }
+        : {})}
+      onInstanceModelChange={(instanceId, model) => {
+        onMultipleModelSelectionsChange(null);
+        onProviderModelSelect(instanceId, model);
+      }}
+    />
+  );
+}
