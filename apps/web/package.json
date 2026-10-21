@@ -6,6 +6,7 @@
   "scripts": {
     "build:ghostty-wasm": "bash scripts/build-libghostty-wasm.sh",
     "dev": "vp dev",
+    "dev:built": "vp build --watch",
     "build": "vp build",
     "preview": "vp preview",
     "test": "vp test run --passWithNoTests --project unit --project browser"

@@ -60,6 +60,14 @@ The workarounds live in the [web entry](../../apps/web/src/bootstrap.ts),
 [Tailwind plugin](../../apps/web/vite/tailwind.ts), and
 [startup warmup](../../apps/web/vite/warmBundledDev.ts).
 
+`vp run dev --share --built` skips the Vite dev server. It runs `vp build --watch` for the web
+app, and the backend serves `apps/web/dist` on the same tailnet URL and pairing flow. Use it when
+someone tests over a slow link or only needs to use the app: loads are production size, and the
+first load does not wait for dev bundling. There is no HMR. After an edit, wait for the
+`built in` line (about 6 s), then reload. Until the first build exists, the URL shows a page that
+reloads by itself. The license manifest is not generated in this mode. `--built` requires
+`--share` and the `dev` mode.
+
 #### Reusable dev credential
 
 Use this only on a hostname where you trust every service. Browsers send cookies to all ports
