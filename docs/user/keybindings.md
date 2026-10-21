@@ -150,8 +150,9 @@ shortcut; assign one in **Settings → Keybindings**.
 bottom of the sidebar, such as unpin, settle, snooze, archive, or discarding a
 draft. Consecutive
 actions of the same kind undo together. The notice remains available for five
-seconds after the latest action. The default shortcut skips text fields and
-terminals so native undo keeps working there.
+seconds after the latest action. Right after an action, the shortcut works even
+in a text field such as the composer. Once you type or press another key, the
+field gets its own undo back. Terminals always keep their native shortcut.
 
 `navigation.back` (`mod+[` by default) and `navigation.forward` (`mod+]`) move
 through the pages you have visited, like a browser's back and forward buttons.
