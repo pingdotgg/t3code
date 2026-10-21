@@ -3,7 +3,6 @@ import { EyeIcon, LayersIcon, PenLineIcon, UsersIcon, type LucideIcon } from "lu
 import type { RefCallback } from "react";
 
 import { cn } from "~/lib/utils";
-import { useShortcutModifierState } from "~/shortcutModifierState";
 import { Separator } from "../ui/separator";
 import {
   pullRequestEntryKey,
@@ -12,7 +11,10 @@ import {
   type PullRequestGroup,
 } from "./pullRequestList.logic";
 import { PullRequestRow, type PullRequestRowTarget } from "./PullRequestRow";
-import type { PullRequestSpeedActionResult } from "./PullRequestSpeedActions";
+import {
+  PullRequestSpeedModeProvider,
+  type PullRequestSpeedActionResult,
+} from "./PullRequestSpeedActions";
 
 const GROUP_ICONS: Record<string, LucideIcon> = {
   authored: PenLineIcon,
@@ -38,10 +40,6 @@ function PullRequestGroupHeader({
   );
 }
 
-/**
- * The grouped rows. Holding Shift turns rows into speed actions, so the modifier subscription lives
- * here: a key press re-renders the rows, not the page and its open pull request.
- */
 export function PullRequestListGroups({
   groups,
   environmentLabels,
@@ -75,47 +73,46 @@ export function PullRequestListGroups({
   sweepingKeys: ReadonlySet<string>;
   onCloseSweepStart: (entry: EnvironmentPullRequestEntry, event: PointerEvent) => void;
 }) {
-  const modifiers = useShortcutModifierState(true);
-  const speedMode =
-    modifiers.shiftKey && !modifiers.metaKey && !modifiers.ctrlKey && !modifiers.altKey;
   return (
-    <div className={cn("space-y-3", sweepingKeys.size > 0 && "**:pointer-events-none")}>
-      {groups.map((group) => (
-        <div key={group.key} className="space-y-0.5">
-          {group.label ? <PullRequestGroupHeader group={group} /> : null}
-          {group.entries.map((entry) => {
-            const entryKey = pullRequestEntryKey(entry);
-            const environmentLabel = environmentLabels?.get(entry.environmentId);
-            return (
-              <PullRequestRow
-                key={entryKey}
-                statsKey={entryKey}
-                statsRef={statsRef}
-                entry={entry}
-                showProjectTitle
-                showProvider={showProvider}
-                {...(environmentLabel !== undefined ? { environmentLabel } : {})}
-                matchedElsewhere={
-                  query.length > 0 && scorePullRequestMatch(entry, query) <= MATCHED_ELSEWHERE_SCORE
-                }
-                selected={
-                  selected?.environmentId === entry.environmentId &&
-                  selected.repository === entry.repository &&
-                  selected.host?.toLowerCase() === entry.host.toLowerCase() &&
-                  selected.number === entry.number
-                }
-                onSelect={onSelect}
-                speedMode={speedMode}
-                hostActions={hostActionsOf(entry)}
-                onActed={onActed}
-                closing={closingKeys.has(entryKey)}
-                sweeping={sweepingKeys.has(entryKey)}
-                onCloseSweepStart={onCloseSweepStart}
-              />
-            );
-          })}
-        </div>
-      ))}
-    </div>
+    <PullRequestSpeedModeProvider>
+      <div className={cn("space-y-3", sweepingKeys.size > 0 && "**:pointer-events-none")}>
+        {groups.map((group) => (
+          <div key={group.key} className="space-y-0.5">
+            {group.label ? <PullRequestGroupHeader group={group} /> : null}
+            {group.entries.map((entry) => {
+              const entryKey = pullRequestEntryKey(entry);
+              const environmentLabel = environmentLabels?.get(entry.environmentId);
+              return (
+                <PullRequestRow
+                  key={entryKey}
+                  statsKey={entryKey}
+                  statsRef={statsRef}
+                  entry={entry}
+                  showProjectTitle
+                  showProvider={showProvider}
+                  {...(environmentLabel !== undefined ? { environmentLabel } : {})}
+                  matchedElsewhere={
+                    query.length > 0 &&
+                    scorePullRequestMatch(entry, query) <= MATCHED_ELSEWHERE_SCORE
+                  }
+                  selected={
+                    selected?.environmentId === entry.environmentId &&
+                    selected.repository === entry.repository &&
+                    selected.host?.toLowerCase() === entry.host.toLowerCase() &&
+                    selected.number === entry.number
+                  }
+                  onSelect={onSelect}
+                  hostActions={hostActionsOf(entry)}
+                  onActed={onActed}
+                  closing={closingKeys.has(entryKey)}
+                  sweeping={sweepingKeys.has(entryKey)}
+                  onCloseSweepStart={onCloseSweepStart}
+                />
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    </PullRequestSpeedModeProvider>
   );
 }
