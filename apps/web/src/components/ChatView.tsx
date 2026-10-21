@@ -1,3 +1,5 @@
+import { ScrollToEndButton, WorkspaceFileDropOverlay } from "./chat/TimelineOverlays";
+import { usePasteToFocusComposer } from "./chat/usePasteToFocusComposer";
 import {
   deriveAvailableRevertTurnCounts,
   deriveThreadPendingBackgroundTasks,
@@ -44,10 +46,6 @@ import { feedbackBannerItem } from "./chat/ComposerFeedback";
 import { useUsageLimitsPanel } from "./chat/useUsageLimitsPanel";
 import { useWorktreeSetup } from "./chat/useWorktreeSetup";
 import { useChatShortcuts, type ChatShortcutHandler } from "./chat/useChatShortcuts";
-import {
-  pasteTextToFocusComposer,
-  shouldRedirectInputToComposer,
-} from "./chat/composerFocusRedirect";
 import * as Schema from "effect/Schema";
 import {
   AuthOrchestrationOperateScope,
@@ -71,8 +69,6 @@ import {
   resolveIdleCompaction,
   RuntimeMode,
 } from "@t3tools/contracts";
-import { readPastedComposerContext } from "./composerInlineTokenPaste";
-import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { useThreadActions } from "../hooks/useThreadActions";
 import {
   deriveProviderSubagentStatus,
@@ -111,7 +107,6 @@ import { useAtomValue } from "@effect/atom-react";
 import { type SetStateAction, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { assistantCitationFromLocation } from "../lib/assistantCitationNavigation";
-import { isMacPlatform } from "../lib/utils";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { useShallow } from "zustand/react/shallow";
 import {
@@ -141,7 +136,6 @@ import { useWorkspaceMutationRefresh } from "../hooks/useWorkspaceMutationRefres
 import { DEFAULT_INTERACTION_MODE, type ChatMessage } from "../types";
 import { useTheme } from "../hooks/useTheme";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
-import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { settleAndAdvance } from "../settleAndAdvance";
 import { subscribeSnapShotComposerFocus } from "../lib/desktopSnapShot";
 import { useMediaQuery } from "../hooks/useMediaQuery";
@@ -177,7 +171,6 @@ import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
 import { isEditableFocused } from "../lib/editableFocus";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { shortcutLabelForCommand } from "../keybindings";
-import { PaperclipIcon, ChevronDownIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { stackedThreadToast, toastManager } from "./ui/toast";
@@ -276,7 +269,8 @@ import { useOpenFavoriteEditorShortcut } from "./chat/OpenInPickerShortcut";
 import {
   PanelLayoutControls,
   type PanelLayoutControlsProps,
-  RightPanelMaximizeControl,
+  ThreadPanelHeaderControl,
+  WorkspaceTitlebarControls,
 } from "./chat/PanelLayoutControls";
 import type { ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { ThreadDetailsPanel } from "./chat/ThreadDetailsPanel";
@@ -348,7 +342,6 @@ import { readEnvironmentScope, readPreparedConnection } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
-import { Button } from "./ui/button";
 import { observeResize } from "~/lib/observeResize";
 import { ThreadVisitWatermark } from "./chat/ThreadVisitWatermark";
 import { ChatTerminalDrawers } from "./chat/ChatTerminalDrawers";
@@ -598,7 +591,6 @@ export default function ChatView(props: ChatViewProps) {
   const composerFilesRef = useRef<ComposerFileAttachment[]>([]);
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
   const branchToolbarRef = useRef<BranchToolbarHandle>(null);
-  const pasteAsTextShortcutUntilRef = useRef(0);
   const [restingComposerControlsHost, setRestingComposerControlsHost] =
     useState<HTMLDivElement | null>(null);
   const [restingComposerControlsVisible, setRestingComposerControlsVisible] = useState(false);
@@ -2868,42 +2860,7 @@ export default function ChatView(props: ChatViewProps) {
     });
   }, [toggleRightPanelStable, toggleRightPanelMaximizedStable]);
 
-  // Paste-to-focus: the resting composer blurs on a click into the timeline,
-  // so a paste that follows has no editable target and would be dropped.
-  useEffect(() => {
-    const keyHandler = (event: KeyboardEvent) => {
-      if (
-        shouldRedirectInputToComposer(event) &&
-        isPasteAsTextShortcut(event, isMacPlatform(navigator.platform))
-      ) {
-        pasteAsTextShortcutUntilRef.current = Date.now() + 1_000;
-      }
-    };
-    const handler = (event: ClipboardEvent) => {
-      if (!activeThreadId || isCommandPaletteOpen()) return;
-      if (getTerminalFocusOwner() !== null) return;
-      if (composerRef.current?.isModelPickerOpen()) return;
-      const text = pasteTextToFocusComposer(event);
-      const clipboardData = event.clipboardData;
-      if (text === null || clipboardData === null) return;
-      const bypassAutoAttachment = Date.now() <= pasteAsTextShortcutUntilRef.current;
-      pasteAsTextShortcutUntilRef.current = 0;
-      if (
-        ((readPastedComposerContext(clipboardData)?.records.length ?? 0) === 0 &&
-          composerRef.current?.pasteTextAtEnd(text, { bypassAutoAttachment })) ||
-        composerRef.current?.insertTextAtEnd(text, { clipboardData })
-      ) {
-        event.preventDefault();
-        event.stopPropagation();
-      }
-    };
-    window.addEventListener("keydown", keyHandler, true);
-    window.addEventListener("paste", handler, true);
-    return () => {
-      window.removeEventListener("keydown", keyHandler, true);
-      window.removeEventListener("paste", handler, true);
-    };
-  }, [activeThreadId, composerRef]);
+  usePasteToFocusComposer(activeThreadId, composerRef);
   const {
     onConfirmRevertStable,
     onForkFromRunStable,
@@ -3255,46 +3212,17 @@ export default function ChatView(props: ChatViewProps) {
       showThreadPanelControl={!inlineRightPanelOwnsTitleBar}
     />
   );
-  const threadPanelHeaderControl = (
-    <div
-      className="absolute top-[var(--workspace-controls-top)] right-[calc(env(safe-area-inset-right)+0.75rem)] z-50 flex h-[var(--workspace-topbar-height)] items-center [-webkit-app-region:no-drag]"
-      data-workspace-titlebar-controls
-    >
-      <PanelLayoutControls
-        {...panelToggleControlProps}
-        showTerminalControl={false}
-        showRightPanelControl={false}
-      />
-    </div>
-  );
+  const threadPanelHeaderControl = <ThreadPanelHeaderControl {...panelToggleControlProps} />;
   const panelLayoutControls = (
-    <div
-      className={cn(
-        "pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]",
-      )}
-      data-workspace-titlebar-controls
+    <WorkspaceTitlebarControls
+      showMaximizeControl={!shouldUsePlanSidebarSheet}
+      rightPanelOpen={rightPanelOpen}
+      animationsActive={panelAnimationsActive}
+      maximized={rightPanelMaximized}
+      onToggleMaximized={toggleRightPanelMaximizedStable}
     >
-      {!shouldUsePlanSidebarSheet ? (
-        <span
-          aria-hidden={!rightPanelOpen}
-          className={cn(
-            "flex shrink-0",
-            panelAnimationsActive &&
-              "motion-safe:transition-opacity motion-safe:duration-(--panel-animation-duration) motion-safe:ease-out",
-            rightPanelOpen
-              ? "pointer-events-auto opacity-100"
-              : "pointer-events-none absolute right-full mr-1 opacity-0",
-          )}
-          inert={!rightPanelOpen}
-        >
-          <RightPanelMaximizeControl
-            maximized={rightPanelMaximized}
-            onToggle={toggleRightPanelMaximizedStable}
-          />
-        </span>
-      ) : null}
-      <div className="pointer-events-auto flex h-full items-center">{panelToggleControls}</div>
-    </div>
+      {panelToggleControls}
+    </WorkspaceTitlebarControls>
   );
   const workspaceFileDropHandlers = makeWorkspaceFileDropHandlers({
     setDragActive: setIsWorkspaceFileDragActive,
@@ -3382,20 +3310,7 @@ export default function ChatView(props: ChatViewProps) {
             onDrop={workspaceFileDropHandlers.onDrop}
           >
             <ThreadFind onClose={focusComposerStable} />
-            {isWorkspaceFileDragActive ? (
-              <div
-                className="pointer-events-none absolute inset-2 z-40 flex items-center justify-center rounded-2xl border-2 border-dashed border-primary/60 bg-primary/[0.035]"
-                data-chat-workspace-drop-overlay="true"
-              >
-                <div
-                  role="status"
-                  className="flex items-center gap-2 rounded-full border border-primary/25 bg-background/95 px-4 py-2.5 text-sm font-medium text-foreground shadow-lg"
-                >
-                  <PaperclipIcon className="size-4 text-primary" aria-hidden="true" />
-                  Drop files to attach
-                </div>
-              </div>
-            ) : null}
+            {isWorkspaceFileDragActive ? <WorkspaceFileDropOverlay /> : null}
             <div className="chat-banner-lane pointer-events-none absolute top-0 z-30 flex flex-col">
               <ProviderStatusBanner
                 status={visibleProviderStatus}
@@ -3546,25 +3461,13 @@ export default function ChatView(props: ChatViewProps) {
               />
 
               {showScrollToBottom && !isThreadFindActive && (
-                <div
-                  className="chat-scroll-to-bottom pointer-events-none absolute z-30 flex justify-center py-1.5"
-                  style={{ bottom: scrollToEndClearance + 4 }}
-                >
-                  <Button
-                    aria-label="Scroll to end"
-                    onPointerDown={(event) => event.preventDefault()}
-                    onClick={() => {
-                      composerRef.current?.restoreAfterTimelineReachedEnd();
-                      scrollToEnd(true);
-                    }}
-                    className="pointer-events-auto"
-                    size="xs"
-                    variant="glass"
-                  >
-                    <ChevronDownIcon className="size-3.5" />
-                    Scroll to end
-                  </Button>
-                </div>
+                <ScrollToEndButton
+                  bottom={scrollToEndClearance + 4}
+                  onScrollToEnd={() => {
+                    composerRef.current?.restoreAfterTimelineReachedEnd();
+                    scrollToEnd(true);
+                  }}
+                />
               )}
             </div>
 
