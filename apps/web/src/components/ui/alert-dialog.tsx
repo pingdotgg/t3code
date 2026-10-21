@@ -8,8 +8,15 @@ import {
   DIALOG_MOBILE_SHEET_CLASS,
   DIALOG_POPUP_CLASS,
 } from "~/components/ui/dialog-styles";
+import { ControlledOpenContext, renderRetainedPopup } from "~/components/ui/dialog";
 
-const AlertDialog = AlertDialogPrimitive.Root;
+function AlertDialog<Payload>(props: AlertDialogPrimitive.Root.Props<Payload>) {
+  return (
+    <ControlledOpenContext value={props.open}>
+      <AlertDialogPrimitive.Root {...props} />
+    </ControlledOpenContext>
+  );
+}
 
 const AlertDialogPortal = AlertDialogPrimitive.Portal;
 
@@ -60,6 +67,7 @@ function AlertDialogPopup({
             className,
           )}
           data-slot="alert-dialog-popup"
+          render={renderRetainedPopup}
           {...props}
         />
       </AlertDialogViewport>
