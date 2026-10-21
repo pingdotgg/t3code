@@ -187,6 +187,8 @@ export default defineConfig({
       "t3code/no-low-value-comments": "error",
       "t3code/no-manual-effect-runtime-in-tests": "error",
       "t3code/no-native-title-tooltip": "error",
+      // Test files only (the rule checks the filename). Becomes an error once existing polls are converted.
+      "t3code/no-polling-loop-in-tests": "warn",
       "t3code/no-raw-mcp-registration": "error",
       "t3code/no-real-time-wait-in-tests": "error",
       "t3code/no-test-in-loop": "error",

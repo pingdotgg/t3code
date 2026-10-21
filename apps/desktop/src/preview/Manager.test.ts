@@ -376,6 +376,7 @@ const makeSourcePng = (width = 1, height = 1): Buffer => {
 };
 
 const makeFaviconWebContents = (options?: {
+  readonly changes?: ChangeSignal;
   readonly fetch?: (url: string, init?: RequestInit) => Promise<Response>;
   readonly id?: number;
   readonly rasterize?: (code: string) => Promise<unknown>;
@@ -386,16 +387,25 @@ const makeFaviconWebContents = (options?: {
   let currentUrl = options?.url ?? "http://localhost:3200/";
   let destroyed = false;
   let loading = false;
-  const fetch = vi.fn(
+  const fetchImpl =
     options?.fetch ??
-      (async () =>
-        new Response(new Uint8Array(sourcePng), {
-          headers: { "content-type": "image/png" },
-        })),
-  );
+    (async () =>
+      new Response(new Uint8Array(sourcePng), {
+        headers: { "content-type": "image/png" },
+      }));
+  const fetch = vi.fn((url: string, init?: RequestInit) => {
+    const response = fetchImpl(url, init);
+    options?.changes?.notify();
+    return response;
+  });
   const executeJavaScriptInIsolatedWorld = vi.fn(
-    async (_worldId: number, scripts: ReadonlyArray<{ readonly code: string }>) =>
-      options?.rasterize ? options.rasterize(scripts[0]?.code ?? "") : TEST_FAVICON,
+    (_worldId: number, scripts: ReadonlyArray<{ readonly code: string }>) => {
+      const result = options?.rasterize
+        ? options.rasterize(scripts[0]?.code ?? "")
+        : Promise.resolve(TEST_FAVICON);
+      options?.changes?.notify();
+      return result;
+    },
   );
   const reload = vi.fn();
   const loadURL = vi.fn(async (url: string) => {
@@ -460,10 +470,33 @@ const makeFaviconWebContents = (options?: {
   };
 };
 
-const settle = function* (until: () => boolean) {
-  for (let attempt = 0; attempt < 30 && !until(); attempt++) {
-    yield* Effect.promise(() => Promise.resolve());
-  }
+// Electron mocks and state subscribers call `notify`, so a wait re-checks its
+// predicate exactly when the state it reads changes.
+const makeChangeSignal = () => {
+  const waiters = new Set<() => void>();
+  return {
+    notify: () => {
+      for (const wake of waiters) wake();
+    },
+    until: (predicate: () => boolean) =>
+      Effect.callback<void>((resume) => {
+        if (predicate()) return resume(Effect.void);
+        const wake = () => {
+          if (!predicate()) return;
+          waiters.delete(wake);
+          resume(Effect.void);
+        };
+        waiters.add(wake);
+        return Effect.sync(() => void waiters.delete(wake));
+      }),
+  };
+};
+type ChangeSignal = ReturnType<typeof makeChangeSignal>;
+
+// Favicon captures run detached from the Electron listener, so asserting that
+// one published nothing can only give its promise chain a fixed number of turns.
+const flushMicrotasks = function* () {
+  for (let turn = 0; turn < 30; turn++) yield* Effect.promise(() => Promise.resolve());
 };
 
 const makeTestPictureInPictureWindow = (loadURL: () => Promise<void> = async () => undefined) => {
@@ -843,11 +876,13 @@ describe("PreviewManager", () => {
   effectIt.effect("shares an identical in-flight event and lets a changed event win", () =>
     withManager((manager) =>
       Effect.gen(function* () {
+        const changes = makeChangeSignal();
         let resolveFirst!: (response: Response) => void;
         const firstResponse = new Promise<Response>((resolve) => {
           resolveFirst = resolve;
         });
         const preview = makeFaviconWebContents({
+          changes,
           fetch: (url) =>
             url.endsWith("first.png")
               ? firstResponse
@@ -862,6 +897,7 @@ describe("PreviewManager", () => {
         yield* manager.subscribeStateChanges((_tabId, state) =>
           Effect.sync(() => {
             states.push(state);
+            changes.notify();
           }),
         );
         yield* manager.createTab("tab_favicon_latest");
@@ -870,15 +906,15 @@ describe("PreviewManager", () => {
         const faviconUpdated = preview.listeners.get("page-favicon-updated")!;
         faviconUpdated({} as never, ["http://localhost:3200/first.png"] as never);
         faviconUpdated({} as never, ["http://localhost:3200/first.png"] as never);
-        yield* settle(() => preview.fetch.mock.calls.length === 1);
+        yield* changes.until(() => preview.fetch.mock.calls.length === 1);
         faviconUpdated({} as never, ["http://localhost:3200/second.png"] as never);
-        yield* settle(() => states.at(-1)?.favicon !== undefined);
+        yield* changes.until(() => states.at(-1)?.favicon !== undefined);
         resolveFirst(
           new Response(new Uint8Array(makeSourcePng()), {
             headers: { "content-type": "image/png" },
           }),
         );
-        yield* settle(() => false);
+        yield* flushMicrotasks();
 
         expect(preview.fetch).toHaveBeenCalledTimes(2);
         expect(states.filter((state) => state.favicon !== undefined)).toHaveLength(1);
@@ -889,8 +925,10 @@ describe("PreviewManager", () => {
   effectIt.effect("allows an identical retry after an undecodable capture", () =>
     withManager((manager) =>
       Effect.gen(function* () {
+        const changes = makeChangeSignal();
         let rasterizations = 0;
         const preview = makeFaviconWebContents({
+          changes,
           rasterize: async () => (++rasterizations === 1 ? null : TEST_FAVICON),
         });
         fromId.mockReturnValue(preview.webContents);
@@ -898,6 +936,7 @@ describe("PreviewManager", () => {
         yield* manager.subscribeStateChanges((_tabId, state) =>
           Effect.sync(() => {
             states.push(state);
+            changes.notify();
           }),
         );
         yield* manager.createTab("tab_favicon_retry");
@@ -905,10 +944,10 @@ describe("PreviewManager", () => {
         const faviconUpdated = preview.listeners.get("page-favicon-updated")!;
 
         faviconUpdated({} as never, ["http://localhost:3200/favicon.png"] as never);
-        yield* settle(() => rasterizations === 1);
-        yield* settle(() => false);
+        yield* changes.until(() => rasterizations === 1);
+        yield* flushMicrotasks();
         faviconUpdated({} as never, ["http://localhost:3200/favicon.png"] as never);
-        yield* settle(() => states.at(-1)?.favicon !== undefined);
+        yield* changes.until(() => states.at(-1)?.favicon !== undefined);
 
         expect(rasterizations).toBe(2);
         expect(states.at(-1)?.favicon?.dataUrl).toBe(TEST_FAVICON);
@@ -919,8 +958,10 @@ describe("PreviewManager", () => {
   effectIt.effect("does not publish a capture invalidated by navigation", () =>
     withManager((manager) =>
       Effect.gen(function* () {
+        const changes = makeChangeSignal();
         let resolveFetch!: (response: Response) => void;
         const preview = makeFaviconWebContents({
+          changes,
           fetch: () =>
             new Promise<Response>((resolve) => {
               resolveFetch = resolve;
@@ -931,6 +972,7 @@ describe("PreviewManager", () => {
         yield* manager.subscribeStateChanges((_tabId, state) =>
           Effect.sync(() => {
             states.push(state);
+            changes.notify();
           }),
         );
         yield* manager.createTab("tab_favicon_navigation");
@@ -939,7 +981,7 @@ describe("PreviewManager", () => {
           {} as never,
           ["http://localhost:3200/favicon.png"] as never,
         );
-        yield* settle(() => preview.fetch.mock.calls.length === 1);
+        yield* changes.until(() => preview.fetch.mock.calls.length === 1);
         preview.listeners.get("did-start-navigation")?.({
           isMainFrame: true,
           isSameDocument: false,
@@ -950,7 +992,7 @@ describe("PreviewManager", () => {
             headers: { "content-type": "image/png" },
           }),
         );
-        yield* settle(() => false);
+        yield* flushMicrotasks();
 
         expect(states.some((state) => state.favicon !== undefined)).toBe(false);
       }),
@@ -960,15 +1002,17 @@ describe("PreviewManager", () => {
   effectIt.effect("ignores an old capture that completes after webview replacement", () =>
     withManager((manager) =>
       Effect.gen(function* () {
+        const changes = makeChangeSignal();
         let resolveFetch!: (response: Response) => void;
         const initial = makeFaviconWebContents({
+          changes,
           id: 42,
           fetch: () =>
             new Promise<Response>((resolve) => {
               resolveFetch = resolve;
             }),
         });
-        const replacement = makeFaviconWebContents({ id: 43 });
+        const replacement = makeFaviconWebContents({ changes, id: 43 });
         fromId.mockImplementation((id?: number) =>
           id === 42 ? initial.webContents : id === 43 ? replacement.webContents : null,
         );
@@ -976,6 +1020,7 @@ describe("PreviewManager", () => {
         yield* manager.subscribeStateChanges((_tabId, state) =>
           Effect.sync(() => {
             states.push(state);
+            changes.notify();
           }),
         );
         yield* manager.createTab("tab_favicon_late_replace");
@@ -984,7 +1029,7 @@ describe("PreviewManager", () => {
           {} as never,
           ["http://localhost:3200/favicon.png"] as never,
         );
-        yield* settle(() => initial.fetch.mock.calls.length === 1);
+        yield* changes.until(() => initial.fetch.mock.calls.length === 1);
 
         yield* manager.registerWebview("tab_favicon_late_replace", 43);
         resolveFetch(
@@ -992,7 +1037,7 @@ describe("PreviewManager", () => {
             headers: { "content-type": "image/png" },
           }),
         );
-        yield* settle(() => false);
+        yield* flushMicrotasks();
 
         expect(states.at(-1)?.webContentsId).toBe(43);
         expect(
@@ -1005,14 +1050,16 @@ describe("PreviewManager", () => {
   effectIt.effect("treats a reused WebContents id as a new attachment", () =>
     withManager((manager) =>
       Effect.gen(function* () {
-        const initial = makeFaviconWebContents({ id: 42 });
-        const replacement = makeFaviconWebContents({ id: 42 });
+        const changes = makeChangeSignal();
+        const initial = makeFaviconWebContents({ changes, id: 42 });
+        const replacement = makeFaviconWebContents({ changes, id: 42 });
         let active = initial.webContents;
         fromId.mockImplementation(() => active);
         const states: PreviewManager.PreviewTabState[] = [];
         yield* manager.subscribeStateChanges((_tabId, state) =>
           Effect.sync(() => {
             states.push(state);
+            changes.notify();
           }),
         );
         yield* manager.createTab("tab_favicon_reused_id");
@@ -1021,7 +1068,7 @@ describe("PreviewManager", () => {
           {} as never,
           ["http://localhost:3200/favicon.png"] as never,
         );
-        yield* settle(() => states.at(-1)?.favicon !== undefined);
+        yield* changes.until(() => states.at(-1)?.favicon !== undefined);
 
         active = replacement.webContents;
         yield* manager.registerWebview("tab_favicon_reused_id", 42);
