@@ -16,6 +16,7 @@ import { useRightPanelActions } from "./chat/useRightPanelActions";
 import { type TerminalLaunchContext, useChatTerminalActions } from "./chat/useChatTerminalActions";
 import { useComposerSend } from "./chat/useComposerSend";
 import { useComposerResume } from "./chat/useComposerResume";
+import { useImplementPlanInNewThread } from "./chat/useProposedPlanSend";
 import { ThreadFind, ThreadFindCanvas, type ThreadFindControls } from "./chat/ThreadFindProvider";
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
@@ -2945,7 +2946,23 @@ export default function ChatView(props: ChatViewProps) {
     scrollToEnd,
     setThreadError,
   });
-  const { onSend, onImplementPlanInNewThread } = useComposerSend({
+  const onImplementPlanInNewThread = useImplementPlanInNewThread({
+    environmentId,
+    routeThreadKey,
+    activeThread,
+    activeThreadBranch,
+    activeProposedPlan,
+    isServerThread,
+    isSendBusy,
+    isConnecting,
+    composerRef,
+    beginLocalDispatch,
+    resetLocalDispatch,
+    activeProject,
+    activeEnvironmentUnavailable,
+    defaultRuntimeMode,
+  });
+  const { onSend } = useComposerSend({
     environmentId,
     routeThreadKey,
     currentRouteThreadKeyRef,
@@ -2963,7 +2980,6 @@ export default function ChatView(props: ChatViewProps) {
     isGitRepo,
     phase,
     runtimeMode,
-    defaultRuntimeMode,
     sendEnvMode,
     startFromOrigin,
     localCheckoutBranchMismatch,
