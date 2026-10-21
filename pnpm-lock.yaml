@@ -731,6 +731,9 @@ importers:
       '@t3tools/source-control-gitlab':
         specifier: workspace:*
         version: link:../../packages/source-control-gitlab
+      character-entities:
+        specifier: 2.0.2
+        version: 2.0.2
       effect:
         specifier: 4.0.5
         version: 4.0.5
@@ -746,6 +749,9 @@ importers:
       proper-lockfile:
         specifier: 4.1.2
         version: 4.1.2
+      saxes:
+        specifier: 6.0.0
+        version: 6.0.0
       stream-chain:
         specifier: ^4.2.5
         version: 4.2.5

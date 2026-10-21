@@ -49,6 +49,7 @@ export class ProviderHost extends Context.Service<
      * resolve inside the attachments directory.
      */
     readonly resolveAttachmentPath: (attachment: ChatAttachment) => string | null;
+    readonly resolveExtractedTextPath?: (path: string) => Effect.Effect<string | undefined>;
     readonly credentials: (
       namespace: string,
       bindingId: string,

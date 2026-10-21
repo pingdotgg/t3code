@@ -17,7 +17,10 @@ if (
   // Guard sockets before either dispatch path can load outbound-capable modules.
   const { ignoreMacosTypeOfServiceEinval } = await import("./outboundHttp.ts");
   ignoreMacosTypeOfServiceEinval();
-  if (command === "acp-mcp-bridge" || command === "acp-mcp-call") {
+  if (command === "__document-text") {
+    const { extractDocumentText } = await import("./provider/documentTextWorker.ts");
+    process.stdout.write(await extractDocumentText(process.argv[3]!, process.argv[4]!));
+  } else if (command === "acp-mcp-bridge" || command === "acp-mcp-call") {
     const { runAcpMcpCliFastPath } = await import("./mcp/AcpMcpStdioBridge.ts");
     await runAcpMcpCliFastPath(command, process.argv.slice(3));
   } else {

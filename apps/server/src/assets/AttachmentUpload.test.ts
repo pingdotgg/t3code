@@ -1,9 +1,15 @@
+import * as DocumentText from "../provider/DocumentText.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import { ChatAttachmentId } from "@t3tools/contracts";
+import {
+  claimPendingAttachments,
+  releaseClaimedAttachments,
+} from "../orchestration-v2/AttachmentClaims.ts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -24,7 +30,7 @@ import {
 
 const layerTest = ServerSecretStore.layer.pipe(
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-attachment-upload-" })),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
 );
 
 const uploadInput = {
@@ -47,6 +53,62 @@ const encodeLegacyAttachmentUploadClaims = Schema.encodeEffect(
 );
 
 describe("AttachmentUpload", () => {
+  it.effect(
+    "persists a readable sidecar, copies it into a claim, and removes both pending files",
+    () =>
+      Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const bytes = new TextEncoder().encode(
+          JSON.stringify({
+            cells: [{ cell_type: "markdown", source: ["# Cargo\n", "Violet crates: 19"] }],
+          }),
+        );
+        const issued = yield* issueAttachmentUploadUrl({
+          type: "file",
+          name: "cargo.ipynb",
+          mimeType: "application/x-ipynb+json",
+          sizeBytes: bytes.length,
+        });
+        const claims = yield* validateAttachmentUploadToken(
+          issued.relativeUrl.slice(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`.length),
+        );
+        if (!claims) throw new Error("Expected upload claims");
+        expect(yield* storeAttachmentUpload(claims, bytes)).toEqual({ ok: true });
+        const path = NodePath.join(config.attachmentsDir, `${issued.attachmentId}.ipynb`);
+        expect(NodeFS.readFileSync(`${path}.txt`, "utf8")).toContain("Violet crates: 19");
+        const replacement = new TextEncoder().encode(
+          new TextDecoder().decode(bytes).replace("Violet crates: 19", "Violet crates: 28"),
+        );
+        expect(yield* storeAttachmentUpload(claims, replacement)).toMatchObject({
+          ok: false,
+          status: 409,
+        });
+        expect(NodeFS.readFileSync(path)).toEqual(Buffer.from(bytes));
+        expect(NodeFS.readFileSync(`${path}.txt`, "utf8")).toContain("Violet crates: 19");
+        const claimed = yield* claimPendingAttachments({
+          threadId: "document-thread",
+          attachments: [
+            {
+              type: "file",
+              id: ChatAttachmentId.make(issued.attachmentId),
+              name: claims.name,
+              mimeType: claims.mimeType,
+              sizeBytes: bytes.length,
+            },
+          ],
+        });
+        expect(claimed.claimedPaths).toHaveLength(2);
+        expect(NodeFS.readFileSync(claimed.claimedPaths[1]!, "utf8")).toContain(
+          "Violet crates: 19",
+        );
+        yield* deletePendingAttachment(issued.attachmentId);
+        expect(NodeFS.existsSync(path)).toBe(false);
+        expect(NodeFS.existsSync(`${path}.txt`)).toBe(false);
+        expect(NodeFS.existsSync(claimed.claimedPaths[1]!)).toBe(true);
+        yield* releaseClaimedAttachments(claimed.claimedPaths);
+        expect(NodeFS.existsSync(claimed.claimedPaths[1]!)).toBe(false);
+      }).pipe(Effect.provide(layerTest)),
+  );
   it.effect("rejects tampered and malformed upload tokens", () =>
     Effect.gen(function* () {
       const issued = yield* issueAttachmentUploadUrl(uploadInput);
