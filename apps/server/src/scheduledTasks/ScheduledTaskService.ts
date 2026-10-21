@@ -456,7 +456,9 @@ export const layer = Layer.effect(
         webhook_token,
         webhook_secret
       FROM scheduled_tasks
-      ORDER BY updated_at DESC, task_id ASC
+      -- Not updated_at: toggles, runs and edits rewrite it, and clients render
+      -- this order as-is, so rows would move under the pointer.
+      ORDER BY created_at DESC, task_id ASC
     `;
 
     const listRows = Effect.fn("ScheduledTaskService.listRows")(function* () {
