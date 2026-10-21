@@ -5,7 +5,6 @@ import {
   restorePlanFollowUpComposer,
   buildExpiredTerminalContextToastCopy,
   deriveComposerSendState,
-  readFileAsDataUrl,
   revokeUserMessagePreviewUrls,
   boundAttachmentIds,
   formatOutgoingPrompt,
@@ -84,6 +83,7 @@ import { environmentServerConfigsAtom } from "../../state/server";
 import { threadEnvironment } from "../../state/threads";
 import { runMobileComposerTransition } from "./draftHeroTransition";
 import { usePlanFollowUpSend } from "./useProposedPlanSend";
+import { useMultipleModelSend } from "./useMultipleModelSend";
 import { type ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import {
   awaitAttachmentUploads,
@@ -102,12 +102,11 @@ import {
   threadContextsOutsideEnvironment,
 } from "@t3tools/shared/composerContextReferences";
 import {
-  draftFanoutSelectionsAtom,
   draftSendState,
   type MultipleModelTarget,
   resolveMultipleModelTargets,
+  prepareTurnAttachments,
   restoreComposerDraft,
-  startFanoutThread,
 } from "./chatViewSend";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import type {
@@ -215,9 +214,6 @@ interface ComposerSendInput {
   readonly setFeedbackSubmissionsByThreadKey: Dispatch<
     SetStateAction<Record<string, ReadonlyArray<CodexFeedbackSubmission>>>
   >;
-  readonly setMultipleModelSelections: (
-    selections: SetStateAction<ReadonlyArray<ModelSelection> | null>,
-  ) => void;
   readonly setThreadError: ReturnType<typeof makeThreadErrorSetter>;
   readonly setKeepFullHistory: (threadKey: string, keep: boolean) => void;
   readonly anchorNewTurn: TimelineFollow["anchorNewTurn"];
@@ -310,7 +306,6 @@ export function useComposerSend(input: ComposerSendInput) {
     setSetupQueueSendThreadKey,
     setOptimisticUserMessages,
     setFeedbackSubmissionsByThreadKey,
-    setMultipleModelSelections,
     setThreadError,
     setKeepFullHistory,
     anchorNewTurn,
@@ -337,6 +332,19 @@ export function useComposerSend(input: ComposerSendInput) {
   const setComposerDraftReviewComments = useComposerDraftStore((store) => store.setReviewComments);
   const setComposerDraftThreadContexts = useComposerDraftStore((store) => store.setThreadContexts);
   const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
+  const sendToMultipleModels = useMultipleModelSend({
+    environmentId,
+    routeThreadKey,
+    currentRouteThreadKeyRef,
+    draftId,
+    composerDraftTarget,
+    composerRef,
+    promptRef,
+    runtimeMode,
+    startFromOrigin,
+    resetLocalDispatch,
+    setThreadError,
+  });
   const submitPlanFollowUp = usePlanFollowUpSend({
     environmentId,
     routeThreadKey,
@@ -356,10 +364,7 @@ export function useComposerSend(input: ComposerSendInput) {
     anchorNewTurn,
     persistThreadSettingsForNextTurn,
   });
-  const fanoutSelectionsAtom = draftFanoutSelectionsAtom(routeThreadKey);
-  const readMultipleModelSelections = () => appAtomRegistry.get(fanoutSelectionsAtom);
-  const { sendInFlight: sendInFlightRef, uncertainSubmissions: uncertainMultipleSubmissionsRef } =
-    draftSendState(routeThreadKey);
+  const { sendInFlight: sendInFlightRef } = draftSendState(routeThreadKey);
   const composerSendGenerationRef = useRef(0);
   const environmentUnavailableSendToastSlotRef = useRef(0);
   // A send awaits uploads before it declines, so it reads the approvals pending by then.
@@ -1029,207 +1034,26 @@ export function useComposerSend(input: ComposerSendInput) {
       );
     }
 
-    const turnAttachmentsPromise = Promise.all(
-      composerAttachmentsSnapshot.map(async (attachment) => {
-        if (turnUsesAttachmentUploads) {
-          const uploaded = getUploadedAttachments({ environmentId, images: [attachment] })?.[0];
-          if (!uploaded) {
-            throw new Error(`Attachment '${attachment.name}' did not finish uploading.`);
-          }
-          return uploaded;
-        }
-        if (attachment.type !== "image") {
-          throw new Error("This server does not support file attachments.");
-        }
-        return {
-          type: "image" as const,
-          id: attachment.id,
-          name: attachment.name,
-          mimeType: attachment.mimeType,
-          sizeBytes: attachment.sizeBytes,
-          dataUrl: await readFileAsDataUrl(attachment.file),
-          ...(attachment.source ? { source: attachment.source } : {}),
-        };
-      }),
-    );
+    const turnAttachmentsPromise = prepareTurnAttachments({
+      environmentId,
+      attachments: composerAttachmentsSnapshot,
+      usesAttachmentUploads: turnUsesAttachmentUploads,
+    });
     if (multipleModelSelections !== null) {
-      const failedSelections: ModelSelection[] = [];
-      let clearedDraft = false;
-      let releasedComposer = false;
-      let canRestoreDraft = () => false;
-      let startedCount = 0;
-      // Anything thrown here (an attachment the server can no longer take)
-      // fails every selection; the draft restore below still runs.
-      const sendResult = await settlePromise(async () => {
-        const attachments = await turnAttachmentsPromise;
-        const fileBlockReason = readLiveAttachmentCapabilities().fileBlockReason;
-        if (fileBlockReason !== null) throw new Error(fileBlockReason);
-        const context = buildOutgoingMessageContext(
-          boundAttachmentIds(attachments, composerAttachmentsSnapshot),
-        );
-        const title = deriveThreadTitleSeed({
-          text: messageTextForSend,
-          attachments: composerAttachmentsSnapshot,
-        });
-        promptRef.current = "";
-        clearComposerDraftContent(composerDraftTarget);
-        composerRef.current?.resetCursorState();
-        clearedDraft = true;
-        const clearedDraftSnapshot = useComposerDraftStore
-          .getState()
-          .getComposerDraft(composerDraftTarget);
-        const submittedSelections = readMultipleModelSelections();
-        canRestoreDraft = () =>
-          currentRouteThreadKeyRef.current === routeThreadKey &&
-          composerSendGenerationRef.current === sendGeneration &&
-          useComposerDraftStore.getState().getComposerDraft(composerDraftTarget) ===
-            clearedDraftSnapshot &&
-          readMultipleModelSelections() === submittedSelections;
-        setThreadError(threadIdForSend, null);
-        const starts = Promise.all(
-          multipleTargets.map(async (target) => {
-            const started = await startFanoutThread({
-              retryKey: JSON.stringify([
-                routeThreadKey,
-                target.selection.instanceId,
-                target.selection.model,
-              ]),
-              model: target.selection.model,
-              uncertainSubmissions: uncertainMultipleSubmissionsRef.current,
-              start: (targetThreadId) => {
-                const supportsInlineMessageContext =
-                  appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment
-                    .capabilities.inlineMessageContext === true;
-                return startThreadTurn({
-                  environmentId,
-                  input: {
-                    threadId: targetThreadId,
-                    message: {
-                      messageId: newMessageId(),
-                      role: "user",
-                      attachments,
-                      ...withMessageContext({
-                        text: target.text,
-                        context,
-                        supportsInlineMessageContext,
-                      }),
-                    },
-                    modelSelection: target.selection,
-                    titleSeed: title,
-                    runtimeMode,
-                    interactionMode: target.interactionMode,
-                    bootstrap: {
-                      createThread: {
-                        projectId: activeProject.id,
-                        title,
-                        modelSelection: target.selection,
-                        runtimeMode,
-                        interactionMode: target.interactionMode,
-                        branch: activeThreadBranch,
-                        worktreePath: null,
-                        createdAt: messageCreatedAt,
-                      },
-                      prepareWorktree: {
-                        projectCwd: activeProject.workspaceRoot,
-                        baseBranch: activeThreadBranch!,
-                        requireWorktree: true,
-                        ...(startFromOrigin ? { startFromOrigin: true } : {}),
-                      },
-                      runSetupScript: true,
-                    },
-                    createdAt: messageCreatedAt,
-                  },
-                });
-              },
-              openThread: (threadId) =>
-                void navigate({
-                  to: "/$environmentId/$threadId",
-                  params: buildThreadRouteParams(scopeThreadRef(environmentId, threadId)),
-                }),
-            });
-            if (started) startedCount += 1;
-            else failedSelections.push(target.selection);
-          }),
-        );
-        sendInFlightRef.current = false;
-        resetLocalDispatch();
-        releasedComposer = true;
-        await starts;
-        if (startedCount > 0) {
-          toastManager.add(
-            stackedThreadToast({
-              type: "success",
-              title: `Started ${startedCount} ${startedCount === 1 ? "thread" : "threads"} in background`,
-            }),
-          );
-        }
-        if (failedSelections.length === 0 && turnUsesAttachmentUploads) {
-          releaseDraftAttachments(composerAttachmentsSnapshot);
-        }
+      await sendToMultipleModels({
+        threadId: threadIdForSend,
+        project: activeProject,
+        branch: activeThreadBranch!,
+        selections: multipleModelSelections,
+        targets: multipleTargets,
+        sendSnapshot,
+        createdAt: messageCreatedAt,
+        attachmentsPromise: turnAttachmentsPromise,
+        usesAttachmentUploads: turnUsesAttachmentUploads,
+        readFileBlockReason: () => readLiveAttachmentCapabilities().fileBlockReason,
+        buildOutgoingMessageContext,
+        isCurrentSend: () => composerSendGenerationRef.current === sendGeneration,
       });
-      if (sendResult._tag === "Failure") {
-        const error = squashAtomCommandFailure(sendResult);
-        failedSelections.push(...multipleModelSelections);
-        setThreadError(
-          threadIdForSend,
-          error instanceof Error ? error.message : "Failed to send messages.",
-        );
-      }
-      const restoreFailedDraft = () => {
-        setMultipleModelSelections(failedSelections);
-        if (clearedDraft) {
-          restoreComposerDraft(composerDraftTarget, sendSnapshot);
-          if (composerRef.current && currentRouteThreadKeyRef.current === routeThreadKey) {
-            promptRef.current = messageTextForSend;
-            composerRef.current.resetCursorState({
-              cursor: collapseExpandedComposerCursor(messageTextForSend, messageTextForSend.length),
-              prompt: messageTextForSend,
-              detectTrigger: true,
-            });
-          }
-        }
-      };
-      if (failedSelections.length > 0) {
-        if (canRestoreDraft() && composerRef.current) {
-          restoreFailedDraft();
-        } else if (clearedDraft) {
-          const recoveryToastId = toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "A background prompt could not be sent",
-              description:
-                "Your newer draft is unchanged. Restore the failed prompt when this composer is empty.",
-              timeout: 0,
-              actionProps: {
-                children: "Restore prompt",
-                onClick: () => {
-                  if (
-                    !draftId ||
-                    !useComposerDraftStore.getState().getDraftSession(draftId) ||
-                    sendInFlightRef.current ||
-                    composerDraftHasUserContent(
-                      useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
-                    )
-                  ) {
-                    toastManager.update(recoveryToastId, {
-                      description:
-                        "Return to the original draft and send or clear its current prompt before restoring.",
-                    });
-                    return;
-                  }
-                  restoreFailedDraft();
-                  void navigate({ to: "/draft/$draftId", params: { draftId } });
-                  toastManager.close(recoveryToastId);
-                },
-              },
-            }),
-          );
-        }
-      }
-      if (!releasedComposer) {
-        sendInFlightRef.current = false;
-        resetLocalDispatch();
-      }
       return;
     }
     const optimisticAttachments = optimisticMessageAttachments(composerAttachmentsSnapshot);
