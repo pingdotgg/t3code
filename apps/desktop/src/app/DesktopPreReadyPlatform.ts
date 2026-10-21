@@ -49,7 +49,7 @@ export class DesktopPreReadyElectronOptions extends Context.Service<
   }
 >()("@t3tools/desktop/app/DesktopPreReadyPlatform/DesktopPreReadyElectronOptions") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
   const homeDirectory = yield* HostProcess.HomeDirectory;
@@ -116,8 +116,7 @@ export const make = Effect.gen(function* () {
           "utf8",
         );
       } catch {}
-      // Chromium caches its portal registration during startup. Set the identity
-      // before any asynchronous work can initialize it with Electron's default.
+      // Chromium caches portal identity; set it before any asynchronous initialization.
       Electron.app.setDesktopName(linux.linuxDesktopEntryName);
       Electron.app.commandLine.appendSwitch("class", linux.linuxWmClass);
       if (linux.passwordStore !== null && linuxPasswordStoreCommandLine === null) {
@@ -146,8 +145,7 @@ export const make = Effect.gen(function* () {
   });
 }).pipe(Effect.withSpan("desktop.electron.configureBeforeReady"));
 
-// Keep Electron's strict pre-ready setup isolated so later runtime layers cannot
-// observe app readiness before scheme privileges and command-line switches exist.
+// Complete scheme privileges and switches before later layers can observe app readiness.
 export const layer = Layer.mergeAll(
   ElectronProtocol.layerSchemePrivileges,
   Layer.effect(DesktopPreReadyElectronOptions, make),

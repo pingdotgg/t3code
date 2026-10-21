@@ -58,12 +58,7 @@ export function latestExecutedRun(
   return latest;
 }
 
-/**
- * Ordinals follow submission, but a run can start ahead of a held queue (a
- * restart continuation, or a message sent while the queue is held), so a queued
- * run resumed later can have a lower ordinal than one that already ended. An
- * unfinished run is the latest.
- */
+/** Held queues can execute out of ordinal order; unfinished runs count as latest. */
 export function runRanAfter(
   run: Pick<OrchestrationV2Run, "ordinal" | "completedAt">,
   other: Pick<OrchestrationV2Run, "ordinal" | "completedAt">,
@@ -86,11 +81,7 @@ export function usageLimitBlockedRun(
   return summary.lastErrorClass === "usage_limit" ? executed : null;
 }
 
-/**
- * That limited run, when newer runs were queued or cancelled before starting.
- * Callers that treat the highest-ordinal run as the thread outcome would
- * otherwise hide the limit.
- */
+/** Retains a limited run's outcome when higher-ordinal runs never started. */
 export function usageLimitRunPresentedAsLatest(
   runs: ReadonlyArray<OrchestrationV2Run>,
   turnItems: ReadonlyArray<OrchestrationV2TurnItem>,

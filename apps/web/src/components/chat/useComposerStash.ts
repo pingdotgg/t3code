@@ -530,11 +530,8 @@ export function useComposerStash(input: {
         ...(file.source ? { source: file.source } : {}),
       });
     }
-    // A repeat ⌘S on the *same* still-unencoded snapshot would stash it
-    // twice. Guard on the snapshot itself rather than a bare boolean: once
-    // the composer has been cleared the user can type something genuinely
-    // new (or switch threads) while encoding continues, and that deserves its
-    // own entry.
+    // Deduplicate the snapshot while encoding, not all stashes: new drafts or
+    // thread switches must still be able to create their own entries.
     const attachmentKey = images
       .map((image) => `image:${image.id}`)
       .concat(files.map((file) => `file:${file.id}`))

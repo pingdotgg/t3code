@@ -32,11 +32,8 @@ interface QueuedThreadShell {
 }
 
 /**
- * A queued turn start lives for at most this long: session adoption takes
- * seconds, so a user message still unadopted after the grace window is a
- * failed start (or stale data — shells from older servers can carry user
- * messages with no latestTurn at all), not pending work. Without this bound
- * such threads would be permanently unsettleable.
+ * Failed starts and stale shells from older servers can leave user messages unadopted.
+ * Bound the pending window so those threads can eventually settle.
  */
 export const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
 const DAY_MS = 24 * 60 * 60 * 1_000;

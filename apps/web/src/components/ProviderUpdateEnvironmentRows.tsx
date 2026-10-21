@@ -83,9 +83,7 @@ function toProviderUpdateOutcome(input: {
   };
 }
 
-// Keep it well beyond the server's own update timeout (5 min) so a legitimately
-// slow update (npm installs routinely run tens of seconds) is never cut off and
-// left showing a dead, unresponsive Update button.
+// Exceed the server's five-minute timeout so slow installs cannot leave a dead Update button.
 const PENDING_EXPIRY_MS = 6 * 60_000;
 
 function rowToneClass(kind: ProviderUpdateRowStatusKind): string {
@@ -165,18 +163,10 @@ export function ProviderUpdateEnvironmentRows({
 
   const [visibleAfterIso] = useState(() => new Date().toISOString());
 
-  // setPendingEnvironments is an async state update, and PENDING_EXPIRY_MS can
-  // clear the spinner while a request is still in flight, so a rapid
-  // double-click (or a click after the expiry fires mid- request) would
-  // otherwise dispatch a second full round of updates. A ref updates
-  // synchronously, so we can bail before doing any work.
+  // Guard synchronously because state lags and pending expiry can fire mid-request.
   const inFlightEnvironmentsRef = useRef<Set<EnvironmentId>>(new Set());
 
-  // Bumped on each dispatch and captured locally, so an attempt that was
-  // superseded -- e.g. one that already tripped the expiry safety net and was
-  // retried -- detects it is no longer current and skips every state write when
-  // it finally resolves, instead of clobbering the newer attempt's
-  // spinner/result/error or its in-flight guard.
+  // Superseded requests must not overwrite newer results or guards.
   const requestVersionRef = useRef<Map<EnvironmentId, number>>(new Map());
 
   const [pendingEnvironments, setPendingEnvironments] = useState<ReadonlySet<EnvironmentId>>(
@@ -299,10 +289,6 @@ export function ProviderUpdateEnvironmentRows({
         providers: collectProviderUpdateOutcomeSnapshots(results),
         providerCount,
       });
-      // A stored view never re-polls, so persisting it would pin the row's
-      // spinner forever once the pending flag expires. Drop it and let the
-      // live per-environment provider state (pill) plus the pending expiry
-      // drive the row, so it self-heals to whatever the backend actually did.
       if (isTerminalProviderUpdatePhase(view.phase)) {
         setResultByEnvironment((previous) => new Map(previous).set(environmentId, view));
       }

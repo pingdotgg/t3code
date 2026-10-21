@@ -107,10 +107,7 @@ const PRIMARY_PROVIDER_DRIVERS: ReadonlySet<string> = new Set([
   "codex",
   "antigravity",
 ]);
-/**
- * Keep measured row changes stable, but let catalog mutations use the list's
- * native bounds so a filtered catalog that underflows returns to the top.
- */
+/** Keep measured size changes stable; let catalog mutations return underflowing filtered lists to the top. */
 const THREAD_SETTINGS_MAINTAIN_VISIBLE_CONTENT_POSITION = {
   data: false,
   size: true,
@@ -1522,10 +1519,7 @@ export function ExistingThreadSettingsRouteScreen() {
   return <ThreadSettingsPickerScreen {...settings} onClose={() => navigation.goBack()} />;
 }
 
-/**
- * Keeping the sheet presentation in RNS gives UIKit ownership of nested dismissal, while
- * Reasoning and Runtime remain regular pushes inside this navigator.
- */
+/** RNS owns nested sheet dismissal; Reasoning and Runtime remain ordinary pushes. */
 export function NewTaskThreadSettingsRouteScreen() {
   const flow = useNewTaskFlow();
   const navigation = useNavigation<NativeStackNavigationProp<Record<string, object | undefined>>>();

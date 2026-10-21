@@ -252,9 +252,7 @@ export function reidentifyComposerContext(
   };
 }
 
-/**
- * Keep queued records canonical; choose the wire format against the host at dispatch time.
- */
+/** Keep queued records canonical; select wire format at dispatch against the host. */
 export function serializeComposerMessageForServer(
   composerText: string,
   context: OrchestrationMessageContext | undefined,

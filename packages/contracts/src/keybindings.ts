@@ -203,11 +203,7 @@ export const ResolvedKeybindingRule = Schema.Struct({
 }).annotate({ parseOptions: { onExcessProperty: "ignore" } });
 export type ResolvedKeybindingRule = typeof ResolvedKeybindingRule.Type;
 
-/**
- * Decoding drops those rules instead of failing the whole payload —
- * rejecting the config would take down the connection over a shortcut the
- * client couldn't dispatch anyway.
- */
+/** Drops undecodable rules without failing the connection. */
 export const ResolvedKeybindingsConfig = ForwardCompatibleArray(ResolvedKeybindingRule).check(
   Schema.isMaxLength(MAX_KEYBINDINGS_COUNT),
 );

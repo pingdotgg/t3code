@@ -19,10 +19,7 @@ const pendingWrites = new Map<
   Promise<PendingTaskEditorWriteResult>
 >();
 
-/**
- * Captures this editor's outbox revision and any editor save it must follow.
- * The returned promise keeps that predecessor even after its map entry clears.
- */
+/** Captures the editor revision and predecessor save; the promise survives clearing its map entry. */
 export function capturePendingTaskEditorWriteBaseline(
   messageId: QueuedThreadMessage["messageId"],
 ): Promise<number> {
@@ -54,8 +51,7 @@ export function flushPendingTaskEditorWrite(input: {
           nextRevision: expectedRevision + (updated ? 1 : 0),
         };
       } catch (error) {
-        // A failed write does not advance the outbox, but later editor saves
-        // still need the expected revision handed off by its predecessor.
+        // Failed writes do not advance the outbox; hand their expected revision to later editor saves.
         return {
           status: "failed",
           error,

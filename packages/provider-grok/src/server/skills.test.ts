@@ -177,8 +177,6 @@ describe("discoverGrokSkills", () => {
     });
   });
 
-  // Workspace skill probes run on their own from the driver, outside the
-  // status check, so they must suppress Grok's launch-time updater themselves.
   it.effect("disables Grok's updater for the probe without touching the caller's env", () => {
     const spawnOptions: Array<ChildProcess.CommandOptions | undefined> = [];
     const environment = { GROK_DISABLE_AUTOUPDATER: "0", GROK_HOME: "/home/dev/.grok" };

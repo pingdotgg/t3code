@@ -114,8 +114,7 @@ export class OpenCodeRuntimeError extends Data.TaggedError(OPENCODE_RUNTIME_ERRO
 
 export type OpenCodeStartupFailureReason = "databaseLocked";
 
-// OpenCode reports a held opencode.db lock on stderr. Classify it once where the
-// exit is captured so callers branch on the category, not on diagnostic text.
+// Classify stderr database locks at exit so callers need not parse diagnostics.
 function classifyStartupExit(stderr: string): OpenCodeStartupFailureReason | undefined {
   return /SQLITE_BUSY|database is locked/i.test(stderr) ? "databaseLocked" : undefined;
 }
@@ -130,8 +129,7 @@ function encodeJsonStringForDiagnostics(input: unknown): string | undefined {
 
 export function openCodeRuntimeErrorDetail(cause: unknown): string {
   if (isOpenCodeRuntimeError(cause)) return cause.detail;
-  // Effect's TimeoutError can be constructed without a message, so `message`
-  // is not guaranteed to be a string on every Error that reaches here.
+  // Effect TimeoutError can have a non-string message.
   if (cause instanceof Error) {
     const message = cause.message;
     if (typeof message === "string") {
@@ -140,7 +138,7 @@ export function openCodeRuntimeErrorDetail(cause: unknown): string {
     }
   }
   if (cause && typeof cause === "object") {
-    // SDK v2 throws { response, request, error? } shapes — extract what's useful
+    // SDK v2 throws response/request/error envelopes.
     const anyCause = cause as Record<string, unknown>;
     const status = (anyCause.response as { status?: number } | undefined)?.status;
     const body = anyCause.error ?? anyCause.data ?? anyCause.body;
@@ -250,10 +248,7 @@ const decodeOpenCodeSkillsCliOutputExit = Schema.decodeUnknownExit(
 export class OpenCodeRuntime extends Context.Service<
   OpenCodeRuntime,
   {
-    /**
-     * Its lifetime is bound to the caller's `Scope.Scope` — the child is killed automatically
-     * when that scope closes.
-     */
+    /** Closing the caller's scope kills the child. */
     readonly startOpenCodeServerProcess: (input: {
       readonly binaryPath: string;
       readonly directory: string;
@@ -316,9 +311,7 @@ function parseServerUrlFromOutput(output: string): string | null {
 const SLUG_LINE_RE = /^(\S+\/\S+)\s*$/;
 const AGENT_HEADER_RE = /^(.+)\s+\((\S+)\)\s*$/;
 
-// Agents that are always hidden in OpenCode but the CLI "agent list" command
-// does not expose the hidden flag. Keep in sync with OpenCode agent
-// definitions (in the OpenCode repo: packages/opencode/src/agent/agent.ts).
+// agent list omits hidden flags; match packages/opencode/src/agent/agent.ts upstream.
 const KNOWN_HIDDEN_AGENTS = new Set(["compaction", "summary", "title"]);
 
 /** @internal */
@@ -362,12 +355,7 @@ export function parseModelsCliOutput(stdout: string): {
   };
 
   for (const line of lines) {
-    // A model's JSON body is a single `JSON.stringify` line starting with `{`,
-    // while a provider/model slug is a bare `provider/model` header. Only the
-    // latter can be a slug: without this guard a body line with no interior
-    // whitespace and a `/` in one of its values (e.g. an OpenRouter model whose
-    // `id` is `vendor/model`) matches SLUG_LINE_RE, so flushModel runs against
-    // an empty body and the model is silently dropped.
+    // Compact JSON can match the slug regex; misclassification silently drops its model.
     const slugMatch = line.trimStart().startsWith("{") ? null : SLUG_LINE_RE.exec(line);
     if (slugMatch) {
       flushModel();
@@ -458,10 +446,7 @@ export function openCodeQuestionId(
   return header.length > 0 ? `question-${index}-${header}` : `question-${index}`;
 }
 
-/**
- * Text is native only as text/plain, which OpenCode reads itself; other text types (HTML,
- * Markdown, CSV) reach the model API as raw file parts, which Anthropic and OpenAI reject.
- */
+// OpenCode inlines only text/plain; other text MIME parts reach APIs that reject them.
 const OPENCODE_NATIVE_IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 const OPENCODE_NATIVE_FILE_PART_MAX_BYTES = 20 * 1024 * 1024;
 
@@ -521,8 +506,7 @@ export function buildOpenCodePermissionRules(runtimeMode: RuntimeMode): Permissi
     ];
   }
 
-  // "auto" is left asking on purpose: the docs say providers without an AI
-  // reviewer, OpenCode among them, fall back to Supervised for that mode.
+  // OpenCode has no AI reviewer; Auto falls back to Supervised.
   const editAction = runtimeMode === "auto-accept-edits" ? "allow" : "ask";
 
   return [
@@ -598,9 +582,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
   const hostPlatform = yield* HostProcess.Platform;
   const serverLedger = yield* OpenCodeServerLedger.OpenCodeServerLedger;
   const agentScope = yield* AgentScope;
-  // npm installs OpenCode as `opencode.CMD`, which `cmd.exe` runs. The
-  // `opencode.exe` it starts escapes libuv's kill-on-close job and outlives a
-  // server that is killed, so the shim's executable runs directly instead.
+  // npm's Windows shim lets the child escape libuv kill-on-close; run its executable directly.
   const resolveCommand = (command: string, args: ReadonlyArray<string>, env?: NodeJS.ProcessEnv) =>
     resolveSpawnCommand(command, args, { ...(env ? { env } : {}), bypassNpmShim: true });
 
@@ -900,8 +882,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
           ),
         );
       });
-      // OpenCode instances share opencode.db. Migration/WAL locks are transient;
-      // configuration and executable errors are not helped by launching again.
+      // Shared opencode.db locks are transient; retry those, not configuration/executable errors.
       return yield* attempt.pipe(
         Effect.retry({
           times: 3,

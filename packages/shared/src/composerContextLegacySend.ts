@@ -2,11 +2,7 @@ import type { ComposerContextRecord, ElementContextDetails } from "@t3tools/cont
 
 import { collectComposerContextReferences } from "./composerContextReferences.ts";
 
-/**
- * Serializes a canonical message (inline reference links plus records) into the pre-inline-context
- * wire shape, for servers that do not advertise `inlineMessageContext`. Those servers drop the
- * records and forward the links as literal text, so the payload has to travel inside the message.
- */
+/** Embeds context in message text for older servers that drop records and cannot resolve inline links. */
 export function serializeLegacyContextMessage(input: {
   text: string;
   records: ReadonlyArray<ComposerContextRecord>;

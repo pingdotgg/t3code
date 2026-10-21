@@ -56,16 +56,11 @@ function labelForKind(kind: ServerProviderUsageWindow["kind"]): string {
   return kind === "session" ? "Session" : kind === "weekly" ? "Weekly" : "Monthly";
 }
 
-/**
- * `primary` / `secondary` are positions, not durations. Codex usually sends
- * `windowDurationMins`; when it does not, paid plans expose the 5-hour and
- * weekly pair and Free/Go expose one monthly allowance.
- */
+/** primary/secondary are positions; without windowDurationMins, paid plans use 5-hour/weekly windows and Free/Go use monthly. */
 function codexRateLimitsToWindows(
   snapshot: CodexRateLimitSnapshot,
 ): ReadonlyArray<ServerProviderUsageWindow> {
-  // Show the main allowance only. Model-specific notifications (such as Spark)
-  // must not replace its primary/secondary rows. Older CLIs omit the limit id.
+  // Keep model-specific limits out of main allowance rows; older CLIs omit limit IDs.
   if (snapshot.limitId && snapshot.limitId !== "codex") return [];
   const isMonthlyPlan = snapshot.planType === "free" || snapshot.planType === "go";
   const positions = [
@@ -158,18 +153,12 @@ export function codexRateLimitsFailureMessage(error: CodexErrors.CodexAppServerE
   }
 }
 
-/**
- * Codex sends `account/rateLimits/updated` as a partial view of the snapshot: a
- * field the update omits keeps the value observed earlier in the session, so a
- * later notification that only names the limit it reached must not drop the
- * windows an earlier one carried.
- */
+/** Rate-limit notifications are partial: omitted fields preserve earlier session values. */
 export function mergeCodexRateLimits(
   previous: CodexRateLimitSnapshot | undefined,
   update: CodexRateLimitSnapshot,
 ): CodexRateLimitSnapshot | undefined {
-  // Model-specific snapshots (such as Spark) describe a different allowance
-  // and must not overwrite the main one, the same rule the usage rows apply.
+  // Model-specific snapshots must not overwrite the main allowance.
   if (update.limitId && update.limitId !== "codex") return previous;
   if (!previous) return update;
   return {

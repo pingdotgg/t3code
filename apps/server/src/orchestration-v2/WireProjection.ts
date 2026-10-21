@@ -25,8 +25,7 @@ function truncateDetail(
   ) {
     return value;
   }
-  // UTF-8 needs at least one byte per UTF-16 code unit. Only encode the prefix
-  // that could fit, rather than allocating a buffer for the complete output.
+  // UTF-8 needs at least one byte per UTF-16 unit; encode only a potentially fitting prefix.
   const prefix = Buffer.from(value.slice(0, maxBytes), "utf8")
     .subarray(0, maxBytes)
     .toString("utf8")
@@ -34,11 +33,7 @@ function truncateDetail(
   return `${prefix}\n… output truncated for transport`;
 }
 
-/**
- * Clients never receive more than this (see projectTurnItemForWire), so a full
- * diff of a large file would only grow the database and the heap that reads it
- * back.
- */
+/** Bound stored diffs to the client wire limit to avoid retaining invisible data in SQLite and heap. */
 export function boundFileChangeForStorage(item: OrchestrationV2TurnItem): OrchestrationV2TurnItem {
   if (item.type !== "file_change") return item;
   const { diffStr, oldStr, newStr } = item;
@@ -159,10 +154,7 @@ function boundDynamicValue(value: unknown): unknown {
     : truncateDetail(json, MAX_ON_DEMAND_BYTES);
 }
 
-/**
- * When the rest is too large to send whole, its truncated text still comes with
- * the image markers, in order, so clients can load each image by index.
- */
+/** Preserve ordered image markers in truncated output so clients can load images by index. */
 function boundToolOutput(output: unknown): unknown {
   const omitted = omitToolOutputImageData(output);
   const bounded = boundDynamicValue(omitted);

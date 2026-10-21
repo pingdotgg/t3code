@@ -124,9 +124,7 @@ function SubagentMetadata(props: {
         {modelLabel}
       </Text>
       {workspace.map(({ label, value }) => (
-        // The row reads this label in place of the icon. collapsable keeps the
-        // view (and label) from being flattened away without making it a
-        // separate accessibility stop.
+        // Preserve the label against flattening without making it a separate accessibility stop.
         <View
           key={label}
           collapsable={false}

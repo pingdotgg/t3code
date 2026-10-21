@@ -72,9 +72,7 @@ export const make = Effect.gen(function* () {
         );
       const maxTunnels = overrides[0]?.maxTunnels ?? DEFAULT_MANAGED_TUNNEL_LIMIT;
 
-      // Allocations already held for this environment are excluded so that
-      // re-linking an environment the user already has a tunnel for stays
-      // idempotent even when the account is at its limit.
+      // Exclude this environment so relinking remains idempotent at the account limit.
       const counted = yield* db
         .select({ activeTunnels: count() })
         .from(relayManagedEndpointAllocations)

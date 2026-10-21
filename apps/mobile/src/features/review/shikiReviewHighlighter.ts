@@ -50,11 +50,9 @@ const REVIEW_HIGHLIGHTER_ENGINE_PREFERENCE = resolveReviewHighlighterEnginePrefe
   REVIEW_HIGHLIGHTER_ENGINE_ENV_VALUE,
 );
 const REVIEW_HIGHLIGHT_CHUNK_LINE_THRESHOLD = 8;
-// Bounds each tokenizing call by characters, not lines, so long-line files
-// still yield to touches and renders between short batches.
+// Bound tokenizing by characters so long lines still yield to touches and renders.
 const REVIEW_HIGHLIGHT_CHUNK_CHARACTERS = 2_000;
-// A yield waits for the next frame, so batches run back to back until about one
-// frame of work has passed instead of yielding after every batch.
+// Yield after a frame's work; yielding each batch would wait a frame per batch.
 const REVIEW_HIGHLIGHT_YIELD_AFTER_MS = 16;
 const REVIEW_TOKENIZE_MAX_LINE_LENGTH = 1_000;
 const REVIEW_INITIAL_LANGUAGE_MODULES = [

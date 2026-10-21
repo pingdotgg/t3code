@@ -211,10 +211,7 @@ export const make = Effect.gen(function* () {
         "relay.agent_activity.phase": input.state?.phase ?? "deleted",
       });
       if (input.state) {
-        // Terminal states are persisted too (pruned by the cron after they
-        // age out) so a thread that finishes while other agents are active
-        // stays visible as Done/Failed in subsequent aggregates instead of
-        // silently vanishing from the Live Activity.
+        // Retain terminal rows until cron pruning so completed threads remain visible alongside active ones.
         yield* rows.upsert({
           environmentPublicKey: input.environmentPublicKey,
           state: input.state,

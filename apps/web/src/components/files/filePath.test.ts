@@ -44,20 +44,15 @@ describe("fileBreadcrumbChildren", () => {
 
 describe("retainedBreadcrumbTrail", () => {
   it.each([
-    // Walking up keeps the deeper path, all the way to the workspace root.
     ["apps/web/src", "apps/web", "apps/web/src"],
     ["apps/web/src", "", "apps/web/src"],
-    // Walking back down inside the trail keeps it too.
     ["apps/web/src", "apps/web/src", "apps/web/src"],
-    // Somewhere else starts over, including a sibling that shares a name prefix.
     ["apps/web/src", "apps/mobile", "apps/mobile"],
     ["src/lib", "src-old", "src-old"],
     ["apps/web", "apps/web/src/main.tsx", "apps/web/src/main.tsx"],
-    // Workspace and host paths never share a trail.
     ["apps/web/src", "/tmp/report", "/tmp/report"],
     ["/tmp/report", "", ""],
     ["C:\\Temp\\a", "", ""],
-    // Host folders outside the workspace keep their trail the same way.
     ["/Users/me/projects/scope", "/Users/me", "/Users/me/projects/scope"],
     ["/Users/me/projects/scope", "/Users/me/proj", "/Users/me/proj"],
     ["/Volumes/Work/a", "/Volumes/Work/a/", "/Volumes/Work/a"],

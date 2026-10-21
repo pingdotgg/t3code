@@ -58,15 +58,12 @@ import {
 const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
 const SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
-// The sandbox gives the document an opaque origin: scripts run, but same-origin
-// cookies, storage, and API calls are out of reach. No modals: agent HTML can
-// open without a click (inline renders, and mobile loads it as the top document),
-// and must not raise blocking dialogs.
+// Opaque origin blocks cookies, storage and API access while allowing scripts.
+// Agent HTML can open without a click, so disallow blocking modals.
 const HTML_CONTENT_SECURITY_POLICY =
   "sandbox allow-scripts allow-forms allow-popups allow-downloads";
 
-// Types a browser may render as a document if a proxy strips the disposition
-// header. Downloads of these fall back to octet-stream.
+// Proxies may strip disposition; force document-capable downloads to octet-stream.
 const DOWNLOAD_MIME_TYPE_PATTERN = /^[\w!#$&^.+-]+\/[\w!#$&^.+-]+$/;
 const isSafeDownloadMimeType = (mimeType: string): boolean =>
   DOWNLOAD_MIME_TYPE_PATTERN.test(mimeType) &&
@@ -196,9 +193,7 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
   const mediaInfo = mediaFile ? yield* statMediaFile(asset.path, mediaFile) : undefined;
   const isMedia = /^(?:audio|video)\//i.test(headers["Content-Type"] ?? "");
   if (isMedia) {
-    // Do not invite conditional range requests with validators that cannot establish
-    // byte-for-byte identity. Attachment media carries no `file`, and must not
-    // outlive the signed URL that granted it either.
+    // Without file identity, validators cannot guarantee byte equality; attachments must also expire with their URL.
     headers["Cache-Control"] = "private, no-store";
   }
   let status = 200;
@@ -259,8 +254,7 @@ export const layerBrowserApiCors = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
     const devOrigin = config.devUrl?.origin;
-    // Dev uses credentialed requests from Vite or the Electron custom origin, so both must be
-    // explicit. Packaged desktop omits credentials and uses Effect's default wildcard origin.
+    // Credentialed dev requests need explicit Vite/Electron origins; packaged desktop uses the default wildcard.
     return HttpRouter.cors({
       ...(devOrigin
         ? {
@@ -333,8 +327,7 @@ class DecodeOtlpTraceRecordsError extends Data.TaggedError("DecodeOtlpTraceRecor
   readonly cause: unknown;
 }> {}
 
-// Renderers export up to once a second while they have spans buffered, so
-// tracing this proxy would add more server spans than it forwards.
+// Tracing once-per-second renderer exports would create more spans than it forwards.
 export const layerOtlpTracesProxyRoute = HttpRouter.add(
   "POST",
   OTLP_TRACES_PROXY_PATH,
@@ -391,9 +384,7 @@ export const layerOtlpTracesProxyRoute = HttpRouter.add(
 
 const UNTRACED_REQUEST_PATHS: ReadonlySet<string> = new Set([OTLP_TRACES_PROXY_PATH]);
 
-// TracerDisabledWhen is one predicate for the whole server, and
-// HttpRouter.serve builds its routes privately, so it is provided to the served
-// layer, never merged into the routes.
+// HttpRouter.serve builds routes privately; provide the server-wide TracerDisabledWhen to the served layer.
 const layerUntracedRequests = Layer.succeed(HttpMiddleware.TracerDisabledWhen)((request) => {
   const queryIndex = request.url.indexOf("?");
   const path = queryIndex === -1 ? request.url : request.url.slice(0, queryIndex);
@@ -664,8 +655,7 @@ const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
     const etag = headers.ETag;
     const lastModified = headers["Last-Modified"];
 
-    // If-None-Match takes precedence over dates and uses weak comparison for
-    // GET/HEAD, including when compression changes the transferred bytes.
+    // If-None-Match precedes dates and uses weak GET/HEAD comparison even across compression.
     const ifNoneMatch = request.headers["if-none-match"];
     const ifModifiedSince = request.headers["if-modified-since"];
     const unchanged =

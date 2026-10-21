@@ -177,9 +177,7 @@ export function createNativeReviewDiffTheme(
 ): NativeReviewDiffTheme {
   const terminalTheme = getMobileTerminalTheme(themeId, scheme);
   const [, terminalRed] = terminalTheme.palette;
-  // Swift expects #RRGGBB/#RRGGBBAA while Android expects #RRGGBB/#AARRGGBB.
-  // Flatten translucent app tokens onto the code surface so both native
-  // implementations receive the one unambiguous shared format.
+  // Swift and Android disagree on alpha-byte order; flatten to shared opaque #RRGGBB.
   const screen = opaqueNativeHexColor(
     appTheme["--color-screen"],
     scheme === "dark" ? "#000000" : "#ffffff",

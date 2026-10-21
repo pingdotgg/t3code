@@ -10,11 +10,7 @@ import {
 
 const MAX_DIMENSION = IMAGE_ATTACHMENT_MAX_EDGE;
 export const MAX_STASH_IMAGE_DATA_URL_CHARS = 1_300_000;
-/**
- * Ceiling on the *source* file handed to the re-encoder. File size is a
- * proxy for pixel count, and decoding hundreds of megapixels into an
- * ImageBitmap can OOM the tab — beyond this we refuse rather than risk it.
- */
+/** Bound source decoding: enormous ImageBitmaps can OOM the tab before resizing. */
 export const MAX_COMPRESSIBLE_SOURCE_BYTES = 50 * 1024 * 1024;
 const MAX_HEIC_DECODE_PIXELS = 64_000_000;
 const MAX_HEIC_METADATA_BYTES = 1024 * 1024;
@@ -254,8 +250,7 @@ async function encodeWithinBudget(
   const target = createCanvas(width, height);
   if (!target) return null;
 
-  // Probe WebP once; JPEG (no alpha) needs a white matte, so the fill has to
-  // happen before drawing and depends on which codec we end up using.
+  // Probe the codec before drawing; JPEG needs a white matte because it has no alpha.
   const mimeType =
     preferredMimeType ??
     ((await encodeCanvas(target.canvas, QUALITY_STEPS[0], "image/webp"))
@@ -299,10 +294,7 @@ async function reencodeWithinBudget(
   }
 
   try {
-    // Each pass shrinks relative to the *previous target*, capped by
-    // MAX_DIMENSION. Scaling a fixed ceiling instead would be a no-op for
-    // images already smaller than that ceiling — the fallback passes would
-    // all resolve to the source size and never actually reduce resolution.
+    // Shrink the previous target; using MAX_DIMENSION leaves smaller images unchanged.
     const baseDimension = Math.min(MAX_DIMENSION, Math.max(bitmap.width, bitmap.height));
     let encodeFailed = false;
     for (const dimensionScale of [1, ...FALLBACK_SCALE_STEPS]) {

@@ -18,7 +18,6 @@ const LDD_IN_BARE_DEBIAN = `\tlinux-vdso.so.1 (0x00007ffd2d1f8000)
 
 // Chrome's own abort on Ubuntu 26.04 with unprivileged user namespaces restricted.
 
-// What the real loader prints when the browser's `--version` cannot start it.
 const LOADER_ERROR =
   "chrome-headless-shell: error while loading shared libraries: libglib-2.0.so.0: cannot open shared object file: No such file or directory";
 

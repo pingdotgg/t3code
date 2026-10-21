@@ -133,12 +133,11 @@ function toPersistenceSqlOrDecodeError(
         });
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
-  // Runtime writes can carry stale payloads. Only recordImportedTranscript may
-  // change source records, so restore that field from the row being updated.
+  // Runtime payloads may be stale; only recordImportedTranscript can change source records.
   const upsertRuntimeRow = SqlSchema.void({
     Request: ProviderSessionRuntimeDbRowSchema,
     execute: (runtime) =>

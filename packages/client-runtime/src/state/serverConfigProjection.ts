@@ -20,12 +20,8 @@ export function withoutEnvironmentThemes(config: ServerConfig): ServerConfig {
 }
 
 /**
- * Returns `next` with every part deep-equal to `previous` replaced by the
- * previous object. A provider status push re-sends every provider even when
- * only one field (often just `checkedAt`) changed, so this keeps unchanged
- * providers, models and skills identical and lets memoized UI skip them.
- * A reconnect snapshot re-sends the whole config the same way.
- * A settings write re-sends the whole settings document for one changed field.
+ * Provider pushes, reconnects, and settings writes resend unchanged data.
+ * Reuse deep-equal objects so memoized UI can skip unchanged providers, models, and skills.
  */
 export function reuseUnchanged<T>(previous: unknown, next: T): T {
   if (Object.is(previous, next)) return next;

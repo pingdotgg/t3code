@@ -673,8 +673,7 @@ describe("FCM queue message isolation", () => {
           ),
           Stream.runForEach(FcmDeliveryQueueConsumer.processMessage),
         );
-        // Alchemy acknowledges the batch after a successful stream. Cloudflare
-        // ignores those acknowledgements for messages explicitly retried earlier.
+        // Cloudflare ignores Alchemy's final batch acknowledgements for already-retried messages.
         for (const item of batch) item.ack();
         expect([...outcomes]).toEqual([
           ["failed", "retry"],

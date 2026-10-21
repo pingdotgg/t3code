@@ -6,10 +6,7 @@ import type {
   ThreadPullRequestWatch,
 } from "@t3tools/contracts";
 
-/**
- * Wakes in a row that bring only comments. Check, conflict, or push news resets the count, so
- * this only stops a chatty bot looping an agent that is replying to it.
- */
+/** Bounds consecutive comment-only wakes to stop bot reply loops; check, conflict, or push news resets it. */
 export const PULL_REQUEST_WATCH_WAKE_LIMIT = 10;
 const LISTED_ITEMS = 10;
 const SNIPPET_LENGTH = 200;
@@ -26,7 +23,7 @@ export interface PullRequestWatchReport {
   readonly exhausted: boolean;
 }
 
-// "action-required" is a finished check that needs someone, so the agent hears about it.
+// action-required is a finished check needing human input.
 const isFailedCheck = (check: PullRequestCheck) =>
   check.status === "failure" || check.status === "cancelled" || check.status === "action-required";
 
@@ -39,7 +36,7 @@ export function evaluatePullRequestWatch(
   const headSha = detail.headSha ?? null;
   const headMoved = headSha !== watch.headSha;
 
-  // An empty list keeps the last state: a host can answer with one when its check read fails.
+  // Hosts can return no checks on read failure; preserve prior state.
   let failedChecks = headMoved ? [] : watch.failedChecks;
   let passed = headMoved ? false : watch.passed;
   let passedChecks = headMoved ? [] : watch.passedChecks;
@@ -54,8 +51,7 @@ export function evaluatePullRequestWatch(
     const passedNow = gate.every((check) => check.status !== "pending" && !isFailedCheck(check));
     const gateNames = gate.map((check) => check.name);
     const told = passed && passedChecks.length === 0 ? gateNames : passedChecks;
-    // A required job created and finished between two passes is never seen pending. Without
-    // required checks, any check counts, and advisory bots keep adding passed ones: no wake.
+    // Required checks can finish between sweeps; detect new names. With no required checks, ignore advisory gate growth.
     const gateGrew = required.length > 0 && gateNames.some((name) => !told.includes(name));
     if (passedNow && (!passed || gateGrew)) {
       changes.push({ kind: "checks-passed", count: gate.length, required: required.length > 0 });
@@ -67,7 +63,7 @@ export function evaluatePullRequestWatch(
   const own = (detail.viewer ?? detail.author?.login)?.toLowerCase();
   const through = Date.parse(watch.remarksThrough);
   const activeAt = (remark: PullRequestComment) => remark.editedAt ?? remark.createdAt;
-  // GitHub times are per second, so remarks at the boundary time are told apart by ID.
+  // GitHub timestamps have second precision; distinguish boundary remarks by id.
   const fresh = (remarks ?? []).filter((remark) => {
     const at = Date.parse(activeAt(remark));
     return (
@@ -87,7 +83,7 @@ export function evaluatePullRequestWatch(
   if (detail.mergeability === "conflicting" && !watch.conflicting) {
     changes.push({ kind: "conflicting" });
   }
-  // "unknown" is GitHub still computing after a push; only a clean answer clears a conflict.
+  // GitHub reports unknown while computing; only clean answers clear conflicts.
   const conflicting =
     detail.mergeability === "unknown" ? watch.conflicting : detail.mergeability === "conflicting";
 

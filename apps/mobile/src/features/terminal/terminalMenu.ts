@@ -61,11 +61,7 @@ export function getTerminalStatusLabel(input: {
   return "Not started";
 }
 
-/**
- * Counts the terminal screen already mounted (`activeRouteTerminalId`) as occupied so
- * an empty session list on the primary route still advances to `term-2` instead of
- * `replace`-navigating to the same `default` tab.
- */
+/** Count the mounted terminal before sessions load, or new-terminal navigation may replace it with itself. */
 export function nextOpenTerminalId(input: {
   readonly listedTerminalIds: ReadonlyArray<string>;
   readonly activeRouteTerminalId?: string | null;
@@ -114,10 +110,7 @@ export function buildTerminalMenuSessions(input: {
   return Arr.sort(sessionsById.values(), terminalMenuSessionOrder);
 }
 
-/**
- * Returns null when no other live session remains and the terminal UI should
- * be dismissed instead.
- */
+/** Returns null when no other live session remains; dismiss the terminal UI. */
 export function previousLiveTerminalId(input: {
   readonly sessions: ReadonlyArray<TerminalMenuSession>;
   readonly exitedTerminalId: string;

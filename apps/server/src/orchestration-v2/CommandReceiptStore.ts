@@ -71,11 +71,11 @@ export interface CommandReceiptStoreV2Shape {
   readonly upsert: (
     receipt: AnyCommandReceiptV2,
   ) => Effect.Effect<void, CommandReceiptStoreV2Error>;
-  /** A thread command's receipt; none when the command id belongs to a project command. */
+  /** None for project command ids. */
   readonly getByCommandId: (
     commandId: CommandId,
   ) => Effect.Effect<Option.Option<CommandReceiptV2>, CommandReceiptStoreV2Error>;
-  /** A project command's receipt; none when the command id belongs to a thread command. */
+  /** None for thread command ids. */
   readonly getProjectByCommandId: (
     commandId: CommandId,
   ) => Effect.Effect<Option.Option<ProjectCommandReceiptV2>, CommandReceiptStoreV2Error>;

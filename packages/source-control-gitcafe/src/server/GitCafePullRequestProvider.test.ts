@@ -160,7 +160,6 @@ const assertRequestId = (body: unknown) =>
 
 describe("GitCafePullRequestProvider", () => {
   it.effect("keeps a staging repository's requests and links on staging", () => {
-    // CAFE_TOKEN follows CAFE_HOST, so staging reads the env token only when it is the target.
     const server = fakeGitCafe(
       { "GET /repos/owner/repo/pulls/7": pull },
       { env: { CAFE_TOKEN: "env-token", CAFE_HOST: "staging.git.cafe" } },

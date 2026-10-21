@@ -8,7 +8,6 @@ import type { SegmentedControlProps } from "./SegmentedControl.types";
 
 export type { SegmentedControlProps } from "./SegmentedControl.types";
 
-/** Shared capsule control with native press targets and a flat, themed selection. */
 export function SegmentedControl<Value extends string | number>(
   props: SegmentedControlProps<Value>,
 ) {

@@ -125,7 +125,7 @@ const makePasswordPrompt = (
     prompts.request(request).pipe(Effect.mapError(toSshPasswordPromptError)),
 });
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const manager = yield* SshTunnel.SshEnvironmentManager;
   const prompts = yield* DesktopSshPasswordPrompts.DesktopSshPasswordPrompts;

@@ -520,8 +520,7 @@ export function findAccessibleWindow<
     const browserMatch = findBrowserTitleMatch(windows, titles, captured, matchMode, matchesBounds);
     if (browserMatch) return browserMatch;
   }
-  // GTK4/libadwaita often exposes the frame as an unnamed group. A PID-scoped
-  // lookup can accept the one window whose bounds match; size-only guesses cannot.
+  // GTK4 frames may be unnamed; accept only a PID-scoped unique bounds match, never size alone.
   if (!options.allowUntitledUniqueBounds) return undefined;
   const boundsMatches = windows.filter(
     (window) => normalizeTitle(window.name ?? "") === "" && matchesBounds(window),

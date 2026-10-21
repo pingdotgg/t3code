@@ -16,8 +16,7 @@ export function omitLocalVisibleTurnItems(
   let omitted = 0;
   for (const row of projection.visibleTurnItems) {
     if (!isLocalTimelineRow(projection, row)) continue;
-    // Same object, not merely the same id: restoring from the row must
-    // reproduce the original entry exactly.
+    // Require object identity so row restoration reproduces the exact entry.
     if (projection.turnItems[omitted] !== row.item) return null;
     omitted += 1;
   }
@@ -25,10 +24,7 @@ export function omitLocalVisibleTurnItems(
   return { ...projection, turnItems: projection.turnItems.slice(omitted) };
 }
 
-/**
- * Client half: call on a decoded snapshot that carries the
- * `turnItemsOmitLocalVisible` marker, before reducers or caches see it.
- */
+/** Restore marked snapshots before reducers or caches see them. */
 export function restoreLocalVisibleTurnItems(
   projection: OrchestrationV2ThreadProjection,
 ): OrchestrationV2ThreadProjection {

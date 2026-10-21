@@ -86,8 +86,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     yield* fs.writeFileString(filePath, `${encoded}\n`);
     return yield* Effect.acquireRelease(
       Effect.sync(() => NodeFS.openSync(filePath, "r")),
-      // Without a /proc or /dev/fd path to reopen, the reader consumes the fd
-      // itself (autoClose), so on Windows it is already closed here.
+      // Windows cannot reopen the fd through /proc or /dev/fd, so the reader closes it.
       (fd) =>
         Effect.sync(() => {
           try {

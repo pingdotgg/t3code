@@ -1,16 +1,5 @@
-/**
- * Two consumers derive from this list, and they must never disagree:
- *
- * - apps/server/vite.config.ts decides what stays external to the bundle.
- * - scripts/build-desktop-artifact.ts selects the runtime dependency roots for
- *   the Windows server sidecar.
- *
- */
-/**
- * An external package is loaded from the real filesystem, so its own `require`
- * also resolves from the real filesystem; a dependency that was bundled away
- * exists only inside the emitted bundle and is unreachable there.
- */
+/** Keep bundler externals and staged runtime dependency roots aligned. */
+// Filesystem-loaded externals need dependencies outside the bundle.
 export const CLI_RUNTIME_EXTERNAL_PREFIXES = [
   // Cursor ships computed Webpack imports and platform helper packages.
   "@cursor/sdk",
@@ -28,8 +17,7 @@ export const CLI_RUNTIME_EXTERNAL_PREFIXES = [
   "utf-8-validate",
 ] as const;
 
-// These are Cursor's disk-backed dependency closure. Match package boundaries
-// so "zod" does not also externalize unrelated packages such as zod-to-json-schema.
+// Match Cursor dependency boundaries so zod does not externalize zod-to-json-schema.
 const CURSOR_RUNTIME_DEPENDENCIES = [
   "@bufbuild/protobuf",
   "@connectrpc/connect",
@@ -49,12 +37,7 @@ export function isRuntimeExternalCliDependency(id: string): boolean {
   );
 }
 
-/**
- * This has to be wired to the bundler's `neverBundle`, not just to
- * `alwaysBundle`. `alwaysBundle` only forces packages IN — returning false from
- * it means "no opinion", and the default then applies: a declared dependency
- * stays external, but a transitive one gets bundled.
- */
+/** Use neverBundle: false from alwaysBundle means no opinion and leaves transitive packages bundled. */
 export function isExternalCliDependency(id: string): boolean {
   return isRuntimeExternalCliDependency(id);
 }
@@ -72,10 +55,7 @@ export function selectCliRuntimeExternalDependencies(
   );
 }
 
-/**
- * `regionCount` is reported so the caller can tell "nothing was inlined" apart
- * from "the marker format changed and this scan no longer sees anything".
- */
+/** regionCount distinguishes a clean bundle from a changed marker format the scan cannot see. */
 export function findInlinedExternalPackages(source: string): {
   readonly regionCount: number;
   readonly inlined: ReadonlyArray<string>;

@@ -248,9 +248,7 @@ export const buildAntigravityPrompt = Effect.fn("buildAntigravityPrompt")(functi
       attachment.type === "file" &&
       "source" in attachment &&
       attachment.source?._tag === "pasted-text";
-    // ProviderService has already put the file path in the text block. Keep a
-    // folded clipboard paste lazy so the agent can search or sample it rather
-    // than paying to embed the entire resource in context immediately.
+    // The text already carries the path; keep folded pastes lazy so agents can search without embedding the whole file.
     const mimeType = attachment.mimeType.toLowerCase().split(";", 1)[0] ?? "";
     const image = attachment.type === "image" && IMAGE_MIME_TYPES.has(mimeType);
     const audio = attachment.type === "file" && AUDIO_MIME_TYPES.has(mimeType);

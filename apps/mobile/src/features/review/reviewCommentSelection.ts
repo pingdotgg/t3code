@@ -270,8 +270,7 @@ export function countReviewCommentContexts(value: string): number {
 
 export function parseReviewInlineComments(value: string): ReadonlyArray<ReviewInlineComment> {
   const comments: ReviewInlineComment[] = [];
-  // Match on masked delimiters, as `parseReviewCommentMessageSegments` does: a chip label may
-  // contain `</review_comment>`, which would otherwise end the block early and truncate it.
+  // Mask chip delimiters: labels containing </review_comment> would otherwise truncate the block.
   const masked = replaceComposerContextReferences(value, (reference) =>
     " ".repeat(reference.source.length),
   );

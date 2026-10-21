@@ -28,8 +28,7 @@ export const AssetResource = Schema.Union([
     attachmentId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
     fileName: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(255))),
     mimeType: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(100))),
-    /** Generic attachments download by default. Document viewers opt into an
-        inline response after deciding the file type is safe to preview. */
+    /** Defaults to download; viewers may request inline after checking the type is safe. */
     disposition: Schema.optionalKey(Schema.Literals(["inline", "attachment"])),
     renderIntent: Schema.optionalKey(Schema.Literal("mcp-app")),
   }),
@@ -40,16 +39,13 @@ export const AssetResource = Schema.Union([
   }),
   Schema.TaggedStruct("project-favicon", {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
-    // A cache-key hint only. The server reads the authoritative path from the
-    // project projection before it issues the signed URL.
+    // Cache-key hint only; the project projection supplies the authoritative path.
     path: Schema.optional(ProjectFaviconPath),
   }),
   Schema.TaggedStruct("native-app-icon", {
     app: ToolActivityNativeAppReference,
   }),
-  // An upload a pull request body points at on GitHub. A private repository serves these only
-  // to a request that carries a credential, which the client has none of, so the server fetches
-  // them with the `gh` credential the repository at `cwd` authenticates with.
+  // The server uses cwd's `gh` credential to fetch private GitHub media for unauthenticated clients.
   Schema.TaggedStruct("github-media", {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
     url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),

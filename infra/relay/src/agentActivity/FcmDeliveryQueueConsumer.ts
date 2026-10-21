@@ -11,8 +11,7 @@ export const processMessage = Effect.fn("relay.fcm_delivery_queue.process_messag
     Effect.matchEffect({
       onFailure: (error) =>
         Effect.gen(function* () {
-          // Decide this message's outcome before Alchemy acknowledges the batch.
-          // Cloudflare keeps the first ack/retry decision for each message.
+          // Cloudflare keeps the first ack/retry decision; decide before Alchemy acknowledges the batch.
           message.retry();
           yield* Effect.logWarning("FCM queue delivery failed; retrying message", {
             messageId: message.id,

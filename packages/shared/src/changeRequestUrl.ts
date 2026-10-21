@@ -1,11 +1,7 @@
 import type { RepositoryIdentity, ThreadLinkedPullRequest } from "@t3tools/contracts";
 import { canonicalRepositoryKey } from "./sourceControl.ts";
 
-/**
- * The two strings are what `pullRequestHostOf` and the project's `repositoryIdentity` produce
- * from a git remote — lower case, no port, the full path below the host — because links are
- * matched against those. Anything else matches nothing.
- */
+/** Match remote identities: lowercase host without port and lowercase repository as the full path below it. */
 export interface ChangeRequestLink {
   readonly host: string;
   readonly repository: string;
@@ -140,11 +136,7 @@ export function gitHubPullRequestBrowserUrl(
   }
 }
 
-/**
- * The pull-request URL a GitHub-style `#123` autolink might name. GitHub writes every bare
- * reference through `/issues/`, including pull requests, so this only builds a candidate: the
- * caller must successfully read it as a pull request before treating it as one.
- */
+/** GitHub routes issue and PR autolinks through /issues/; read the candidate as a PR before accepting it. */
 export function pullRequestCandidateUrlFromReferenceAutolink(targetUrl: string): string | null {
   let url: URL;
   try {

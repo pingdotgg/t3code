@@ -225,9 +225,8 @@ export function planScopedSettingsPatch(
         ? unscopableKeys.length > 0
           ? []
           : projectOverrideWrites(scope, environments, (current, settings, projectId) => {
-              // Object-valued keys arrive as partial patches (the writing style
-              // rows send one field); an override entry stores the whole value,
-              // so complete the patch from the target's effective value.
+              // Override entries store whole objects; complete partial patches from each target's effective
+              // value.
               const effective = resolveProjectSettings(settings, projectId).settings;
               const next: Record<string, unknown> = { ...current };
               for (const [key, value] of Object.entries<unknown>(serverPatch)) {
@@ -241,8 +240,7 @@ export function planScopedSettingsPatch(
                   };
                   continue;
                 }
-                // A picker's "Inherit" sends null; for keys whose override
-                // cannot store null that means remove the override.
+                // Inherit sends null; remove overrides whose keys cannot store null.
                 if (
                   value === null &&
                   !isNullableProjectSettingsOverride(key as ProjectScopedServerSettingKey)
@@ -412,10 +410,7 @@ function writeWasDropped(value: unknown, before: unknown, saved: unknown): boole
   return !unchanged && Equal.equals(saved, before);
 }
 
-/**
- * An older server drops keys it does not know, top-level or nested, and still
- * succeeds. Left unreported, the row stays mixed forever.
- */
+/** Older servers silently drop unknown keys; report them so rows cannot stay mixed forever. */
 function droppedSettingKeys(write: ScopedServerWrite, saved: ServerSettings | undefined) {
   if (saved === undefined) return [];
   return Object.entries(write.patch).flatMap(([key, value]) =>

@@ -4,10 +4,7 @@ export type ProjectIconGlyph =
   | { readonly kind: "emoji"; readonly emoji: string }
   | { readonly kind: "monogram"; readonly text: string; readonly color: ProjectIconColor };
 
-/**
- * Hermes has no Intl.Segmenter, so combining marks are folded into their base
- * character instead of full grapheme segmentation.
- */
+/** Hermes lacks Intl.Segmenter; fold combining marks into base characters instead. */
 export function countGlyphs(text: string): number {
   return Array.from(text.replace(/\p{M}/gu, "")).length;
 }

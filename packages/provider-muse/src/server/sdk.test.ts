@@ -219,7 +219,6 @@ describe("Muse launch", () => {
       );
       yield* fs.makeDirectory(folder);
       const launcher = path.join(folder, "muse.cmd");
-      // Records its arguments next to itself; reaching the file at all proves cmd found it.
       yield* fs.writeFileString(launcher, '@echo off\r\necho %*>"%~dp0args.txt"\r\n');
       const launch = yield* museLaunch(launcher);
       const run = NodeChildProcess.spawnSync(launch.command, [...launch.args, "serve", "--x"], {

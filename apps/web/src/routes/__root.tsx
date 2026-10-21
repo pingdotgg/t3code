@@ -164,8 +164,7 @@ function RootRouteView() {
     );
   }
 
-  // Ahead of first-run onboarding, which would otherwise send a new visitor to the welcome
-  // wizard and lose the link.
+  // Handle links before onboarding redirects lose them.
   if (hostedPromptLinkLanding !== null) {
     return (
       <>
@@ -257,8 +256,7 @@ function RootRouteView() {
           {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
           {isElectron ? <DesktopUpdateLaunchNotice /> : null}
           {appShell}
-          {/* Above the router: a theme draft is judged by walking the app, so the
-              editor has to survive navigation away from settings. */}
+          {/* Keep the theme editor above the router so drafts survive navigation. */}
           <ThemeEditorHost />
         </FirstRunGate>
       </AnchoredToastProvider>
@@ -268,8 +266,7 @@ function RootRouteView() {
 
 function EnvironmentThemeSync() {
   useEnvironmentThemeSync();
-  // Ordered after the palette sync so a first-run client adopting the
-  // environment's own theme finds it already in the library.
+  // Sync palettes before adopting the environment theme so it is already in the library.
   useDefaultThemeAdoption();
   return null;
 }
@@ -342,7 +339,7 @@ function FontAppearanceSync() {
   return null;
 }
 
-/** Keyed by pathname: each route paints its own surface, which the browser chrome samples. */
+// Each route paints its own surface for browser chrome to sample.
 function BrowserChromeThemeSync() {
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -476,9 +473,7 @@ function errorDetails(error: unknown): string {
 
 const MAX_ERROR_CAUSE_DEPTH = 5;
 
-/**
- * Takes the pathname only so tokens in the query never land on the clipboard.
- */
+// Use only pathname to keep query tokens off the clipboard.
 function errorReport(error: unknown, pathname: string): string {
   const lines = [
     `${APP_DISPLAY_NAME} ${APP_VERSION}`,

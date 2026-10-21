@@ -107,16 +107,10 @@ const makeOpenCodeMessageId = Effect.fnUntraced(function* (
   return `msg_${encodedTime}${random}`;
 });
 
-/**
- * OpenCode's session, message, part, and interaction-request identifiers are
- * durable. It does not expose a first-class turn object: the initiating user
- * message is the best native turn correlation point, and session idle is the
- * authoritative terminal signal.
- */
+// OpenCode has no turn object; correlate by initiating user message and settle on session idle.
 const OpenCodeProviderCapabilitiesV2 = {
   sessions: {
-    // The current adapter owns one directory-bound client/server per session.
-    // Keep it isolated until its runtime is made safe for cross-thread pooling.
+    // The directory-bound client/server is not safe for cross-thread pooling.
     supportsMultipleProviderThreadsPerSession: false,
     supportsModelSwitchInSession: true,
     supportsProviderSwitchingViaHandoff: true,
@@ -597,10 +591,7 @@ const OPENCODE_RESTRICTED_PERMISSIONS = [
   "doom_loop",
 ] as const;
 
-/**
- * OpenCode does not provide an OS sandbox, so permission rules are also the
- * enforcement boundary for non-interactive policies.
- */
+/** OpenCode has no OS sandbox; permission rules must enforce non-interactive policies too. */
 export function openCodePermissionRules(
   runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
 ): PermissionRuleset {
@@ -622,9 +613,7 @@ export function openCodePermissionRules(
     return [{ permission: "*", pattern: "*", action: "allow" }];
   }
 
-  // Task sessions initially inherit only parent deny rules. Seed explicit
-  // denies before the effective ask/allow overrides so a child is safe during
-  // the short interval before emitSubagent installs its complete policy.
+  // Children initially inherit only denies; seed them before overrides to protect the policy-install gap.
   const rules: PermissionRuleset = [
     { permission: "*", pattern: "*", action: "deny" },
     ...OPENCODE_RESTRICTED_PERMISSIONS.map((permission) => ({
@@ -704,12 +693,7 @@ function permissionRuleEquals(
   );
 }
 
-/**
- * OpenCode task sessions inherit only the parent's deny/external-directory
- * rules and then add agent-specific restrictions such as disabling nested
- * tasks. Install the complete parent policy while retaining only rules that
- * were added specifically for the selected child agent.
- */
+/** Children inherit only deny/external-directory rules; restore parent policy while retaining agent restrictions. */
 export function openCodeChildPermissionRules(
   runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
   nativeChildRules: PermissionRuleset,
@@ -725,11 +709,7 @@ export function openCodeChildPermissionRules(
   return [...parentRules, ...childSpecificRules];
 }
 
-/**
- * OpenCode's fork/revert boundary is exclusive. To retain the selected app
- * turn, address the next native user message; omitting a boundary retains the
- * current head when the selected turn is already last.
- */
+/** Boundaries are exclusive: use the next user message, or omit at head to retain the selected turn. */
 export function openCodeBoundaryAfterProviderTurn(
   providerTurns: ReadonlyArray<OrchestrationV2ProviderTurn>,
   selectedProviderTurnId: OrchestrationV2ProviderTurn["id"],
@@ -995,13 +975,9 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
         const subagentsByNativeItemId = new Map<string, OpenCodeSubagentContext>();
         const subagentsByChildSessionId = new Map<string, OpenCodeSubagentContext>();
         const relatedSessionOwners = new Map<string, OpenCodeThreadState>();
-        // Sessions of this runtime that OpenCode reports busy. A background
-        // task child keeps running after its parent turn settles, so idle
-        // release must not close the server under it.
+        // Busy children outlive parent settlement; keep their server open.
         const busySessionIds = new Set<string>();
-        // Requests settled before their session relation resolved: a late
-        // routing attempt must never resurrect them. Bounded because entries
-        // only matter for the seconds a routing retry can still be running.
+        // Remember settled requests across routing retries to prevent resurrection; only recent IDs matter.
         const settledNativeRequestIds = new Set<string>();
         const pendingChildRequestRoutes = new Set<string>();
         const rememberSettledRequest = (nativeRequestId: string) => {
@@ -2510,10 +2486,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           const state = threads.get(message.sessionID);
           const turn = state?.activeTurn;
           if (state === undefined || turn === null || turn === undefined) return;
-          // Some OpenCode versions ignore the client-provided message ID. A
-          // completed assistant message is definitive admission evidence, so
-          // let the following idle event settle the turn without weakening
-          // the stale-user-message guard.
+          // Versions may ignore supplied message IDs; completed assistant output admits settlement on idle.
           advanceOpenCodePromptAdmission(turn, "assistant-completed");
           for (const partId of turn.partIdsByMessage.get(message.id) ?? []) {
             const part = turn.parts.get(partId);
@@ -2846,9 +2819,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           );
           const nativeMessages = [];
           for (const entry of unwrapData("session.messages", response)) {
-            // OpenCode retains reverted records in session.messages. Its
-            // revert marker identifies the first removed message, so stop
-            // before it or a restart resurrects rolled-back assistant work.
+            // Reverted records remain in messages; stop at the revert marker to avoid resurrecting work.
             if (entry.info.id === nativeSession.revert?.messageID) break;
             nativeMessages.push(entry);
           }
@@ -2906,8 +2877,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           };
         });
 
-        // Native commands wait for generation, unlike promptAsync. A user-message
-        // receipt admits the run while the scoped request continues in the background.
+        // Native commands await generation; user-message receipts admit their background requests.
         const submitPrompt = Effect.fn("OpenCode.submitPrompt")(function* (
           state: OpenCodeThreadState,
           turn: ActiveOpenCodeTurn,
@@ -3011,8 +2981,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   providerThread: threadInput.existingProviderThread,
                 });
               }
-              // No title: OpenCode generates one from the first prompt only when
-              // session.create leaves it unset (SessionPrompt.ensureTitle).
+              // OpenCode generates a title only when session.create leaves it unset.
               const response = yield* sdkCall(
                 "session.create",
                 { permission: openCodePermissionRules(threadInput.runtimePolicy) },
@@ -3142,10 +3111,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 completedAt: null,
               };
               const admissionMessageId = yield* makeOpenCodeMessageId(messageIdClock);
-              // No Effect may be yielded between this check and installing the
-              // turn. If the event stream ended while IDs were being prepared,
-              // registering afterward would leave a running turn that the EOF
-              // handler had already finished scanning.
+              // Do not yield before turn installation; EOF may otherwise finish scanning before registration.
               if (nativeStreamFailure !== null) {
                 return yield* protocolError(
                   "OpenCode event stream has ended; reconnect the provider session before starting another turn.",
@@ -3427,8 +3393,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               cancelOpenCodePromptAdmission(turn, state!.nextAdmissionGeneration++);
               turn.admissionAbortController?.abort();
               if (admissionWasPending) {
-                // A timed-out local request must not prevent the definitive
-                // server-side abort below from running.
+                // Local admission timeout must not block the server-side abort.
                 yield* Deferred.await(turn.admissionSettled).pipe(
                   Effect.timeout("10 seconds"),
                   Effect.ignore,
@@ -3447,8 +3412,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                       }),
                 ),
               );
-              // Root abort does not stop child sessions. Report incomplete cleanup
-              // even if the root has already emitted its terminal event.
+              // Root abort leaves children running; report incomplete cleanup even after root termination.
               yield* abortDescendants(sessionId);
             },
             (effect, interruptInput) =>

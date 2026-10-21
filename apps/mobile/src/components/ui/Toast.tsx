@@ -18,7 +18,6 @@ export interface ToastProps {
   readonly onDismiss?: () => void;
 }
 
-/** The owning screen places and dismisses feedback; actions are never implicit. */
 export function Toast(props: ToastProps) {
   useEffect(() => {
     if (Platform.OS === "ios") AccessibilityInfo.announceForAccessibility(props.message);

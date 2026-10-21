@@ -35,14 +35,7 @@ export function applyCtrlModifier(input: string): string {
   return input;
 }
 
-/**
- * The host's paste chord (cmd+v on a macOS host, ctrl+v elsewhere) pastes the
- * device clipboard instead of reaching the remote shell as a raw control byte,
- * which matches what the web terminal does with the same chord. Forwarding the
- * byte is never what a phone user means: PowerShell binds ctrl+v to paste from
- * the host machine's clipboard, so the shell inserts whatever the desktop last
- * copied rather than the text on the phone.
- */
+/** Use the device clipboard for host paste chords; forwarding Ctrl+V to PowerShell pastes the host clipboard. */
 export function resolveModifiedTerminalInput(input: {
   readonly data: string;
   readonly modifier: PendingModifier;
@@ -59,14 +52,7 @@ export function resolveModifiedTerminalInput(input: {
   };
 }
 
-/**
- * Encodes clipboard text for the remote pty the way the web terminal does when
- * bracketed paste is off: unsafe control bytes become spaces (which also
- * defuses an embedded bracketed-paste end marker, since its ESC goes too) and
- * line breaks become carriage returns, since a bare LF is Ctrl+J to a raw-mode
- * TUI. The native mobile surface does not expose DECSET 2004, so mobile never
- * wraps a paste in bracketed-paste markers.
- */
+/** No DECSET 2004 state, so omit bracket markers. Strip unsafe controls and use CR; raw-mode TUIs read LF as Ctrl+J. */
 export function encodeTerminalPaste(text: string): string {
   return text.replace(UNSAFE_PASTE_BYTES, " ").replace(/\r\n|\n/g, "\r");
 }
@@ -86,9 +72,7 @@ export function chunkTerminalWrite(data: string): ReadonlyArray<string> {
   return chunks;
 }
 
-/**
- * Returns null for "unknown" so callers can fall back to a weaker signal.
- */
+/** Returns null for unknown OSes so callers can try weaker signals. */
 export function hostPlatformFromOs(os: ExecutionEnvironmentPlatformOs | null): HostPlatform | null {
   if (os === "darwin") return "mac";
   if (os === "linux") return "linux";

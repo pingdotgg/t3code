@@ -29,8 +29,7 @@ export function resolveThreadQueueRowControls(input: {
 
   return {
     canDismiss: !input.busy,
-    // Re-opening the row already in the composer would reload it and throw
-    // away whatever has been typed since.
+    // Reopening the active edit would discard unsaved composer text.
     canEdit: mutationEnabled && !isEditing,
     canMoveDown: mutationEnabled && input.canReorder && input.index < input.queuedCount - 1,
     canMoveUp: mutationEnabled && input.canReorder && input.index > 0,

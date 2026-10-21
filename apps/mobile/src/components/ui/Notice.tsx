@@ -6,7 +6,6 @@ import { AppText } from "./AppText";
 import { SymbolView, type AppSymbolName } from "./AppSymbol";
 import { GlassSurface } from "./GlassSurface";
 
-/** Inline feedback or a dismissible notice positioned by its owning screen. */
 export function Notice(props: {
   readonly message: string;
   readonly tone?: "default" | "danger";

@@ -78,7 +78,7 @@ function pendingPromise<A>() {
   return { promise, resolve, reject };
 }
 
-/** SDK-shaped transport fake: registration deliberately returns void, as the SDK does. */
+// Match the SDK: handler registration returns void.
 const makeFakeMuse = Effect.fnUntraced(function* (idPrefix = "native") {
   const requests = yield* Queue.unbounded<NativeCall>();
   const calls: NativeCall[] = [];
@@ -173,7 +173,6 @@ const makeFakeMuse = Effect.fnUntraced(function* (idPrefix = "native") {
       Effect.sync(() => {
         notify({ jsonrpc: "2.0", method, params: { sessionId, ...params } });
       }),
-    /** A notification about the host or account rather than a session, as `usage/changed` is. */
     emitHostWide: (method: string, params: Record<string, unknown>) =>
       Effect.sync(() => {
         notify({ jsonrpc: "2.0", method, params });
@@ -344,17 +343,14 @@ const startConversation = Effect.fnUntraced(function* (
   return { nativeId: call.commandId!, providerTurn: event.providerTurn };
 });
 
-// `usage/changed` as Muse 1.4.3 sent it after a reply (2026-10-08), with a placeholder tier.
 const SUBSCRIPTION_USAGE = {
   window: { usedPercent: 0, windowDurationMins: 300, resetsAtMs: 1791465557000 },
   weekly: { usedPercent: 5, resetsAtMs: 1791763200000 },
   tier: "tier-1",
   observedAtMs: 1791447762610,
 } satisfies MuseSubscriptionUsage;
-// How Muse ends a turn Meta refuses for quota (from a simulated Meta 429).
 const QUOTA_MESSAGE =
   "API error 429: Subscription quota exhausted. Your usage window resets soon. (rate_limit_error)";
-// How Muse 1.4.6 ended a turn at a real quota stop (2026-10-13), relayed by a credential proxy.
 const RELAYED_QUOTA_MESSAGE =
   "API error 429: All credentials for model muse-wonder-1.0-contributor are cooling down (last error: rate_limit_exceeded: Subscription quota exhausted. Your usage window resets at 2026-10-13T10:45:52Z.) (after 10 provider attempts)";
 
@@ -548,7 +544,7 @@ describe("MuseAdapterV2", () => {
       );
       yield* startConversation(harness, fake);
       const turnStart = fake.calls.find((call) => call.method === "turn/start");
-      // Muse 1.4.3 rejects any other form: "expected a canonical path (resolves to \\?\C:\…)".
+      // Muse 1.4.3 accepts only verbatim canonical roots.
       assert.deepStrictEqual(turnStart?.params.workspaceRoots, ["\\\\?\\C:\\work\\repo"]);
       // The muse.cmd launcher runs under cmd.exe, which cannot start in a verbatim directory.
       assert.strictEqual(hostCwd, "C:\\work\\repo");
@@ -563,7 +559,6 @@ describe("MuseAdapterV2", () => {
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
       const harness = yield* makeHarness(fake);
-      // Meta's report after the last reply that went through: the session window ran out.
       yield* fake.emitHostWide("usage/changed", {
         ...SUBSCRIPTION_USAGE,
         window: { ...SUBSCRIPTION_USAGE.window, usedPercent: 103 },
@@ -579,7 +574,6 @@ describe("MuseAdapterV2", () => {
       assert.strictEqual(terminal.status, "failed");
       assert.strictEqual(terminal.threadDisposition, "reusable");
       assert.strictEqual(terminal.failure?.class, "usage_limit");
-      // The exhausted session window's reset, not the weekly one.
       assert.strictEqual(terminal.failure?.resetAt, "2026-10-08T13:19:17.000Z");
       assert.isTrue(
         harness.allEvents.some(
@@ -605,7 +599,6 @@ describe("MuseAdapterV2", () => {
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
       const harness = yield* makeHarness(fake);
-      // A fresh host has no report yet; the refusal itself says when the window resets.
       const { nativeId } = yield* startConversation(harness, fake);
       yield* fake.emit("turn/completed", {
         turnId: nativeId,
@@ -624,7 +617,6 @@ describe("MuseAdapterV2", () => {
       const fake = yield* makeFakeMuse();
       const harness = yield* makeHarness(fake);
       const { nativeId } = yield* startConversation(harness, fake);
-      // The typed quota decides even when the text names no quota.
       yield* fake.emit("turn/completed", {
         turnId: nativeId,
         terminal: "failed",
@@ -646,7 +638,6 @@ describe("MuseAdapterV2", () => {
       const fake = yield* makeFakeMuse();
       const harness = yield* makeHarness(fake);
       yield* fake.emitHostWide("usage/changed", { window: "not usage" });
-      // A reset no Date can hold would throw once formatted, so that report is skipped too.
       yield* fake.emitHostWide("usage/changed", {
         ...SUBSCRIPTION_USAGE,
         window: { ...SUBSCRIPTION_USAGE.window, usedPercent: 103, resetsAtMs: 1e16 },

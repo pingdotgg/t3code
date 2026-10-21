@@ -41,7 +41,6 @@ export function useBrowserViewportResize(options: {
   const keyboardViewportRef = useRef<ViewportDrag | null>(null);
   const [dragViewport, setDragViewport] = useState<ViewportDrag | null>(null);
   const sourceViewportKey = browserViewportSettingKey(viewport);
-  // Drag listeners and the keyboard commit timer outlive the render that started them.
   const isCurrentSource = useStableCallback((key: string) => key === sourceViewportKey);
   const activeDrag = dragViewport?.sourceKey === sourceViewportKey ? dragViewport : null;
   const effectiveViewport = activeDrag

@@ -123,10 +123,7 @@ const nativeReport = (provider: ServerProvider): AccountReport => ({
   usageLimits: provider.usageLimits,
 });
 
-/**
- * Pass every enabled login, read or not, so an unreadable workspace still
- * counts as one.
- */
+// Include every enabled login, even unreadable workspaces.
 function accountKeyResolver(reports: Iterable<AccountReport>) {
   const workspaces = new Map<string, Set<string>>();
   for (const report of reports) {
@@ -169,11 +166,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
   const creditSources = new Map<string, LimitAccount>();
   const hubRedeems = new Map<string, LimitAccount>();
   const merge = (key: string, next: LimitAccount) => {
-    // Redeeming through a hub also clears the routing cooldown that hub holds
-    // for the account. Redeeming natively against the same subscription resets
-    // it upstream but leaves the hub refusing to route to the account until
-    // its own cooldown expires, so a hub target wins the redemption outright
-    // while the displayed balance still follows the freshest read.
+    // Prefer hub redemption to clear its routing cooldown too; displayed balance still follows the freshest read.
     const previousHub = hubRedeems.get(key);
     if (
       next.redeem &&
@@ -402,11 +395,7 @@ function accountSortName(account: LimitAccount): string {
   return (account.displayName ?? account.email ?? account.key).toLowerCase();
 }
 
-/**
- * Codex ids are slots, not allowances: a weekly-only plan reports its weekly
- * window as `primary`, other plans as `secondary`. Its windows pool by kind;
- * other drivers' ids name distinct allowances.
- */
+// Codex ids name slots, so pool by kind; other drivers' ids identify distinct allowances.
 function poolKey(driver: ServerProvider["driver"], window: ServerProviderUsageWindow): string {
   return driver === "codex" ? window.kind : `${window.kind}:${window.id}`;
 }
@@ -475,9 +464,7 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
     const first = members[0]!.window;
     const id = members[0]!.account.driver === "codex" ? key : first.id;
     const usedPercent = members.reduce((sum, m) => sum + m.window.usedPercent, 0) / members.length;
-    // Pace compares spend against the clock, so it is judged only over the
-    // members that have a clock; a window with no reset would otherwise
-    // count as spend with no time elapsed and skew the verdict.
+    // Judge pace only for windows with reset clocks; others add spend without elapsed time.
     const timed = members.flatMap((m) => {
       const share = elapsedShare(m.window, now);
       return share === null ? [] : [{ used: m.window.usedPercent, elapsed: share }];

@@ -37,8 +37,7 @@ export const BUILT_IN_SOURCE_CONTROL_DRIVERS: ReadonlyArray<
 > = drivers;
 
 export const layer = Layer.mergeAll(
-  // `GitHubRest.layerWithDependencies` carries the quota reserve and rate-limit pause every GitHub
-  // reader shares, so the server builds it once, here.
+  // Build GitHubRest once so all readers share quota reserves and rate-limit pauses.
   GitHubPullRequestApi.layer.pipe(Layer.provideMerge(GitHubRest.layerWithDependencies)),
   AzureDevOpsPullRequestCli.layer.pipe(Layer.provideMerge(AzureDevOpsCli.layer)),
   BitbucketPullRequestApi.layer.pipe(Layer.provideMerge(BitbucketApi.layer)),

@@ -1,8 +1,5 @@
-// Windows WSL dev mode runs the server under Linux from the same node_modules
-// as the Windows client, so Windows installs also need Linux x64 glibc native
-// modules. Other platforms install only their own binaries; setting this
-// everywhere added ~2.2 GB of foreign binaries to every macOS install.
-// Release scripts stage their own installs with explicit architectures.
+// Windows installs need Linux x64 glibc binaries because WSL shares node_modules.
+// Keep other platforms native; release scripts set their own architectures.
 module.exports = {
   hooks: {
     updateConfig(config) {

@@ -133,9 +133,8 @@ interface FilePreviewPanelProps {
   revealLine: number | null;
   revealRequestId: number;
   onOpenFile: (relativePath: string) => void;
-  /** Moves this folder browser to another folder in place; see `navigateFolder`. */
   onNavigateFolder: (relativePath: string, folderTrail: string, keepSource: boolean) => void;
-  /** The deeper path breadcrumbs keep after the browser moved up; see `navigateFolder`. */
+  /** Retained descendant breadcrumb path after navigating up; see navigateFolder. */
   folderTrail: string | undefined;
   onPendingChange: (relativePath: string, pending: boolean) => void;
   selectedFilePending: boolean;
@@ -212,10 +211,6 @@ function WorkspaceImagePreview(props: {
   );
 }
 
-/**
- * HTML runs in a sandboxed frame with an opaque origin, so a page cannot reach
- * the app's session or storage.
- */
 function WorkspaceBrowserPreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
@@ -393,11 +388,7 @@ function updateFileLinkReveal(fileContainer: HTMLElement, line: number | null): 
 }
 
 const REVEAL_MAX_ATTEMPTS = 30;
-/**
- * After scrolling to the target, hold it for a short window so late
- * programmatic scroll resets (editable-editor focus and state restoration)
- * cannot silently snap the file back to the top.
- */
+/** Hold the reveal target against late focus/restoration scroll resets. */
 const REVEAL_GUARD_FRAMES = 20;
 const REVEAL_GUARD_TOLERANCE_PX = 2;
 
@@ -515,8 +506,8 @@ function useFileLineReveal(
       };
       scrollContainer.addEventListener("wheel", cancelGuard, { passive: true });
       scrollContainer.addEventListener("touchstart", cancelGuard, { passive: true });
-      // Pierre stops gutter pointer events from bubbling. Listen in capture
-      // so starting a comment cancels the reveal guard before the row expands.
+      // Capture gutter pointer events before Pierre stops propagation so comments can cancel the reveal
+      // guard.
       scrollContainer.addEventListener("pointerdown", cancelGuard, {
         passive: true,
         capture: true,
@@ -549,9 +540,8 @@ function useFileLineReveal(
           return;
         }
 
-        // Contents and line metrics can lag the first post-render on fresh
-        // mounts; clamping against missing contents would scroll to line 1
-        // and wrongly mark the request handled.
+        // Wait for contents and metrics; missing data would clamp fresh-mount reveals to line 1 and mark them
+        // handled.
         const currentContents = instance.file?.contents;
         const line =
           currentContents === undefined ? null : clampFileLine(currentContents, revealLine);
@@ -605,11 +595,8 @@ function needsWorkerHighlight(workerPool: WorkerPoolManager | undefined, file: F
   return lines <= DEFAULT_TOKENIZE_MAX_LENGTH;
 }
 
-/**
- * Pierre highlights an active edit session on the main thread, so each version
- * of the file becomes editable only once it has rendered the worker's
- * highlight.
- */
+/** Enable editing only after worker highlighting renders; active edit sessions highlight on the main
+ * thread. */
 function useEditableAfterHighlight(file: FileContents) {
   const workerPool = useWorkerPool();
   const [highlightedFile, setHighlightedFile] = useState<FileContents | null>(null);
@@ -623,8 +610,8 @@ function useEditableAfterHighlight(file: FileContents) {
 
   const onPostRender = (renderedFile: FileContents | undefined, phase: PostRenderPhase) => {
     if (ready || phase === "unmount" || renderedFile?.cacheKey !== file.cacheKey) return;
-    // The pool caches a result just before the instance renders it, so a
-    // render that sees the cache has painted highlighted rows.
+    // Cache results arrive just before instance rendering; seeing the cache during render means rows are
+    // highlighted.
     if (workerPool?.getFileResultCache(file) !== undefined) setHighlightedFile(file);
   };
   return { ready, onPostRender };
@@ -677,8 +664,7 @@ function EditableFileSurface({
     relativePath,
     onPendingChange,
   });
-  // The editor owns the draft, so its own edits echoing back through the file
-  // query keep the file identity. Only a change from elsewhere replaces it.
+  // Retain file identity for echoed editor changes; only external changes replace the editor's draft.
   const [externalFile, setExternalFile] = useState(() =>
     editableFileContents(environmentId, cwd, relativePath, contents),
   );
@@ -1026,21 +1012,14 @@ export default function FilePreviewPanel({
     attachment === undefined && relativePath !== null,
   );
   const attemptedPath = file.readError?.resolvedPath ?? file.readError?.operationPath;
-  // A chat link cannot tell a folder from a file, so a folder arrives here as
-  // a file surface and the read fails. Keep the breadcrumbs, drop the preview
-  // pane, and let the tree fill the surface with the folder revealed. Mutation
-  // refresh stays on so the surface notices if the path becomes a file. A host
-  // folder outside the workspace gets a tree of its own, rooted at that folder.
-  // `folderTrail` is set only when crumbs walked the browser up: the deeper path
-  // kept for the way back down. The explorer (`""`) shows crumbs only then.
+  // Folder links fail file reads; retain mutation refresh to detect conversion to files. Host folders own
+  // roots; folderTrail keeps descendants.
   const breadcrumbPath =
     attachment !== undefined ? null : (relativePath ?? (folderTrail === undefined ? null : ""));
-  // A host trail that walked up to the workspace root (`/repo/project` is `""`) no
-  // longer passes through the current path, so the crumbs start over there.
+  // Reset crumbs when a host trail reaches the workspace root and no longer passes through the current path.
   const breadcrumbTrail =
     breadcrumbPath === null ? null : retainedBreadcrumbTrail(folderTrail, breadcrumbPath);
-  // The trail only continues below folders, so a surface with one is a folder
-  // before its read settles, and walking up never flashes a file preview.
+  // A trail implies a folder before reads settle, preventing file-preview flashes while navigating up.
   const isFolder =
     attachment === undefined &&
     (file.isNotFile || (folderTrail !== undefined && file.data === null && file.error === null));
@@ -1074,9 +1053,7 @@ export default function FilePreviewPanel({
     true,
     Schema.Boolean,
   );
-  // Paired with the path on purpose: each file surface counts its reveals from
-  // one, so a bare id would let a dismissed reveal on one file swallow the first
-  // reveal on the next.
+  // Reveal ids restart at one per file; pair with the path so dismissal cannot swallow another file's reveal.
   const [handledReveal, setHandledReveal] = useState<{ path: string; requestId: number } | null>(
     null,
   );
@@ -1118,8 +1095,7 @@ export default function FilePreviewPanel({
     !isVideo &&
     previewAvailable &&
     isBrowserPreviewFile(previewPath);
-  // A file keeps its tab; walking up from it opens a folder browser beside it.
-  // The trail's end keeps its own spelling (`C:/a` or `C:\a`), so it finds its tab.
+  // Navigating up preserves the file tab; retain the trail's path spelling to find its folder tab.
   const navigateToFolder = (crumbPath: string) => {
     const path =
       breadcrumbTrail !== null && breadcrumbPathOf(breadcrumbTrail) === crumbPath
@@ -1138,9 +1114,8 @@ export default function FilePreviewPanel({
     enabled:
       attachment === undefined &&
       relativePath !== null &&
-      // Media and PDFs never show their contents, so re-reading them on every
-      // workspace mutation is waste. A folder named like one still re-reads, so
-      // it notices when the path becomes a file.
+      // Skip mutation reads for media/PDF files; re-read similarly named folders to detect conversion to
+      // files.
       (isFolder || (!isMedia && !isPdf)) &&
       !selectedFilePending,
     mutationId: workspaceMutationId,

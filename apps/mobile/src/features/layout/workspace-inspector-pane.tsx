@@ -12,10 +12,7 @@ import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderE
 import { WORKSPACE_PANE_TIMING } from "./workspace-pane-animation";
 import { WorkspacePaneDivider } from "./workspace-pane-divider";
 
-/**
- * Receives the pane layout via props (not the workspace context hook) so this module stays
- * import-cycle-free with AdaptiveWorkspaceLayout.
- */
+/** Pass layout props to avoid an import cycle with AdaptiveWorkspaceLayout. */
 export function WorkspaceInspectorPane(props: {
   readonly pathname: string;
   readonly renderedInspectorWidth: SharedValue<number>;
@@ -132,8 +129,6 @@ export function WorkspaceInspectorPane(props: {
   );
 }
 
-// The render callback must run inside the boundary's child, not while its
-// parent constructs the boundary element.
 function InspectorRenderer(props: { readonly render?: () => ReactNode }) {
   return <>{props.render?.()}</>;
 }

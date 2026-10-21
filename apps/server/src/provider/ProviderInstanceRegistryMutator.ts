@@ -1,9 +1,4 @@
-/**
- * Closes the per-instance `Scope` of every removed or replaced entry (tearing
- * down adapter processes, refresh fibres, temp files) BEFORE creating the
- * replacement — `reconcile` guarantees "at most one live instance per id" at
- * all times.
- */
+/** Reconcile closes removed/replaced scopes before creating replacements: at most one live instance per id. */
 import type { ProviderInstanceConfigMap } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";

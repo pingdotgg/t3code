@@ -1,14 +1,5 @@
-/**
- * Anyone who can call the URL chooses these values, so each one is wrapped in
- * `<webhook-data-ID>` tags and a closing note marks the tagged text as
- * untrusted request data. The caller picks a fresh random ID per request, so a
- * request can't close its own frame. Mentions inside a value are broken so
- * they never act; the template's own mentions still do.
- *
- * Credential-looking headers and query parameters are redacted wherever the
- * whole set renders (`{{request}}`, `{{headers}}`, `{{query}}`), as in the
- * delivery log. Naming one (`{{headers.authorization}}`) gives its raw value.
- */
+// Frame untrusted values with unpredictable per-request tags and break their mentions, preserving template mentions.
+// Whole-set placeholders redact credentials; named placeholders return raw values.
 
 export interface WebhookRequest {
   readonly method: string;
@@ -56,17 +47,8 @@ export function redactQuery(query: string): string {
 // Trim after matching so unclosed placeholders cannot backtrack over whitespace partitions.
 const PLACEHOLDER = /\{\{([^{}]*)\}\}/g;
 
-/**
- * Syntax an adapter or provider CLI may act on before the model reads the
- * prompt: `$name` skill mentions (any currency sign, after any character in
- * Codex and Pi), `@` file, agent and plugin mentions (after punctuation or
- * letters in some CLIs), a `/name` command word mid-text, and `t3-context:`
- * links. A word joiner goes after every currency sign and `@`, after a `/`
- * that starts a single-segment word, and inside the `t3-context` scheme and
- * any `webhook-data` name, so a value can't forge a frame tag.
- * Checked against Claude Code 2.1.296, Codex 0.162.1, Pi 1.2.0 and dsh
- * 0.2.0-rc.2; other agents may parse more.
- */
+// Break mentions before provider CLI parsing, including currency signs, embedded @, commands, context links and frame tags.
+// Checked with Claude Code 2.1.296, Codex 0.162.1, Pi 1.2.0 and dsh 0.2.0-rc.2; others may parse more.
 const MENTION = /[\p{Sc}@]|(?<=^|\s)\/(?=[^\s/]+(?:\s|$))|t3-context(?=:)|webhook(?=-data)/giu;
 
 function parseBody(request: WebhookRequest): unknown {
@@ -74,8 +56,7 @@ function parseBody(request: WebhookRequest): unknown {
   if (contentType.includes("application/x-www-form-urlencoded")) {
     return Object.fromEntries(new URLSearchParams(request.bodyText));
   }
-  // Senders are inconsistent about content types, so any body that parses
-  // as JSON is addressable.
+  // Senders mislabel content types; accept any parseable JSON body.
   try {
     return JSON.parse(request.bodyText) as unknown;
   } catch {
@@ -165,7 +146,6 @@ export function renderWebhookPrompt(
       if (!missing.includes(expression)) missing.push(expression);
       return "";
     }
-    // An empty value carries no request data, so it needs no frame or note.
     if (text === "") return "";
     if (raw) return text;
     framed = true;

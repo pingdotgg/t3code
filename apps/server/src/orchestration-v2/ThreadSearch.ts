@@ -68,7 +68,7 @@ export class ThreadSearch extends Context.Service<
   }
 >()("t3/orchestration-v2/ThreadSearch") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
@@ -130,8 +130,7 @@ export const make = Effect.gen(function* () {
 
   const search: ThreadSearch["Service"]["search"] = Effect.fn("ThreadSearch.search")(
     function* (input) {
-      // The scan reads every message, so run it on the reader worker rather
-      // than the event loop.
+      // Scan messages on the reader worker to avoid blocking the event loop.
       const rows = yield* sql
         .withTransaction(
           searchRows({

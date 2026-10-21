@@ -69,8 +69,7 @@ export async function openUrlInPreview<E>(input: {
   }
   const runtime = previewRuntimeFor(input.threadRef.environmentId);
   const previousActiveTabId = readThreadPreviewState(input.threadRef).activeTabId;
-  // The server's "opened" event switches the preview tab but not the panel's
-  // selection, so a changed selection means the user picked a tab themselves.
+  // The server changes the active tab, not panel selection; selection changes come from the user.
   const selectedSurface = () =>
     selectSelectedRightPanelSurface(useRightPanelStore.getState().byThreadKey, input.threadRef)
       ?.id ?? null;
@@ -89,8 +88,7 @@ export async function openUrlInPreview<E>(input: {
     rememberPreviewUrl(input.threadRef, input.url);
     if (input.background) {
       updatePreviewServerSnapshot(input.threadRef, snapshot);
-      // The server's "opened" event activates the new tab; hand focus back,
-      // unless the user picked a tab, this one included, while the open was in flight.
+      // Restore focus unless the user picked a tab while opening this one.
       if (
         previousActiveTabId &&
         readThreadPreviewState(input.threadRef).activeTabId === snapshot.tabId &&

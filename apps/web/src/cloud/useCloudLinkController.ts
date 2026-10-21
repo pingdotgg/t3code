@@ -33,11 +33,7 @@ export interface CloudLinkDesiredState {
   readonly holdWebhooksWhileOffline?: boolean;
 }
 
-/**
- * The local tunnel config can outlive a relay link that drifted to
- * publish-only, and clients then get `endpoint_provider_not_managed`. So when
- * relay discovery has this environment's record, it must also say managed.
- */
+// Require managed discovery: stale tunnel config after a publish-only switch causes endpoint_provider_not_managed.
 function isManagedTunnelActive(
   linkState: EnvironmentCloudLinkStateResult,
   relayProviderKind: RelayManagedEndpointProviderKind | undefined,
@@ -135,13 +131,9 @@ export function useCloudLinkController() {
     const tokenResult = await settlePromise(() => getToken(resolveRelayClerkTokenOptions()));
     if (!canManageLink()) return false;
 
-    // A failure after this point may follow a partially applied mutation (e.g.
-    // the link succeeded but the preference update did not), so every exit —
-    // success or failure — refreshes the rendered state to whatever the server
-    // actually holds now.
+    // A failed mutation may have partially applied, so refresh server state on every exit.
     if (!wantsLink) {
-      // Unlink works without a relay token — a failed token read must not
-      // leave the user unable to turn T3 Connect off.
+      // Unlink needs no relay token; failed token reads must still allow it.
       const unlinkResult = await unlinkPrimaryEnvironment({
         target,
         clerkToken: tokenResult._tag === "Success" ? (tokenResult.value ?? null) : null,

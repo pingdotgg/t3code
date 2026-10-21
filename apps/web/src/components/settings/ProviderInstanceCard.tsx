@@ -136,12 +136,7 @@ function readConfigString(config: unknown, key: string): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
-/**
- * Unlike provider settings field updates, does not drop empty-looking values —
- * the caller is responsible for deciding whether an empty array / empty object
- * should be stored explicitly (e.g. `customModels: []` is a meaningful "user
- * cleared their custom list" state distinct from "driver default").
- */
+/** Preserve explicit empty arrays/objects; clearing a custom list differs from selecting driver defaults. */
 function nextConfigBlobWithValue(
   config: unknown,
   key: string,
@@ -604,14 +599,8 @@ interface ProviderInstanceCardProps {
 const EMPTY_ACP_PROJECTS: NonNullable<ProviderInstanceCardProps["acpProjects"]> = [];
 const NO_CUSTOM_MODELS: ReadonlyArray<CustomModelDefinition> = [];
 
-/**
- * Unknown drivers (`driverOption === undefined`) get a read-only
- *     notice instead of editable fields, so fork instances round-trip
- *     without accidentally destroying their config.
- * With `projectOverride` set, the Switch instead reads and writes
- *     that project's override, leaving the environment's `instance.enabled`
- *     untouched.
- */
+/** Unknown drivers stay read-only to preserve fork config. projectOverride switches affect only the
+ * project, not instance.enabled. */
 export function ProviderInstanceCard({
   instanceId,
   instance,
@@ -709,8 +698,6 @@ export function ProviderInstanceCard({
   const driverKind: ProviderDriverKind | null = isProviderDriverKind(instance.driver)
     ? instance.driver
     : null;
-  // Keyed on the stored list, not the whole instance, so writing another field
-  // leaves the models list (often ~50 rows) with the same props.
   const storedCustomModels =
     instance.config !== null && typeof instance.config === "object"
       ? (instance.config as Record<string, unknown>).customModels

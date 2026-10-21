@@ -215,11 +215,8 @@ function threadCreatedAtMillis(node: ThreadRelationshipNode | undefined): number
 }
 
 /**
- * Web-specific by design: the panel pins the parent row first and a distinct
- * merge-back target second so their actions stay where the user expects, and
- * only then falls back to newest-created-first. Mobile does not share that
- * exception, so this is not the canonical relationship order and should not be
- * reused as one.
+ * Web pins the parent and distinct merge-back target before newest-created-first ordering.
+ * Mobile does not share this exception; do not reuse it as the canonical relationship order.
  */
 export function orderWebThreadLineageRows(input: {
   readonly graph: ThreadRelationshipGraph;

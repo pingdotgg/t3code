@@ -1,8 +1,5 @@
 /**
- * Records one anonymous `mcp.delegated_task.finished` event when an app-owned
- * delegated task reaches a final status, so we can see whether delegation
- * between providers actually completes. The event carries the parent and child
- * provider and model, the final status, and the child's runtime in seconds.
+ * Record one anonymous `mcp.delegated_task.finished` event per app-owned task reaching final status.
  *
  * @module DelegatedTaskAnalytics
  */

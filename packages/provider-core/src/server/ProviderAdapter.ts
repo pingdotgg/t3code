@@ -120,11 +120,7 @@ export const ProviderAdapterV2Event = Schema.Union([
     driver: ProviderDriverKind,
     turnItem: OrchestrationV2TurnItem,
   }),
-  /**
-   * Raw output from a running command. Never persisted: the session manager
-   * hands it to the command output hub, which only clients showing the row see.
-   * The item's final output still arrives in its `turn_item.updated`.
-   */
+  /** Unpersisted deltas go only to clients showing the row; final output arrives in turn_item.updated. */
   Schema.Struct({
     type: Schema.Literal("command_output.delta"),
     driver: ProviderDriverKind,
@@ -165,11 +161,7 @@ export const ProviderAdapterV2Event = Schema.Union([
     retry: Schema.optional(OrchestrationV2ProviderRetry),
     retryStartedAt: Schema.optional(Schema.DateTimeUtc),
     threadDisposition: Schema.Literals(["reusable", "broken"]),
-    /**
-     * Child turns the root started outlive its failure and will report their
-     * own terminals, as after a completed root. Without it, the run settles
-     * every child it still sees as open.
-     */
+    /** Child turns outlive root failure and report their own terminals; otherwise open children settle. */
     childTurnsContinue: Schema.optional(Schema.Literal(true)),
   }),
 ]);
@@ -553,27 +545,14 @@ export interface ProviderAdapterV2SessionRuntime {
   readonly providerSessionId: ProviderSessionId;
   readonly providerSession: OrchestrationV2ProviderSession;
   readonly events: Stream.Stream<ProviderAdapterV2Event, ProviderAdapterV2Error>;
-  /**
-   * Manager-owned runtimes expose a synchronous subscription so concurrent
-   * provider threads receive independent copies of the process event stream.
-   * Adapter runtimes may omit this and expose only their single-consumer event stream.
-   */
+  /** Manager runtimes broadcast independent subscriptions; adapters may expose only a single-consumer stream. */
   readonly subscribeEvents?: Effect.Effect<ProviderAdapterV2EventSubscription>;
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
-  /**
-   * When present, RunExecutionService uses only this probe (never the
-   * session-wide hasPendingBackgroundWork) so sibling native threads cannot pin
-   * an unrelated root subscription open.
-   */
+  /** Overrides the session-wide probe so sibling threads cannot keep this root subscription open. */
   readonly hasPendingBackgroundWorkForThread?: (
     providerThread: OrchestrationV2ProviderThread,
   ) => Effect.Effect<boolean>;
-  /**
-   * Set when every background task this session lists on its provider threads
-   * runs inside the session's own process and ends when it closes. Leave unset
-   * when a task can outlive the session, for example on a shared server, so its
-   * thread keeps showing Waiting.
-   */
+  /** Set only if all session background tasks end with its process; otherwise threads must keep Waiting. */
   readonly backgroundTasksEndWithProcess?: true;
   readonly getModelContextWindow?: (
     modelSelection: ModelSelection,
@@ -630,10 +609,7 @@ export interface ProviderAdapterV2SessionRuntime {
     readonly providerThread: OrchestrationV2ProviderThread;
     readonly reason?: string;
   }) => Effect.Effect<{ readonly feedbackId: string }, ProviderAdapterV2Error>;
-  /**
-   * Absent means apps from this provider are not interactive and their tool
-   * calls stay plain tool rows.
-   */
+  /** Absent means non-interactive apps with plain tool rows. */
   readonly mcpApps?: ProviderAdapterV2McpApps;
   readonly rollbackThread: (
     input: ProviderAdapterV2RollbackThreadInput,

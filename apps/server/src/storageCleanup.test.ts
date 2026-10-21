@@ -741,7 +741,6 @@ describe("subagent worktree ownership", () => {
         id: ThreadId.make("grandchild"),
         lineage: { ...child.lineage, parentThreadId: child.id },
       };
-      // The worktree owner can follow its children in the snapshot.
       fixture.setThreads(
         scenario === "grandchild"
           ? [grandchild, child, root]

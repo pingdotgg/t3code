@@ -110,7 +110,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
         control.linger = "yes";
       if (!failed && command === "systemctl --user enable t3code.service") control.enabled = true;
       if (!failed && command === "systemctl --user restart t3code.service") control.active = true;
-      // A stop that fails (a timeout, say) has still stopped the service.
+      // A timed-out stop may still stop the service.
       if (command === "systemctl --user stop t3code.service") control.active = false;
       if (
         control.stateAfterStop !== undefined &&
@@ -327,8 +327,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect((yield* service.status).current).toBe(false);
       expect(yield* service.uninstall).toBe(true);
       expect((yield* service.status).installed).toBe(false);
-      // The stop can block up to systemd's 90s TimeoutStopSec; the runner's
-      // 60s default would cancel it mid-shutdown.
+      // systemd can take 90s to stop, exceeding the runner's 60s default.
       expect(timeouts.get("systemctl --user disable --now t3code.service")).toEqual(
         Duration.seconds(120),
       );
@@ -541,7 +540,6 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(failure).toBe("repair failed");
       expect(control.active).toBe(true);
 
-      // A failed stop skips the operation but still starts the service again.
       control.failCommand = "systemctl --user stop t3code.service";
       let ran = false;
       const stopFailure = yield* service
@@ -559,8 +557,6 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(control.active).toBe(true);
       control.failCommand = undefined;
 
-      // An enabled unit that is not active (crash-looping in auto-restart, say)
-      // is still stopped for the repair and started again afterwards.
       control.active = false;
       commands.length = 0;
       yield* service.withStopped(Effect.sync(() => commands.push("repair")));
@@ -572,11 +568,9 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         "systemctl --user restart t3code.service",
       ]);
       expect(control.active).toBe(true);
-      // A running unit the user disabled is started again but stays disabled.
       control.enabled = false;
       yield* service.withStopped(Effect.void);
       expect(control).toMatchObject({ active: true, enabled: false });
-      // A unit that was neither enabled nor active stays stopped.
       control.active = false;
       control.enabled = false;
       commands.length = 0;
@@ -774,8 +768,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(yield* service.uninstall).toBe(true);
       expect((yield* service.status).installed).toBe(false);
       expect(commands.some((command) => command.startsWith("systemctl "))).toBe(false);
-      // A bootout can block up to the plist's 90s ExitTimeOut; the runner's
-      // 60s default would cancel it and let bootstrap race a loaded job.
+      // launchd can take 90s to bootout; the runner's 60s default could let bootstrap race it.
       expect(timeouts.get("launchctl bootout --wait gui/501/com.t3tools.t3code.service")).toEqual(
         Duration.seconds(120),
       );

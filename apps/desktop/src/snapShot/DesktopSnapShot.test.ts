@@ -798,7 +798,6 @@ it.effect.each(["darwin", "win32"] as const)(
 
         for (const finish of heldFlights) finish();
         yield* Fiber.join(landing);
-        // Landing releases the guard even before the first capture is acknowledged.
         yield* Effect.promise(fixture.trigger);
         assert.equal(fixture.state.snapshots, 2);
         assert.lengthOf(fixture.readyIds, 2);

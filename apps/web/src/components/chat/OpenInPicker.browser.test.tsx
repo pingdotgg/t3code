@@ -166,7 +166,7 @@ describe("host editor access", () => {
     const { renderPicker, byLabel, primaryButton, click, pressOpenFavorite } = fixture;
     state.allowed.add(selected);
     await renderPicker();
-    // Revoke without rerendering: the mounted button and shortcut must re-check the grant.
+    // Revoke without rerendering to exercise execution-time grant checks.
     state.allowed.delete(selected);
     state.allowed.add(primary);
     await click(primaryButton());

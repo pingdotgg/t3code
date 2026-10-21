@@ -1,9 +1,5 @@
-// Run with: node apps/server/scripts/measure-pr-preview.ts owner/repo 123 456
-// Numbers form a session with shared repository-permission caches. Browser and
-// service caches are excluded. Uses real GitHub reads, without a server or database.
-// Requests are counted at the HTTP client. A GraphQL request's cost is how far it moved GitHub's
-// `x-ratelimit-used` for the `graphql` resource, which is approximate when anything else spends
-// the same token's quota while this runs.
+// PRs share repository-permission caches; browser and service caches are excluded.
+// GraphQL cost uses `x-ratelimit-used` deltas and includes concurrent use of the token.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Console from "effect/Console";
@@ -30,7 +26,6 @@ if (!repository || numbers.length === 0 || numbers.some((number) => !/^\d+$/.tes
 type Read = { graphqlRequests: number; restRequests: number; cost: number };
 const reads: Read[] = [];
 
-/** The `graphql` quota's use so far, and the window it counts in. */
 let graphqlUsed: { used: number; reset: string } | null = null;
 const decodeRateLimit = Schema.decodeUnknownSync(
   Schema.fromJsonString(
@@ -42,10 +37,7 @@ const decodeRateLimit = Schema.decodeUnknownSync(
   ),
 );
 
-/**
- * What one GraphQL answer spent: how far it moved `used` past the highest value seen, so requests
- * answered out of order still add up to the window's total. A new window starts from zero.
- */
+// Count only increases in `used` so out-of-order answers do not double-count quota.
 function graphqlCost(headers: Readonly<Record<string, string | undefined>>): number {
   const used = Number(headers["x-ratelimit-used"]);
   const reset = headers["x-ratelimit-reset"] ?? "";
@@ -55,7 +47,6 @@ function graphqlCost(headers: Readonly<Record<string, string | undefined>>): num
   return Math.max(0, used - previous);
 }
 
-/** The HTTP client the GitHub transports send through, recording each request as it is answered. */
 const measuredHttp = Layer.effect(
   HttpClient.HttpClient,
   Effect.gen(function* () {
@@ -73,7 +64,6 @@ const measuredHttp = Layer.effect(
   }),
 ).pipe(Layer.provide(FetchHttpClient.layer));
 
-// The server's host port over default settings: gh's own account choice, no saved token.
 const sourceControlHost = ServerSourceControlHost.layer.pipe(
   Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer))),
   Layer.provide(GitVcsDriver.layer),
@@ -96,7 +86,7 @@ for (const mode of ["detail", "preview"] as const) {
     Effect.scoped(
       Effect.gen(function* () {
         const provider = yield* GitHubPullRequestProvider.make;
-        // Where the `graphql` quota stands before the first read. `rate_limit` is free.
+        // `rate_limit` reads do not spend GraphQL quota.
         const api = yield* GitHubRest.GitHubRest;
         const limits = decodeRateLimit(
           (yield* api.rest({ host: "github.com", operation: "rateLimit", path: "rate_limit" }))

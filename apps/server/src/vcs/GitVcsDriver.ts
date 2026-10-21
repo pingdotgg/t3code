@@ -54,11 +54,7 @@ export interface ExecuteGitInput {
   readonly forceKillAfterMs?: number;
   readonly maxOutputBytes?: number;
   readonly appendTruncationMarker?: boolean;
-  /**
-   * With `appendTruncationMarker`, keep invoking the line callbacks after the
-   * buffered copy is full. For long-running commands whose output is only
-   * consumed through `progress`.
-   */
+  /** With appendTruncationMarker, line callbacks continue beyond the buffer cap for progress-only consumers. */
   readonly keepLineCallbacksAfterTruncation?: boolean;
   readonly progress?: ExecuteGitProgress;
 }
@@ -121,10 +117,7 @@ export interface ExecuteGitProgress {
 }
 
 export interface CreateWorktreeProgress {
-  /**
-   * Git refuses an existing path, so a path reported here belongs to this call and is safe to
-   * remove on cancel.
-   */
+  /** Git refuses existing paths; claimed paths belong to this call and can be removed on cancel. */
   readonly onWorktreeClaimed?: (path: string) => Effect.Effect<void, never>;
   readonly onCheckoutProgress?: (input: {
     percent: number;
@@ -144,10 +137,7 @@ export interface CreateWorktreeProgress {
 
 export interface CreateWorktreeOptions {
   readonly progress?: CreateWorktreeProgress;
-  /**
-   * Null (or omitted, for callers without settings access) defers to the
-   * checkout's own t3.json.
-   */
+  /** Null or omitted defers to the checkout's t3.json. */
   readonly submodules?: WorktreeSubmodules | null;
   readonly worktreesDirectory?: string;
 }
@@ -224,10 +214,7 @@ export interface GitResolveCommitResult {
 export interface GitRefreshCheckedOutBranchInput {
   cwd: string;
   targetCommit: string;
-  /**
-   * Commit the checkout is allowed to be hard-reset away from: the upstream commit read before
-   * the fetch. HEAD sitting there means the checkout holds no work of its own.
-   */
+  /** Pre-fetch upstream commit; resetting away is safe only if HEAD stayed here. */
   resetWhenHeadCommit?: string | null | undefined;
 }
 
@@ -804,14 +791,10 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     return path.resolve(physicalCwd, gitCommonDir);
   });
 
-  // Git renames loose objects and refs into place without fsync by default, so
-  // an unclean restart can leave 0-byte files under refs/t3/** that break every
-  // later fetch and push. Checkpoint writes flush before they are published;
-  // macOS defaults to writeout-only, which does not reach the disk either.
+  // Git defaults and macOS writeout-only can leave empty refs after crashes; flush before publication.
   // Set fsync first: Git 2.36 ignores unknown batch without resetting the method.
-  // Git documents batch/fsync equivalence on macOS HFS+/APFS and Windows NTFS/ReFS;
-  // keep per-object fsync on other platforms. Batch still fully flushes refs.
-  // On macOS, VcsProcess retries unsupported full flushes with plain fsync.
+  // Batch fully flushes refs and equals fsync on macOS HFS+/APFS and Windows NTFS/ReFS.
+  // Keep per-object fsync elsewhere; VcsProcess retries unsupported macOS full flushes with plain fsync.
   const durableWrite = [
     "-c",
     "core.fsync=objects,reference",
@@ -829,8 +812,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   const checkpoints: VcsDriver.VcsCheckpointOps = {
     captureCheckpoint: Effect.fn("GitVcsDriver.checkpoints.captureCheckpoint")(function* (input) {
       const operation = VcsProcess.CHECKPOINT_CAPTURE_OPERATION;
-      // core.splitIndex governs every index Git writes, so an unguarded write to the
-      // scratch index can expire the sharedindex.* the real .git/index still uses.
+      // Scratch split-index writes can expire sharedindex files still used by the real index.
       const indexConfig = [
         "-c",
         "core.fsmonitor=false",
@@ -1061,8 +1043,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           Effect.catchTags({
             VcsProcessExitError: (error) =>
               Effect.gen(function* () {
-                // Git cannot stage an embedded repository until it has a commit. Discover these
-                // only after staging fails so ordinary checkpoints do not need another file scan.
+                // Git cannot stage uncommitted embedded repos; scan for them only after staging fails.
                 const untracked = yield* execute({
                   operation,
                   cwd: input.cwd,
@@ -1358,8 +1339,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           maxOutputBytes: VcsDriver.CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
           outputMode: "error",
         }).pipe(Effect.map((result) => result.stdout.split("\0")));
-      // Remerge diff lists a merge's paths only where the result differs from Git's
-      // automatic merge, so a merge keeps its conflict fixes and drops clean upstream changes.
+      // Remerge diffs retain merge conflict fixes while excluding clean upstream changes.
       const pathLists = yield* Effect.all(
         [
           listPaths(["diff", startHead, `${input.fromCheckpointRef}^{commit}`]),

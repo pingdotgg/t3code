@@ -14,10 +14,7 @@ const CHANGE_REQUEST_REFERENCE =
 
 const KIND = SourceControlProviderKind.make("forgejo");
 
-/**
- * The repository's browser URL the server resolved from the signed-in account, which is the
- * only place a Forgejo mounted below a path says so.
- */
+/** Only the resolved browser URL carries Forgejo's installation mount. */
 function resolvedWebUrl(identity: ChangeRequestProjectIdentity): URL | null {
   if (!identity.webUrl) return null;
   try {
@@ -35,14 +32,13 @@ export const definition = defineSourceControlClient({
   icon: "forgejo",
   changeRequest: { shortLabel: "PR", singular: "pull request" },
   repositoryPathHint: "owner/repo",
-  // Forgejo and Gitea are self-hosted, so no hostname names them.
+  // Forgejo and Gitea are self-hosted.
   publicHost: null,
   publishDescription: "Your signed-in server",
   publishHost: (signedInHost) => signedInHost ?? "your server",
   newRepositoryOwner: (account) => (account ? { owner: account } : null),
   defaultCloneTransport: "https",
-  // The server's resolved web URL wins; otherwise an HTTP remote on the same host names the
-  // origin, which may carry a port. SSH remotes say nothing about the web origin.
+  // SSH remotes cannot identify the HTTP port; prefer the resolved browser URL.
   changeRequestUrl: ({ host, repository, number, remoteUrl, webUrl }) => {
     if (webUrl) return `${webUrl.replace(/\/+$/, "")}/pulls/${number}`;
     try {
@@ -58,7 +54,7 @@ export const definition = defineSourceControlClient({
     return `https://${host}/${repository}/pulls/${number}`;
   },
   changeRequestActions: new Set(["merge", "close", "reopen", "update-branch"] as const),
-  // Neither `fj` nor `tea` checks out by number, so fetch the pull ref from the repository itself.
+  // Neither `fj` nor `tea` checks out by number.
   checkoutCommand: ({ number, repositoryUrl }) =>
     repositoryUrl
       ? `git fetch '${repositoryUrl.replaceAll("'", "'\\''")}' refs/pull/${number}/head && git checkout -B pulls/${number} FETCH_HEAD`

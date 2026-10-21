@@ -25,7 +25,7 @@ const PAGE_HEADERS = {
   "x-content-type-options": "nosniff",
 };
 
-/** OAuth responses carry codes, tokens and client ids, none of which may be cached. */
+// OAuth responses contain credentials and must not be cached.
 const noStore = HttpEffect.appendPreResponseHandler((_request, response) =>
   Effect.succeed(
     HttpServerResponse.setHeaders(response, { "cache-control": "no-store", pragma: "no-cache" }),

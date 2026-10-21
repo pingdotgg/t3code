@@ -612,9 +612,7 @@ describe("OpenCodeAdapterV2", () => {
       ),
   );
 
-  // Event order from a live OpenCode 1.18.32 run of a `task` call with
-  // background=true: the task part completes at launch, the root session
-  // settles, and the child session stays busy until its own work ends.
+  // OpenCode 1.18.32 background tasks complete at launch; children stay busy after root settlement.
   it.effect("reports a background task child as pending work after the root turn settles", () =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();
@@ -2174,8 +2172,6 @@ describe("OpenCodeAdapterV2", () => {
       });
       assert.notEqual(minted.id, placeholder.id);
       assert.equal(minted.nativeThreadRef?.nativeId, "ses_native_2");
-      // OpenCode names a session from its first prompt only when create
-      // leaves the title unset, so the adapter never sends one.
       for (const input of createInputs) {
         assert.notProperty(input, "title");
       }

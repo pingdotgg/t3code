@@ -1,10 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - Bridges Playwright's WebSocket transport to the desktop's fds.
-/**
- * Playwright connects over CDP only through a WebSocket URL, so each attached
- * desktop tab gets a loopback endpoint with an unguessable path. Its frames
- * cross the bootstrap file descriptors to the desktop's relay, which owns the
- * tab's `webContents.debugger`.
- */
+/** Playwright needs a CDP WebSocket; the secret loopback endpoint relays desktop debugger frames over bootstrap fds. */
 import * as NodeStream from "@effect/platform-node/NodeStream";
 import * as NodeSocketServer from "@effect/platform-node/NodeSocketServer";
 import {
@@ -44,10 +39,7 @@ export class DesktopBrowserChannel extends Context.Service<
   DesktopBrowserChannel,
   {
     readonly available: boolean;
-    /**
-     * Subscribes before it checks, so an attach landing in between is never
-     * missed.
-     */
+    /** Subscribe before checking so concurrent attaches cannot be missed. */
     readonly awaitAttached: (key: DesktopTabKey, timeout: Duration.Input) => Effect.Effect<boolean>;
     readonly detached: Stream.Stream<DesktopTabKey>;
     readonly attached: Stream.Stream<DesktopTabKey>;
@@ -91,8 +83,7 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  // Socket reads can be cancelled while the desktop keeps its write end open.
-  // Filesystem reads on this pipe keep Node alive after scope shutdown.
+  // Use cancellable socket reads; filesystem pipe reads keep Node alive after scope shutdown.
   const readable = yield* Effect.acquireRelease(
     Effect.sync(() => new NodeNet.Socket({ fd: inputFd, readable: true, writable: false })),
     (stream) => Effect.sync(() => stream.destroy()),

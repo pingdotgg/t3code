@@ -59,8 +59,7 @@ export function resolveChatCanvasLayout({
   let overlapsChat = false;
   if (preview && container.width > 0 && container.height > 0) {
     frame = resolvePreviewMiniPlayerFrame({ ...preview, container });
-    // Reserve a readable chat lane only while it leaves room to drag. Otherwise
-    // the container's right edge would pin the preview at every pointer position.
+    // Reserve a chat lane only if the preview still has room to drag.
     const minimumPreviewX =
       preview.lastInteraction === "resize" ||
       container.width <= padding + minChatWidth + frame.width + GAP * 2

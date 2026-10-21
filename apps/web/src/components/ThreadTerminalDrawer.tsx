@@ -231,8 +231,7 @@ const TERMINAL_PALETTES = {
   ].map(hexToGhosttyColor),
 };
 
-// The surface reads `visible` once it finishes loading WASM, so it must see the value at
-// that moment rather than the one from when setup started.
+// Read visibility when WASM finishes loading, not when setup starts.
 function withLiveVisibility(
   visibleRef: { readonly current: boolean },
   options: Omit<GhosttyTerminalSurfaceOptions, "visible">,
@@ -386,11 +385,7 @@ function terminalContextMenuItems(options: {
   ];
 }
 
-/**
- * A popup already superseded by a right-click keeps its menu promise unsettled
- * for a moment; treating it as active would cancel the newer context-menu flow
- * instead.
- */
+/** A superseded popup's unsettled promise must not cancel the newer right-click flow. */
 export function shouldClearTerminalSelectionAction(options: {
   actionPending: boolean;
   openMenuRequestId: number | null;
@@ -440,8 +435,6 @@ interface TerminalLaunchLocation {
 }
 
 export function TerminalViewport(props: TerminalViewportProps) {
-  // A different launch is a different session, so it gets a fresh surface and fresh
-  // session bookkeeping.
   const sessionKey = JSON.stringify([
     props.threadRef.environmentId,
     props.threadId,
@@ -610,8 +603,8 @@ function TerminalSessionViewport({
 
   useEffect(() => {
     if (resizeSessionGeneration === null) return;
-    // The first fit can finish before authorization or the attach snapshot.
-    // Replay its grid once this writable session exists, including reconnects.
+    // The first fit can precede authorization/attach; replay the grid for each writable session, including
+    // reconnects.
     terminalRef.current?.resendSize();
   }, [resizeSessionGeneration]);
 
@@ -649,9 +642,7 @@ function TerminalSessionViewport({
         beforeKey: (event) => handleBeforeKey(event),
         onLinkActivate: (text, event) => handleLinkActivate(text, event),
         canActivateLink: (text) => canActivateTerminalLink(text),
-        // The surface listens from construction, so a right-click can land
-        // while `create` is still awaiting WASM — before the handler below it
-        // exists.
+        // Surface listeners start before WASM loading finishes and the terminal handler exists.
         onContextMenu: (event) => {
           if (terminalRef.current) void showTerminalContextMenu(event);
         },
@@ -662,15 +653,12 @@ function TerminalSessionViewport({
         return null;
       }
       terminal.setVisible(visibleRef.current);
-      // The theme observer is not installed yet, so re-read the theme in case
-      // the app toggled light/dark while the WASM surface was loading.
+      // Re-read theme changes during WASM loading, before the observer was installed.
       terminal.setTheme(terminalThemeFromApp(mount));
       setupTerminal = terminal;
       terminalRef.current = terminal;
       terminal.input.readOnly = !hasTerminalWriteAccess();
-      // Client settings hydrate asynchronously; a font preference that landed
-      // while the surface was loading found terminalRef null, so its setFont
-      // was dropped.
+      // Reapply font settings hydrated during loading, when terminalRef was null.
       const currentFont = terminalFontRef.current;
       if (currentFont.family !== setupFont.family || currentFont.size !== setupFont.size) {
         void terminal.setFont(terminalFontOptions(currentFont.family, currentFont.size));
@@ -781,9 +769,7 @@ function TerminalSessionViewport({
         const activeTerminal = terminalRef.current;
         if (!activeTerminal) return;
         try {
-          // The surface owns the read so it can claim the paste race before it
-          // starts: a paste shortcut fired while the menu read is in flight
-          // supersedes this paste instead of landing alongside it.
+          // Let the surface own clipboard reads so paste shortcuts can supersede an in-flight menu paste.
           await activeTerminal.pasteFromClipboard(
             () => readTextFromClipboard("terminal input"),
             () => requestId === selectionActionRequestIdRef.current,
@@ -797,9 +783,7 @@ function TerminalSessionViewport({
 
       const showTerminalContextMenu = async (event: MouseEvent) => {
         if (!localApi || !terminalRef.current) return;
-        // Own the gesture before anything async: leaving the default alive lets
-        // the browser (or Electron's editing menu) answer with a Paste entry
-        // that is permanently disabled over the terminal canvas.
+        // Prevent default before awaits; native menus offer a permanently disabled Paste over the canvas.
         event.preventDefault();
         clearSelectionAction();
         const selectionAction = readSelectionAction();
@@ -1109,22 +1093,19 @@ function TerminalSessionViewport({
     previousSessionRef.current = current;
   }, [terminalOutput, terminalError, terminalStatus, terminalVersion]);
 
-  // Each new request focuses again, even when nothing else changed.
   const focusRequest = autoFocus && canOperateTerminal && visible ? focusRequestId : null;
   useEffect(() => {
     if (focusRequest === null) return;
     (terminalRef.current ?? containerRef.current)?.focus();
   }, [focusRequest]);
 
-  // The surface measures its mount, so each drawer resize or window resize refits it.
   // A hidden surface skips fitting, and showing it again fits through setVisible.
   const layoutRevision = visible ? `${drawerHeight}:${resizeEpoch}` : null;
   useEffect(() => {
     const terminal = terminalRef.current;
     if (!terminal || layoutRevision === null) return;
     const wasAtBottom = terminal.isAtBottom();
-    // The surface reports grid changes through onResize, which is the single
-    // channel for PTY resize RPCs; fitting here only refreshes the layout.
+    // onResize alone sends PTY resize RPCs; fitting here only refreshes layout.
     const frame = window.requestAnimationFrame(() => {
       if (!visibleRef.current) return;
       terminal.fit();

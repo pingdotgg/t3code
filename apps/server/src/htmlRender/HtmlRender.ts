@@ -77,11 +77,8 @@ export class HtmlRenderViewportHeightError extends Schema.TaggedError<HtmlRender
   }
 }
 
-// Only stylesheets and style attributes are checked, so page text that mentions
-// a unit passes; comments match first so their contents are skipped. Scripts
-// are still checked, since markup they insert applies. An unclosed comment,
-// tag, or quote runs to the end of the page, which keeps both patterns linear
-// on hostile input.
+// Check only stylesheets and style attributes, even inside scripts; skip comments whole.
+// Consume unclosed comments, tags, or quotes through EOF to keep both patterns linear.
 const CSS_SOURCE =
   /<!--[\s\S]*?(?:-->|$)|<style\b[^>]*(?:>|$)([\s\S]*?)(?:<\/style\s*>|$)|\sstyle\s*=\s*(?:"([^"]*)(?:"|$)|'([^']*)(?:'|$)|([^\s>]+))/gi;
 // The lookbehind skips base64 runs, such as an inlined image that happens to contain "1vh".
@@ -181,10 +178,7 @@ const dataUriPrefix = (path: string) =>
 const latin1 = (bytes: Uint8Array, start: number, end: number) =>
   String.fromCharCode(...bytes.subarray(start, end));
 
-/**
- * Whether file bytes are an image, whatever the file is named, so a symlink or
- * renamed file cannot carry other data, such as a secret, into a page.
- */
+// Validate bytes, not filenames, so renamed files or symlinks cannot inline secrets.
 const isImageBytes = (bytes: Uint8Array) => {
   const head = latin1(bytes, 0, 12);
   if (
@@ -272,8 +266,7 @@ const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (h
   if (pageBytes > MAX_PAGE_BYTES) {
     return yield* new HtmlRenderPageTooLargeError({ sizeBytes: pageBytes });
   }
-  // Files can grow after `stat`. Each read stops one byte past the image
-  // limit, and reading stops once the images read so far cannot fit the page.
+  // Files can grow after stat; bound each read and stop when accumulated images cannot fit.
   let readBytes = 0;
   const images = yield* Effect.forEach(
     files.filter((file) => file.size !== undefined),
@@ -345,8 +338,7 @@ const make = Effect.gen(function* () {
     FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
   >();
   const browsers = yield* Semaphore.make(MAX_CONCURRENT_BROWSERS);
-  // Chrome's sandbox stays on unless the operator explicitly turns it off.
-  // Chrome also refuses it as root, where that opt-out is the only way to run.
+  // Keep Chrome sandboxed unless explicitly disabled; root must opt out to run.
   const noSandbox = PreviewBrowserHost.sandboxDisabled(yield* HostProcess.Environment);
   const setupCommand = yield* resolveRootCliCommand(PreviewBrowserHost.SETUP_SUBCOMMAND);
 

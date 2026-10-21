@@ -543,8 +543,6 @@ describe("share cleanup ownership", () => {
   });
 
   it("refuses traversal segments that escape an owned root", () => {
-    // An encoded separator survives URL normalization: "..%2F.." decodes to
-    // "../..", so the lexical check must reject it before containment.
     expect(
       isShareFileUriUnderOwnedRoots(
         "file:///var/mobile/Containers/Shared/AppGroup/GROUP/..%2F..%2FsenderDoc.pdf",

@@ -30,10 +30,7 @@ export function CommandPaletteContent({
 }: CommandPaletteContentProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Direct-open flows replace the initial palette view after the dialog has
-  // already moved focus. Reclaim it when the replacement input mounts so
-  // typing cannot continue in the composer behind the modal. Defer until the
-  // dialog has recorded the previous focus target for restoration on close.
+  // Wait until the dialog records restoration focus before focusing a replaced input.
   useEffect(() => {
     const frame = requestAnimationFrame(() => inputRef.current?.focus());
     return () => cancelAnimationFrame(frame);

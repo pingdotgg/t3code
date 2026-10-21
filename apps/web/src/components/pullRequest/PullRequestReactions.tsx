@@ -44,7 +44,7 @@ export function PullRequestReactionBar({
 }: {
   readonly reactions: ReadonlyArray<PullRequestReaction>;
   readonly canReact: boolean;
-  /** Absent reacts to the change request itself, which is where its description's reactions live. */
+  /** Omit to react to the pull request description. */
   readonly subjectId?: string | undefined;
   readonly environmentId: EnvironmentId;
   readonly reference: PullRequestRef;

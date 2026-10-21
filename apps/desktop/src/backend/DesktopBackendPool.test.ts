@@ -96,8 +96,6 @@ describe("DesktopBackendPool", () => {
         const instance = yield* pool.register({
           id,
           label: Effect.succeed("WSL (Ubuntu)"),
-          // A transient preflight failure leaves a restart fiber scheduled
-          // without needing a real child process.
           configResolve: Effect.succeed({
             executablePath: "/electron",
             args: [],

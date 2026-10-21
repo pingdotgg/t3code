@@ -44,10 +44,7 @@ export class ProviderHost extends Context.Service<
       readonly subscribe: Effect.Effect<Stream.Stream<ServerSettings>, never, Scope.Scope>;
     };
     readonly shouldRunBackgroundWork: (scope: BackgroundScope) => Effect.Effect<boolean>;
-    /**
-     * Absolute path of a stored chat attachment, or `null` when its id does not
-     * resolve inside the attachments directory.
-     */
+    /** Absolute attachment path, or null if the ID does not resolve inside attachmentsDir. */
     readonly resolveAttachmentPath: (attachment: ChatAttachment) => string | null;
     readonly credentials: (
       namespace: string,

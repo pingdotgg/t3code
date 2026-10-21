@@ -56,9 +56,7 @@ function ChatRouteGlobalShortcuts() {
       ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen
       : false,
   );
-  // The `previewOpen` shortcut-context flag here uses the store-only value;
-  // the URL-aware arbitration lives inside ChatView's `onTogglePreview`,
-  // which we invoke via the action bus to avoid duplicating the rule.
+  // This flag is store-only; dispatch the action bus to reuse ChatView's URL-aware arbitration.
   const previewOpen = useRightPanelStore((state) =>
     routeThreadRef
       ? selectActiveRightPanel(state.byThreadKey, routeThreadRef) === "preview"
@@ -196,8 +194,7 @@ function ChatRouteGlobalShortcuts() {
 }
 
 function ChatRouteLayout() {
-  // Both thread routes render here, not in their own leaf components, so the
-  // draft-to-thread promotion keeps one ChatView mounted across the swap.
+  // Render both routes here so draft promotion keeps the same ChatView mounted.
   const threadTarget = useThreadRouteTarget();
   return (
     <>

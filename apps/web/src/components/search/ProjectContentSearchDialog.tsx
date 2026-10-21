@@ -21,10 +21,7 @@ interface ProjectContentSearchDialogProps {
   readonly onOpenChange: (open: boolean) => void;
 }
 
-/**
- * Result rows are syntax highlighted, so mounting all 500 possible rows at once
- * stalls the UI.
- */
+/** Syntax-highlighting all 500 result rows at once stalls the UI. */
 const VISIBLE_MATCH_WINDOW = 100;
 
 interface MatchGroup {
@@ -125,14 +122,12 @@ function OpenContentSearchDialog(props: {
   });
   const canOpenMatches = search.canReadFiles && !search.isPending && search.error === null;
   const matches = search.matches;
-  // New results restart the selection and the rendered window.
   const [resultsFor, setResultsFor] = useState(matches);
   if (resultsFor !== matches) {
     setResultsFor(matches);
     setSelectedIndex(0);
     setVisibleCount(VISIBLE_MATCH_WINDOW);
   }
-  // Keyboard selection past the window grows it before the row has to scroll into view.
   if (selectedIndex >= visibleCount) {
     setVisibleCount(selectedIndex + VISIBLE_MATCH_WINDOW);
   }

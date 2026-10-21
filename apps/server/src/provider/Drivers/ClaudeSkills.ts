@@ -33,11 +33,7 @@ type SkillFrontmatter =
       readonly userInvocable?: boolean;
     };
 
-/**
- * Claude Code accepts the YAML 1.1 boolean spellings (`yes`/`no`, `on`/`off`,
- * `1`/`0`), which the 1.2 core schema this parser uses leaves as strings and
- * numbers.
- */
+/** Claude accepts YAML 1.1 booleans that this YAML 1.2 parser leaves as strings or numbers. */
 function parseFrontmatterBoolean(value: unknown): boolean | undefined {
   if (typeof value === "boolean") return value;
   if (typeof value === "number") {
@@ -71,8 +67,7 @@ function parseSkillFrontmatter(contents: string): SkillFrontmatter {
   try {
     parsed = parseYamlDocument(frontmatter);
   } catch {
-    // Claude Code accepts plain scalars containing `: `. Repair only those,
-    // leaving comments and YAML structure for the full-document parser.
+    // Repair Claude's accepted ': ' scalars without disturbing comments or YAML structure.
     const repaired = frontmatter.replace(
       /^([\w-]+:[ \t]*)([^\r\n]*)/gm,
       (line, prefix: string, value: string) => {
@@ -424,11 +419,7 @@ const resolveClaudeConfigDirPath = Effect.fn("resolveClaudeConfigDirPath")(funct
   if (homePath.length > 0) {
     return path.resolve(expandHomePath(homePath, home));
   }
-  // No tilde expansion here: the spawned CLI receives this env var verbatim
-  // (env vars are never shell-expanded), so a literal `~` must stay literal
-  // for discovery to scan the same directory the runtime would. A relative
-  // value is resolved against the workspace cwd — the subprocess's own cwd —
-  // for the same reason.
+  // Match the spawned CLI: preserve a literal ~ and resolve relative config against workspace cwd.
   const environmentConfigDir = environment.CLAUDE_CONFIG_DIR?.trim() ?? "";
   if (environmentConfigDir.length > 0) {
     return cwd ? path.resolve(cwd, environmentConfigDir) : path.resolve(environmentConfigDir);
@@ -436,11 +427,7 @@ const resolveClaudeConfigDirPath = Effect.fn("resolveClaudeConfigDirPath")(funct
   return path.join(home, ".claude");
 });
 
-/**
- * Roots are listed highest precedence first and the first hit for a name wins,
- * matching Claude Code: verified against the CLI with the same skill name in
- * both scopes, the user copy is the one that runs.
- */
+/** First name wins, matching Claude Code's precedence of user skills over project skills. */
 export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* (
   config: Pick<ClaudeSettings, "homePath"> & Partial<Pick<ClaudeSettings, "launchArgs">>,
   cwd?: string,
@@ -455,7 +442,6 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
     environment ?? process.env,
   );
 
-  // Use the session's argument parser so discovery sees the same --add-dir value.
   const additionalDirectory = parseCliArgs(config.launchArgs ?? "").flags["add-dir"];
   const roots: ReadonlyArray<ClaudeSkillRoot> = [
     { directory: path.join(configDirPath, "skills"), scope: "user" },

@@ -86,9 +86,7 @@ export interface QueuedThreadMessage {
   readonly modelSelection?: ModelSelectionType;
   readonly runtimeMode?: RuntimeModeType;
   readonly interactionMode?: ProviderInteractionModeType;
-  /**
-   * Captured at enqueue time because the drain can fire long after the tap.
-   */
+  /** Captured at enqueue because draining may occur long after the tap. */
   readonly dispatchMode?: ComposerDispatchMode;
   readonly creation?: QueuedThreadCreation;
   readonly createdAt: string;
@@ -181,9 +179,7 @@ export function resolveThreadOutboxDeliveryAction(input: {
     if (input.threadExists) {
       return "remove";
     }
-    // Wait for the shell to be live before sending: until the thread list has
-    // synchronized, a previously delivered creation whose cleanup failed would
-    // look missing and get re-issued, duplicating the thread.
+    // Wait for live shells; an unsynchronized list can hide delivered creations and cause duplicate re-issuance.
     return input.environmentConnected && input.shellStatus === "live" ? "send" : "wait";
   }
   if (!input.threadExists) {
@@ -247,13 +243,7 @@ function errorMessage(error: unknown): string | null {
   return typeof error === "string" ? error : null;
 }
 
-/**
- * Only a failure the server actually decided (`OrchestrationDispatchCommandError`,
- * or an authorization rejection) means the payload itself is bad. The other typed
- * failures a queued send can hit are transport-shaped: a socket that dropped
- * mid-request (`RpcClientError` wrapping a Socket read/write/close reason), or an
- * environment that is not connected or not registered.
- */
+/** Dispatch/auth rejections invalidate payloads; other typed failures may be disconnected transports and must retry. */
 export function shouldRetryThreadOutboxDelivery(error: unknown): boolean {
   if (typeof error === "object" && error !== null && "_tag" in error) {
     switch (error._tag) {

@@ -1,10 +1,6 @@
 import type { ProviderInteractionMode } from "@t3tools/contracts";
 
-/**
- * Authored as self-contained sections so a provider that limits the size of
- * each instruction entry can deliver every one whole. Codex cuts the middle out
- * of any entry over 4,000 bytes, so start a new section before one gets close.
- */
+// Codex truncates entries over 4,000 bytes; keep each section self-contained and below that limit.
 export const T3_CODE_ORCHESTRATION_SECTIONS: ReadonlyArray<string> = [
   `## T3 Code orchestration
 
@@ -73,10 +69,7 @@ export interface T3AcpInstructionState {
   readonly hasT3Mcp: boolean;
 }
 
-/**
- * ACP has no system/developer prompt field, so send T3-owned context in the
- * first user prompt and whenever the available tools or interaction mode change.
- */
+/** ACP lacks system/developer fields; inject context on first prompt and tool/mode changes. */
 export function t3AcpPromptWithInstructions(input: {
   readonly prompt: string;
   readonly state: T3AcpInstructionState;
@@ -101,9 +94,6 @@ export function t3AcpPromptWithInstructions(input: {
   return `<t3_code_instructions>\n${instructions.join("\n\n")}\n</t3_code_instructions>\n\n<user_request>\n${input.prompt}\n</user_request>`;
 }
 
-/**
- * Keep the wrapper explicit so it cannot be mistaken for text authored by the user.
- */
 function prependT3OrchestrationInstructions(prompt: string): string {
   return `<t3_code_orchestration_instructions>${T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim()}</t3_code_orchestration_instructions>\n\n<user_request>\n${prompt}\n</user_request>`;
 }

@@ -51,7 +51,6 @@ const layerSourceControlProviderRegistryTest = (input: {
         ServerSettings.ServerSettingsService.layerTest(),
         Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({}),
         Layer.mock(GitHubRest.GitHubRest)({}),
-        // The GitHub provider's GraphQL reads go through these; no test here makes one.
         Layer.mock(GitHubRequestPolicy.GitHubRequestPolicy)({}),
         Layer.succeed(
           HttpClient.HttpClient,

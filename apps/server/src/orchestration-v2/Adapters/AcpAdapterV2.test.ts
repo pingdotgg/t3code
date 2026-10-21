@@ -1225,8 +1225,7 @@ describe("AcpAdapterV2", () => {
       );
       type Runtime = AcpSessionRuntime.AcpSessionRuntime["Service"];
       let handler: Parameters<Runtime["handleSessionUpdate"]>[0] | undefined;
-      // Devin streams a file write as it generates it: each update resends the
-      // whole file so far, a few characters longer, with no status.
+      // Devin resends the growing file without status on each update.
       const file = `${"x = 1\n".repeat(800)}END_OF_FILE\n`;
       const chunks = 200;
       const streamedWrite = (
@@ -3169,8 +3168,8 @@ describe("AcpAdapterV2", () => {
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
-  // Oracle: #15888 KillTask reports. Command completion must release the turn even
-  // when the CLI keeps the prompt RPC and process alive. Kill calls stay visible.
+  // Command completion must release the turn even when the CLI keeps the prompt RPC
+  // and process alive. Kill calls stay visible.
   it.live.each([
     { shape: "output_only", expectedCommand: { type: "command_execution", status: "completed" } },
     { shape: "variant_only", expectedCommand: { type: "command_execution", status: "completed" } },
@@ -4626,8 +4625,7 @@ describe("AcpAdapterV2", () => {
       assert.isTrue(yield* hasPendingBackgroundWork);
       assert.isDefined(sessionUpdateHandler, "session update handler must be wired");
 
-      // A production Grok spawn ACK has raw tool status completed but extracts
-      // as a running subagent with its original non-empty prompt.
+      // Grok reports spawn ACKs as completed tools with running subagents and non-empty prompts.
       yield* sessionUpdateHandler!({
         sessionId: "mock-session-1",
         update: {

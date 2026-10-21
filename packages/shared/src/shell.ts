@@ -49,11 +49,7 @@ export type CommandAvailabilityChecker = (
 
 const WINDOWS_SHELL_META_CHARS = /([()\][%!^"`<>&|;, *?])/g;
 
-/**
- * Node hands the command string to `cmd.exe /d /s /c "<command>"` without any
- * quoting, so every dynamic argument must be escaped to survive both cmd.exe
- * parsing and the target program's `CommandLineToArgvW` parsing.
- */
+// Escape dynamic arguments for both cmd.exe and the target's CommandLineToArgvW parsing.
 function escapeWindowsShellArg(arg: string): string {
   let escaped = arg.replace(/(\\*)"/g, '$1$1\\"');
   // Double up trailing backslashes so the closing quote is not escaped away.
@@ -488,10 +484,7 @@ function resolveCommandCandidates(
   return Array.from(new Set(candidates));
 }
 
-// Explicit-path resolution is never cached - callers probe paths they have
-// just written (e.g. managed binary installs). A "not-found" outcome is also
-// cached for the TTL, so a just-installed binary can stay invisible for up to
-// 30s unless resolved by explicit path.
+// Explicit paths bypass the cache for new installs; cached misses can otherwise hide binaries for 30 seconds.
 const COMMAND_RESOLUTION_CACHE_TTL_NANOS = 30_000_000_000n;
 const COMMAND_RESOLUTION_CACHE_MAX_ENTRIES = 512;
 const COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR = String.fromCharCode(0);
@@ -521,8 +514,7 @@ const directoryMtime = (directory: string) =>
     Effect.catch((error) => Effect.succeed(error.reason._tag === "NotFound" ? null : undefined)),
   );
 
-// Dated before it is read, so an entry added in between changes the mtime seen
-// on the next check. Without names, lookups probe candidates directly.
+// Timestamp before reading so concurrent additions change the next mtime check; missing listings fall back to direct probes.
 const listPathDirectory = Effect.fnUntraced(function* (
   directory: string,
 ): Effect.fn.Return<PathDirectoryListing, never, FileSystem.FileSystem> {
@@ -678,8 +670,7 @@ export const resolveCommandPath = Effect.fn("shell.resolveCommandPath")(function
   });
 });
 
-// Git for Windows 2.56 moved x64 builds from mingw64 to ucrt64; ARM64 builds
-// live in clangarm64 and 32-bit ones in mingw32.
+// Git 2.56 x64 uses ucrt64; ARM64 uses clangarm64; older x64/32-bit builds use mingw64/mingw32.
 const GIT_FOR_WINDOWS_BUILDS = ["ucrt64", "clangarm64", "mingw64", "mingw32"] as const;
 
 function isFileSync(filePath: string): boolean {
@@ -690,13 +681,7 @@ function isFileSync(filePath: string): boolean {
   }
 }
 
-/**
- * The launcher costs a second process on every git command, and each launch
- * leaks a kernel token reference that slows process creation machine-wide until
- * reboot. The real binary sets HOME itself, but adds its own folders to PATH
- * for hooks, ssh and credential helpers only when MSYSTEM is unset, so the
- * launcher stays when MSYSTEM is set.
- */
+/** Bypass the launcher's extra process and kernel-token leak. Retain it when MSYSTEM is set, or git.exe omits hook/helper PATH entries. */
 export function preferGitForWindowsBinary(
   executable: string,
   env: NodeJS.ProcessEnv,
@@ -716,7 +701,7 @@ export function preferGitForWindowsBinary(
   return executable;
 }
 
-// What npm's cmd-shim writes for a package whose bin is a native executable.
+// npm cmd-shim format for native executables.
 const NPM_EXECUTABLE_SHIM_PREFIX = [
   "@ECHO off",
   "GOTO start",
@@ -737,12 +722,7 @@ function readFileSyncOrUndefined(filePath: string): string | undefined {
   }
 }
 
-/**
- * The executable an npm cmd-shim runs, when the shim does nothing else.
- * Started through the shim, the executable is a child of `cmd.exe` and so
- * escapes the kill-on-close job libuv puts every child in: it keeps running
- * after this process is killed. Started directly it is in the job.
- */
+/** Resolve shims that only launch native executables so direct spawning keeps them in libuv's kill-on-close job. */
 export function npmShimExecutable(
   shimPath: string,
   readFile: (filePath: string) => string | undefined = readFileSyncOrUndefined,
@@ -750,8 +730,7 @@ export function npmShimExecutable(
 ): string | undefined {
   const path = NodePath.win32;
   if (path.extname(shimPath).toLowerCase() !== ".cmd") return undefined;
-  // Compared exactly: whitespace CMD keeps, such as after `SET dp0=`, would
-  // make it run a different file than the one found here.
+  // Match exactly because preserved SET whitespace can select a different file.
   const lines = readFile(shimPath)
     ?.split(/\r?\n/)
     .filter((line) => line.length > 0);
@@ -790,11 +769,8 @@ export const XcodeGitLocation = Context.Reference<XcodeGitLocator>(
 const MACOS_GIT_SHIM = "/usr/bin/git";
 
 /**
- * /usr/bin/git is an xcrun shim that finds the active developer directory on
- * every run: about 8 ms per spawn, against under 3 ms for the git behind it.
- * Only the shim is replaced, so a git the user put first on PATH (Homebrew,
- * Nix) still wins, and git's own children keep the same PATH. Any lookup
- * failure keeps plain `git`.
+ * Skip the xcrun shim's per-spawn lookup only when git resolves to /usr/bin/git.
+ * User-selected git on PATH still wins, children keep PATH, and lookup failures use `git`.
  */
 const resolveMacosGit = Effect.fnUntraced(function* (
   env: NodeJS.ProcessEnv,
@@ -831,7 +807,7 @@ const resolveMacosGit = Effect.fnUntraced(function* (
 });
 
 export interface SpawnCommandOptions extends CommandAvailabilityOptions {
-  /** Run the executable behind an npm cmd-shim directly (see `npmShimExecutable`). */
+  /** Bypass npm cmd-shims; see npmShimExecutable for process-lifetime semantics. */
   readonly bypassNpmShim?: boolean;
 }
 
@@ -898,9 +874,7 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
     return { command: shimExecutable, args: [...args], shell: false };
   }
 
-  // Node runs a shell spawn as `cmd.exe /d /s /c "<command> <args...>"`, but
-  // passing args with `shell: true` prints DEP0190. Build the same escaped line
-  // here and pass no args.
+  // Build the escaped command line without separate args to avoid Node DEP0190 with shell:true.
   return {
     command: [resolvedCommand, ...args].map(escapeWindowsShellArg).join(" "),
     args: [],
@@ -942,7 +916,6 @@ function readWindowsEnvironmentSafely(
   }
 }
 
-/** Keep one PATH spelling in copied Windows environment records. */
 export function setWindowsPath(env: NodeJS.ProcessEnv, value: string): void {
   for (const key of Object.keys(env)) {
     if (key.toUpperCase() === "PATH") {

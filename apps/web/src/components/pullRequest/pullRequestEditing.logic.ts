@@ -25,10 +25,7 @@ export function canEditPullRequestChangeRequest(detail: EditingSubject): boolean
   );
 }
 
-/**
- * A review's own summary is left out: the hosts disagree about what one even is, and none of
- * them takes a rewrite of it through the mutation a comment goes through.
- */
+/** Hosts do not support rewriting review summaries through comment mutations. */
 export function canEditPullRequestComment(
   detail: EditingSubject,
   comment: Pick<PullRequestComment, "author" | "canEdit" | "kind">,

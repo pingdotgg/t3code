@@ -13,11 +13,7 @@ export const TrimmedString = Schema.String.pipe(
     }),
   ),
 );
-/**
- * A `TrimmedString` only trims when decoding or encoding, so `make` and encode see the untrimmed
- * value: a plain `isNonEmpty` would accept `" "` there and encode it to `""`, which no longer
- * decodes.
- */
+// `make` and encode see untrimmed values; `isNonEmpty` would accept whitespace that encodes to an invalid empty string.
 const isNonBlank = Schema.makeFilter((value: string) => value.trim().length > 0, {
   expected: "a non-blank string",
   toJsonSchema: () => [{ minLength: 1 }, true],
@@ -71,12 +67,7 @@ export const ForwardCompatibleNullable = <Value extends Schema.Top>(value: Value
   );
 };
 
-/**
- * A nullable setting whose null is "unset" and never crosses the wire: it
- * decodes from a missing or unknown key and encodes back to a missing key.
- * For a field that older clients decode as a required literal, so a null
- * on the wire would fail their whole settings snapshot.
- */
+/** Missing or unknown values decode to null; null encodes as absent for older clients requiring a literal. */
 export const OmittedWhenNull = <Value extends Schema.Top>(value: Value) => {
   const decodeValue = Schema.decodeUnknownOption(value as never);
   return Schema.optionalKey(Schema.Unknown).pipe(
@@ -96,10 +87,7 @@ export const OmittedWhenNull = <Value extends Schema.Top>(value: Value) => {
   );
 };
 
-/**
- * For a tagged union, prefer {@link ForwardCompatibleUnion}: it drops only values whose tag this
- * build does not know, so a known member with a broken payload still fails loudly.
- */
+/** Prefer {@link ForwardCompatibleUnion} for tagged unions so malformed known members still fail. */
 export const ForwardCompatibleArray = <Element extends Schema.Top>(element: Element) =>
   Schema.Array(
     Schema.UndefinedOr(element).pipe(
@@ -113,9 +101,7 @@ export const ForwardCompatibleArray = <Element extends Schema.Top>(element: Elem
           Schema.catchEncoding(() => Effect.succeedSome(undefined)),
         ),
       ).check(
-        // The holes above are an encoding detail: a decoded value has none, so
-        // `Schema.is` and `make` still reject an array that does. Aborts, so a
-        // later check on the array never sees a hole.
+        // Schema.is/make must reject holes; abort before later array checks.
         Schema.makeFilter(
           (values) => {
             // Every index, not `every`, which skips the holes of a sparse array.
@@ -144,10 +130,7 @@ export type ForwardCompatibleArray<Element extends Schema.Top> = Schema.Codec<
   Element["EncodingServices"]
 >;
 
-/**
- * A class, so only the codec can make one: no decoded payload, however it is shaped, is ever
- * mistaken for it.
- */
+/** Class identity prevents decoded payloads from impersonating unknown members. */
 export class UnknownUnionMember<Tag extends string = string> {
   readonly tag: Tag;
   readonly value: string;
@@ -157,9 +140,7 @@ export class UnknownUnionMember<Tag extends string = string> {
   }
 }
 
-/**
- * Unknown members are decode-only; encoding one fails.
- */
+/** Unknown members are decode-only; encoding one fails. */
 export const ForwardCompatibleUnion = <
   const Members extends ReadonlyArray<Schema.Top & { readonly fields: object }>,
   const Tag extends string,

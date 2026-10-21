@@ -390,10 +390,7 @@ function insertThread(
     .run(input.id, isWorking ? "running" : "ready", isWorking ? turnId : null, updatedAt);
 }
 
-// V1 tables this seed owns. `projection_projects` is not listed: V2 still
-// stores projects there, so the seed upserts its own rows instead. V2 clients
-// do not read the V1 thread rows; moving the seed to V2 is tracked in
-// https://github.com/pingdotgg/t3code/issues/15013.
+// V2 still owns projection_projects; upsert project rows without deleting them with V1 thread data.
 const SEEDED_V1_TABLES = [
   "projection_thread_messages",
   "projection_thread_sessions",
@@ -447,10 +444,7 @@ function seedDatabase(
   threads: ReadonlyArray<(typeof SHOWCASE_THREADS)[number]>,
   now: number,
 ): void {
-  // The environment server is already running against this file and keeps
-  // writing (migrations, projections) while we seed, so the write lock is
-  // genuinely contended — without a busy timeout `BEGIN IMMEDIATE` fails
-  // instantly with SQLITE_BUSY on a loaded machine.
+  // The running server writes migrations/projections concurrently; wait for its lock instead of failing SQLITE_BUSY.
   const database = new NodeSqlite.DatabaseSync(dbPath, { timeout: 30_000 });
   try {
     database.exec("BEGIN IMMEDIATE");
@@ -526,9 +520,7 @@ function seedDatabase(
 
     database.exec("COMMIT");
   } catch (error) {
-    // A failed BEGIN (or an error SQLite already auto-rolled back) leaves no
-    // transaction, and the rollback's own "cannot rollback" error would then
-    // replace the one that actually explains the failure.
+    // Failed BEGIN or automatic rollback leaves no transaction; preserve the original error if rollback fails.
     try {
       database.exec("ROLLBACK");
     } catch {}
@@ -579,8 +571,7 @@ export async function seedShowcaseEnvironment(input: {
         });
       }),
   );
-  // The environment server begins listening before it finishes migrating the
-  // database, so wait for the schema before deleting from and reseeding it.
+  // Listening precedes migration completion; wait for the schema before reseeding.
   await waitForSeedableSchema(dbPath);
   seedDatabase(dbPath, workspaceRoots, projects, threads, now);
 

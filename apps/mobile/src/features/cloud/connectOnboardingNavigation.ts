@@ -6,15 +6,10 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { clearConnectOnboardingRequest, connectOnboardingRequestAtom } from "./connectOnboarding";
 import { isConnectOnboardingOptedOut } from "./connectOnboardingOptOut";
 
-// Sign-in happens inside the Settings sheet; give its session-state transition
-// a beat to settle before presenting another formSheet on top.
+// Wait for Settings sign-in transitions to settle before presenting another formSheet.
 const PRESENT_ONBOARDING_DELAY_MS = 600;
 
-/**
- * Lives apart from connectOnboarding.ts so non-navigation consumers
- * (CloudAuthProvider) do not pull
- * @react-navigation into their module graph.
- */
+/** Keep @react-navigation out of non-navigation consumers' import graphs. */
 export function useConnectOnboardingNavigation(): void {
   const navigation = useNavigation();
   const requestedAccountId = useAtomValue(connectOnboardingRequestAtom);
@@ -27,9 +22,7 @@ export function useConnectOnboardingNavigation(): void {
     const timer = setTimeout(() => {
       void (async () => {
         const optedOut = await isConnectOnboardingOptedOut(requestedAccountId).catch(() => false);
-        // The cancelled flag covers effect re-runs, but a sign-out can clear
-        // the request atom moments before this render commits — re-check the
-        // atom so a stale request never presents the sheet.
+        // Re-check the request atom: sign-out can clear it before this render commits.
         if (cancelled || appAtomRegistry.get(connectOnboardingRequestAtom) !== requestedAccountId) {
           return;
         }

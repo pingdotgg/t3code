@@ -52,8 +52,7 @@ const provider: ServerProvider = {
 
 describe("provider compatibility", () => {
   it("keeps releases before V2 on the OpenCode 1 policy they shipped with", () => {
-    // Every installed build fetches main's manifest, and 0.0.45 and older run the
-    // V1 orchestrator, which cannot drive OpenCode 2.
+    // Older builds fetch main's manifest; their V1 orchestrator cannot drive OpenCode 2.
     const opencode = ProviderDriverKind.make("opencode");
     for (const [version, expected] of [
       ["1.14.19", "supported"],

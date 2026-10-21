@@ -85,8 +85,7 @@ export const layer: Layer.Layer<
               requestId: input.requestId,
             });
           }
-          // Dispatch validates the request while it is pending, then persists the
-          // resolved projection before this effect is executed.
+          // Dispatch persists resolution before this effect runs; pending requests are not executable.
           if (request.status !== "resolved") {
             return yield* new RuntimeRequestResponseExecutionError({
               reason: "request-not-ready",

@@ -423,11 +423,7 @@ export interface ProjectionStoreV2Shape {
   readonly getShellSnapshot: (
     options?: ShellSnapshotOptions,
   ) => Effect.Effect<OrchestrationV2ThreadShellSnapshot, ProjectionStoreV2Error>;
-  /**
-   * Callers that combine the shell with other reads run this inside their own
-   * transaction and the returned decode after it commits, so the shared
-   * connection is not held while thousands of rows are converted.
-   */
+  /** Read within the caller's transaction, then decode after commit to release the shared connection before row conversion. */
   readonly readShellSnapshot: (
     options?: ShellSnapshotOptions,
   ) => Effect.Effect<
@@ -693,7 +689,6 @@ function upsertProviderTurn(
   });
 }
 
-/** A stale run snapshot must not erase fields that other events recorded on the run. */
 function preserveRunRecordedFields(
   current: OrchestrationV2Run | undefined,
   next: OrchestrationV2Run,
@@ -932,12 +927,7 @@ export function applyToProjection(
   }
 }
 
-/**
- * Provider sessions are process-scoped: one session row can be bound to several app
- * threads. Updating that row changes what every bound thread reads, even though the
- * application event itself belongs to one thread stream. Provider thread owners are global
- * too: the latest event wins across app threads.
- */
+/** Sessions are shared across app threads, so session events update every binding. Provider-thread ownership is also global: latest wins. */
 export interface ProjectionReplayState {
   readonly projections: Map<ThreadId, OrchestrationV2ThreadProjection>;
   readonly providerSessionThreadIds: Map<ProviderSessionId, ReadonlySet<ThreadId>>;
@@ -1112,8 +1102,7 @@ const encodeTimelineSources = Schema.encodeEffect(
 );
 const encodeIdList = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
 
-// An empty list filter selects no rows, but SQLite still walks every row of
-// the thread to apply it. Callers pass `turnItemTypes: []` to skip items.
+// Empty filters still scan SQLite rows; short-circuit them, including turnItemTypes: [].
 const matchesNothing = (...filters: ReadonlyArray<ReadonlyArray<unknown> | undefined>) =>
   filters.some((values) => values?.length === 0);
 
@@ -1901,7 +1890,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
 
-    // For run upserts: a snapshot without `path` keeps the value another event recorded there.
     const keepRecordedRunField = (payload: Statement.Fragment, path: string) => sql`
       CASE
         WHEN json_type(excluded.payload_json, ${path}) IS NULL
@@ -3033,8 +3021,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   ON item.rowid = retained.item_rowid
                 ORDER BY retained.ordinal ASC, retained.turn_item_id ASC
               `;
-        // Reuse the decoded items for cohort IDs and the resulting projection.
-        // Parsing these rows separately duplicates every retained tool output.
+        // Decode items once for cohort ids and projection; repeated parsing duplicates retained tool output.
         const turnItems = yield* decodeRows(decodeTurnItemPayload, threadId)(boundedTurnItemRows);
         const cohortJson = (field: string) =>
           JSON.stringify(
@@ -3599,8 +3586,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           return withLocalVisibleTurnItems(projection);
         }
 
-        // A row-limited segment without turn anchors must finish paging locally
-        // before inherited user turns can influence the page boundary.
+        // Page unanchored local segments fully before inherited turns affect the boundary.
         if (
           window?.userTurnLimit !== undefined &&
           localWindow !== undefined &&
@@ -4936,8 +4922,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             if (threads.length === 0) {
               return yield* new ProjectionStoreThreadNotFoundError({ threadId });
             }
-            // Checkpoint diffs need no transcript or fork ancestry. Select just the
-            // metadata columns so large run/checkpoint JSON payloads stay in SQLite.
+            // Select checkpoint metadata only; diffs need neither transcripts nor large run/checkpoint JSON.
             const [runs, checkpointScopes, checkpoints] = yield* Effect.all([
               sql`
               SELECT run_id AS id, ordinal, status

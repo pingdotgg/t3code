@@ -69,8 +69,7 @@ export function threadPullRequestKeysEqual(
   return threadPullRequestKeyOf(left) === threadPullRequestKeyOf(right);
 }
 
-// Clients re-derive chains for every link on each render, and normalizing parses the
-// link's URL. Links are immutable and keep their identity until they change.
+// Cache parsed keys by immutable link identity; every rendered link otherwise reparses its URL.
 const normalizedKeys = new WeakMap<ThreadPullRequestKeySource, ThreadPullRequestKey>();
 
 function normalizedKeyOf(key: ThreadPullRequestKeySource): ThreadPullRequestKey {
@@ -87,8 +86,7 @@ export function threadPullRequestKeyOf(key: ThreadPullRequestKeySource): string 
   return `${normalized.host}/${normalized.repository}#${normalized.number}`;
 }
 
-/** Tombstoned stack members stay in the array only so the
- * sync reactor does not re-add them. */
+/** Tombstones prevent sync from re-adding hidden members. */
 export function visibleThreadPullRequests(
   links: ReadonlyArray<ThreadPullRequestLink>,
 ): ReadonlyArray<ThreadPullRequestLink> {
@@ -114,8 +112,7 @@ export type ThreadCurrentPullRequest =
     };
 
 function layersFromTop(chain: ThreadPullRequestChain): Array<ThreadPullRequestLink> {
-  // `.sort()` on a fresh array, not `.toSorted()`: this runs on Hermes, which has no ES2023
-  // array methods, and a TypeError here is fatal on every mobile launch that renders a stack.
+  // Hermes has no ES2023 array methods, so sort a fresh array.
   return chain.layers
     .map((link, index) => ({ link, index, depth: chain.depths[index]! }))
     .sort((left, right) => right.depth - left.depth || right.index - left.index)
@@ -209,7 +206,7 @@ export function legacyLinkedPullRequestOf(
 export interface ThreadPullRequestChain {
   readonly kind: "native" | "derived";
   readonly layers: ReadonlyArray<ThreadPullRequestLink>;
-  /** One per layer: 0 for the base, parent's depth + 1 above it. Siblings share a depth. */
+  /** Per-layer depth: base 0, child parent+1; siblings share depth. */
   readonly depths: ReadonlyArray<number>;
 }
 

@@ -15,7 +15,6 @@ import { useSidebarWorkspaceTabs } from "./useSystemWorkspaceTabBar";
 import { useSelectWorkspaceTab } from "./useSelectWorkspaceTab";
 import { useMobileNavigationTheme } from "../../lib/useMobileNavigationTheme";
 
-// Tabler's git-pull-request geometry, shared with the UIKit tab bar.
 const PULL_REQUEST_ICON = require("../../../assets/icons/pull-request.png");
 
 export function WorkspaceToolbar(props: {
@@ -76,8 +75,7 @@ export function WorkspaceToolbar(props: {
       <NativeStackScreenOptions
         optionsVersion={[selectedTab, tab.searchMode]}
         options={{
-          // Liquid Glass keeps search mounted as UIKit's own header button, which
-          // morphs into the field; swapping a stacked bar in and out cannot animate.
+          // Keep UIKit's search button mounted so it can morph into the field.
           headerSearchBarOptions:
             NATIVE_LIQUID_GLASS_SUPPORTED || tab.searchMode !== "resting"
               ? {

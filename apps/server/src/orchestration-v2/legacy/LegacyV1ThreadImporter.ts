@@ -675,10 +675,7 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  // `transcript_imported_at` is never reset to NULL, so a positive answer
-  // stays valid for the process lifetime; ensureTranscript runs on most
-  // thread reads and command dispatches, so skipping the lock + lookup here
-  // keeps that path off the database entirely after first confirmation.
+  // transcript_imported_at never resets; cache confirmed imports for the process lifetime to skip repeated locks and reads.
   const confirmedTranscriptThreadIds = new Set<ThreadId>();
 
   const ensureTranscriptBase = (threadId: ThreadId) =>
@@ -699,8 +696,7 @@ const make = Effect.gen(function* () {
           return { importedThreadCount: 0, importedMessageCount: 0 };
         }
         const messages = yield* listMessages(threadId);
-        // The thread's V1 events are still in the table here. Without the hint
-        // SQLite walks them through the stream index and reads past each payload.
+        // Hint the index to skip V1 events without scanning their payloads.
         const existingRows = yield* sql<{ readonly event_id: string }>`
           SELECT event_id
           FROM orchestration_events INDEXED BY idx_orchestration_events_agent_stream_sequence

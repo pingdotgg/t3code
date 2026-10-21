@@ -101,7 +101,6 @@ export const TURN_INTERRUPT_PROMPT =
   "Do not answer immediately. First run the local shell command `sleep 30`, then respond with exactly: interrupt fixture should not finish naturally.";
 export const TURN_INTERRUPT_MID_TOOL_PROMPT =
   "Run this exact local command: `node -e \"console.log('interrupt fixture tool started'); setTimeout(() => {}, 30000)\"`. Do not answer until it completes, then respond exactly: interrupt fixture should not finish naturally.";
-/** A command that prints over a few seconds, with colour and a carriage-return redraw. */
 const COMMAND_OUTPUT_STREAMING_COMMAND =
   "for i in 1 2 3 4; do printf '\\033[32mstream line %s\\033[0m\\n' $i; sleep 1; done; printf 'progress 50%%\\rprogress 100%%\\n'";
 export const COMMAND_OUTPUT_STREAMING_PROMPT = `Run this exact shell command in the foreground and wait for it to finish: \`${COMMAND_OUTPUT_STREAMING_COMMAND}\`. Then respond exactly: command output fixture complete`;
@@ -228,10 +227,7 @@ export type OrchestratorFixtureInputStep =
       readonly waitForTurnItemType?: OrchestrationV2TurnItem["type"];
     }
   | {
-      /**
-       * A run held open for background work finishes through the adapter's
-       * debounce, which replay passes on the adapter's receipt.
-       */
+      /** Replay finishes background-held runs through the adapter's debounce receipt. */
       readonly type: "finish_held_run";
       readonly targetRunIndex: number;
       readonly status: OrchestrationV2RunStatus;
@@ -295,12 +291,7 @@ export type OrchestratorFixtureInputStep =
 export interface OrchestratorFixtureInput {
   readonly interactionMode?: ProviderInteractionMode;
   readonly runtimeMode?: RuntimeMode;
-  /**
-   * Files committed into the replay workspace before the scenario runs, keyed
-   * by workspace-relative path. A recorder must seed the same files so adapter
-   * logic that reads the workspace (e.g. skill discovery) sees what the
-   * provider saw.
-   */
+  /** Files committed before replay, keyed by relative path; seed the same files when recording so workspace reads match. */
   readonly workspaceFiles?: Readonly<Record<string, string>>;
   readonly steps: ReadonlyArray<OrchestratorFixtureInputStep>;
 }
@@ -556,8 +547,7 @@ export function materializeFixtureInput(input: {
       }),
     );
 
-    // A run that asks several times stays busy between answers, so the next
-    // answer waits for its request instead of for the thread to go idle.
+    // Multiple requests keep runs busy between answers; wait for each request, not thread idle.
     const answersNext = (stepIndex: number) => {
       const next = input.fixtureInput.steps[stepIndex + 1]?.type;
       return next === "approve_next_runtime_request" || next === "answer_next_user_input_request";
@@ -576,8 +566,7 @@ export function materializeFixtureInput(input: {
                   (nextStep.type === "restart" && nextStep.targetRunIndex === runIndex) ||
                   (nextStep.type === "release_replay_gate_after_waiting" &&
                     nextStep.targetRunIndex === runIndex) ||
-                  // A provider continuation run starts while this thread is
-                  // busy, so waiting for idle first would never return.
+                  // Continuations start while busy; waiting for idle would deadlock.
                   (nextStep.type === "await_run_status" && nextStep.targetRunIndex > runIndex) ||
                   // Held open until the test clock moves, so it cannot go idle first.
                   nextStep.type === "finish_held_run")) ||

@@ -137,7 +137,7 @@ export const make = Effect.gen(function* () {
       more: rows.length > 0 && (links === undefined || /rel="?next"?/i.test(links)),
     };
   });
-  // Use a stable, small page size that also works with Forgejo's default maximum of 50.
+  // Forgejo's default page limit is 50.
   const page = Effect.fn("ForgejoPullRequestProvider.page")(function* <A>(
     input: ForgejoCli.ForgejoApiInput,
     schema: Schema.Codec<A, unknown, never, never>,
@@ -258,8 +258,7 @@ export const make = Effect.gen(function* () {
           ...input,
           path: `${repoPath(input)}/pulls?state=${state}&sort=recentupdate`,
         };
-        // Self-hosted servers may cap pages below 50. Establish their actual page size before
-        // translating the service's row offset into an API page number.
+        // Servers may cap below 50; probe the page size before mapping row offsets.
         const first = yield* readPage(query, Schema.NullOr(ForgejoPullRequest), 1);
         const pageSize = first.rows.length || 50;
         const firstIndex = Math.floor(offset / pageSize) + 1;
@@ -330,7 +329,7 @@ export const make = Effect.gen(function* () {
               })),
             ),
             page({ ...input, path: `${pullPath(input)}/reviews` }, ForgejoReview),
-            // Without these, each commit lists its files and a big merge outgrows the output limit.
+            // Commit file lists can exceed the output limit on large merges.
             page(
               { ...input, path: `${pullPath(input)}/commits?files=false&verification=false` },
               ForgejoCommit,

@@ -75,8 +75,7 @@ function readViewportWidth(): number {
   return window.innerWidth;
 }
 
-// getWindowFullscreenState is a synchronous IPC round trip, so the snapshot is cached
-// and only re-read when a subscription starts.
+// Cache the synchronous fullscreen IPC read until subscription.
 let windowFullscreenSnapshot: boolean | null = null;
 
 function macosDesktopBridge() {
@@ -152,8 +151,7 @@ function SidebarControl() {
         event.target instanceof HTMLElement &&
         event.target.closest('[data-composer-rich-text="true"]')
       ) {
-        // The rich-text composer claims Mod+B for bold; the toggle stays
-        // available everywhere else, including the plain-text composer.
+        // The rich-text composer reserves Mod+B for bold.
         return;
       }
       if (
@@ -339,9 +337,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const isOnSettings = pathname === "/settings" || pathname.startsWith("/settings/");
   const isMacosDesktop = isElectron && isMacPlatform(navigator.platform);
   const [sidebarWidth, setSidebarWidth] = useState(readInitialThreadSidebarWidth);
-  // Subscribed rather than read once: the clamp must track live window size,
-  // and a clamped drag ends with an unchanged width, which skips the re-render
-  // that would otherwise refresh a render-time snapshot.
+  // A clamped drag may not change width, so viewport changes need a separate subscription.
   const viewportWidth = useSyncExternalStore(subscribeToViewportWidth, readViewportWidth);
   const [brandWidth, setBrandWidth] = useState(0);
   const sidebarMinimumWidth = resolveThreadSidebarMinimumWidth(brandWidth);

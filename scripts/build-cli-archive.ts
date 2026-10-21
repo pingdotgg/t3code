@@ -1,8 +1,5 @@
 #!/usr/bin/env node
-/**
- * The archive is the unit every runtime installer downloads, so nothing in it
- * may require Node, npm, or a compiler on the machine that unpacks it.
- */
+/** Runtime archives must run without host Node, npm, or compilers. */
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Config from "effect/Config";
@@ -92,8 +89,7 @@ export function cliArchiveStem(version: string, platform: BuildPlatform, arch: B
 }
 
 export function cliArchiveFileName(version: string, platform: BuildPlatform, arch: BuildArch) {
-  // gzip rather than xz: GNU tar needs an external xz binary for -J, which
-  // minimal hosts lack, while every tar (and Node's zlib) handles gzip alone.
+  // Minimal hosts may lack xz, but tar and Node zlib handle gzip without it.
   return `${cliArchiveStem(version, platform, arch)}.${platform === "win" ? "zip" : "tar.gz"}`;
 }
 
@@ -124,10 +120,7 @@ const requireInput = Effect.fn("requireInput")(function* (inputPath: string, hin
   }
 });
 
-/**
- * The tree is archived and unpacked on machines without pnpm, so the store
- * layout cannot be relied on to survive the trip.
- */
+/** Installed runtimes cannot rely on pnpm's store layout surviving archival. */
 const stageRuntimeExternals = Effect.fn("stageRuntimeExternals")(function* (input: {
   readonly repoRoot: string;
   readonly stageDir: string;
@@ -220,10 +213,7 @@ const stageRuntimeExternals = Effect.fn("stageRuntimeExternals")(function* (inpu
   ]) {
     yield* fs.remove(path.join(input.stageDir, entry), { recursive: true, force: true });
   }
-  // A hoisted install still leaves nested `node_modules/.bin` shim directories
-  // inside packages that declare bins (msgpackr-extract's). They are symlinks
-  // nothing runs, and the npm registry refuses a tarball that contains any
-  // symlink, so strip every `.bin` directory below node_modules.
+  // Nested .bin shims are unused symlinks, which the npm registry rejects in tarballs.
   yield* removeNestedBinDirectories(fs, path, path.join(input.stageDir, "node_modules"));
 });
 
@@ -267,13 +257,7 @@ const MacSigningConfig = Config.all({
   appleApiIssuer: Config.String("APPLE_API_ISSUER").pipe(Config.option),
 });
 
-/**
- * Apple Silicon refuses to run unsigned Mach-O binaries at all, so the
- * executable is always signed: ad hoc when no identity is configured, or with
- * the Developer ID plus notarization when it is. The hardened runtime that
- * notarization requires only loads signed libraries, so every native addon in
- * the archive is signed with the same identity.
- */
+/** Apple Silicon requires signed binaries; notarization's hardened runtime also requires every native addon signed. */
 const signMacArchiveContents = Effect.fn("signMacArchiveContents")(function* (input: {
   readonly repoRoot: string;
   readonly contentDir: string;
@@ -322,8 +306,7 @@ const signMacArchiveContents = Effect.fn("signMacArchiveContents")(function* (in
     );
     return;
   }
-  // notarytool only accepts archives, and a bare executable cannot be stapled,
-  // so notarize a zip of the binary and rely on the online ticket lookup.
+  // notarytool requires an archive; bare executables rely on online tickets because they cannot be stapled.
   const notarizeZip = path.join(path.dirname(input.executablePath), ".notarize-t3.zip");
   yield* runCommand(
     ChildProcess.make("ditto", ["-c", "-k", "--keepParent", input.executablePath, notarizeZip]),
@@ -355,13 +338,7 @@ const WindowsSigningConfig = Config.all({
   ),
 });
 
-/**
- * Node's --build-sea injects the blob into a copy of node.exe by rebuilding its
- * resource section but, unlike its Mach-O path, leaves node's original
- * Authenticode data-directory entry in the PE header. The file grows, so the
- * entry now points into the middle of the new section at bytes that are not a
- * certificate table.
- */
+/** Node's Windows --build-sea leaves a stale Authenticode offset pointing into rebuilt resources instead of certificates. */
 const stripStaleAuthenticodeEntry = Effect.fn("stripStaleAuthenticodeEntry")(function* (
   executablePath: string,
 ) {
@@ -377,15 +354,13 @@ const stripStaleAuthenticodeEntry = Effect.fn("stripStaleAuthenticodeEntry")(fun
   }
   const optionalHeader = peOffset + 24;
   const magic = view.getUint16(optionalHeader, true);
-  // Data directories start at +112 (PE32+) or +96 (PE32); the certificate
-  // table is directory index 4, eight bytes (file offset, size).
+  // PE data directories start at +112 (PE32+) or +96 (PE32); index 4 holds the certificate offset and size.
   const securityEntry = optionalHeader + (magic === 0x20b ? 112 : 96) + 4 * 8;
   const offset = view.getUint32(securityEntry, true);
   const size = view.getUint32(securityEntry + 4, true);
   if (offset === 0 && size === 0) return;
   if (offset + size === bytes.byteLength) {
-    // A certificate table that still ends at EOF is intact; leave it for
-    // signtool to replace rather than second-guessing it here.
+    // Let signtool replace intact certificate tables ending at EOF.
     return;
   }
   view.setUint32(securityEntry, 0, true);
@@ -444,16 +419,14 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
   const repoRoot = yield* RepoRoot;
   const serverDir = path.join(repoRoot, "apps/server");
   const executableName = input.platform === "win" ? "t3.exe" : "t3";
-  // tsdown suffixes cross-built executables with their target (t3-darwin-x64);
-  // a host build is plain t3. Prefer the exact target when both exist.
+  // tsdown suffixes cross-built executables; prefer the exact target over the plain host build.
   const targetKey = `${input.platform === "mac" ? "darwin" : input.platform}-${input.arch}`;
   const targetExecutable = path.join(
     serverDir,
     "dist-exe",
     `t3-${targetKey}${input.platform === "win" ? ".exe" : ""}`,
   );
-  // The unsuffixed host build is only a valid stand-in when it was built for
-  // this platform and architecture; otherwise a missing target must fail.
+  // The unsuffixed executable is valid only for the host platform and architecture.
   const hostPlatform = yield* HostProcess.Platform;
   const hostKey = `${hostPlatform === "win32" ? "win" : hostPlatform}-${yield* HostProcess.Architecture}`;
   const builtExecutable = (yield* fs.exists(targetExecutable))
@@ -525,11 +498,7 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
       "tar (zip)",
     );
   } else {
-    // On Linux, pnpm hard-links identical files out of its store and node-gyp
-    // hard-links build outputs, and GNU tar records those as link entries.
-    // The npm registry rejects a tarball containing any, and the npm platform
-    // packages are re-packed from this archive's contents, so store every
-    // file as a file. macOS's bsdtar has no such flag; pnpm clones there.
+    // npm rejects Linux hardlink entries; macOS pnpm clones and bsdtar lacks this flag.
     yield* runCommand(
       ChildProcess.make("tar", [
         ...(input.platform === "linux" ? ["--hard-dereference"] : []),

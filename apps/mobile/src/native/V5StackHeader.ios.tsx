@@ -209,8 +209,7 @@ export function V5StackHeader(props: {
         onPress: mailSearch.onComposePress,
       });
   }
-  // Duo keeps compose at the bottom of a visible sidebar. On a single panel,
-  // the primary column owns the rail too; its separate UIToolbar is inaccessible.
+  // Duo compose stays beneath visible sidebars; single-panel primary rails make their separate UIToolbar inaccessible.
   if (
     nativeMetrics &&
     nativeMetrics.verticalBarEdge !== "none" &&
@@ -236,8 +235,7 @@ export function V5StackHeader(props: {
   useEffect(() => {
     searchHasFocus.current = false;
     if (!searchOptions?.autoFocus) return;
-    // UIKit attaches integrated search during the toolbar transition. Native
-    // onFocus acknowledges readiness; a single frame can reach it too early.
+    // Wait for native onFocus: UIKit attaches search during transition and one frame may be too early.
     const deadline = Date.now() + 500;
     let frame = 0;
     const focusWhenAttached = () => {
@@ -251,8 +249,7 @@ export function V5StackHeader(props: {
   const titleStyle = StyleSheet.flatten(options.headerTitleStyle);
   const headerStyle = StyleSheet.flatten(options.headerStyle);
   const appearance = {
-    // A clear color also removes UIKit's material. Let UIKit supply it for
-    // translucent bars so scrolling content can appear beneath native blur.
+    // Clear colors remove UIKit material; let translucent bars supply their own blur background.
     backgroundColor: options.headerTransparent
       ? undefined
       : (headerStyle?.backgroundColor ?? theme.colors.card),

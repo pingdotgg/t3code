@@ -38,12 +38,7 @@ export interface ProviderUpdateToastView {
   readonly dismissAfterVisibleMs?: number;
 }
 
-/**
- * A non-terminal ("initial"/"running") snapshot never re-polls itself, so
- * storing one pins an update row's spinner indefinitely once its pending flag
- * expires; such phases must be dropped in favor of the live per-environment
- * provider state instead of being persisted.
- */
+/** Non-terminal snapshots never re-poll; persisting them would pin spinners after pending expires. */
 export function isTerminalProviderUpdatePhase(phase: ProviderUpdateToastPhase): boolean {
   return phase === "succeeded" || phase === "failed" || phase === "unchanged";
 }
@@ -234,11 +229,7 @@ function formatProviderList(providers: ReadonlyArray<Pick<ServerProvider, "drive
   return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
 }
 
-/**
- * Install and provider settings reach only installs the server can update.
- * The rest are updated by the app or tool that installed them, so they get
- * their own sentence whatever else the notice offers.
- */
+/** Installs the server cannot update need separate instructions for their owning app or tool. */
 function describeInitialUpdates(input: {
   readonly updateProviders: ReadonlyArray<ProviderUpdateCandidate>;
   readonly oneClickProviders: ReadonlyArray<ProviderUpdateCandidate>;
@@ -483,11 +474,7 @@ function latestFinishedAtForProviders(providers: ReadonlyArray<ServerProvider>):
   }, null);
 }
 
-/**
- * Collapses terminal update states to the most recently finished instance per
- * driver, so an update on a non-default instance is not hidden behind an
- * older outcome on the driver's default instance.
- */
+/** Use each driver's latest finished instance so an older default-instance result cannot hide it. */
 function latestTerminalProvidersByDriver(providers: ReadonlyArray<ServerProvider>) {
   const latestProviderByDriver = new Map<ProviderDriverKind, ServerProvider>();
 
@@ -505,8 +492,7 @@ export function getProviderUpdateSidebarPillView(
   providers: ReadonlyArray<ServerProvider>,
   options?: ProviderUpdateSidebarPillOptions,
 ): ProviderUpdateSidebarPillView | null {
-  // Update state is recorded per instance, so pick the instances with an
-  // update before collapsing to one entry per driver.
+  // Filter active instances before deduplicating drivers because update state is per instance.
   const activeProviders = dedupeProvidersByDriver(providers.filter(isProviderUpdateActive));
   if (activeProviders.length > 0) {
     const activeProvider = activeProviders[0]!;

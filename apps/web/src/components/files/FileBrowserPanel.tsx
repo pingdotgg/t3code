@@ -42,12 +42,8 @@ interface FileBrowserPanelProps {
   selectedPath: string | null;
   selectedPathRevealId: number;
   onOpenFile: (relativePath: string) => void;
-  /**
-   * Set when `cwd` is a host folder outside the workspace rather than the
-   * workspace root. Entries then open and mention as host paths. A host folder can
-   * be a home directory, so nothing walks it whole: there is no expand-all, and
-   * search filters the folders already loaded instead of indexing on the server.
-   */
+  /** Host-folder entries use absolute paths. Avoid full traversal: disable expand-all and search only
+   * loaded folders. */
   hostFolder?: boolean;
   onRefreshSelectedFile?: () => void;
   workspaceMutationId: string | null;
@@ -106,8 +102,6 @@ function FileSearchField(props: {
   );
 }
 
-// The tree diffs `treePaths` by identity, so the panel must keep this result cached
-// across the hooks that read it.
 function buildTreeEntries(
   directoryEntries: readonly ProjectEntry[],
   searchEntries: readonly ProjectEntry[],
@@ -177,9 +171,7 @@ export default function FileBrowserPanel({
   const treeSelectionPathRef = useRef<string | null>(null);
   const handledRevealRef = useRef<{ path: string; revealId: number } | null>(null);
 
-  // The tree renders rows in shadow DOM and its anchor rect is unreliable, so
-  // capture the right-click position ourselves; contextmenu is a composed
-  // event, so a capture-phase listener sees it with viewport coordinates.
+  // Shadow-DOM row rects are unreliable; capture the composed contextmenu event's viewport position.
   const contextMenuPointerRef = useRef<{ x: number; y: number; at: number } | null>(null);
   useEffect(() => {
     const capturePointer = (event: MouseEvent) => {
@@ -216,8 +208,7 @@ export default function FileBrowserPanel({
           position,
         );
         if (clicked === null) return;
-        // "Open with" submenu selections report the child id ("editor:<id>"),
-        // which is not present in the top-level item list.
+        // Open-with submenu ids are absent from the top-level item list.
         const isFileMenuAction =
           fileMenuItems.some((entry) => entry.id === clicked) || clicked.startsWith("editor:");
         if (isFileMenuAction) {
@@ -262,7 +253,6 @@ export default function FileBrowserPanel({
         }
       }).then((result) => {
         context.close();
-        // Keep surfacing unexpected failures as unhandled rejections.
         if (!AsyncResult.isSuccess(result)) throw Cause.squash(result.cause);
       });
     },
@@ -288,8 +278,7 @@ export default function FileBrowserPanel({
     initialExpansion: "closed",
     icons: T3_PIERRE_ICONS,
     onSelectionChange: (selectedPaths) => {
-      // The drag controller's selection cache must track every change,
-      // including reveal-driven ones, or drags act on a stale selection.
+      // Update drag selection even for reveals so subsequent drags cannot use stale paths.
       dragMention.handleSelectionChange(selectedPaths);
       if (syncingSelectionRef.current) return;
       if (dragMention.isDragInProgress()) {
@@ -431,8 +420,7 @@ export default function FileBrowserPanel({
     }
     const revealRequest = { path: selectedPath, revealId: selectedPathRevealId };
     const handledReveal = handledRevealRef.current;
-    // Entry refreshes rebuild treePaths while the same preview stays open.
-    // Replaying a handled reveal would close an active tree search and steal focus.
+    // Refresh rebuilds treePaths; replaying handled reveals would close search and steal focus.
     if (
       handledReveal?.path === revealRequest.path &&
       handledReveal.revealId === revealRequest.revealId
@@ -443,10 +431,7 @@ export default function FileBrowserPanel({
     const selectedItem = model.getItem(selectedTreePath);
     if (!selectedItem) return;
 
-    // A selection that originated inside the tree (clicking a row, possibly
-    // in an active tree search) is already visible; re-revealing it would
-    // close the search and clobber the user's context. Only sync external
-    // opens (file picker, content search, chat links).
+    // Reveal only external selections; tree selections are visible and re-revealing would close search.
     const selectedInTree = model
       .getSelectedPaths()
       .some((path) => path.replace(/\/$/, "") === selectedPath);
@@ -465,8 +450,7 @@ export default function FileBrowserPanel({
       model.getItem(path)?.deselect();
     }
 
-    // Directory rows are registered with a trailing slash (see treePath), so
-    // ancestor lookups must use the same form to expand them.
+    // Directory paths include trailing slashes; ancestor lookups must match.
     const segments = selectedPath.split("/");
     let ancestorPath = "";
     for (const segment of segments.slice(0, -1)) {
@@ -486,8 +470,7 @@ export default function FileBrowserPanel({
     });
   }, [entryKinds, model, selectedPath, selectedPathRevealId]);
 
-  // The capture phase runs before the tree's own dragstart handler selects
-  // the dragged row, so the drag flag is up before that selection emits.
+  // Capture dragstart before the tree selects the row so selection sees the drag flag.
   const panelRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const panel = panelRef.current;

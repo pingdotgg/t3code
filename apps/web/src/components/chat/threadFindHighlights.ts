@@ -165,7 +165,7 @@ export function useThreadFindHighlights(input: {
     };
     let frame: number | null = null;
     const observer = new MutationObserver((mutations) => {
-      // Timers and status chrome tick every second; only searchable text and folds matter.
+      // Ignore timer and status mutations outside searchable text and folds.
       const relevant = mutations.filter(affectsSearchableText);
       if (relevant.length === 0) return;
       for (const mutation of relevant) {

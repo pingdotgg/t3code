@@ -1,8 +1,4 @@
-/**
- * Only hosts where a credential is what decides the answer belong here. `objects.githubusercontent.com`
- * and the `private-user-images` links GitHub's own HTML carries are already signed and load on their
- * own, and a token does nothing for them once that signature expires.
- */
+/** Only credential-dependent hosts belong here; signed objects/private-user-images URLs need no token. */
 
 const RAW_HOST = "raw.githubusercontent.com";
 const LFS_HOST = "media.githubusercontent.com";

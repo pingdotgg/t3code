@@ -106,7 +106,7 @@ const GitCafeComment = Schema.Struct({
   body: Schema.NullOr(Schema.String),
   createdAt: IsoDateTime,
   path: Schema.NullOr(Schema.String),
-  // The API allows any integer here; only a positive line anchors a review thread.
+  // Only positive lines anchor review threads; the API allows any integer.
   line: Schema.NullOr(Schema.Int),
   side: Schema.NullOr(Schema.Literals(["left", "right"])),
   commitOid: Schema.NullOr(Schema.String),
@@ -205,7 +205,7 @@ const GitCafeDiffFile = Schema.Struct({
   isSubmodule: Schema.optional(Schema.Boolean),
   oldOid: Schema.optional(Schema.String),
   newOid: Schema.optional(Schema.String),
-  // Structural pages (`/changes`, `/compare`) list files without hunks; the batched reads fill them.
+  // `/changes` and `/compare` omit hunks; batched reads fill them.
   hunks: Schema.optional(
     Schema.Array(
       Schema.Struct({
@@ -249,7 +249,6 @@ function toActor(actor: Actor, host: string): PullRequestActor | null {
   return {
     login: actor.kind === "local" ? actor.handle : actor.login,
     name: actor.kind === "local" ? actor.displayName : null,
-    // GitCafe serves its own avatars by path, so a relative one is read against the host.
     avatarUrl: actor.avatarUrl === null ? null : new URL(actor.avatarUrl, `https://${host}`).href,
   };
 }

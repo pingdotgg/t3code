@@ -46,8 +46,7 @@ function LoadedMediaVideo(props: {
   useEffect(() => {
     active.current = focused && !paused && AppState.currentState === "active";
     if (!focused || paused || (!active.current && !fullscreen.current)) player.pause();
-    // Native background handling distinguishes Android's fullscreen activity
-    // from leaving the app; React Native reports both as background.
+    // RN reports both leaving the app and Android fullscreen as background; native handling distinguishes them.
     const subscription = AppState.addEventListener("change", (state) => {
       active.current = focused && !paused && state === "active";
       if (state === "inactive" || (state === "background" && !fullscreen.current)) player.pause();

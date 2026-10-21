@@ -23,9 +23,7 @@ function publishedThemeColors(
   appearance: ThemeAppearance,
   colors: Readonly<Record<string, string>> | undefined,
 ): ThemeColors {
-  // A variant builds on that appearance's stock defaults: the generator follows
-  // the seed canvas's luminance, so dark seeds would give a light variant
-  // unreadable colors.
+  // The generator follows canvas luminance; dark seeds would make a light variant unreadable.
   const base =
     appearance === theme.appearance && theme.canvas !== undefined && theme.accent !== undefined
       ? createVividThemeColors(appearance, theme.canvas, theme.accent)
@@ -50,10 +48,7 @@ export function environmentThemeDefinition(theme: EnvironmentTheme): ThemeDefini
     appearance: theme.appearance,
     colors: publishedThemeColors(theme, theme.appearance, theme.colors),
     ...(Object.keys(variants).length > 0 ? { variants } : {}),
-    // Only the pure seeded form is guided-generator output. An exported file,
-    // or seeds carrying explicit role overrides, must open Duplicate in the
-    // advanced editor -- the guided one regenerates from canvas and accent and
-    // would discard whatever the machine hand-tuned.
+    // Guided editing regenerates from seeds, so hand-tuned role overrides must use the advanced editor.
     ...(theme.canvas !== undefined &&
     theme.accent !== undefined &&
     theme.colors === undefined &&
@@ -63,12 +58,7 @@ export function environmentThemeDefinition(theme: EnvironmentTheme): ThemeDefini
   };
 }
 
-/**
- * Published palettes this client can render. Reserved ids are dropped here rather
- * than rendered: a published `t3-iris.json` would show this palette on its
- * card while "Use" resolved the built-in, and a published `dark.json` would
- * capture everyone whose stored preference is the stock `"dark"`.
- */
+/** Filters reserved ids that would select built-ins instead of the published palette. */
 export function publishedThemeDefinitions(
   themes: ReadonlyArray<EnvironmentTheme>,
 ): ReadonlyArray<ThemeDefinition> {
@@ -95,14 +85,10 @@ export function useEnvironmentThemeSync(): void {
   const lastPublished = useRef<ReadonlyArray<EnvironmentTheme> | null>(null);
 
   useEffect(() => {
-    // Every reconnect snapshot delivers a fresh but usually identical array;
-    // regenerating palettes and repainting the document for it is exactly the
-    // wasted-frame class this codebase audits for.
     if (lastPublished.current !== null && Equal.equals(lastPublished.current, published)) return;
     lastPublished.current = published;
 
-    // The palette is painted from a snapshot taken when the theme last
-    // changed, so new colors only land if the active theme is re-applied.
+    // Active palettes are snapshots; changed colors require reapplying the theme.
     if (setEnvironmentThemes(publishedThemeDefinitions(published))) {
       refreshTheme({ preservePreview: true });
     }

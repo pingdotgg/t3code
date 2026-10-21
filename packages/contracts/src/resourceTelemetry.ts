@@ -318,11 +318,7 @@ export const DesktopTelemetrySetHostPowerIntervals = Schema.Struct({
 export type DesktopTelemetrySetHostPowerIntervals =
   typeof DesktopTelemetrySetHostPowerIntervals.Type;
 
-/**
- * Server -> desktop main: run the app's own update flow now (check ->
- * download -> quit-and-install) with no local confirmation. The remote click
- * on the machine that sent the RPC is the consent.
- */
+/** Runs check/download/quit-and-install without local confirmation; the remote RPC click supplies consent. */
 export const DesktopTelemetryRequestDesktopUpdate = Schema.Struct({
   version: Schema.Literal(1),
   type: Schema.Literal("requestDesktopUpdate"),

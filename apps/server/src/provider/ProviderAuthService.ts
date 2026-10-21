@@ -88,9 +88,7 @@ export const makeProviderAuthService = Effect.gen(function* () {
     return instance.auth;
   });
 
-  // Native sessions may still belong to the previous provider after the
-  // selected model changes. Read session bindings, not the selected model,
-  // when invalidating credentials for sign-in or sign-out.
+  // Invalidate credentials using session bindings; model selection may already point to another provider.
   const stopSessions = Effect.fn("ProviderAuthService.stopSessions")(function* (
     instanceId: ProviderInstanceId,
     binding: ProviderAuthController["credentialBinding"],

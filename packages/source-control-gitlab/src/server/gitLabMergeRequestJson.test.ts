@@ -159,7 +159,6 @@ describe("decodeMergeRequestDetailJson", () => {
     const sha = "afce4da4d5fe7d2fd0647b5b864526ea0a2827cb";
 
     expect(headSha({ sha })).toBe(sha);
-    // A new merge request can report its head before GitLab has computed `diff_refs`.
     expect(headSha({ sha, diff_refs: null })).toBe(sha);
     expect(headSha({ sha, merge_commit_sha: "0".repeat(40) })).toBe(sha);
     expect(headSha({})).toBeUndefined();

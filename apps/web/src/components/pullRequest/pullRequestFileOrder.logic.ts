@@ -83,8 +83,7 @@ function importedPaths(
       const withExtension = specifier.startsWith(".")
         ? resolveRelative(path, specifier)
         : specifier;
-      // A specifier may name the extension the module map dropped, and it need not be the one on
-      // disk: TypeScript's own imports point at the `.js` beside a `.ts`.
+      // Module-map keys omit extensions, which can differ from disk.
       const extension = MODULE_EXTENSIONS.find((candidate) => withExtension.endsWith(candidate));
       const resolved =
         extension === undefined ? withExtension : withExtension.slice(0, -extension.length);

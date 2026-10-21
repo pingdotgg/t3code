@@ -211,8 +211,7 @@ function collectToolbarItems(children: ReactNode): NativeToolbarItem[] {
     const item = convertToolbarChild(child);
     if (item) {
       if (item.type === "spacing") {
-        // Native inserts spacing items at `index`, treating a missing index
-        // as 0 — which would move the spacer in front of earlier siblings.
+        // Native defaults missing spacing-item indices to zero, moving spacers before earlier siblings.
         (item as { index?: number }).index = items.length;
       }
       items.push(item);

@@ -54,7 +54,7 @@ interface ObservedProcess {
   readonly zombie: boolean;
 }
 
-// `ps -o lstart` prints e.g. `Sat Sep  6 20:51:57 2026`; C locale and UTC keep it stable.
+// ps lstart needs C locale and UTC for stable parsing.
 const DARWIN_PS_LINE =
   /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(\w{3} \w{3} +\d{1,2} \d{2}:\d{2}:\d{2} \d{4})\s+(.*)$/;
 
@@ -187,9 +187,7 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
     function* (server) {
       if (!recordable) return Effect.void;
       const pgid = server.pid;
-      // The spawned process leads the group. If it already exited (a wrapper
-      // that left the server running), any live member identifies the group:
-      // a group id is not reused while the group has members.
+      // Any live member identifies a leaderless group; pgid cannot be reused while members remain.
       const leader = yield* observe(pgid);
       const members =
         leader !== undefined && !leader.zombie && leader.pgid === pgid

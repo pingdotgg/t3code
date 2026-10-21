@@ -9,9 +9,7 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 
-/**
- * Bytes never live here: image and file records bind to a `ChatAttachment` by id.
- */
+/** Image and file records reference `ChatAttachment` ids, never bytes. */
 
 export const COMPOSER_CONTEXT_KINDS = [
   "image",
@@ -56,8 +54,7 @@ export const ComposerContextKind = TrimmedNonEmptyString.check(
 );
 export type ComposerContextKind = typeof ComposerContextKind.Type;
 
-// Same rules as the private `ChatAttachmentId` in orchestration.ts; duplicated here because
-// orchestration.ts imports this module.
+// Duplicates the private ChatAttachmentId rules to avoid an orchestration.ts import cycle.
 const ContextAttachmentId = TrimmedNonEmptyString.check(
   Schema.isMaxLength(CONTEXT_ID_MAX_CHARS),
   Schema.isPattern(CONTEXT_ID_PATTERN),
@@ -143,9 +140,7 @@ export const ElementContextRecord = Schema.Struct({
 });
 export type ElementContextRecord = typeof ElementContextRecord.Type;
 
-// Optional record fields are `optionalKey`: a record holding an explicit
-// `undefined` cannot be sent as JSON, so it fails its own check and is dropped
-// alone instead of failing the whole message.
+// `optionalKey` rejects explicit undefined within one record, so only that record is dropped.
 export const PreviewAnnotationContextRecord = Schema.Struct({
   ...recordBase,
   kind: Schema.Literal("preview-annotation"),
@@ -215,10 +210,7 @@ export type ThreadContextRecord = typeof ThreadContextRecord.Type;
 
 const isJson = Schema.is(Schema.Json);
 
-/**
- * Known discriminators are excluded so a malformed known record fails its own schema instead of
- * sliding through unchecked.
- */
+/** Excludes known discriminators so malformed known records fail their own schema. */
 export const UnknownContextRecord = Schema.Struct({
   ...recordBase,
   kind: ComposerContextKind.check(Schema.isPattern(KNOWN_KIND_PATTERN)),
@@ -258,7 +250,7 @@ export type ComposerContextRecord = typeof ComposerContextRecord.Type;
 export const COMPOSER_CONTEXT_MAX_RECORDS = 200;
 const COMPOSER_CONTEXT_MAX_SERIALIZED_CHARS = 16_000_000;
 
-/** Structured context riding on a user message. Undecodable records are dropped, not fatal. */
+/** Undecodable context records are dropped without failing the message. */
 export const OrchestrationMessageContext = Schema.Struct({
   version: Schema.Literal(1),
   records: Schema.Array(Schema.Unknown)

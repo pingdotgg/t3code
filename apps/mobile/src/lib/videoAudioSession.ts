@@ -6,8 +6,7 @@ const nativeControls = requireOptionalNativeModule<{
   releaseVideoAudioSession(): Promise<void>;
 }>("T3NativeControls");
 
-// Players report not playing during seeks and buffering stalls, and another
-// player may start right after one stops. Both keep the session.
+// Keep the session through seeks, buffering, and brief gaps between players.
 const RELEASE_DELAY_MS = 1_000;
 
 let playingCount = 0;
@@ -17,10 +16,7 @@ export function mediaPlaybackStarted(): void {
   playingCount += 1;
 }
 
-/**
- * expo-video activates the iOS playback session but never deactivates it, so interrupted apps (Spotify,
- * Podcasts) are never told they may resume. In-app audio previews count too, since deactivating stops them.
- */
+/** expo-video never deactivates iOS playback, preventing interrupted apps from resuming. Include audio previews to avoid stopping them. */
 export function mediaPlaybackStopped(): void {
   playingCount -= 1;
   if (playingCount > 0 || Platform.OS !== "ios") return;

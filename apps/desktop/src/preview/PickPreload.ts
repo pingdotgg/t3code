@@ -196,11 +196,7 @@ const navigationDirectionForButton = (button: number): "back" | "forward" | null
   return null;
 };
 
-// Chromium routes thumb-button history navigation to the *focused* WebContents,
-// so hovering this guest without focusing it sends the host app's router back
-// instead of the preview. Suppress Chromium's default here and drive this tab's
-// history explicitly so the buttons always navigate the browser the pointer is
-// over — never the host app.
+// Chromium routes thumb-button navigation to the focused WebContents; navigate this hovered guest explicitly.
 const suppressNavigationButton = (event: MouseEvent): void => {
   if (!event.isTrusted || navigationDirectionForButton(event.button) === null) return;
   event.preventDefault();
@@ -390,11 +386,7 @@ function toStackFrame(frame: {
   };
 }
 
-/**
- * `getElementContext` walks the inspected page's React internals, and some pages leave it
- * pending forever. Without a bound, the whole submit chain stalls and the overlay sits on
- * "Capturing…".
- */
+/** React-internals lookups can remain pending forever; bound them so submit cannot stall the overlay. */
 function withCaptureTimeout<A>(promise: Promise<A>, millis: number): Promise<A | null> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   return Promise.race([
@@ -407,11 +399,7 @@ function withCaptureTimeout<A>(promise: Promise<A>, millis: number): Promise<A |
 
 const HTML_PREVIEW_MAX_CHARS = 500;
 
-/**
- * The React context lookup can stall or throw on some pages, so the element is never dropped:
- * without context it still carries its tag, a short HTML preview, and its rect so the crop
- * stays on the pick instead of falling back to the whole viewport.
- */
+/** Preserve the tag, HTML, and crop rect when React context lookup fails or stalls. */
 async function captureElement(element: Element): Promise<PickedElementPayload> {
   const base = {
     pageUrl: location.href,
@@ -1386,8 +1374,7 @@ function startAnnotation(sendEnabled: boolean): void {
     pendingCapture = true;
     submit.disabled = true;
     submit.textContent = "Capturing…";
-    // The element context lookup can take up to its timeout, and the user can
-    // keep editing meanwhile; the annotation must describe what they submitted.
+    // Snapshot the submitted comment before context lookup lets the user edit it.
     const submittedComment = comment.value.trim();
     const submittedRegions = [...regions];
     const submittedStrokes = [...strokes];
@@ -1408,8 +1395,7 @@ function startAnnotation(sendEnabled: boolean): void {
       }),
     )
       .then((elements) => {
-        // The overlay may have been cancelled or replaced while the capture
-        // ran. A late submit must not deliver into the next pick's listener.
+        // A late submit must not reach a replacement pick's listener.
         if (finished) return;
         const annotation: PreviewAnnotationPayload = {
           id: nextId("annotation"),
@@ -1448,8 +1434,7 @@ function startAnnotation(sendEnabled: boolean): void {
   root.addEventListener("keydown", (event) => {
     const submission =
       event.target === comment ? resolveAnnotationSubmission(event, sendEnabled) : null;
-    // Keep this in the bubble phase so editor inputs receive the event before
-    // it is isolated from listeners installed by the inspected page.
+    // Bubble phase lets editor inputs handle events before hiding them from the page.
     event.stopImmediatePropagation();
     if (!submission) return;
     event.preventDefault();

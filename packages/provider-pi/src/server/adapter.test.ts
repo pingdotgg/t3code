@@ -170,11 +170,7 @@ interface FakePi {
   };
 }
 
-/**
- * Pi 1.0.0's idle `get_state` reply, taken from the `simple` replay fixture
- * (fixtures/simple/pi_transcript.ndjson) minus the model object. Pi omits
- * `model` when none is selected and `sessionName` until one is set.
- */
+/** Pi omits `model` when none is selected and `sessionName` until one is set. */
 const recordedIdleState = (sessionFile: string) => ({
   thinkingLevel: "high",
   isStreaming: false,

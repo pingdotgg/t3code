@@ -15,10 +15,7 @@ export const THREAD_RESUME_MAX_REPLAY_EVENTS = 128;
 
 export const THREAD_RESUME_MAX_REPLAY_ENCODED_BYTES = 1_048_576;
 
-/**
- * Keep the original preflight budget: decoded objects and temporary strings
- * cost more than their stored JSON, even if wire projection shrinks them later.
- */
+/** Decoded objects and temporary strings exceed stored JSON size, even before wire slimming. */
 export const THREAD_RESUME_MAX_RAW_PAYLOAD_BYTES = 1_048_576;
 
 export function isThreadReplayRawPayloadSafe(rawPayloadBytes: number): boolean {
@@ -84,10 +81,7 @@ export type ThreadResumePlan =
     }
   | { readonly mode: "snapshot" };
 
-/**
- * Event count limits reducer churn while encoded bytes limit a small number of
- * large updates. Either excess is cheaper to replace with one current snapshot.
- */
+/** Bound event count and encoded bytes; replace excessive replay with one current snapshot. */
 export function decideThreadResume(input: {
   readonly afterSequence: number;
   readonly highWater: number;

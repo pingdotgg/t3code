@@ -18,7 +18,6 @@ import {
 } from "./orchestrationV2.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 
-/** 24-hour "HH:MM" wall-clock time. Mirrors `parseTimeOfDay` on the server. */
 const TimeOfDay = TrimmedNonEmptyString.check(
   Schema.isPattern(/^([01]?\d|2[0-3]):([0-5]\d)$/),
 ).annotate({ description: "Local wall-clock time in 24-hour HH:MM form, such as 09:30." });
@@ -187,10 +186,7 @@ const ScheduledTaskUpsertWebhookSchedule = Schema.Struct({
     "Run on each request to the task's webhook URL. The prompt may use {{body.path}}, {{headers.name}}, {{query.name}}, {{body}} and {{request}} placeholders.",
 });
 
-/**
- * Read model for persisted schedules. Keep accepting legacy sub-minute rows so
- * users can list, disable, edit, or delete them after the write minimum changes.
- */
+/** Accept legacy sub-minute schedules so users can still manage them. */
 export const ScheduledTaskSchedule = Schema.Union([
   ScheduledTaskIntervalSchedule,
   ScheduledTaskFixedTimeSchedule,
@@ -260,8 +256,6 @@ export const ScheduledTaskListInput = Schema.Struct({});
 export type ScheduledTaskListInput = typeof ScheduledTaskListInput.Type;
 
 export const ScheduledTaskListResult = Schema.Struct({
-  // Trigger types grow over time; a client must not lose the whole list over
-  // one task it cannot decode.
   tasks: ForwardCompatibleArray(ScheduledTask),
 });
 export type ScheduledTaskListResult = typeof ScheduledTaskListResult.Type;

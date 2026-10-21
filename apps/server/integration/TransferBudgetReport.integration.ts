@@ -119,9 +119,7 @@ function row(
   return `| ${provider} | ${phase} | ${metric} | ${format(observed)} | ${format(maximum)} | ${status} |`;
 }
 
-// Shell delivery coalesces on a 50 ms window, so message counts and bytes move
-// with scheduler timing between runs, and the reconnect and SQL figures follow
-// the same batches.
+// The 50 ms shell batching makes transfer, reconnect and SQL figures timing-dependent.
 function infoRow(
   provider: ProviderDriverKind,
   phase: string,

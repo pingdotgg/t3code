@@ -35,12 +35,7 @@ const TERMINAL_RUN_STATUSES = new Set<OrchestrationV2Run["status"]>([
   "rolled_back",
 ]);
 
-/**
- * Includes `waiting`: a successful turn persists as waiting until checkpoint capture flips it to
- * completed, and waiting is only set from completed. Excludes `rolled_back`: the provider-thread
- * roster is not run-tied, so a rolled-back latest run must fail the gate entirely (not only item
- * filter).
- */
+// waiting is completed work awaiting checkpoints; exclude rolled_back entirely because provider threads are not run-tied.
 const SETTLED_FOR_BACKGROUND_WAIT_RUN_STATUSES = new Set<OrchestrationV2Run["status"]>([
   "cancelled",
   "completed",
@@ -205,10 +200,7 @@ function nativeTaskIdFromTurnItem(item: PendingBackgroundWorkTurnItem): string {
   return String(item.id);
 }
 
-/**
- * The turn items the pending-work list names, without its settled-run gate.
- * Stop ends exactly these, so the list and Stop cannot disagree.
- */
+/** Items Stop ends, without the pending list's settled-run gate. */
 export function pendingBackgroundTurnItems<Item extends PendingBackgroundWorkTurnItem>(input: {
   readonly turnItems: ReadonlyArray<Item>;
   readonly runs?: ReadonlyArray<PendingBackgroundWorkRun>;
@@ -233,11 +225,7 @@ export function derivePendingBackgroundWork(input: {
   readonly turnItems: ReadonlyArray<PendingBackgroundWorkTurnItem>;
   readonly activeProviderThreadId?: string | null;
   readonly hasActiveRun?: boolean;
-  /**
-   * Run rows used to exclude items owned by rolled_back runs. Optional for
-   * callers that already filtered (SQL shell path); in-memory callers should
-   * pass projection runs so policy cannot drift.
-   */
+  /** Excludes rolled-back runs; optional only when the caller already filtered them, as SQL shell reads do. */
   readonly runs?: ReadonlyArray<PendingBackgroundWorkRun>;
   readonly pullRequests?: ReadonlyArray<PendingBackgroundWorkPullRequest> | undefined;
 }): ReadonlyArray<PendingBackgroundWorkTask> {

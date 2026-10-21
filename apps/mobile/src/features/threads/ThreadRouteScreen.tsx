@@ -736,9 +736,7 @@ function ThreadRouteContent(
     if (!creation?.creation || routeThreadIdentity === null) {
       return;
     }
-    // The drain restored the prompt and attachments into the recovery draft
-    // the rejected creation owns. Open that draft by id: without it the sheet
-    // mints a fresh empty one and the restored content is unreachable.
+    // Open recovery by draft id or the sheet creates an empty draft and strands restored content.
     try {
       await recoverFailedThreadDraft(creation);
     } catch (error) {
@@ -806,8 +804,7 @@ function ThreadRouteContent(
       localResendBusy.current = false;
       return;
     }
-    // V2 accepts the launch before setup runs, so cancellation never rejects
-    // the original outbox delivery. Reuse the server-owned prompt and uploads.
+    // V2 accepts launch before setup; cancellation cannot reject that delivery, so reuse server-owned prompt and uploads.
     const metadata = makeTurnCommandMetadata();
     const launched = await startLocalThread({
       environmentId: selectedThread.environmentId,
@@ -865,9 +862,7 @@ function ThreadRouteContent(
     return <OpeningThreadLoadingScreen />;
   }
 
-  // A queued creation renders as ready content: its prompt is the whole
-  // conversation until the server creates the thread. The subscription's
-  // not-found error for that window is expected, not a load failure.
+  // Queued creation displays its prompt before server creation; temporary not-found is expected.
   const contentPresentation =
     creationState !== null
       ? { kind: "ready" as const }

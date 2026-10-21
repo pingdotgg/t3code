@@ -38,11 +38,7 @@ export const PreviewViewportSize = Schema.Struct({
 }).check(viewportAreaFilter);
 export type PreviewViewportSize = typeof PreviewViewportSize.Type;
 
-/**
- * The page's measured viewport can be smaller than the minimum selectable
- * fixed size while fill mode follows a narrow panel. Keep measurement
- * validation separate from the stricter user-selectable size constraints.
- */
+/** Fill mode can measure below selectable minimum sizes; validate measurements separately. */
 export const PreviewRenderedViewportSize = Schema.Struct({
   width: Schema.Int.check(Schema.isGreaterThan(0)),
   height: Schema.Int.check(Schema.isGreaterThan(0)),
@@ -104,10 +100,7 @@ export const FILL_PREVIEW_VIEWPORT = {
   _tag: "fill",
 } as const satisfies PreviewViewportSetting;
 
-/**
- * Zoom is applied by the desktop main process to the Chromium guest, but the ladder lives here so
- * the settings UI can offer exactly the steps the zoom controls step through.
- */
+/** Shared steps keep settings aligned with desktop Chromium zoom controls. */
 export const PREVIEW_ZOOM_LEVELS = [
   0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0, 5.0,
 ] as const;
@@ -147,11 +140,7 @@ export type PreviewNavStatus = typeof PreviewNavStatus.Type;
 export const PreviewRuntime = Schema.Literals(["desktop", "server"]);
 export type PreviewRuntime = typeof PreviewRuntime.Type;
 
-/**
- * Host setup the server's browser is missing, sent as JSON in the reason when
- * the preview stream closes with code 4503. Close reasons are capped at 123
- * bytes, which this fits.
- */
+/** JSON reason for preview stream close code 4503; must fit the 123-byte close-reason limit. */
 export const PreviewStreamHostSetup = Schema.Struct({
   need: Schema.Literals(["sandbox", "libraries"]),
   command: Schema.String,
@@ -168,11 +157,7 @@ export const PreviewSessionSnapshot = Schema.Struct({
   viewport: Schema.optional(PreviewViewportSetting),
   colorScheme: Schema.optional(PreviewAppearancePreference),
   zoomFactor: Schema.optional(PreviewZoomFactor),
-  /**
-   * Browser profile the tab's Chromium partition is derived from. Fixed at
-   * open: Electron only honours a `<webview>`'s partition before attach, so
-   * switching would require tearing the guest down and losing page state.
-   */
+  /** Fixed at open; Electron cannot change a webview partition after attach without losing page state. */
   profileId: Schema.optional(BrowserProfileId),
   runtime: Schema.optional(PreviewRuntime),
   automationOwner: Schema.optional(Schema.String),
@@ -222,9 +207,7 @@ export const PreviewResizeInput = Schema.Struct({
 });
 export type PreviewResizeInput = typeof PreviewResizeInput.Type;
 
-/**
- * Unlike page input, these need no control of the tab.
- */
+/** Requires no tab control, unlike page input. */
 export const PreviewAdjustInput = Schema.Struct({
   threadId: ThreadId,
   tabId: PreviewTabId,

@@ -14,11 +14,7 @@ import {
 
 import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHubCredentials";
 
-/**
- * Everything a redirect leads to — the presigned object stores GitHub hands assets off to —
- * authorizes with its own signature, and some of them reject a request that also carries a
- * bearer token.
- */
+// Redirect targets use their own signatures and may reject an extra bearer token.
 const CREDENTIALED_HOSTS = new Set([
   "github.com",
   "www.github.com",
@@ -46,8 +42,7 @@ const FORWARDED_RESPONSE_HEADERS = [
 ] as const;
 const MEDIA_CONTENT_TYPE_PATTERN = /^(?:image|video|audio)\/[\w!#$&^.+-]+$/i;
 const SVG_CONTENT_TYPE = "image/svg+xml";
-// An SVG is a document: same policy the asset route gives a workspace SVG, so one embedded in a
-// body cannot run script against this origin.
+// Sandbox embedded SVG documents as the workspace asset route does.
 const SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
 
 const githubToken = GitHubCredentials.GitHubCredentials.pipe(
@@ -71,7 +66,7 @@ const fetchFollowingRedirects = Effect.fn("GitHubMediaFetch.fetchFollowingRedire
         HttpClientRequest.get(target).pipe(
           HttpClientRequest.setHeaders({
             ...headers,
-            // The bytes are streamed straight through, so never let an encoding layer in.
+            // Stream bytes unchanged, without an encoding layer.
             "accept-encoding": "identity",
             ...(authorization === null ? {} : { authorization }),
           }),
@@ -91,7 +86,7 @@ export const githubMediaResponse = Effect.fn("GitHubMediaFetch.githubMediaRespon
   asset: { readonly url: string; readonly cwd: string; readonly expiresAt: number },
   requestHeaders: Record<string, string | undefined>,
 ) {
-  // Both media hosts are served by github.com's account, which is the host `gh` stores it under.
+  // gh stores both media hosts' credentials under github.com.
   const token = yield* githubToken;
   const forwarded: Record<string, string> = {};
   for (const name of FORWARDED_REQUEST_HEADERS) {
@@ -106,8 +101,7 @@ export const githubMediaResponse = Effect.fn("GitHubMediaFetch.githubMediaRespon
     "x-content-type-options": "nosniff",
   };
   if (response === null) return HttpServerResponse.empty({ status: 502, headers });
-  // It carries none of the upstream entity headers: a `content-length` with no body behind it
-  // holds the connection open until the browser gives up on it.
+  // Forwarding content-length without a body would hang the browser connection.
   if (response.status >= 400) {
     return HttpServerResponse.empty({
       status: response.status >= 500 ? 502 : response.status,

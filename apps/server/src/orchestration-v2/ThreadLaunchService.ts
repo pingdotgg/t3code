@@ -166,10 +166,7 @@ export class ThreadLaunchService extends Context.Service<
       ThreadLaunchResult,
       ThreadLaunchError | ThreadManagement.ThreadManagementProviderInstanceDisabledError
     >;
-    /**
-     * `launch` accepts such a launch and reports the failure inside the
-     * thread; a caller that needs it before a thread exists checks first.
-     */
+    /** Check before creation for early errors; launch otherwise accepts and reports base failures inside the thread. */
     readonly checkWorktreeBase: (
       input: Pick<ThreadLaunchInput, "projectId" | "workspaceStrategy">,
     ) => Effect.Effect<void, ThreadLaunchBaseRefError>;
@@ -272,8 +269,7 @@ const make = Effect.gen(function* () {
         (yield* git.resolveWorktreeBaseRemote({ cwd, refName: baseRef })) !== null
       )
         return undefined;
-      // `git worktree add` also starts from a remote-tracking branch of that
-      // name; any ref carrying it is reason enough to let Git decide.
+      // git worktree add accepts remote-tracking branches; let Git decide when any matching ref exists.
       if (yield* git.hasRefNamed({ cwd, refName: baseRef })) return undefined;
       return (yield* git.hasCommit({ cwd, refName: "HEAD" })) ? project : undefined;
     }).pipe(Effect.orElseSucceed(() => undefined));
@@ -308,8 +304,7 @@ const make = Effect.gen(function* () {
     let setupTerminalId: string | null = null;
     let workspaceRecorded = false;
     let runReleased = false;
-    // The background branch rename records the worktree again when it lands,
-    // so cleanup stops it before forgetting a removed worktree.
+    // Stop background renames before forgetting worktrees; completed renames record them again.
     let branchRename: Fiber.Fiber<unknown> | null = null;
     if (input.workspaceStrategy.type === "worktree") {
       yield* setupTracker.begin({
@@ -455,8 +450,7 @@ const make = Effect.gen(function* () {
         yield* setupTracker.stageStatus(threadId, "checkout", "done");
       }
 
-      // A reused worktree is already recorded, and rewriting it could undo
-      // the first attempt's branch rename.
+      // Do not rewrite reused worktrees; that could undo the original branch rename.
       if (reused === undefined) {
         yield* threads
           .dispatch({
@@ -508,8 +502,7 @@ const make = Effect.gen(function* () {
                     }),
                   ),
                 );
-              // Updating the parent first makes later subagents inherit the new name.
-              // Re-read after each pass for children of subagents updated in that pass.
+              // Update parents first so children inherit names; reread each pass for newly updated descendants.
               const visited = new Set([threadId]);
               while (true) {
                 const snapshot = yield* threads.getShellSnapshot();
@@ -678,9 +671,7 @@ const make = Effect.gen(function* () {
           ) {
             if (branchRename !== null) yield* Fiber.interrupt(branchRename);
             const removedPath = createdWorktreePath;
-            // The thread forgets the worktree only once it is gone; a failed
-            // removal leaves the directory for the user to clean up rather than
-            // reusing a checkout that may be half written.
+            // Forget worktrees only after removal succeeds; failed removals must not reuse partially written checkouts.
             yield* git
               .removeWorktree({ cwd: project.workspaceRoot, path: removedPath, force: true })
               .pipe(
@@ -843,10 +834,7 @@ const make = Effect.gen(function* () {
         instanceId: input.modelSelection.instanceId,
       });
       return yield* Effect.gen(function* () {
-        // A retried launch has no client-supplied id to replay against, so
-        // recover the thread id its accepted create was recorded under before
-        // allocating another one; a fresh id would only collide with the
-        // recorded receipt.
+        // Recover ids from accepted launch receipts before allocating; retries have no client id and new ids collide with receipts.
         const reusableLaunchReceipt =
           input.threadId === undefined &&
           Option.isSome(launchReceipt) &&

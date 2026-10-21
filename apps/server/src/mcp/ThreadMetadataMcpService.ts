@@ -203,8 +203,7 @@ const make = Effect.gen(function* () {
     const metadataEvent = dispatched.storedEvents.find(
       (stored) => stored.event.type === "thread.metadata-updated",
     );
-    // A retried commandId replays the stored events of the first dispatch;
-    // compaction may have deleted them by then, so answer from the projection.
+    // Retries may find stored events compacted away; answer from the projection.
     const thread =
       metadataEvent?.event.type === "thread.metadata-updated"
         ? metadataEvent.event.payload

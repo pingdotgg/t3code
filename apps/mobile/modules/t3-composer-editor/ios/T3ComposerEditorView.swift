@@ -85,9 +85,7 @@ private final class ComposerTextView: UITextView {
   var textPasteThresholdBytes = 0
   var maxInputChars = Int.max
   var enterBehavior: ComposerEnterBehavior = .send
-  /// Shortcut HUD titles. JS supplies what the two sends actually do right now
-  /// ("Queue Message" / "Steer Message"), so the iPad Command-hold list names
-  /// the outcome rather than a generic "Send".
+  /// JS supplies the actual send outcomes so the iPad Command-hold HUD names the configured actions.
   var submitTitle = "Send Message"
   var alternateSubmitTitle = "Send Message"
   private var bypassTextPasteInterception = false
@@ -95,9 +93,6 @@ private final class ComposerTextView: UITextView {
   override var keyCommands: [UIKeyCommand]? {
     var commands = super.keyCommands ?? []
     guard !isReadOnly, markedTextRange == nil else { return commands }
-    // The plainer chord always performs the configured follow-up behavior and
-    // the more-modified one performs its opposite, so Command is the "other
-    // way" modifier whichever Return behavior is configured.
     if enterBehavior == .send {
       let submitOnReturn = UIKeyCommand(
         input: "\r",

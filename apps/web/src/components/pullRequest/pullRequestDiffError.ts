@@ -1,4 +1,4 @@
-/** Diff failures currently include transport wrappers, so recognize the reason inside them. */
+/** Diff errors can wrap the failure reason in transport text. */
 export function describePullRequestDiffError(error: string, providerName: string) {
   if (/\brate limit\b|\brate[-_]limited\b|\btoo many requests\b/i.test(error)) {
     return {

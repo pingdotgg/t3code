@@ -235,8 +235,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   const remoteCapableEditors = useRemoteCapableEditors();
   const [remoteHintSeen, markRemoteHintSeen] = useRemoteOpenHint();
   const environmentLabel = useEnvironment(environmentId)?.label ?? "this machine";
-  // Remote mode ignores the server's PATH probe: what matters is what runs on
-  // the viewing machine, which only the desktop app can probe.
+  // Remote editors run on the viewing machine; only desktop can probe that PATH.
   const effectiveEditors = remote.mode === "local-exec" ? availableEditors : remoteCapableEditors;
   const [preferredEditor, setPreferredEditor] = usePreferredEditor(effectiveEditors);
 
@@ -253,8 +252,7 @@ export const OpenInPicker = memo(function OpenInPicker({
         isFile: openInCwdIsFile,
       });
       if (url === undefined) return;
-      // Only record hint-seen/preferred when the shell actually accepted
-      // the URL (an older desktop build can refuse the editor scheme).
+      // Older desktops can refuse editor schemes; record preferences only after acceptance.
       void openRemoteEditorUrl(url).then((opened) => {
         if (!opened) return;
         markRemoteHintSeen();
@@ -307,7 +305,7 @@ export const OpenInPicker = memo(function OpenInPicker({
     preferredEditor,
     remote.mode,
   ]);
-  // Derived after the shortcut effect so the compiler can cache the resolved editor list.
+  // Derive after the shortcut effect to preserve the editor list's compiler cache.
   const options = resolveOpenInOptions(navigator.platform, effectiveEditors);
   const primaryOption = options.find(({ value }) => value === preferredEditor) ?? null;
   const primaryLabel = isPanel ? `Open in ${primaryOption?.label ?? "editor"}` : "Open";

@@ -236,8 +236,7 @@ function makeService(input: {
   readonly resolveHandle?: SourceControlProviderRegistry.SourceControlProviderRegistry["Service"]["resolveHandle"];
   readonly resolveRepositoryIdentity?: RepositoryIdentityResolver.RepositoryIdentityResolver["Service"]["resolve"];
 }) {
-  // Built into the test's own scope rather than provided call by call: the marks store owns a
-  // database, and `Effect.provide` would close it the moment the service was handed back.
+  // Build in the test scope; per-call Effect.provide would close the marks database on service acquisition.
   return Effect.flatMap(
     Layer.build(
       Layer.mergeAll(

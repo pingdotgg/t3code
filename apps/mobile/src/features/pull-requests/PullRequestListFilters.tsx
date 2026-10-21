@@ -25,8 +25,7 @@ const SORTS = {
   created: "Newest created",
   oldest: "Oldest updated",
 } as const;
-// On Android the row sits under ScreenContent's 28dp corner. A 12dp inset keeps the
-// 16dp chip radius concentric with it (28 - 12 = 16).
+// A 12dp inset keeps 16dp chips concentric with Android's 28dp ScreenContent corner.
 const ROW_STYLE =
   Platform.OS === "android"
     ? { paddingHorizontal: 12, paddingTop: 12, paddingBottom: 8, gap: 8 }

@@ -20,11 +20,7 @@ const threadOutboxShellStatusesAtom = Atom.make(
   },
 ).pipe(Atom.withLabel("mobile:thread-outbox:shell-statuses"));
 
-/**
- * Queued pending tasks the outbox drain must not deliver right now: the one
- * open in the new-task editor, plus any whose latest edits could not be saved
- * back yet (delivering those would send stale content).
- */
+/** Do not deliver tasks still open in an editor or whose latest edits failed to save; their queued payloads are stale. */
 export const editingQueuedMessageIdsAtom = Atom.make<Readonly<Record<MessageId, true>>>({}).pipe(
   Atom.keepAlive,
   Atom.withLabel("mobile:thread-outbox:editing-message-ids"),

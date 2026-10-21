@@ -588,7 +588,7 @@ function ProviderSection(props: {
   const colors = useProviderColors();
   if (merged.providers.length === 0 && props.cursorAccessEnvironments.length === 0) return null;
 
-  // .sort() on a copy, not .toSorted(): Hermes doesn't ship the ES2023 method.
+  // Hermes lacks toSorted.
   const ordered = [...merged.providers].sort((a, b) =>
     metric === "cost" ? b.costUsd - a.costUsd : b.totalTokens - a.totalTokens,
   );
@@ -812,7 +812,7 @@ function ModelsSection(props: { readonly merged: MergedUsage; readonly metric: U
   const colors = useProviderColors();
   if (merged.models.length === 0) return null;
 
-  // .sort() on a copy, not .toSorted(): Hermes doesn't ship the ES2023 method.
+  // Hermes lacks toSorted.
   const ordered = [...merged.models].sort((a, b) =>
     metric === "cost"
       ? b.costUsd - a.costUsd || b.totalTokens - a.totalTokens

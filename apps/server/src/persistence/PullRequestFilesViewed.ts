@@ -24,12 +24,7 @@ export type PullRequestFilesViewedScope = typeof PullRequestFilesViewedScope.Typ
 
 export const PullRequestFileViewedMark = Schema.Struct({
   path: Schema.String,
-  /**
-   * Empty where the host said it had none to give, which is an answer rather than a gap: a file
-   * with no version at the head is one the change request deletes. Null where the host could
-   * not say at all, which is no baseline rather than an empty one, and such a mark stays
-   * cleared until a press replaces it.
-   */
+  /** Empty means the host confirms deletion; null means no baseline, so the mark stays cleared until replaced. */
   revision: Schema.NullOr(Schema.String),
 });
 export type PullRequestFileViewedMark = typeof PullRequestFileViewedMark.Type;

@@ -157,9 +157,7 @@ export function ThreadDetailsCard({
         inlineOpen ? (
           <aside
             aria-label="Thread details"
-            // Slides down to make room for the find bar, but returns in the same frame
-            // the bar closes: a floating preview below moves up at once and would
-            // otherwise overlap the card mid-slide.
+            // Skip the return transition to avoid overlapping the rising preview.
             className={cn(
               "absolute z-20",
               topInset > 0 &&
@@ -181,7 +179,7 @@ export function ThreadDetailsCard({
         <PopoverPopup
           anchor={anchor}
           align="end"
-          // Lines the card up with the find bar: the panel pads its card by 8px.
+          // Account for the find panel's 8px card padding.
           alignOffset={THREAD_DETAILS_CARD_GAP - 8}
           collisionAvoidance={{ side: "shift", align: "shift", fallbackAxisSide: "none" }}
           side="bottom"

@@ -69,9 +69,7 @@ export function registerConfirmDialogHost(): () => void {
   };
 }
 
-/**
- * An undefined result means no themed host is currently available.
- */
+/** Undefined means no themed host is available. */
 export function requestConfirmDialog(
   message: string,
   options?: ConfirmDialogOptions,

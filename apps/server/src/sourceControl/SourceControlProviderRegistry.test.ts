@@ -136,14 +136,12 @@ function makeRegistry(input: {
           ? Layer.mock(ServerSettings.ServerSettingsService)(input.settings)
           : ServerSettings.ServerSettingsService.layerTest(),
         Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({}),
-        // The GitHub provider's GraphQL reads go through these; no test here makes one.
         Layer.mock(GitHubRequestPolicy.GitHubRequestPolicy)({}),
         Layer.succeed(
           HttpClient.HttpClient,
           HttpClient.make(() => Effect.die(new Error("Unexpected GitHub GraphQL read"))),
         ),
         Layer.mock(GitHubRest.GitHubRest)({
-          // No GitHub credential unless a test supplies one, so custom hosts stay unclaimed.
           credential: (host) => Effect.fail(new GitHubCredentials.GitHubNotSignedInError({ host })),
           ...input.githubApi,
         }),

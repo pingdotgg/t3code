@@ -64,9 +64,7 @@ type AppUpdateYmlConfig = typeof AppUpdateYmlConfig.Type;
 
 const UpdateInfo = Schema.Struct({
   version: Schema.String,
-  // Left unvalidated on purpose: a malformed release-notes payload must never
-  // fail the decode and block the update state transition. The shape is
-  // validated defensively in normalizeDesktopUpdateReleaseNotes.
+  // Malformed notes must not block update-state decoding; normalizeDesktopUpdateReleaseNotes validates separately.
   releaseNotes: Schema.optional(Schema.Unknown),
 });
 
@@ -335,7 +333,7 @@ function isArm64HostRunningIntelBuild(runtimeInfo: DesktopRuntimeInfo): boolean 
   return runtimeInfo.hostArch === "arm64" && runtimeInfo.appArch === "x64";
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const config = yield* DesktopConfig.DesktopConfig;
   const pool = yield* DesktopBackendPool.DesktopBackendPool;
@@ -364,8 +362,7 @@ export const make = Effect.gen(function* () {
   );
 
   const stateChanges = yield* PubSub.sliding<DesktopUpdateState>(16);
-  // Makes ref writes + publishes atomic against subscribe, so a snapshot
-  // never overlaps with the first change a subscriber receives.
+  // Serialize writes and publishes against subscription so snapshots cannot overlap the first change.
   const stateMutex = yield* Semaphore.make(1);
 
   const emitState = Ref.get(updateStateRef).pipe(
@@ -399,8 +396,7 @@ export const make = Effect.gen(function* () {
     ),
   );
 
-  // The .deb carries electron-builder's resources/package-type marker.
-  // electron-updater reads the same file and installs updates with dpkg.
+  // electron-updater uses this marker to install .deb updates with dpkg.
   const isDebPackage =
     environment.platform === "linux" && environment.isPackaged
       ? yield* fileSystem
@@ -597,8 +593,7 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  // A failed or interrupted install brings no updated backend, so a later
-  // quit must release the tunnel.
+  // Failed or interrupted installs leave no replacement backend; later quits must release the tunnel.
   const removeUpdateRestartMarker = fileSystem
     .remove(updateRestartMarkerPath, { force: true })
     .pipe(Effect.ignore);
@@ -742,11 +737,7 @@ export const make = Effect.gen(function* () {
           yield* writeUpdateRestartMarker;
           const { downloadedVersion } = yield* Ref.get(updateStateRef);
           if (downloadedVersion !== null) yield* writeInstallRecord(downloadedVersion);
-          // Stop every backend in the pool, not just the primary. With parallel
-          // WSL + Windows backends, leaving the WSL instance up means
-          // quitAndInstall's app.quit() exits before the pool's scope cascade
-          // has a chance to run its stop finalizer, so the WSL child gets
-          // hard-killed by the OS instead of receiving SIGTERM + grace.
+          // Stop pooled backends before quitAndInstall can outrun their scope finalizers.
           const instances = yield* pool.list;
           // stop clears desiredRunning, so retain the recovery set beforehand.
           const runningInstances = yield* Effect.filter(instances, (instance) =>

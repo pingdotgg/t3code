@@ -77,19 +77,11 @@ export class AgentAwarenessOperationError extends Schema.TaggedError<AgentAwaren
 }
 
 const environmentConnections = new Map<EnvironmentId, SavedRemoteConnection>();
-// Keyed by ActivityKit id: getAgentLiveActivities() wraps the same native
-// activity in a new object on every call. The relay keeps only the latest token
-// a device registers, so each activity's token reads and registrations run one
-// at a time; otherwise a lookup that read the old token could land after the
-// rotated one.
+// ActivityKit returns new wrappers per id; serialize by id to prevent stale-token registration.
 const activityPushTokenLocks = new Map<string, Semaphore.Semaphore>();
-// But the registration is not a pure no-op: the relay replays the current
-// aggregate to this device on every accepted registration, and that replay is
-// the foreground reconciliation that repairs drifted or orphaned activities.
+// Each accepted registration replays the relay aggregate, repairing drifted or orphaned activities.
 const ACTIVITY_TOKEN_REREGISTER_INTERVAL_MS = 60_000;
-// Locally started activities carry the same stale window the relay puts on
-// every push (STALE_AFTER_SECONDS in ApnsClient.ts), so a card whose relay
-// registration never lands still degrades instead of looking alive forever.
+// Match the relay's STALE_AFTER_SECONDS so activities expire even if registration fails.
 const LIVE_ACTIVITY_STALE_AFTER_MS = 10 * 60_000;
 const liveActivityStaleDate = () => new Date(Date.now() + LIVE_ACTIVITY_STALE_AFTER_MS);
 const registeredActivityPushTokens = new Map<string, number>();
@@ -182,8 +174,7 @@ export function setAgentAwarenessRelayTokenProvider(
     provider !== null &&
     !shouldRegisterAgentAwarenessDeviceForProvider(relayTokenProviderIdentity, identity);
   if (!isExistingIdentity) {
-    // Native configure compares the persisted account on cold start. An
-    // unset JS identity is a remount, not evidence of a different account.
+    // An unset JS identity may mean remount; native configure checks the persisted account on cold start.
     if (relayTokenProviderIdentity && identity !== relayTokenProviderIdentity) {
       clearAndroidAgentNotifications();
     }
@@ -205,8 +196,7 @@ export function setAgentAwarenessRelayTokenProvider(
       clearTimeout(activeLiveActivityRegistrationRetry);
       activeLiveActivityRegistrationRetry = null;
     }
-    // Without a signed-in user the relay can no longer update or end these
-    // activities, so they would sit orphaned on the lock screen.
+    // Signed-out activities would be orphaned because the relay can no longer update or end them.
     endLocalLiveActivities("live activity cleanup after cloud sign-out failed");
     setRegistrationStatus("unknown");
     void clearAgentAwarenessRegistrationRecord().catch((error: unknown) => {
@@ -229,10 +219,7 @@ export function setAgentAwarenessRelayTokenProvider(
   enqueueDeviceRegistration({}, "device registration after cloud sign-in failed");
 }
 
-// For provider teardown while the user is still signed in (e.g. the auth bridge
-// unmounting/remounting), ending lock-screen activities and wiping the
-// persisted registration would be wrong — the relay still holds a valid
-// registration and the next mount reuses it.
+// Provider remounts retain a valid relay registration; teardown must preserve it and lock-screen activities.
 export function releaseAgentAwarenessRelayTokenProvider(): void {
   relayTokenProvider = null;
   relayTokenProviderIdentity = null;
@@ -651,10 +638,7 @@ function startPendingDeviceRegistration(): void {
       runtime.runPromiseExit(registerDevice(next.input, generation)),
     );
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      // A transient failure on a later refresh (e.g. token rotation) leaves
-      // the prior accepted registration intact on the relay, so an already
-      // registered device stays "registered" rather than flipping the
-      // settings toggles off.
+      // Refresh failures leave the relay's accepted registration intact; preserve registered status.
       if (registrationStatus !== "registered") {
         setRegistrationStatus("failed");
       }
@@ -969,9 +953,7 @@ export const registerLiveActivityPushToken = Effect.fn(
   );
 });
 
-// iOS can replace an activity's push token while it runs, not only deliver a
-// late first one. The relay keeps pushing to the old token until APNs rejects
-// it, so every activity needs a listener that registers each new token.
+// Observe every token replacement: the relay otherwise keeps pushing to the old token until APNs rejects it.
 function observeLiveActivityPushTokens(
   activity: LiveActivity<AgentActivityProps>,
 ): Semaphore.Semaphore {

@@ -98,8 +98,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverDiscoverSourceControl]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetTraceDiagnostics]: AuthDiagnosticsReadScope,
   [WS_METHODS.serverGetProcessDiagnostics]: AuthDiagnosticsReadScope,
-  // Load-balancing new threads reads host load; that is part of operating
-  // threads, not of inspecting diagnostics.
+  // Thread load balancing reads host load, so it needs thread scope rather than diagnostics scope.
   [WS_METHODS.serverGetHostResources]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetProcessResourceHistory]: AuthDiagnosticsReadScope,
   [WS_METHODS.serverGetResourceTelemetryHistory]: AuthDiagnosticsReadScope,
@@ -236,7 +235,6 @@ const requiredScopesForSettingsUpdate = (payload: unknown) => {
   const input = Schema.decodeUnknownSync(SettingsUpdate)(payload);
   const scopes = requiredScopesForServerSettingsPatch(input.patch);
   if (input.providerInstanceMutation === undefined) return scopes;
-  // An atomic provider mutation carries an empty patch unless it also changes settings.
   return Object.values(input.patch).every((value) => value === undefined)
     ? [AuthProvidersManageScope]
     : [...new Set([...scopes, AuthProvidersManageScope])];

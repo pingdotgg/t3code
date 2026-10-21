@@ -9,7 +9,6 @@ import { projectEnvironment } from "~/state/projects";
 export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
   const [directories, setDirectories] = useState(new Map<string, readonly ProjectEntry[]>());
   const [errors, setErrors] = useState(new Map<string, string>());
-  // The root starts counted as loading because the mount effect requests it.
   const [pending, setPending] = useState(1);
   const [loadingDirectories, setLoadingDirectories] = useState<ReadonlySet<string>>(
     () => new Set([""]),
@@ -21,7 +20,6 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
   const running = useRef(0);
   const waiting = useRef<Array<() => void>>([]);
 
-  // Callers count the request as pending first; the mount load is counted by the initial state.
   const startRequest = (directoryPath: string, refresh: boolean): Promise<void> => {
     loaded.current.add(directoryPath);
     requested.current.add(directoryPath);
@@ -29,7 +27,6 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
     const request = (async () => {
       if (running.current >= 4) await new Promise<void>((resolve) => waiting.current.push(resolve));
       else running.current++;
-      // executeAtomQuery settles instead of throwing, so the slot is always released.
       const result = active.current
         ? await executeAtomQuery(appAtomRegistry, atom, {
             refresh: true,

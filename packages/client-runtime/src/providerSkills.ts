@@ -26,11 +26,8 @@ export function dedupeProviderSkillsByName(
 }
 
 /**
- * A skill switched off in the provider's settings will not run, and one the
- * provider reserves for the agent (Claude Code's `user-invocable: false`)
- * rejects a user invocation. Everything else, including skills the agent may
- * not start on its own, is fair game: the server dispatches the pick in the
- * provider's native form.
+ * Exclude disabled and agent-only skills (Claude Code's `user-invocable: false`).
+ * Skills the agent cannot start on its own can still be invoked by users in the provider's native form.
  */
 export function isProviderSkillUserInvocable(
   skill: Pick<ServerProviderSkill, "enabled" | "userInvocable">,

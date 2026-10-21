@@ -10,7 +10,7 @@ import {
 } from "../../providerInstances";
 import { getTriggerDisplayModelName, type ModelEsque } from "./providerIconUtils";
 
-// Used when the provider did not report its cache TTL: Claude's 1h cache plus slack.
+// Fallback TTL: Claude's 1h cache plus slack.
 const CLAUDE_RESUME_COMPACTION_FALLBACK_MS = 70 * 60_000;
 
 export function providerSupportsManualCompaction(

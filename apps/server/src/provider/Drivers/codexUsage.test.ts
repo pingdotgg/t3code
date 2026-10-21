@@ -327,7 +327,7 @@ describe("parseCodexLine", () => {
 
   // A forked/subagent rollout opens with the parent's history copied in and
   // every line re-stamped to the fork instant, then the ancestors' session
-  // metas. Counting those again multiplied usage ~1.85x on real data (#5758).
+  // metas. Counting those again multiplied usage ~1.85x on real data.
   describe("forked rollouts", () => {
     const meta = (overrides: {
       id: string;

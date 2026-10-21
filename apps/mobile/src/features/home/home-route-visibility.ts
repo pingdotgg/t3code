@@ -4,11 +4,7 @@ import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { Atom } from "effect/reactivity";
 
-/**
- * Home stays mounted under a pushed Thread, and native-stack never freezes the
- * route directly below the focused one on Fabric, so Home has to stop its own
- * work.
- */
+/** Fabric never freezes the route below focus; Home must stop its own work beneath Thread. */
 export function useHomeRouteVisible(): boolean {
   const navigation =
     useNavigation<NativeStackNavigationProp<ReactNavigation.RootParamList, "Home">>();

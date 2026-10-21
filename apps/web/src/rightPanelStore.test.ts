@@ -750,7 +750,6 @@ describe("rightPanelStore", () => {
       }),
     ]);
 
-    // The workspace root is the files explorer, still holding the way back down.
     store.navigateFolder(refA, "file:apps", "", "apps/web/src");
     expect(state().surfaces.map((surface) => surface.id)).toEqual(["file:README.md", "files"]);
     expect(state().surfaces[1]).toEqual({
@@ -759,7 +758,6 @@ describe("rightPanelStore", () => {
       folderTrail: "apps/web/src",
     });
 
-    // Reaching the end of the trail leaves no trail behind.
     store.navigateFolder(refA, "files", "apps/web/src", "apps/web/src");
     expect(state().activeSurfaceId).toBe("file:apps/web/src");
     expect(state().surfaces[1]).toEqual({
@@ -803,7 +801,6 @@ describe("rightPanelStore", () => {
       expect.objectContaining({ id: "file:src", folderTrail: "src/app.ts" }),
     ]);
 
-    // The trail's end is the file: its tab comes back as it was, the folder tab goes.
     store.navigateFolder(refA, "file:src", "src/app.ts", "src/app.ts");
     expect(state().activeSurfaceId).toBe("file:src/app.ts");
     expect(state().surfaces).toEqual([

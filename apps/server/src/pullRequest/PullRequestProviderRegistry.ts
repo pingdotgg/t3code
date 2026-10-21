@@ -24,9 +24,7 @@ export function fromProviders(
   };
 }
 
-/**
- * @public Service construction is part of the canonical Effect module API.
- */
+/** @public */
 export const make = Effect.gen(function* () {
   const drivers = yield* Effect.forEach(BuiltInDrivers.BUILT_IN_SOURCE_CONTROL_DRIVERS, (driver) =>
     driver.make.pipe(Effect.map((instance) => instance.pullRequests)),

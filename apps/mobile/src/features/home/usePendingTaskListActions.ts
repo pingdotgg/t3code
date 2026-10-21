@@ -55,9 +55,7 @@ export function usePendingTaskListActions(): {
           text: "Delete",
           style: "destructive",
           onPress: () => {
-            // Release the edit lock only after removal succeeds, and only if
-            // it is held for THIS task — clearing it up front (or for another
-            // task) would let the drain deliver a mid-edit payload.
+            // Release only this task's edit lock after removal succeeds, or the drain could deliver a mid-edit payload.
             void removeThreadOutboxMessage(pendingTask.message)
               .then(() => releaseEditingQueuedMessage(pendingTask.message.messageId))
               .catch((error) => {

@@ -263,8 +263,7 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
           });
     });
   });
-  // Each scan visits every message, so a cache smaller than the thread is cycled through and
-  // never hits. Real threads reach a few thousand messages of a few hundred characters.
+  // Scans visit every message; a cache smaller than the thread churns without hits.
   const textCache = yield* Cache.make({
     capacity: 8192,
     timeToLive: "1 minute",

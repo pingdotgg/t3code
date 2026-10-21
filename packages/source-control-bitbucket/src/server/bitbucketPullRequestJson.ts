@@ -20,18 +20,11 @@ import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 
 import { dedupeChecks } from "@t3tools/source-control-core/server/pullRequestChecks";
 
-/**
- * Bitbucket's enums are decoded as plain strings and normalized here, in the same tolerant
- * style as the GitHub and GitLab decoders: a new pull request state or build status must not
- * fail a whole payload.
- */
+/** Unknown enum values must not fail the whole payload. */
 const RawUserSchema = Schema.Struct({
-  /**
-   * How Bitbucket addresses an account when a reviewer set is written; the handles it shows are
-   * not accepted there.
-   */
+  /** Reviewer writes require UUIDs, not displayed handles. */
   uuid: Schema.optional(Schema.NullOr(Schema.String)),
-  /** Absent on an app account, which is why `display_name` has to stand in for it. */
+  /** App accounts omit this; use `display_name`. */
   nickname: Schema.optional(Schema.NullOr(Schema.String)),
   display_name: Schema.optional(Schema.NullOr(Schema.String)),
   links: Schema.optional(
@@ -170,14 +163,11 @@ export interface BitbucketPullRequest {
   readonly baseBranch: string;
   readonly state: PullRequestState;
   readonly isDraft: boolean;
-  /**
-   * Bitbucket reports no conflict state on a pull request, so the list leaves it unknown. The
-   * detail read asks the conflicts endpoint, which does answer.
-   */
+  /** Listings omit conflict state; detail reads use the conflicts endpoint. */
   readonly mergeability: PullRequestMergeability;
   readonly createdAt: string;
   readonly updatedAt: string;
-  /** When the request was merged or declined, unlike `updatedAt`, which later comments move. */
+  /** Merge/decline time; later comments move `updatedAt`. */
   readonly closedAt: string | null;
   readonly body: string;
   readonly reviewRequestLogins: ReadonlyArray<string>;
@@ -191,11 +181,7 @@ function trimmed(value: string | null | undefined): string | null {
   return text.length > 0 ? text : null;
 }
 
-/**
- * Bitbucket stamps times as `+00:00` with microseconds. The page sorts change requests from
- * every host against each other as plain strings, so they are normalized to the same `Z` form
- * the other hosts already use.
- */
+/** Normalize Bitbucket's microsecond `+00:00` timestamps to `Z` for cross-host string sorting. */
 function toIsoUtc(value: string): string {
   return Option.match(DateTime.make(value), {
     onNone: () => value,
@@ -354,11 +340,7 @@ export function decodeRepositoryPermissionJson(raw: string): Result.Result<boole
   return Result.succeed(permission === null || permission === "admin" || permission === "write");
 }
 
-/**
- * Nothing on a repository lists the people with access to it — `permissions-config/users` is for
- * administrators only — and a pull request can be sent to anyone in the workspace, so this is the
- * list Bitbucket's own reviewer field is filled from too.
- */
+/** Repository membership requires admin access; reviews can target any workspace member. */
 export function decodeWorkspaceMembersJson(
   raw: string,
 ): Result.Result<BitbucketPage<PullRequestReviewerCandidate>, DecodeFailure> {
@@ -382,10 +364,7 @@ export type BitbucketRawComment = Schema.Schema.Type<typeof RawCommentSchema>;
 
 export interface BitbucketComments {
   readonly comments: ReadonlyArray<PullRequestComment>;
-  /**
-   * The same comments unread, for `buildReviewThreads`. A reply and the remark it answers can
-   * land on different pages, and only the caller holding every page can put them together.
-   */
+  /** Raw entries for thread assembly across page boundaries. */
   readonly entries: ReadonlyArray<BitbucketRawComment>;
   readonly next: string | null;
 }
@@ -523,10 +502,7 @@ export function decodeStatusesJson(
     const status = decodedStatus.value;
     const name = trimmed(status.name) ?? trimmed(status.key);
     if (name === null) continue;
-    // Bitbucket re-uses a status key when a pipeline is run again, so the same check can appear
-    // twice on one page. Nothing decoded here says which copy is newer, so the later one wins,
-    // which is the order Bitbucket writes an update in. The key is kept as the workflow name so
-    // two different pipelines that display the same name are not folded into one.
+    // Reruns reuse keys; later entries win. Keys distinguish same-named pipelines.
     checks.push({
       check: {
         name,

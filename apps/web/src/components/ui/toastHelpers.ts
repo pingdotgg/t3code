@@ -14,10 +14,7 @@ export type StackedThreadToastOptions = {
   data?: Omit<ThreadToastData, "actionLayout">;
 };
 
-/**
- * Defined `actionProps` that hide a previous toast CTA on `toastManager.update`.
- * Passing `actionProps: undefined` is a no-op because updates omit undefined keys.
- */
+/** Clear toast actions with defined empty children; undefined actionProps is a no-op on update. */
 export const hiddenToastActionProps = {
   children: null,
 } as const satisfies Pick<ComponentPropsWithoutRef<"button">, "children">;

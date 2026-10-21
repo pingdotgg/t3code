@@ -436,16 +436,14 @@ function workRowSymbolName(icon: ThreadFeedActivity["icon"]): WorkContentIcon {
   }
 }
 
-// Entering fades only for rows created moments ago: rows remount whenever the
-// list scrolls them back into view, and old rows must not replay an entrance.
+// Animate only fresh rows; virtualization remounts old rows during scrolling.
 const FRESH_ROW_WINDOW_MS = 3_000;
 function isFreshRow(createdAt: string): boolean {
   const timestamp = Date.parse(createdAt);
   return Number.isFinite(timestamp) && Date.now() - timestamp < FRESH_ROW_WINDOW_MS;
 }
 
-// The minimum matches min-h-8 below. Exact sizing is disabled when native
-// accessibility scaling can make the single-line text taller than that minimum.
+// Match min-h-8; disable exact sizing when native accessibility scaling can exceed it.
 const WORK_ROW_HEIGHT = THREAD_WORK_ROW_MIN_HEIGHT;
 const WORK_ROW_GAP = 1;
 const WORK_LOG_BOTTOM_MARGIN = 3.5;
@@ -684,11 +682,8 @@ function ThreadWorkGroupList(props: {
     finishPendingAppend();
     rememberPosition();
   });
-  // The native ScrollView reports its content size a frame or more after
-  // LegendList has laid the rows out, so a detail toggle rendered the group
-  // at its old height while the rows below already moved. Read the size
-  // LegendList computes on the JS thread instead; it settles in the same
-  // commit as the row measurement that changed it.
+  // Native ScrollView reports size after LegendList lays out rows. Use LegendList's JS size
+  // so group height and row measurements settle in the same commit.
   useLayoutEffect(() => {
     const list = listRef.current;
     if (!list) return;
@@ -717,8 +712,7 @@ function ThreadWorkGroupList(props: {
         estimatedItemSize={props.rowSizing.estimatedRowHeight + WORK_ROW_GAP}
         getFixedItemSize={getFixedItemSize}
         initialScrollIndex={initialScrollIndex}
-        // Bootstrap overscan is only 50px. An offset inside expanded detail can
-        // otherwise leave its own row unmeasured until after scroll restoration.
+        // 50px bootstrap overscan may leave expanded details unmeasured until after scroll restoration.
         alwaysRender={
           restoringPosition && initialPosition ? { keys: [initialPosition.rowId] } : undefined
         }
@@ -888,7 +882,6 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
 ) {
   const { row, expanded } = props;
   const navigation = useNavigation();
-  // Command rows stream their output, including the final output, from the server.
   const streamsOutput =
     useCommandOutputStreaming(props.environmentId) &&
     row.projectedItem.item.type === "command_execution";
@@ -1062,8 +1055,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
         accessibilityState={canExpand ? { expanded } : undefined}
         onPress={() => {
           if (notifiedSubagentThreadId !== undefined) {
-            // Push, not navigate: navigate reuses this Thread route, so back
-            // would skip the parent thread and land on Home (matches #15068).
+            // Push rather than navigate so Back returns to the parent thread instead of Home.
             navigation.dispatch(
               StackActions.push("Thread", {
                 environmentId: String(props.environmentId),

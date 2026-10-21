@@ -21,10 +21,7 @@ import { formatHostForUrl, isLoopbackHost, isWildcardHost } from "../startupAcce
 
 type NetworkInterfacesMap = ReturnType<typeof NodeOS.networkInterfaces>;
 
-/**
- * Stays under the config read's own discovery timeout, so a slow `tailscale`
- * CLI drops only the tailnet name and never the LAN addresses.
- */
+// Stay below the config discovery timeout so slow Tailscale drops only the tailnet name.
 const TAILSCALE_ENDPOINT_TIMEOUT = Duration.seconds(3);
 
 export class DirectEndpoints extends Context.Service<
@@ -34,32 +31,18 @@ export class DirectEndpoints extends Context.Service<
   }
 >()("t3/environment/DirectEndpoints") {}
 
-/**
- * These routes are plain HTTP and carry the client's credential, so a public
- * address would send it across the internet unencrypted, and a name
- * (`server.local`) can resolve to a different machine on each client's network.
- */
+// Credentials travel over HTTP; public IPs leak them and hostnames can resolve differently per client.
 const isAdvertisableAddress = (address: string): boolean =>
   NodeNet.isIPv4(address) &&
   !address.startsWith("127.") &&
   !address.startsWith("169.254.") &&
   isPrivateNetworkHost(address);
 
-/**
- * Container and VM networks (Docker, libvirt, VMware, VirtualBox, Hyper-V, and
- * macOS's `bridge100`+) have private addresses only this machine reaches. A
- * host bridge such as `br0` or Proxmox's `vmbr0` carries the LAN address, so
- * it stays listed.
- */
+// VM/container private addresses are host-only; keep LAN bridges such as br0 and vmbr0.
 const VIRTUAL_INTERFACE =
   /^(docker|br-|veth|virbr|vmnet|vboxnet|vEthernet|podman|cni|flannel|cali|lxcbr|lxdbr|bridge1\d\d)/;
 
-/**
- * Tailscale's own interface: `tailscale0` on Linux, "Tailscale" on Windows.
- * macOS names every tunnel `utunN`, so there it is the one that also carries
- * an address in Tailscale's IPv6 range. Cloudflare WARP and other VPNs assign
- * from the same IPv4 range, so the IPv4 address alone proves nothing.
- */
+// macOS utun names need Tailscale's IPv6 range to identify them; WARP shares its IPv4 range.
 const isTailscaleInterface = (
   name: string,
   entries: ReadonlyArray<NodeOS.NetworkInterfaceInfo>,
@@ -93,7 +76,7 @@ export function resolveBoundEndpoints(input: {
   }));
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -107,11 +90,7 @@ export const make = Effect.gen(function* () {
         interfaces: NodeOS.networkInterfaces(),
       }),
     ];
-    // Tailscale Serve terminates HTTPS on the tailnet name and forwards to
-    // loopback, so it works even for a loopback-only server. The name is only
-    // listed once it answers as this server: Serve setup can fail without
-    // stopping startup. Anything slower than the probe leaves it out rather
-    // than holding back the addresses already found.
+    // Serve setup can fail without stopping startup; advertise only after it answers as this server.
     if (config.tailscaleServeEnabled) {
       const servedUrl = yield* readTailscaleStatus.pipe(
         Effect.map((status) => status.magicDnsName),

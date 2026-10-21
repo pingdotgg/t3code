@@ -232,7 +232,6 @@ describe("third-party license generation", () => {
       name: "fixture-app",
       dependencies: { "demo-dependency": "1.2.3", "@types/demo": "1.0.0" },
     });
-    // The DefinitelyTyped shape, and the csstype / undici-types one it pulls in.
     await write("@types/demo", {
       main: "",
       types: "index.d.ts",
@@ -260,7 +259,6 @@ describe("third-party license generation", () => {
   it.each([
     {
       shape: "a JS entry next to its declarations",
-      // The @shikijs/types shape: a types condition next to a real JS entry.
       entry: {
         main: "./dist/index.mjs",
         exports: { ".": { types: "./dist/index.d.mts", import: "./dist/index.mjs" } },

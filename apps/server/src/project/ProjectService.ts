@@ -266,8 +266,7 @@ export const make = Effect.gen(function* () {
         `Command ${command.commandId} was already used by ${receipt.commandType} for ${receipt.projectId}.`,
       );
     }
-    // A retried command re-plans against the state it already produced, so its
-    // first receipt, not the new plan, decides the outcome.
+    // Retries re-plan against their own effects; the first receipt determines the outcome.
     if (receipt.status === "accepted") return;
     const rejection = Option.getOrUndefined(decodeProjectCommandRejection(receipt.error));
     switch (rejection?._tag) {
@@ -474,11 +473,7 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  // A machine-disabled provider instance that a deleted project's override
-  // once turned on must not stay probed and alive forever. Nothing else
-  // removes the entry, so deletion is where it goes; best-effort because a
-  // settings write failure should not block the deletion it is cleaning up
-  // after, and a server crash before a replay never revisits this project.
+  // Best-effort cleanup releases disabled instances kept alive by overrides; crashes have no replay to revisit deletion.
   const clearProjectSettingsOverrides = (projectId: ProjectId) =>
     serverSettings.updateSettings({ projectSettingsOverrides: { [projectId]: null } }).pipe(
       Effect.asVoid,
@@ -493,8 +488,7 @@ export const make = Effect.gen(function* () {
   const deleteProject: ProjectService["Service"]["delete"] = Effect.fn("ProjectService.delete")(
     function* (input) {
       const { projectId } = input;
-      // A deleted row still reaches commit, so a retried command id replays its
-      // receipt and any other command id is rejected as not found.
+      // Read deleted rows so retries replay receipts and other command ids fail as not found.
       const existing = yield* readRow(projectId, { includeDeleted: true });
       if (Option.isNone(existing)) {
         return yield* new ProjectNotFoundError({ projectId });

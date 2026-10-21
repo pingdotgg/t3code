@@ -278,8 +278,7 @@ function clampPanelPosition(
   widthOverride?: number,
 ) {
   const margin = 8;
-  // The caller passes a width when it has just shrunk the panel: the DOM
-  // still reports the old one until React commits.
+  // Use the caller's new width after shrink; DOM width stays stale until commit.
   const width = widthOverride ?? panel?.offsetWidth ?? 0;
   return {
     x: Math.min(Math.max(x, margin), Math.max(margin, window.innerWidth - width - margin)),
@@ -292,9 +291,7 @@ function retireMergedTheme(retired: ThemeDefinition, mergeTarget: ThemeDefinitio
   try {
     removeCustomTheme(retired.id);
   } catch (cause) {
-    // The merge already persisted. Leaving it while the edited theme
-    // survives would collide on every retry, so the target goes back to
-    // its pre-merge palettes before the failure surfaces.
+    // Restore the pre-merge target on retirement failure; leaving the persisted merge would collide on retry.
     try {
       updateCustomTheme(mergeTarget);
     } catch {}
@@ -382,9 +379,7 @@ export function ThemeEditorPanel({
     return () => window.removeEventListener("resize", clamp);
   }, [isMinimized, open]);
 
-  // Seeded during render so the first open commit already holds this
-  // session's draft; seeding in an effect would preview the previous
-  // session's colors for a frame.
+  // Seed during render so the first open frame cannot preview the previous session's colors.
   const [seededOpen, setSeededOpen] = useState(false);
   if (seededOpen !== open) {
     setSeededOpen(open);
@@ -406,9 +401,7 @@ export function ThemeEditorPanel({
 
       setName(editingTheme?.label ?? seedName ?? "");
       setActiveAppearance(nextAppearance);
-      // Themes saved by the guided editor carry the managed flag; anything else
-      // (imports, hand-edited files, older saves) opens in advanced mode so
-      // guided regeneration cannot silently discard hand-tuned colors.
+      // Open unmanaged themes in advanced mode to preserve imported or hand-tuned colors.
       setIsAdvanced(sourceTheme !== null && sourceTheme.managed !== true);
       setSimpleColorsDirtyByAppearance({ light: false, dark: false });
       setShouldRegenerateGuidedColors(sourceTheme !== null && sourceTheme.managed !== true);
@@ -443,7 +436,6 @@ export function ThemeEditorPanel({
     return null;
   };
 
-  // Moves off a palette the merge target already has, once per target change.
   const mergeKey =
     isEditing || mergeTarget === null ? null : `${mergeTarget.id}:${takenAppearances.join(",")}`;
   const [appliedMergeKey, setAppliedMergeKey] = useState<string | null>(null);
@@ -541,10 +533,7 @@ export function ThemeEditorPanel({
     const highlightedRoles = selectedHighlightRolesKey.split(",") as Array<ThemeColorRole>;
     const refreshHighlights = () => setUsageCount(highlightThemeRoleUsage(highlightedRoles));
     refreshHighlights();
-    // A refresh snapshots computed styles for the whole tree twice, so it is
-    // throttled rather than run per frame: a streaming reply or a virtualized
-    // list mutates the DOM continuously and would otherwise stall the main
-    // thread for as long as the inspector is open.
+    // Each refresh snapshots the whole tree twice; throttle streaming and virtualization mutations.
     const MIN_REFRESH_INTERVAL_MS = 500;
     let refreshFrame: number | null = null;
     let refreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -891,8 +880,7 @@ export function ThemeEditorPanel({
 
   const renderAppearanceButton = (appearance: ThemeAppearance) => {
     const lockReason = appearanceLockReason(appearance);
-    // A locked mode stays hoverable so the tooltip can say why it is off;
-    // a real disabled attribute would swallow the pointer events.
+    // Use aria-disabled so locked modes remain hoverable for explanatory tooltips.
     const button = (
       <Toggle aria-disabled={lockReason !== null} value={appearance}>
         {appearance === "light" ? "Light" : "Dark"}
@@ -1046,9 +1034,7 @@ export function ThemeEditorPanel({
     const rect = panelRef.current?.getBoundingClientRect();
     if (!rect) return;
     event.preventDefault();
-    // The grip drags the bottom-right corner, so the top-left must hold
-    // still; the default parking spot is anchored bottom-right and would
-    // slide, so it converts to an explicit position first.
+    // Convert bottom-right parking to explicit position before resizing so the top-left corner stays fixed.
     if (position === null) setPosition(clampPosition(rect.x, rect.y));
     resizeStartRef.current = {
       pointerX: event.clientX,

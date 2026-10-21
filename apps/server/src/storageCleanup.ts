@@ -67,8 +67,7 @@ const decodePnpmModulesManifest = Schema.decodeUnknownEffect(
 );
 
 const DAY_MS = 86_400_000;
-// After a settle, the project's settle script needs time to open its
-// terminal, which then protects the worktree.
+// Give settle scripts time to open terminals that protect the worktree.
 const SETTLE_SCRIPT_GRACE_MS = 60_000;
 // Worktree creation can precede its thread row, including review-guide checkouts.
 const ORPHAN_WORKTREE_GRACE_MS = 60 * 60 * 1_000;
@@ -145,7 +144,7 @@ export function storageCleanupActivityAt(thread: OrchestrationV2ThreadShell): nu
   );
 }
 
-/** Only a complete subagent chain within this worktree shares ownership. */
+// Ownership requires a complete subagent chain within this worktree.
 function worktreeOwner(threads: ReadonlyArray<OrchestrationV2ThreadShell>) {
   if (threads.length === 1) return threads[0];
   const byId = new Map(threads.map((thread) => [thread.id, thread]));
@@ -171,11 +170,7 @@ function worktreeOwner(threads: ReadonlyArray<OrchestrationV2ThreadShell>) {
   return owner;
 }
 
-/**
- * Whether the host's pull request proves this worktree's head was merged. A
- * squash or rebase merge leaves the head outside the default branch, so the
- * merged pull request then has to name this exact commit.
- */
+/** Squash/rebase merges require the merged PR to name this exact head commit. */
 export function storageCleanupPullRequestMerged(
   pullRequest: Pick<
     GitManager.GitBranchPullRequest,
@@ -330,8 +325,7 @@ const make = Effect.gen(function* () {
     Effect.orElseSucceed(() => null),
   );
 
-  // The snapshot takes seconds on large databases, so it runs on the reader
-  // worker instead of the event loop.
+  // Large snapshots take seconds; use the reader worker instead of blocking the event loop.
   const readThreads = Effect.fn("StorageCleanup.readThreads")(function* () {
     const snapshot = yield* projections.getShellSnapshot().pipe(NodeSqliteClient.readOnly);
     const projects = yield* projectStore.listShells();
@@ -360,7 +354,6 @@ const make = Effect.gen(function* () {
     projects: ReadonlyArray<{ readonly workspaceRoot: string }>,
     entries: StorageCleanupReportEntry[],
   ) {
-    // Include deleted and archived threads, even those without a branch or project.
     const rows = yield* sql<{ worktreePath: string }>`
       SELECT DISTINCT json_extract(payload_json, '$.worktreePath') AS "worktreePath"
       FROM orchestration_v2_projection_threads
@@ -412,9 +405,7 @@ const make = Effect.gen(function* () {
       }
       return result;
     });
-    // Let the first walk reach its own limit so unmeasurable folders get cached.
-    // Later walks share the remaining sweep budget.
-    // Unmeasured folders still appear with an unknown size.
+    // Let the first walk time out and cache unmeasurable folders; later walks share the remaining budget.
     const now = yield* Clock.currentTimeMillis;
     const measurementDeadline = now + 30_000;
     let firstMeasurement = true;
@@ -480,9 +471,7 @@ const make = Effect.gen(function* () {
     }
   });
 
-  // Whether cwd stopped being a checkout of this branch. Two small Git reads,
-  // since every worktree in a sweep is asked; statusDetailsLocal also diffs and
-  // counts.
+  // Use two small Git reads: statusDetailsLocal also diffs and counts for every worktree.
   const branchChanged = Effect.fn("StorageCleanup.branchChanged")(function* (
     cwd: string,
     branch: string | null,
@@ -494,8 +483,7 @@ const make = Effect.gen(function* () {
         cwd,
         detail,
       });
-    // Null when cwd is not a repository, or is gone. Git's own messages are
-    // matched, so they must not be translated.
+    // Return null for missing/non-repository cwd; force untranslated git diagnostics for matching.
     const read = Effect.fnUntraced(function* (args: string[], allowedExitCode?: number) {
       const result = yield* git
         .execute({
@@ -525,8 +513,7 @@ const make = Effect.gen(function* () {
       return yield* failure(
         "Git index is locked. Status will resume when the index lock is removed.",
       );
-    // Exits 1 for a detached HEAD. Reads the full ref name, which is never
-    // shortened to "heads/<branch>" when a tag shares the branch name.
+    // Detached HEAD exits 1; full refs avoid shortening when a tag shares the branch name.
     const head = yield* read(["symbolic-ref", "--quiet", "HEAD"], 1);
     if (head === null) return true;
     const ref = head.exitCode === 0 ? head.stdout.trim() : "";
@@ -790,8 +777,7 @@ const make = Effect.gen(function* () {
         if (group.some((member) => member.branch !== thread.branch))
           return keep("a subagent thread's branch differs from this worktree's branch");
         if (hasTerminal(worktreePath)) return keep("open terminal");
-        // Roots are canonical, so compare canonical paths. A symlinked parent
-        // (a linked drive) is fine; a symlinked worktree directory is not.
+        // Compare canonical roots while allowing symlinked parents, never symlinked worktree directories.
         const realPath = yield* fs.realPath(worktreePath);
         const realParent = yield* fs.realPath(path.dirname(worktreePath));
         if (realPath !== path.join(realParent, path.basename(worktreePath)))
@@ -914,10 +900,7 @@ const make = Effect.gen(function* () {
                   ? "not merged"
                   : "has commits beyond the default branch",
           );
-        // Threads, queued deletion work and provider sessions as they are now, so a
-        // queued turn, resumed session or new thread sharing this path cancels
-        // the removal. Read only this path's threads: a full snapshot per
-        // worktree takes seconds on large databases.
+        // Re-read this path's threads and sessions so new activity cancels removal; full per-worktree snapshots take seconds.
         const blockedSinceCheck = Effect.fnUntraced(function* () {
           const latestProjects = yield* projectStore.listShells();
           if (yield* containsProjectRoot(worktreePath, [project, ...latestProjects]))
@@ -933,8 +916,7 @@ const make = Effect.gen(function* () {
                 .worktreeOnDelete
             )
               return "thread or cleanup settings changed since check";
-            // V2 deletion queues durable cleanup. Do not remove its checkout until
-            // every effect has finished successfully or was explicitly cancelled.
+            // Durable deletion cleanup must succeed or be explicitly cancelled before removing its checkout.
             const pendingCleanup = yield* sql`
               SELECT 1 FROM orchestration_v2_effect_outbox
               WHERE thread_id = ${thread.id} AND status NOT IN ('succeeded', 'cancelled') LIMIT 1
@@ -974,8 +956,7 @@ const make = Effect.gen(function* () {
           const sessions = yield* Effect.forEach(sessionRows, (row) =>
             decodeCleanupSession(row.payload_json),
           );
-          // A stored session can stay ready after its runtime was released,
-          // for example once every thread detached; only a live one holds it.
+          // Ready persisted sessions may have released their runtime; only live sessions protect the path.
           for (const session of sessions) {
             const cwd = path.resolve(session.cwd);
             if (
@@ -1031,8 +1012,7 @@ const make = Effect.gen(function* () {
         });
         entries.push({ ...entry, outcome: "removed", reason: sentence(removalReason), bytes });
         yield* gitManager.invalidateStatus(project.workspaceRoot);
-        // Preserve branch and path: ProviderTurnStartService recreates the checkout
-        // from that branch when the thread is resumed.
+        // Preserve branch/path so ProviderTurnStartService can recreate the checkout on resume.
         yield* Effect.logInfo("storage cleanup removed worktree", { threadId: thread.id });
       }).pipe(
         (effect) => withWorkspaceLease(worktreePath, effect),

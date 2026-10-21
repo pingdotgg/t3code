@@ -68,7 +68,6 @@ export function ComposerBannerStack({ className, items, attachedAbove }: Compose
     };
   }, []);
 
-  // A stack that shrinks to one banner collapses, so the next stack starts collapsed.
   if (items.length < 2 && stackExpanded) {
     setStackExpanded(false);
   }
@@ -179,8 +178,7 @@ export function ComposerBannerStack({ className, items, attachedAbove }: Compose
               stackExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
             )}
           >
-            {/* Clip only the collapsing axis: at fractional widths a horizontal clip
-                shaves the notice's right border. */}
+            {/* Horizontal clipping shaves the right border at fractional widths. */}
             <div className="min-h-0 overflow-y-clip">
               <div
                 className={cn(

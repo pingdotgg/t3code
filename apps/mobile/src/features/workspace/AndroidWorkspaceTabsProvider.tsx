@@ -14,11 +14,8 @@ import { WorkspaceTabsProvider } from "./WorkspaceTabsContext";
 
 interface AndroidWorkspaceRoot {
   /**
-   * The root stack's key and state. The rail renders in the root navigator's layout, where
-   * `useNavigation()` resolves to the container ref: its dispatch goes to the focused
-   * navigator and hands that navigator's state to a callback. A tab press from inside nested
-   * Settings must reset the root stack, so the rail reads the root state here and targets
-   * the root key.
+   * The rail's `useNavigation()` dispatches to the focused navigator, which may be nested Settings.
+   * Use the root stack's state and key so a tab press resets the root.
    */
   readonly key: string;
   readonly getState: () => NavigationState;

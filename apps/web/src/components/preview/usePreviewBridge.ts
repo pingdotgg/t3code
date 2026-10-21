@@ -28,9 +28,7 @@ function originOf(url: string): string | null {
   }
 }
 
-/**
- * Webview lifetime is owned by ElectronBrowserHost.
- */
+/** ElectronBrowserHost owns webview lifetime. */
 export function usePreviewBridge(input: {
   threadRef: ScopedThreadRef;
   tabId: string;
@@ -40,8 +38,6 @@ export function usePreviewBridge(input: {
   const { threadRef, tabId, runtimeTabId, serverDriven = false } = input;
   const clearBrowserPointer = useBrowserPointerStore((state) => state.clear);
   const reportStatus = useAtomCommand(previewEnvironment.reportStatus, "preview status report");
-  // Callers pass a fresh threadRef each render; rebuilding it from its ids keeps the ref
-  // stable for the effects.
   const { environmentId, threadId } = threadRef;
   const stableThreadRef: ScopedThreadRef = { environmentId, threadId };
   const projectRef = useFaviconProjectRefForThread(stableThreadRef);

@@ -1,8 +1,5 @@
 import type { Icon } from "@tabler/icons-react-native/types";
-/*
- * Keep these as per-icon exports. Importing the package root eagerly registers
- * the entire Tabler icon set in Metro.
- */
+/* Package-root imports eagerly register the entire Tabler icon set in Metro. */
 import IconAdjustmentsHorizontal from "@tabler/icons-react-native/IconAdjustmentsHorizontal";
 import IconAlignLeft from "@tabler/icons-react-native/IconAlignLeft";
 import IconAlertCircle from "@tabler/icons-react-native/IconAlertCircle";

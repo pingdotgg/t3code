@@ -68,7 +68,6 @@ function Fetch([string] $uri, [string] $destination, [switch] $progress) {
     Invoke-WebRequest -Uri $uri -OutFile $destination -UseBasicParsing
     return
   }
-  # Read the response once, displaying actual bytes received at most ten times a second.
   Add-Type -AssemblyName System.Net.Http
   $client = New-Object System.Net.Http.HttpClient
   $response = $source = $file = $null
@@ -117,9 +116,7 @@ if ($interactive) {
 }
 Step "Finding your release..."
 
-# PROCESSOR_ARCHITEW6432 reports the real machine when a 32-bit PowerShell
-# runs under WOW64; RuntimeInformation needs .NET 4.7.1+, which 5.1 hosts
-# may lack.
+# PROCESSOR_ARCHITEW6432 bypasses WOW64 emulation; 5.1 hosts can lack RuntimeInformation's required .NET version.
 $rawArch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
 $arch = switch ($rawArch) {
   "AMD64" { "x64" }
@@ -130,9 +127,6 @@ $arch = switch ($rawArch) {
 $channel = if ($env:T3CODE_CHANNEL) { $env:T3CODE_CHANNEL } else { "stable" }
 $version = $env:T3CODE_VERSION
 if (-not $version) {
-  # Tags are v<semver>; the channel is the prerelease identifier, or none for
-  # stable. Only tags of the requested train are considered, so a stable
-  # install can never pick up a nightly or preview build by accident.
   $tagPattern = switch ($channel) {
     "stable" { '^v\d+\.\d+\.\d+$' }
     "nightly" { '^v\d+\.\d+\.\d+-nightly\.\d+\.\d+$' }
@@ -193,7 +187,6 @@ if ((Test-Path $marker) -and ((Get-Content $marker -Raw).Trim() -eq $version)) {
       $global:ProgressPreference = "SilentlyContinue"
       Expand-Archive -Path (Join-Path $staging $archive) -DestinationPath $staging -Force
     } finally { $global:ProgressPreference = $savedProgress }
-    # The archive wraps everything in one directory named after its stem.
     Get-ChildItem (Join-Path $staging $stem) | Move-Item -Destination $staging
     Remove-Item (Join-Path $staging $stem), (Join-Path $staging $archive), (Join-Path $staging "SHA256SUMS") -Recurse -Force
 

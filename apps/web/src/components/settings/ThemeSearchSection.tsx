@@ -96,17 +96,14 @@ export function ThemeSearchSection({
   const [installingId, setInstallingId] = useState<string | null>(null);
   const [pendingUpdate, setPendingUpdate] = useState<OpenVsxThemeExtension | null>(null);
   const requestRef = useRef<AbortController | null>(null);
-  // Recorded only once a search succeeds, so a finished install reruns the
-  // search only when the query or sort changed while it was in flight, and the
-  // install error the user needs to see survives.
+  // Record successful searches only; rerun after install only for changed query/sort to preserve install
+  // errors.
   const [lastSearchKey, setLastSearchKey] = useState<string | null>(null);
   const [handledSearch, setHandledSearch] = useState<{
     key: string;
     query: string;
     fetch: boolean;
   } | null>(null);
-  // An install aborts any search, so once it ends the current key is checked
-  // again even though it has not changed.
   const [searchInterrupted, setSearchInterrupted] = useState(false);
 
   const [wasOpen, setWasOpen] = useState(open);
@@ -196,19 +193,14 @@ export function ThemeSearchSection({
 
   const debouncedQuery = useDebouncedValue(query.trim(), SEARCH_DEBOUNCE_MS);
   const searchKey = `${debouncedQuery}\u0000${sortBy}`;
-  // An unsettled query would hit Open VSX for text that is no longer visible;
-  // wait for the debounce to catch up to the current input instead.
   const searchSettled =
     open && installingId === null && debouncedQuery !== "" && debouncedQuery === query.trim();
 
   const keyChanged = handledSearch?.key !== searchKey;
   if (searchSettled && (keyChanged || searchInterrupted)) {
-    // Typing and then undoing lands back on the key already shown; keep those
-    // results instead of searching again.
     const fetch = lastSearchKey !== searchKey;
     setHandledSearch({ key: searchKey, query: debouncedQuery, fetch });
     setSearchInterrupted(false);
-    // An install error on an unchanged, already-shown query stays visible.
     if (fetch || keyChanged) setError(null);
     setIsSearching(fetch);
   }
@@ -223,8 +215,6 @@ export function ThemeSearchSection({
       fetchHandledSearch(handledSearch.query);
       return;
     }
-    // A request for a newer key may still be in flight; abort it so it cannot
-    // overwrite the results being kept.
     requestRef.current?.abort();
     requestRef.current = null;
   }, [handledSearch]);

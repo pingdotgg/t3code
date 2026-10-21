@@ -40,11 +40,7 @@ function shouldRefreshOnInterval(input: {
   );
 }
 
-/**
- * When each view last read, kept outside React because a mount is exactly what it has to outlive:
- * a reader who navigates away and straight back mounts a fresh hook, and a timestamp that started
- * at zero would call that first read due.
- */
+// Survive remounts so returning to a view does not make fresh reads look overdue.
 const lastRefreshedAtByView = new Map<string, number>();
 
 let lastInteractedAt = 0;
@@ -83,8 +79,6 @@ export function useLiveRefresh(
   } = {},
 ): void {
   const { enabled = true, key, intervalMs = LIVE_REFRESH_INTERVAL_MS } = options;
-  // An effect event so a caller can pass a fresh closure every render without re-arming the
-  // listeners, which would otherwise refresh on every render that changed anything at all.
   const runRefresh = useEffectEvent((viewId: string, now: number) => {
     if (refresh === null) return;
     lastRefreshedAtByView.set(viewId, now);

@@ -9,7 +9,6 @@ import { AndroidAnchoredMenu } from "../../components/ui/AndroidAnchoredMenu";
 import { SearchField } from "../../components/ui/SearchField";
 import { useToolbarLayout } from "../../components/ui/useToolbarLayout";
 
-/** Keep Files search in the same header row on compact and expanded layouts. */
 export function FilesHeader(props: {
   readonly projectName: string;
   readonly searchQuery: string;

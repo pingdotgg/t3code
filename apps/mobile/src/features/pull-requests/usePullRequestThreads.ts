@@ -56,8 +56,7 @@ export function usePullRequestThreads(
   };
   const key = JSON.stringify(reference);
   const route = useRoute();
-  // The iOS split host projects detail screens beneath a synthetic workspace
-  // route. Its parent's focus flag is not the visible detail's focus flag.
+  // The iOS synthetic workspace parent's focus differs from the visible detail's focus.
   const focused = useNavigationState((state) => state.routes[state.index]?.key === route.key);
   const relations = useEnvironmentQuery(
     pr && supported && focused ? composerPullRequests.linkedThreads(reference) : null,

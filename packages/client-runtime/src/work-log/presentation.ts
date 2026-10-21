@@ -316,11 +316,9 @@ function textRepeatsCommand(text: string, commands: ReadonlyArray<string | null>
 }
 
 /**
- * OpenCode stores completed output in `detail` with no other output channel, so
- * plain equality is only treated as synthetic when the payload shape shows the
- * detail came from the command: Codex item metadata, an ACP tool call
- * (`data.toolCallId`, `kind: "execute"`), a Claude tool-name prefix, or no
- * structured command at all.
+ * OpenCode's `detail` is its only completed-output channel, so equality alone cannot mark it synthetic.
+ * Require Codex metadata, ACP execute-tool metadata, a Claude tool-name prefix,
+ * or no structured command.
  */
 export function commandDetailRepeatsCommand(input: {
   readonly detail: string;

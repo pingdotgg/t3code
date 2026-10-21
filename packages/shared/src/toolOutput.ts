@@ -155,8 +155,7 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
       }
       if (complete) output.threads = threads;
       else {
-        // A partial batch or a top-level ID would turn an unknown creation
-        // count into a confidently wrong one in the existing summary parser.
+        // Partial batches or top-level ids make the summary parser report a false creation count.
         delete output.threadId;
         delete output.status;
       }
@@ -186,13 +185,7 @@ export function htmlRenderFromToolItem(item: {
   return output?.isError ? undefined : output?.htmlRender;
 }
 
-/**
- * The MCP App a completed tool call carries, if any. The adapter that captured
- * it put the reference in the output, beside the tool's own result. A tool's
- * result can imitate that shape, so the reference only counts when it names
- * the very server and tool the item records: a server can then only ever
- * point at an app of its own.
- */
+/** Accept app references only when server and tool match the item, so tools cannot impersonate another app source. */
 export function mcpAppFromToolItem(item: {
   readonly toolName: string | null | undefined;
   readonly output?: unknown;
@@ -220,10 +213,7 @@ export interface ToolOutputImage {
   readonly data?: string;
 }
 
-/**
- * Only raster types are recognized, so the server never serves an agent's SVG
- * or HTML inline.
- */
+/** Raster types only, so agent SVG/HTML cannot be served inline. */
 export function readToolOutputImage(block: unknown): ToolOutputImage | null {
   if (!Predicate.isObject(block) || block.type !== "image") return null;
   const source = Predicate.isObject(block.source) ? block.source : undefined;
@@ -258,10 +248,7 @@ export function toolOutputImageBlocks(value: unknown): ReadonlyArray<unknown> {
   return blocks;
 }
 
-/**
- * The order is the `tool-output-image` asset index, so servers and clients
- * agree on it.
- */
+/** Order defines the shared tool-output-image asset index. */
 export function toolOutputImages(value: unknown): ReadonlyArray<ToolOutputImage> {
   return toolOutputImageBlocks(value).flatMap((block) => readToolOutputImage(block) ?? []);
 }

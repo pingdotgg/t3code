@@ -257,8 +257,7 @@ export function ComposerActionButton(props: {
   readonly icon: ComponentProps<typeof SymbolView>["name"];
   readonly onPress: () => void;
   readonly variant?: "primary" | "danger";
-  // Forwarded so a Menu can drive this button as its long-press
-  // anchor: Android injects onLongPress, iOS injects onTouchStart and onPress.
+  // Menu injects onLongPress on Android and onTouchStart/onPress on iOS.
   readonly onLongPress?: PressableProps["onLongPress"];
   readonly onTouchStart?: PressableProps["onTouchStart"];
 }) {

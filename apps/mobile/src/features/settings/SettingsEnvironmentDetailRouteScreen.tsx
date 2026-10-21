@@ -40,7 +40,6 @@ export function SettingsEnvironmentDetailRouteScreen({
 }: StaticScreenProps<{
   readonly environmentId: EnvironmentId;
 }>) {
-  // Key local request state to the host even when navigation reuses this screen.
   return (
     <EnvironmentDetail
       key={route.params.environmentId}

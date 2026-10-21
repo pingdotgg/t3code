@@ -7,12 +7,7 @@ import {
 
 import { resolveDiffThemeName } from "./diffRendering";
 
-/**
- * Always highlight with the Oniguruma WASM engine — the JS regex engine can
- * backtrack catastrophically and hang the tokenizing thread. The shared
- * highlighter is a first-caller-wins singleton, so every creation site must
- * pass this value.
- */
+/** Use WASM at every creation site: the first-caller-wins singleton can hang with JS regex backtracking. */
 export const PREFERRED_HIGHLIGHTER: HighlighterTypes = "shiki-wasm";
 
 const highlighterPromiseCache = new Map<string, Promise<DiffsHighlighter>>();

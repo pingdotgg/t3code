@@ -34,10 +34,7 @@ export function resolveAttachmentReferences(
   });
 }
 
-/**
- * The sweep counts its 24 hours from when the upload finishes, which can be up
- * to the upload URL's lifetime after issue.
- */
+/** The 24-hour sweep starts at upload completion, possibly one upload-URL lifetime after issue. */
 const UPLOAD_OWNER_TTL_MS = 24 * 60 * 60 * 1000 + ATTACHMENT_UPLOAD_URL_TTL_MS;
 
 const uploadOwner = McpInvocationContext.McpInvocationContext.pipe(

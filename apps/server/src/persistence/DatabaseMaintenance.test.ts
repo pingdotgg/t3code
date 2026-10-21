@@ -53,7 +53,6 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
         }).pipe(Effect.provide(openLegacy));
         assert.isAbove((yield* maintenance.inspect(dbPath)).legacyDatabaseBytes ?? 0, 0);
 
-        // A version before 0.1.0 still running against it keeps it.
         const refused = yield* Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
           yield* sql`SELECT value FROM v1_data`;
@@ -77,7 +76,6 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
         const maintenance = yield* DatabaseMaintenance.DatabaseMaintenance;
         const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-compact-" });
         const dbPath = path.join(baseDir, "userdata", "statev2.sqlite");
-        // A migrated database created before incremental auto_vacuum, with free pages.
         yield* Effect.flatMap(
           ProjectionMaintenance.ProjectionMaintenanceV2,
           (projections) => projections.rebuild,
@@ -101,7 +99,6 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
           yield* sql`PRAGMA wal_checkpoint(TRUNCATE)`;
         }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
 
-        // A server that merely has the database open, like an idle one, is enough to refuse.
         const sizeBefore = (yield* fs.stat(dbPath)).size;
         const refused = yield* Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
@@ -112,7 +109,6 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
         assert.equal((yield* fs.stat(dbPath)).size, sizeBefore);
 
         const result = yield* maintenance.compact(dbPath);
-        // The 4 MiB of free pages are returned to the filesystem.
         assert.isBelow(result.afterBytes, result.beforeBytes - 3 * 1024 * 1024);
         yield* Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;

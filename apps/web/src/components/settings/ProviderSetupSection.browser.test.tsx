@@ -50,8 +50,6 @@ vi.mock(import("../../state/use-atom-command"), async (original) => ({
   ...(await original()),
   useAtomCommand: ((command: unknown) => command) as never,
 }));
-// The queries behave like live subscriptions: changing `setup.auth` and calling
-// `publish()` re-renders the sections that read them.
 const queryListeners = vi.hoisted(() => new Set<() => void>());
 vi.mock(import("../../state/query"), async (original) => {
   const { useSyncExternalStore } = await import("react");

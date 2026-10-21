@@ -56,7 +56,6 @@ describe("Duo workspace sizing", () => {
       reservedRegions: [{ kind: "occlusion", x: 535, y: 0, width: 134, height: 82 }],
     };
     expect(deriveLayout({ ...portrait, nativeMetrics: portrait }).usesSplitView).toBe(true);
-    // Without the hinge, the same window is an ordinary narrow iPad-style window.
     const withoutHinge = { ...portrait, hasHinge: false };
     expect(deriveLayout({ ...withoutHinge, nativeMetrics: withoutHinge }).usesSplitView).toBe(
       false,

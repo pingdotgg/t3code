@@ -89,7 +89,6 @@ type ApiCall =
       readonly kind: "graphql";
       readonly authorization: string | undefined;
       readonly partial?: boolean;
-      /** The generated operation's name, which the routes below match on. */
       readonly operationName?: string;
       readonly host: string;
       readonly operation: string;
@@ -108,7 +107,6 @@ const mockedStackMemberships = vi.fn<(call: ApiCall) => ApiAnswer>(() =>
   Effect.succeed(output('{"data":{}}')),
 );
 
-/** The REST transport, answered from the mocks above. */
 const mockApi = Layer.succeed(
   GitHubRest.GitHubRest,
   GitHubRest.GitHubRest.of({
@@ -117,11 +115,6 @@ const mockApi = Layer.succeed(
   }),
 );
 
-/**
- * The HTTP side of the generated GraphQL reads, answered from the same mocks: a request to a
- * host's GraphQL endpoint is recorded as a `graphql` call, carrying the `partial` flag the batches
- * read with, and answered with the mocked body, status and headers.
- */
 const mockHttp = Layer.succeed(
   HttpClient.HttpClient,
   HttpClient.make((request) =>
@@ -145,7 +138,6 @@ const mockHttp = Layer.succeed(
         variables: sent.variables,
         partial: true,
       };
-      // A mocked failure with a status is what GitHub would have answered with it.
       const answer = yield* (
         sent.query.startsWith("query PullRequestStackMembership(")
           ? mockedStackMemberships
@@ -157,8 +149,7 @@ const mockHttp = Layer.succeed(
         }),
         Effect.orDie,
       );
-      // A mutation mocked as `{}` is one whose answer the test does not read. GitHub always
-      // answers a mutation that ran with `data`, so it is sent as the null payload it selects.
+      // Empty mutation mocks still need the selected GraphQL root field.
       const body =
         answer.body === "{}" && sent.query.startsWith("mutation ")
           ? encodeJson(mutationAnswer(sent.query))
@@ -213,7 +204,6 @@ function graphqlQuota(remaining: number, resetAt = "2099-08-13T14:00:00Z") {
   };
 }
 
-/** What every listing row answers with, which a fixture overrides only where it matters. */
 const rowDefaults = {
   author: null,
   state: "OPEN",
@@ -227,13 +217,8 @@ const rowDefaults = {
   commits: { nodes: [] },
 };
 
-/** A connection's page info with no next page, as GitHub sends it: the cursor is always there. */
 const lastPage = { hasNextPage: false, endCursor: null };
 
-/**
- * Listing rows as GraphQL answers them. Overrides may use the flat shapes a test reads most
- * easily: `reviewRequests` as `[{ login }]` or `[{ slug }]`, and `checks` as the rollup state.
- */
 function rows(
   count: number,
   firstNumber: number,
@@ -401,7 +386,6 @@ function threadCommentsPage(
   });
 }
 
-/** What GitHub answers for a pull request it will not serve a whole diff for. */
 const diffRefused = new GitHubRequestPolicy.GitHubApiResponseError({
   host: "github.com",
   operation: "getPullRequestDiff",
@@ -472,17 +456,12 @@ function searchPage(nodes: ReadonlyArray<unknown>, hasNextPage = false) {
 
 const searchQueryOfCall = searchOfCall;
 
-/** Whether a request is the GraphQL operation `needle` names, or its document or path holds it. */
 function matches(call: ApiCall, needle: string): boolean {
   return call.kind === "graphql"
     ? call.operationName === needle || call.query.includes(needle)
     : call.path.includes(needle);
 }
 
-/**
- * Answers every request with the body of the first route whose needle it matches, and any
- * unrouted mutation with the empty payload each one selects, which nothing reads back.
- */
 function route(...routes: ReadonlyArray<readonly [needle: string, body: unknown]>): void {
   mockedExecute.mockImplementation((call) => {
     const match = routes.find(([needle]) => matches(call, needle));
@@ -498,30 +477,24 @@ function route(...routes: ReadonlyArray<readonly [needle: string, body: unknown]
   });
 }
 
-/** What a mutation answers when nothing is asked of its payload: each root field, null. */
 function mutationAnswer(query: string) {
   const root = /\)\{(\w+)(?:\(|\{|@)/.exec(query)?.[1];
   return { data: root === undefined ? {} : { [root]: null } };
 }
 
-/** The variables of every GraphQL request `needle` matches, in order. */
 function variablesOf(needle: string): ReadonlyArray<Readonly<Record<string, unknown>>> {
   return mockedExecute.mock.calls.flatMap(([call]) =>
     call.kind === "graphql" && matches(call, needle) ? [call.variables ?? {}] : [],
   );
 }
 
-/** Every REST request whose path contains `needle`, in order. */
 function restCallsTo(needle: string): ReadonlyArray<GitHubRest.GitHubRestInput> {
   return mockedExecute.mock.calls.flatMap(([call]) =>
     call.kind === "rest" && call.path.includes(needle) ? [call] : [],
   );
 }
 
-/**
- * The check that a client-given node hangs off the pull request it names. Routed before the node
- * id lookup, whose document it contains.
- */
+/** Route before the node-ID lookup, whose document is contained in this scope query. */
 const SUBJECT_SCOPE_QUERY = "PullRequestSubject";
 const subjectScope = (subjectId: string, pullRequestId: string) => ({
   data: {
@@ -530,7 +503,6 @@ const subjectScope = (subjectId: string, pullRequestId: string) => ({
   },
 });
 
-/** A check run as the `CheckContext` fragment answers it, with `fields` over the defaults. */
 const checkRun = (fields: Record<string, unknown>) => ({
   __typename: "CheckRun",
   name: "",
@@ -543,7 +515,6 @@ const checkRun = (fields: Record<string, unknown>) => ({
   ...fields,
 });
 
-/** One page of a head commit's check contexts, the read a rollup past one page is walked by. */
 const checkContextsPage = (
   nodes: ReadonlyArray<Record<string, unknown>>,
   endCursor: string | null,
@@ -624,7 +595,7 @@ function workflowApprovalRoutes(
   );
 }
 
-/** The pull request node id lookup, which the layer caches for every test after the first. */
+/** Node IDs stay cached after the first test. */
 const NODE_ID_QUERY = "PullRequestNodeId";
 const nodeIdAnswer = (id: string) => ({ data: { repository: { pullRequest: { id } } } });
 
@@ -983,7 +954,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
 
         expect(Result.isFailure(seven!) ? seven.failure._tag : null).toBe("GitHubApiNotFoundError");
         expect(Result.isSuccess(eight!) ? eight.success.headBranch : null).toBe("feat/eight");
-        // One request answered both; nothing was read again on its own.
         expect(mockedExecute).toHaveBeenCalledOnce();
         expect(callAt(0)).toMatchObject({ kind: "graphql", partial: true });
       }),
@@ -1463,8 +1433,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         number: index + 1,
       }));
       mockedExecute.mockImplementation((call) =>
-        // Every chunk finds only its first pull request, so a row GitHub had nothing for is
-        // dropped rather than shown as a change of no size.
         Effect.succeed(
           output(
             encodeJson({
@@ -2236,8 +2204,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         action: "approve-workflows",
       });
 
-      // Open pull requests on this head branch, and runs scoped to this exact head.
-      // The first page sends no cursor at all, which reads from the start.
       expect(variablesOf("PullRequestHeads")[0]).toEqual({
         owner: "acme",
         name: "web",
@@ -2978,8 +2944,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
             encodeJson({
               data: {
                 repository: { pullRequest: { id: "PR_thisOne" } },
-                // A comment on pull request #99 of a different repository, named as though it
-                // belonged to #7 here.
                 node: {
                   __typename: "IssueComment",
                   id: "IC_99",
@@ -3390,7 +3354,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         number: 7,
       });
 
-      // The first page asks from the beginning; the next carries on from where it stopped.
       expect(varsAt(0)["after"]).toBeNull();
       expect(varsAt(1)["after"]).toBe("Y3Vyc29yOjE");
       expect(conversation.comments.map((comment) => comment.id)).toEqual(["c1", "c2"]);

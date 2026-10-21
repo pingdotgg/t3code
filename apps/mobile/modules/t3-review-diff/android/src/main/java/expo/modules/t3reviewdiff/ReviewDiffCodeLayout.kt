@@ -15,7 +15,6 @@ import android.text.style.UnderlineSpan
 import kotlin.math.ceil
 import kotlin.math.max
 
-/** Text layout is independent of comment heights and vertical row offsets. */
 internal class CodeLines(
   val starts: IntArray,
   val height: Int,
@@ -126,7 +125,6 @@ internal class CodeLayoutCache {
   }
 
   private fun styledCode(row: DiffRow, tokens: List<DiffToken>?, theme: DiffTheme): CharSequence {
-    // The ASCII path uses the existing token drawing and rounded highlight rectangles.
     if (row.content.all { it in ' '..'~' }) return row.content
     val text = SpannableString(row.content)
     var offset = 0

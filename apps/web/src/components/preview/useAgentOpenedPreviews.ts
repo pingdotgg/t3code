@@ -13,16 +13,11 @@ import { useRightPanelStore, type RightPanelSurface } from "../../rightPanelStor
 const selectAutoShowFloatingPreview = (settings: { browserAutoShowFloatingPreview: boolean }) =>
   settings.browserAutoShowFloatingPreview;
 
-/**
- * Shows browsers and devices an agent or another client opened for the thread,
- * and closes a floating device once its session ends.
- */
 export function useAgentOpenedPreviews(input: {
   readonly threadRef: ScopedThreadRef | null;
   readonly deviceState: DeviceServiceState;
   readonly deviceStateLoaded: boolean;
   readonly previewState: ThreadPreviewState;
-  // Whether the environment hosts browser tabs for this client.
   readonly serverBrowserAvailable: boolean;
   readonly panelSurfaces: ReadonlyArray<RightPanelSurface>;
   readonly miniPlayerSource: PreviewMiniPlayerState["source"] | null;
@@ -40,12 +35,8 @@ export function useAgentOpenedPreviews(input: {
     sheetLayout,
   } = input;
   const autoShowFloatingPreview = useClientSettings(selectAutoShowFloatingPreview);
-  // A device the agent opens floats over chat like an agent-driven browser,
-  // or becomes a panel tab when floating previews are off. Sessions opened by
-  // another client arrive the same way; sheet layouts get neither. The first
-  // snapshot is a baseline: persisted tabs restore themselves, and existing
-  // sessions must not resurrect closed tabs. A session whose device summary
-  // has not arrived yet stays out of the baseline so a later snapshot opens it.
+  // Baseline sessions to preserve dismissals on reload; missing device summaries must remain eligible to open
+  // later.
   const previousDeviceSessions = useRef(new Map<string, Set<string>>());
   useEffect(() => {
     if (!threadRef || !deviceStateLoaded) return;
@@ -137,8 +128,6 @@ export function useAgentOpenedPreviews(input: {
     autoShowFloatingPreview,
     panelSurfaces,
   ]);
-  // A floating device follows its session: once the agent or another client
-  // closes the device there is nothing left to stream.
   useEffect(() => {
     if (!threadRef || !deviceStateLoaded) return;
     const source = miniPlayerSource;

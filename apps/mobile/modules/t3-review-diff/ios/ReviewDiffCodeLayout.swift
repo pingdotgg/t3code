@@ -23,7 +23,6 @@ final class ReviewDiffCodeLayout: NSObject {
   let lineHeight: CGFloat
   let firstLineHeight: CGFloat
   let extraHeight: CGFloat
-  /// Widest visual line, which sizes horizontal scrolling when the row is not wrapped.
   let usedWidth: CGFloat
   private let font: UIFont
   private let width: CGFloat
@@ -67,7 +66,6 @@ final class ReviewDiffCodeLayout: NSObject {
     return layout
   }
 
-  /// Only colors change when syntax tokens arrive; the measured text and font stay intact.
   func decorate(text: NSAttributedString, highlights: [NSRange], color: UIColor, version: Int) {
     guard usesNativeLayout else { return }
     let layout = nativeLayout()

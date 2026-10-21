@@ -170,7 +170,6 @@ describe("SettingsServerControlsRouteScreen", () => {
     act(() => root.render(<SettingsEnvironmentSourceControlRouteScreen />));
 
     act(() => mocks.branchNaming.onChange({ branchNamingMode: "custom" }));
-    // The branch naming view closes with a draft while the mode write is pending.
     act(() => mocks.branchNaming.onChange({ branchNameInstructions: "Use issue IDs." }));
     expect(mocks.updateSettings).toHaveBeenCalledOnce();
 

@@ -14,8 +14,7 @@ const SPLIT_SIDEBAR_DEFAULT_MAX_WIDTH = 380;
 
 export const AUXILIARY_PANE_MIN_CONTENT_WIDTH = 960;
 export const CHAT_CONTENT_MAX_WIDTH = 960;
-// Android reading width for the thread feed, composer, and full-width thread list.
-// Phones are narrower; foldables in portrait and the keyboard-open split view are not.
+// Limit Android reading width for wide foldables and keyboard-open split views.
 export const ANDROID_READING_MAX_WIDTH = 640;
 // min-h-8 uses the 14px rem configured in metro.config.js.
 export const THREAD_WORK_ROW_MIN_HEIGHT = 28;
@@ -31,8 +30,7 @@ export function deriveThreadWorkLogSizing(input: {
       THREAD_WORK_ROW_MIN_HEIGHT,
       Math.ceil(lineHeight * input.fontScale),
     ),
-    // Native text can exceed its authored line height with accessibility scaling.
-    // Leave those rows measured instead of promising LegendList an exact size.
+    // Accessibility scaling can exceed authored line heights; leave those rows measured.
     fixedRowHeight:
       input.fontScale <= 1 && lineHeight <= THREAD_WORK_ROW_MIN_HEIGHT
         ? THREAD_WORK_ROW_MIN_HEIGHT
@@ -92,10 +90,7 @@ export function deriveLayout(input: {
   const { width, height } = input;
   const metrics = input.nativeMetrics;
   const usableWidth = width - (metrics?.safeArea.left ?? 0) - (metrics?.safeArea.right ?? 0);
-  // UIKit's size class supports the shorter Duo inner display. Geometry remains
-  // a floor so a narrow multitasking window cannot squeeze both columns.
-  // Unfolded in portrait, the inner display reports neither a side bar nor a
-  // fold, only its hinge.
+  // Duo size class supports short inner displays; geometry still bounds narrow windows. Portrait unfolding may report only a hinge.
   const hasDuoGeometry =
     metrics &&
     (metrics.hasHinge === true ||
@@ -161,12 +156,7 @@ export function alignListPaneToHinge(input: {
   return { ...layout, listPaneWidth, listPaneGap: hinge.width };
 }
 
-/**
- * Whether the workspace root must keep the primary sidebar open. Native split
- * columns keep a sidebar toggle in the empty detail header, so only they may
- * collapse it there. Compact layouts stay pinned so a reveal request (such as
- * focusing search) cannot flip the saved preference for a later split view.
- */
+/** Pin compact layouts so reveal requests cannot change the later split-view preference. */
 export function isPrimarySidebarPinned(input: {
   readonly pathname: string;
   readonly nativeWorkspace: boolean;

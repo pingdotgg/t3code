@@ -511,8 +511,7 @@ it.effect("never puts a saved token that is unsafe for an HTTP header on the wir
     const bitbucket = yield* BitbucketApi.BitbucketApi;
     const settings = yield* ServerSettings.ServerSettingsService;
 
-    // Fetch would reject this header with an error quoting the token, and that error reaches
-    // clients. The unusable token is ignored, so the environment credential is used instead.
+    // Fetch errors echo malformed header tokens to clients; ignore this token and use the environment credential.
     yield* settings.updateSettings({
       sourceControlHosts: { bitbucket: { accessToken: "saved\ntoken" } },
     });
@@ -676,7 +675,6 @@ it.effect("does not follow a redirect off the configured Bitbucket", () =>
       bitbucket.request({ method: "GET", url: "/repositories/acme/web/pullrequests/1/diff" }),
     );
 
-    // The client would carry every header to the new host, so the hop is checked here instead.
     assert.strictEqual(error._tag, "BitbucketUntrustedUrlError");
   }).pipe(
     Effect.provide(
@@ -700,7 +698,6 @@ it.effect("follows a redirect that stays on the configured Bitbucket", () =>
       url: "/repositories/acme/web/pullrequests/1/diff",
     });
 
-    // Bitbucket serves a diff as a redirect to a commit range, so the hop has to be followed.
     assert.strictEqual(result.body, "diff --git a/a.ts b/a.ts");
     assert.isFalse(result.truncated);
   }).pipe(

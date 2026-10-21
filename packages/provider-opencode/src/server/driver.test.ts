@@ -96,8 +96,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
   );
 });
 
-// npm links `<prefix>/bin/opencode` into the package that installed it:
-// `opencode-ai` for 1.x and `@opencode/cli` (whose bin is `bin/opencode.exe`) for 2.x.
+// npm links into opencode-ai for 1.x and @opencode/cli for 2.x.
 const npmGlobalInstall = (prefix: string, packagePath: ReadonlyArray<string>, bin: string) => {
   const target = NodePath.join(prefix, "lib", "node_modules", ...packagePath, "bin", bin);
   NodeFS.mkdirSync(NodePath.dirname(target), { recursive: true });

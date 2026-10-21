@@ -60,8 +60,7 @@ export function resolveRemoteOpenState(input: {
     return LOCAL_EXEC;
   }
   if (target._tag === "PrimaryConnectionTarget") {
-    // The desktop app manages its own primary backend, so it is always on this machine even
-    // when its URL is not loopback (wsl-only mode binds the WSL2 NAT address).
+    // Desktop owns its primary even at a non-loopback WSL2 NAT address.
     if (input.isDesktopRenderer) {
       return LOCAL_EXEC;
     }
@@ -106,9 +105,7 @@ function remoteOpenStatesEqual(previous: RemoteOpenState, next: RemoteOpenState)
   );
 }
 
-// The presentation changes with every server config push and reconnect. This
-// keeps the previous resolution while it is equal, so subscribers re-render only
-// when where files open actually changes.
+// Config pushes recreate presentations; preserve equal resolutions to avoid re-rendering file links.
 const remoteOpenResolutionAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get): RemoteOpenResolution => {
     const presentation = get(environmentPresentations.presentationAtom(environmentId));
@@ -187,11 +184,7 @@ export function useRemoteCapableEditors(): ReadonlyArray<EditorId> {
   return editors;
 }
 
-/**
- * Resolves false when the desktop shell refused the URL (e.g. an older build whose protocol
- * allowlist predates editor schemes) so callers do not record a successful open that never
- * happened.
- */
+/** Resolves false when the desktop refuses the URL, including unsupported editor schemes. */
 export async function openRemoteEditorUrl(url: string): Promise<boolean> {
   const bridge = window.desktopBridge;
   if (bridge !== undefined) {

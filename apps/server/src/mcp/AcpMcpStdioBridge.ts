@@ -1,5 +1,4 @@
-// The bridge relays opaque JSON-RPC lines verbatim; schema-decoding foreign
-// payloads here would reject traffic it must pass through untouched.
+// Relay JSON-RPC verbatim; schema decoding would reject foreign payloads.
 // @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off
 import * as NodeReadline from "node:readline";
 
@@ -10,10 +9,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { discardResponseBody, responsePayloads } from "@t3tools/shared/mcpResponsePayloads";
 
-/**
- * ACP agents must support stdio MCP servers, while optional http/sse support is
- * unevenly implemented.
- */
+/** ACP mandates stdio MCP support; HTTP/SSE support varies. */
 
 export class AcpMcpBridgeError extends Error {
   readonly _tag = "AcpMcpBridgeError";
@@ -251,10 +247,7 @@ export function runAcpMcpStdioBridge(options: AcpMcpStdioBridgeOptions): Effect.
         ),
     );
 
-    // Only session establishment is ordered; client responses to
-    // server-initiated SSE requests must bypass the barrier or they would
-    // deadlock the still-open HTTP exchange, and normal MCP calls stay
-    // concurrent after initialization.
+    // Order only session establishment; SSE responses must bypass it to avoid deadlock. Calls remain concurrent after initialization.
     let sessionBarrier: Effect.Effect<void> = Effect.void;
     let sessionBarrierPending = false;
 
@@ -325,10 +318,7 @@ export function runAcpMcpStdioBridge(options: AcpMcpStdioBridgeOptions): Effect.
   });
 }
 
-/**
- * Kept free of heavy imports: these commands run on the ACP first-message
- * critical path.
- */
+/** Avoid heavy imports on the ACP first-message path. */
 export async function runAcpMcpCliFastPath(
   command: "acp-mcp-bridge" | "acp-mcp-call",
   args: ReadonlyArray<string>,

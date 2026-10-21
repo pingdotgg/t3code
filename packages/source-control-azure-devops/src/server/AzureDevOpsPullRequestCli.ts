@@ -104,31 +104,17 @@ export type AzureDevOpsPullRequestCliError =
 
 const REST_API_VERSION = "7.1";
 const PULL_REQUEST_LIST_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
-/**
- * A full page of change entries is two thousand files, each carrying its path, its url and
- * several object ids, which is past the megabyte a read is given by default.
- */
+/** A 2,000-file page exceeds the default 1 MiB output budget. */
 const CHANGE_ENTRIES_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
-/**
- * Four times the megabyte of file the other hosts hand over, because Azure has no route that
- * serves the bytes themselves: the file arrives inside a JSON envelope, escaped if it is text and
- * base64 if it is not, and both are larger than the file they carry.
- */
+/** JSON escaping and base64 can exceed the decoded file's size. */
 const ITEM_CONTENT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
-/**
- * Neither route pages, so each answers with the whole of it at once and grows with how
- * long the review ran rather than with how large the change is.
- */
+/** Review history is unpaged and independent of diff size. */
 const REVIEW_HISTORY_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 
-/** Azure's own ceiling for one page of an iteration's changes. */
+/** Azure's iteration-change page limit. */
 const CHANGE_ENTRIES_PER_PAGE = 2000;
 
-/**
- * Where following the pages stops, counted in the entries Azure was asked to skip rather than in
- * the files that survived decoding: a page can be entirely folders and other entries a review has
- * nothing to show for, and bounding on what was kept would follow such a change forever.
- */
+/** Count raw entries, including folders and malformed rows. */
 const MAX_CHANGE_ENTRIES = 10_000;
 
 export interface AzureDevOpsIterationChanges {
@@ -150,10 +136,7 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
       readonly involvement: PullRequestInvolvement;
       readonly viewer: string;
       readonly limit: number;
-      /**
-       * Where to carry on from. Azure has no date filter for a pull request listing, so the only
-       * part of a cursor it can use is how many rows have already been handed over.
-       */
+      /** Azure supports raw row offsets, not date filters. */
       readonly cursor?: ProviderListCursor | undefined;
     }) => Effect.Effect<
       {
@@ -169,27 +152,19 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
       readonly number: number;
     }) => Effect.Effect<AzureDevOpsPullRequest, AzureDevOpsPullRequestCliError>;
 
-    /** Threads are not reachable through `az repos pr`, so they come from the REST API. */
     readonly listThreads: (input: {
       readonly cwd: string;
       readonly location: AzureDevOpsRepositoryLocation;
       readonly number: number;
     }) => Effect.Effect<ReadonlyArray<PullRequestComment>, AzureDevOpsPullRequestCliError>;
 
-    /**
-     * Azure hangs the changed files off an iteration rather than off the pull
-     * request, so reading a diff starts here.
-     */
     readonly listIterations: (input: {
       readonly cwd: string;
       readonly location: AzureDevOpsRepositoryLocation;
       readonly number: number;
     }) => Effect.Effect<ReadonlyArray<AzureDevOpsIteration>, AzureDevOpsPullRequestCliError>;
 
-    /**
-     * What one iteration changed, against the merge base rather than against the previous push,
-     * which is the whole of the pull request rather than the latest slice of it.
-     */
+    /** Changes cover the whole PR from its merge base. */
     readonly listIterationChanges: (input: {
       readonly cwd: string;
       readonly location: AzureDevOpsRepositoryLocation;
@@ -197,10 +172,6 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
       readonly iterationId: number;
     }) => Effect.Effect<AzureDevOpsIterationChanges, AzureDevOpsPullRequestCliError>;
 
-    /**
-     * One file's text at one commit. Azure has no diff route that carries content, so both sides
-     * of every changed file are read this way and the patch is made from them here.
-     */
     readonly readItemContent: (input: {
       readonly cwd: string;
       readonly location: AzureDevOpsRepositoryLocation;
@@ -222,10 +193,6 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
       readonly body?: string | undefined;
     }) => Effect.Effect<void, AzureDevOpsPullRequestCliError>;
 
-    /**
-     * `az repos pr reviewer` is the whole of what Azure offers here: it adds and removes named
-     * identities, and has no counterpart that says who could be named.
-     */
     readonly setPullRequestReviewers: (input: {
       readonly cwd: string;
       readonly number: number;
@@ -296,20 +263,16 @@ function actionArgs(
   }
 }
 
-/**
- * The dash is the whole point — these are argv, and a value that looks like a
- * flag stops being a value.
- */
 function isReviewerName(value: string): boolean {
   const name = value.trim();
   return name.length > 0 && !name.startsWith("-");
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const azure = yield* AzureDevOpsCli.AzureDevOpsCli;
 
-  // The remote takes three shapes and only `az` knows how to read all of them.
+  // Let `az` parse all three remote formats.
   const detectArgs = ["--detect", "true"] as const;
 
   const executeJson = (input: {
@@ -323,12 +286,7 @@ export const make = Effect.gen(function* () {
       ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
     });
 
-  /**
-   * Used in place of `az rest` because it signs in the way the azure-devops extension does: `az
-   * rest` mints its own token against the tenant `az` defaults to, and an organisation in any
-   * other tenant answers that with a sign-in page, which arrives here as unreadable output
-   * rather than as a failure.
-   */
+  /** Use the extension's credentials; `az rest` uses the default tenant. */
   const invoke = <A>(input: {
     readonly cwd: string;
     readonly operation: string;
@@ -373,11 +331,7 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  /**
-   * Azure names its own items with a leading slash, which the repository paths carried around
-   * here have had taken off so they match the patch and the viewed mark. Put it back on the way
-   * out, because the items route is documented in Azure's own spelling.
-   */
+  /** Azure's items route requires a leading slash. */
   const toItemPath = (path: string) => (path.startsWith("/") ? path : `/${path}`);
 
   const repositoryRoute = (location: AzureDevOpsRepositoryLocation): ReadonlyArray<string> => [
@@ -393,10 +347,7 @@ export const make = Effect.gen(function* () {
     `pullRequestId=${input.number}`,
   ];
 
-  /**
-   * Azure pages by raw offset. Keep reading when malformed rows leave the decoded page short, and
-   * retain the raw count so the next public cursor skips every row this walk consumed.
-   */
+  /** Decoding can shorten a non-final page; advance by raw rows. */
   const listPullRequestPage = (input: {
     readonly cwd: string;
     readonly repository: string;
@@ -503,9 +454,7 @@ export const make = Effect.gen(function* () {
             ? Effect.fail(new AzureDevOpsViewerUnavailableError({ command: "az", cwd: input.cwd }))
             : Effect.succeed(decoded.success);
         }),
-        // `az devops login` signs in with a personal access token, which `az account show` knows
-        // nothing about, and nothing in `az` prints whose token it is. `--creator me` is resolved
-        // by the extension itself, so the viewer's own pull request names them.
+        // `az account show` cannot identify PAT logins; the extension resolves `--creator me`.
         Effect.catchIf(
           (error) => error._tag !== "AzureDevOpsCliUnavailableError",
           () =>
@@ -641,12 +590,9 @@ export const make = Effect.gen(function* () {
           "versionDescriptor.versionType=commit",
           `versionDescriptor.version=${input.commit}`,
           "includeContent=true",
-          // Azure leaves `contentMetadata` out unless this is asked for, and with it goes its own
-          // word on whether the file is binary, which is the only reliable one, since a binary
-          // file arrives encoded rather than as the bytes it is on the host.
+          // Encoded content cannot identify binaries; request Azure's binary flag.
           "includeContentMetadata=true",
-          // Without this Azure answers with the file's own bytes rather than with a JSON
-          // envelope, and `az devops invoke` refuses anything it cannot parse as JSON.
+          // `az devops invoke` requires JSON; otherwise Azure returns raw file bytes.
           "$format=json",
         ],
         maxOutputBytes: ITEM_CONTENT_MAX_OUTPUT_BYTES,
@@ -667,8 +613,7 @@ export const make = Effect.gen(function* () {
                 ...detectArgs,
                 "--id",
                 String(input.number),
-                // One `--reviewers` takes them all, because az reads the flag as a list and a
-                // second one would replace the first rather than add to it.
+                // Repeating `--reviewers` replaces the earlier list.
                 "--reviewers",
                 ...input.reviewers,
                 "--only-show-errors",
@@ -708,9 +653,7 @@ export const make = Effect.gen(function* () {
             ...detectArgs,
             "--id",
             String(input.number),
-            // One argument rather than a flag and a value beside it: a description usually opens
-            // with a bullet, and az reads a dash in the next argv slot as a flag of its own.
-            // `--description` also takes several strings, and this keeps the whole text as one.
+            // One argv entry preserves leading dashes and multi-string descriptions.
             ...(input.title === undefined ? [] : [`--title=${input.title}`]),
             ...(input.body === undefined ? [] : [`--description=${input.body}`]),
             "--only-show-errors",

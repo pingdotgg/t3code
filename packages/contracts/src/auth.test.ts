@@ -21,8 +21,7 @@ describe("authorization grants", () => {
     expect(AuthStandardClientScopes).not.toContain("review:write");
   });
 
-  // Frozen vocabulary from the client before granular scopes shipped. Do not
-  // derive it from the current enum: that would hide compatibility regressions.
+  // Keep the pre-granular vocabulary frozen to expose compatibility regressions.
   const oldScopes = Schema.Array(
     Schema.Literals([
       "orchestration:read",

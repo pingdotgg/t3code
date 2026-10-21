@@ -45,14 +45,8 @@ const MAX_CONSOLE_TEXT_CHARS = 500;
 const VIEWPORT_HEIGHT = 800;
 const MAX_CAPTURE_HEIGHT = 4_000;
 const CAPTURE_TIMEOUT = "20 seconds";
-// Chrome refuses local files to every web page, frame, worker, and popup, so a
-// page cannot read files the agent's provider withholds; local images reach it
-// already inlined as data URIs. `.localhost` keeps it a secure context that may
-// still load plain-http resources, and the request never leaves the browser.
-// All of the browser's traffic goes through `publicProxy`, which only reaches
-// public addresses, so a page cannot reach this machine's local network. The
-// main frame also stays on the page and the browser opens no popups, so a
-// capture always shows the page itself.
+// Chrome blocks file access; images arrive inlined. Browser-only .localhost permits secure contexts and HTTP resources.
+// publicProxy blocks local networks; pinning the main frame and forbidding popups keeps captures on the page.
 const PAGE_ORIGIN = "http://t3-page.localhost";
 const PAGE_URL = `${PAGE_ORIGIN}/page.html`;
 const PAGE_NAME = "page.html";
@@ -60,9 +54,7 @@ const MEASURE_CONCURRENCY = 3;
 
 const textEncoder = new TextEncoder();
 
-/**
- * Node's encoder, since pages run to 25 MiB.
- */
+// Pages reach 25 MiB; use Node's encoder.
 const pageBody = (html: string) =>
   Buffer.from(Buffer.from(html, "utf8").toString("base64"), "latin1");
 
@@ -151,11 +143,10 @@ const consoleMessageFromEvent = (method: string, params: unknown): ConsoleMessag
   return undefined;
 };
 
-// Resolves after web fonts load and two frames paint, so late layout lands in the capture.
+// Wait for fonts and two paint frames to capture late layout.
 const SETTLE_EXPRESSION =
   "document.fonts.ready.then(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true)))))";
-// The root's scroll height never drops below the viewport, so a short page
-// reports its own box height instead.
+// scrollHeight is at least viewport height; use the root box for shorter pages.
 const MEASURE_EXPRESSION =
   "(() => { const root = document.documentElement; return root.scrollHeight > root.clientHeight ? root.scrollHeight : root.getBoundingClientRect().height; })()";
 
@@ -174,10 +165,7 @@ interface PageEvents {
   omittedConsoleMessages: number;
 }
 
-/**
- * Starts the headless shell for the life of the scope, speaking CDP over
- * `--remote-debugging-pipe` (fd 3 in, fd 4 out, NUL-delimited JSON).
- */
+// CDP pipe uses fd 3 in, fd 4 out and NUL-delimited JSON.
 const launchBrowser = Effect.fnUntraced(function* (input: {
   readonly executable: string;
   readonly noSandbox: boolean;
@@ -266,9 +254,7 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
       ),
     ).pipe(Effect.asVoid);
 
-  // Serves the page. Its body is shared bytes between two small JSON halves,
-  // queued together, so loading a page of up to 25 MiB at several widths never
-  // copies it on this side.
+  // Queue shared body bytes between JSON halves to avoid copies across capture widths.
   const fulfillPage = (sessionId: string, requestId: string, body: Uint8Array) =>
     Queue.offerAll(outgoing, [
       textEncoder.encode(
@@ -308,8 +294,7 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
       if (url === PAGE_URL && body !== undefined) {
         return fulfillPage(sessionId, paused.requestId, body);
       }
-      // A frame inside the page may show another site; Local Network Access
-      // still covers it. The main frame and T3's own origin serve nothing else.
+      // Subframes may show other sites covered by Local Network Access; the main frame stays on T3's page.
       const otherSiteFrame =
         paused.resourceType === "Document" &&
         paused.frameId !== page.mainFrameId &&
@@ -337,8 +322,7 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
     return Effect.void;
   };
 
-  // The pipe closes when the browser exits. A startup abort, such as a missing
-  // sandbox, says why on stderr, which may still be draining, so give it a moment.
+  // Startup aborts close the pipe; let stderr drain to recover the reason.
   const disconnect = Effect.gen(function* () {
     yield* Fiber.await(stderrReader).pipe(Effect.timeout("1 second"), Effect.ignore);
     const exit = yield* child.exitCode.pipe(
@@ -367,7 +351,7 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
     );
   });
 
-  // Decoded text chunks may split a message anywhere, and a screenshot reply spans many.
+  // Chunks may split messages; screenshot replies span many chunks.
   let partial: Array<string> = [];
   yield* child.getOutputFd(4).pipe(
     Stream.decodeText(),
@@ -436,8 +420,7 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
     yield* send("Page.enable", {}, Ignored, sessionId);
     yield* send("Runtime.enable", {}, Ignored, sessionId);
     yield* send("Log.enable", {}, Ignored, sessionId);
-    // Previews have no use for WebRTC, whose ICE servers can make the browser
-    // resolve names outside the proxy. Runs before page scripts in every frame.
+    // Disable WebRTC before scripts in every frame; ICE can resolve names outside the proxy.
     yield* send(
       "Page.addScriptToEvaluateOnNewDocument",
       {
@@ -447,8 +430,7 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
       Ignored,
       sessionId,
     );
-    // Pauses T3's own origin, to serve the page, and every document, to keep
-    // the main frame on it.
+    // Intercept T3's page and all document navigations to keep the main frame on it.
     yield* send(
       "Fetch.enable",
       {
@@ -576,10 +558,7 @@ export const captureHtmlScreenshot = Effect.fn("headlessChrome.captureHtmlScreen
   }),
 );
 
-/**
- * Content heights of the page at each width, each from a fresh load, since
- * pages often lay themselves out from the width once at load.
- */
+/** Fresh load per width, since pages may lay out only at load. */
 export const measureHtmlHeights = Effect.fn("headlessChrome.measureHtmlHeights")(function* (input: {
   readonly executable: string;
   readonly noSandbox: boolean;

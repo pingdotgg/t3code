@@ -44,8 +44,6 @@ vi.mock(import("../../state/environments"), async (original) => ({
   ...(await original()),
   useEnvironmentProviders: () => new Map(),
 }));
-// The real row reads write permission and overrides from live environment state; this
-// suite is about how the section writes mixed writing styles.
 vi.mock(import("./settingsLayout"), async (original) => ({
   ...(await original()),
   SettingsRow: ({ title, control, resetAction, children }) => (

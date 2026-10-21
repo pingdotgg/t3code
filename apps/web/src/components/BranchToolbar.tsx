@@ -242,8 +242,7 @@ const RunContextSelector = memo(function RunContextSelector({
     </Tooltip>
   );
   const icon = showEnvironmentIndicator ? (
-    // Button's base styles apply `-mx-0.5` to descendant SVGs, which eats 4px
-    // out of whatever gap we set. mx-0! cancels that so gap-0.5 reads as 2px.
+    // Button's SVG margins consume 4px of the gap; mx-0! restores the intended 2px.
     <span className="inline-flex shrink-0 items-center gap-0.5">
       <Tooltip>
         <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
@@ -445,10 +444,7 @@ const COMPOSER_CONTEXT_MOTION_DURATION_MS = 180;
 const COMPOSER_CONTEXT_MOTION_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
 const COMPOSER_CONTEXT_LABEL_SELECTOR = "[data-composer-label]";
 
-/**
- * Reading one element's scrollWidth drops the tail when the label is hidden or
- * squeezed, and the strip then flips between labels and icons on every measure.
- */
+/** A hidden or squeezed label's scrollWidth loses its tail, causing label/icon flapping. */
 function labelTextWidth(label: HTMLElement, range: Range): number {
   const walker = document.createTreeWalker(label, NodeFilter.SHOW_TEXT);
   let width = 0;
@@ -499,11 +495,7 @@ function useLabelsOverflow(element: HTMLDivElement | null): boolean {
     let groups = 0;
     for (const child of current.children) {
       if (!(child instanceof HTMLElement)) continue;
-      // Reserve the natural width of the controls inside it, blocks in overflow
-      // included, so Git labels compact before squeezing out the model picker.
-      // Reserving only the visible controls would let the labels expand into
-      // room the composer just freed, shrink the host, and hide the controls
-      // again.
+      // Reserve overflowed controls' width to prevent repeated hiding and expansion.
       const hostedControls = child.matches('[data-chat-resting-composer-controls-host="true"]')
         ? child.querySelector<HTMLElement>('[data-chat-composer-resting-controls="true"]')
         : null;
@@ -757,9 +749,7 @@ export const BranchToolbar = memo(function BranchToolbar({
       data-compact={labelsOverflow ? "" : undefined}
       className={cn(
         "gap-1 text-xs font-normal text-muted-foreground/70",
-        // A non-Git strip with no visible composer controls should occupy no
-        // space, but its host must retain a prospective width so controls can
-        // become visible again when the chat view grows.
+        // Hide empty non-Git strips while retaining host width so controls can reappear as the chat grows.
         !contextStripVisible && "pointer-events-none invisible absolute inset-x-0 top-full",
       )}
     >

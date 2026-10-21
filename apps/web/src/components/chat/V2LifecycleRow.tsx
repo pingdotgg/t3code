@@ -299,11 +299,7 @@ function SubagentAvatar({
   );
 }
 
-/**
- * Reads only the two provider fields the avatar draws. Provider status pushes
- * replace the provider objects (fresh `checkedAt`), so selecting strings keeps
- * the avatar from re-rendering when nothing it shows changed.
- */
+// Select strings; status pushes replace providers even when avatar fields are unchanged.
 export function EnvironmentSubagentAvatar({
   environmentId,
   providerInstanceId,
@@ -363,7 +359,6 @@ export function SubagentNotificationLink(props: {
       null,
   );
   if (agent === null) return props.fallback;
-  // A subagent resumed since this notification shows its live status, not the outcome reported then.
   const resumed =
     NOTIFICATION_OUTCOME_STATUS[props.outcome] !== null &&
     subagentResumedSince(agent, props.createdAt);
@@ -536,8 +531,7 @@ function SubagentTimelineTooltip(
   },
 ) {
   const environmentId = props.parentRef.environmentId;
-  // The popup only mounts while open, so the full provider list is read here
-  // instead of in every timeline row.
+  // Read providers only in the open popup to avoid per-row subscriptions.
   const providers =
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
   const parent = useThreadShell(props.parentRef)?.source;

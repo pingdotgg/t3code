@@ -9,11 +9,7 @@ import {
   type ApnsJwtSigningInput,
 } from "./apnsJwt.ts";
 
-// APNs requires REUSING the provider token: refreshing it more than roughly
-// once per 20 minutes returns 429 TooManyProviderTokenUpdates and drops the
-// push (observed live: bursty Live Activity updates got 429'd, leaving stale
-// lock-screen state). Reuse each signed JWT for most of its 60-minute
-// validity.
+// Reuse JWTs within their 60-minute validity; frequent refreshes trigger APNs TooManyProviderTokenUpdates.
 export const APNS_JWT_REUSE_SECONDS = 45 * 60;
 
 export class ApnsProviderTokens extends Context.Service<
@@ -28,10 +24,7 @@ interface CachedProviderToken {
   readonly issuedAtUnixSeconds: number;
 }
 
-// Signing is deterministic (RFC 6979) and iat is quantized below, so every
-// isolate independently derives the byte-identical token for a window; this
-// map only avoids re-signing on every push. No shared storage is needed, and
-// no provider token is ever written anywhere.
+// Deterministic signing plus quantized iat gives isolates identical tokens; cache only to avoid repeated signing.
 const isolateTokenCache = new Map<string, CachedProviderToken>();
 
 export function __resetApnsProviderTokenCacheForTest(): void {

@@ -65,7 +65,6 @@ const layerWorktreeLocation = (worktreesDir = managedWorktreesDir) =>
     ServerSettings.layerTest(),
   );
 
-/** Starts a run on a thread whose worktree folder is missing, with routing reads failing after. */
 function startWithMissingWorktree(
   worktreePath: string,
   realPaths: Record<string, string> = {
@@ -129,7 +128,6 @@ function startWithMissingWorktree(
         IdAllocator.layer,
         Layer.succeed(FileSystem.FileSystem, {
           exists: () => Effect.succeed(false),
-          // Paths that exist on the fake disk, mapped to where their symlinks lead.
           realPath: (target: string) =>
             normalize(target) in realPaths
               ? Effect.succeed(realPaths[normalize(target)])

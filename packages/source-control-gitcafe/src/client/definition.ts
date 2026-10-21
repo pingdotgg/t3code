@@ -58,7 +58,6 @@ export const definition = defineSourceControlClient({
   authorProfileUrl: () => null,
   referenceAutolinkRepositoryUrl: () => null,
   reviewSummaryRequired: () => false,
-  // `/pulls/` is Forgejo's shape too, so only GitCafe's own hosts claim it.
   checkoutCommandArgument: () => null,
   isChangeRequestReference: () => false,
   changeRequestUrlHost: (url) => url.hostname,

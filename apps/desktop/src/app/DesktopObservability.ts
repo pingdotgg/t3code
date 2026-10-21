@@ -426,8 +426,7 @@ const backendLogFilePathForInstance = (
   environment: DesktopEnvironment.DesktopEnvironment["Service"],
   id: string,
 ): string => {
-  // Primary keeps the historical "server-child.log" path so ops scripts
-  // and packaged-build log inspection still find it where it always lived.
+  // Keep the primary log path stable for ops scripts and packaged-build inspection.
   if (id === PRIMARY_BACKEND_LOG_INSTANCE_ID) {
     return environment.path.join(environment.logDir, "server-child.log");
   }
@@ -435,8 +434,7 @@ const backendLogFilePathForInstance = (
   return environment.path.join(environment.logDir, `server-child-${sanitized}.log`);
 };
 
-// Cacheable by resolved file path so two ids that sanitize to the same filename
-// share a single RotatingLogFileWriter (no race on currentSize tracking).
+// IDs sharing a sanitized filename must share a writer to avoid currentSize races.
 const makeBackendOutputSinkForInstance = (
   environment: DesktopEnvironment.DesktopEnvironment["Service"],
   id: string,
@@ -606,16 +604,7 @@ const layerTelemetry = Layer.unwrap(
       },
     };
 
-    // `Logger.layer` writes the whole logger set rather than adding to it, so
-    // every logger the main process wants has to be named in this one call.
-    // Splitting the OTLP logger back out into a layer of its own silently
-    // drops either it or the console output.
-    // Swapping `Logger.tracerLogger` out for the OTLP logger matches the
-    // server: both reach a collector, but the tracer logger covers only
-    // messages logged inside a recorded span and files them under traces,
-    // while the OTLP logger carries every message as a log record stamped
-    // with its trace and span ids. Keeping both would export every in-span
-    // message twice.
+    // Logger.layer replaces the logger set. tracerLogger would duplicate OTLP in-span messages.
     const layerLogger = Logger.layer(
       endpoints.logs === undefined
         ? [Logger.consolePretty(), Logger.tracerLogger]

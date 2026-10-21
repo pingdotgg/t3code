@@ -211,10 +211,7 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
     (value: MobileThemeMode) => {
       const current = appliedRuntimeStateRef.current ?? runtimeState;
 
-      // Clear a forced native appearance before publishing System. The
-      // resulting useColorScheme notification still sees the previous forced
-      // preference, so React batches the actual system palette into the one
-      // urgent preference commit below.
+      // Clear forced appearance before publishing System so useColorScheme batches the system palette into the preference commit.
       if (value === "system") {
         Appearance.setColorScheme("unspecified");
       }

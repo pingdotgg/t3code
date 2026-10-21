@@ -134,10 +134,7 @@ export function coalesceShellApplicationEvents<A extends ShellApplicationEvent>(
   );
 }
 
-/**
- * Prevents a newer marked enrichment from landing before the unmarked authoritative initial
- * snapshot.
- */
+/** Emit the authoritative initial snapshot before marked enrichment. */
 export function composeShellStreamWithEnrichment<A, E, R, A2, E2, R2, A3, E3, R3>(input: {
   readonly initial: Stream.Stream<A, E, R>;
   readonly tail: Stream.Stream<A2, E2, R2>;
@@ -302,11 +299,7 @@ const sameThreadShell = Schema.toEquivalence(ThreadShellSchema);
 
 const UNCHANGED_THREAD_SHELL_RESEND_MS = 5_000;
 
-/**
- * A skipped delta leaves the client cursor behind, and a resume replays the events after that
- * cursor. So an unchanged shell is still sent once its last send is
- * `UNCHANGED_THREAD_SHELL_RESEND_MS` old.
- */
+/** Resend unchanged shells after UNCHANGED_THREAD_SHELL_RESEND_MS so skipped deltas cannot leave resume cursors behind. */
 export function skipUnchangedThreadShells<A extends OrchestrationV2ShellStreamItem, E, R>(
   stream: Stream.Stream<A, E, R>,
 ): Stream.Stream<A, E, R> {

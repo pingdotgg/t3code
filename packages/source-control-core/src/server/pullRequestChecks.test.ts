@@ -172,7 +172,6 @@ describe("dedupeChecks", () => {
   });
 
   it("leaves a colliding check with no workflow of its own unqualified", () => {
-    // An app-provided check run belongs to no workflow, which GitHub reports as an empty name.
     const checks = dedupeChecks([
       entry("build", "success", { workflowName: "", at: "2026-08-11T16:00:00Z" }),
       entry("build", "failure", { workflowName: "CI", at: "2026-08-11T16:00:00Z" }),

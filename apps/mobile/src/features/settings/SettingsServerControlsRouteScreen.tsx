@@ -150,8 +150,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
   );
   const [pendingWrites, setPendingWrites] = useState(0);
   const writeInFlight = useRef(false);
-  // A closing view can still save its drafts while a write is pending, after
-  // the controls disabled. Those patches run once the current write settles.
+  // Closing views can save after controls disable; queue those patches behind the pending write.
   const queuedPatch = useRef<{ key: string; patch: ServerSettingsPatch } | null>(null);
   const targetsKey = targets
     .map((target) => `${target.environment.environmentId}:${target.projectId}`)

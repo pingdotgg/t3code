@@ -37,9 +37,7 @@ export function ProviderUpdateLaunchNotification() {
 const seenProviderUpdateNotificationKeys = new Set<string>();
 type ProviderUpdateToastId = ReturnType<typeof toastManager.add>;
 
-// While a local backend (e.g. WSL) is still connecting, defer the popover so it
-// reflects every environment. Cap the wait so a stuck or failed backend can't
-// suppress the primary's updates indefinitely.
+// Wait briefly for local backends so the popover includes them; cap the wait for failed connections.
 const SETTLING_GRACE_MS = 30_000;
 
 function ProviderUpdateEnvironmentsNotification() {
@@ -52,9 +50,7 @@ function ProviderUpdateEnvironmentsNotification() {
     readonly toastId: ProviderUpdateToastId;
     readonly key: string;
   } | null>(null);
-  // Whether the user has triggered an update from the current toast. Until they
-  // do, the prompt is replaced when the available updates change; afterward it
-  // is kept so in-progress rows are not torn down.
+  // Keep the toast after interaction so update changes cannot tear down in-progress rows.
   const hasInteractedRef = useRef(false);
 
   useEffect(() => {
@@ -73,7 +69,6 @@ function ProviderUpdateEnvironmentsNotification() {
   );
 
   const [settleGraceElapsed, setSettleGraceElapsed] = useState(false);
-  // The grace period restarts with the next settling phase.
   if (!isAnySettling && settleGraceElapsed) {
     setSettleGraceElapsed(false);
   }
@@ -93,8 +88,6 @@ function ProviderUpdateEnvironmentsNotification() {
     void navigate({ to: "/settings/providers" });
   };
 
-  // The toast closes long after the effect that opened it, so it dismisses the key
-  // the updates have moved to by then.
   const dismissPrompt = useStableCallback(() => {
     if (notificationKey) {
       dismissNotificationKey(notificationKey);

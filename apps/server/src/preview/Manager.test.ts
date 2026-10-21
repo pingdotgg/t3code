@@ -16,19 +16,11 @@ interface EventCollector {
   readonly drain: Effect.Effect<ReadonlyArray<PreviewEvent>>;
 }
 
-/**
- * Each `it.effect` shares the live PreviewManager layer across the whole
- * `it.layer` block, so tests that assert per-thread counts must use a unique
- * thread id to avoid bleeding state from earlier tests.
- */
+/** The shared live layer retains state between tests; counts need unique thread ids. */
 let nextThreadId = 0;
 const freshThreadId = () => ThreadId.make(`thread-${++nextThreadId}`);
 
-/**
- * Subscribe to the manager's event stream BEFORE the test publishes. We
- * use `subscribeEvents` (synchronous PubSub.subscribe under the hood) so
- * no event can land between subscribe and the consumer drain.
- */
+/** Subscribe synchronously before publishing so the forked consumer cannot miss events. */
 const collectEvents = Effect.gen(function* () {
   const manager = yield* PreviewManager.PreviewManager;
   const subscription = yield* manager.subscribeEvents;

@@ -36,10 +36,7 @@ export async function renderPhoto(
   }
 }
 
-/**
- * Returns null when the image fits, is another format (GIF, WebP), or the native renderer fails,
- * so the caller keeps the original bytes.
- */
+/** Returns null to keep original bytes if they fit, use another format, or native rendering fails. */
 export async function fitComposerImage(image: {
   readonly uri: string;
   readonly mimeType: string;

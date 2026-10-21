@@ -43,11 +43,7 @@ import type { ReviewCommentContext } from "~/reviewCommentContext";
 
 const PREVIEW_LABEL_MAX_CHARS = 48;
 
-/**
- * A review selection can be arbitrarily large, but the wire schema bounds `text` and `diff`.
- * Clamp at the same boundary so an oversized selection still sends, marked where it was cut,
- * rather than failing to encode at send time.
- */
+// Truncate selections to wire bounds before persistence to avoid send-time encoding failures.
 const TRUNCATION_MARKER = "\n… truncated …";
 
 function clampContextText(value: string, max: number): string {
@@ -472,11 +468,7 @@ export function previewAnnotationFromRecord(
   };
 }
 
-/**
- * Whether two records carry the same payload, ignoring the label (display text, never
- * identity). Context ids are a folded form of producer ids, so a collision alone does not mean
- * the records are the same excerpt; the paste path compares payloads before de-duplicating.
- */
+/** Labels are display-only; folded ids can collide, so paste deduplication compares payloads. */
 export function isSameComposerContextPayload(
   left: ComposerContextRecord,
   right: ComposerContextRecord,

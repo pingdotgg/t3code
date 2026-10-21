@@ -170,10 +170,7 @@ export const make = Effect.gen(function* () {
               eq(relayLiveActivities.deviceId, registration.deviceId),
             ),
           );
-        // The app re-registers its current card's token on every foreground.
-        // Restamping the arming time would make that card look freshly armed,
-        // and the arming grace in ApnsDeliveries would swallow the end that
-        // the registration replay owes a card whose work is gone.
+        // Foreground token refresh must retain the original arming time or grace can swallow an owed end event.
         const armedAt =
           (current?.activityPushToken === registration.activityPushToken
             ? current.remoteStartedAt
@@ -344,10 +341,7 @@ export const make = Effect.gen(function* () {
           .onConflictDoUpdate({
             target: [relayLiveActivities.userId, relayLiveActivities.deviceId],
             set: {
-              // A delivered start begins a NEW activity generation: the stored
-              // update token belongs to the previous activity (dead once a new
-              // one starts, and certainly dead after an end), so keep it only
-              // for plain updates.
+              // Starts create new activity generations; only plain updates can reuse the previous update token.
               activityPushToken:
                 input.kind === "live_activity_update"
                   ? sql`${relayLiveActivities.activityPushToken}`

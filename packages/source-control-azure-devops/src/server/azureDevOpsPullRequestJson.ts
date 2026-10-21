@@ -14,12 +14,7 @@ import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 
 import { azureDevOpsPullRequestWebUrl } from "./azureDevOpsPullRequests.ts";
 
-/**
- * Azure's enums are decoded as plain strings and normalized here, in the same tolerant style as
- * the other hosts: a new merge status must not fail a whole payload. Every field beyond the
- * identity is optional, because `az repos pr` returns rather more or less of the REST object
- * depending on the command.
- */
+// CLI fields vary by command; unknown enum values must not fail the payload.
 const RawIdentitySchema = Schema.Struct({
   displayName: Schema.optional(Schema.NullOr(Schema.String)),
   uniqueName: Schema.optional(Schema.NullOr(Schema.String)),
@@ -32,11 +27,7 @@ const RawPullRequestSchema = Schema.Struct({
   description: Schema.optional(Schema.NullOr(Schema.String)),
   status: Schema.optional(Schema.NullOr(Schema.String)),
   isDraft: Schema.optional(Schema.NullOr(Schema.Boolean)),
-  /**
-   * Who armed auto-complete, which is the only thing Azure says about it: the field carries an
-   * identity while the pull request is set to complete on its own, and Azure leaves it out
-   * entirely once nobody has. So its presence is the answer, and there is no third state.
-   */
+  /** This identity's presence indicates auto-complete. */
   autoCompleteSetBy: Schema.optional(Schema.NullOr(RawIdentitySchema)),
   completionOptions: Schema.optional(
     Schema.NullOr(
@@ -143,7 +134,7 @@ function normalizeRefName(refName: string): string {
   return refName.trim().replace(/^refs\/heads\//, "");
 }
 
-/** A login has to compare against `az account show`, which reports an email. */
+/** Logins must match the email from `az account show`. */
 function toActor(raw: Schema.Schema.Type<typeof RawIdentitySchema> | null | undefined) {
   const login = trimmed(raw?.uniqueName) ?? trimmed(raw?.displayName);
   return login === null
@@ -257,7 +248,7 @@ type DecodeFailure = Cause.Cause<Schema.SchemaError>;
 export interface AzureDevOpsPullRequestBatch {
   readonly items: ReadonlyArray<AzureDevOpsPullRequest>;
   readonly rawIndexes: ReadonlyArray<number>;
-  /** Rows Azure returned, counted before decoding, so a skipped row cannot hide a next page. */
+  /** Count before decoding to avoid ending pagination on skipped rows. */
   readonly rawCount: number;
 }
 
@@ -282,7 +273,7 @@ export function decodePullRequestListJson(
   return Result.succeed({ items, rawIndexes, rawCount: decoded.success.length });
 }
 
-/** Null carries "Azure answered, but with too little to use", which the caller reports. */
+/** Null means Azure returned insufficient data. */
 export function decodePullRequestJson(
   raw: string,
 ): Result.Result<AzureDevOpsPullRequest | null, DecodeFailure> {
@@ -411,11 +402,7 @@ const decodeChangePage = decodeJsonResult(RawChangePageSchema);
 const decodeChangeEntry = Schema.decodeUnknownExit(RawChangeEntrySchema);
 const decodeItemContent = decodeJsonResult(RawItemContentSchema);
 
-/**
- * Azure leads a path with a slash that every other host and every patch omits. Not trimmed like
- * the rest of this payload, since a leading/trailing space is a legal part of a file's name and
- * the patch and viewed mark are keyed by the untrimmed path.
- */
+/** Preserve whitespace to match patch paths and viewed marks. */
 function toRepositoryPath(value: string | null | undefined): string | null {
   if (value === undefined || value === null) return null;
   const path = value.replace(/^\/+/, "");
@@ -471,8 +458,7 @@ export function decodeIterationChangesJson(
     if (path === null) continue;
     if (change.item?.isFolder === true) continue;
     if ((change.item?.gitObjectType ?? "blob").toLowerCase() !== "blob") continue;
-    // Azure names where a renamed file came from in either of two places depending on the route
-    // and the version, so both are read and the current path stands in when neither is there.
+    // Azure uses either field for renames, depending on route/version.
     const oldPath =
       toRepositoryPath(change.sourceServerItem) ?? toRepositoryPath(change.originalPath) ?? path;
     changes.push({
@@ -490,10 +476,7 @@ export function decodeIterationChangesJson(
   });
 }
 
-/**
- * Azure answers an absent file with an empty body rather than an error, which reads as empty.
- * Whether the bytes are text is Azure's own call, not this decoder's to guess from content.
- */
+/** Azure returns an empty body for absent files. Binary status comes from its metadata. */
 export function decodeItemContentJson(
   raw: string,
 ): Result.Result<AzureDevOpsItemContent, DecodeFailure> {

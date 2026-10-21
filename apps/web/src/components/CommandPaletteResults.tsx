@@ -88,11 +88,8 @@ interface CommandPaletteVirtualizedResultsProps extends Omit<CommandPaletteResul
   listRef: RefObject<LegendListRef | null>;
 }
 
-/**
- * The parent passes the flat item order to the Command root as `items` with
- * `virtualized`, scrolls keyboard highlights into view through `listRef`, and
- * runs Enter itself since the row may be unmounted.
- */
+/** Pass flat items with virtualized to Command, scroll highlights via listRef, and handle Enter for
+ * unmounted rows. */
 export function CommandPaletteVirtualizedResults(props: CommandPaletteVirtualizedResultsProps) {
   const { listRef } = props;
   const [scrollFade, setScrollFade] = useState({ top: false, bottom: false });

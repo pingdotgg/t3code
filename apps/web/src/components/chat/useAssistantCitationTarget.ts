@@ -45,7 +45,6 @@ export function useAssistantCitationTarget({
     done: boolean;
   } | null>(null);
 
-  // A target belongs to one request, so returning to an earlier key never reuses it.
   if (ready !== null && ready.key !== request?.key) {
     setReady(null);
   }

@@ -42,8 +42,7 @@ export function canLinkChangeRequest(
   return findProjectForChangeRequest(projects, parsed) !== undefined;
 }
 
-// A string, so provider status pushes and snapshots that keep the mode don't
-// re-render every link renderer.
+// A primitive mode prevents unchanged status pushes from re-rendering every link.
 const linkModeAtom = Atom.family((environmentId: EnvironmentId | null) =>
   Atom.make((get) =>
     threadPullRequestLinkMode(

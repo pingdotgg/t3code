@@ -78,8 +78,7 @@ export function useGitActionProgress(target: VcsActionTarget): GitActionProgress
   const actionState = useVcsActionState(target);
   const { result } = useGitActionResultNotification();
 
-  // The clock is state the interval advances: a render-time Date.now() would be
-  // cached on the start timestamp by the compiler and the label would freeze.
+  // Keep clock state; the compiler caches render-time Date.now() and would freeze the label.
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
     if (!actionState.isRunning) return;

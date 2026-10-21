@@ -65,7 +65,7 @@ export class ElectronSafeStorage extends Context.Service<
   }
 >()("@t3tools/desktop/electron/ElectronSafeStorage") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
 

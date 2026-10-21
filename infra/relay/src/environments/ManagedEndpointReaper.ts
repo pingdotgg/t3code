@@ -14,25 +14,17 @@ import * as ManagedEndpointAllocations from "./ManagedEndpointAllocations.ts";
 import * as ManagedEndpointProvider from "./ManagedEndpointProvider.ts";
 
 export const MANAGED_ENDPOINT_GRACE_PERIOD_MINUTES = 5;
-// A tunnel that never connected is usually a link still being set up: a slow
-// cloudflared download or a user who walked away mid-pairing. Give it an hour.
+// Never-connected tunnels may still be pairing; allow an hour.
 export const MANAGED_ENDPOINT_INACTIVE_GRACE_PERIOD_MINUTES = 60;
 export const MANAGED_ENDPOINT_SWEEP_PAGE_SIZE = 100;
 export const MANAGED_ENDPOINT_SWEEP_ATTEMPT_LIMIT = 100;
 export const MANAGED_ENDPOINT_SWEEP_LIST_REQUEST_LIMIT = 10;
 const MANAGED_ENDPOINT_LEGACY_AGE_BUCKET_DAYS = [7, 30, 90] as const;
-// A host that never registered recovery cannot replace a deleted tunnel on
-// its own build. Only delete its tunnel after it has been gone this long. A
+// Hosts without recovery cannot replace deleted tunnels; allow a longer absence.
 const MANAGED_ENDPOINT_LEGACY_GRACE_PERIOD_DAYS = 7;
-// Deletions run a few at a time: each one is a row-locked database
-// transaction plus two Cloudflare calls, so one at a time cannot finish a
-// full attempt budget inside the cron's timeout. Each holds a Hyperdrive
-// connection while it runs; keep this well under the 20-connection origin
-// limit that request handlers share.
+// Parallelize to fit the cron budget, but stay below Hyperdrive's shared 20-connection limit.
 export const MANAGED_ENDPOINT_SWEEP_DELETE_CONCURRENCY = 4;
-// Stop starting deletions this long after the sweep starts, leaving room under
-// the cron's two-minute timeout to finish in-flight ones and record the
-// counters.
+// Leave time under the cron's two-minute limit to finish deletions and record counters.
 const MANAGED_ENDPOINT_SWEEP_DELETE_BUDGET_MS = 90_000;
 
 export interface ManagedEndpointSweepResult {
@@ -247,9 +239,7 @@ export const make = Effect.gen(function* () {
     }
 
     const collected = [...new Map(expired.map((entry) => [entry.tunnel.id, entry])).values()];
-    // Start each sweep one attempt budget further along so a run of
-    // candidates whose deletes keep failing cannot hold the budget forever
-    // and starve everything listed after them.
+    // Rotate the start offset so repeatedly failing candidates cannot starve later ones.
     const offset =
       collected.length === 0 ? 0 : (slot * MANAGED_ENDPOINT_SWEEP_ATTEMPT_LIMIT) % collected.length;
     const uniqueExpired = [...collected.slice(offset), ...collected.slice(0, offset)];
@@ -298,9 +288,7 @@ export const make = Effect.gen(function* () {
         skippedUnrecorded += 1;
         continue;
       }
-      // A tunnel with no allocation row cannot be claimed, so a relink that
-      // adopts it by name races any delete here. Count it and leave it for a
-      // manual sweep instead.
+      // Without an allocation claim, deletion can race relinking by name; leave orphans for manual sweeps.
       if (owner === undefined) {
         skippedOrphan += 1;
         continue;

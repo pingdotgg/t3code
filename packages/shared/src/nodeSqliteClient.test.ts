@@ -139,8 +139,7 @@ it.effect("keeps another connection from committing between a transaction's read
           const [row] = yield* sql<{ readonly value: number }>`
             SELECT value FROM counters WHERE id = 1
           `;
-          // With a deferred BEGIN this commit lands and the write below fails
-          // with SQLITE_BUSY_SNAPSHOT, which no busy timeout can wait out.
+          // Deferred BEGIN permits a competing commit, causing SQLITE_BUSY_SNAPSHOT that no timeout can resolve.
           yield* Effect.sync(() =>
             assert.throws(
               () => other.exec("UPDATE counters SET value = value + 1 WHERE id = 1"),

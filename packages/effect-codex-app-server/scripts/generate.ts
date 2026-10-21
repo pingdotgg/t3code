@@ -292,13 +292,9 @@ function isJsonSchemaNode(value: Schema.Json | undefined): value is JsonSchemaNo
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-// Adapts Codex's JSON Schema to Effect's importer, visiting only schema
-// positions so a field literally named "properties" is left alone:
-// - Effect imports an object without additionalProperties as an open record.
-//   Codex omits it for plain structs, so close objects that list properties.
-// - Effect cannot intersect shared object fields with object alternatives,
-//   which Codex uses for "one of these keys plus shared fields"
-//   (image_url | file_id). Fold the shared fields into each alternative.
+// Visit only schema positions so fields literally named properties stay untouched.
+// Close Codex structs that omit additionalProperties; Effect otherwise imports open records.
+// Fold shared fields into each object alternative because Effect cannot intersect them.
 function adaptSchemaForEffect(value: Schema.Json): Schema.Json {
   if (!isJsonSchemaNode(value)) {
     return value;

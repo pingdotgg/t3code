@@ -10,8 +10,7 @@ const nativeControls = requireOptionalNativeModule<{
 export const NATIVE_WORKSPACE_COLUMNS_SUPPORTED =
   Platform.OS === "ios" && Platform.isPad && nativeControls?.supportsWorkspaceColumns === true;
 
-// Binaries without the native no-hinge fallback never report metrics on ordinary
-// iPhones running iOS 27.1 or later. Use the compact navigator rather than staying blank.
+// Older binaries lack no-hinge metrics on iOS 27.1+ iPhones; time out to compact navigation instead of blanking.
 const NATIVE_METRICS_TIMEOUT_MS = 1000;
 
 export function useNativeWorkspaceColumnsReady() {

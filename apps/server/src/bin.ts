@@ -1,9 +1,4 @@
-/**
- * Every ACP agent spawns `t3 acp-mcp-bridge` while opening its session, and terminal-fallback
- * agents run `t3 acp-mcp-call` per tool call, so their startup sits on first-message latency.
- * Both dispatch here before the full CLI module graph (seconds of evaluation) loads; everything
- * else defers to the real CLI in ./binCli.ts.
- */
+// ACP startup and terminal fallback bypass the full CLI graph to avoid seconds of latency.
 import { isEntrypoint } from "./entrypoint.ts";
 
 if (
@@ -21,8 +16,7 @@ if (
     const { runAcpMcpCliFastPath } = await import("./mcp/AcpMcpStdioBridge.ts");
     await runAcpMcpCliFastPath(command, process.argv.slice(3));
   } else {
-    // Before anything reads stdin: the desktop app's Windows launcher starts
-    // the CLI without one. Never for the fast paths, whose stdin is a pipe.
+    // Windows desktop launches without stdin; attach before reading, except on fast paths using pipes.
     const { attachConsoleStdin } = await import("./cli/consoleStdin.ts");
     attachConsoleStdin();
     const { runCli } = await import("./binCli.ts");

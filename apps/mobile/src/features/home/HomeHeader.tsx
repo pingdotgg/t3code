@@ -116,8 +116,7 @@ export function HomeHeader(props: HomeHeaderProps) {
                     type: "button",
                   }),
                 ],
-          // The keys below are set per-branch (not `undefined`) so a later
-          // reapply cannot clobber options owned by Toolbar.
+          // Omit unowned keys; even undefined would clobber Toolbar options on reapply.
           ...(sidebarHeader
             ? {
                 headerSearchBarOptions: {

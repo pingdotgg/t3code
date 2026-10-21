@@ -23,8 +23,7 @@ export const layer = Layer.unwrap(
 
     const traces = config.otlpTracesExport;
     const metrics = config.otlpMetricsExport;
-    // The trace serializer stays in the returned context because the browser
-    // trace forwarder exports on the same signal.
+    // Keep serialization in context for the browser trace forwarder's exporter.
     const layerSerialization = SharedObservability.layerOtlpSerialization(traces.protocol);
     const resource = ServerConfig.otlpResource(config, yield* HostProcess.Hostname);
     const attribution = yield* ResourceAttribution.ResourceAttribution;
@@ -32,8 +31,7 @@ export const layer = Layer.unwrap(
     const layerTraceReferences = Layer.mergeAll(
       Layer.succeed(Tracer.MinimumTraceLevel, config.traceMinLevel),
       Layer.succeed(References.TracerTimingEnabled, config.traceTimingEnabled),
-      // Keeps each SQL statement's span current while it waits for a connection,
-      // so the client can record the lock wait on it.
+      // Preserve SQL spans while awaiting connections so lock waits can be recorded on them.
       Layer.succeed(Statement.SpanPropagationEnabled, true),
       HttpObservability.layer,
     );

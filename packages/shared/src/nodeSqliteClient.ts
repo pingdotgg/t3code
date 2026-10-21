@@ -37,14 +37,10 @@ export interface SqliteClientConfig {
   readonly spanAttributes?: Record<string, unknown> | undefined;
   readonly transformResultNames?: ((str: string) => string) | undefined;
   readonly transformQueryNames?: ((str: string) => string) | undefined;
-  /**
-   * Ignored for in-memory databases, which a second connection cannot share.
-   */
+  /** Ignored for in-memory databases, which cannot share a second connection. */
   readonly readerWorker?: boolean | undefined;
   readonly readerStartupTimeout?: Duration.Input | undefined;
-  /**
-   * Ignored for in-memory databases.
-   */
+  /** Ignored for in-memory databases. */
   readonly checkpointWorker?: boolean | undefined;
 }
 
@@ -54,12 +50,7 @@ const ReadOnly = Context.Reference<typeof Effect.interruptible | undefined>(
   { defaultValue: () => undefined },
 );
 
-/**
- * Wrap the whole transaction, as in
- * `sql.withTransaction(reads).pipe(readOnly)`. Inside an open write transaction
- * the reads keep using the writer, and a write attempted on the reader fails
- * with "attempt to write a readonly database".
- */
+/** Wrap the whole transaction; existing write transactions retain the writer, and writes on the reader fail as readonly. */
 export const readOnly = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
   Effect.uninterruptibleMask((restore) =>
     restore(Effect.provideService(effect, ReadOnly, restore)),
@@ -119,10 +110,7 @@ const checkNodeSqliteCompat = () => {
   return Effect.void;
 };
 
-/**
- * `node:sqlite` reports the SQLite result code as `errcode`, while
- * `classifySqliteError` reads `errno`.
- */
+// node:sqlite supplies errcode; classifySqliteError expects errno.
 const classifyError = (cause: unknown, message: string, operation: string) => {
   if (
     Predicate.hasProperty(cause, "errcode") &&
@@ -134,10 +122,7 @@ const classifyError = (cause: unknown, message: string, operation: string) => {
   return classifySqliteError(cause, { message, operation });
 };
 
-/**
- * SQLite keeps its copy of a statement's text and blob parameters until the
- * statement is bound again or finalized, and `node:sqlite` cannot clear them.
- */
+// SQLite retains text/blob bindings until rebind or finalization; node:sqlite cannot clear them.
 const LARGE_BINDING_SIZE = 64 * 1024;
 
 const isBlob = (value: unknown): value is ArrayBufferView | ArrayBufferLike =>
@@ -159,8 +144,7 @@ const hasLargeBinding = (params: ReadonlyArray<unknown>): boolean => {
         param !== null &&
         !isBlob(param)
       ) {
-        // `node:sqlite` takes named parameters as one object, callable or not.
-        // Read data properties only: calling a getter here would run it twice.
+        // Named parameters may be callable objects; read data properties only to avoid invoking getters twice.
         for (const property of Object.values(Object.getOwnPropertyDescriptors(param))) {
           if (!property.enumerable) continue;
           if (!("value" in property)) return true;
@@ -176,8 +160,7 @@ const hasLargeBinding = (params: ReadonlyArray<unknown>): boolean => {
   }
 };
 
-// Evaluated source instead of a worker file, so the reader also starts from
-// bundles and single-executable builds that have no module file on disk.
+// Inline worker source also runs in bundles and single-executable builds without module files.
 const readerWorkerSource = `
 const { parentPort, workerData } = require("node:worker_threads");
 const { DatabaseSync } = require("node:sqlite");
@@ -274,15 +257,10 @@ const readerFailureMessages = {
 const failed = (cause: unknown, message: string, operation: string) =>
   new SqlError({ reason: classifyError(cause, message, operation) });
 
-// COMMIT, ROLLBACK and ROLLBACK TO SAVEPOINT. On a reader they change nothing,
-// so they succeed once the worker is gone instead of failing the cleanup.
+// Read-transaction cleanup succeeds after worker exit because it can no longer change anything.
 const endsReadTransaction = (sql: string) => /^\s*ROLLBACK\b|^\s*COMMIT\b/i.test(sql);
 
-/**
- * Each worker gets its own `Connection`, so a transaction stays on the worker
- * it began on: once that worker exits, its statements fail rather than silently
- * continuing outside the transaction on a replacement.
- */
+// Bind transactions to one worker; fail after its exit instead of resuming outside the transaction on a replacement.
 const makeReader = Effect.fnUntraced(function* (options: SqliteClientConfig) {
   let current:
     | {
@@ -394,8 +372,7 @@ const makeReader = Effect.fnUntraced(function* (options: SqliteClientConfig) {
         return request({ sql, params: params ?? [], cached: false, values: true, raw: false });
       },
       executeUnprepared(sql, params, rowTransform) {
-        // A read-only connection rejects BEGIN IMMEDIATE and BEGIN EXCLUSIVE,
-        // and a deferred BEGIN is all a read snapshot needs.
+        // Read snapshots need deferred BEGIN; readonly connections reject IMMEDIATE and EXCLUSIVE.
         const statement = /^\s*BEGIN\b/i.test(sql) ? "BEGIN" : sql;
         const effect = request({
           sql: statement,
@@ -456,8 +433,7 @@ const makeReader = Effect.fnUntraced(function* (options: SqliteClientConfig) {
         );
       }),
       (startup): Effect.Effect<Connection | undefined> =>
-        // Another acquire may have timed out and retired this worker while this one
-        // waited; a late "ready" must not hand out a worker that is being terminated.
+        // A late ready event must not hand out a worker retired by another acquire timeout.
         unavailable || current !== reader
           ? Effect.succeed(undefined)
           : Option.isSome(startup) && startup.value.type === "ready"
@@ -1159,9 +1135,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
     borrower,
     compiler,
     transactionAcquirer,
-    // A deferred BEGIN only takes the write lock at the first write. If another
-    // process commits after this transaction's first read, that write fails at
-    // once with SQLITE_BUSY_SNAPSHOT, which busy_timeout cannot wait out.
+    // BEGIN IMMEDIATE avoids read-then-write SQLITE_BUSY_SNAPSHOT, which busy_timeout cannot resolve.
     beginTransaction: options.readonly === true ? "BEGIN" : "BEGIN IMMEDIATE",
     spanAttributes: [
       ...(options.spanAttributes ? Object.entries(options.spanAttributes) : []),

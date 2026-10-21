@@ -73,7 +73,7 @@ import {
   THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
 } from "./threadDetailsPanelStyles";
 
-// A server without checks for this pull request answers null; polling it again finds nothing new.
+// A null checks response is settled; polling cannot find checks.
 const isSettledWithoutChecks = (result: AsyncResult.AsyncResult<unknown, unknown>) =>
   result._tag === "Success" && result.value === null;
 
@@ -121,8 +121,7 @@ export function ThreadDetailsPrRow({
           environmentId,
           input: { ...reference, allowStale: false },
         });
-  // Read the queries part by part: every poll publishes a new result (a new
-  // timestamp, `waiting` on and off) even when nothing in it changed.
+  // Select query parts because polling rebuilds unchanged results.
   const detailData = useEnvironmentQuerySelector(detailAtom, selectEnvironmentQueryData);
   const detailQuery = useEnvironmentQueryRefresh(detailAtom);
   const supportsChecks =

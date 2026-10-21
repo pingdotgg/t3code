@@ -1,8 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - Names download files on the shared disk.
-/**
- * The preview manager owns the tab's single debugger session and hands it here;
- * the relay shares it.
- */
+/** The manager owns the single debugger attachment; the relay shares it. */
 import {
   DesktopBrowserCommand,
   DesktopBrowserEvent,
@@ -114,10 +111,7 @@ export const make = Effect.gen(function* () {
     return relay;
   };
 
-  /**
-   * Without a path Electron would open its Save dialog over the app for a file
-   * the agent asked for. CDP names the download just before this runs.
-   */
+  // CDP supplies the path before this runs; otherwise Electron opens a Save dialog.
   const placeDownload = (source: Electron.WebContents, item: Electron.DownloadItem) => {
     const tab = [...tabs.values()].find(
       (candidate) => candidate.debuggee.webContents === source && candidate.downloadDirectory,

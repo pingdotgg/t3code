@@ -46,10 +46,7 @@ export interface SourceControlClientDefinition {
   readonly newRepositoryOwner: (account: string | null) => { readonly owner: string | null } | null;
   readonly defaultCloneTransport: "https" | "ssh";
   readonly changeRequestUrl: (input: ChangeRequestUrlInput) => string | null;
-  /**
-   * The actions this host can take on a change request, the same list its server provider
-   * declares in `capabilities.actions`.
-   */
+  /** Must match the server provider's `capabilities.actions`. */
   readonly changeRequestActions: ReadonlySet<PullRequestAction>;
   readonly checkoutCommand: (changeRequest: ChangeRequestCheckoutInput) => string | null;
   readonly authorProfileUrl: (login: string, repositoryUrl: string) => string | null;

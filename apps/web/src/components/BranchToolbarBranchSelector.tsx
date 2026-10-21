@@ -226,10 +226,8 @@ export function BranchToolbarBranchSelector({
   const branchRefState = usePaginatedBranches({
     environmentId,
     cwd: branchCwd,
-    // The server filters refs by substring, so it has to be given the sanitized
-    // name as well: querying the raw "new branch" drops an existing new-branch
-    // from the response entirely, which would defeat the collision check below.
-    // Ref names cannot contain an ASCII space, so sanitizing loses no matches.
+    // Substring search needs sanitized names to detect new-branch collisions; refs cannot contain ASCII
+    // spaces.
     query: sanitizeNewRefName(deferredBranchQuery.trim()),
   });
   const trimmedBranchQuery = branchQuery.trim();
@@ -481,9 +479,7 @@ export function BranchToolbarBranchSelector({
     ? null
     : (defaultBranchName ?? currentGitBranch);
 
-  // A started thread's server is creating its worktree and records the branch
-  // itself; defaulting it here would reset the thread to the base checkout and
-  // detach the agent that just started.
+  // The server sets started threads' branches; defaulting here would detach the agent from its worktree.
   const threadStarted = serverSession !== null;
   useEffect(() => {
     if (

@@ -137,9 +137,7 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
 });
 
 it("names an Azure DevOps repository by its own name, not its project path", () => {
-  // `az repos pr list --repository` takes a name and detects the organisation and project from
-  // the checkout; the recorded `org/project/_git/repo` path is refused, and the repository then
-  // reads as unavailable on the page.
+  // az infers org/project from the checkout and accepts only the repository name, not its recorded full path.
   const selector = sourceControlRepositorySelector({
     provider: "azure-devops",
     displayName: "contoso/payments/_git/checkout",

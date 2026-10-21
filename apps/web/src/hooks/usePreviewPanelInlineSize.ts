@@ -11,10 +11,7 @@ export interface PreviewPanelInlineSize {
 const PREVIEW_PANEL_WIDTH_STORAGE_KEY = "t3code:preview-panel-width";
 const PREVIEW_PANEL_MIN_WIDTH = 360;
 const PREVIEW_PANEL_MAX_WIDTH_FRACTION = 0.7;
-/**
- * Floor for the column beside the panel: below this the chat column's
- * composer overflows, so the panel yields instead.
- */
+/** Below this, the sibling chat column's composer overflows. */
 const SIBLING_COLUMN_MIN_WIDTH = 360;
 const PREVIEW_PANEL_DEFAULT_WIDTH = 540;
 
@@ -48,11 +45,7 @@ function useViewportClampedMaxWidth(
   useLayoutEffect(() => {
     if (typeof window === "undefined") return;
     const row = container ?? (enabled ? hostRef?.current?.parentElement : null) ?? null;
-    // Measure before first paint: the persisted width must be clamped against
-    // the row on the initial render, not one observer tick later (the panel
-    // would flash over-wide on every mount). Only the derived cap is stored: the
-    // row resizes every frame of a sidebar drag, but the cap rarely moves, and an
-    // unchanged cap skips re-rendering the panel's owner.
+    // Clamp before paint to avoid flashing; store only the cap, which rarely changes during sidebar drags.
     const measure = () => {
       setMaxWidth(getPreviewPanelMaxWidth(window.innerWidth, row?.clientWidth));
     };
@@ -79,9 +72,6 @@ function getPreviewPanelMaxWidth(viewportWidth: number, containerWidth?: number)
   const fractionCap = Math.floor(viewportWidth * PREVIEW_PANEL_MAX_WIDTH_FRACTION);
   const containerCap =
     containerWidth === undefined ? Infinity : Math.floor(containerWidth) - SIBLING_COLUMN_MIN_WIDTH;
-  // Never below the panel's own minimum: when the row cannot fit both
-  // columns' minimums the sibling yields, and useResizableWidth's clamp must
-  // not see max < min (it would resolve the inversion to min and, via
-  // drag-end persistence, overwrite the user's stored width).
+  // Keep max >= min; an inverted clamp would overwrite the saved width on drag end.
   return Math.max(PREVIEW_PANEL_MIN_WIDTH, Math.min(fractionCap, containerCap));
 }

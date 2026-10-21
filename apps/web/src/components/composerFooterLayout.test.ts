@@ -107,9 +107,6 @@ describe("resolveRestingComposerControlsLayout hysteresis", () => {
   };
 
   it("settles when the measured picker width jitters below a pixel", () => {
-    // The composer re-measures on every render, so the picker's recovered
-    // natural width can land a fraction of a pixel apart between renders.
-    // Without hysteresis that flips hiddenCount forever.
     let layout = { hiddenCount: 0, visible: true };
     const settled: string[] = [];
     for (let index = 0; index < 10; index += 1) {

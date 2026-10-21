@@ -20,9 +20,7 @@ const isLocalUri = (uri: string) => /^(file|content):/.test(uri);
 /** Signed asset URLs live for an hour; treat anything older than this as worth re-minting. */
 const STALE_URL_MS = 5 * 60_000;
 
-/**
- * Captured bytes never resolve against the workspace.
- */
+/** Captured bytes never resolve against the workspace. */
 export function useAttachmentDocument(input: {
   readonly name: string;
   readonly mimeType: string;
@@ -88,8 +86,7 @@ export function useAttachmentDocument(input: {
   }, [attachment, refresh, revision]);
   useEffect(() => {
     if (!attachment) return;
-    // A new attachment must not keep the previous file behind it: `share()` would otherwise
-    // send the old bytes under the new name if this load fails.
+    // Clear old attachment bytes or a failed load could share them under the new name.
     // oxlint-disable-next-line react/set-state-in-effect -- A new attachment invalidates the last one.
     setLocalUri(null);
     setContent(null);
@@ -125,8 +122,7 @@ export function useAttachmentDocument(input: {
     const response = isLocalUri(uri)
       ? Promise.resolve().then(() => ({ ok: true, body: new File(uri).readableStream() }))
       : (async () => {
-          // A signed URL minted when the file opened may have expired by the time the user
-          // switches to source; reauthorize before fetching instead of reading a stale link.
+          // Reauthorize before source reads; the opening URL may have expired.
           const authorized = textReadUrl.current;
           let target = authorized?.uri ?? uri;
           if (!authorized || Date.now() - authorized.authorizedAt > STALE_URL_MS) {

@@ -22,11 +22,7 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useStableCallback } from "./useStableCallback";
 
-/**
- * Closes right panel surfaces for a thread. A surface's live resources go with
- * it: a browser's preview session and a terminal tab's sessions. Closing a
- * browser an agent is driving, or a terminal tab, asks first.
- */
+/** Closing releases preview and terminal sessions. Agent-driven browsers and terminal tabs require confirmation. */
 export function useRightPanelSurfaceClose(input: {
   readonly threadRef: ScopedThreadRef | null;
   readonly terminalLabelsById: ReadonlyMap<string, string>;
@@ -45,9 +41,7 @@ export function useRightPanelSurfaceClose(input: {
   );
 
   const releaseSurfaceResources = (ref: ScopedThreadRef, surface: RightPanelSurface) => {
-    // Without preview access only the local surface goes away. The
-    // server record is in-memory bookkeeping, not a live view, and stays
-    // listed until a client with the scope closes it or the server restarts.
+    // Without preview access, server state remains until an authorized close or restart.
     if (canOperatePreview && surface.kind === "preview" && surface.resourceId) {
       void closePreviewSession({
         closePreview,

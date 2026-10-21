@@ -25,14 +25,14 @@ const CAPABILITIES: PullRequestCapabilities = {
   comment: true,
   actions: [...definition.changeRequestActions],
   mergeMethods: ["merge", "squash", "rebase"],
-  // Only through a stack: GitCafe's one branch update restacks every layer above it.
+  // Branch updates restack every layer above the target.
   updateMethods: ["rebase"],
   search: true,
   stacks: true,
   stackActions: true,
   reactions: true,
   labels: false,
-  // Line comments go through GitCafe's review drafts, which arrive with revision fencing.
+  // Line comments require review drafts with revision fencing.
   review: {
     inlineComment: false,
     reply: true,
@@ -45,12 +45,9 @@ const CAPABILITIES: PullRequestCapabilities = {
 
 const PAGE_SIZE = 100;
 const MAX_PAGES = 10;
-/** GitCafe's cap on paths per `/diff-files` read, and so one diff page. */
+/** GitCafe's path limit per `/diff-files` read. */
 const DIFF_FILES_BATCH = 64;
-/**
- * Line totals cost one hunk read per batch, so a pull request larger than this reports none
- * rather than reading every file.
- */
+/** Line totals require hunk reads; omit them for large PRs. */
 const LINE_STATS_MAX_FILES = DIFF_FILES_BATCH * 4;
 const MAX_CHANGE_PAGES = 20;
 
@@ -161,7 +158,7 @@ const withDetails = (
   return files.map((file) => byPath.get(file.path) ?? file);
 };
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const api = yield* GitCafeApi.GitCafeApi;
 
@@ -254,10 +251,7 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  /**
-   * GitCafe's stack lists no heads, and they are what a land or restack is fenced on, so each
-   * open layer's pull is read.
-   */
+  /** The stack omits heads needed to fence land/restack; read each open layer's PR. */
   const readStack = Effect.fn("GitCafePullRequestProvider.readStack")(function* (
     operation: string,
     input: PullRef,
@@ -406,8 +400,7 @@ export const make = Effect.gen(function* () {
     if (pull.mergeRoute === "unsupported")
       return yield* failure("merge", "This GitCafe pull request has no supported merge route.");
     const base = yield* repositoryPath("merge", input);
-    // GitCafe observes the base only for merges it routes to the provider; a native merge is
-    // fenced on the target branch's current commit.
+    // Native merges fence on the current target commit; provider-routed merges supply the base.
     const baseOid =
       pull.mergeRoute === "provider"
         ? pull.observedBaseOid
@@ -461,9 +454,7 @@ export const make = Effect.gen(function* () {
         const involved = input.involvement === "authored" || input.involvement === "reviewing";
         let actorId: string | undefined;
         if (involved) {
-          // A host narrows as far as it can: when the actor list can't be read, the listing comes
-          // back unnarrowed and the page's own involvement filter does the rest. A refused token
-          // or a rate limit still fails, since the service acts on those for the whole host.
+          // Leave unreadable actor filtering to the client; auth/rate-limit errors still fail.
           const options = yield* read(
             "listChangeRequests",
             input,

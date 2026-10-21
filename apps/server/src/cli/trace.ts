@@ -22,9 +22,7 @@ const decodeTraceSpanLine = Schema.decodeUnknownOption(
       durationMs: Schema.Finite,
       endTimeUnixNano: Schema.FiniteFromString,
       exit: Schema.optional(Schema.Struct({ _tag: Schema.String })),
-      // Effect's OTLP tracer writes code "2" for errors. It marks interrupts
-      // with an `effect.fiber.interrupted` attribute; clients before Effect
-      // 4.0.2 wrote code "1" with message "Interrupted" instead.
+      // OTLP errors use code 2; interrupts carry effect.fiber.interrupted, or code 1 with Interrupted before Effect 4.0.2.
       status: Schema.optional(
         Schema.Struct({
           code: Schema.optional(Schema.String),

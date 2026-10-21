@@ -54,8 +54,7 @@ function render(
   );
 }
 
-// Android Back hides the keyboard but never ends editing, so leaving the
-// screen is just an unmount with the text still in the field.
+// Android Back hides the keyboard without ending editing; leaving then only unmounts.
 function leaveScreen() {
   act(() => root.unmount());
   root = createRoot(document.createElement("div"));

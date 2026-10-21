@@ -259,7 +259,6 @@ it.effect("checkpoint capture keeps the shared index a split index still uses", 
     yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
 
     assert.strictEqual((yield* git(["show", `${checkpointRef}:untracked.txt`])).stdout, "new\n");
-    // The real index points at a sharedindex.* file. Reading it fails if the capture expired it.
     assert.strictEqual((yield* git(["ls-files", "--cached"])).stdout, "file.txt\n");
     assert.strictEqual((yield* git(["diff", "--cached", "--name-only"])).stdout, "file.txt\n");
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),

@@ -93,7 +93,6 @@ it("names a lost subagent by the id the agent resumes it with", () => {
     description: "sleep 150",
     parentTaskId: "agent-1",
   });
-  // The agent waits on the subagent, which waits on its shell.
   assert.deepEqual(ownShell, {
     kind: "subagent",
     label: "sleep 150 (subagent agent-1)",

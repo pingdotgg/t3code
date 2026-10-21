@@ -38,11 +38,7 @@ const queueBrowserViewportMutation = <A>(
   return { started, execution };
 };
 
-/**
- * Serializes every server-side viewport mutation for one desktop runtime tab.
- * Both visible UI commits and background automation use this queue so a
- * compensating rollback cannot overtake a newer resize.
- */
+/** Serializes UI and automation mutations per tab so rollback cannot overtake a newer resize. */
 export function runBrowserViewportMutation<A>(
   tabId: string,
   mutation: () => Promise<A>,
@@ -83,8 +79,7 @@ export function commitBrowserViewportChange(
       ? handler(setting)
       : Promise.reject(new Error(`No visible browser viewport handler for tab ${tabId}`));
   });
-  // The queue follows the real handler lifetime, while the caller-facing
-  // timeout starts only once this commit reaches the front of that queue.
+  // Queue until the handler finishes; start the caller timeout only when its turn begins.
   const result = started.then(({ operation }) => runHandlerWithTimeout(tabId, operation));
   return result;
 }

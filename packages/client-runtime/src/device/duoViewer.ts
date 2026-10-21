@@ -380,11 +380,9 @@ export function createDuoViewer(options: {
             new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), roll),
           );
         if (next?.screenId === 1 && !landedFold && physicalPose !== "tent") {
-          // Native readback can retain the cover even for an open physical preset.
-          // A screen-facing rest must use that display's actual hinged normal.
-          // A landed fold is shut, so its pose already faces the cover; the
-          // hinge is still moving and its current normal would be stale.
-          // Tent stands on both edges with the cover outward; facing it flat would tip it over.
+          // Open presets can retain native cover readback; face the display's actual hinged normal.
+          // Landed folds already face the cover while the hinge normal is stale.
+          // Tent must stand on both edges with the cover outward; facing it flat would tip it over.
           const snap = nearestDuoView(targetPresentation, activeSnaps());
           if (snap) targetPresentation.copy(snap.rotation);
         }

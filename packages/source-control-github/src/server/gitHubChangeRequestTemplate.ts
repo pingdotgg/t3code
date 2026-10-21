@@ -131,8 +131,7 @@ export const detect = Effect.fn("gitHubChangeRequestTemplate.detect")(function* 
   executeGit: ExecuteGit,
 ) {
   return yield* Effect.gen(function* () {
-    // Worktree paths can be replaced between validation and open. Read regular blobs from the
-    // committed base tree so repository-controlled symlinks and path races never reach the host filesystem.
+    // Read committed regular blobs; worktree paths can become symlinks between validation and open.
     const result = yield* executeGit({
       operation: "gitHubChangeRequestTemplate.listTemplates",
       cwd,

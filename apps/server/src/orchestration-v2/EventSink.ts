@@ -107,12 +107,7 @@ export interface EventSinkV2Shape {
     },
     EventSinkV2Error
   >;
-  /**
-   * Atomically commit only when the provider thread is still owned by the
-   * expected run attempt and ordinal. Used for late post-terminal
-   * provider_thread updates so a completed or superseded attempt cannot clobber
-   * a newer attempt that already claimed the thread.
-   */
+  /** Commits only if the expected attempt and ordinal still own the provider thread, protecting newer attempts. */
   readonly writeIfProviderThreadOwner: (input: {
     readonly guardPendingUserInputCancellations?: boolean;
     readonly commandId?: CommandId;
@@ -128,12 +123,7 @@ export interface EventSinkV2Shape {
     },
     EventSinkV2Error
   >;
-  /**
-   * Atomically commit only while the stored provider thread still equals
-   * `expected`, the row its writer read, so a read-modify-write of the row
-   * cannot overwrite an update published in between. The whole row is
-   * compared because not every writer moves `updatedAt`.
-   */
+  /** Commits only if the full provider row equals expected; some writers do not advance updatedAt. */
   readonly writeIfProviderThreadUnchanged: (input: {
     readonly expected: OrchestrationV2ProviderThread;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
@@ -246,10 +236,7 @@ const layerBase: Layer.Layer<
     const publishStoredEvents = (events: ReadonlyArray<OrchestrationV2StoredEvent>) =>
       eventStore.publishCommitted(events).pipe(Effect.andThen(publishLiveEvents(events)));
 
-    // Transactions commit one at a time, but each writer publishes after its
-    // commit. If a writer is descheduled in between, a later commit reaches
-    // subscribers first, and clients drop any event at or below the newest
-    // sequence they have applied.
+    // Serialize commit and publish; reordered publication makes clients drop earlier sequences.
     const publishLane = yield* Semaphore.make(1);
     const commitThenPublish = <A, E, R>(
       transaction: Effect.Effect<A, E, R>,
@@ -970,10 +957,7 @@ const layerBase: Layer.Layer<
   }),
 );
 
-/**
- * Keeping the outbox instance shared with the worker is important because enqueue notifications
- * are in-memory wakeups backed by the durable SQL queue.
- */
+/** Share the worker's outbox instance: enqueue wakeups are in-memory. */
 export const layerFromStores = layerBase;
 
 export const layer: Layer.Layer<

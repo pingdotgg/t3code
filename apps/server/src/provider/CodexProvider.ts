@@ -71,10 +71,7 @@ const CODEX_CATALOG_REFRESH_TIMEOUT_MS = 3_000;
 const CODEX_CONFIG_PROBE_TIMEOUT_MS = 3_000;
 const CODEX_CATALOG_REFRESH_POLL = "100 millis" as const;
 const CODEX_CLIENT_NAME = "T3 Code";
-// Codex's probe does a full handshake plus account, models, and skills requests, which can
-// legitimately run past the shared 10s AUTH_PROBE_TIMEOUT_MS on a loaded or slow machine
-// (most often reported on Windows). Give Codex its own longer budget instead of raising the
-// timeout for every provider.
+// Handshake plus account/models/skills requests can exceed the shared 10s probe budget.
 const CODEX_AUTH_PROBE_TIMEOUT_MS = 20_000;
 const CODEX_DISCOVERY_MARGIN_MS = 250;
 
@@ -440,12 +437,7 @@ const requestCodexChatGptModels = Effect.fn("requestCodexChatGptModels")(functio
   );
 });
 
-/**
- * App-server starts its catalog refresh before `initialize` names the client,
- * so that first fetch goes out as the plain CLI, misses tiers like Sol
- * Ultrafast, and overwrites the shared `models_cache.json`. Naming the
- * originator at spawn closes that race.
- */
+/** Set originator at spawn; the pre-initialize refresh otherwise overwrites shared cache with plain-CLI models. */
 export const codexAppServerEnvironment = (
   environment: NodeJS.ProcessEnv | undefined,
 ): NodeJS.ProcessEnv => ({
@@ -473,9 +465,7 @@ export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(fu
   readonly cwd: string;
   readonly environment?: NodeJS.ProcessEnv | undefined;
 }) {
-  // `~` is not shell-expanded when env vars are set via `child_process.spawn`,
-  // so `CODEX_HOME=~/.codex_work` would reach codex verbatim and trip
-  // "CODEX_HOME points to '~/.codex_work', but that path does not exist".
+  // Expand CODEX_HOME explicitly: spawn passes a literal ~ that Codex rejects.
   const resolvedHomePath = input.homePath
     ? expandHomePath(input.homePath, yield* HostProcess.HomeDirectory)
     : undefined;

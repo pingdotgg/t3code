@@ -247,10 +247,7 @@ export interface GrokModelsCliOutput {
   readonly models: ReadonlyArray<ServerProviderModel>;
 }
 
-/**
- * The command exits 0 whether or not the user is logged in, so the text is the
- * only signal.
- */
+/** Exit status is always 0; only output text indicates login state. */
 export function parseGrokModelsCliOutput(output: string): GrokModelsCliOutput {
   const authenticated = /you are logged in/i.test(output)
     ? true
@@ -507,7 +504,6 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
         ? { status: "unauthenticated" }
         : { status: "unknown" };
 
-  // Skill discovery applies the probe environment itself.
   const skills = yield* discoverGrokSkills(grokSettings, environment, cwd).pipe(
     Effect.tapError((cause) => Effect.logDebug("Grok skill discovery failed.", { cause })),
     Effect.orElseSucceed(() => []),

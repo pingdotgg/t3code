@@ -325,7 +325,7 @@ export const make = Effect.gen(function* () {
         Effect.map((result) => result.exitCode === 0),
       ),
     hasRefNamed: (input) =>
-      // No ref name holds a pattern character, and one here would widen the match.
+      // Pattern characters would widen the ref match.
       /[*?[\\]/.test(input.refName)
         ? Effect.succeed(false)
         : ensureGitCommand("GitWorkflowService.hasRefNamed", input.cwd).pipe(

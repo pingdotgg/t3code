@@ -189,16 +189,12 @@ export class TerminalManager extends Context.Service<
 
     readonly clear: (input: TerminalClearInput) => Effect.Effect<void, TerminalError>;
 
-    /**
-     * Always resets history before spawning the new process.
-     */
+    /** Resets history before spawning. */
     readonly restart: (
       input: TerminalRestartInput,
     ) => Effect.Effect<TerminalSessionSnapshot, TerminalError>;
 
-    /**
-     * When `terminalId` is omitted, closes all sessions for the thread.
-     */
+    /** Omit terminalId to close all sessions for the thread. */
     readonly close: (input: TerminalCloseInput) => Effect.Effect<void, TerminalError>;
 
     readonly closeIdle: (input: {
@@ -662,8 +658,7 @@ function parsePosixProcessTable(stdout: string): TerminalProcessTableSnapshot {
   const childrenByParent = new Map<number, number[]>();
   const commandById = new Map<number, string>();
   for (const line of stdout.split(/\r?\n/g)) {
-    // `comm=` is the final column and may itself contain spaces, so only the
-    // first two tokens are structural.
+    // The final comm column can contain spaces; only the first two tokens are structural.
     const match = /^\s*(\d+)\s+(\d+)\s+(.+)$/.exec(line);
     if (!match) continue;
     const pid = Number(match[1]);
@@ -701,8 +696,7 @@ function deriveSubprocessInspectResult(
   const commandName = (pid: number) =>
     normalizeChildCommandName(snapshot.commandById.get(pid) ?? "", platform);
   const shellName = commandName(terminalPid);
-  // Async prompt themes fork the shell into a helper that waits with no
-  // children of its own. That copy is not a command the user started.
+  // Async prompt themes fork childless shell helpers that are not user commands.
   const childPid = (snapshot.childrenByParent.get(terminalPid) ?? []).find(
     (pid) =>
       shellName === null ||
@@ -733,9 +727,7 @@ function deriveSubprocessInspectResult(
 
 const POSIX_PS_ABSOLUTE_PATHS = ["/bin/ps", "/usr/bin/ps"] as const;
 
-// Resolve `ps` to an absolute path once at startup. Spawning by bare name
-// walks every PATH entry per spawn (one failed posix_spawn per directory
-// until the hit), which is measurable at a 1s poll cadence on long PATHs.
+// Resolve ps once; bare-name spawns repeatedly probe long PATHs during one-second polling.
 const resolvePosixPsCommand = Effect.fn("terminal.resolvePosixPsCommand")(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   for (const candidate of POSIX_PS_ABSOLUTE_PATHS) {
@@ -772,8 +764,7 @@ const posixProcessTableSnapshot = Effect.fn("terminal.posixProcessTableSnapshot"
       ),
     );
   if (result.code !== 0 || result.timedOut || result.stdoutTruncated) {
-    // Not authoritative: an empty or partial table would mark every terminal
-    // idle and clear its registered process ids. Failing skips the tick.
+    // Reject partial tables; treating them as authoritative would clear process ids and mark terminals idle.
     return yield* new TerminalSubprocessCheckError({
       command: "ps",
       exitCode: result.code,
@@ -1062,10 +1053,7 @@ function shouldStripCsiSequence(body: string, finalByte: string): boolean {
   if (finalByte === "c" && /^[>0-9;?]*$/.test(body)) {
     return true;
   }
-  // DECRQM mode queries (…$p) and DECRPM replies (…$y): replaying a stored
-  // query makes the terminal answer again, and the shell echoes the answer as
-  // junk at the prompt. The `$` guard keeps setters like DECSTR (!p) and
-  // DECSCL ("p) intact.
+  // Strip DECRQM/DECRPM query traffic to prevent echoed replies during replay; $ guards preserve setters.
   if ((finalByte === "p" || finalByte === "y") && /^[0-9;?]*\$$/.test(body)) {
     return true;
   }
@@ -1080,9 +1068,7 @@ function shouldStripCsiSequence(body: string, finalByte: string): boolean {
   return false;
 }
 
-// DECRQSS ($q) and XTGETTCAP (+q) queries plus their replies ([01]$r / [01]+r):
-// pure request/response traffic with no visual value, and replaying a stored
-// query triggers a fresh reply.
+// Strip DECRQSS/XTGETTCAP query traffic; replaying queries triggers fresh replies without visual value.
 function shouldStripDcsSequence(content: string): boolean {
   return /^[01]?[$+][qr]/.test(content);
 }
@@ -1311,12 +1297,7 @@ function isPathSegmentUnderAppDir(segment: string, appDir: string): boolean {
   return segment === appDir || segment.startsWith(`${appDir}/`);
 }
 
-// On Linux AppImage builds the runtime mounts the app under a temporary dir and
-// injects APPIMAGE/APPDIR/ARGV0/OWD plus mount entries on PATH/LD_LIBRARY_PATH.
-// The integrated terminal inherits the server process environment, so without
-// this scrub those leak into the PTY and tools resolve against the AppImage
-// mount instead of the user's real environment (e.g. `php` reporting PHP_BINARY
-// as the AppImage path). See issue #1699.
+// AppImage mount paths would make PTY tools resolve against the mount instead of the user's system.
 function stripAppImageRuntimeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   if (env.APPIMAGE === undefined && env.APPDIR === undefined) return env;
 
@@ -1468,7 +1449,7 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
   );
 });
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.fn("TerminalManager.make")(function* () {
   const { terminalLogsDir, providerStatusCacheDir, baseDir } = yield* ServerConfig.ServerConfig;
   const ptyAdapter = yield* PtyAdapter.PtyAdapter;
@@ -1516,9 +1497,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const platform = yield* HostProcess.Platform;
   const architecture = yield* HostProcess.Architecture;
   const agentScope = yield* AgentScope;
-  // Terminals must inherit the user's full environment (minus the blocklist
-  // applied in createTerminalSpawnEnv) — an allowlist here silently strips
-  // things like PSModulePath, DISPLAY, proxies, and toolchain variables.
+  // Inherit the full environment minus createTerminalSpawnEnv's blocklist; allowlists silently drop user tooling variables.
   const baseEnv = options.env ?? process.env;
   const shellResolver = options.shellResolver ?? (() => defaultShellResolver(platform, baseEnv));
   const processRunner = yield* ProcessRunner.ProcessRunner;
@@ -1540,9 +1519,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       return { ...input, env };
     },
   );
-  // One process-table snapshot per poll tick, shared across every terminal.
-  // Per-terminal `pgrep`/`ps` calls multiply spawn load by terminal count and
-  // can exhaust the PID space on hosts with many sessions (#6332).
+  // Share one process table per poll; per-terminal scans can exhaust PIDs on busy hosts.
   const fallbackProcessTableSnapshot = (
     platform === "win32"
       ? windowsProcessTableSnapshot()
@@ -1683,8 +1660,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     fiber: Fiber.Fiber<void, never>,
   ) {
     yield* modifyManagerState((state) => {
-      // The child may finish (and run its finalizer) before this registration.
-      // Check inside the synchronized update so completed fibers are not retained.
+      // Children may finalize before registration; check inside the synchronized update to avoid retaining finished fibers.
       if (fiber.pollUnsafe() !== undefined) {
         return [undefined, state] as const;
       }
@@ -1699,8 +1675,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     threadId: string,
     terminalId: string,
   ) {
-    // Subscribe before SIGTERM so an immediate exit is not missed. Released with
-    // Effect.ensuring because a JS `finally` does not run when the fiber is interrupted.
+    // Subscribe before SIGTERM to catch immediate exits; Effect.ensuring releases even on interruption, unlike JS finally.
     const exited = Deferred.makeUnsafe<void>();
     const unsubscribeExit = process.onExit(() => {
       Deferred.doneUnsafe(exited, Effect.void);
@@ -2325,9 +2300,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
               platform,
               yield* HostProcess.HomeDirectory,
             );
-            // Append (never prepend) managed ACP agent install directories so
-            // `kimi login` and friends resolve by name without shadowing any
-            // system or user tool of the same name.
+            // Append managed install directories so agent commands resolve without shadowing user/system tools.
             if (
               options.managedBinaryCacheDir !== undefined &&
               options.managedBinaryToolsDir !== undefined
@@ -3337,8 +3310,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         const marks = new Map(
           running.map((session) => [session.terminalId, terminalActivityMark(session)]),
         );
-        // Inspect now instead of trusting the last poll, so a command started
-        // since then keeps its terminal.
+        // Inspect now so commands started after the last poll still protect their terminals.
         const { inspector } = yield* acquireSubprocessInspector;
         yield* Effect.forEach(
           running,

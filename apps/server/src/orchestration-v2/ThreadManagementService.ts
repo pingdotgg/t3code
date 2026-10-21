@@ -86,10 +86,7 @@ function existingThreadIdsForCommand(
   switch (command.type) {
     case "thread.create":
       return [];
-    // Read-state commands only rewrite the thread payload's visited/unread
-    // watermark; they never touch messages, so they do not need the imported
-    // v1 transcript hydrated first. Visits fire on every thread-activity bump
-    // while a thread is open, so keeping them off the import path matters.
+    // Read-state commands touch no messages; skip V1 hydration on frequent visits.
     case "thread.visit":
     case "thread.mark-unread":
       return [];
@@ -385,22 +382,13 @@ export interface ThreadManagementServiceShape {
     readonly projectId: ProjectId;
     readonly instanceId: ProviderInstanceId;
   }) => Effect.Effect<boolean>;
-  /**
-   * A caller resolving a target ahead of a dispatch under this same command id
-   * can use it to skip project-enablement filtering: the dispatch will only
-   * replay the recorded result, never start anything new, so the filter would
-   * just refuse a retry the project's settings no longer allow fresh.
-   */
+  /** Receipt replays start no work; skip enablement checks with the same command id so settings cannot reject accepted retries. */
   readonly hasReceipt: (commandId: CommandId) => Effect.Effect<boolean>;
   readonly waitForThread: (
     input: ThreadManagementWaitInput,
   ) => Effect.Effect<ThreadManagementWaitResult, ThreadManagementError>;
-  /**
-   * Settling stops the provider session, so an agent that settles its own
-   * thread uses this to wait for its turn to end. A run that ends any other
-   * way leaves the thread active, as does anything `thread.settle` refuses
-   * then, such as a queued message.
-   */
+  /** Waits for the agent's run to end before settling its thread and stopping the session.
+   * Other endings or settle refusals leave the thread active. */
   readonly settleAfterRun: (input: {
     readonly projectId: ProjectId;
     readonly threadId: ThreadId;
@@ -1023,9 +1011,7 @@ const make = Effect.gen(function* () {
       if (records.thread.deletedAt !== null) {
         return yield* new OrchestrationV2StopWorkflowError({ ...input, reason: "unavailable" });
       }
-      // A limited caller (an agent over MCP) may not stop work on a thread
-      // running above its own modes. Checked under the thread lock, where the
-      // thread's user cannot raise the modes between this read and the stop.
+      // Check mode limits under the lock so users cannot raise modes between validation and Stop.
       const limit = yield* DispatchModeLimit;
       const exceeded =
         limit === undefined ? undefined : exceededDispatchModeLimit(limit, records.thread);

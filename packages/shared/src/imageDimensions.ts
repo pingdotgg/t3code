@@ -3,11 +3,7 @@ export interface ImageDimensions {
   readonly height: number;
 }
 
-/**
- * Enough for every supported header. A JPEG's frame header can sit behind
- * several 64 KiB metadata segments (EXIF, an ICC profile, XMP), so allow a
- * few of them before giving up.
- */
+/** Allows several 64 KiB JPEG metadata segments before the dimensions header. */
 export const IMAGE_DIMENSIONS_HEADER_BYTES = 256 * 1024;
 
 export function readImageDimensions(bytes: Uint8Array): ImageDimensions | null {
@@ -93,8 +89,7 @@ function readJpeg(bytes: Uint8Array): ImageDimensions | null {
       offset += 1;
       continue;
     }
-    // Start-of-frame markers carry the dimensions; skip the arithmetic-coding
-    // and Huffman-table markers that share the range.
+    // Exclude arithmetic-coding and Huffman-table markers from the frame-header range.
     if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
       const height = data.getUint16(offset + 5);
       const width = data.getUint16(offset + 7);
@@ -107,8 +102,7 @@ function readJpeg(bytes: Uint8Array): ImageDimensions | null {
       continue;
     }
     const length = data.getUint16(offset + 2);
-    // Viewers apply the EXIF orientation before display, so a phone photo
-    // stored on its side takes the swapped size on screen.
+    // EXIF rotation swaps the displayed axes.
     if (marker === 0xe1 && !rotated) {
       rotated = exifOrientationSwapsAxes(bytes, offset + 4, offset + 2 + length);
     }

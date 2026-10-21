@@ -121,11 +121,7 @@ export const PreviewAutomationStatus = Schema.Struct({
       }),
     ),
   ),
-  /**
-   * Server hosts: every tab in the thread, including ones the user or another
-   * agent session opened. Any of them can be read; acting needs `ownedByCaller`,
-   * or an `unclaimed` tab while no human controls it.
-   */
+  /** Server hosts: all thread tabs are readable; actions require ownedByCaller or an unclaimed tab without human control. */
   tabs: Schema.optional(
     Schema.Array(
       Schema.Struct({
@@ -340,7 +336,7 @@ export const PreviewAutomationResizeResult = Schema.Struct({
 });
 export type PreviewAutomationResizeResult = typeof PreviewAutomationResizeResult.Type;
 
-/** Mirrors DesktopPreviewColorScheme; declared here to keep this module free of ipc.ts imports. */
+// Mirrors DesktopPreviewColorScheme without importing ipc.ts.
 export const PreviewAutomationColorScheme = Schema.Literals(["system", "light", "dark"]);
 export type PreviewAutomationColorScheme = typeof PreviewAutomationColorScheme.Type;
 
@@ -765,9 +761,7 @@ export type PreviewAutomationHostIdentity = typeof PreviewAutomationHostIdentity
 
 export const PreviewAutomationHost = Schema.Struct({
   ...PreviewAutomationHostIdentity.fields,
-  /**
-   * Missing means the pre-capability-negotiation V1 operation set.
-   */
+  /** Missing means the V1 operation set from before capability negotiation. */
   supportedOperations: Schema.optional(Schema.Array(PreviewAutomationOperation)),
 });
 export type PreviewAutomationHost = typeof PreviewAutomationHost.Type;

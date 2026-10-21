@@ -8,7 +8,7 @@ export function ThreadStatusLine(props: {
   readonly actionLabel: string;
   readonly actionDisabled?: boolean;
   readonly onAction: () => void;
-  // Set when the label reads the clock, so the line updates as time passes.
+  // Set for clock-dependent labels to trigger updates.
   readonly clockMinute?: string;
 }) {
   return (

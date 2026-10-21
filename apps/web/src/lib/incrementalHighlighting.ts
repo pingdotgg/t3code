@@ -26,8 +26,7 @@ export function createIncrementalHighlightedDocument(
     | undefined;
 
   return (code: string) => {
-    // Plain text and ANSI do not have a TextMate grammar state. A CR at the end
-    // of a chunk can still become a CRLF, so keep that input on the full path.
+    // Plain text and ANSI have no grammar state; trailing CR still needs the full path for possible CRLF.
     if (
       !language ||
       ["text", "plaintext", "plain", "txt", "ansi"].includes(language) ||
@@ -38,8 +37,7 @@ export function createIncrementalHighlightedDocument(
     if (cached && !code.startsWith(cached.prefix)) cached = undefined;
     const end = code.lastIndexOf("\n") + 1;
     if (end > (cached?.prefix.length ?? 0)) {
-      // Omit the final newline: Shiki would tokenize an extra empty line and
-      // advance the grammar state twice before we process the following line.
+      // Omit the last newline so Shiki does not tokenize an extra line and advance state twice.
       const root = highlighter.codeToHast(code.slice(cached?.prefix.length ?? 0, end - 1), {
         ...options,
         ...(cached ? { grammarState: cached.state } : {}),

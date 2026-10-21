@@ -319,10 +319,7 @@ const TurnStartedPayload = Schema.Struct({
 });
 export type TurnStartedPayload = typeof TurnStartedPayload.Type;
 
-/**
- * Input includes cache reads and writes. Output includes reasoning, and
- * reasoningTokens is an optional subset.
- */
+// Input includes cache reads/writes; output includes the optional reasoningTokens subset.
 const TurnTokenUsageCommonFields = {
   usageScope: Schema.Literal("main_agent"),
   cachedInputTokens: Schema.optional(NonNegativeInt),
@@ -499,10 +496,7 @@ const UserInputResolvedPayload = Schema.Struct({
 });
 export type UserInputResolvedPayload = typeof UserInputResolvedPayload.Type;
 
-/**
- * Claude reports per-activation deltas; Codex reports cumulative totals — the
- * merge strategy is provider-specific and lives in client-runtime.
- */
+/** Claude reports activation deltas; Codex reports cumulative totals. Merge per provider in client-runtime. */
 export const RuntimeTaskUsage = Schema.Struct({
   totalTokens: NonNegativeInt,
   inputTokens: Schema.optional(NonNegativeInt),
@@ -524,15 +518,12 @@ export const TaskRunHandles = Schema.Struct({
   runId: Schema.optional(TrimmedNonEmptyStringSchema),
   scriptPath: Schema.optional(TrimmedNonEmptyStringSchema),
   transcriptDir: Schema.optional(TrimmedNonEmptyStringSchema),
-  /** Only http/https URLs may be stored here — sanitized at the adapter. */
+  /** Only http/https URLs, sanitized by the adapter. */
   sessionUrl: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type TaskRunHandles = typeof TaskRunHandles.Type;
 
-/**
- * Repeated on progress and terminal rows (not just start) so client folds can
- * reconstruct an agent even when its start row aged out of activity retention.
- */
+// Repeat on progress and terminal rows so agents survive start-row eviction.
 const taskAgentLinkageFields = {
   taskType: Schema.optional(TrimmedNonEmptyStringSchema),
   agentKind: Schema.optional(Schema.Literals(["agent", "background"])),
@@ -552,10 +543,7 @@ const taskAgentLinkageFields = {
   runHandles: Schema.optional(TaskRunHandles),
   outputFile: Schema.optional(TrimmedNonEmptyStringSchema),
   agentPath: Schema.optional(TrimmedNonEmptyStringSchema),
-  /**
-   * Set on provider-synthesized child-agent events (Codex) whose activity
-   * belongs in the Agents surface, never the parent timeline.
-   */
+  /** Provider-synthesized child events belong in Agents, never the parent timeline. */
   timelineBypass: Schema.optional(Schema.Boolean),
 } as const;
 

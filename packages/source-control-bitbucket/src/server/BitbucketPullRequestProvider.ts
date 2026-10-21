@@ -20,8 +20,6 @@ const CAPABILITIES: PullRequestCapabilities = {
   actions: [...definition.changeRequestActions],
   mergeMethods: ["merge", "squash", "rebase"],
   search: true,
-  // Bitbucket Cloud's API exposes no reaction on a pull request or on a comment, so none is
-  // read and none is offered.
   reactions: false,
   review: {
     inlineComment: true,
@@ -31,18 +29,11 @@ const CAPABILITIES: PullRequestCapabilities = {
   },
   reviewers: { request: true, listCandidates: true },
   edit: { changeRequest: true, comment: true },
-  // Bitbucket Cloud states nothing about what a reviewer has already read: no endpoint carries a
-  // viewed file, and the per-pull-request properties it does offer are one value shared by
-  // everyone rather than one per reader. So the marks are kept here, and the client says whose
-  // they are rather than implying bitbucket.org will show them.
+  // Bitbucket PR properties are shared, not per-reader viewed marks.
   viewedFiles: "environment",
 };
 
-/**
- * Bitbucket lets the author of a pull request decline their own with no more than read access,
- * and the permission response says nothing about who opened this one — so withholding the
- * control from the one person entitled to it is the worse of the two mistakes.
- */
+/** Authors can decline their own PRs with read access. */
 export function bitbucketViewerPermissions(input: {
   readonly canWrite: boolean;
 }): PullRequestViewerPermissions {
@@ -202,8 +193,7 @@ export const make = Effect.gen(function* () {
             closedAt: pullRequest.state === "closed" ? pullRequest.closedAt : null,
             reviewers: pullRequest.reviewers,
             checks,
-            // Bitbucket publishes no per-repository list of allowed strategies, so the ones it
-            // supports are all offered and a strategy the repository forbids fails on merge.
+            // Bitbucket exposes no strategy permissions; unsupported strategies fail at merge.
             mergeCapabilities: { merge: true, squash: true, rebase: true },
             viewerPermissions: bitbucketViewerPermissions({ canWrite }),
           }),
@@ -240,7 +230,7 @@ export const make = Effect.gen(function* () {
         Effect.map((canWrite) => bitbucketViewerPermissions({ canWrite })),
       ),
 
-    // `/diff` answers with the whole patch and pages nothing, so the first slice is the last.
+    // `/diff` returns the whole patch without pagination.
     getDiff: (input) =>
       api
         .getPullRequestDiff({
@@ -262,8 +252,7 @@ export const make = Effect.gen(function* () {
         })
         .pipe(Effect.mapError(fail("getFileRevisions"))),
 
-    // Users only: Bitbucket requests a review of an account, and has no group that stands in for
-    // one on a pull request.
+    // Bitbucket supports user reviewers only.
     listReviewerCandidates: (input) =>
       api
         .listReviewerCandidates({ repository: input.repository, number: input.number })

@@ -67,8 +67,7 @@ function rehypePreserveBareAnchorPlaceholders() {
     let rawTextTag: string | undefined;
     const visit = (node: MarkdownImageHastNode) => {
       if (node.type === "raw" && typeof node.value === "string") {
-        // Raw blocks can contain several tags. Consume whole tags, quoted attributes,
-        // and comments so text resembling a closing anchor cannot pair a placeholder.
+        // Scan whole tags, attributes, and comments so embedded closing-anchor text cannot match a placeholder.
         const tags = /<!--[\s\S]*?(?:-->|$)|<\/?[A-Za-z](?:[^"'<>]|"[^"]*"|'[^']*')*>/g;
         let offset = 0;
         while (rawTextTag !== "plaintext") {
@@ -318,7 +317,6 @@ function keepWindowsPathDestination(this: DestinationCompileContext, token: unkn
     node.url = isWindowsAbsolutePath(authored) && !authored.includes("&") ? authored : decoded;
 }
 
-// A drive path that has not reached whitespace yet: `C:`, `C:\Users\me`, `C:/work`.
 const UNFINISHED_DRIVE_PATH = /(?:^|\W)[A-Za-z]:(?:[\\/]\S*)?$/;
 
 interface EscapeCompileContext {
@@ -336,11 +334,8 @@ function keepWindowsPathEscape(this: EscapeCompileContext) {
 }
 
 /**
- * CommonMark reads the `\.` in `C:\me\.t3\shot.png` as an escape. Every backslash in a
- * Windows path is a separator, so link, image, and definition destinations that are
- * Windows paths keep the text as written, and so do escapes inside drive paths in prose.
- * Prose paths end at whitespace: past that, nothing tells a path from a sentence, and
- * `C:\x and \*this\*` must still read `*this*`.
+ * CommonMark treats backslashes as escapes; preserve them as separators in Windows destinations
+ * and drive-path prose. Prose paths end at whitespace so later escapes still work.
  */
 function remarkKeepWindowsPaths(this: Processor) {
   const data = this.data();

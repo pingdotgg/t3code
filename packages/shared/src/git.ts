@@ -110,10 +110,7 @@ export function buildTemporaryWorktreeBranchName(
   return `${WORKTREE_BRANCH_PREFIX}/${token}`;
 }
 
-/**
- * Git stores refs as paths, so a plain `t3` branch makes every `t3/<hex>`
- * ref impossible. This moves a temporary name to the flat `t3-<hex>` sibling.
- */
+/** Flatten temporary t3/<hex> refs because an existing t3 branch blocks nested refs. */
 export function flattenTemporaryWorktreeBranchName(refName: string): string {
   const normalized = refName.trim().toLowerCase();
   const tokenStart = normalized.search(/[-/]/) + 1;
@@ -125,12 +122,7 @@ export function isTemporaryWorktreeBranch(refName: string): boolean {
   return TEMP_WORKTREE_BRANCH_PATTERN.test(refName.trim().toLowerCase());
 }
 
-/**
- * Azure alone addresses one repository under two names that share no part: `ssh.dev.azure.com` and
- * `v3/{org}/{project}/{repo}` over SSH, against `dev.azure.com` and `{org}/{project}/_git/{repo}`
- * everywhere a person sees it. A project cloned over SSH would otherwise be a different repository
- * to every comparison made against a pull request URL, which arrives in the web spelling.
- */
+// Normalize Azure's SSH v3/org/project/repo identity to its web org/project/_git/repo spelling.
 function azureDevOpsRepositoryKey(host: string, segments: ReadonlyArray<string>): string | null {
   if (host !== "ssh.dev.azure.com" && host !== "vs-ssh.visualstudio.com") return null;
   const [marker, organization, project, repository] = segments;
@@ -220,14 +212,11 @@ export function parseOriginUrlFromGitConfig(configText: string): string | null {
   let section: string | null = null;
   let originUrl: string | null = null;
   let firstRemoteUrl: string | null = null;
-  // A trailing backslash continues the value on the next line.
   const joined = configText.replace(/\\\r?\n[ \t]*/g, "");
   for (const rawLine of joined.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (line.length === 0 || line.startsWith("#") || line.startsWith(";")) continue;
-    // Both `[remote "origin"]` and the legacy `[remote.origin]` form, with an
-    // optional trailing comment. Git keeps quoted subsections case-sensitive
-    // but folds the dotted form to lowercase.
+    // Git preserves case in quoted remote subsections but lowercases legacy dotted ones.
     const header = /^\[\s*remote(?:\s+"([^"]+)"|\.([^\]\s]+))\s*\](?:\s*[#;].*)?$/i.exec(line);
     if (header) {
       section = header[1] ?? header[2]?.toLowerCase() ?? null;
@@ -285,9 +274,7 @@ function deriveLocalBranchNameCandidatesFromRemoteRef(
   return [...candidates];
 }
 
-// Only the whitespace git actually rejects is replaced — git accepts U+00A0 and
-// friends, and rewriting those would silently create a ref the user never asked
-// for.
+// Replace only Git-rejected whitespace; nonbreaking spaces are valid ref characters.
 export function sanitizeNewRefName(rawName: string): string {
   return rawName.trim().replace(/[ \t\n\r\f\v]+/g, "-");
 }

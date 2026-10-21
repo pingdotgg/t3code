@@ -115,8 +115,7 @@ function useResolvedThreadSelection(params: ThreadSelectionRouteParams | undefin
   const routeParams = params ?? {};
   const routeEnvironmentId = firstRouteParam(routeParams.environmentId);
   const routeThreadId = firstRouteParam(routeParams.threadId);
-  // A route that drops its params (a closing sheet, for example) keeps showing
-  // the last thread, so the last complete pair is kept as state.
+  // Retain the last complete thread ref while closing routes drop params.
   const [lastRouteThreadRef, setLastRouteThreadRef] = useState<ScopedThreadRef | null>(null);
   if (
     routeEnvironmentId !== null &&
@@ -157,9 +156,7 @@ function useResolvedThreadSelection(params: ThreadSelectionRouteParams | undefin
     const message = queued ?? outcome?.message ?? null;
     return message === null ? null : { message, outcome };
   })();
-  // Until the creation is delivered the server has no thread to subscribe
-  // to. Every detail reader must use this ref, not the route id: an earlier
-  // read gets a definitive not-found, which the thread state keeps as deleted.
+  // Use this detail ref until creation delivers; early route-id reads cache not-found as deletion.
   const selectedThreadDetailRef =
     selectedThreadShell !== null ||
     pendingCreation === null ||
@@ -187,8 +184,7 @@ function useResolvedThreadSelection(params: ThreadSelectionRouteParams | undefin
     previous: previousCreation,
     detail: selectedThreadDetail,
   });
-  // `pendingCreation` is rebuilt each render, so compare contents: an identity
-  // check would set state on every render.
+  // Compare pendingCreation contents; new render-time objects would otherwise continually set state.
   const creationUnchanged =
     resolvedCreation === previousCreation ||
     (resolvedCreation !== null &&

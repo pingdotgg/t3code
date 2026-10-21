@@ -17,8 +17,7 @@ interface SchemaDiagnosticIssue {
   readonly path: ReadonlyArray<PropertyKey>;
 }
 
-// Schema's default formatter includes actual values. These diagnostics cross
-// process and UI boundaries, so retain only issue kinds and bounded paths.
+// Default Schema diagnostics include values; expose only issue kinds and bounded paths across process/UI boundaries.
 
 function truncateDiagnostic(value: string, maxLength: number): string {
   return value.length <= maxLength ? value : `${value.slice(0, maxLength - 3)}...`;

@@ -1,10 +1,4 @@
-/**
- * serve-sim's preview drives its "Simulator" panel by sending shell commands over a token-gated
- * socket. Proxying that would hand any environment session arbitrary command execution on the
- * host, so T3 runs the same underlying commands itself, typed per action: `xcrun simctl ui` and
- * `simctl privacy` for iOS, the `serve-sim-ax-settings` helper that serve-sim bundles for the
- * accessibility toggles, and `adb shell` for Android.
- */
+// serve-sim's preview socket accepts shell commands; use typed actions to avoid arbitrary host execution.
 import {
   type DeviceActionInput,
   type DeviceActionType,
@@ -272,8 +266,7 @@ const runIos = Effect.fn("DeviceActions.runIos")(function* (
       return;
     case "setPermission": {
       if (input.permission === "notifications") {
-        // simctl has no notification permission verb; serve-sim's CLI edits
-        // the BulletinBoard plist for it.
+        // simctl lacks notification permissions; serve-sim edits the BulletinBoard plist.
         yield* serveSimPermissions(ready, udid, input);
         return;
       }
@@ -423,8 +416,7 @@ const runAndroid = Effect.fn("DeviceActions.runAndroid")(function* (
       );
       return;
     case "clearLocation":
-      // The emulator has no "clear"; leaving the fix in place is the closest
-      // behavior, so this is a no-op that still refreshes the reading.
+      // The emulator cannot clear location; keep the fix and refresh the reading.
       return;
     case "setPermission": {
       const permissions = ANDROID_PERMISSIONS[input.permission];
@@ -549,8 +541,7 @@ const readAndroid = Effect.fn("DeviceActions.readAndroid")(function* (run: Runne
       shell(["settings", "get", "system", "font_scale"]),
       shell(["settings", "get", "global", "animator_duration_scale"]),
       shell(["settings", "get", "global", "wifi_on"]),
-      // `dumpsys window windows` stopped printing the focus on API 36; the
-      // unfiltered dump still does.
+      // API 36 dropped focus from `dumpsys window windows`; use the unfiltered dump.
       shell(["dumpsys", "window"]),
     ],
     { concurrency: 5 },

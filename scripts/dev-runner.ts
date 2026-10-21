@@ -30,10 +30,8 @@ const BASE_WEB_PORT = 5733;
 const MAX_HASH_OFFSET = 3000;
 const MAX_PORT = 65535;
 const DESKTOP_DEV_LOOPBACK_HOST = "127.0.0.1";
-// HTTP(S) requests to these ports are blocked by the Fetch standard before a
-// browser reaches the network. Keep the complete list here so explicit or
-// future wider offsets cannot produce a URL that curl accepts but browsers
-// reject. https://fetch.spec.whatwg.org/#port-blocking
+// Browsers block these ports before networking even when curl accepts them.
+// https://fetch.spec.whatwg.org/#port-blocking
 const FETCH_BAD_PORTS = new Set([
   0, 1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53, 69, 77, 79, 87, 95, 101, 102,
   103, 104, 109, 110, 111, 113, 115, 117, 119, 123, 135, 137, 139, 143, 161, 179, 389, 427, 465,
@@ -41,17 +39,13 @@ const FETCH_BAD_PORTS = new Set([
   995, 1719, 1720, 1723, 2049, 3659, 4045, 4190, 5060, 5061, 6000, 6566, 6665, 6666, 6667, 6668,
   6669, 6679, 6697, 10080,
 ]);
-// Dev servers bind loopback, so loopback is the only interface whose
-// availability decides whether we can use a port.
+// Dev binds loopback; other interfaces cannot establish port availability.
 const DEV_PORT_PROBE_HOSTS = ["127.0.0.1", "::1"] as const;
 // A pruned migrate-dev-db copy is tens of MB; some worktrees hold a full copy
 // of the live database instead.
 const LARGE_DEV_DATABASE_BYTES = 500 * 1024 * 1024;
 
-/**
- * Loopback and the wildcards qualify; a specific interface (e.g. a LAN IP) does
- * not — the OS binds only that address and the proxy target goes dark.
- */
+/** Only loopback and wildcard binds keep the loopback proxy target reachable. */
 export function isProxiableBindHost(host: string): boolean {
   const normalized = host.trim();
   return (
@@ -95,10 +89,7 @@ const BUILT_DEV_ARGS = [
 ] as const;
 
 type DevMode = keyof typeof MODE_ARGS;
-/**
- * `role` matters because only the backend honours `--host`/`T3CODE_HOST`; the
- * web port is always loopback.
- */
+// Only backend ports honor --host/T3CODE_HOST; web ports stay loopback.
 type PortAvailabilityCheck<R = never> = (
   port: number,
   role?: "server" | "web",
@@ -336,21 +327,15 @@ export const createDevRunnerEnv = Effect.fn("dev-runner.createDevRunnerEnv")(fun
     delete output.T3CODE_HOME;
   }
 
-  // A dev-runner server is never launcher-managed. When the shell that runs
-  // this script was itself spawned by the machine's managed t3 service (an
-  // agent working inside T3 Code), these leak through and the child server
-  // fails startup with "The service launcher started a different t3 version"
-  // (serviceLauncherClient.ts resolveStartup).
+  // Managed T3 service shells leak launcher variables that make dev servers fail version checks.
+  // Dev-runner servers are never launcher-managed (serviceLauncherClient.ts resolveStartup).
   delete output.T3_SERVICE_LAUNCHER_CONTEXT;
   delete output.T3_BOOT_SERVICE_UNIT;
 
   if (!isDesktopMode) {
     output.T3CODE_PORT = String(serverPort);
-    // HOST is Vite's own bind address, and the desktop branch below is the
-    // only place we set it. An inherited one (an exported HOST, a container,
-    // a `HOST=0.0.0.0 npm start` habit) would otherwise reach Vite and pin
-    // its HMR socket to that address — see the `explicitHost` gate in
-    // apps/web/vite.config.ts.
+    // An inherited HOST pins Vite's HMR socket via explicitHost in apps/web/vite.config.ts.
+    // Only desktop mode should set it.
     delete output.HOST;
     if (mode === "dev" || mode === "dev:web") {
       // Browser dev is single-origin: everything (including /ws) is proxied

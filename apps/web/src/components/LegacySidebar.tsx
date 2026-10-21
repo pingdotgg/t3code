@@ -454,8 +454,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   );
   const pr = linkedPullRequestStatus?.pr ?? null;
   const supportsMultiplePullRequests = useSupportsMultiplePullRequests(thread.environmentId);
-  // Every hook runs above this line: the handlers below key on this ref, and the
-  // compiler can only cache it once no hook call follows its plain uses.
+  // Hooks must precede this ref's plain uses for the compiler to cache it.
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const fileDropHandlers = makeWorkspaceFileDropHandlers({
     setDragActive: setIsFileDragOver,
@@ -518,8 +517,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const handleRowDoubleClick = (event: React.MouseEvent) => {
     if (!readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope)) return;
     if (renamingThreadKey === threadKey) return;
-    // On mobile the first tap navigates and closes the sidebar sheet, so the
-    // inline rename can't be shown. Renaming there stays on the context menu.
+    // Mobile navigation closes the sidebar on the first tap, so rename stays in the context menu.
     if (isMobile) return;
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     if ((event.target as HTMLElement).closest("button, a")) return;
@@ -617,8 +615,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       void commitRename(threadRef, renamingTitle, thread.title);
     }
   };
-  // Without stopping `dblclick`, double-clicking to select a word would re-fire
-  // the row's rename handler and reset the in-progress edit back to the title.
+  // Stop dblclick propagation so word selection cannot restart rename and discard edits.
   const handleRenameInputClick = (event: React.MouseEvent<HTMLInputElement>) => {
     event.stopPropagation();
   };
@@ -1106,9 +1103,7 @@ function resolveProjectThreadStatus(
   });
 }
 
-// Thread derivations for one project row. Built in their own hooks so they reach
-// SidebarProjectItem frozen: inline, its later calls made the compiler fuse the
-// ordered keys with the route-dependent panel, handing every row a new array.
+// Separate hooks keep array caches independent of the route-dependent panel.
 function useProjectThreads(project: SidebarProjectSnapshot) {
   const threadSortOrder = useClientSettings<SidebarThreadSortOrder>(
     (settings) => settings.sidebarThreadSortOrder,
@@ -1339,8 +1334,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     orderedProjectThreadKeys,
     lastVisitedAtByThreadKey,
   } = useProjectThreads(project);
-  // The "Delete anyway" toast action runs after the toast delay, so it must see
-  // the thread list as of the click, not as of the first prompt.
   const readSidebarThreadByKey = useStableCallback(() => sidebarThreadByKey);
   const projectPreferenceKeys = projectExpansionPreferenceKeys(project);
   const projectExpanded = useUiStateStore((state) =>
@@ -1763,9 +1756,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       return;
     }
 
-    // Ignore the trailing click of a plain double-click so it doesn't navigate
-    // while a double-click is starting an inline rename. Placed after the
-    // modifier branches so cmd/shift selection still processes every click.
+    // Ignore trailing double-clicks after modifier handling so rename does not navigate or break selection.
     if (isTrailingDoubleClick(event.detail)) {
       return;
     }
@@ -2130,8 +2121,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     closeProjectGroupingDialog();
   };
 
-  // Every thread row receives this, so it keeps one identity while the thread
-  // list changes instead of re-rendering all of them.
   const handleThreadContextMenu = useStableCallback(
     async (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
       const api = readLocalApi();
@@ -2535,8 +2524,7 @@ const SidebarProjectListRow = memo(function SidebarProjectListRow(props: Sidebar
 
 function LocalSecondaryStatus() {
   const { environments } = useEnvironments();
-  // The desktop reports which local secondary backends (e.g. the WSL backend)
-  // exist; the hook polls because the bridge has no change event.
+  // Poll desktop-local backends because the bridge has no change event.
   const secondaries = useDesktopLocalBootstraps();
 
   const localEnvByUrl = (() => {
@@ -3023,9 +3011,7 @@ function openAddProjectCommandPalette() {
   openCommandPalette({ open: "add-project" });
 }
 
-// Project and thread derivations live in their own hooks so they reach
-// LegacySidebar frozen and cached on their real inputs; inline, its later hook
-// calls made the compiler recompute them, and the props of every row with them.
+// Separate hooks cache real inputs; later sidebar hooks would invalidate every row's props.
 function useLegacySidebarProjects() {
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
@@ -3082,8 +3068,7 @@ function useLegacySidebarProjects() {
   };
 }
 
-// Kept apart from useLegacySidebarProjects so a thread change re-sorts the
-// projects without rebuilding their snapshots, which every project row keys on.
+// Re-sort on thread changes without rebuilding project snapshots used as row keys.
 function useSortedLegacySidebarProjects(input: {
   sidebarProjects: readonly SidebarProjectSnapshot[];
   physicalToLogicalKey: ReadonlyMap<string, string>;
@@ -3325,8 +3310,6 @@ export default function LegacySidebar() {
 
   const projectDnDSensors = useSensors(useSensor(PointerSensor, PROJECT_POINTER_SENSOR_OPTIONS));
 
-  // DndContext keeps these across a drag, so they keep one identity and read the
-  // latest projects when called.
   const handleProjectDragEnd = useStableCallback((event: DragEndEvent) => {
     if (sidebarProjectSortOrder !== "manual") {
       dragInProgressRef.current = false;
@@ -3376,8 +3359,7 @@ export default function LegacySidebar() {
   };
 
   const isManualProjectSorting = sidebarProjectSortOrder === "manual";
-  // Built before the modifier-dependent shortcut context so the compiler gives it
-  // its own cache; every project row keys on this map.
+  // Build before modifier-dependent context to give the compiler a separate cache used by every row.
   const threadJumpLabelByKey = buildThreadJumpLabelMap({
     keybindings,
     platform,

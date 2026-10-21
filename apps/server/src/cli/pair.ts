@@ -47,15 +47,13 @@ import { baseDirFlag, DurationFromString } from "./config.ts";
 
 const WELL_KNOWN_ENVIRONMENT_PATH = "/.well-known/t3/environment";
 const PAIR_PROBE_TIMEOUT = Duration.millis(2_500);
-// Tailscale provisions an HTTPS certificate on the first request to a fresh
-// serve mapping, which can take a few seconds.
+// Tailscale's first HTTPS request may take seconds to provision a certificate.
 const TAILSCALE_PROBE_ATTEMPTS = 5;
 const TAILSCALE_PROBE_RETRY_DELAY = Duration.seconds(1);
 
 export type PairStateVariant = "userdata" | "dev";
 
-// deriveServerPaths only checks devUrl for undefined-ness when picking the
-// dev-vs-userdata state directory; the value itself is not used.
+// Only devUrl's presence selects dev state; its value is unused.
 const DEV_VARIANT_PLACEHOLDER_URL = new URL("http://localhost");
 
 export class NoRunningServerError extends Schema.TaggedError<NoRunningServerError>()(
@@ -145,11 +143,7 @@ export class DevServerNotProxiableError extends Schema.TaggedError<DevServerNotP
 
 const isDevServerNotProxiableError = Schema.is(DevServerNotProxiableError);
 
-/**
- * Dev servers are single-origin, so the web dev server's port is the one to publish; the
- * backend rides along behind Vite's proxy. Serve targets are always plain HTTP, so an HTTPS dev
- * URL cannot be proxied and is rejected.
- */
+/** Publish the single-origin web dev port, which proxies the backend. Serve requires HTTP targets. */
 export const resolveTailscaleLocalTarget = (
   state: PersistedServerRuntimeState,
 ): { readonly localPort: number; readonly localHost?: string } | DevServerNotProxiableError => {
@@ -206,10 +200,7 @@ const probeEnvironmentDescriptor: (
       Effect.timeout(PAIR_PROBE_TIMEOUT),
       Effect.mapError(() => ({ _tag: "unreachable" }) as const),
     );
-    // Bad-gateway family means a proxy (Tailscale Serve) answered for a
-    // backend that is gone — a stale mapping, not a live occupant. Treating
-    // it as unreachable lets `t3 pair --tailscale` repair its own mapping
-    // after the server's port changed.
+    // Gateway errors identify stale proxy mappings that pairing may repair.
     if (response.status === 502 || response.status === 503 || response.status === 504) {
       return { _tag: "unreachable" } as const;
     }
@@ -265,9 +256,7 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
       if (Option.isNone(state)) {
         continue;
       }
-      // The pid check guards against a dead server's state file whose port
-      // was since reused by a different server: pairing would then mint a
-      // token in the old database while the QR code points at the new server.
+      // A dead server's port may be reused; do not mint tokens in its old database for another server.
       if (!isProcessAlive(state.value.pid)) {
         continue;
       }
@@ -286,19 +275,13 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
   return yield* new NoRunningServerError({ checkedStatePaths, inLinkedWorktree });
 });
 
-/**
- * Built by hand rather than through `resolveServerConfig` to keep the dev-vs-userdata choice
- * pinned to where the runtime state was actually found, independent of ambient environment
- * variables.
- */
+/** Use the discovered state directory, independent of ambient config variables. */
 const makePairServerConfig = Effect.fn(function* (input: {
   readonly target: DiscoveredPairTarget;
   readonly logLevel: ServerConfig.ServerConfig["Service"]["logLevel"];
 }) {
   const { baseDir, variant, state } = input.target;
-  // The state-dir variant does not imply dev-ness: a worktree dev server uses
-  // an explicit home and therefore lands in `userdata`. The recorded devUrl is
-  // what actually marks a dev server.
+  // Worktree dev servers can use `userdata`; only the recorded devUrl marks a dev server.
   const devUrl = state.devUrl !== undefined ? new URL(state.devUrl) : undefined;
   const derivedPaths = yield* ServerConfig.deriveServerPaths(
     baseDir,
@@ -374,19 +357,13 @@ const resolveTailscalePairingBase = Effect.fn("pair.resolveTailscalePairingBase"
       servePort: input.servePort,
     });
 
-    // Only an unreachable port, or a mapping already fronting this exact
-    // environment, is safe to (re)configure. Any other responder — T3 or not
-    // — must not have its mapping silently replaced.
+    // Only unreachable ports or this environment's mappings are safe to reconfigure.
     const existing = yield* probeEnvironmentDescriptor(baseUrl);
     if (existing._tag === "descriptor") {
       if (existing.descriptor.environmentId !== input.target.descriptor.environmentId) {
         return yield* new ServesOtherEnvironmentError({ servePort: input.servePort });
       }
-      // Matching environment id proves the mapping reaches this server, but
-      // not through which port: for a dev server it may front the backend
-      // (whose /.well-known also answers) while /pair only renders through
-      // the web origin. Reuse as-is for regular servers; fall through and
-      // repoint our own mapping at the web port for dev servers.
+      // A dev backend also answers /.well-known, but /pair needs the web origin.
       if (input.target.state.devUrl === undefined) {
         return { baseUrl, notes };
       }

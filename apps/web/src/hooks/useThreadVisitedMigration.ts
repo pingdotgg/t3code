@@ -9,15 +9,13 @@ import { useUiStateStore } from "../uiStateStore";
 
 const migratedThreadKeys = new Set<string>();
 
-// Subscribes outside render: the migration only acts on threads it has not
-// seen, so a shell update must not re-render the layout that mounts it.
+// Subscribe outside render; shell updates must not re-render the layout for this one-time migration.
 export function useThreadVisitedMigration(): void {
   const registry = useContext(RegistryContext);
   const visitThreadMutation = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
   const migrate = useEffectEvent((threads: ReadonlyArray<EnvironmentThreadShell>) => {
     for (const thread of threads) {
-      // Field absent → the environment's server has no visited tracking; keep
-      // the local value in play and reconsider if the server upgrades.
+      // Missing means unsupported; retain the local value until the server upgrades.
       if (thread.lastVisitedAt === undefined) continue;
       const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
       if (migratedThreadKeys.has(threadKey)) continue;

@@ -18,9 +18,7 @@ export function Sheet(props: SheetProps) {
       onDismiss={props.onClose}
       onNativeDismiss={props.onClose}
     >
-      {/* Flex children are not bounded by the FormSheet host on Android, so pin to its edges.
-          Material coordinates drags with the first nested-scrolling view in native order. The Compose
-          header has one, so the content comes first and column-reverse draws it below. */}
+      {/* Android FormSheet does not bound flex children. Material drags target the first scroll view, so place content before the header. */}
       <View collapsable={false} className="absolute inset-0 flex-col-reverse bg-sheet">
         <View className="flex-1">{props.children}</View>
         <AndroidSheetHeader title={props.title} onBack={() => setIsOpen(false)} />

@@ -272,9 +272,7 @@ function ThreadNavigationSidebarPane(
     toggleSnoozedShelf,
     toggleWorkingShelf,
   } = useThreadListV2ShelfPreferences();
-  // The list's clock is state: the compiler caches anything computed from it on
-  // its other inputs, so a render-time `new Date()` would stop moving. The minute
-  // interval and the snooze-wake timer below both advance it.
+  // Keep time in state; the compiler would cache a render-time new Date().
   const [now, setNow] = useState(() => new Date().toISOString());
   const nowMinute = now.slice(0, 16);
   const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
@@ -297,9 +295,7 @@ function ThreadNavigationSidebarPane(
   } = listEnvironments;
   const resolveProviderInstance = useThreadRowProviderInstanceResolver(providersByEnvironmentId);
   const pendingOrder = usePendingThreadOrder(nowMinute, snoozeWakeTick);
-  // Up/down menu availability for every card, computed once per section per
-  // rebuild (see computeThreadMoveAvailability): per-thread planner calls made
-  // list construction quadratic, and this list rebuilds on every minute tick.
+  // Compute move availability once per section to avoid quadratic planner work on each minute tick.
   const threadMoveAvailability = (() => {
     const sectionAvailability = (section: "pinned" | "active") =>
       computeThreadMoveAvailability({
@@ -356,9 +352,7 @@ function ThreadNavigationSidebarPane(
       bumpSnoozeWakeTick((tick) => tick + 1);
     }, delayMs);
     return () => clearTimeout(id);
-    // snoozeWakeTick must re-arm the timer even when nextSnoozeWakeAt is
-    // unchanged: after a clamped fire (wake beyond the 32-bit setTimeout
-    // range) the boundary string is identical and the chain would die.
+    // snoozeWakeTick re-arms clamped timers even when the wake date exceeds 32-bit setTimeout and stays unchanged.
   }, [nextSnoozeWakeAt, snoozeWakeTick]);
   const listItems = ((): readonly SidebarListItem[] => {
     const v2SearchQuery = props.searchQuery.trim().toLocaleLowerCase();
@@ -475,9 +469,6 @@ function ThreadNavigationSidebarPane(
 
   const [measuredHeaderHeight, setMeasuredHeaderHeight] = useState<number | null>(null);
   const { height, paddingTop, paddingBottom } = useToolbarLayout();
-  // The sticky header (title row, search field, optional connection status)
-  // is measured so the list inset always matches its real height — no
-  // hardcoded per-variant constants.
   const stickyHeaderHeight =
     measuredHeaderHeight ??
     (Platform.OS === "android"
@@ -499,8 +490,7 @@ function ThreadNavigationSidebarPane(
       openSwipeableRef.current = null;
     }
   };
-  // These close the open row too, so they cannot be pass-throughs. The compiler would
-  // recache a closure over `props` whenever any prop changed.
+  // Destructure callback props; capturing all props would invalidate these row-closing handlers on unrelated changes.
   const { onSelectThread, onOpenThreadPullRequests } = props;
   const handleSelectThread = (thread: EnvironmentThreadShell) => {
     onSelectThread(thread);
@@ -521,11 +511,7 @@ function ThreadNavigationSidebarPane(
     onScroll: onFabScroll,
     onScrollBeginDrag: handleScrollBeginDrag,
   });
-  // The sticky header's project shells and search maps feed row props, so
-  // they have to bust the recycler's memoization — otherwise a row keeps the
-  // blank favicon and fallback title it was first rendered with. The minute
-  // clock deliberately stays out: its per-row text lives on the items, so a
-  // tick only re-renders rows whose displayed text actually moved.
+  // Recycle equality needs project/search data for titles and favicons; keep the minute clock on items to limit updates.
   const listExtraData = {
     selectedThreadKey: props.selectedThreadKey ?? "",
     projectByKey,

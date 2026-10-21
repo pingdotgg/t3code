@@ -787,7 +787,6 @@ private class DiffCanvasView(context: Context) : View(context) {
 
   override fun onSizeChanged(width: Int, height: Int, oldWidth: Int, oldHeight: Int) {
     super.onSizeChanged(width, height, oldWidth, oldHeight)
-    // Wrapped rows take their height from the width, so a new width is a new layout.
     if (style.wordWrap && width != oldWidth) layoutRows()
     setVerticalOffset(verticalOffset)
     setHorizontalOffset(horizontalOffset)
@@ -1223,7 +1222,6 @@ private class DiffCanvasView(context: Context) : View(context) {
     }
     val selected = selectedRowIds.contains(row.id)
     if (selected) {
-      // Keep the diff and syntax colors intact; selection lives in the gutter.
       fill(
         canvas,
         withAlpha(theme.hunkText, 242),
@@ -1234,7 +1232,6 @@ private class DiffCanvasView(context: Context) : View(context) {
       )
     }
 
-    // Wrapped rows keep the line number and first code line in the first row-height band.
     val lines = codeWrap.lines(row.id)
     val firstLineBottom = top + lines.firstHeight(style.rowHeightPx.toInt())
     drawScrollableCode(canvas, top, bottom) { codeX ->

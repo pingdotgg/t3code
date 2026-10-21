@@ -252,11 +252,7 @@ const PreviewScrollTool = safeBrowserTool(
   }).annotate(Tool.Title, "Scroll preview page"),
 );
 
-/**
- * MCP `structuredContent` must be a JSON object, and Claude Code rejects the
- * whole result when it is not. Wrapping keeps arrays, strings, numbers, and
- * null valid instead of failing only for non-object expressions.
- */
+/** Wrap non-objects: MCP requires object structuredContent, and Claude Code rejects invalid results entirely. */
 export const PreviewEvaluateResult = Schema.Struct({
   ...presentationFields,
   value: Schema.Unknown.annotate({

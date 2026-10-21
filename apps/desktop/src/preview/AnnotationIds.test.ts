@@ -4,8 +4,6 @@ import { createAnnotationIdSource } from "./AnnotationIds.ts";
 
 describe("createAnnotationIdSource", () => {
   it("gives annotations picked on separate page loads distinct ids", () => {
-    // The picker preload runs afresh on every page load, while the composer
-    // keeps earlier annotations keyed by id.
     const firstLoad = createAnnotationIdSource();
     firstLoad("element");
     const firstAnnotation = firstLoad("annotation");

@@ -156,8 +156,7 @@ export function useThreadFindNavigation({
           previous.entries === entries)
       )
         return;
-      // Activity can insert rows while LegendList waits for layout. Retarget the
-      // pending jump instead of treating the first requested index as final.
+      // Activity can insert rows during LegendList layout; retarget pending jumps.
       const request = { key: matchKey, rowIndex, entries };
       positioningRef.current = request;
 
@@ -198,8 +197,7 @@ export function useThreadFindNavigation({
     const top = viewport.top + margin;
     const bottom = viewport.bottom - margin - contentInsetEndAdjustment;
     const delta = rect.top < top ? rect.top - top : rect.bottom > bottom ? rect.bottom - bottom : 0;
-    // A new list can expose DOM text before its virtual row sizes settle.
-    // Await row positioning before measuring an offscreen occurrence.
+    // DOM text can precede settled row sizes; wait before measuring offscreen matches.
     if (
       Math.abs(delta) >= 1 &&
       positionedEntriesRef.current !== entries &&

@@ -183,8 +183,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
       nestedScrollEnabled
       className="flex-1"
       scrollEnabled={draggedRunId === null}
-      // The iOS header is translucent and floats over this view; UIKit has to
-      // inset the content or the first row sits underneath the title.
+      // UIKit must inset content beneath the floating translucent iOS header.
       contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
       contentContainerClassName="px-5 pb-6"
       contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 16) + 8 }}
@@ -249,8 +248,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
               }
             >
               {canReorder ? (
-                // Outside the swipeable: two pans on one row would race, and
-                // the handle owns vertical movement while the row owns sideways.
+                // Keep the vertical handle outside the sideways swipeable so their pans do not race.
                 <QueueDragHandle
                   disabled={busyRunId !== null}
                   title={title}
@@ -416,8 +414,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
   );
 
   if (Platform.OS === "ios") {
-    // A plain formSheet screen never renders a stack header, so it comes from
-    // a nested native stack inside the sheet (same shape as the git sheet).
+    // Plain formSheets lack stack headers; host one in a nested native stack.
     return (
       <GestureHandlerRootView style={{ flex: 1 }}>
         <View collapsable={false} className="flex-1 bg-sheet">
@@ -498,8 +495,7 @@ function QueueRowSwipeable(props: {
       friction={2}
       rightThreshold={40}
       overshootRight={false}
-      // The sheet's own vertical scroll and the drag handle both move up and
-      // down; a swipe has to be clearly sideways before it takes the gesture.
+      // Require a clearly sideways swipe to avoid competing with sheet scroll and drag handles.
       failOffsetY={[-12, 12]}
       containerStyle={{ backgroundColor: props.background, flex: 1 }}
       childrenContainerStyle={{ backgroundColor: props.background }}
@@ -594,8 +590,6 @@ function QueueDragHandle(props: {
   onMove: (y: number) => void;
   onEnd: (y: number, success: boolean) => void;
 }) {
-  // Gesture callbacks fire outside render, so effect events read the latest
-  // props without rebuilding the gesture.
   const onStart = useEffectEvent(() => props.onStart());
   const onMove = useEffectEvent((y: number) => props.onMove(y));
   const onEnd = useEffectEvent((y: number, success: boolean) => props.onEnd(y, success));

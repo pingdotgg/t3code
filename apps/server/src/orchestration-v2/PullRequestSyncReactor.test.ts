@@ -859,7 +859,6 @@ describe("PullRequestSyncReactor", () => {
         yield* Effect.gen(function* () {
           const reactor = yield* startAndSweep(fixture);
           const firstSweep = yield* Ref.get(fixture.syncCommands);
-          // The held merged summary is dropped so the read reaches the host.
           assert.deepStrictEqual(yield* Ref.get(invalidated), [1]);
           assert.strictEqual(firstSweep.at(-1)?.snapshot.mergedAt, "2026-08-27T00:00:00.000Z");
           yield* Ref.update(fixture.snapshots, (snapshot) => applySync(snapshot, firstSweep));

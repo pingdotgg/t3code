@@ -370,7 +370,7 @@ const serversEqual = (
 const isCommandNotFound = (error: ProcessRunner.ProcessSpawnError): boolean =>
   PlatformError.isPlatformError(error.cause) && error.cause.reason._tag === "NotFound";
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* PortDiscoveryMake() {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -441,9 +441,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     const known = yield* Ref.get(socketOwnersRef);
     const knownMisses = yield* Ref.get(socketOwnerMissesRef);
     const inodes = new Set(listeners.map((listener) => listener.inode));
-    // Listeners rarely change, so the fd walk runs only for sockets without a
-    // confirmed owner, and gives up on one after a few walks miss it (another
-    // user's process, or one that exited mid-walk).
+    // Walk fds only for unowned sockets; stop after repeated misses for inaccessible or exited processes.
     const unseen = new Set(
       [...inodes].filter(
         (inode) => !known.has(inode) && (knownMisses.get(inode) ?? 0) < SOCKET_OWNER_ATTEMPTS,
@@ -531,8 +529,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     }
 
     for (const server of servers) {
-      // A listener alone does not identify its protocol. Sending HTTP or TLS to
-      // another app's binary RPC listener can crash it before classification.
+      // Never probe an unidentified listener with HTTP or TLS; binary RPC servers can crash on it.
       if (server.terminal === null) continue;
       groups.push({
         server,
@@ -624,8 +621,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     return { discovered, configured } satisfies WebProbeSnapshot;
   });
 
-  // `tasklist` costs ~200-300ms per PID, so look up only visible servers, a few at a time, and
-  // reuse each name until its TTL expires.
+  // tasklist costs 200-300ms per PID; query visible servers with bounded concurrency and cache names.
   const withWindowsProcessNames = Effect.fn("PortDiscovery.withWindowsProcessNames")(function* (
     snapshot: WebProbeSnapshot,
   ) {
@@ -707,8 +703,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       const listeners = yield* Effect.all([runNetstat("tcp"), runNetstat("tcpv6")], {
         concurrency: 2,
       }).pipe(
-        // One failed query leaves a partial snapshot that could hide another process sharing a
-        // port across IPv4/IPv6, so fall back to configured URLs instead.
+        // Failed queries can hide other IPv4/IPv6 listeners on the port; fall back to configured URLs.
         Effect.map(([tcp4, tcp6]) =>
           exitedWithError(tcp4) || exitedWithError(tcp6)
             ? null

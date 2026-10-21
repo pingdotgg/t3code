@@ -19,8 +19,7 @@ export function StandalonePage({
   readonly children: ReactNode;
 }) {
   return (
-    // #root never scrolls, so the page owns its scroll. Safe centering keeps a
-    // card taller than the viewport anchored at the top instead of clipping it.
+    // The page owns scrolling because root cannot scroll; safe centering keeps oversized cards top-aligned.
     <div className="relative h-full overflow-hidden bg-background text-foreground">
       <div className="pointer-events-none absolute inset-0 opacity-80" aria-hidden>
         <div className={backdropClassNames[tone]} />

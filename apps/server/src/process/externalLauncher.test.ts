@@ -19,10 +19,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as ExternalLauncher from "./externalLauncher.ts";
 
-// Tests below write `#!/bin/sh` stubs into a real temp dir and hand that
-// directory to a posix-mocked resolver as PATH. On a Windows host the temp
-// path carries a drive letter, so the posix `:` split shatters it; there is
-// no posix executable to find there anyway.
+// Windows drive letters break mocked POSIX PATH splitting; these tests also require /bin/sh stubs.
 const windowsHost = HostProcess.Platform.defaultValue() === "win32";
 
 interface MockSpawnResult {

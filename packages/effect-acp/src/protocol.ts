@@ -525,11 +525,8 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
       );
   };
 
-  // A notification has no reply to fail, so one the schema rejects is logged
-  // and dropped. Ending the connection over it would kill a working session
-  // because one update, possibly from a newer spec, did not parse. An agent
-  // repeats a bad shape on every update, so each distinct failure is warned
-  // about once per connection.
+  // Drop undecodable notifications without ending working sessions; newer specs may add unknown shapes.
+  // Warn once per distinct failure per connection because agents repeat bad payloads.
   const dropUndecodableNotification = (method: string) => (cause: Schema.SchemaError) => {
     const error = AcpError.AcpProtocolParseError.fromSchemaError(
       "decode-notification-payload",

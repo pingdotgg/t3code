@@ -146,10 +146,7 @@ export function useThreadHeaderOptions(props: {
   const { environmentId, threadId, gitStatus } = props.gitControls;
   return {
     options,
-    // Header item factories are stabilized, so the native header only re-reads them when
-    // this version changes. Keying on the items keeps the Git menu status live; the menu
-    // callbacks also read state the items do not display (a "Push" item runs `push` or
-    // `commit_push` depending on the default ref), so that state is keyed too.
+    // Factories re-read only on version changes; include displayed items and hidden callback state such as default refs.
     optionsVersion: [
       splitLeftHeaderItems,
       threadCenterHeaderItems,

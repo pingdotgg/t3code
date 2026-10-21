@@ -119,7 +119,7 @@ const normalizeUrl = (rawUrl: string): Effect.Effect<string, PreviewInvalidUrlEr
 
 const currentIsoTimestamp = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* PreviewManagerMake() {
   const crypto = yield* Crypto.Crypto;
   const serverEpoch = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
@@ -127,10 +127,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
   const eventsPubSub = yield* PubSub.unbounded<PreviewEvent>();
   const events: Stream.Stream<PreviewEvent> = Stream.fromPubSub(eventsPubSub);
 
-  /**
-   * The event is published INSIDE the lock so observers see events in the same
-   * order as the underlying state transitions.
-   */
+  /** Publish inside the lock to preserve state-transition order. */
   const mutateExistingSession = <R, E>(
     threadId: string,
     tabId: string,

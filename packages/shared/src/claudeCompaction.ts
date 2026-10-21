@@ -1,10 +1,4 @@
-/**
- * Copy for Claude's resume compaction dialog, shared by the server adapter
- * (which asks the question) and the web client (which recognizes the
- * question and its "never" answer in resolved user-input activities to
- * mirror the dismissal). Both sides must agree on these strings, so they
- * live here: reword the question or the answer label in this file only.
- */
+/** Adapter and client match these dialog strings; reword them only here. */
 export const CLAUDE_RESUME_COMPACTION_NEVER_ANSWER = "Don't ask again";
 
 export function formatClaudeResumeCompactionQuestion(input: {

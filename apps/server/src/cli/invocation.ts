@@ -38,16 +38,7 @@ const InstallManifest = Schema.Struct({
 });
 const decodeInstallManifest = Schema.decodeUnknownEffect(Schema.fromJsonString(InstallManifest));
 
-/**
- * The script this CLI was started through: the `t3` npm launcher that
- * downloaded and ran this executable (it names itself in
- * `T3CODE_NPM_LAUNCHER_PATH`), or the Node entry script of a build run from
- * source. A standalone executable has none and reports its own path.
- *
- * The variable is inherited by everything the server spawns, so a launcher
- * counts only when its package is this exact version: a different `t3` run
- * from an agent's shell must not claim to be the npm install.
- */
+/** The launcher variable is inherited; trust it only when its package matches this exact version. */
 const resolveEntryPath = Effect.gen(function* () {
   const npmLauncher = (yield* HostProcess.Environment).T3CODE_NPM_LAUNCHER_PATH?.trim();
   if (npmLauncher) {
@@ -100,11 +91,7 @@ export const resolveServerInstallation = Effect.gen(function* () {
   return { kind: "npm-global", prefix } satisfies ServerInstallation;
 }).pipe(Effect.orElseSucceed(() => null));
 
-/**
- * The literal spec the user typed (e.g. `t3@nightly`) is resolved away before
- * our process starts, so re-derive it from the running version: nightly builds
- * re-suggest the nightly channel, anything else suggests the bare package.
- */
+/** The original package spec is unavailable at startup; infer its channel from the version. */
 function suggestedPackageSpec(version: string): string {
   const channel = /^[^-+]+-(nightly|preview)\./.exec(version)?.[1];
   return channel === undefined ? "t3" : `t3@${channel}`;
@@ -130,28 +117,17 @@ export const resolveCliCommand = (subcommand: string) =>
 const shellWord = (value: string) =>
   /^[\w@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", `'"'"'`)}'`;
 
-/**
- * Quotes `value` for PowerShell, the default Windows terminal. Always quoted,
- * so a path reads the same whether or not it holds a space. Inside double
- * quotes `"` and its typographic forms (which also end the string) double,
- * and `$` and the backtick are escaped so nothing expands.
- */
+/** PowerShell also treats typographic quotes as delimiters; escape them and suppress expansion. */
 const powershellWord = (value: string) =>
   `"${value
     .replaceAll("`", "``")
     .replaceAll("$", "`$")
     .replace(/["\u201C\u201D\u201E]/g, "$&$&")}"`;
 
-/** Quotes a word for the host's shell: POSIX, or PowerShell on Windows. */
 const hostShellWord = (platform: NodeJS.Platform, value: string) =>
   platform === "win32" ? powershellWord(value) : shellWord(value);
 
-/**
- * The launcher a person can type to run this install when `t3` is not on
- * PATH: the desktop app's `t3` shim, which the app and the shim itself name in
- * `T3CODE_CLI_PATH`, or a standalone binary's own path. Script installs (a
- * repo checkout) have no single launcher and keep plain `t3`.
- */
+/** Script installs have no single launcher; desktop shims and standalone binaries do. */
 const resolveInstallLauncher = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const shim = (yield* HostProcess.Environment).T3CODE_CLI_PATH?.trim();
@@ -164,11 +140,8 @@ const resolveInstallLauncher = Effect.gen(function* () {
 });
 
 /**
- * `t3 <subcommand> <args>` for a person to run on this host: `t3` when it is
- * on PATH, the package runner this process came from, or else the absolute
- * path of the launcher for this install, such as the one the desktop app
- * installs. `args` are quoted for the host's shell: POSIX, or PowerShell on
- * Windows.
+ * Uses `t3` on PATH, the originating package runner, or this install's absolute launcher path.
+ * Arguments are quoted for POSIX shells or PowerShell on Windows.
  */
 export const resolveHostCliCommand = Effect.fn("invocation.resolveHostCliCommand")(function* (
   subcommand: string,

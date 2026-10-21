@@ -23,9 +23,7 @@ const {
   pageClass,
 } = Astro.props;
 
-// Social preview card, shared by og:image and twitter:image. Link unfurlers
-// (Instagram, iMessage, X, Slack) want a 1200x630 jpg or png at an absolute URL.
-// The source is a 2x export so the downscale stays sharp.
+// Link unfurlers require a 1200x630 JPG/PNG at an absolute URL.
 const socialImage = await getImage({
   src: socialCard,
   width: 1200,

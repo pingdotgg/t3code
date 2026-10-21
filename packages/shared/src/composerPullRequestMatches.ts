@@ -63,8 +63,7 @@ export function filterComposerPullRequestMatches<
   }
   const isExactMatch = (entry: ComposerPullRequestMatch) => String(entry.number) === input.query;
   const isLinked = (entry: ComposerPullRequestMatch) => linkedKeys.has(keyOf(entry));
-  // `.sort()` on a copy, not `.toSorted()`: this runs on Hermes, which has no ES2023 array
-  // methods, and reaching for one here crashed the composer as the suggestions loaded.
+  // Hermes has no ES2023 array methods, so sort a fresh array.
   return [...uniqueEntries.values()]
     .sort(
       (left, right) =>

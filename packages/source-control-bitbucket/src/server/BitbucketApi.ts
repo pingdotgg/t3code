@@ -229,15 +229,11 @@ export class BitbucketCheckoutError extends Schema.TaggedError<BitbucketCheckout
   }
 }
 
-/**
- * Refused rather than followed, because the request carries the account's credentials and a url
- * that came back in a response — a pagination cursor, or the target of a redirect — is not this
- * server's to trust.
- */
+/** Reject response-supplied URLs that could leak credentials. */
 export class BitbucketUntrustedUrlError extends Schema.TaggedError<BitbucketUntrustedUrlError>()(
   "BitbucketUntrustedUrlError",
   {
-    /** The host only. A rejected hop is often a signed url, whose query carries a credential. */
+    /** Host only; signed URL queries can contain credentials. */
     host: Schema.String,
   },
 ) {
@@ -531,10 +527,7 @@ type BitbucketCredential =
   | { readonly kind: "access-token"; readonly accessToken: string }
   | { readonly kind: "api-token"; readonly email: string; readonly apiToken: string };
 
-/**
- * A value the HTTP stack rejects makes it throw an error quoting the whole header, and that
- * error travels to clients as a cause, so an unusable token is treated as unset.
- */
+/** Invalid header values can throw errors containing credentials; treat them as unset. */
 const HEADER_SAFE = /^[\x21-\x7e]+$/u;
 
 function credentialFrom(input: {
@@ -630,7 +623,7 @@ const responseError = Effect.fn("BitbucketApi.responseError")(function* (
   });
 });
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const config = yield* BitbucketApiEnvConfig;
   const host = yield* SourceControlHost.SourceControlHost;
@@ -858,11 +851,7 @@ export const make = Effect.gen(function* () {
     return origin !== null && origin === apiOrigin ? value : null;
   };
 
-  /**
-   * Redirects are followed here rather than by the client, which forwards every header to
-   * whatever host it is sent to. A pull request diff, diffstat and conflicts are all served as
-   * redirects, so they have to be followed — but only back to the same Bitbucket.
-   */
+  /** Redirects forward auth headers; restrict them to the configured Bitbucket. */
   const send = (input: {
     readonly method: "GET" | "POST" | "PUT" | "DELETE";
     readonly url: string;
@@ -883,7 +872,7 @@ export const make = Effect.gen(function* () {
           : input.method === "DELETE"
             ? HttpClientRequest.make("DELETE")(url)
             : HttpClientRequest.put(url);
-    // No `Accept: application/json`: the diff endpoints answer with a patch, not JSON.
+    // Diff endpoints return patches, not JSON.
     const withBody =
       input.body === undefined
         ? base
@@ -916,8 +905,7 @@ export const make = Effect.gen(function* () {
     send({ ...input, redirects: 0 }).pipe(
       Effect.flatMap((response) =>
         HttpClientResponse.matchStatus({
-          // Read through the body stream rather than `text`, so an oversized diff is stopped as
-          // it arrives instead of being materialized whole and then cut.
+          // Streaming enforces the byte limit before allocating the full diff.
           "2xx": (success) =>
             collectUint8StreamText({
               stream: success.stream,
@@ -939,7 +927,7 @@ export const make = Effect.gen(function* () {
           orElse: (failed) => responseError("request", failed),
         })(response),
       ),
-      // This also caps redirect hops: no request can finish headers then stall its body forever.
+      // Include redirects and body reads in the timeout.
       Effect.timeout(BITBUCKET_API_REQUEST_TIMEOUT),
       Effect.catchTags({
         TimeoutError: (cause) =>

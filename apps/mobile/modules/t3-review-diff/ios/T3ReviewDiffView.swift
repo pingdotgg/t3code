@@ -857,7 +857,6 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
     onPullToRefresh([:])
   }
 
-  /// Driven from JS: set to false once the reload completes to dismiss the spinner.
   func setRefreshing(_ refreshing: Bool) {
     if refreshing {
       if !pullRefreshControl.isRefreshing {
@@ -1035,7 +1034,6 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
   }
   var viewportWidth: CGFloat = 0 {
     didSet {
-      // Wrapped rows take their height from the width, so a new width is a new layout.
       if style.wordWrap, viewportWidth != oldValue {
         rebuildRowLayout()
       }
@@ -1061,9 +1059,7 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
   private var tokenColorsByHex: [String: UIColor] = [:]
   private var tokenAttributedStringsByRowId: [String: NSAttributedString] = [:]
   private var codeCharacterWidth: CGFloat = 8
-  /// Columns per visual line while word wrap is on; nil while code rows pan horizontally.
   private var codeWrapColumns: Int?
-  /// Text geometry survives comment height changes; width, font, and content invalidate it.
   private var codeLayoutsByRowId: [String: ReviewDiffCodeLayout] = [:]
   private var codeLayoutWidth: CGFloat = 0
   private var codeLayoutFont: UIFont?
@@ -1120,7 +1116,6 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     ceil(codeFont.lineHeight)
   }
 
-  /// Wrapped rows fill the code viewport; unwrapped rows keep one line and scroll horizontally.
   private func codeLayoutWidthLimit(font: UIFont) -> CGFloat? {
     guard style.wordWrap else { return ReviewDiffCodeLayout.unboundedWidth }
     let width = viewportWidth - codeStartX - style.codePadding
@@ -1219,7 +1214,6 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
             )
           }
           nextCodeLayouts[row.id] = layout
-          // Tabs and fallback glyphs are wider than one column.
           width = layout.usedWidth
           if rowHeight > 0 {
             rowHeight = max(rowHeight, layout.firstLineHeight) + layout.extraHeight
@@ -1241,7 +1235,6 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     codeCharacterWidth = characterWidth
     codeWrapColumns = wrapColumns
     codeLayoutsByRowId = nextCodeLayouts
-    // Measured widths are not capped, so the end of every line stays reachable by scrolling.
     contentWidthsByFileId = maxWidthsByFileId.mapValues { ceil($0) + style.codePadding * 2 }
     rowOffsets = nextOffsets
     fileHeaderRowIndices = nextFileHeaderRowIndices
@@ -2323,7 +2316,6 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     let horizontalOffset = horizontalOffset(for: fileId)
     let contentWidth = contentWidth(for: fileId)
     let change = row.change ?? "context"
-    // Wrapped rows keep the line number and first code line in the first row-height band.
     let layout = codeLayoutsByRowId[row.id]
     let firstLineRect = CGRect(
       x: rect.minX, y: rect.minY, width: rect.width,
@@ -2418,7 +2410,6 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     context.restoreGState()
   }
 
-  /// Draws the segment starting at each of the row's line starts on its own visual line.
   private func drawCodeLines(
     length: Int,
     lineStarts: [Int],
@@ -2448,7 +2439,6 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
       return
     }
 
-    // Keep the diff and syntax colors intact; selection lives in the gutter.
     theme.hunkText.withAlphaComponent(0.95).setFill()
     context.fill(CGRect(x: 0, y: rect.minY, width: style.changeBarWidth, height: rect.height))
   }
@@ -2484,7 +2474,6 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
         continue
       }
 
-      // A wrapped row splits the highlight at each visual line boundary.
       for (line, lineStart) in lineStarts.enumerated() {
         let lineEnd = line + 1 < lineStarts.count ? lineStarts[line + 1] : Int.max
         let start = max(range.start, lineStart)

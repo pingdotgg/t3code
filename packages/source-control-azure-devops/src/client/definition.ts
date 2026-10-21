@@ -26,8 +26,7 @@ export const definition = defineSourceControlClient({
   icon: "azure-devops",
   changeRequest: { shortLabel: "PR", singular: "pull request" },
   repositoryPathHint: "project/repository",
-  // `az repos` reads need the checkout's organization and project, so a bare hostname names no
-  // repository this client can act on.
+  // `az repos` needs the checkout's organization and project.
   publicHost: null,
   publishDescription: "dev.azure.com",
   publishHost: () => "dev.azure.com",

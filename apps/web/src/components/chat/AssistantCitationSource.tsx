@@ -88,7 +88,7 @@ export interface AssistantCitationRequest {
   key: string;
 }
 
-/** Navigation owns the ref so virtual row remounts cannot replay an activation. */
+/** Navigation owns activation state across virtual row remounts. */
 export interface AssistantCitationTarget extends AssistantCitationRequest {
   activationRef: RefObject<{
     scrolled: boolean;
@@ -307,7 +307,7 @@ export function observeAssistantCitationSource({
     if (scrolling) {
       scrolling = false;
       void list.scrollToOffset({
-        // Legend may defer this call too. Read the user's position when it executes.
+        // Legend may defer reading the offset until after the user scrolls.
         get offset() {
           return scrollNode.scrollTop;
         },

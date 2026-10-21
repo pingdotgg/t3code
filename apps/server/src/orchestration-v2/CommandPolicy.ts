@@ -135,8 +135,7 @@ export function resolveMessageDispatchIntent(
 ): MessageDispatchMode {
   const mode = resolveDeliveryIntent(projection, requestedMode, deliveryIntent);
   if (mode.type !== "steer_active") return mode;
-  // Compaction and sign-out turns cannot take steering input. A message sent
-  // while one runs waits in the queue like any other follow-up.
+  // Compaction and sign-out cannot accept steers; queue follow-ups.
   const target = projection.runs.find((run) => run.id === mode.targetRunId);
   const targetMessage = projection.messages.find((message) => message.id === target?.userMessageId);
   return targetMessage !== undefined && isNativeMaintenanceCommand(targetMessage)
@@ -398,8 +397,7 @@ const ensureContextHandoff: CommandPolicyV2Shape["ensureContextHandoff"] = (inpu
 };
 
 const decideForkExecution: CommandPolicyV2Shape["decideForkExecution"] = (input) => {
-  // Unsuccessful runs may have no native turn or assistant cursor. Forking
-  // those at native head can include later turns, so use the bounded transcript.
+  // Unsuccessful runs may lack native cursors; fork bounded transcripts to exclude later turns.
   const canForkNatively =
     (input.sourceRunStatus === "completed" || input.sourceRunStatus === "waiting") &&
     input.sameProvider &&
