@@ -139,6 +139,11 @@ export function useQuietThreadShell(ref: ScopedThreadRef | null): EnvironmentThr
   );
 }
 
+/** Every thread shell, held through streaming ticks; see quietThreadShellAtom. */
+export function useQuietThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
+  return useAtomValue(environmentThreadShells.quietThreadShellsAtom);
+}
+
 export function useChildThreadInputs(ref: ScopedThreadRef | null) {
   return useAtomValue(
     ref === null ? EMPTY_THREAD_SHELLS_ATOM : environmentThreadShells.childThreadInputsAtom(ref),

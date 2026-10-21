@@ -344,4 +344,39 @@ describe("v2 thread shell lists", () => {
       harness.registry.dispose();
     }
   });
+
+  it("keeps the quiet shell list through streaming ticks", () => {
+    const harness = makeHarness();
+    const runId = RunId.make("streaming-list-run");
+    const running: OrchestrationV2ThreadShell = {
+      ...v2ThreadShell,
+      latestRunId: runId,
+      activeRunId: runId,
+      status: "running",
+      itemCount: 1,
+      visibleItemCount: 1,
+    };
+    const setThread = (thread: OrchestrationV2ThreadShell, sequence: number) =>
+      harness.registry.set(harness.snapshotAtom(environmentId), {
+        ...v2ShellSnapshot,
+        snapshotSequence: sequence,
+        threads: [thread],
+      });
+    setThread(running, 1);
+    const listAtom = harness.threads.quietThreadShellsAtom;
+    const dispose = harness.registry.mount(listAtom);
+    try {
+      const first = harness.registry.get(listAtom);
+      expect(first).toHaveLength(1);
+      setThread({ ...running, updatedAt: DateTime.add(v2Now, { seconds: 1 }), itemCount: 4 }, 2);
+      expect(harness.registry.get(listAtom)).toBe(first);
+
+      setThread({ ...running, title: "Renamed" }, 3);
+      expect(harness.registry.get(listAtom)).not.toBe(first);
+      expect(harness.registry.get(listAtom)[0]?.title).toBe("Renamed");
+    } finally {
+      dispose();
+      harness.registry.dispose();
+    }
+  });
 });
