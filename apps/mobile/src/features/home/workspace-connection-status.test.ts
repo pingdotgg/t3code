@@ -9,6 +9,7 @@ function workspaceState(overrides: Partial<WorkspaceState> = {}): WorkspaceState
     hasConnections: true,
     hasLoadedShellSnapshot: true,
     hasPendingShellSnapshot: false,
+    hasSyncingConnectedEnvironment: false,
     hasReadyEnvironment: true,
     hasConnectingEnvironment: false,
     connectingEnvironments: [],
@@ -23,6 +24,66 @@ function workspaceState(overrides: Partial<WorkspaceState> = {}): WorkspaceState
 describe("workspace connection status", () => {
   it("stays hidden while a ready environment is connected", () => {
     expect(workspaceConnectionStatusPresentation(workspaceState())).toBeNull();
+  });
+
+  it.each([
+    ["connecting", null],
+    ["reconnecting", null],
+    ["connecting", "Could not reach sleeping laptop"],
+    ["reconnecting", "Could not reach sleeping laptop"],
+    ["error", "Could not reach sleeping laptop"],
+  ] as const)(
+    "keeps the brand while a secondary environment is %s (%s)",
+    (connectionState, connectionError) => {
+      const state = workspaceState({
+        hasConnectingEnvironment: connectionState !== "error",
+        hasPendingShellSnapshot: true,
+        connectionError,
+        connectingEnvironments:
+          connectionState === "error"
+            ? []
+            : [
+                {
+                  environmentId: "environment-2" as never,
+                  environmentLabel: "Sleeping laptop",
+                  displayUrl: "",
+                  isRelayManaged: false,
+                  isEnabled: true,
+                  connectionState,
+                  connectionError,
+                  connectionErrorTraceId: null,
+                },
+              ],
+      });
+
+      expect(workspaceConnectionStatusPresentation(state)).toBeNull();
+    },
+  );
+
+  it("shows connected shell catch-up even while a secondary environment is unreachable", () => {
+    const state = workspaceState({
+      hasSyncingConnectedEnvironment: true,
+      hasPendingShellSnapshot: true,
+      hasConnectingEnvironment: true,
+      connectionError: "Could not reach sleeping laptop",
+      connectingEnvironments: [
+        {
+          environmentId: "environment-2" as never,
+          environmentLabel: "Sleeping laptop",
+          displayUrl: "",
+          isRelayManaged: false,
+          isEnabled: true,
+          connectionState: "reconnecting",
+          connectionError: "Could not reach sleeping laptop",
+          connectionErrorTraceId: null,
+        },
+      ],
+    });
+
+    expect(workspaceConnectionStatusPresentation(state)).toEqual({
+      label: "Syncing threads...",
+      showsProgress: true,
+    });
   });
 
   it("surfaces offline snapshots", () => {
@@ -72,7 +133,10 @@ describe("workspace connection status", () => {
   });
 
   it("shows shell catch-up while cached threads remain visible", () => {
-    const state = workspaceState({ hasPendingShellSnapshot: true });
+    const state = workspaceState({
+      hasPendingShellSnapshot: true,
+      hasSyncingConnectedEnvironment: true,
+    });
 
     expect(workspaceConnectionStatusPresentation(state)).toEqual({
       label: "Syncing threads...",
@@ -84,6 +148,7 @@ describe("workspace connection status", () => {
     const state = workspaceState({
       hasLoadedShellSnapshot: false,
       hasPendingShellSnapshot: true,
+      hasSyncingConnectedEnvironment: true,
     });
 
     expect(workspaceConnectionStatusPresentation(state)).toEqual({

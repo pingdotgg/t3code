@@ -62,6 +62,7 @@ describe("workspace connection subscriptions", () => {
         networkStatus: get(h.network),
         environments: [projectWorkspaceEnvironment(ID, get(h.source)!)],
         shellSummary: get(shell),
+        hasSyncingConnectedEnvironment: false,
       }),
     );
     const initial = h.registry.get(h.stateAtom);
