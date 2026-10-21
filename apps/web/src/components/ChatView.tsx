@@ -91,6 +91,7 @@ import {
 import { readPastedComposerContext } from "./composerInlineTokenPaste";
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { effectiveSnoozed, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
+import { declinePendingApprovals } from "@t3tools/client-runtime/state/thread-requests";
 import { presentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { childThreadInputsTitle } from "@t3tools/client-runtime/state/threads";
 import { useAcknowledgeThreadWoke, useThreadActions } from "../hooks/useThreadActions";
@@ -2542,6 +2543,13 @@ export default function ChatView(props: ChatViewProps) {
     composerRef,
     setThreadError,
   });
+  // A send awaits uploads before it declines, so it reads the approvals pending by then.
+  const pendingApprovalsRef = useRef(pendingApprovals);
+  const respondingRequestIdsRef = useRef(respondingRequestIds);
+  useLayoutEffect(() => {
+    pendingApprovalsRef.current = pendingApprovals;
+    respondingRequestIdsRef.current = respondingRequestIds;
+  }, [pendingApprovals, respondingRequestIds]);
   const activeProposedPlan = (() => {
     if (!latestRunSettled) {
       return null;
@@ -6213,6 +6221,9 @@ export default function ChatView(props: ChatViewProps) {
     },
   ) => {
     e?.preventDefault();
+    // What the user pressed send on; uploads below can take a while, and a redirect must not
+    // decline approvals for a draft that changed meanwhile.
+    const promptAtSend = promptRef.current;
     if (
       usageLimitsOffered &&
       usageLimitsKey !== null &&
@@ -6786,6 +6797,94 @@ export default function ChatView(props: ChatViewProps) {
         currentThreadKey === activeThreadKey ? null : currentThreadKey,
       );
       return;
+    }
+    // A message sent while approvals are pending redirects the agent. They are declined only
+    // here, after everything above has accepted the send, so local commands and rejected
+    // drafts leave them alone. After navigating away during an upload, the shown approvals
+    // are another thread's, so this send leaves them alone too.
+    const approvalsToDecline =
+      currentRouteThreadKeyRef.current === routeThreadKey
+        ? pendingApprovalsRef.current.filter((approval) =>
+            sendCtx?.shownPendingApprovalIds.includes(approval.requestId),
+          )
+        : [];
+    if (approvalsToDecline.length > 0) {
+      // A draft edited since send, or a paste still landing in it, is no longer the message
+      // the user sent.
+      const attachmentIdsAtSend = composerAttachmentsSnapshot.map((attachment) => attachment.id);
+      // A direct annotation send writes its image and reference into the draft as it sends,
+      // so the live draft may still lack them; anything else differing is a real edit.
+      const annotationImageId = directAnnotation?.image?.id;
+      const attachmentIdsBeforeAnnotation = attachmentIdsAtSend.filter(
+        (id) => id !== annotationImageId,
+      );
+      const sameIds = (left: ReadonlyArray<string>, right: ReadonlyArray<string>) =>
+        left.length === right.length && left.every((id, index) => id === right[index]);
+      const draftChangedSinceSend = () => {
+        if (composerRef.current?.hasPendingAttachments() === true) return true;
+        const sendContext = composerRef.current?.getSendContext();
+        const attachmentIds = sendContext
+          ? [...sendContext.images, ...sendContext.files].map((attachment) => attachment.id)
+          : attachmentIdsAtSend;
+        const promptUnchanged =
+          promptRef.current === promptAtSend || promptRef.current === promptForSend;
+        const attachmentsUnchanged =
+          sameIds(attachmentIds, attachmentIdsAtSend) ||
+          (annotationImageId !== undefined &&
+            sameIds(attachmentIds, attachmentIdsBeforeAnnotation));
+        return !promptUnchanged || !attachmentsUnchanged;
+      };
+      const draftBeforeDecline = useComposerDraftStore
+        .getState()
+        .getComposerDraft(composerDraftTarget);
+      const changedBeforeDecline = draftChangedSinceSend();
+      const pendingIdsBeforeDecline = pendingApprovalsRef.current.map(
+        (approval) => approval.requestId,
+      );
+      const approvalResponding = approvalsToDecline.some((approval) =>
+        respondingRequestIdsRef.current.includes(approval.requestId),
+      );
+      const declined =
+        !changedBeforeDecline &&
+        !approvalResponding &&
+        (await declinePendingApprovals(approvalsToDecline, onRespondToApprovalStable).catch(
+          () => false,
+        ));
+      const draftChanged =
+        changedBeforeDecline ||
+        draftChangedSinceSend() ||
+        useComposerDraftStore.getState().getComposerDraft(composerDraftTarget) !==
+          draftBeforeDecline;
+      // An approval that arrived during the decline would block the redirect; keep the draft so
+      // the next send declines it too.
+      const approvalArrived = pendingApprovalsRef.current.some(
+        (approval) => !pendingIdsBeforeDecline.includes(approval.requestId),
+      );
+      if (
+        !declined ||
+        draftChanged ||
+        approvalArrived ||
+        currentRouteThreadKeyRef.current !== routeThreadKey
+      ) {
+        sendInFlightRef.current = false;
+        setDockedDraftHeroThreadKey((currentThreadKey) =>
+          currentThreadKey === activeThreadKey ? null : currentThreadKey,
+        );
+        if (draftChanged || approvalResponding || (declined && approvalArrived)) {
+          toastManager.add({
+            type: "info",
+            title: draftChanged
+              ? declined
+                ? "Approval declined. Your message changed, so it wasn't sent."
+                : "Your message changed, so it wasn't sent."
+              : approvalResponding
+                ? "An approval is already being answered, so your message wasn't sent."
+                : "Another approval arrived, so your message wasn't sent.",
+            description: "Send again when it's ready.",
+          });
+        }
+        return;
+      }
     }
     if (sendQueuesBehindSetup) {
       setSetupQueueSendThreadKey(activeThreadKey);
