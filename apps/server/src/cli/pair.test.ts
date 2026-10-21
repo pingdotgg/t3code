@@ -9,6 +9,7 @@ import { AuthStandardClientScopes } from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, expect, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
@@ -283,6 +284,46 @@ describe("t3 pair", () => {
           typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
         );
         assert.include(rendered, "No running T3 Code server found.");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  // regression: #10516 minting opens the target database with this checkout's
+  // migrations, so a worktree must never fall back to the live install.
+  it.effect("does not fall back to the shared home from a linked worktree", () =>
+    withDescriptorServer((origin) =>
+      Effect.gen(function* () {
+        const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-worktree-test-"));
+        const worktree = NodePath.join(root, "worktree");
+        NodeFS.mkdirSync(worktree);
+        NodeFS.writeFileSync(
+          NodePath.join(worktree, ".git"),
+          `gitdir: ${NodePath.join(root, "repo", ".git", "worktrees", "worktree")}\n`,
+        );
+        const sharedHome = NodePath.join(root, "shared");
+        yield* persistServerRuntimeState({
+          path: NodePath.join(sharedHome, "userdata", "server-runtime.json"),
+          state: yield* makePersistedServerRuntimeState({
+            config: { host: "127.0.0.1", devUrl: undefined },
+            port: Number(new URL(origin).port),
+          }),
+        });
+
+        const error = yield* provideCliTestLayers(
+          runCli(["pair"]).pipe(
+            Effect.provideService(HostProcess.WorkingDirectory, worktree),
+            Effect.provide(
+              ConfigProvider.layer(ConfigProvider.fromEnv({ env: { T3CODE_HOME: sharedHome } })),
+            ),
+            Effect.flip,
+          ),
+        );
+
+        assert.include(String(error), "No running T3 Code server found.");
+        assert.notInclude(String(error), sharedHome);
+        assert.deepEqual(NodeFS.readdirSync(NodePath.join(sharedHome, "userdata")), [
+          "server-runtime.json",
+        ]);
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
