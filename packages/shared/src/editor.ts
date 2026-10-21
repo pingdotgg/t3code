@@ -110,7 +110,11 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
 
   if (platform === "darwin") {
     const macExecutable = jetbrains ? command : macBundleExecutables[editor.id];
-    const roots = [...(home ? [path.join(home, "Applications")] : []), "/Applications"];
+    const roots = [
+      ...(home ? [path.join(home, "Applications")] : []),
+      "/Applications",
+      ...(editor.id === "qtcreator" && home ? [path.join(home, "Qt")] : []),
+    ];
     for (const root of roots) {
       // JetBrains Toolbox appends versions to bundle names; accept exact and versioned names.
       const entries = yield* fs.readDirectory(root).pipe(Effect.orElseSucceed(() => []));
@@ -181,6 +185,9 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
           );
         }
       }
+    }
+    if (editor.id === "qtcreator") {
+      candidates.push("C:\\Qt\\Tools\\QtCreator\\bin\\qtcreator.exe");
     }
   } else if (platform === "linux") {
     const dirs = [
