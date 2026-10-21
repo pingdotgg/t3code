@@ -957,6 +957,9 @@ importers:
       effect:
         specifier: 4.0.5
         version: 4.0.5
+      fast-xml-parser:
+        specifier: 5.7.3
+        version: 5.7.3
       hast-util-to-html:
         specifier: ^9.0.5
         version: 9.0.5

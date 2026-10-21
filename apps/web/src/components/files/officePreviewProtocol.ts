@@ -2,12 +2,13 @@ import type { OfficePreviewKind } from "@t3tools/shared/filePreview";
 import type { SlideDisplayList } from "@betteroffice/pptx";
 
 export const OFFICE_PREVIEW_MAX_BYTES = 50 * 1024 * 1024;
-export const OFFICE_PREVIEW_MAX_ROWS = 500;
-export const OFFICE_PREVIEW_MAX_COLUMNS = 50;
+export const OFFICE_PREVIEW_MAX_ROWS = 250_000;
+export const OFFICE_PREVIEW_MAX_COLUMNS = 1024;
 
 export type OfficeWorkerRequest =
   | { readonly type: "open"; readonly kind: OfficePreviewKind; readonly bytes: ArrayBuffer }
-  | { readonly type: "slide"; readonly index: number };
+  | { readonly type: "slide"; readonly index: number }
+  | { readonly type: "sheet-page"; readonly sheet: number; readonly index: number };
 
 export type OfficeWorkerResult =
   | { readonly type: "error"; readonly message: string }
@@ -19,7 +20,19 @@ export type OfficeWorkerResult =
     }
   | {
       readonly type: "xlsx";
-      readonly sheets: { name: string; rows: string[][]; truncated: boolean }[];
+      readonly sheets: {
+        name: string;
+        rows: string[][];
+        truncated: boolean;
+        rowCount: number;
+        columns: number;
+      }[];
+    }
+  | {
+      readonly type: "sheet-page";
+      readonly sheet: number;
+      readonly index: number;
+      readonly rows: string[][];
     }
   | { readonly type: "pptx"; readonly count: number; readonly font: ArrayBuffer }
   | {

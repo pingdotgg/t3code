@@ -207,6 +207,30 @@
   ],
   "packageOverrides": [
     {
+      "name": "@nodable/entities",
+      "version": "2.1.1",
+      "sourceUrl": "https://github.com/nodable/val-parsers",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2026 Nodable"]
+      }
+    },
+    {
+      "name": "xml-naming",
+      "version": "0.1.0",
+      "sourceUrl": "https://github.com/NaturalIntelligence/xml-naming",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2026 Natural Intelligence"]
+      }
+    },
+    {
+      "name": "fast-xml-parser",
+      "version": "5.7.3",
+      "license": "MIT",
+      "sourceUrl": "https://github.com/NaturalIntelligence/fast-xml-parser"
+    },
+    {
       "name": "saxes",
       "version": "6.0.0",
       "license": "ISC",

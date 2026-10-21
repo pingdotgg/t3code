@@ -59,6 +59,7 @@
     "docx-preview": "0.4.1",
     "dompurify": "^3.4.16",
     "effect": "catalog:",
+    "fast-xml-parser": "5.7.3",
     "hast-util-to-html": "^9.0.5",
     "hast-util-to-jsx-runtime": "^2.3.6",
     "heic-to": "^1.5.2",

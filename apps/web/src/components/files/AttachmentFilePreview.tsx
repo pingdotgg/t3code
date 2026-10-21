@@ -34,6 +34,8 @@ import {
   FileSurfaceNotice,
 } from "./fileSurfaceChrome";
 
+const LargeTextViewer = lazy(() => import("./LargeTextViewer"));
+
 const OfficeFilePreview = lazy(() =>
   import("./OfficeFilePreview").then((module) => ({ default: module.OfficeFilePreview })),
 );
@@ -132,6 +134,7 @@ export function AttachmentFilePreview(props: {
   const [content, setContent] = useState<{ text: string; truncated: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [contentError, setContentError] = useState<string | null>(null);
+  const copyContents = useRef<(() => Promise<string>) | null>(null);
   const authorizedAt = useRef(0);
   useEffect(() => {
     if (!props.file) return;
@@ -163,10 +166,14 @@ export function AttachmentFilePreview(props: {
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Retry must reauthorize the remote file.
   }, [props.file, refresh, revision]);
   const url = props.file ? localUrl : remoteUrl;
+  const streamsText =
+    kind === "text" &&
+    (props.sizeBytes > FILE_TEXT_PREVIEW_MAX_BYTES ||
+      (props.sizeBytes === 0 && (!resource || resource._tag === "attachment")));
   const needsText =
     kind === "text" || kind === "markdown" || kind === "mermaid" || (kind === "html" && !rendered);
   useEffect(() => {
-    if (!needsText || !url) return;
+    if (!needsText || streamsText || !url) return;
     const controller = new AbortController();
     // oxlint-disable-next-line react/set-state-in-effect -- A new external resource must clear the previous response before loading.
     setContent(null);
@@ -199,13 +206,13 @@ export function AttachmentFilePreview(props: {
         setContentError(cause instanceof Error ? cause.message : "Could not load this file.");
     });
     return () => controller.abort();
-  }, [url, needsText, revision, props.sizeBytes, props.file, refresh]);
+  }, [url, needsText, streamsText, revision, props.sizeBytes, props.file, refresh]);
   const failure = error ?? (needsText ? contentError : null);
   const wordWrap = useClientSettings((settings) => settings.wordWrap);
   const showsRawText =
     failure === null &&
     needsText &&
-    content !== null &&
+    (content !== null || streamsText) &&
     !(delimiter && rendered) &&
     !((kind === "markdown" || kind === "mermaid") && rendered);
 
@@ -250,6 +257,18 @@ export function AttachmentFilePreview(props: {
         setRevision((value) => value + 1);
       }}
     />
+  ) : streamsText && url ? (
+    <Suspense fallback={<FileSurfaceLoading />}>
+      <LargeTextViewer
+        key={`${url}:${rendered}:${revision}`}
+        name={props.name}
+        src={url}
+        sizeBytes={props.sizeBytes}
+        onRetry={() => setRevision((value) => value + 1)}
+        delimiter={rendered ? delimiter : null}
+        copyContents={copyContents}
+      />
+    </Suspense>
   ) : !url || (needsText && !content) ? (
     <FileSurfaceLoading />
   ) : needsText && content ? (
@@ -358,10 +377,33 @@ export function AttachmentFilePreview(props: {
             <WrapTextIcon className="size-3.5" />
           </FileSurfaceAction>
         ) : null}
-        {content ? (
+        {content || streamsText ? (
           <FileSurfaceAction
-            label={isCopied ? "Copied" : content.truncated ? "Copy preview" : "Copy contents"}
-            onPress={() => copyToClipboard(content.text, undefined)}
+            label={isCopied ? "Copied" : content?.truncated ? "Copy preview" : "Copy contents"}
+            onPress={() => {
+              if (content) {
+                void copyToClipboard(content.text, undefined);
+                return;
+              }
+              const copy = copyContents.current;
+              if (!copy) {
+                toastManager.add({
+                  type: "error",
+                  title: "Could not copy file",
+                  description: "Wait for the file to finish loading before copying.",
+                });
+                return;
+              }
+              void copy()
+                .then((text) => copyToClipboard(text, undefined))
+                .catch((cause: unknown) =>
+                  toastManager.add({
+                    type: "error",
+                    title: "Could not copy file",
+                    description: cause instanceof Error ? cause.message : "Try again.",
+                  }),
+                );
+            }}
           >
             <MorphIcon className="size-3.5" icon={isCopied ? Check : Copy} />
           </FileSurfaceAction>

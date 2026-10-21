@@ -99,8 +99,13 @@ const browserTestProject = {
     include: [
       "vite-plus/test/browser",
       "@base-ui/react/autocomplete",
-      "read-excel-file/universal",
+      "@betteroffice/pptx",
+      "docx-preview",
+      "fast-xml-parser",
+      "dompurify",
+      "jszip",
       "saxes",
+      "read-excel-file/universal",
     ],
   },
   test: {

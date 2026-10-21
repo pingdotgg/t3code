@@ -1,3 +1,4 @@
+import { XMLParser } from "fast-xml-parser";
 import JSZip from "jszip";
 import { SaxesParser } from "saxes";
 import type { PresentationHandle, SlidePrimitive } from "@betteroffice/pptx";
@@ -9,6 +10,10 @@ import {
   type OfficeWorkerRequest,
   type OfficeWorkerResult,
 } from "./officePreviewProtocol";
+
+import { PREVIEW_PAGE_ROWS } from "./largeTextProtocol";
+
+let workbook: string[][][] = [];
 
 let presentation: PresentationHandle | null = null;
 
@@ -237,7 +242,8 @@ function boundedWorksheet(xml: string) {
         throw new Error("This workbook contains invalid row coordinates.");
       column = 0;
       cells = rows.get(row) ?? new Map<number, string>();
-      if (row > OFFICE_PREVIEW_MAX_ROWS) truncated = true;
+      if (row > OFFICE_PREVIEW_MAX_ROWS)
+        throw new Error("This workbook exceeds the preview limit: 250,000 rows.");
     } else if (depth === 4 && tag.local === "c") {
       const ref = attribute("r");
       const position = ref ? coordinate(ref) : { col: column + 1, line: row };
@@ -250,8 +256,9 @@ function boundedWorksheet(xml: string) {
         return;
       }
       // Explicit coordinates also bound sheets whose rows/cells omit r.
-      const letters =
-        column <= 26 ? String.fromCharCode(64 + column) : `A${String.fromCharCode(38 + column)}`;
+      let letters = "";
+      for (let value = column; value > 0; value = Math.floor((value - 1) / 26))
+        letters = String.fromCharCode(65 + ((value - 1) % 26)) + letters;
       const style = attribute("s");
       const type = attribute("t");
       if ((style && !/^\d{1,6}$/.test(style)) || (type && !/^[a-zA-Z]+$/.test(type)))
@@ -770,6 +777,7 @@ async function wordExpansion(
 // must not turn into an unbounded allocation on the UI thread.
 async function boundedArchive(input: Extract<OfficeWorkerRequest, { type: "open" }>) {
   const { bytes } = input;
+  const spreadsheet = input.kind === "xlsx";
   if (bytes.byteLength > OFFICE_PREVIEW_MAX_BYTES)
     throw new Error("Preview limited to files under 50 MB.");
   const source = await JSZip.loadAsync(bytes).catch(() => {
@@ -816,7 +824,7 @@ async function boundedArchive(input: Extract<OfficeWorkerRequest, { type: "open"
         .on("data", (chunk: Uint8Array) => {
           total += chunk.length;
           length += chunk.length;
-          if (total > OFFICE_PREVIEW_MAX_BYTES) {
+          if (total > (spreadsheet ? 128 * 1024 * 1024 : OFFICE_PREVIEW_MAX_BYTES)) {
             stream.pause();
             reject(new Error("The expanded document is too large to preview safely."));
             return;
@@ -847,10 +855,11 @@ async function boundedArchive(input: Extract<OfficeWorkerRequest, { type: "open"
             }
           }
           if (
-            total > OFFICE_PREVIEW_MAX_BYTES ||
+            total > (spreadsheet ? 128 * 1024 * 1024 : OFFICE_PREVIEW_MAX_BYTES) ||
+            (spreadsheet && total > Math.max(bytes.byteLength * 200, 8 * 1024 * 1024)) ||
             (!document &&
-              (input.kind === "xlsx" || media || entry.name.endsWith(".xml")) &&
-              length > 8 * 1024 * 1024)
+              (spreadsheet || media || entry.name.endsWith(".xml")) &&
+              length > (spreadsheet ? 64 * 1024 * 1024 : 8 * 1024 * 1024))
           ) {
             stream.pause();
             reject(new Error("The expanded document is too large to preview safely."));
@@ -947,6 +956,17 @@ async function boundedArchive(input: Extract<OfficeWorkerRequest, { type: "open"
 }
 
 async function handle(input: OfficeWorkerRequest) {
+  if (input.type === "sheet-page") {
+    const rows = workbook[input.sheet];
+    if (!rows) throw new Error("This sheet is unavailable.");
+    reply({
+      type: "sheet-page",
+      sheet: input.sheet,
+      index: input.index,
+      rows: rows.slice(input.index * PREVIEW_PAGE_ROWS, (input.index + 1) * PREVIEW_PAGE_ROWS),
+    });
+    return;
+  }
   if (input.type === "slide") {
     if (!presentation) throw new Error("The presentation is unavailable.");
     const frame = presentation.layoutSlide(input.index);
@@ -991,11 +1011,76 @@ async function handle(input: OfficeWorkerRequest) {
     reply({ type: "docx", bytes, ...word });
   } else if (input.kind === "xlsx") {
     const { default: readXlsxFile } = await import("read-excel-file/universal");
+    const sheetIds = new Set<string>();
+    const targets = new Map<string, string>();
+    const scan = (xml: string, visit: (name: string, attrs: Record<string, string>) => void) => {
+      if (/<!\s*(DOCTYPE|ENTITY)/i.test(xml)) throw new Error("Workbook DTDs are not supported.");
+      new XMLParser({
+        ignoreAttributes: false,
+        attributeNamePrefix: "",
+        parseAttributeValue: false,
+        updateTag(name, _path, attrs) {
+          visit(name.split(":").at(-1)!, attrs);
+          return name;
+        },
+      }).parse(xml);
+    };
+    scan(await archive.file("xl/workbook.xml")!.async("string"), (name, attrs) => {
+      if (name === "sheet" && attrs["r:id"]) sheetIds.add(attrs["r:id"]);
+    });
+    const relationships = archive.file("xl/_rels/workbook.xml.rels");
+    if (!relationships) throw new Error("This workbook has no worksheet relationships.");
+    scan(await relationships.async("string"), (name, attrs) => {
+      if (
+        name === "Relationship" &&
+        (attrs.Type ===
+          "http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" ||
+          attrs.Type === "http://purl.oclc.org/ooxml/officeDocument/relationships/worksheet")
+      ) {
+        // Match read-excel-file's absolute/relative target handling exactly.
+        const target = attrs.Target;
+        if (!target) throw new Error("This workbook has an invalid worksheet relationship.");
+        targets.set(attrs.Id!, target.startsWith("/") ? target.slice(1) : `xl/${target}`);
+      }
+    });
+    if (sheetIds.size === 0 || sheetIds.size > 100)
+      throw new Error("This workbook has no readable sheets or too many sheets to preview.");
+    let cells = 0;
+    for (const id of sheetIds) {
+      const target = targets.get(id);
+      const entry = target ? archive.file(target) : null;
+      if (!entry) throw new Error("This workbook has a missing worksheet.");
+      let maxRow = 0;
+      let maxColumn = 0;
+      scan(await entry.async("string"), (name, attrs) => {
+        if (name === "row") maxRow = Math.max(maxRow + 1, Number(attrs.r ?? 0));
+        if (name === "c") {
+          cells++;
+          const address = /^([A-Z]+)(\d+)$/.exec(attrs.r ?? "");
+          if (!address) throw new Error("This workbook has an invalid cell address.");
+          maxRow = Math.max(maxRow, Number(address[2]));
+          let column = 0;
+          for (const letter of address[1]!) column = column * 26 + letter.charCodeAt(0) - 64;
+          maxColumn = Math.max(maxColumn, column);
+        }
+        if (
+          !Number.isFinite(maxRow) ||
+          maxRow > OFFICE_PREVIEW_MAX_ROWS ||
+          maxColumn > OFFICE_PREVIEW_MAX_COLUMNS ||
+          maxRow * maxColumn > 8_000_000 ||
+          cells > 2_000_000
+        )
+          throw new Error(
+            "This workbook exceeds the preview limit: 250,000 rows, 1,024 columns, 2 million cells or 8 million grid positions.",
+          );
+      });
+    }
     const sheets = await readXlsxFile(bytes);
     if (sheets.length === 0 || sheets.length > 100)
       throw new Error("This workbook has no readable sheets or too many sheets to preview.");
     let remainingText =
       1024 * 1024 - sheets.reduce((sum, { sheet }) => sum + Math.min(sheet.length, 256), 0);
+    workbook = [];
     reply({
       type: "xlsx",
       sheets: sheets.map(({ sheet, data }, index) => {
@@ -1029,7 +1114,14 @@ async function handle(input: OfficeWorkerRequest) {
             break;
           }
         }
-        return { name: sheet.slice(0, 256), rows, truncated };
+        workbook.push(rows);
+        return {
+          name: sheet.slice(0, 256),
+          rows: rows.slice(0, PREVIEW_PAGE_ROWS),
+          rowCount: rows.length,
+          columns: rows.reduce((columns, row) => Math.max(columns, row.length), 1),
+          truncated,
+        };
       }),
     });
   } else {
