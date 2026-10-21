@@ -2182,19 +2182,21 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           });
         case "session.execution.interrupted":
           return yield* endExecution(state, turn, { status: "interrupted" });
-        case "session.execution.failed":
+        case "session.execution.failed": {
+          const { type, message, status } = event.data.error;
+          // OpenCode types an empty balance as provider.quota too, but it answers
+          // that with HTTP 402 and it never resets. Usage windows and budgets are 429.
+          const usageLimit =
+            (type === "provider.quota" && status !== 402) || type === "provider.rate-limit";
           return yield* endExecution(state, turn, {
             status: "failed",
             failure: makeProviderFailure({
-              message: event.data.error.message,
-              code: event.data.error.type,
-              class:
-                event.data.error.type === "provider.quota" ||
-                event.data.error.type === "provider.rate-limit"
-                  ? "usage_limit"
-                  : "provider_error",
+              message,
+              code: type,
+              class: usageLimit ? "usage_limit" : "provider_error",
             }),
           });
+        }
         default:
           return;
       }

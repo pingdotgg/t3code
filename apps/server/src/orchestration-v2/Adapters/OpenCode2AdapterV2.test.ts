@@ -514,6 +514,71 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  // OpenCode types an empty balance as provider.quota too, but answers it with
+  // HTTP 402 and it never resets. Usage windows and budgets arrive as 429.
+  it.effect.each([
+    {
+      name: "an out-of-funds provider.quota (402)",
+      failureClass: "provider_error",
+      error: {
+        type: "provider.quota",
+        message: "Upstream request failed: Insufficient account funds",
+        status: 402,
+      },
+    },
+    {
+      name: "a provider.quota usage window (429)",
+      failureClass: "usage_limit",
+      error: {
+        type: "provider.quota",
+        message: "Subscription quota exceeded.",
+        status: 429,
+        response: {
+          body: JSON.stringify({
+            type: "error",
+            error: { type: "GoUsageLimitError", message: "Subscription quota exceeded." },
+          }),
+        },
+      },
+    },
+    {
+      name: "a provider.quota account budget (429)",
+      failureClass: "usage_limit",
+      error: {
+        type: "provider.quota",
+        message: "Upstream request failed: Account budget exceeded",
+        status: 429,
+      },
+    },
+    {
+      name: "a provider.rate-limit failure (429)",
+      failureClass: "usage_limit",
+      error: {
+        type: "provider.rate-limit",
+        message: "Rate limit exceeded: free-models-per-min.",
+        status: 429,
+      },
+    },
+  ] as const)("classifies $name as $failureClass", ({ error, failureClass }) =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.failed", { sessionID: SESSION, error }),
+      ]);
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(turnInput(thread));
+      const ended = yield* Fiber.join(terminal);
+      assert.equal(ended?.status, "failed");
+      assert.deepEqual(ended?.failure, {
+        class: failureClass,
+        code: error.type,
+        message: error.message,
+        retryable: null,
+      });
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("ends the turn when its terminal event is one this build cannot decode", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
