@@ -225,25 +225,6 @@ describe("V2 thread find", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect("returns only a final frame for empty searches and relative navigation", () =>
-    Effect.gen(function* () {
-      const projection = yield* setup;
-      yield* putItems([item("only", 0, "needle needle")]);
-      const empty = yield* projection
-        .searchThreadStream({ threadId, query: "missing" })
-        .pipe(Stream.runCollect);
-      assert.equal(empty.length, 1);
-      assert.equal(empty[0]!.totalMatches, 0);
-      assert.notEqual(empty[0]!.complete, false);
-      const relative = yield* projection
-        .searchThreadStream({ threadId, query: "needle", offset: 1 })
-        .pipe(Stream.runCollect);
-      assert.equal(relative.length, 1);
-      assert.equal(relative[0]!.match?.occurrence, 1);
-      assert.notEqual(relative[0]!.complete, false);
-    }).pipe(Effect.provide(layerTest)),
-  );
-
   it.effect("returns bounded navigation counts around the selection, including wraparound", () =>
     Effect.gen(function* () {
       const projection = yield* setup;

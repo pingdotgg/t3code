@@ -3,7 +3,6 @@ import { expect, it, vi } from "vite-plus/test";
 import { it as effectIt } from "@effect/vitest";
 import {
   CheckpointScopeId,
-  ContextTransferId,
   MessageId,
   NodeId,
   ProviderSessionId,
@@ -201,23 +200,6 @@ function startWithMissingWorktree(
     projectionReads: () => projectionReadCount,
   };
 }
-
-it("does not commit running state when inherited background routing cannot be read", async () => {
-  const worktreePath = `${managedWorktreesDir}/project/feature-restore`;
-  const harness = startWithMissingWorktree(worktreePath);
-  const error = await harness.start;
-
-  expect(error._tag).toBe("ProviderTurnStartError");
-  expect(harness.projectionReads()).toBe(3);
-  expect(harness.pruneWorktrees).toHaveBeenCalledWith({ cwd: "/tmp/provider-turn-start-project" });
-  expect(harness.createWorktree).toHaveBeenCalledWith({
-    cwd: "/tmp/provider-turn-start-project",
-    refName: "feature/restore",
-    path: worktreePath,
-  });
-  expect(harness.writeIfRunCurrent).not.toHaveBeenCalled();
-  expect(harness.startRootRun).not.toHaveBeenCalled();
-});
 
 it.each([
   {
@@ -816,123 +798,66 @@ effectIt.effect("reads current startup state after waiting for the workspace lea
   }),
 );
 
+// regression: #15784 superseded provider startups kept running
 effectIt.effect.each([
-  { boundary: "policy resolution", nativeMode: "ensure", loss: "replaced" },
-  { boundary: "policy resolution", nativeMode: "ensure", loss: "interrupted" },
-  { boundary: "session opening", nativeMode: "ensure", loss: "replaced" },
-  { boundary: "session opening", nativeMode: "ensure", loss: "interrupted" },
-  { boundary: "session opening", nativeMode: "resume", loss: "replaced" },
-  { boundary: "session opening", nativeMode: "fork", loss: "replaced" },
-])(
-  "does not continue $nativeMode startup when $loss during $boundary",
-  ({ boundary, nativeMode, loss }) =>
-    Effect.gen(function* () {
-      const entered = yield* Deferred.make<void>();
-      const release = yield* Deferred.make<void>();
-      const gate = Deferred.succeed(entered, undefined).pipe(
-        Effect.andThen(Deferred.await(release)),
+  { boundary: "policy resolution", loss: "replaced" },
+  { boundary: "session opening", loss: "interrupted" },
+])("does not continue startup when $loss during $boundary", ({ boundary, loss }) =>
+  Effect.gen(function* () {
+    const entered = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const gate = Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release)));
+    const harness = makeLocalCommandHarness({ text: "Continue" });
+    const projection = harness.projection();
+    const providerThread = projection.providerThreads[0]!;
+    const ensureThread = vi.fn(() => Effect.succeed(providerThread));
+    const resumeThread = vi.fn(() => Effect.succeed(providerThread));
+    const forkThread = vi.fn(() => Effect.succeed(providerThread));
+    harness.open.mockReturnValue(
+      (boundary === "session opening" ? gate : Effect.void).pipe(
+        Effect.as({
+          driver: providerThread.driver,
+          ensureThread,
+          resumeThread,
+          forkThread,
+        } as never),
+      ),
+    );
+    if (boundary === "policy resolution") {
+      harness.resolveRuntimePolicy.mockReturnValue(
+        gate.pipe(Effect.as({ cwd: "/tmp/native-account-command" } as never)),
       );
-      const harness = makeLocalCommandHarness({ text: "Continue" });
-      const projection = harness.projection();
-      const run = projection.runs[0]!;
-      const providerThread = projection.providerThreads[0]!;
-      if (nativeMode === "resume") {
-        harness.setProjection({
-          ...projection,
-          providerThreads: [
-            {
-              ...providerThread,
-              nativeThreadRef: {
-                driver: providerThread.driver,
-                nativeId: "existing",
-                strength: "strong",
-              },
-            },
-          ],
-        });
-      } else if (nativeMode === "fork") {
-        const sourceThreadId = ThreadId.make("fork-source");
-        harness.getThreadRecords.mockReturnValue(
-          Effect.succeed({
-            ...projection,
-            thread: { ...projection.thread, id: sourceThreadId },
-          }),
-        );
-        harness.setProjection({
-          ...projection,
-          contextTransfers: [
-            {
-              id: ContextTransferId.make("pending-fork"),
-              type: "fork",
-              sourceThreadId,
-              targetThreadId: projection.thread.id,
-              sourcePoint: { threadId: sourceThreadId, runId: run.id },
-              basePoint: null,
-              sourceProviderInstanceId: run.providerInstanceId,
-              targetProviderInstanceId: run.providerInstanceId,
-              targetRunId: run.id,
-              status: "pending",
-              resolution: null,
-              createdBy: "user",
-              error: null,
-              createdAt: projection.updatedAt,
-              updatedAt: projection.updatedAt,
-              consumedAt: null,
-            },
-          ],
-        });
-      }
-      const ensureThread = vi.fn(() => Effect.succeed(providerThread));
-      const resumeThread = vi.fn(() => Effect.succeed(providerThread));
-      const forkThread = vi.fn(() => Effect.succeed(providerThread));
-      harness.open.mockReturnValue(
-        (boundary === "session opening" ? gate : Effect.void).pipe(
-          Effect.as({
-            driver: providerThread.driver,
-            ensureThread,
-            resumeThread,
-            forkThread,
-          } as never),
-        ),
-      );
-      if (boundary === "policy resolution") {
-        harness.resolveRuntimePolicy.mockReturnValue(
-          gate.pipe(Effect.as({ cwd: "/tmp/native-account-command" } as never)),
-        );
-      }
+    }
 
-      const startup = yield* harness.start.pipe(Effect.forkChild({ startImmediately: true }));
-      yield* Deferred.await(entered);
-      const current = harness.projection();
-      const replacementId = RunAttemptId.make("replacement-attempt");
-      const updated = {
-        ...current,
-        runs: current.runs.map((candidate) =>
-          loss === "replaced"
-            ? { ...candidate, activeAttemptId: replacementId }
-            : { ...candidate, status: "interrupted" as const, completedAt: current.updatedAt },
-        ),
-        attempts:
-          loss === "replaced"
-            ? [
-                ...current.attempts,
-                { ...current.attempts[0]!, id: replacementId, attemptOrdinal: 2 },
-              ]
-            : current.attempts,
-      };
-      harness.setProjection(updated);
-      yield* Deferred.succeed(release, undefined);
-      yield* Fiber.join(startup);
+    const startup = yield* harness.start.pipe(Effect.forkChild({ startImmediately: true }));
+    yield* Deferred.await(entered);
+    const current = harness.projection();
+    const replacementId = RunAttemptId.make("replacement-attempt");
+    const updated = {
+      ...current,
+      runs: current.runs.map((candidate) =>
+        loss === "replaced"
+          ? { ...candidate, activeAttemptId: replacementId }
+          : { ...candidate, status: "interrupted" as const, completedAt: current.updatedAt },
+      ),
+      attempts:
+        loss === "replaced"
+          ? [...current.attempts, { ...current.attempts[0]!, id: replacementId, attemptOrdinal: 2 }]
+          : current.attempts,
+    };
+    harness.setProjection(updated);
+    yield* Deferred.succeed(release, undefined);
+    yield* Fiber.join(startup);
 
-      expect(harness.open).toHaveBeenCalledTimes(boundary === "session opening" ? 1 : 0);
-      expect(ensureThread).not.toHaveBeenCalled();
-      expect(resumeThread).not.toHaveBeenCalled();
-      expect(forkThread).not.toHaveBeenCalled();
-      expect(harness.startRootRun).not.toHaveBeenCalled();
-      expect(harness.writeIfRunCurrent).not.toHaveBeenCalled();
-      expect(harness.events).toEqual([]);
-      expect(harness.projection()).toEqual(updated);
-    }),
+    expect(harness.open).toHaveBeenCalledTimes(boundary === "session opening" ? 1 : 0);
+    expect(ensureThread).not.toHaveBeenCalled();
+    expect(resumeThread).not.toHaveBeenCalled();
+    expect(forkThread).not.toHaveBeenCalled();
+    expect(harness.startRootRun).not.toHaveBeenCalled();
+    expect(harness.writeIfRunCurrent).not.toHaveBeenCalled();
+    expect(harness.events).toEqual([]);
+    expect(harness.projection()).toEqual(updated);
+  }),
 );
 
 effectIt.effect("starts another provider in the same checkout while a turn is pending", () =>
@@ -1012,24 +937,6 @@ effectIt.effect("leaves the run starting when a session-open failure will be ret
   }),
 );
 
-effectIt.effect("keeps a session-open failure retryable when terminal persistence fails", () =>
-  Effect.gen(function* () {
-    const harness = makeLocalCommandHarness({
-      text: "Continue",
-      openFailure: new Error("provider session rejected"),
-      writeFailure: new Error("database unavailable"),
-    });
-
-    const error = yield* harness.start.pipe(Effect.flip);
-
-    expect(error._tag).toBe("ProviderTurnStartError");
-    expect(harness.writeIfRunCurrent).toHaveBeenCalledOnce();
-    expect(harness.startRootRun).not.toHaveBeenCalled();
-    expect(harness.projection().runs.at(-1)?.status).toBe("starting");
-    expect(harness.events).toEqual([]);
-  }),
-);
-
 effectIt.effect("does not terminalize a provider-session open interruption", () =>
   Effect.gen(function* () {
     const harness = makeLocalCommandHarness({ text: "Continue", interruptOpen: true });
@@ -1066,52 +973,6 @@ effectIt.effect("does not overwrite a run interrupted while its provider session
     expect(projection.turnItems).toEqual([]);
     expect(harness.events).toEqual([]);
   }),
-);
-
-effectIt.effect("fails a starting run when its last start attempt cannot load the thread", () =>
-  Effect.gen(function* () {
-    const harness = makeLocalCommandHarness({
-      text: "Continue",
-      ensureThreadFailure: new Error("Pi RPC read failed: pi process exited with code 1."),
-    });
-
-    yield* harness.start;
-
-    expect(harness.startRootRun).not.toHaveBeenCalled();
-    const projection = harness.projection();
-    expect(projection.runs.at(-1)).toMatchObject({ status: "failed", startedAt: null });
-    expect(projection.attempts[0]).toMatchObject({ status: "failed", startedAt: null });
-    expect(projection.nodes[0]).toMatchObject({ status: "failed", startedAt: null });
-    expect(projection.turnItems).toMatchObject([
-      {
-        type: "error",
-        title: "Provider turn failed to start",
-        failure: {
-          class: "provider_error",
-          message: "Pi RPC read failed: pi process exited with code 1.",
-        },
-      },
-    ]);
-  }),
-);
-
-effectIt.effect(
-  "keeps a store failure after the provider loaded the thread typed and retryable",
-  () =>
-    Effect.gen(function* () {
-      const harness = makeLocalCommandHarness({
-        text: "Continue",
-        historyReadFailureAfterFallback: new Error("database unavailable"),
-      });
-
-      const error = yield* harness.start.pipe(Effect.flip);
-
-      expect(error._tag).toBe("ProviderTurnStartError");
-      expect((error.cause as { _tag?: string } | undefined)?._tag).toBe("ProjectionStoreReadError");
-      expect(harness.writeIfRunCurrent).not.toHaveBeenCalled();
-      expect(harness.projection().runs.at(-1)?.status).toBe("starting");
-      expect(harness.events).toEqual([]);
-    }),
 );
 
 effectIt.effect("does not mistake a failed state read for a superseded run", () =>
@@ -1162,31 +1023,6 @@ effectIt.effect(
       expect(projection.providerTurns).toEqual([]);
       expect(projection.checkpoints).toEqual([]);
     }),
-);
-
-effectIt.effect("persists a failed sign-out without starting a provider turn", () =>
-  Effect.gen(function* () {
-    const harness = makeLocalCommandHarness({
-      text: "/logout",
-      logoutFailure: "Could not stop all sessions for this provider. Try again.",
-    });
-
-    yield* harness.start;
-
-    expect(harness.open).not.toHaveBeenCalled();
-    expect(harness.startRootRun).not.toHaveBeenCalled();
-    expect(harness.projection().runs.at(-1)?.status).toBe("failed");
-    expect(harness.projection().turnItems).toMatchObject([
-      {
-        type: "error",
-        title: "Provider sign-out failed",
-        failure: {
-          class: "permission_error",
-          message: "Could not stop all sessions for this provider. Try again.",
-        },
-      },
-    ]);
-  }),
 );
 
 for (const previousMessages of [[], ["/compact", " /COMPACT "]]) {

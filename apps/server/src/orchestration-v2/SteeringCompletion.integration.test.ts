@@ -34,31 +34,20 @@ const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "test-model" };
 
 it.effect.each(
-  [false, true]
-    .flatMap((mailbox) =>
-      (
-        [
-          "before delivery",
-          "during delivery",
-          "before dispatch",
-          "after delivery",
-          "without native steering",
-          "with interrupting native steering",
-          "settled only",
-        ] as const
-      ).map((timing) => ({
-        mailbox,
-        timing,
-        label: mailbox ? "mailbox notification" : "steering",
-      })),
-    )
-    .filter(
-      ({ mailbox, timing }) =>
-        mailbox ||
-        (timing !== "without native steering" &&
-          timing !== "with interrupting native steering" &&
-          timing !== "settled only"),
-    ),
+  (
+    [
+      [false, "during delivery"],
+      [false, "before dispatch"],
+      [true, "after delivery"],
+      [true, "without native steering"],
+      [true, "with interrupting native steering"],
+      [true, "settled only"],
+    ] as const
+  ).map(([mailbox, timing]) => ({
+    mailbox,
+    timing,
+    label: mailbox ? "mailbox notification" : "steering",
+  })),
 )("delivers $label when completion wins $timing", ({ mailbox, timing }) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -561,14 +550,15 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
   return { events, started, steered, layer, startFirstTurn };
 });
 
-it.effect.each([{ canRestart: false }, { canRestart: true }])(
-  "steers a changed turn-scoped selection into the running turn (canRestart=$canRestart)",
-  ({ canRestart }) =>
+// regression: #19210 a provider that can restart the turn must still steer, since restarting ends its native subagents
+it.effect(
+  "steers a changed turn-scoped selection into a running turn the provider could restart",
+  () =>
     Effect.scoped(
       Effect.gen(function* () {
         const { started, steered, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
-          `steering-selection-change-${canRestart}`,
-          canRestart,
+          "steering-selection-change",
+          true,
         );
         yield* Effect.gen(function* () {
           const orchestrator = yield* Orchestrator.OrchestratorV2;

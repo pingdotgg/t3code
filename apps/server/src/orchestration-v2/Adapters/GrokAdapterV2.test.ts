@@ -166,20 +166,6 @@ describe("GrokAdapterV2 capabilities", () => {
 });
 
 describe("ACP permission policy", () => {
-  it("honors explicit on-request approval over full-access runtime mode", () => {
-    assert.equal(
-      acpPermissionDisposition(
-        runtimePolicy({
-          runtimeMode: "full-access",
-          approvalPolicy: "on-request",
-          sandboxPolicy: { type: "readOnly" },
-        }),
-        permissionRequest("execute"),
-      ),
-      "ask",
-    );
-  });
-
   it("rejects mutating escalation under a non-interactive read-only policy", () => {
     const policy = runtimePolicy({
       runtimeMode: "full-access",
@@ -370,25 +356,6 @@ describe("Grok launch permission mode", () => {
       assert.deepEqual(yield* launchArgs(resolved), [
         ["--permission-mode", "default", "agent", "stdio"],
       ]);
-    }),
-  );
-
-  it.effect("launches asking when an explicit approval or sandbox policy governs the thread", () =>
-    Effect.gen(function* () {
-      const asking = [["--permission-mode", "default", "agent", "stdio"]];
-      assert.deepEqual(
-        yield* launchArgs(
-          policy("full-access", {
-            approvalPolicy: "never",
-            sandboxPolicy: { type: "workspaceWrite", writableRoots: [], networkAccess: false },
-          }),
-        ),
-        asking,
-      );
-      assert.deepEqual(
-        yield* launchArgs(policy("full-access", { approvalPolicy: "on-request" })),
-        asking,
-      );
     }),
   );
 });

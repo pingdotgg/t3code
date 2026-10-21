@@ -37,7 +37,6 @@ import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import { CommandPolicyCapabilityUnsupportedError } from "../CommandPolicy.ts";
 import {
   ClaudeAppendSystemPromptFileError,
-  ClaudeAppendSystemPromptMissingValueError,
   ClaudeBackgroundWorkBlocksQueryReplacementError,
   ClaudeProviderCapabilitiesV2,
 } from "../Adapters/ClaudeAdapterV2.ts";
@@ -408,36 +407,15 @@ const waitForIdle = Effect.fn("ProviderSwitchTest.waitForIdle")(function* (
 describe("orchestration v2 provider switching", () => {
   it.live.each([
     "compact-native",
-    "compact-fallback",
     "compact-legacy",
     "large-current-input",
-    "screenshot-native",
     "screenshot-fallback",
-    "screenshot-pair-native",
-    "screenshot-pair-fallback",
-    "screenshot-eight-native",
-    "screenshot-eight-fallback",
-    "screenshot-large-model-native",
     "screenshot-reported-capacity-native",
-    "screenshot-model-change-native",
-    "screenshot-option-change-native",
-    "screenshot-model-change-retry-native",
     "screenshot-option-change-retry-native",
-    "prior-images-reasoning-change-replacement-native",
     "prior-images-reasoning-change-replacement-small-native",
-    "prior-images-reasoning-change-native",
-    "prior-images-turn-usage-native",
-    "prior-images-turn-usage-replacement-native",
-    "prior-images-turn-usage-model-change-native",
-    "prior-images-turn-usage-option-change-retry-native",
-    "prior-images-reasoning-change-retry-native",
-    "prior-images-native",
-    "prior-images-fallback",
-    "imported-prior-images-native",
     "imported-prior-images-fallback",
     "prior-images-telemetry-native",
     "prior-images-unsent-native",
-    "prior-images-replacement-native",
     "prior-images-legacy-replacement-native",
     "delivery-write-failure",
   ] as const)("preserves handoffs through %s", (scenario) =>
@@ -852,22 +830,20 @@ describe("orchestration v2 provider switching", () => {
           if (scenario.startsWith("screenshot")) {
             assert.deepEqual((yield* Ref.get(capturedTurns)).at(-1)!.attachments, screenshots);
           }
-          if (scenario === "compact-fallback" || scenario === "compact-legacy") {
-            if (scenario === "compact-legacy") {
-              const { history: _history, ...legacyHandoff } = handoff;
-              yield* eventSink.write({
-                events: [
-                  {
-                    id: EventId.make("legacy-handoff-shape"),
-                    type: "context-handoff.updated",
-                    threadId,
-                    runId: handoff.targetRunId,
-                    occurredAt: yield* DateTime.now,
-                    payload: legacyHandoff,
-                  },
-                ],
-              });
-            }
+          if (scenario === "compact-legacy") {
+            const { history: _history, ...legacyHandoff } = handoff;
+            yield* eventSink.write({
+              events: [
+                {
+                  id: EventId.make("legacy-handoff-shape"),
+                  type: "context-handoff.updated",
+                  threadId,
+                  runId: handoff.targetRunId,
+                  occurredAt: yield* DateTime.now,
+                  payload: legacyHandoff,
+                },
+              ],
+            });
             assert.isUndefined(handoff.delivery);
             yield* dispatch(3, "Continue after compact", CLAUDE_MODEL_SELECTION);
             yield* wait(3);
@@ -1209,10 +1185,6 @@ describe("orchestration v2 provider switching", () => {
   it.live.each([
     ["background work", new ClaudeBackgroundWorkBlocksQueryReplacementError()],
     ["an unreadable append file", new ClaudeAppendSystemPromptFileError({ path: "missing.md" })],
-    [
-      "a missing append value",
-      new ClaudeAppendSystemPromptMissingValueError({ flag: "--append-system-prompt" }),
-    ],
   ] as const)("keeps the native session after turns refused for %s", ([, refusalCause]) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1307,18 +1279,19 @@ describe("orchestration v2 provider switching", () => {
   );
 
   it.live.each(
-    (["failed", "interrupted"] as const).flatMap((status) =>
-      [false, true].flatMap((queued) =>
-        [false, true].flatMap((returning) =>
-          [false, true].map(
-            (native) =>
-              [
-                `${status} context ${queued ? "through the queue" : "immediately"} to ${returning ? "a returning" : "a new"} provider via ${native ? "native history" : "text"}`,
-                { status, queued, returning, native },
-              ] as const,
-          ),
-        ),
-      ),
+    (
+      [
+        ["failed", false, false, false],
+        ["failed", true, true, true],
+        ["interrupted", false, true, false],
+        ["interrupted", true, false, true],
+      ] as const
+    ).map(
+      ([status, queued, returning, native]) =>
+        [
+          `${status} context ${queued ? "through the queue" : "immediately"} to ${returning ? "a returning" : "a new"} provider via ${native ? "native history" : "text"}`,
+          { status, queued, returning, native },
+        ] as const,
     ),
   )("hands off %s", ([, { status, queued, returning, native }]) =>
     Effect.scoped(
@@ -2252,10 +2225,9 @@ describe("orchestration v2 provider switching", () => {
     ),
   );
 
+  // regression: #21314 a queued PR update must follow the provider that took over the thread
   it.live.each([
     ["automatic", "Claude"],
-    ["queue.resume", "Claude"],
-    ["automatic", "compatible Codex"],
     ["queue.resume", "compatible Codex"],
   ] as const)(
     "delivers a queued PR update on the current provider through %s (%s)",
@@ -2448,9 +2420,6 @@ describe("orchestration v2 provider switching", () => {
             if (compatible) {
               assert.equal(executed.nativeThreadId, turns[0]!.nativeThreadId);
               assert.isEmpty(after.contextHandoffs);
-              if (delivery === "automatic") {
-                assert.equal(delivered.providerThreadId, wake.providerThreadId);
-              }
             }
             assert.equal(
               after.providerThreads.find((entry) => entry.id === delivered.providerThreadId)

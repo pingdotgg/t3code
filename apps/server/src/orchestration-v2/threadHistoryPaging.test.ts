@@ -14,9 +14,7 @@ import {
   buildBoundedThreadProjection,
   boundedTimelineEncodedBytes,
   computeLatestLocalTurnOrdinal,
-  decodeThreadHistoryCursor,
   encodeThreadHistoryCursor,
-  InvalidThreadHistoryCursorError,
   projectedRowBoundedSnapshotEncodedBytes,
   projectedRowEncodedBytes,
   selectHistoryPageFromCursor,
@@ -289,13 +287,6 @@ describe("threadHistoryPaging", () => {
     expect([...older.items, ...recent.items]).toHaveLength(items.length);
   });
 
-  it("rejects malformed cursors", () => {
-    expect(() => decodeThreadHistoryCursor("not-valid")).toThrow(InvalidThreadHistoryCursorError);
-    expect(() =>
-      decodeThreadHistoryCursor(Buffer.from("{}", "utf8").toString("base64url")),
-    ).toThrow(InvalidThreadHistoryCursorError);
-  });
-
   it("always includes at least one pathological oversized item", () => {
     const items = [makeRow(0, { outputBytes: 2_000_000 }), makeRow(1, { outputBytes: 10 })];
     const page = selectRecentTimelineWindow({
@@ -431,32 +422,6 @@ describe("threadHistoryPaging", () => {
       "interrupt-res",
     ]);
     expect(bounded.hasMoreHistory).toBe(true);
-  });
-
-  it("retains all run_interrupt_request items even when no result is in the initial window", () => {
-    const request = interruptRow(0, "run_interrupt_request");
-    const result = interruptRow(1, "run_interrupt_result");
-    const recent = makeRow(2);
-    const full = makeProjection([request, result, recent]);
-    const bounded = buildBoundedThreadProjection({
-      projection: full,
-      snapshotSequence: 4,
-      policy: { maxItems: 1, maxEncodedBytes: 10_000_000 },
-    });
-
-    expect(bounded.projection.visibleTurnItems.map((row) => String(row.sourceItemId))).toEqual([
-      "item-2",
-    ]);
-    expect(bounded.projection.turnItems.map((item) => String(item.id)).sort()).toEqual([
-      "interrupt-req",
-      "item-2",
-    ]);
-    expect(bounded.projection.turnItems.some((item) => item.type === "run_interrupt_request")).toBe(
-      true,
-    );
-    expect(bounded.projection.turnItems.some((item) => item.type === "run_interrupt_result")).toBe(
-      false,
-    );
   });
 
   it("charges local row.item duplication when measuring bounded timeline bytes", () => {

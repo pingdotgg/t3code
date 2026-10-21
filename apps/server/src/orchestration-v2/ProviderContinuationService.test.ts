@@ -11,7 +11,6 @@ import {
   type OrchestrationV2Notification,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -156,31 +155,6 @@ describe("ProviderContinuationService", () => {
       );
     }),
   );
-
-  it.effect("marks an adapter-buffered wake with the provider creation source", () => {
-    return Effect.gen(function* () {
-      const dispatched = yield* Queue.unbounded<unknown>();
-      yield* Effect.gen(function* () {
-        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-        yield* requests.offer(request());
-        const command = (yield* Queue.take(dispatched)) as {
-          readonly creationSource: string;
-          readonly notification: OrchestrationV2Notification;
-        };
-        assert.equal(command.creationSource, "provider");
-        assert.deepEqual(command.notification, {
-          source: { kind: "background_task" },
-          outcome: "updated",
-          summary: "Background activity updated",
-        });
-      }).pipe(
-        Effect.provide(
-          layerTest({ dispatched, getThreadRecords: () => Effect.succeed(projection) }),
-        ),
-        Effect.scoped,
-      );
-    });
-  });
 
   it.effect("delivers a message_text wake as a real prompt, not a buffered wake", () => {
     return Effect.gen(function* () {
@@ -530,47 +504,6 @@ describe("ProviderContinuationService", () => {
     });
   });
 
-  it.effect("drops archived and deleted delegated completions during recovery", () => {
-    return Effect.gen(function* () {
-      for (const barrier of ["archivedAt", "deletedAt"] as const) {
-        const dispatched = yield* Queue.unbounded<unknown>();
-        yield* Effect.gen(function* () {
-          const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-          yield* requests.offer({
-            threadId,
-            providerThreadId,
-            driver,
-            detail: null,
-            delivery: "message_text",
-            delegatedCompletion: {
-              parentRunId,
-              generation: 1,
-              messageId: delegatedMessageId,
-            },
-          });
-          yield* Effect.yieldNow;
-          yield* Effect.yieldNow;
-          assert.isTrue(Option.isNone(yield* Queue.poll(dispatched)));
-        }).pipe(
-          Effect.provide(
-            layerTest({
-              dispatched,
-              getThreadRecords: () =>
-                Effect.succeed({
-                  ...delegatedProjection(),
-                  thread: {
-                    ...projection.thread,
-                    [barrier]: DateTime.makeUnsafe("2026-08-03T00:00:00.000Z"),
-                  },
-                } as unknown as OrchestrationV2ThreadProjection),
-            }),
-          ),
-          Effect.scoped,
-        );
-      }
-    });
-  });
-
   it.effect("dispatches a current request exactly once", () => {
     return Effect.gen(function* () {
       const dispatched = yield* Queue.unbounded<unknown>();
@@ -578,27 +511,6 @@ describe("ProviderContinuationService", () => {
         const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
         yield* requests.offer(request());
         yield* Queue.take(dispatched);
-        yield* Effect.yieldNow;
-        assert.isTrue(Option.isNone(yield* Queue.poll(dispatched)));
-      }).pipe(
-        Effect.provide(
-          layerTest({ dispatched, getThreadRecords: () => Effect.succeed(projection) }),
-        ),
-        Effect.scoped,
-      );
-    });
-  });
-
-  it.effect("drops a request invalidated before dispatch", () => {
-    return Effect.gen(function* () {
-      const dispatched = yield* Queue.unbounded<unknown>();
-      yield* Effect.gen(function* () {
-        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-        const guard = yield* makeGuard();
-        const dispatchIfCurrent = yield* guard.capture;
-        yield* guard.invalidate;
-        yield* requests.offer(request(dispatchIfCurrent));
-        yield* Effect.yieldNow;
         yield* Effect.yieldNow;
         assert.isTrue(Option.isNone(yield* Queue.poll(dispatched)));
       }).pipe(

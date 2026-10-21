@@ -124,6 +124,7 @@ describe("evaluatePullRequestWatch", () => {
     ]);
   });
 
+  // regression: #16208 PR watches burned GitHub's rate limit and gave up
   it("does not report passed again for a new passed check where none is required", () => {
     const first = evaluatePullRequestWatch(
       watch(),

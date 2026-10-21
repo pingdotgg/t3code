@@ -144,7 +144,6 @@ export const THREAD_MERGE_BACK_HANDOFF_PROMPT = [
   "User message:",
   "Retain the transferred fork marker for later. Respond with exactly: merge delta stored",
 ].join("\n");
-export const THREAD_MERGE_BACK_RECALL = `${THREAD_MERGE_BACK_SOURCE_MARKER}|${THREAD_MERGE_BACK_FORK_MARKER}`;
 export const THREAD_MERGE_BACK_RECALL_PROMPT =
   "Return the source marker followed by the transferred fork marker, separated by a single | character. Respond with only the markers and separator.";
 const THREAD_MERGE_BACK_SIBLINGS_SOURCE_MARKER = "merge-sibling-source-3C7K";

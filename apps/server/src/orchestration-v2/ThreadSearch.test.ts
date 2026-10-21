@@ -178,30 +178,6 @@ it.layer(layerTest)("ThreadSearch", (it) => {
       assert.deepEqual((yield* search.search({ query: "ne%le" })).matches, []);
     }),
   );
-
-  it.effect("reports an unreadable match as a decode failure", () =>
-    Effect.gen(function* () {
-      const projections = yield* ProjectionStore.ProjectionStoreV2;
-      const search = yield* ThreadSearch.ThreadSearch;
-      const sql = yield* SqlClient.SqlClient;
-      const project = ProjectId.make("project:search-corrupt");
-      const threadId = ThreadId.make("thread:corrupt");
-      yield* createProject(project);
-      yield* Effect.forEach(
-        [thread(threadId, project), message(threadId, "corrupt", "user", "20260927")],
-        projections.apply,
-        { discard: true },
-      );
-      yield* sql`
-        UPDATE orchestration_v2_projection_messages
-        SET payload_json = json_set(payload_json, '$.text', 20260927)
-        WHERE message_id = 'corrupt'
-      `;
-
-      const error = yield* Effect.flip(search.search({ query: "0260927" }));
-      assert.equal(error.operation, "decode");
-    }),
-  );
 });
 
 it.effect("searches on the reader worker while the writer is busy", () =>

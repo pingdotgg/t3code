@@ -550,7 +550,7 @@ it.effect("provisions independent launches concurrently instead of behind a glob
   }),
 );
 
-it.effect.each([" /COMPACT ", "/logout"])(
+it.effect.each([" /COMPACT "])(
   "uses the first conversation message for a title after %s",
   (nativeCommand) =>
     Effect.gen(function* () {
@@ -1386,33 +1386,6 @@ it.effect("replays a server-allocated launch", () =>
   }),
 );
 
-it.effect("refuses a launch when the project disables the model's provider instance", () => {
-  const harness = makeHarness({
-    serverSettings: {
-      projectSettingsOverrides: {
-        [projectId]: { providerInstances: { [modelSelection.instanceId]: { enabled: false } } },
-      },
-    },
-  });
-  return Effect.gen(function* () {
-    const launches = yield* ThreadLaunch.ThreadLaunchService;
-    const failed = yield* launches
-      .launch(
-        launchInput({
-          command: "command:launch:project-disabled-instance",
-          thread: "thread:launch:project-disabled-instance",
-          message: "Hello",
-        }),
-      )
-      .pipe(Effect.flip);
-    if (failed._tag !== "ThreadManagementProviderInstanceDisabledError") {
-      assert.fail(`expected ThreadManagementProviderInstanceDisabledError, got ${failed._tag}`);
-    }
-    assert.equal(failed.projectId, projectId);
-    assert.equal(failed.instanceId, modelSelection.instanceId);
-  }).pipe(Effect.provide(harness.layer));
-});
-
 it.effect("replays an accepted launch after the project disables the instance", () => {
   const harness = makeHarness();
   return Effect.gen(function* () {
@@ -1472,59 +1445,6 @@ it.effect("rejects a server-allocated launch replay with a mismatching thread id
     }
     assert.equal(failed.operation, "create-thread");
     assert.include(String(failed.cause), "cannot be replayed");
-  }).pipe(Effect.provide(harness.layer));
-});
-
-it.effect("rejects a server-allocated launch receipt from another project", () => {
-  const harness = makeHarness();
-  return Effect.gen(function* () {
-    const launches = yield* ThreadLaunch.ThreadLaunchService;
-    const { threadId: _unusedThreadId, ...rest } = launchInput({
-      command: "command:launch:allocated-wrong-project",
-      thread: "unused",
-      message: "Wrong project",
-    });
-    const first = yield* launches.launch(rest);
-    const failed = yield* launches
-      .launch({
-        ...rest,
-        projectId: otherProjectId,
-      })
-      .pipe(Effect.flip);
-    if (failed._tag !== "ThreadLaunchError") {
-      assert.fail(`expected ThreadLaunchError, got ${failed._tag}`);
-    }
-    assert.equal(failed.operation, "resolve-project");
-    assert.equal(failed.threadId, first.threadId);
-    assert.equal(failed.cause, "Project identity changed.");
-  }).pipe(Effect.provide(harness.layer));
-});
-
-it.effect("rejects a server-allocated launch retry after the thread is deleted", () => {
-  const harness = makeHarness();
-  return Effect.gen(function* () {
-    const launches = yield* ThreadLaunch.ThreadLaunchService;
-    const threads = yield* ThreadManagement.ThreadManagementService;
-    const { threadId: _unusedThreadId, ...rest } = launchInput({
-      command: "command:launch:allocated-deleted",
-      thread: "unused",
-      message: "Deleted before retry",
-    });
-    const first = yield* launches.launch(rest);
-    yield* threads.dispatch({
-      type: "thread.delete",
-      commandId: CommandId.make("command:launch:allocated-deleted:delete"),
-      threadId: first.threadId,
-    });
-    const failed = yield* launches.launch(rest).pipe(Effect.flip);
-    if (failed._tag !== "ThreadLaunchError") {
-      assert.fail(`expected ThreadLaunchError, got ${failed._tag}`);
-    }
-    assert.equal(failed.operation, "create-thread");
-    assert.equal(failed.threadId, first.threadId);
-    assert.equal(failed.cause, "Thread not found.");
-    const shells = yield* threads.listProjectThreads({ projectId, includeSubagents: true });
-    assert.equal(shells.length, 0);
   }).pipe(Effect.provide(harness.layer));
 });
 

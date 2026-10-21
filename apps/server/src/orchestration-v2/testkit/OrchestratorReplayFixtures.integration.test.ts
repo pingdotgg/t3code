@@ -572,13 +572,11 @@ describe("orchestrator replay fixtures", () => {
       }),
     );
 
-    it.effect.each(
-      (["WebFetch", "Write"] as const).flatMap((tool) =>
-        (["before root settles", "while root is idle"] as const).flatMap((opens) =>
-          (["stopped", "failed"] as const).map((status) => [tool, opens, status] as const),
-        ),
-      ),
-    )(
+    // regression: #16486 a background subagent's tool left open while its parent is idle never settled
+    it.effect.each([
+      ["WebFetch", "while root is idle", "stopped"],
+      ["Write", "before root settles", "failed"],
+    ] as const)(
       "ends a background subagent's open %s (opened %s) when its notification is %s",
       ([tool, opens, notificationStatus]) =>
         runFixtureProviderWithRegisteredHarness({

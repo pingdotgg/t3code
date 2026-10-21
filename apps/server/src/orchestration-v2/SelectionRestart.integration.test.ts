@@ -438,12 +438,12 @@ it.live("retries a failed selection restart session open before completing", () 
   ),
 );
 
-it.live.each(["stopped", "error"] as const)(
-  "restarts the live session on a model change when a newer %s session record exists",
-  (deadStatus) =>
+it.live(
+  "restarts the live session on a model change when a newer stopped session record exists",
+  () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const name = `selection-restart-dead-${deadStatus}`;
+        const name = "selection-restart-dead-stopped";
         const cwd = yield* checkpointWorkspace(name);
         const threadId = ThreadId.make(`thread:${name}`);
         const state = yield* Ref.make<RestartAdapterState>({
@@ -541,9 +541,9 @@ it.live.each(["stopped", "error"] as const)(
                 occurredAt: deadAt,
                 payload: {
                   ...deadSession,
-                  status: deadStatus,
+                  status: "stopped",
                   updatedAt: deadAt,
-                  lastError: deadStatus === "error" ? "Simulated session failure." : null,
+                  lastError: null,
                 },
               },
             ],

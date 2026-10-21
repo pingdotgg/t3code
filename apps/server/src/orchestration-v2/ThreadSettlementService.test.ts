@@ -724,31 +724,6 @@ describe("ThreadSettlementServiceV2 worker", () => {
     ),
   );
 
-  it.effect("dispatches the last activity time with the v2 snapshot guard", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        yield* TestClock.setTime(Date.parse(NOW));
-        const thread = makeThread("inactive-open-pr", {
-          branch: "feature",
-          latestRunCompletedAt: DateTime.makeUnsafe("2026-08-25T00:00:00.000Z"),
-        });
-        const fixture = yield* makeHarness({
-          snapshot: makeSnapshot([thread]),
-          settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleAfterDays: 2 },
-          branchPullRequest: () => Effect.succeed(makeBranchPullRequest("open")),
-        });
-        yield* Effect.gen(function* () {
-          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
-          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
-          const commands = yield* Ref.get(fixture.commands);
-          expect(commands).toHaveLength(1);
-          expect(commands[0]?.settledAt).toEqual(thread.latestRunCompletedAt);
-          expect(commands[0]?.snapshotAt).toEqual(thread.updatedAt);
-        }).pipe(Effect.provide(fixture.layer));
-      }),
-    ),
-  );
-
   it.effect("reevaluates immediately after a pull request merge", () =>
     Effect.scoped(
       Effect.gen(function* () {

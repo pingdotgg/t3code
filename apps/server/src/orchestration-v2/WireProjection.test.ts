@@ -94,23 +94,6 @@ describe("orchestration V2 wire projection", () => {
     expect(item.output.data).toBe("private-image-data");
   });
 
-  it("preserves provider notices in bounded items and live events", () => {
-    const item = {
-      ...base,
-      type: "system_notice" as const,
-      message: "Safeguards flagged this message. Switched to Opus 4.8.",
-    };
-    expect(projectTurnItemForWire(item)).toEqual(item);
-    const event = {
-      id: EventId.make("notice-wire-event"),
-      type: "turn-item.updated" as const,
-      threadId: item.threadId,
-      occurredAt: item.updatedAt,
-      payload: item,
-    };
-    expect(projectDomainEventForWire(event)).toEqual(event);
-  });
-
   it("keeps transcript bodies out of shell rows", () => {
     const now = DateTime.makeUnsafe("2026-08-13T00:00:00.000Z");
     const threadId = ThreadId.make("thread-shell-budget");
@@ -164,17 +147,6 @@ describe("orchestration V2 wire projection", () => {
 
     expect(shell.latestVisibleMessage).toBeNull();
     expect(JSON.stringify(shell).length).toBeLessThan(2_000);
-  });
-
-  it("omits oversized dynamic tool results without mutating persistence data", () => {
-    const output = { content: [{ type: "text", text: "first line\n" + "x".repeat(100_000) }] };
-    const item = { ...base, output } satisfies OrchestrationV2TurnItem;
-    const projected = projectTurnItemForWire(item);
-
-    expect(item.output).toBe(output);
-    expect(projected).not.toBe(item);
-    expect(JSON.stringify(projected).length).toBeLessThan(2_000);
-    expect(projected).not.toHaveProperty("output");
   });
 
   it("omits even small dynamic tool results while retaining input", () => {

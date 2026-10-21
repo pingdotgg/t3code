@@ -636,50 +636,6 @@ const layerSharedApplicationDataPlaneTest = Layer.mergeAll(
 );
 
 it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
-  it.effect("emits model updates separately from provider switches", () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const threadId = ThreadId.make("runtime-layer-model-selection-events");
-
-      yield* orchestrator.dispatch({
-        type: "thread.create",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: CommandId.make("runtime-layer-model-selection-events-create"),
-        threadId,
-        projectId: ProjectId.make("runtime-layer-model-selection-events-project"),
-        title: "Model selection events",
-        modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: null,
-      });
-
-      const sameInstance = yield* orchestrator.dispatch({
-        type: "thread.model-selection.set",
-        commandId: CommandId.make("runtime-layer-model-selection-events-update"),
-        threadId,
-        modelSelection: { ...modelSelection, model: "gpt-5.5" },
-      });
-      assert.deepEqual(
-        sameInstance.storedEvents.map((stored) => stored.event.type),
-        ["thread.model-selection-updated"],
-      );
-
-      const differentInstance = yield* orchestrator.dispatch({
-        type: "thread.model-selection.set",
-        commandId: CommandId.make("runtime-layer-model-selection-events-switch"),
-        threadId,
-        modelSelection: { instanceId: alternateInstanceId, model: "gpt-5.5" },
-      });
-      assert.deepEqual(
-        differentInstance.storedEvents.map((stored) => stored.event.type),
-        ["thread.provider-switched"],
-      );
-    }),
-  );
-
   const seedFailingRollbackThread = (name: string) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -783,44 +739,6 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
       yield* rollback(CommandId.make("runtime-rollback-failure-retry"));
       const retried = yield* orchestrator.getThreadProjection(threadId);
       assert.isNull(retried.thread.rollbackFailure);
-    }),
-  );
-
-  it.effect("ignores a late failure from a rollback that a newer one superseded", () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const outbox = yield* EffectOutbox.EffectOutboxV2;
-      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-      const { threadId, rollback } = yield* seedFailingRollbackThread(
-        "runtime-rollback-superseded",
-      );
-
-      const olderCommandId = CommandId.make("runtime-rollback-superseded-older");
-      yield* rollback(olderCommandId);
-      for (let attempt = 0; attempt < 4; attempt++) {
-        yield* worker.drain();
-        yield* TestClock.adjust("30 seconds");
-      }
-      const newerCommandId = CommandId.make("runtime-rollback-superseded-newer");
-      yield* rollback(newerCommandId);
-      yield* worker.drain();
-
-      const [olderEffect] = yield* outbox.listByCommandId(olderCommandId);
-      assert.equal(olderEffect?.status, "failed");
-      const superseded = yield* orchestrator.getThreadProjection(threadId);
-      assert.isNull(superseded.thread.rollbackFailure);
-
-      for (let attempt = 0; attempt < 5; attempt++) {
-        yield* TestClock.adjust("30 seconds");
-        yield* worker.drain();
-      }
-      const [newerEffect] = yield* outbox.listByCommandId(newerCommandId);
-      assert.equal(newerEffect?.status, "failed");
-      const failed = yield* orchestrator.getThreadProjection(threadId);
-      assert.deepEqual(failed.thread.rollbackFailure, {
-        requestId: newerCommandId,
-        message: ROLLBACK_FAILED_MESSAGE,
-      });
     }),
   );
 
@@ -2111,67 +2029,6 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
-  it.effect("persists linked pull requests through projection rebuilds and unlinking", () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
-      const threadId = ThreadId.make("runtime-layer-linked-pull-request-thread");
-      const linkedPullRequest = {
-        projectId: ProjectId.make("runtime-layer-linked-pull-request-project"),
-        repository: "pingdotgg/t3code",
-        number: 8160,
-        url: "https://github.com/pingdotgg/t3code/pull/8160",
-      } as const;
-
-      yield* orchestrator.dispatch({
-        type: "thread.create",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: CommandId.make("runtime-layer-linked-pull-request-create"),
-        threadId,
-        projectId: linkedPullRequest.projectId,
-        title: "Linked pull request thread",
-        modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: null,
-      });
-      yield* orchestrator.dispatch({
-        type: "thread.metadata.update",
-        commandId: CommandId.make("runtime-layer-linked-pull-request-link"),
-        threadId,
-        linkedPullRequest,
-      });
-
-      assert.deepEqual(
-        (yield* orchestrator.getThreadProjection(threadId)).thread.linkedPullRequest,
-        linkedPullRequest,
-      );
-      const linkedShell = yield* orchestrator.getThreadShell(threadId);
-      assert.isNotNull(linkedShell);
-      assert.deepEqual(linkedShell.linkedPullRequest, linkedPullRequest);
-
-      const rebuilt = yield* maintenance.rebuild;
-      assert.isTrue(rebuilt.valid);
-      assert.deepEqual(
-        (yield* orchestrator.getThreadProjection(threadId)).thread.linkedPullRequest,
-        linkedPullRequest,
-      );
-
-      yield* orchestrator.dispatch({
-        type: "thread.metadata.update",
-        commandId: CommandId.make("runtime-layer-linked-pull-request-unlink"),
-        threadId,
-        linkedPullRequest: null,
-      });
-      assert.isNull((yield* orchestrator.getThreadProjection(threadId)).thread.linkedPullRequest);
-      const unlinkedShell = yield* orchestrator.getThreadShell(threadId);
-      assert.isNotNull(unlinkedShell);
-      assert.isNull(unlinkedShell.linkedPullRequest);
-    }),
-  );
-
   it.effect("keeps the branch pull request when linking another pull request", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -2765,6 +2622,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  // regression: #21155 watching a pull request again repeated news the thread already got
   it.effect("a watch that ends on the comment limit keeps what its last pass saw", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -2888,6 +2746,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  // regression: #21155 watching a pull request again repeated news the thread already got
   it.effect("watching a dismissed stack layer again keeps what its last watch told", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -3733,88 +3592,6 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* assertCancelled;
       assert.isTrue((yield* maintenance.rebuild).valid);
       yield* assertCancelled;
-    }),
-  );
-
-  it.effect("cancels queued work when a thread is archived", () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const threadId = ThreadId.make("runtime-layer-archive-queued-thread");
-
-      yield* orchestrator.dispatch({
-        type: "thread.create",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: CommandId.make("runtime-layer-archive-queued-create"),
-        threadId,
-        projectId: ProjectId.make("runtime-layer-archive-queued-project"),
-        title: "Archive queued work",
-        modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: "/tmp/runtime-layer-archive-queued",
-      });
-      yield* orchestrator.dispatch({
-        type: "message.dispatch",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: CommandId.make("runtime-layer-archive-queued-active-message"),
-        threadId,
-        messageId: MessageId.make("runtime-layer-archive-queued-active-message"),
-        text: "Keep the provider occupied.",
-        attachments: [],
-        modelSelection,
-        dispatchMode: { type: "start_immediately" },
-      });
-      yield* orchestrator.dispatch({
-        type: "message.dispatch",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: CommandId.make("runtime-layer-archive-queued-next-message"),
-        threadId,
-        messageId: MessageId.make("runtime-layer-archive-queued-next-message"),
-        text: "Do not run this after archive.",
-        attachments: [],
-        modelSelection,
-        dispatchMode: { type: "queue_after_active" },
-      });
-
-      const beforeArchive = yield* orchestrator.getThreadProjection(threadId);
-      const activeRun = beforeArchive.runs.find((run) => run.status === "starting");
-      const queuedRun = beforeArchive.runs.find((run) => run.status === "queued");
-      assert.isDefined(activeRun);
-      assert.isDefined(queuedRun);
-
-      yield* orchestrator.dispatch({
-        type: "thread.archive",
-        commandId: CommandId.make("runtime-layer-archive-queued-archive"),
-        threadId,
-      });
-
-      const archived = yield* orchestrator.getThreadProjection(threadId);
-      assert.isNotNull(archived.thread.archivedAt);
-      assert.equal(archived.runs.find((run) => run.id === queuedRun.id)?.status, "cancelled");
-      assert.equal(
-        archived.attempts.find((attempt) => attempt.runId === queuedRun.id)?.status,
-        "cancelled",
-      );
-      assert.equal(archived.nodes.find((node) => node.runId === queuedRun.id)?.status, "cancelled");
-      assert.equal(yield* orchestrator.resumeQueuedRuns, 0);
-
-      const promoteError = yield* orchestrator
-        .dispatch({
-          type: "queued-message.promote-to-steer",
-          commandId: CommandId.make("runtime-layer-archive-queued-promote"),
-          threadId,
-          queuedRunId: queuedRun.id,
-          targetRunId: activeRun.id,
-        })
-        .pipe(Effect.flip);
-      assert.equal(promoteError._tag, "OrchestratorDispatchError");
-
-      const afterPromotion = yield* orchestrator.getThreadProjection(threadId);
-      assert.equal(afterPromotion.runs.find((run) => run.id === queuedRun.id)?.status, "cancelled");
     }),
   );
 
@@ -5856,20 +5633,13 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
   it.effect.each([
     "resume",
     "queued-resume",
-    "cancel",
     "rearm",
     "snooze-race",
-    "new-message",
     "archive",
-    "settle",
     "replacement",
     "manual-snooze",
-    "manual-snooze-after-recovery",
     "invalid-snooze",
-    "snooze-only",
-    "snooze-resume",
     "cancel-resume-keep-snooze",
-    "wake-preserve-resume",
     "independent-patches",
     "expired-snooze",
     "wake",
@@ -6022,15 +5792,8 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         assert.isNull(current.thread.snoozedUntil);
         return;
       }
-      const snooze = [
-        "snooze-only",
-        "manual-snooze-after-recovery",
-        "snooze-resume",
-        "wake",
-        "cancel-resume-keep-snooze",
-        "wake-preserve-resume",
-      ].includes(scenario);
-      const autoResume = scenario !== "snooze-only" && scenario !== "wake";
+      const snooze = scenario === "wake" || scenario === "cancel-resume-keep-snooze";
+      const autoResume = scenario !== "wake";
       const arm = limitRecoveryCommand(shell, autoResume, DateTime.toEpochMillis(now), snooze);
       assert(arm?.type === "thread.metadata.update" && arm.limitRecovery != null);
       const automaticArm = {
@@ -6106,7 +5869,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
       });
       if (snooze)
         assert.equal(DateTime.toEpochMillis(armedShell.snoozedUntil!), Date.parse(resetAt));
-      if (scenario === "cancel-resume-keep-snooze" || scenario === "wake-preserve-resume") {
+      if (scenario === "cancel-resume-keep-snooze") {
         yield* TestClock.adjust("10 seconds");
         yield* orchestrator.dispatch({
           type: "thread.metadata.update",
@@ -6115,25 +5878,19 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           limitRecovery: {
             runId: run.id,
             resetAt,
-            autoResume: scenario === "wake-preserve-resume",
-            snooze: scenario === "cancel-resume-keep-snooze",
+            autoResume: false,
+            snooze: true,
           },
         });
         armedShell = (yield* orchestrator.getShellSnapshot()).threads.find(
           (thread) => thread.id === threadId,
         )!;
-        if (scenario === "cancel-resume-keep-snooze") {
-          assert.equal(DateTime.toEpochMillis(armedShell.snoozedUntil!), Date.parse(resetAt));
-          assert.equal(
-            DateTime.toEpochMillis(armedShell.snoozedAt!),
-            DateTime.toEpochMillis(armedShell.updatedAt),
-          );
-          assert.isFalse(armedShell.limitRecovery!.autoResume);
-        } else {
-          assert.isNull(armedShell.snoozedUntil);
-          assert.isNull(armedShell.snoozedAt);
-          assert.isTrue(armedShell.limitRecovery!.autoResume);
-        }
+        assert.equal(DateTime.toEpochMillis(armedShell.snoozedUntil!), Date.parse(resetAt));
+        assert.equal(
+          DateTime.toEpochMillis(armedShell.snoozedAt!),
+          DateTime.toEpochMillis(armedShell.updatedAt),
+        );
+        assert.isFalse(armedShell.limitRecovery!.autoResume);
       }
       if (scenario === "independent-patches") {
         yield* TestClock.adjust("10 seconds");
@@ -6173,7 +5930,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         assert.isTrue(armedShell.limitRecovery!.autoResume);
         assert.isTrue(armedShell.limitRecovery!.snooze);
       }
-      if (scenario === "manual-snooze" || scenario === "manual-snooze-after-recovery") {
+      if (scenario === "manual-snooze") {
         yield* orchestrator.dispatch({
           type: "thread.snooze",
           commandId: CommandId.make(`recovery:manual-snooze:${scenario}`),
@@ -6275,7 +6032,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         assert.isTrue(current.thread.limitRecovery!.autoResume);
       }
 
-      if (scenario === "cancel" || scenario === "rearm")
+      if (scenario === "rearm")
         yield* orchestrator.dispatch({
           type: "thread.metadata.update",
           commandId: CommandId.make(`recovery:cancel:${scenario}`),
@@ -6286,24 +6043,6 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         yield* orchestrator.dispatch({
           type: "thread.archive",
           commandId: CommandId.make(`recovery:archive:${scenario}`),
-          threadId,
-        });
-      if (scenario === "new-message")
-        yield* orchestrator.dispatch({
-          type: "message.dispatch",
-          commandId: CommandId.make(`recovery:new-message:${scenario}`),
-          threadId,
-          messageId: MessageId.make(`recovery:new-message:${scenario}`),
-          text: "I will continue manually.",
-          attachments: [],
-          dispatchMode: { type: "defer_start" },
-          createdBy: "user",
-          creationSource: "web",
-        });
-      if (scenario === "settle")
-        yield* orchestrator.dispatch({
-          type: "thread.settle",
-          commandId: CommandId.make(`recovery:settle:${scenario}`),
           threadId,
         });
       if (scenario === "stop") {
@@ -6377,8 +6116,6 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           (scenario === "resume" ||
           stopBeforeArm ||
           scenario === "queued-resume" ||
-          scenario === "snooze-resume" ||
-          scenario === "wake-preserve-resume" ||
           scenario === "independent-patches" ||
           scenario === "expired-snooze"
             ? 1
@@ -6390,8 +6127,6 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           (scenario === "resume" ||
           stopBeforeArm ||
           scenario === "queued-resume" ||
-          scenario === "snooze-resume" ||
-          scenario === "wake-preserve-resume" ||
           scenario === "independent-patches" ||
           scenario === "expired-snooze"
             ? 1

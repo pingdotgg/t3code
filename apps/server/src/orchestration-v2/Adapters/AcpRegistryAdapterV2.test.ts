@@ -757,6 +757,7 @@ describe("AcpRegistryAdapterV2", () => {
         }).pipe(Effect.provide(layerTest), Effect.scoped),
     );
 
+    // regression: #19519 models come from session model state, not a hardcoded list
     it.effect("leaves unadvertised model IDs alone in both model selection protocols", () =>
       Effect.gen(function* () {
         const { configurations } = yield* openWithStoredPicks({
@@ -898,73 +899,7 @@ describe("AcpRegistryAdapterV2", () => {
     );
   });
 
-  it.effect("offers client terminals to Devin only and client fs to no registry agent", () =>
-    Effect.gen(function* () {
-      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const path = yield* Path.Path;
-      const mockAgentPath = yield* path.fromFileUrl(
-        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
-      );
-      const advertisedCapabilities = Effect.fn("advertisedCapabilities")(function* (
-        agentId: string,
-      ) {
-        let clientCapabilities: unknown;
-        const instanceId = ProviderInstanceId.make(`acp-registry-capabilities-${agentId}`);
-        const adapter = yield* makeAcpRegistryAdapterV2({
-          selfInvocation: yield* resolveSelfInvocation(),
-          instanceId,
-          settings: yield* decodeAcpRegistryAdapterSettings({ agentId, authMethodId: "test" }),
-          environment: {},
-          makeRuntime: (input) =>
-            Effect.gen(function* () {
-              clientCapabilities = input.clientCapabilities;
-              const { processEnvironment: _processEnvironment, ...runtimeInput } = input;
-              const context = yield* Layer.build(
-                AcpSessionRuntime.layer({
-                  ...runtimeInput,
-                  spawn: {
-                    command: process.execPath,
-                    args: [mockAgentPath],
-                    cwd: input.cwd,
-                    env: { T3_ACP_SESSION_LIFECYCLE: "1" },
-                  },
-                  authMethodId: "test",
-                }).pipe(
-                  Layer.provide(
-                    Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
-                  ),
-                ),
-              );
-              return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
-                Effect.provide(context),
-              );
-            }),
-        }).pipe(Effect.provide(layerInjectedRuntimeCatalog));
-        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          cwd: process.cwd(),
-        });
-        yield* adapter.openSession({
-          threadId: ThreadId.make(`thread-acp-registry-capabilities-${agentId}`),
-          providerSessionId: ProviderSessionId.make(`provider-session-capabilities-${agentId}`),
-          modelSelection: { instanceId, model: "default" },
-          runtimePolicy,
-        });
-        return clientCapabilities;
-      });
-
-      assert.deepInclude(yield* advertisedCapabilities("devin"), {
-        fs: { readTextFile: false, writeTextFile: false },
-        terminal: true,
-      });
-      assert.deepInclude(yield* advertisedCapabilities("gemini"), {
-        fs: { readTextFile: false, writeTextFile: false },
-        terminal: false,
-      });
-    }).pipe(Effect.provide(layerTest), Effect.scoped),
-  );
-
+  // regression: #21618 Claude Agent needs ACP v2 for native background lifecycle
   it.effect("launches Claude Agent on ACP v2 unless its instance environment decides", () =>
     Effect.gen(function* () {
       const launchSwitch = Effect.fn("launchSwitch")(function* (

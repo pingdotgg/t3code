@@ -114,6 +114,7 @@ it.effect(
     }).pipe(Effect.provide(layerTest)),
 );
 
+// regression: #15920 one bad legacy message stopped the server from starting
 it.effect("propagates interruption from transcript reads and retry-marker writes", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;

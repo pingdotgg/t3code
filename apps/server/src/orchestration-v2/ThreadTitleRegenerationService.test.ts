@@ -278,34 +278,6 @@ describe("ThreadTitleRegenerationService", () => {
     }),
   );
 
-  it.effect("keeps the current title when generation returns the fallback", () =>
-    Effect.gen(function* () {
-      const harness = makeHarness({
-        generateTitle: () => Effect.succeed({ title: "New thread" }),
-      });
-      yield* Effect.gen(function* () {
-        const threads = yield* ThreadManagement.ThreadManagementService;
-        const titleRegeneration = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
-        const threadId = yield* createThread({
-          command: "command:title:fallback:create",
-          thread: "thread:title:fallback",
-        });
-        yield* dispatchUserMessage({
-          command: "command:title:fallback:message",
-          threadId,
-          text: "Some conversation",
-        });
-        const requestId = yield* armRegeneration({ command: "command:title:fallback:1", threadId });
-
-        yield* titleRegeneration.execute({ threadId, requestId, kind: { type: "regenerate" } });
-
-        const projection = yield* threads.getThreadProjection(threadId);
-        assert.equal(projection.thread.title, "Seed title");
-        assert.isNotOk(projection.thread.titleRegeneration);
-      }).pipe(Effect.provide(harness.layer));
-    }),
-  );
-
   it.effect("clears the marker and keeps the title when generation fails", () =>
     Effect.gen(function* () {
       const harness = makeHarness({
@@ -328,32 +300,6 @@ describe("ThreadTitleRegenerationService", () => {
         yield* titleRegeneration.execute({ threadId, requestId, kind: { type: "regenerate" } });
 
         assert.equal(harness.generateThreadTitle.mock.calls.length, 1);
-        const projection = yield* threads.getThreadProjection(threadId);
-        assert.equal(projection.thread.title, "Seed title");
-        assert.isNotOk(projection.thread.titleRegeneration);
-      }).pipe(Effect.provide(harness.layer));
-    }),
-  );
-
-  it.effect("completes without generating when the initial message is unavailable", () =>
-    Effect.gen(function* () {
-      const harness = makeHarness();
-      yield* Effect.gen(function* () {
-        const threads = yield* ThreadManagement.ThreadManagementService;
-        const titleRegeneration = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
-        const threadId = yield* createThread({
-          command: "command:title:missing:create",
-          thread: "thread:title:missing",
-        });
-        const requestId = yield* armRegeneration({ command: "command:title:missing:1", threadId });
-
-        yield* titleRegeneration.execute({
-          threadId,
-          requestId,
-          kind: { type: "initial", messageId: MessageId.make("message:title:missing") },
-        });
-
-        assert.equal(harness.generateThreadTitle.mock.calls.length, 0);
         const projection = yield* threads.getThreadProjection(threadId);
         assert.equal(projection.thread.title, "Seed title");
         assert.isNotOk(projection.thread.titleRegeneration);

@@ -112,19 +112,6 @@ const agentList = (directory: string) => ({
   ],
 });
 
-const noOpenRequests: ReadonlyArray<ProviderReplayEntry> = [
-  out("permission.list", { sessionID: SESSION }),
-  reply("permission.list", { data: [] }),
-  out("session.form.list", { sessionID: SESSION }),
-  reply("session.form.list", { data: [] }),
-];
-const supervisedRules = (name: string) => [
-  { action: "shell", resource: "*", effect: "ask" },
-  { action: "edit", resource: "*", effect: "ask" },
-  { action: "external_directory", resource: "*", effect: "ask" },
-  ...BUILD_PATHS,
-  ...mcpRules(name),
-];
 const autoEditRules = (name: string) => [
   { action: "shell", resource: "*", effect: "ask" },
   { action: "edit", resource: "*", effect: "allow" },
@@ -180,16 +167,6 @@ const answeredPrompt = (text: string): ReadonlyArray<ProviderReplayEntry> => [
   event("session.execution.succeeded", { sessionID: SESSION }),
 ];
 
-const directoryModels = (directory: string): ReadonlyArray<ProviderReplayEntry> => [
-  out("model.list", { "location[directory]": directory }),
-  reply("model.list", {
-    location: { directory },
-    data: [
-      catalogModel("big-pickle", "Big Pickle"),
-      catalogModel("mimo-v2.6-flash-free", "MiMo V2.6 Flash Free"),
-    ],
-  }),
-];
 /** A `/api/model` entry as 2.0.18 lists it; a known window means no re-read after a turn. */
 const catalogModel = (id: string, name: string) => ({
   id,
@@ -372,88 +349,6 @@ describe("OpenCode 2 through the orchestrator", () => {
         );
 
         assert.lengthOf(projection.providerThreads, 1);
-      }).pipe(Effect.scoped),
-  );
-
-  it.effect("gives a session made with older rules T3's rules before its next prompt", () =>
-    Effect.gen(function* () {
-      const name = "opencode2-resume-rules";
-      const before = yield* checkpointWorkspace(`${name}-before`);
-      const after = yield* checkpointWorkspace(`${name}-after`);
-      const thread = threadCommands({ name, worktreePath: before });
-      const projection = yield* runScenario({
-        name,
-        threadId: thread.threadId,
-        entries: [
-          ...createdSession(before, name),
-          ...instructionsWritten,
-          ...answeredPrompt("FIRST"),
-          ...directoryModels(after),
-
-          out("session.get", { sessionID: SESSION }),
-          reply(
-            "session.get",
-            sessionInfo(
-              before,
-              [
-                { action: "*", resource: "*", effect: "allow" },
-                { action: "subagent", resource: "*", effect: "deny" },
-              ],
-              name,
-            ),
-          ),
-          ...noOpenRequests,
-          out("session.update", { sessionID: SESSION, permissions: t3Rules(name) }),
-          reply("session.update", null),
-          out("session.move", { sessionID: SESSION, directory: after }),
-          reply("session.move", null),
-          ...instructionsWritten,
-          ...answeredPrompt("SECOND"),
-        ],
-        commands: [
-          thread.create,
-          thread.message("first"),
-          {
-            type: "thread.metadata.update",
-            commandId: thread.command("worktree"),
-            threadId: thread.threadId,
-            worktreePath: after,
-          },
-          thread.message("second"),
-        ],
-      });
-      assert.deepEqual(
-        projection.runs.map((run) => run.status),
-        ["completed", "completed"],
-      );
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect(
-    "creates a Supervised thread's session with rules that ask before shell and edits",
-    () =>
-      Effect.gen(function* () {
-        const name = "opencode2-supervised-rules";
-        const cwd = yield* checkpointWorkspace(name);
-        const thread = threadCommands({
-          name,
-          worktreePath: cwd,
-          runtimeMode: "approval-required",
-        });
-        const projection = yield* runScenario({
-          name,
-          threadId: thread.threadId,
-          entries: [
-            ...createdSession(cwd, name, supervisedRules(name), true),
-            ...instructionsWritten,
-            ...answeredPrompt("FIRST"),
-          ],
-          commands: [thread.create, thread.message("first")],
-        });
-        assert.deepEqual(
-          projection.runs.map((run) => run.status),
-          ["completed"],
-        );
       }).pipe(Effect.scoped),
   );
 

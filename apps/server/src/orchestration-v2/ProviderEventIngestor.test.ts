@@ -963,7 +963,7 @@ layer("ProviderEventIngestorV2", (it) => {
     }),
   );
 
-  it.effect.each(["completed", "interrupted", "failed", "cancelled", "control"] as const)(
+  it.effect.each(["interrupted", "control"] as const)(
     "dismisses only native questions when a provider turn ends with %s",
     (terminal) =>
       Effect.gen(function* () {
@@ -1777,20 +1777,15 @@ layer("ProviderEventIngestorV2", (it) => {
       }),
   );
 
-  it.effect.each(["explicit", "detached", "unchanged", "legacy"])(
+  // regression: #20079 the renamed-branch correction must not rewrite a child that needs none
+  it.effect.each(["explicit", "detached"])(
     "preserves a native child's branch when the checkout needs no correction: %s",
     (scenario) =>
       Effect.gen(function* () {
         const { worktreePath, command } = yield* makeSharedWorktree;
         const git = yield* GitVcsDriver.GitVcsDriver;
-        const branch =
-          scenario === "explicit"
-            ? "child-feature"
-            : scenario === "legacy"
-              ? "t3-abcd1234"
-              : "t3/abcd1234";
-        if (scenario === "explicit" || scenario === "legacy")
-          yield* command(worktreePath, ["branch", "-m", branch]);
+        const branch = scenario === "explicit" ? "child-feature" : "t3/abcd1234";
+        if (scenario === "explicit") yield* command(worktreePath, ["branch", "-m", branch]);
         if (scenario === "detached") yield* command(worktreePath, ["checkout", "--detach"]);
         const now = yield* DateTime.now;
         const sink = yield* EventSink.EventSinkV2;

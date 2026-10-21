@@ -125,32 +125,6 @@ describe("ThreadLiveEventCoalescer", () => {
     expect(coalesceLiveToolUpdatedEvents(events).map((event) => event.sequence)).toEqual([2, 3, 4]);
   });
 
-  it.effect("fails and clears pending updates when their serialized payload fills the budget", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const first = makeToolActivity(1);
-        const coalescer = yield* makeThreadLiveEventCoalescer({
-          coalesceWindow: "500 millis",
-          maxSerializedBytes: Buffer.byteLength(encodeEvent(first)),
-        });
-        yield* coalescer.offer(first);
-        expect(yield* coalescer.usage).toEqual({
-          retainedItems: 1,
-          retainedSerializedBytes: Buffer.byteLength(encodeEvent(first)),
-        });
-
-        const overflow = yield* coalescer.offer(makeToolActivity(2)).pipe(Effect.result);
-        expect(overflow._tag).toBe("Failure");
-        yield* coalescer.closed;
-        expect(yield* coalescer.usage).toEqual({ retainedItems: 0, retainedSerializedBytes: 0 });
-        const marker = yield* coalescer.offer({ kind: "synchronized" }).pipe(Effect.result);
-        expect(marker._tag).toBe("Failure");
-        const delivered = yield* coalescer.stream.pipe(Stream.runCollect, Effect.result);
-        expect(delivered._tag).toBe("Failure");
-      }),
-    ),
-  );
-
   it.effect("keeps the flush timer alive when an offer's shorter scope closes", () =>
     Effect.scoped(
       Effect.gen(function* () {

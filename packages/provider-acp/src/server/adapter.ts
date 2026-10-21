@@ -384,7 +384,7 @@ export function acpScopedNativeId(instanceId: ProviderInstanceId, nativeId: stri
   return `provider-instance:${encodeURIComponent(instanceId)}:${nativeId}`;
 }
 
-export function acpProviderItemNativeId(input: {
+function acpProviderItemNativeId(input: {
   readonly instanceId: ProviderInstanceId;
   readonly itemIdentityVersion: 2 | undefined;
   readonly nativeId: string;
@@ -1219,14 +1219,14 @@ function acpIsProviderContinuationMessage(message: {
   return message.createdBy === "agent" && message.creationSource === "provider";
 }
 
-export function acpCarryoverTerminalShouldClearContinuation(input: {
+function acpCarryoverTerminalShouldClearContinuation(input: {
   readonly continuationOffered: boolean;
   readonly wakeBufferLength: number;
 }): boolean {
   return !input.continuationOffered && input.wakeBufferLength === 0;
 }
 
-export function acpTurnStartShouldPreserveContinuation(input: {
+function acpTurnStartShouldPreserveContinuation(input: {
   readonly continuationRequested: boolean;
   readonly isContinuationTurn: boolean;
   readonly wakeBufferLength: number;

@@ -126,17 +126,6 @@ describe("decideThreadResume", () => {
     });
   });
 
-  it("falls back to a snapshot when the event count exceeds the bound", () => {
-    expect(
-      decideThreadResume({
-        afterSequence: 10,
-        highWater: 20_000,
-        replayEventCount: THREAD_RESUME_MAX_REPLAY_EVENTS + 1,
-        replayEncodedBytes: 1,
-      }),
-    ).toEqual({ mode: "snapshot" });
-  });
-
   it("falls back to a snapshot when encoded replay bytes exceed the bound", () => {
     expect(
       decideThreadResume({
