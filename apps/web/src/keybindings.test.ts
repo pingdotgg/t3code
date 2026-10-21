@@ -618,6 +618,17 @@ describe("resolveShortcutCommand", () => {
     );
   });
 
+  it("maximizes the right panel with mod+alt+shift+b by default", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "B", code: "KeyB", metaKey: true, altKey: true, shiftKey: true }),
+        DEFAULT_RESOLVED_KEYBINDINGS,
+        { platform: "MacIntel", context: { terminalFocus: false } },
+      ),
+      "rightPanel.toggleMaximized",
+    );
+  });
+
   it("navigates history with mod+[ and mod+] outside the terminal", () => {
     const back = event({ key: "[", code: "BracketLeft", metaKey: true });
     const forward = event({ key: "]", code: "BracketRight", ctrlKey: true });
