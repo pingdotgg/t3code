@@ -12,6 +12,7 @@ import {
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurnTokenUsage,
+  type OrchestrationV2ThreadProjection,
   ProjectId,
   ProviderInstanceId,
   ProviderSessionId,
@@ -379,18 +380,29 @@ const waitForIdle = Effect.fn("ProviderSwitchTest.waitForIdle")(function* (
   targetThreadId: ThreadId,
 ) {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
-  for (let attempt = 0; attempt < 1_000; attempt += 1) {
-    const projection = yield* orchestrator.getThreadProjection(targetThreadId);
-    if (
-      projection.runs.every(
-        (run) => !["queued", "starting", "running", "waiting"].includes(run.status),
-      )
-    ) {
-      return projection;
-    }
-    yield* Effect.sleep("5 millis");
+  const eventSink = yield* EventSink.EventSinkV2;
+  const isIdle = (projection: OrchestrationV2ThreadProjection) =>
+    projection.runs.every(
+      (run) => !["queued", "starting", "running", "waiting"].includes(run.status),
+    );
+  const afterSequence = yield* eventSink.latestSequence();
+  const current = yield* orchestrator.getThreadProjection(targetThreadId);
+  if (isIdle(current)) {
+    return current;
   }
-  return yield* Effect.die(new Error("Provider switch test timed out waiting for idle"));
+  // Projections commit with their events, so each later event is the only time to re-read.
+  const [idle] = yield* eventSink.stream({ afterSequence }).pipe(
+    Stream.mapEffect(() => orchestrator.getThreadProjection(targetThreadId)),
+    Stream.filter(isIdle),
+    Stream.take(1),
+    Stream.runCollect,
+  );
+  if (idle === undefined) {
+    return yield* Effect.die(
+      new Error("Provider switch test event stream ended before the thread went idle"),
+    );
+  }
+  return idle;
 });
 
 describe("orchestration v2 provider switching", () => {

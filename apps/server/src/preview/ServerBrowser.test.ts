@@ -390,13 +390,20 @@ it.live.each([
       });
       const navigation = yield* viewer.input(message).pipe(Effect.forkScoped);
       yield* Effect.promise(() => started.promise);
+      const cdp = contexts[0]!.sessions.at(-1)!;
+      const send = cdp.send.getMockImplementation()!;
+      const typed = Promise.withResolvers<void>();
+      cdp.send.mockImplementation(async (operation, input) => {
+        if (operation === "Input.insertText") typed.resolve();
+        return send(operation, input);
+      });
       const correction = yield* Effect.gen(function* () {
         yield* viewer.input({ type: "navigate", url: "http://localhost:5173/fixed" });
         yield* viewer.input({ type: "text", text: "hello" });
       }).pipe(Effect.forkScoped);
       yield* Effect.addFinalizer(() => Effect.sync(() => committed.resolve()));
-      // Check after runnable promises drain, without waiting for navigation or a timeout.
-      yield* Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
+      // The text reaches the page while the first navigation is still uncommitted.
+      yield* Effect.promise(() => typed.promise);
       expect(page.goto).toHaveBeenLastCalledWith(
         "http://localhost:5173/fixed",
         expect.objectContaining({ waitUntil: "commit" }),

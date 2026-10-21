@@ -188,6 +188,7 @@ export default defineConfig({
       "t3code/no-manual-effect-runtime-in-tests": "error",
       "t3code/no-native-title-tooltip": "error",
       "t3code/no-raw-mcp-registration": "error",
+      "t3code/no-real-time-wait-in-tests": "error",
       "t3code/no-test-in-loop": "error",
       "t3code/no-test-timeout-or-unreasoned-skip": "error",
       "t3code/no-rpc-permission-bypass": ["error", { allowRawClientAccess: true }],
@@ -215,6 +216,10 @@ export default defineConfig({
       {
         files: ["apps/web/src/**/*.browser.test.{ts,tsx}"],
         rules: { "t3code/no-frame-waits-in-browser-tests": "error" },
+      },
+      {
+        files: ["**/*.browser.test.*"],
+        rules: { "t3code/no-real-time-wait-in-tests": "off" },
       },
       {
         files: ["apps/**/src/**", "packages/**/src/**"],

@@ -257,9 +257,13 @@ describe("PreviewPasskeys", () => {
 
       page.state.focused = true;
       let finish: (value: unknown) => void = () => {};
-      webauthn.getCredential.mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
+      const ceremonyStarted = Promise.withResolvers<void>();
+      webauthn.getCredential.mockImplementationOnce(() => {
+        ceremonyStarted.resolve();
+        return new Promise((resolve) => (finish = resolve));
+      });
       const first = yield* Effect.forkChild(page.call(PASSKEY_GET_CHANNEL, publicKey));
-      yield* Effect.promise(() => new Promise((resolve) => setImmediate(resolve)));
+      yield* Effect.promise(() => ceremonyStarted.promise);
       assert.deepStrictEqual(yield* page.call(PASSKEY_GET_CHANNEL, publicKey), notAllowed);
 
       page.mainFrame.origin = "https://other.example";

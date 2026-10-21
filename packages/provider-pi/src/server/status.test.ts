@@ -1,8 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
-import * as Deferred from "effect/Deferred";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -54,13 +52,7 @@ function piProbeSpawner(version: string) {
   });
 }
 
-const piDiscoverySpawner = (
-  inventory: unknown,
-  slowStartup?: {
-    readonly delay: Duration.Input;
-    readonly getStateReceived: Deferred.Deferred<void>;
-  },
-) =>
+const piDiscoverySpawner = (inventory: unknown) =>
   Effect.gen(function* () {
     const stdout = yield* Queue.unbounded<Uint8Array, Cause.Done>();
     let stdinBuffer = "";
@@ -74,10 +66,6 @@ const piDiscoverySpawner = (
           stdinBuffer = stdinBuffer.slice(newline + 1);
           if (line.length === 0) continue;
           const request = decodeRpcRequest(line);
-          if (request.type === "get_state" && slowStartup !== undefined) {
-            yield* Deferred.succeed(slowStartup.getStateReceived, undefined);
-            yield* Effect.sleep(slowStartup.delay);
-          }
           const data =
             request.type === "get_available_models"
               ? inventory

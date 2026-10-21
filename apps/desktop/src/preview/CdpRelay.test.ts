@@ -15,6 +15,7 @@ const makeTarget = (
 });
 
 // Each relay reply resolves after a few microtasks; one macrotask lets them all land.
+// oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- a zero-delay macrotask boundary, not a wait for time
 const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 describe("CDP relay", () => {

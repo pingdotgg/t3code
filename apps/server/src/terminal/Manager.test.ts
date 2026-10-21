@@ -12,20 +12,16 @@ import {
   TerminalProviderInstanceNotFoundError,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as Data from "effect/Data";
 import * as Deferred from "effect/Deferred";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
-import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -49,10 +45,6 @@ vi.mock("effect/SynchronizedRef", async (importOriginal) => {
 // The server omits DOM types, which include TypeScript's WebAssembly declarations.
 
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
-
-class WaitForConditionError extends Data.TaggedError("WaitForConditionError")<{
-  readonly message: string;
-}> {}
 
 class FakePtyProcess implements PtyAdapter.PtyProcess {
   readonly writes: string[] = [];
@@ -204,26 +196,6 @@ class GatedPtyAdapter extends FakePtyAdapter {
     );
   }
 }
-
-const waitFor = <E, R>(
-  predicate: Effect.Effect<boolean, E, R>,
-  timeout: Duration.Input = 800,
-): Effect.Effect<void, WaitForConditionError | E, R> =>
-  predicate.pipe(
-    Effect.filterOrFail(
-      (done) => done,
-      () => new WaitForConditionError({ message: "Condition not met" }),
-    ),
-    Effect.retry(Schedule.spaced("15 millis")),
-    Effect.timeoutOption(timeout),
-    Effect.flatMap((result) =>
-      Option.match(result, {
-        onNone: () =>
-          Effect.fail(new WaitForConditionError({ message: "Timed out waiting for condition" })),
-        onSome: () => Effect.void,
-      }),
-    ),
-  );
 
 function openInput(overrides: Partial<TerminalOpenInput> = {}): TerminalOpenInput {
   return {
@@ -773,7 +745,7 @@ it.layer(
     Effect.gen(function* () {
       const ptyAdapter = new FakePtyAdapter();
       let duringCheck: (pid: number) => Effect.Effect<void> = () => Effect.void;
-      const { manager, getEvents } = yield* createManager(5, {
+      const { manager } = yield* createManager(5, {
         ptyAdapter,
         subprocessPollIntervalMs: 60_000,
         subprocessInspector: (pid) =>
@@ -781,6 +753,13 @@ it.layer(
             Effect.as({ hasRunningSubprocess: false, childCommand: null, processIds: [] }),
           ),
       });
+      const outputSeen = yield* Deferred.make<void>();
+      const unsubscribeOutput = yield* manager.subscribe((event) =>
+        event.type === "output"
+          ? Deferred.succeed(outputSeen, undefined).pipe(Effect.asVoid)
+          : Effect.void,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribeOutput));
       yield* manager.open(openInput({ terminalId: "typed" }));
       yield* manager.open(openInput({ terminalId: "echoed" }));
       const [typed, echoed] = ptyAdapter.processes;
@@ -791,9 +770,7 @@ it.layer(
               .pipe(Effect.orDie)
           : Effect.gen(function* () {
               echoed!.emitData("make build\r\n");
-              yield* waitFor(
-                Effect.map(getEvents, (events) => events.some((event) => event.type === "output")),
-              );
+              yield* Deferred.await(outputSeen);
             }).pipe(Effect.orDie);
 
       yield* manager.closeIdle({ threadId: "thread-1" });
