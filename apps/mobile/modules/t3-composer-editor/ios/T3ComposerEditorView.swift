@@ -7,7 +7,7 @@ private struct ComposerTokenPayload: Decodable {
   let label: String
   let iconUri: String?
   let accent: String?
-  let symbol: String?
+  let tintsIcon: Bool?
   let detail: String?
   let start: Int
   let end: Int
@@ -29,20 +29,6 @@ private struct ComposerControlledDocumentPayload: Decodable {
 private struct ComposerThemePayload: Decodable {
   let text: String
   let placeholder: String
-  let chipBackground: String
-  let chipBorder: String
-  let chipText: String
-  let skillBackground: String
-  let skillBorder: String
-  let skillText: String
-  let fileTint: String
-}
-
-private struct ComposerChipStyle {
-  let tint: UIColor
-  let backgroundColor: UIColor
-  let borderColor: UIColor
-  let textColor: UIColor
 }
 
 private enum ComposerEnterBehavior: String {
@@ -446,14 +432,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   private var requestedSelection: ComposerSelectionPayload?
   private var theme = ComposerThemePayload(
     text: "#262626",
-    placeholder: "#8e8e93",
-    chipBackground: "#f2f2f7",
-    chipBorder: "#dedee3",
-    chipText: "#262626",
-    skillBackground: "#f9e8fb",
-    skillBorder: "#e5a6eb",
-    skillText: "#a21caf",
-    fileTint: "#737373"
+    placeholder: "#8e8e93"
   )
   private var fontFamily = "DMSans-Regular"
   private var fontSize: CGFloat = 14
@@ -906,40 +885,26 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   }
 
   private func makeAttachmentString(_ token: ComposerTokenPayload) -> NSAttributedString {
-    let isSkill = token.type == "skill"
-    let accent = token.accent.flatMap { UIColor(composerHex: $0) }
-    let foreground = UIColor(composerHex: theme.chipText) ?? .label
-    let border = UIColor(composerHex: theme.chipBorder) ?? .separator
-    let tint = accent.map { blend($0, over: foreground, weight: 0.22) }
-      ?? UIColor(composerHex: isSkill ? theme.skillText : theme.fileTint) ?? .secondaryLabel
-    let iconName = token.symbol ?? (isSkill ? "cube" : "doc")
-    let iconImage = token.iconUri.flatMap(iconImage(for:))
-    let style = ComposerChipStyle(
-      tint: tint,
-      backgroundColor: accent?.withAlphaComponent(0.11) ?? UIColor(
-        composerHex: isSkill ? theme.skillBackground : theme.chipBackground
-      ) ?? .secondarySystemFill,
-      borderColor: accent.map { blend($0, over: border, weight: 0.34) } ?? UIColor(
-        composerHex: isSkill ? theme.skillBorder : theme.chipBorder
-      ) ?? .separator,
-      textColor: tint
-    )
+    let color = token.accent.flatMap { UIColor(composerHex: $0) }
+      ?? UIColor(composerHex: theme.text) ?? .label
+    let chipFont = UIFont(name: "DMSans-Medium", size: fontSize)
+      ?? UIFont.systemFont(ofSize: fontSize, weight: .medium)
+    let icon = token.iconUri.flatMap(iconImage(for:)).map {
+      token.tintsIcon == true ? Self.tinted($0, color: color) : $0
+    }
     let image = renderChip(
       label: token.label,
       detail: token.detail,
-      iconName: iconName,
-      iconImage: iconImage,
-      style: style
+      icon: icon,
+      color: color,
+      font: chipFont
     )
-    let font = UIFont(name: fontFamily, size: fontSize)
-      ?? UIFont.systemFont(ofSize: fontSize)
-    let baselineOffset = floor((font.capHeight - image.size.height) / 2)
     let attachment = ComposerTextAttachment(
       source: token.source,
       label: token.label,
       image: image,
       size: image.size,
-      baselineOffset: baselineOffset
+      baselineOffset: chipFont.ascender - image.size.height
     )
     let attributedAttachment = NSMutableAttributedString(attachment: attachment)
     attributedAttachment.addAttributes(
@@ -949,78 +914,35 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     return attributedAttachment
   }
 
-  /// Chip glyphs with no SF Symbol that reads correctly. A pull request would otherwise land on
-  /// `arrow.triangle.branch`, a road-sign fork that says "branch", not "pull request", so it is
-  /// drawn from the same lucide geometry web and Android use.
-  private static func vectorIcon(named name: String, size: CGFloat, color: UIColor) -> UIImage? {
-    guard name == "git-pull-request" else { return nil }
-    return UIGraphicsImageRenderer(size: CGSize(width: size, height: size)).image { _ in
-      let s = size / 24  // lucide authors on a 24pt grid.
-      let path = UIBezierPath()
-      for centre in [CGPoint(x: 18 * s, y: 18 * s), CGPoint(x: 6 * s, y: 6 * s)] {
-        path.append(UIBezierPath(arcCenter: centre, radius: 3 * s, startAngle: 0,
-                                 endAngle: .pi * 2, clockwise: true))
-      }
-      path.move(to: CGPoint(x: 13 * s, y: 6 * s))
-      path.addLine(to: CGPoint(x: 16 * s, y: 6 * s))
-      path.addCurve(to: CGPoint(x: 18 * s, y: 8 * s),
-                    controlPoint1: CGPoint(x: 17.1 * s, y: 6 * s),
-                    controlPoint2: CGPoint(x: 18 * s, y: 6.9 * s))
-      path.addLine(to: CGPoint(x: 18 * s, y: 15 * s))
-      path.move(to: CGPoint(x: 6 * s, y: 9 * s))
-      path.addLine(to: CGPoint(x: 6 * s, y: 21 * s))
-      path.lineWidth = 2 * s
-      path.lineCapStyle = .round
-      path.lineJoinStyle = .round
-      color.setStroke()
-      path.stroke()
-    }
-  }
-
   private func renderChip(
     label: String,
     detail: String?,
-    iconName: String,
-    iconImage: UIImage?,
-    style: ComposerChipStyle
+    icon: UIImage?,
+    color: UIColor,
+    font: UIFont
   ) -> UIImage {
-    // Kept in step with `T3ContextChipVectorIcon` in the markdown module: a chip drawn here and
-    // the same chip drawn in a sent message have to be the same picture.
-    let chipFontSize = fontSize * 0.86
-    let font = UIFont(name: "DMSans-Medium", size: chipFontSize)
-      ?? UIFont.systemFont(ofSize: chipFontSize, weight: .medium)
-    let fallbackIcon = Self.vectorIcon(named: iconName, size: 14, color: style.textColor)
-      ?? UIImage(
-        systemName: iconName,
-        withConfiguration: UIImage.SymbolConfiguration(pointSize: 12, weight: .medium)
-      )
-    let icon = iconImage ?? fallbackIcon
-    // The size reads as metadata, not part of the name, so it renders a step down from the
-    // label the way the web chip does.
     let paragraph = NSMutableParagraphStyle()
     paragraph.alignment = .left
-    let detailFont = UIFont(name: "DMSans-Medium", size: chipFontSize * 0.84)
-      ?? UIFont.systemFont(ofSize: chipFontSize * 0.84, weight: .medium)
+    paragraph.lineBreakMode = .byTruncatingMiddle
     let attributedLabel = NSMutableAttributedString(
       string: label,
-      attributes: [.font: font, .foregroundColor: style.textColor, .paragraphStyle: paragraph]
+      attributes: [.font: font, .foregroundColor: color, .paragraphStyle: paragraph]
     )
+    // The size reads as metadata, not part of the name, so it renders a step down from the
+    // label the way the web chip does.
     if let detail, !detail.isEmpty {
+      let detailFont = font.withSize(font.pointSize * 0.84)
       attributedLabel.append(
         NSAttributedString(
           string: " \(detail)",
-          attributes: [
-            .font: detailFont,
-            .foregroundColor: style.textColor,
-            .paragraphStyle: paragraph,
-          ]
+          attributes: [.font: detailFont, .foregroundColor: color, .paragraphStyle: paragraph]
         )
       )
     }
-    let iconWidth: CGFloat = icon == nil ? 0 : chipFontSize * 1.17
-    let iconGap: CGFloat = icon == nil ? 0 : chipFontSize * 0.33
-    let padding = chipFontSize * 0.5
-    let height = ceil(chipFontSize * 1.41)
+    let iconSide = font.pointSize
+    let iconSlot: CGFloat = icon == nil ? 0 : iconSide * 1.25
+    let padding: CGFloat = 5
+    let height = ceil(font.ascender - font.descender)
     // A long path would otherwise draw a chip wider than the composer and clip. Cap the label
     // to the text the editor can actually show and truncate inside it, as Android's
     // `maximumWidth` does, so the chip always fits the line it sits on.
@@ -1030,58 +952,35 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     if availableWidth <= 0 {
       chipsNeedMeasuredWidth = true
     }
-    let maximumLabelWidth = max(chipFontSize * 3, availableWidth - padding * 2 - iconWidth - iconGap)
-    paragraph.lineBreakMode = .byTruncatingMiddle
-    attributedLabel.addAttribute(
-      .paragraphStyle,
-      value: paragraph,
-      range: NSRange(location: 0, length: attributedLabel.length)
-    )
-    let measured = attributedLabel.size()
-    let textSize = CGSize(width: min(measured.width, maximumLabelWidth), height: measured.height)
-    let width = ceil(padding * 2 + iconWidth + iconGap + textSize.width)
+    let maximumLabelWidth = max(font.pointSize * 3, availableWidth - padding * 2 - iconSlot)
+    let labelWidth = min(attributedLabel.size().width, maximumLabelWidth)
+    let width = ceil(padding * 2 + iconSlot + labelWidth)
     let format = UIGraphicsImageRendererFormat.preferred()
     format.opaque = false
     let renderer = UIGraphicsImageRenderer(size: CGSize(width: width, height: height), format: format)
-    return renderer.image { context in
-      let rect = CGRect(origin: .zero, size: CGSize(width: width, height: height))
-      let path = UIBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), cornerRadius: chipFontSize * 0.5)
-      style.backgroundColor.setFill()
-      path.fill()
-      style.borderColor.setStroke()
-      path.lineWidth = 1
-      path.stroke()
-
-      var x = padding
+    return renderer.image { _ in
       if let icon {
-        let renderedIcon = iconImage == nil
-          ? icon.withTintColor(style.tint, renderingMode: .alwaysOriginal)
-          : icon
-        renderedIcon.draw(
-          in: CGRect(x: x, y: (height - iconWidth) / 2, width: iconWidth, height: iconWidth)
+        icon.draw(
+          in: CGRect(x: padding, y: (height - iconSide) / 2, width: iconSide, height: iconSide)
         )
-        x += iconWidth + iconGap
       }
       // Exactly the measured width: a spare pixel here would let a capped label draw past
       // the cap instead of truncating inside it.
       attributedLabel.draw(
-        in: CGRect(x: x, y: (height - textSize.height) / 2, width: textSize.width, height: textSize.height)
+        in: CGRect(x: padding + iconSlot, y: 0, width: labelWidth, height: height)
       )
-      context.cgContext.setAllowsAntialiasing(true)
     }
   }
 
-  private func blend(_ accent: UIColor, over base: UIColor, weight: CGFloat) -> UIColor {
-    var ar: CGFloat = 0, ag: CGFloat = 0, ab: CGFloat = 0, aa: CGFloat = 0
-    var br: CGFloat = 0, bg: CGFloat = 0, bb: CGFloat = 0, ba: CGFloat = 0
-    accent.getRed(&ar, green: &ag, blue: &ab, alpha: &aa)
-    base.getRed(&br, green: &bg, blue: &bb, alpha: &ba)
-    return UIColor(
-      red: ar * weight + br * (1 - weight),
-      green: ag * weight + bg * (1 - weight),
-      blue: ab * weight + bb * (1 - weight),
-      alpha: aa * weight + ba * (1 - weight)
-    )
+  private static func tinted(_ image: UIImage, color: UIColor) -> UIImage {
+    let format = UIGraphicsImageRendererFormat.preferred()
+    format.scale = image.scale
+    format.opaque = false
+    return UIGraphicsImageRenderer(size: image.size, format: format).image { _ in
+      color.setFill()
+      UIRectFill(CGRect(origin: .zero, size: image.size))
+      image.draw(at: .zero, blendMode: .destinationIn, alpha: 1)
+    }
   }
 
   private func iconImage(for uri: String) -> UIImage? {

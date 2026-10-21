@@ -9,6 +9,7 @@ import type { ComposerContextRecord } from "@t3tools/contracts";
 import { contextChipPresentation } from "../lib/composerChipPresentation";
 import { CONTEXT_CHIP_ICON_SOURCES } from "../lib/contextChipIcons.generated";
 import { FONT_FAMILIES } from "../lib/fontFamilies";
+import { contextChipIconSource } from "../lib/contextChipIconSource";
 import { markdownFileIconSource } from "../lib/markdownFileIcons";
 import { markdownLinkIconSource } from "../lib/markdownLinkIcons";
 import { resolveMarkdownLinkIcon, resolveMarkdownLinkPresentation } from "../lib/markdownLinks";
@@ -21,14 +22,7 @@ import {
   enrichedLinkVariantPattern,
   enrichedSkillDisplayName,
   enrichedSkillReference,
-  type EnrichedChipIcon,
 } from "../lib/enrichedLinkPresentation";
-
-function chipIconSource(icon: EnrichedChipIcon) {
-  return icon.kind === "chip"
-    ? CONTEXT_CHIP_ICON_SOURCES[icon.name]
-    : markdownFileIconSource(icon.name);
-}
 
 export function enrichedContextLinkCustomization(
   href: string,
@@ -38,7 +32,7 @@ export function enrichedContextLinkCustomization(
   if (!context) return undefined;
   return {
     label: context.label,
-    icon: chipIconSource(context.icon),
+    icon: contextChipIconSource(context.icon),
     chip: { accent: context.accent, tintsIcon: context.icon.kind === "chip" },
   };
 }
