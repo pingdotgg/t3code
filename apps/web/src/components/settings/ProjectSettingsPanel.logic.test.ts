@@ -51,6 +51,7 @@ describe("project removal confirmation", () => {
     );
   });
 
+  // regression: #21409 project-wide removal must count every checkout's threads and keep files
   it("states the full group count and preserves files when removing a project everywhere", () => {
     const plan = planProjectRemoval({
       members: [local, remote],

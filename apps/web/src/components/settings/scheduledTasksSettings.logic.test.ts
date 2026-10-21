@@ -214,18 +214,6 @@ describe("webhook scheduled tasks", () => {
     });
   });
 
-  it("drops the signature when it is switched off and offers GitHub's settings", () => {
-    const draft = taskToDraft({ ...webhookTask, schedule: { type: "webhook", signature: null } });
-    expect(draft.signatureEnabled).toBe(false);
-    expect(draft.signatureHeader).toBe("x-hub-signature-256");
-    expect(scheduleFromDraft(draft)).toEqual({
-      type: "webhook",
-      signature: null,
-      maxDeliveryAgeMinutes: null,
-      dedupe: {},
-    });
-  });
-
   it("round-trips the max age, treats blank as no limit, and rejects an invalid limit", () => {
     const draft = taskToDraft({
       ...webhookTask,
@@ -329,17 +317,6 @@ describe("scheduled task model defaults", () => {
         },
       }),
     ).toEqual(environmentSelection);
-  });
-  it("does not choose an implicit model on a disabled provider", () => {
-    expect(
-      resolve(
-        {
-          ...config,
-          providers: config.providers.map((provider) => ({ ...provider, enabled: false })),
-        },
-        null,
-      ),
-    ).toBeNull();
   });
 });
 

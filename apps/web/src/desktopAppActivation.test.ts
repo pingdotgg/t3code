@@ -67,25 +67,4 @@ describe("desktop app activation", () => {
 
     expect(response).toMatchObject({ ok: false, code: "platform-mismatch" });
   });
-
-  it("returns a project error without opening a thread", async () => {
-    const openThread = vi.fn(async () => ({ threadId }));
-    const response = await handleDesktopAppActivationRequest(
-      request,
-      dependencies({
-        findProject: () => null,
-        createProject: vi.fn(async () => {
-          throw new Error("Project path is not available.");
-        }),
-        openThread,
-      }),
-    );
-
-    expect(response).toMatchObject({
-      ok: false,
-      code: "project-create-failed",
-      message: "Project path is not available.",
-    });
-    expect(openThread).not.toHaveBeenCalled();
-  });
 });

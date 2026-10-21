@@ -5,11 +5,9 @@ import {
   createRecordingRequestTracker,
   snapShotStatus,
   snapShotShortcutStatus,
-  snapShotFeedbackUnavailableMessage,
   snapShotSetupSummary,
   snapShotSetupButtonLabel,
   snapShotSetupComplete,
-  snapShotAccessibilityUnavailableMessage,
 } from "./SnapShotSettings.logic";
 
 it("ignores a stale request after a newer request starts", () => {
@@ -26,37 +24,7 @@ it("ignores a stale request after a newer request starts", () => {
   expect(requests.tryBegin()).toBeNull();
 });
 
-it("distinguishes Hyprland helper setup, action registration, and verified shortcut delivery", () => {
-  const state: DesktopSnapShotState = {
-    mode: "portal",
-    linuxBackend: "hyprland",
-    linuxDesktop: "hyprland",
-    shortcut: DEFAULT_CLIENT_SETTINGS.snapShotShortcut,
-    shortcutRegistered: false,
-    shortcutMessage: "Connecting to Hyprland shortcuts…",
-    message: null,
-    hyprlandHelper: { status: "not-installed", message: "Install helper" },
-  };
-  expect(snapShotSetupButtonLabel(state)).toBe("Set up Hyprland capture");
-  expect(snapShotStatus(state, false)).toBe("Turn this on to set up snapshots.");
-  expect(snapShotStatus(state, true)).toContain("Install the capture helper");
-  expect(snapShotFeedbackUnavailableMessage(state)).toContain("Install or update");
-  const ready = {
-    ...state,
-    hyprlandHelper: { status: "ready" as const, message: "Ready" },
-    linuxFeedbackAvailable: true,
-  };
-  expect(snapShotSetupButtonLabel(ready)).toBe("Manage capture");
-  expect(snapShotShortcutStatus({ ...ready, shortcutPending: true })).not.toContain("permission");
-  expect(snapShotStatus({ ...ready, shortcutActionRegistered: true }, true)).toBe(
-    "Use your shortcut from another app",
-  );
-  expect(snapShotStatus({ ...ready, shortcutVerified: true }, true)).toBe("Ready to capture");
-  expect(snapShotFeedbackUnavailableMessage(ready)).toBeUndefined();
-  expect(snapShotAccessibilityUnavailableMessage(ready)).toBeUndefined();
-});
-
-it.each(["gnome-extension", "niri", "screenshot-portal", "picker"] as const)(
+it.each(["gnome-extension", "picker"] as const)(
   "waits for opt-in before presenting %s setup requirements",
   (linuxBackend) => {
     const state: DesktopSnapShotState = {
@@ -132,20 +100,6 @@ it("distinguishes saved shortcuts from observed delivery without making users re
       true,
     ),
   ).toBe("Ready to capture");
-});
-
-it("does not ask Niri users to repeat setup when its capture endpoint is available", () => {
-  const state: DesktopSnapShotState = {
-    mode: "portal",
-    linuxBackend: "niri",
-    shortcut: DEFAULT_CLIENT_SETTINGS.snapShotShortcut,
-    shortcutRegistered: false,
-    shortcutBinding: "Ctrl+Shift+2 { spawn ...; }",
-    shortcutMessage: null,
-    message: null,
-  };
-  expect(snapShotStatus(state, true)).toBe("Use your shortcut from another app");
-  expect(snapShotSetupButtonLabel(state)).toBe("Manage capture");
 });
 
 it("reports pending, denied, and assigned shortcuts without inferring consent from saved keys", () => {

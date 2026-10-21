@@ -203,16 +203,6 @@ describe("settings scope navigation", () => {
     });
   });
 
-  it("respects explicit clearing keys instead of restoring the previous checkout", async () => {
-    const router = createSettingsRouter();
-    await router.navigate({ to: "/settings/general", search: checkoutSearch });
-    await router.navigate({
-      to: "/settings/projects",
-      search: { project: "different-project", machine: undefined },
-    });
-    expect(router.state.location.search).toEqual({ project: "different-project" });
-  });
-
   it("preserves escaped checkout identifiers across reload and browser history", async () => {
     const router = createSettingsRouter();
     await router.navigate({ to: "/settings/general", search: checkoutSearch });

@@ -50,7 +50,7 @@ function hasBundledDevInternals(value: unknown): value is BundledDevInternals {
  * the lazy module ids it compiled. The browser's own requests then reuse
  * Rolldown's transform cache. Entries are paths relative to the Vite root.
  */
-export async function warmLazyEntries(
+async function warmLazyEntries(
   server: ViteDevServer,
   entries: readonly string[],
 ): Promise<string[]> {

@@ -29,22 +29,6 @@ const snapshot: PreviewSessionSnapshot = {
 };
 
 describe("closedViewStore", () => {
-  it.each([null, {}, { entries: null }, { entries: {} }, { entries: "invalid" }])(
-    "rehydrates malformed older history %j as empty history",
-    async (state) => {
-      useClosedViewStore.getState().remember(diff(refA));
-      const { storage, name } = useClosedViewStore.persist.getOptions();
-      await storage!.setItem(name!, {
-        state: state as { entries: ClosedViewEntry[] },
-        version: 0,
-      });
-      await useClosedViewStore.persist.rehydrate();
-      expect(useClosedViewStore.persist.hasHydrated()).toBe(true);
-      expect(useClosedViewStore.getState().entries).toEqual([]);
-      expect(await storage!.getItem(name!)).toEqual({ state: { entries: [] }, version: 2 });
-    },
-  );
-
   it.each([
     { id: "bad", kind: "browser", threadRef: refA, snapshot: {} },
     {

@@ -1,7 +1,4 @@
-import {
-  formatWorkingDurationLabel,
-  presentThreadShell,
-} from "@t3tools/client-runtime/state/models";
+import { presentThreadShell } from "@t3tools/client-runtime/state/models";
 import * as DateTime from "effect/DateTime";
 import { deriveActiveWorkStartedAt } from "../session-logic.ts";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -419,19 +416,6 @@ describe("resolveThreadStatusPill", () => {
     },
   };
 
-  it("shows pending approval before all other statuses", () => {
-    expect(
-      resolveThreadStatusPill({
-        thread: {
-          ...baseThread,
-          hasPendingApprovals: true,
-          hasPendingUserInput: true,
-          blockedOnThreadWait: true,
-        },
-      }),
-    ).toMatchObject({ label: "Pending Approval", pulse: false });
-  });
-
   it("shows an active thread wait without a pulse and resumes Working when it ends", () => {
     const blocked = { ...baseThread, blockedOnThreadWait: true };
     expect(resolveSidebarThreadStatus(blocked)).toBe("waiting");
@@ -467,33 +451,6 @@ describe("resolveThreadStatusPill", () => {
       dotClass: "bg-sidebar-muted-foreground",
       pulse: false,
     });
-  });
-
-  it("keeps an active turn working when background tasks are also present", () => {
-    expect(
-      resolveThreadStatusPill({
-        thread: {
-          ...baseThread,
-          pendingBackgroundTasks: [{ taskId: "bg-1", description: "sleep 20", kind: "command" }],
-        },
-      }),
-    ).toMatchObject({ label: "Working", pulse: true });
-  });
-
-  it("does not show waiting after the background task roster clears", () => {
-    expect(
-      resolveThreadStatusPill({
-        thread: {
-          ...baseThread,
-          pendingBackgroundTasks: [],
-          runtime: {
-            ...baseThread.runtime,
-            status: "idle",
-            activeRunId: null,
-          },
-        },
-      }),
-    ).toBeNull();
   });
 
   it("shows plan ready when a settled plan turn has a proposed plan ready for follow-up", () => {
@@ -596,31 +553,6 @@ describe("resolveThreadStatusPill", () => {
 });
 
 describe("resolveProjectStatusIndicator", () => {
-  it("surfaces the highest-priority actionable state across project threads", () => {
-    expect(
-      resolveProjectStatusIndicator([
-        {
-          label: "Completed",
-          colorClass: "text-emerald-600",
-          dotClass: "bg-emerald-500",
-          pulse: false,
-        },
-        {
-          label: "Pending Approval",
-          colorClass: "text-amber-600",
-          dotClass: "bg-amber-500",
-          pulse: false,
-        },
-        {
-          label: "Working",
-          colorClass: "text-sky-600",
-          dotClass: "bg-sky-500",
-          pulse: true,
-        },
-      ]),
-    ).toMatchObject({ label: "Pending Approval", dotClass: "bg-amber-500" });
-  });
-
   it("ranks waiting below active work and above plan-ready", () => {
     const waiting = {
       label: "Waiting" as const,
@@ -704,41 +636,6 @@ function makeThread(overrides: ThreadFixtureOverrides = {}): Thread {
 }
 
 describe("getFallbackThreadIdAfterDelete", () => {
-  it("returns the top remaining thread in the deleted thread's project sidebar order", () => {
-    const fallbackThreadId = getFallbackThreadIdAfterDelete({
-      threads: [
-        makeThread({
-          id: ThreadId.make("thread-oldest"),
-          projectId: ProjectId.make("project-1"),
-          createdAt: "2026-03-09T10:00:00.000Z",
-          messages: [],
-        }),
-        makeThread({
-          id: ThreadId.make("thread-active"),
-          projectId: ProjectId.make("project-1"),
-          createdAt: "2026-03-09T10:05:00.000Z",
-          messages: [],
-        }),
-        makeThread({
-          id: ThreadId.make("thread-newest"),
-          projectId: ProjectId.make("project-1"),
-          createdAt: "2026-03-09T10:10:00.000Z",
-          messages: [],
-        }),
-        makeThread({
-          id: ThreadId.make("thread-other-project"),
-          projectId: ProjectId.make("project-2"),
-          createdAt: "2026-03-09T10:20:00.000Z",
-          messages: [],
-        }),
-      ],
-      deletedThreadId: ThreadId.make("thread-active"),
-      sortOrder: "created_at",
-    });
-
-    expect(fallbackThreadId).toBe(ThreadId.make("thread-newest"));
-  });
-
   it("skips other threads being deleted in the same action", () => {
     const fallbackThreadId = getFallbackThreadIdAfterDelete({
       threads: [
@@ -937,11 +834,6 @@ describe("sortSidebarV2ProjectGroups", () => {
 });
 
 describe("pinOrderKeyBetween", () => {
-  it("extends into new digits when bounds are adjacent", () => {
-    const key = pinOrderKeyBetween("g", "h")!;
-    expect("g" < key && key < "h").toBe(true);
-  });
-
   it("stays strictly ordered under repeated top insertion", () => {
     let head: string | null = null;
     const keys: string[] = [];

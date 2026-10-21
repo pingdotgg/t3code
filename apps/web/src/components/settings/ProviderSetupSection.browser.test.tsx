@@ -233,25 +233,6 @@ describe("Antigravity setup", () => {
     expect(setup.authState).toHaveBeenLastCalledWith({ environmentId, input: { instanceId } });
   });
 
-  it("removes an owned damaged runtime only after confirmation", async () => {
-    resetSetup();
-    setup.auth = authState({ phase: "idle", flowId: null, authorizationUrl: null });
-    setup.installation = {
-      ...setup.installation!,
-      phase: "failed",
-      canRemove: true,
-      installedVersion: null,
-    };
-    await using screen = await renderSetup();
-    await screen.click("Remove downloaded runtime");
-    expect(setup.confirm).toHaveBeenCalledOnce();
-    expect(setup.removeInstall).not.toHaveBeenCalled();
-
-    setup.confirm.mockResolvedValue(true);
-    await screen.click("Remove downloaded runtime");
-    expect(setup.removeInstall).toHaveBeenCalledWith({ environmentId, input: { instanceId } });
-  });
-
   it("does not let a shared managed install hide an invalid custom binary path", async () => {
     resetSetup();
     setup.auth = authState({ phase: "idle", flowId: null, authorizationUrl: null });

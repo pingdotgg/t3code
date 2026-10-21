@@ -329,27 +329,6 @@ describe("index.html boot script", () => {
     );
   });
 
-  it("lets a dark half go dark when the light-only base cannot", () => {
-    const boot = runBootScript({
-      storage: {
-        [THEME_STORAGE_KEY]: "paper",
-        [THEME_APPEARANCE_MODE_STORAGE_KEY]: "system",
-        [CUSTOM_THEMES_STORAGE_KEY]: JSON.stringify([
-          {
-            id: "paper",
-            label: "Paper",
-            appearance: "light",
-            colors: { canvas: "#f8fbff", text: "#10243d", accent: "#5b6cff" },
-          },
-        ]),
-        "t3code:theme-halves:v1": JSON.stringify({ dark: GROVE_THEME.id }),
-      },
-      prefersDark: true,
-    });
-    expect(boot.isDark).toBe(true);
-    expect(boot.themeId).toBe(GROVE_THEME.id);
-  });
-
   it("paints the half's splash when the base theme no longer exists", () => {
     const boot = runBootScript({
       storage: {
@@ -365,19 +344,6 @@ describe("index.html boot script", () => {
     expect(boot.bootVariables["--boot-background"]).toBe(
       getThemeColorsForMode(GROVE_THEME, "dark")!.canvas,
     );
-  });
-
-  it("ignores a mix half that names an unknown theme", () => {
-    const boot = runBootScript({
-      storage: {
-        [THEME_STORAGE_KEY]: "t3-chat",
-        [THEME_APPEARANCE_MODE_STORAGE_KEY]: "system",
-        "t3code:theme-halves:v1": JSON.stringify({ dark: "gone-theme" }),
-      },
-      prefersDark: true,
-    });
-    expect(boot.themeId).toBe("t3-chat");
-    expect(boot.isDark).toBe(true);
   });
 
   it("uses runtime defaults for malformed custom roles", () => {

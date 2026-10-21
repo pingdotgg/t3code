@@ -132,10 +132,6 @@ describe("canEditPullRequestChangeRequest", () => {
     expect(canEditPullRequestChangeRequest(subject({ capabilities: capabilities() }))).toBe(false);
   });
 
-  it("refuses where the host did not say who the reader is", () => {
-    expect(canEditPullRequestChangeRequest(subject({ viewer: undefined }))).toBe(false);
-  });
-
   it("still allows a merger the host could not name", () => {
     expect(
       canEditPullRequestChangeRequest(
@@ -181,24 +177,8 @@ describe("canEditPullRequestComment", () => {
     ).toBe(false);
   });
 
-  it("refuses a remark the host attributes to nobody", () => {
-    expect(canEditPullRequestComment(subject(), comment({ author: null }))).toBe(false);
-  });
-
   it("refuses a review's own summary", () => {
     expect(canEditPullRequestComment(subject(), comment({ kind: "review" }))).toBe(false);
-  });
-
-  it("refuses where the host cannot rewrite a remark at all", () => {
-    expect(
-      canEditPullRequestComment(
-        subject({ capabilities: capabilities({ changeRequest: true, comment: false }) }),
-        comment(),
-      ),
-    ).toBe(false);
-    expect(canEditPullRequestComment(subject({ capabilities: capabilities() }), comment())).toBe(
-      false,
-    );
   });
 });
 

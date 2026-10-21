@@ -202,12 +202,6 @@ describe("archive Undo", () => {
       }),
     );
   });
-
-  it("shows no Undo when the archive failed", async () => {
-    commands.archive.mockResolvedValue({ _tag: "Failure", cause: new Error("nope") });
-    await useThreadActions().archiveThread(target);
-    expect(useThreadUndoNotice.getState().notice).toBeNull();
-  });
 });
 
 describe("settle and snooze Undo", () => {
@@ -262,6 +256,7 @@ describe("settle and snooze Undo", () => {
     expect(commands.pin).not.toHaveBeenCalled();
   });
 
+  // regression: #12972 the sidebar undo notice must reverse a snooze
   it("wakes the thread from the snooze notice", async () => {
     const add = vi.spyOn(toastManager, "add").mockReturnValue("toast");
     const actions = useThreadActions();

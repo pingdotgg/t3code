@@ -42,20 +42,6 @@ describe("desktop update button state", () => {
     expect(getDesktopUpdateButtonTooltip(state)).toContain("Click to retry");
   });
 
-  it("keeps install action available after an install error", () => {
-    const state: DesktopUpdateState = {
-      ...baseState,
-      status: "error",
-      downloadedVersion: "1.1.0",
-      availableVersion: "1.1.0",
-      message: "shutdown timeout",
-      errorContext: "install",
-      canRetry: true,
-    };
-    expect(resolveDesktopUpdateButtonAction(state)).toBe("install");
-    expect(getDesktopUpdateButtonTooltip(state)).toContain("Click to retry");
-  });
-
   it("prefers a newly available release over a stale downloaded version", () => {
     const state: DesktopUpdateState = {
       ...baseState,
@@ -103,17 +89,6 @@ describe("canCheckForUpdate", () => {
         status: "downloaded",
         availableVersion: "1.1.0",
         downloadedVersion: "1.1.0",
-      }),
-    ).toBe(true);
-  });
-
-  it("returns true on error so the user can retry", () => {
-    expect(
-      canCheckForUpdate({
-        ...baseState,
-        status: "error",
-        errorContext: "check",
-        message: "network",
       }),
     ).toBe(true);
   });

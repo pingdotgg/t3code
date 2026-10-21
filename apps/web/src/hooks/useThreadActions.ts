@@ -165,7 +165,7 @@ export class ThreadActiveReorderUnsupportedError extends Schema.TaggedError<Thre
   }
 }
 
-export async function requestThreadUnpinConfirmation(input: {
+async function requestThreadUnpinConfirmation(input: {
   enabled: boolean;
   title: string;
   confirm: ((message: string) => Promise<boolean>) | null;

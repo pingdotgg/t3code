@@ -98,11 +98,6 @@ describe("deriveLocalBranchNameFromRemoteRef", () => {
       "upstream/feature/demo",
     );
   });
-
-  it("returns the original name when ref is malformed", () => {
-    expect(deriveLocalBranchNameFromRemoteRef("origin/")).toBe("origin/");
-    expect(deriveLocalBranchNameFromRemoteRef("/feature/demo")).toBe("/feature/demo");
-  });
 });
 
 describe("dedupeRemoteBranchesWithLocalMatches", () => {

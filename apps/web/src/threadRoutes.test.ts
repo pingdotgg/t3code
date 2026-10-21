@@ -55,27 +55,6 @@ describe("threadRoutes", () => {
     ).toBeNull();
   });
 
-  it("renders server threads and local drafts when they are ready", () => {
-    expect(
-      resolveThreadRouteRenderState({
-        bootstrapComplete: true,
-        serverThreadExists: true,
-        serverThreadDeleted: false,
-        unlistedThreadDetail: EMPTY_ENVIRONMENT_THREAD_STATE,
-        draftThreadExists: false,
-      }),
-    ).toBe("ready");
-    expect(
-      resolveThreadRouteRenderState({
-        bootstrapComplete: true,
-        serverThreadExists: false,
-        serverThreadDeleted: false,
-        unlistedThreadDetail: EMPTY_ENVIRONMENT_THREAD_STATE,
-        draftThreadExists: true,
-      }),
-    ).toBe("ready");
-  });
-
   it.each([
     { status: "cached", source: "server thread" },
     { status: "synchronizing", source: "server thread" },

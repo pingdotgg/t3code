@@ -251,6 +251,7 @@ describe("scoped settings writes", () => {
       ).toEqual({ saved: [laptop.label], failed: unsupported });
     });
 
+    // regression: #18334 an environment silently dropped a setting with no warning
     it("reports a dropped key inside a project override", async () => {
       expect(
         await outcome(
@@ -408,6 +409,7 @@ describe("scoped settings writes", () => {
     ).toEqual([]);
   });
 
+  // regression: #11541 device settings were written to the wrong scope
   it("scopes agent device access to projects while keeping hub and hosts environment-wide", () => {
     const plan = planScopedSettingsPatch(project, [laptop, server], {
       enableAgentDeviceAccess: true,
@@ -717,6 +719,7 @@ describe("model selection patches at project scope", () => {
     },
   });
 
+  // regression: #16581 changing a project's model kept the old model's options
   it("replaces old options when changing model selections", () => {
     const plan = planScopedSettingsPatch(checkout, [customized], {
       defaultModelSelection: { instanceId: claude, model: "claude-opus-4-8" },

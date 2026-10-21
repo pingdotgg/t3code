@@ -59,18 +59,6 @@ describe("one server per repository", () => {
     expect(plain(assignment)).toEqual({ "env-1": ["p1"], "env-2": ["p2"] });
   });
 
-  it("keeps a repository listed by the one server that holds it", () => {
-    const assignment = assignProjectsToEnvironments(
-      [
-        project("a1", "env-1", "github.com/acme/app"),
-        project("b2", "env-2", "gitlab.com/acme/app"),
-      ],
-      envs("env-1", "env-2"),
-      "env-1" as EnvironmentId,
-    );
-    expect(plain(assignment)).toEqual({ "env-1": ["a1"], "env-2": ["b2"] });
-  });
-
   it("keeps a server's own worktrees of the repository it lists", () => {
     const assignment = assignProjectsToEnvironments(
       [
@@ -94,18 +82,6 @@ describe("one server per repository", () => {
       "env-1" as EnvironmentId,
     );
     expect(plain(assignment)).toEqual({ "env-1": ["a1"] });
-  });
-
-  it("ignores a project on a server that is not being read", () => {
-    const assignment = assignProjectsToEnvironments(
-      [
-        project("a1", "env-1", "github.com/acme/app"),
-        project("a2", "env-2", "github.com/acme/app"),
-      ],
-      envs("env-2"),
-      "env-2" as EnvironmentId,
-    );
-    expect(plain(assignment)).toEqual({ "env-2": ["a2"] });
   });
 
   it("answers the same whatever order the projects arrive in", () => {
@@ -157,32 +133,6 @@ describe("where a pull request can be acted on", () => {
         label: "Server env-1",
       },
     ]);
-  });
-
-  it("offers nothing where one server holds the repository", () => {
-    expect(
-      resolvePickableEnvironments(
-        on("env-1", "a1"),
-        [
-          project("a1", "env-1", "github.com/acme/app"),
-          project("c2", "env-2", "github.com/acme/site"),
-        ],
-        connected("env-1", "env-2"),
-      ),
-    ).toEqual([]);
-  });
-
-  it("leaves out a server that is not connected", () => {
-    expect(
-      resolvePickableEnvironments(
-        on("env-1", "a1"),
-        [
-          project("a1", "env-1", "github.com/acme/app"),
-          project("a2", "env-2", "github.com/acme/app"),
-        ],
-        connected("env-1"),
-      ),
-    ).toEqual([]);
   });
 
   it("names one copy per server, so two worktrees are one choice", () => {

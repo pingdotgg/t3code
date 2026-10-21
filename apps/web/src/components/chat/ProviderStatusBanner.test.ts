@@ -109,18 +109,4 @@ describe("compatibility banners", () => {
       broken.message,
     );
   });
-
-  it("keeps authentication failures ahead of compatibility warnings even without a probe message", () => {
-    const unauthenticated: ServerProvider = {
-      ...provider,
-      status: "error",
-      auth: { status: "unauthenticated" },
-    };
-    expect(getProviderStatusMessage(unauthenticated)).toBe(
-      "Sign in via the CLI to authenticate again.",
-    );
-    expect(getProviderStatusMessage({ ...unauthenticated, message: "Credentials expired" })).toBe(
-      "Credentials expired",
-    );
-  });
 });

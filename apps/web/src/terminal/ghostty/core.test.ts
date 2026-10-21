@@ -40,6 +40,7 @@ describe("ghosttyCellText", () => {
     expect(text.codePointAt(graphemeLength - 1)).toBe(0x301);
   });
 
+  // regression: #7809 oversized terminal graphemes crashed rendering
   it("converts small clusters including astral codepoints", () => {
     const text = ghosttyCellText(codepointView([0x1f642, 0x20e3]), 2);
     expect([...text]).toEqual(["\u{1F642}", "\u{20E3}"]);

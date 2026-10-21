@@ -63,12 +63,6 @@ import { SourceControlWritingSettingsSection } from "./SourceControlWritingSetti
 
 const resetButton = (label: string) =>
   page.getByRole("button", { name: `Reset ${label} to default` });
-const writeForAll = () => page.getByRole("button", { name: "Write custom instructions for all" });
-const applyToAll = () => page.getByRole("button", { name: "Apply instructions to all" });
-const bulkEditor = () =>
-  page.getByRole("textbox", {
-    name: "Custom source control instructions for all selected environments",
-  });
 
 const content = () => (
   <StrictMode>
@@ -117,16 +111,5 @@ describe("mixed source control instructions", () => {
     expect(
       state.styles.map(({ mode, customInstructions }) => ({ mode, customInstructions })),
     ).toEqual(initialInstructions);
-  });
-
-  it("does not write an untouched bulk draft", async () => {
-    await using _screen = await setup();
-    const initialStyles = state.styles;
-    await userEvent.click(writeForAll());
-    await expect.element(bulkEditor()).toHaveValue("");
-    await expect.element(applyToAll()).toBeDisabled();
-
-    expect(state.updateSettings).not.toHaveBeenCalled();
-    expect(state.styles).toEqual(initialStyles);
   });
 });

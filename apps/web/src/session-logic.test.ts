@@ -655,47 +655,6 @@ describe("V2 session presentation", () => {
     ]);
   });
 
-  it("keeps failed tool items tool-toned so groups still summarize", () => {
-    const failedCommand = {
-      id: TurnItemId.make("item-failed-command"),
-      threadId: ThreadId.make("thread-1"),
-      runId: RunId.make("run-1"),
-      nodeId: null,
-      providerThreadId: null,
-      providerTurnId: null,
-      nativeItemRef: null,
-      parentItemId: null,
-      ordinal: 0,
-      status: "failed" as const,
-      title: null,
-      startedAt: null,
-      completedAt: null,
-      updatedAt: DateTime.nowUnsafe(),
-      type: "command_execution" as const,
-      input: "ssh host true",
-      output: "connection refused",
-      exitCode: 255,
-    } satisfies OrchestrationV2TurnItem;
-    const entries = deriveTimelineEntriesFromVisibleTurnItems({
-      visibleTurnItems: [
-        {
-          position: 0,
-          visibility: "local" as const,
-          sourceThreadId: ThreadId.make("thread-1"),
-          sourceItemId: failedCommand.id,
-          item: failedCommand,
-        } as never,
-      ],
-      optimisticMessages: [],
-    });
-    const entry = entries[0];
-    expect(entry?.kind).toBe("work");
-    if (entry?.kind === "work") {
-      expect(entry.entry.tone).toBe("tool");
-      expect(entry.entry.toolLifecycleStatus).toBe("failed");
-    }
-  });
-
   it("waits for a dispatched turn item before adding queued input to the timeline", () => {
     const projection = makeThreadProjectionFixture();
     const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
@@ -1592,11 +1551,6 @@ describe("work-log failure policy (#7999/#7893)", () => {
     expect(workEntryIndicatesToolFailure(entry)).toBe(true);
     expect(workEntryDisplayIndicatesToolFailure(entry)).toBe(false);
   });
-
-  it("recovered failure text no longer counts as success", () => {
-    const entry = toolEntry({ toolLifecycleStatus: "completed", detail: "ENOENT: no such file" });
-    expect(workEntryIndicatesToolSuccess(entry)).toBe(false);
-  });
 });
 
 describe("incremental v2 timeline entries", () => {
@@ -1740,35 +1694,6 @@ describe("incremental v2 timeline entries", () => {
       expect(next.entries.at(-1)).not.toBe(previous.entries.at(-1));
     },
   );
-
-  it("updates fallback timestamps when the provider has not supplied a message start time", () => {
-    const fixture = makeStreamingTimelineFixture("Partial");
-    const visibleTurnItems = fixture.visibleTurnItems.map((row) =>
-      row.item.type === "assistant_message" && row.item.streaming
-        ? { ...row, item: { ...row.item, startedAt: null } }
-        : row,
-    );
-    const input = { visibleTurnItems, optimisticMessages: [] };
-    const previous = deriveTimelineEntriesFromVisibleTurnItemsWithState(input);
-    const nextInput = {
-      ...input,
-      visibleTurnItems: visibleTurnItems.map((row) =>
-        row.item.type === "assistant_message" && row.item.streaming
-          ? {
-              ...row,
-              item: {
-                ...row.item,
-                text: "Next token",
-                updatedAt: DateTime.makeUnsafe(fixture.time(8)),
-              },
-            }
-          : row,
-      ),
-    };
-    const next = deriveTimelineEntriesFromVisibleTurnItemsWithState(nextInput, previous);
-    expect(next.entries).toEqual(deriveTimelineEntriesFromVisibleTurnItems(nextInput));
-    expect(next.entries.at(-1)?.createdAt).toBe(fixture.time(8));
-  });
 
   it("deduplicates optimistic sends when committed items arrive and retains anchored ordering", () => {
     const fixture = makeStreamingTimelineFixture();

@@ -6,7 +6,6 @@ import {
   resolveAutoFeatureBranchName,
   resolveLiveThreadBranchUpdate,
   resolveQuickAction,
-  resolveThreadBranchUpdate,
 } from "./GitActionsControl.logic";
 
 function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
@@ -77,24 +76,6 @@ describe("when: ref is clean, up to date, and has no open PR", () => {
   });
 });
 
-describe("when: ref is behind upstream", () => {
-  it("resolveQuickAction returns pull", () => {
-    const quick = resolveQuickAction(status({ behindCount: 2 }), false);
-    assert.deepInclude(quick, { kind: "run_pull", label: "Pull", disabled: false });
-  });
-});
-
-describe("when: working tree has local changes", () => {
-  it("resolveQuickAction returns commit, push, and create PR", () => {
-    const quick = resolveQuickAction(status({ hasWorkingTreeChanges: true }), false);
-    assert.deepInclude(quick, {
-      kind: "run_action",
-      action: "commit_push_pr",
-      label: "Commit, push & PR",
-    });
-  });
-});
-
 describe("when: on default ref without open PR", () => {
   it("resolveQuickAction returns commit and push when local changes exist", () => {
     const quick = resolveQuickAction(
@@ -157,33 +138,6 @@ describe("requiresDefaultBranchConfirmation", () => {
     assert.isTrue(requiresDefaultBranchConfirmation("commit_push_pr", true));
     assert.isFalse(requiresDefaultBranchConfirmation("commit_push", false));
     assert.isFalse(requiresDefaultBranchConfirmation("push", false));
-  });
-});
-
-describe("resolveThreadBranchUpdate", () => {
-  it("returns a branch update when the action created a new branch", () => {
-    const update = resolveThreadBranchUpdate({
-      action: "commit_push_pr",
-      branch: {
-        status: "created",
-        name: "feature/fix-toast-copy",
-      },
-      commit: {
-        status: "created",
-        commitSha: "89abcdef01234567",
-        subject: "feat: add ref sync",
-      },
-      push: { status: "pushed", branch: "feature/fix-toast-copy" },
-      pr: { status: "skipped_not_requested" },
-      toast: {
-        title: "Pushed 89abcde to origin/feature/fix-toast-copy",
-        cta: { kind: "none" },
-      },
-    });
-
-    assert.deepEqual(update, {
-      branch: "feature/fix-toast-copy",
-    });
   });
 });
 

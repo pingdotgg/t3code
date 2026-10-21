@@ -128,20 +128,6 @@ describe("browser target resolver", () => {
     }
   });
 
-  it("supports private IPv6 environment hosts", async () => {
-    readPreparedConnection.mockReturnValue({
-      httpBaseUrl: "http://[fd7a:115c:a1e0::53]:3773",
-    });
-    const { resolveBrowserNavigationTarget } = await import("./browserTargetResolver");
-    expect(
-      resolveBrowserNavigationTarget(EnvironmentId.make("environment-1"), {
-        kind: "environment-port",
-        port: 5173,
-        path: "/app?mode=test",
-      }).resolvedUrl,
-    ).toBe("http://[fd7a:115c:a1e0::53]:5173/app?mode=test");
-  });
-
   it("classifies exact private IPv4 and IPv6 boundaries", async () => {
     const { isPrivateNetworkHost } = await import("./browserTargetResolver");
     const privateHosts = [

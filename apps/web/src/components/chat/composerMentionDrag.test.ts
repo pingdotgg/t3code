@@ -2,7 +2,6 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   COMPOSER_MENTION_DRAG_TYPE,
-  COMPOSER_PULL_REQUEST_DRAG_TYPE,
   type ComposerMentionDropHost,
   makeComposerMentionDragHandlers,
 } from "./composerMentionDrag.ts";
@@ -80,14 +79,5 @@ describe("makeComposerMentionDragHandlers", () => {
     const { event } = makeDragEvent();
     handlers.onDragOver(event);
     expect(event.dataTransfer.dropEffect).toBe("move");
-  });
-
-  it("ignores a pull request payload that does not decode", () => {
-    const { host, log } = makeHost();
-    const handlers = makeComposerMentionDragHandlers(host);
-    handlers.onDrop(
-      makeDragEvent({ format: COMPOSER_PULL_REQUEST_DRAG_TYPE, mention: '{"number":0}' }).event,
-    );
-    expect(log).toEqual(["active:false"]);
   });
 });

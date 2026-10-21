@@ -11,6 +11,7 @@ import {
 describe("resolveWizardNavigation", () => {
   const invalidId = { instanceIdError: "Instance ID is required." };
 
+  // regression: #2813 the wizard advanced past an invalid instance id
   it("blocks Next from Identity to Config while the instance id is invalid", () => {
     expect(resolveWizardNavigation(1, 2, 3, invalidId)).toEqual({
       kind: "blocked",

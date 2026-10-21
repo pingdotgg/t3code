@@ -17,6 +17,7 @@ describe("device host changes across environments", () => {
     expect(saved.map((hosts) => updateDeviceHosts(hosts, shared, false))).toEqual(saved);
   });
 
+  // regression: #11541 device settings edits must apply to selected environments only
   it("edits and removes the shared host while preserving unrelated hosts", () => {
     const edited = { ...shared, target: "julius@new-address" };
     const saved = [[shared], [local, shared]].map((hosts) =>

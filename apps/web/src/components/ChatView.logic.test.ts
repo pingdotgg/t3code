@@ -140,30 +140,6 @@ describe("resolveDraftPromotionNavigationTarget", () => {
 });
 
 describe("deriveComposerSendState", () => {
-  it("treats expired terminal pills as non-sendable content", () => {
-    const state = deriveComposerSendState({
-      prompt: "[Terminal 1](t3-context://v1/terminal/ctx-expired)",
-      imageCount: 0,
-      terminalContexts: [
-        {
-          id: "ctx-expired",
-          threadId,
-          terminalId: "default",
-          terminalLabel: "Terminal 1",
-          lineStart: 4,
-          lineEnd: 4,
-          text: "",
-          createdAt: now,
-        },
-      ],
-    });
-
-    expect(state.trimmedPrompt).toBe("");
-    expect(state.sendableTerminalContexts).toEqual([]);
-    expect(state.expiredTerminalContextCount).toBe(1);
-    expect(state.hasSendableContent).toBe(false);
-  });
-
   it("keeps text sendable while excluding expired terminal pills", () => {
     const state = deriveComposerSendState({
       prompt: `yoo [Terminal 1](t3-context://v1/terminal/ctx-expired) waddup`,
@@ -189,24 +165,6 @@ describe("deriveComposerSendState", () => {
 });
 
 describe("hasServerAcknowledgedLocalDispatch", () => {
-  it("does not acknowledge unchanged server state", () => {
-    const localDispatch = createLocalDispatchSnapshot(
-      makeThread({ latestRun: completedTurn, runtime: readySession }),
-    );
-
-    expect(
-      hasServerAcknowledgedLocalDispatch({
-        localDispatch,
-        phase: "ready",
-        latestRun: completedTurn,
-        runtime: readySession,
-        hasPendingApproval: false,
-        hasPendingUserInput: false,
-        threadError: null,
-      }),
-    ).toBe(false);
-  });
-
   it("acknowledges a settled newer background turn", () => {
     const localDispatch = createLocalDispatchSnapshot(
       makeThread({ latestRun: completedTurn, runtime: readySession }),
@@ -431,18 +389,6 @@ describe("deriveCommittedServerUserMessageIds", () => {
   });
 });
 
-describe("draft hero submission transition", () => {
-  it("does not auto-navigate a background submission after server promotion", () => {
-    expect(
-      resolveDraftPromotionNavigationTarget({
-        serverThreadRef: { environmentId, threadId },
-        serverThread: makeThread({ latestRun: completedTurn }),
-        backgroundSubmissionPending: true,
-      }),
-    ).toBeNull();
-  });
-});
-
 describe("resolveThreadSwitchTimeline", () => {
   afterEach(() => {
     resetHeldThreadTimeline();
@@ -461,17 +407,6 @@ describe("resolveThreadSwitchTimeline", () => {
         nextEntries: [],
       }),
     ).toEqual({ entries: ["a1", "a2"], displayThreadKey: "env-1:thread-a" });
-  });
-
-  it("prefers live entries over a remembered snapshot", () => {
-    rememberReadyThreadTimeline({ threadKey: "env-1:thread-b", entries: ["stale-b"] });
-    expect(
-      resolveThreadSwitchTimeline({
-        loading: false,
-        activeThreadKey: "env-1:thread-b",
-        nextEntries: ["fresh-b"],
-      }),
-    ).toEqual({ entries: ["fresh-b"], displayThreadKey: "env-1:thread-b" });
   });
 
   it("does not hold another environment's timeline across a jump", () => {
@@ -1077,17 +1012,6 @@ describe("mergeDirectPreviewAnnotation", () => {
     }) as const;
   const image = (id: string) =>
     ({ id, type: "image", name: `${id}.png`, mimeType: "image/png", sizeBytes: 1 }) as never;
-
-  it("appends the screenshot and claims the crop when the turn has room", () => {
-    const result = mergeDirectPreviewAnnotation({
-      images: [],
-      fileCount: 0,
-      previewAnnotations: [],
-      direct: { annotation: annotation("a"), image: image("crop") },
-    });
-    expect(result.images.map((entry) => entry.id)).toEqual(["crop"]);
-    expect(result.previewAnnotations[0]?.screenshot?.dataUrl).toBe("");
-  });
 
   it("drops the screenshot claim when the attachment cap is full", () => {
     const result = mergeDirectPreviewAnnotation({

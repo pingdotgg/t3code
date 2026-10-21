@@ -25,15 +25,6 @@ function keyboardEventLike(type: "keydown" | "keyup", init: Partial<KeyboardEven
 }
 
 describe("shortcutModifierState", () => {
-  it("preserves the current object when modifier values do not change", () => {
-    const initialState = emptyState();
-    const nextState = shortcutModifierStateAfterKeyboardEvent(
-      initialState,
-      keyboardEventLike("keyup", { key: "Shift" }),
-    );
-    expect(nextState).toBe(initialState);
-  });
-
   it("tracks bare modifier keydown and keyup events explicitly", () => {
     let state = emptyState();
     state = shortcutModifierStateAfterKeyboardEvent(

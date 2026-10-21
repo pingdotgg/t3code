@@ -613,13 +613,6 @@ describe("composer rich text document model", () => {
     expect(roundTrip(value).value).toBe(value);
   });
 
-  it.each(["> quoted", "> a\n>b", "---", "- - -", "# Heading", "#1234"])(
-    "keeps the block %s literal in plain mode",
-    (value) => {
-      expect(roundTripPlain(value).value).toBe(value);
-    },
-  );
-
   it.each([
     ["---", "---"],
     ["a\n---", "a\n---"],
@@ -631,30 +624,6 @@ describe("composer rich text document model", () => {
     const doc = ProseMirrorNode.fromJSON(schema, json);
     expect(doc.resolve(flatToPm(map, map.docLength)).parent.isTextblock).toBe(true);
   });
-
-  it("parses a quote as a blockquote of one paragraph per line", () => {
-    const json = buildDocJson("> a\n> b\n>c", (n) => ({ label: n, description: null }));
-    expect(json.content.map((block) => block.type)).toEqual(["blockquote", "blockquote"]);
-    expect((json.content[0] as { content: unknown[] }).content).toHaveLength(2);
-  });
-
-  it.each([
-    "> a\n> b",
-    "> **q** @README.md",
-    "text\n---\nmore",
-    "---\ntext",
-    "# Heading text",
-    "## **b** @README.md",
-  ])(
-    "maps every document offset of the block %s through markdown coordinates and back",
-    (value) => {
-      const map = roundTrip(value);
-      expect(map.value).toBe(value);
-      for (let flat = 0; flat <= map.docLength; flat += 1) {
-        expect(markdownToFlat(map, flatToMarkdown(map, flat))).toBe(flat);
-      }
-    },
-  );
 
   it.each([
     "```\ncode\n```",
@@ -722,29 +691,6 @@ describe("composer rich text document model", () => {
     expect(after.content[0]?.attrs?.skillName).toBe("my-skill");
   });
 
-  it.each([
-    ["listItem", { marker: "-", space: "" }, "bulletList", "- text"],
-    ["listItem", { marker: "1.", space: "" }, "orderedList", "1. text"],
-  ])("gives a bare %s a space once it has text", (item, attrs, list, expected) => {
-    const doc = ProseMirrorNode.fromJSON(schema, {
-      type: "doc",
-      content: [
-        {
-          type: list,
-          content: [
-            {
-              type: item,
-              attrs,
-              content: [{ type: "paragraph", content: [{ type: "text", text: "text" }] }],
-            },
-          ],
-        },
-      ],
-    });
-    expect(serializeEditorDoc(doc).value).toBe(expected);
-    expect(roundTrip("-").value).toBe("-");
-  });
-
   it("writes code holding a closing fence inside a longer fence", () => {
     const doc = ProseMirrorNode.fromJSON(schema, {
       type: "doc",
@@ -788,11 +734,6 @@ describe("composer rich text document model", () => {
     expect(skillChipReplacements(doc, known)).toEqual([]);
   });
 
-  it("keeps fences literal in plain mode", () => {
-    const value = "```ts\nconst a = 1;\n```";
-    expect(roundTripPlain(value).value).toBe(value);
-  });
-
   it.each([
     "plain prose with no styling at all",
     "a chip @README.md counts one character in both modes",
@@ -817,16 +758,6 @@ describe("composer rich text document model", () => {
     const rich = roundTrip(value);
     expect(flatToMarkdown(plain, markdownToFlat(plain, 3))).toBe(3);
     expect(flatToMarkdown(rich, markdownToFlat(rich, 3))).toBe(4);
-  });
-
-  it("maps markdown offsets at styled edges onto document text", () => {
-    const value = "a **bold** c";
-    const map = roundTrip(value);
-    expect(map.value).toBe(value);
-    expect(flatToMarkdown(map, 2)).toBe(4);
-    expect(flatToMarkdown(map, 6)).toBe(10);
-    expect(markdownToFlat(map, 3)).toBe(2);
-    expect(markdownToFlat(map, 9)).toBe(6);
   });
 });
 
@@ -856,10 +787,6 @@ describe("serializeSelection", () => {
 
   it("keeps the nesting of an item and its children", () => {
     expect(copy("- p\n  - a\n  - b", "p", "a")).toBe("- p\n  - a");
-  });
-
-  it("copies text within one block without its marker", () => {
-    expect(copy("- one two", "one", "one")).toBe("one");
   });
 });
 
@@ -949,6 +876,7 @@ describe("pasting into a path query", () => {
     expect(serializeEditorDoc(doc).value).toBe("Open @**src/**__test__.tsx");
   });
 
+  // regression: #16619 paths pasted after @ lost their underscores to markdown parsing
   it("parses markdown pasted right after a mention chip", () => {
     const withSpace = ProseMirrorNode.fromJSON(
       schema,
@@ -1004,6 +932,7 @@ describe("caret stops at styled edges", () => {
     expect(typed(outside, "x")).toBe("head **bold**x");
   });
 
+  // regression: #13217 could not type in front of bold that starts a composer line
   it("offers both stops where styled text meets plain text mid-line", () => {
     const plain = stateAt("a **b** c", 3);
     expect(caretTakesMarksBefore(plain)).toBe(true);

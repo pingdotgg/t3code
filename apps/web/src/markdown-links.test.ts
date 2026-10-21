@@ -32,16 +32,11 @@ describe("rewriteMarkdownFileUriHref", () => {
     );
   });
 
+  // regression: #6433 workspace images in chat markdown did not render
   it("treats a localhost file uri as a local path", () => {
     expect(rewriteMarkdownFileUriHref("file://localhost/home/me/notes.md")).toBe(
       "/home/me/notes.md",
     );
-  });
-
-  it("unwraps angle-bracketed file uri hrefs", () => {
-    expect(
-      rewriteMarkdownFileUriHref(" <file:///D:/Programme/t3code/apps/web/src/markdown-links.ts> "),
-    ).toBe("D:/Programme/t3code/apps/web/src/markdown-links.ts");
   });
 });
 

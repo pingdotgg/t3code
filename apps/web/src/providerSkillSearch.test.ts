@@ -13,6 +13,7 @@ function makeSkill(input: Partial<ServerProviderSkill> & Pick<ServerProviderSkil
 }
 
 describe("searchProviderSkills", () => {
+  // regression: #12098 unicode currency symbols must work as skill aliases
   it.each(["$", "€", "£", "¥", "₹", "₩", "₿", "𑿝"])(
     "searches skills with a %s prefix",
     (prefix) => {

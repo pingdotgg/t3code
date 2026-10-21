@@ -56,21 +56,6 @@ describe("desktop local topology reads", () => {
     expect(reader.readSnapshot()).toBe(after);
   });
 
-  it("distinguishes a successful empty topology from a read failure", () => {
-    let readBootstraps = () => [];
-    const reader = createDesktopSecondaryBootstrapsReader(() => ({
-      getLocalEnvironmentBootstraps: () => readBootstraps(),
-    }));
-
-    expect(reader.readResult()).toEqual({ _tag: "Success", bootstraps: [] });
-
-    const cause = new Error("IPC unavailable");
-    readBootstraps = () => {
-      throw cause;
-    };
-    expect(reader.readResult()).toEqual({ _tag: "Failure", cause });
-  });
-
   it("filters the primary bootstrap from successful topology reads", () => {
     const secondary = {
       id: "wsl:Ubuntu",

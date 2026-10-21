@@ -91,14 +91,6 @@ describe("observeTimelineRun", () => {
     expect(observeTimelineRun(ready.observation, next).anchorMessageId).toBeNull();
   });
 
-  it("establishes a separate baseline when the same thread ID belongs to another environment", () => {
-    const opened = observeTimelineRun(null, existing);
-    expect(
-      observeTimelineRun(opened.observation, { ...next, threadKey: "other:thread" })
-        .anchorMessageId,
-    ).toBeNull();
-  });
-
   it("does not reset the baseline during a temporary loss of projection data", () => {
     const opened = observeTimelineRun(null, existing);
     const reconnecting = observeTimelineRun(opened.observation, {

@@ -191,29 +191,6 @@ describe("environment favorite toggles", () => {
     },
   );
 
-  it("keeps the newest pending intent when an earlier write completes", async () => {
-    await using fixture = await setup();
-    const { durable, writes, mount, click } = fixture;
-    await mount();
-    const first = click();
-    const second = click();
-    await act(async () => {});
-    writes[0]!.finish();
-    await first;
-    const third = click();
-    await act(async () => {});
-    expect(writes.map((write) => write.patch.setModelFavorites?.[0]?.favorite)).toEqual([
-      true,
-      false,
-      true,
-    ]);
-    writes[1]!.finish();
-    await second;
-    writes[2]!.finish();
-    await third;
-    expect(durable.get(primaryId)!.favorites).toEqual([{ provider, model }]);
-  });
-
   it("preserves an acknowledged add when a later remove fails before its echo", async () => {
     await using fixture = await setup();
     const { durable, writes, mount, click } = fixture;

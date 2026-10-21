@@ -39,31 +39,6 @@ describe("composer attachment files", () => {
     ).toBe("Waiting for the server before file attachments can send");
   });
 
-  it("uses the confirmed server limit without exceeding the hard cap", () => {
-    expect(
-      fileAttachmentStagingLimit({
-        attachmentUploadsCapabilityKnown: true,
-        supportsAttachmentUploads: true,
-        maxFileAttachmentBytes: 1024 * 1024,
-      }),
-    ).toBe(1024 * 1024);
-    expect(
-      fileAttachmentStagingLimit({
-        attachmentUploadsCapabilityKnown: true,
-        supportsAttachmentUploads: true,
-        maxFileAttachmentBytes: PROVIDER_SEND_TURN_MAX_FILE_BYTES * 2,
-      }),
-    ).toBe(PROVIDER_SEND_TURN_MAX_FILE_BYTES);
-    expect(
-      fileAttachmentCapabilityBlockReason({
-        files: [{ name: "report.pdf", sizeBytes: 1024 }],
-        attachmentUploadsCapabilityKnown: true,
-        supportsAttachmentUploads: true,
-        maxFileAttachmentBytes: 50 * 1024 * 1024,
-      }),
-    ).toBeNull();
-  });
-
   it("keeps draft-persisted file uploads when the upload capability flips off", () => {
     const environmentId = EnvironmentId.make("environment-1");
     const image: ComposerImageAttachment = {

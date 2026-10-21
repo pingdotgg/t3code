@@ -91,6 +91,7 @@ describe("openPreviewSession", () => {
 });
 
 describe("openUrlInPreview from a link", () => {
+  // regression: #16961 a background link open switched the active preview tab
   it("keeps the current tab active for a background open", async () => {
     applyPreviewServerSnapshot(threadRef, { ...snapshot, tabId: "tab-current" });
 

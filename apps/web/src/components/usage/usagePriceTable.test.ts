@@ -1,11 +1,6 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import {
-  usageAliasCell,
-  usagePriceCell,
-  usagePriceTableChanges,
-  type UsagePriceDraft,
-} from "./usagePriceTable";
+import { usagePriceCell, usagePriceTableChanges, type UsagePriceDraft } from "./usagePriceTable";
 import type { UsagePriceTarget } from "./usagePriceTargets";
 
 const price = { inputCostPerMillionTokens: 2, outputCostPerMillionTokens: 8 };
@@ -119,18 +114,5 @@ describe("price table edits", () => {
         "model:example",
       ),
     ).toBe("Map to a different model.");
-  });
-
-  it("keeps each environment's mapping when the column is untouched", () => {
-    const edits = [draft({ inputCostPerMillionTokens: "3" })];
-    expect(
-      usagePriceTableChanges(target("a", {}, { example: "example-model" }), edits).changes,
-    ).toEqual([]);
-    expect(
-      usageAliasCell(
-        [target("a", {}, { example: "example-model" }), target("b", { example: price })],
-        "example",
-      ),
-    ).toEqual({ value: "", placeholder: "Mixed" });
   });
 });

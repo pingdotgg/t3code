@@ -15,6 +15,7 @@ import {
 const decodeReadError = Schema.decodeSync(ProjectReadFileError);
 
 describe("file preview read errors", () => {
+  // regression: #15628 read errors from servers without attempted paths keep their own message
   it("preserves the public message from older servers", () => {
     const error = decodeReadError({
       _tag: "ProjectReadFileError",

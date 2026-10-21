@@ -74,6 +74,7 @@ describe("composer list renumbering", () => {
     expect(edit.cursorAfter).toBe("  1) a\n  2) ".length);
   });
 
+  // regression: #14332 continuing a numbered list must renumber following items only up to the list boundary
   it.each([
     ["a blank line", ""],
     ["plain text", "text"],

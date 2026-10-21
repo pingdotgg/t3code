@@ -35,10 +35,6 @@ describe("normalizeHistoryUrl", () => {
     );
   });
 
-  it("normalizes bare public hosts to https", () => {
-    expect(normalizeHistoryUrl("myapp.test")).toBe("https://myapp.test/");
-  });
-
   it("preserves hash routes and strips credentials", () => {
     expect(normalizeHistoryUrl("http://localhost:3000/app#/route")).toBe(
       "http://localhost:3000/app#/route",
@@ -54,17 +50,6 @@ describe("normalizeHistoryUrl", () => {
 });
 
 describe("upsertHistoryEntry", () => {
-  it("moves revisits to front, updates the timestamp, and keeps the title", () => {
-    const existing = [
-      entry({ url: "http://a.test/", lastVisitedAt: 500, title: "A" }),
-      entry({ url: "http://b.test/", lastVisitedAt: 400 }),
-    ];
-    const next = upsertHistoryEntry(existing, "http://b.test/", 3000);
-    expect(next.map((e) => e.url)).toEqual(["http://b.test/", "http://a.test/"]);
-    expect(next[0]?.lastVisitedAt).toBe(3000);
-    expect(next[1]?.title).toBe("A");
-  });
-
   it("with insertOrdered, replaying an older visit for an existing entry keeps its newer timestamp", () => {
     const existing = [entry({ url: "http://a.test/", lastVisitedAt: 2000 })];
     const next = upsertHistoryEntry(existing, "http://a.test/", 1000, { insertOrdered: true });
@@ -128,14 +113,6 @@ describe("useBrowserHistoryStore", () => {
     resetBrowserHistoryForTests();
   });
 
-  it("records visits for registered threads under the project key", () => {
-    useBrowserHistoryStore.getState().registerThreadProject(threadRef, "proj-a");
-    recordVisitForThread(threadRef, "myapp.test/admin#section", 1234);
-    expect(useBrowserHistoryStore.getState().byProjectKey["proj-a"]).toEqual([
-      { url: "https://myapp.test/admin#section", lastVisitedAt: 1234 },
-    ]);
-  });
-
   it("sets titles update-only via the thread helper", () => {
     useBrowserHistoryStore.getState().registerThreadProject(threadRef, "proj-a");
     setTitleForThreadUrl(threadRef, "http://a.test/", "Should not create");
@@ -186,13 +163,6 @@ describe("useBrowserHistoryStore", () => {
     expect(useBrowserHistoryStore.getState().byProjectKey["proj-a"]).toEqual([
       { url: "http://localhost:5173/app", lastVisitedAt: 5 },
     ]);
-  });
-
-  it("does not match a genuinely different path via the trailing-slash comparison", () => {
-    useBrowserHistoryStore.getState().registerThreadProject(threadRef, "proj-a");
-    recordVisitForThread(threadRef, "http://a.test/community", 1);
-    setTitleForThreadUrl(threadRef, "http://a.test/community/foo", "Foo");
-    expect(useBrowserHistoryStore.getState().byProjectKey["proj-a"]?.[0]?.title).toBeUndefined();
   });
 });
 

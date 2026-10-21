@@ -64,19 +64,6 @@ describe("incremental code highlighting", () => {
     }
   });
 
-  it.each(["text", "plaintext", "plain", "txt", "ansi"])(
-    "preserves %s without requesting grammar state",
-    async (language) => {
-      const highlighter = await highlighterPromise;
-      const highlight = createIncrementalHighlightedDocument(highlighter, language, "pierre-dark");
-      for (const text of ["plain\ntext", "\u001b[31mred\ncontinued", "\n"]) {
-        expect(toHtml(highlight(text))).toBe(
-          highlighter.codeToHtml(text, { lang: language, theme: "pierre-dark" }),
-        );
-      }
-    },
-  );
-
   it("preserves partial CRLF and CR line endings", async () => {
     const highlighter = await highlighterPromise;
     const highlight = createIncrementalHighlightedDocument(

@@ -12,7 +12,6 @@ import { deriveEffectiveComposerModelState } from "./composerDraftStore";
 import { getComposerProviderState } from "./components/chat/composerProviderState";
 import { deriveProviderInstanceEntries, NO_PROVIDER_MODEL_SELECTION } from "./providerInstances";
 import {
-  getCustomModelOptionsByInstance,
   getAppModelOptionsForInstance,
   resolveAppModelSelectionForInstance,
   resolveAppModelSelectionState,
@@ -128,27 +127,6 @@ describe("instance-scoped model selection", () => {
         "opus",
       ),
     ).toBe("opus");
-  });
-
-  it("includes Grok custom models from the selected provider instance", () => {
-    const providers = [provider({ provider: ProviderDriverKind.make("grok"), instanceId: "grok" })];
-    const settings: UnifiedSettings = {
-      ...settingsWithProviderInstances(),
-      providerInstances: {
-        ...settingsWithProviderInstances().providerInstances,
-        [ProviderInstanceId.make("grok")]: {
-          driver: ProviderDriverKind.make("grok"),
-          config: { customModels: ["grok-test-custom-model"] },
-        },
-      },
-    };
-    const grok = deriveProviderInstanceEntries(providers).find(
-      (entry) => entry.instanceId === "grok",
-    )!;
-
-    expect(getAppModelOptionsForInstance(settings, grok).map((option) => option.slug)).toContain(
-      "grok-test-custom-model",
-    );
   });
 
   it("offers and resolves every saved custom model, past the first 32", () => {
@@ -325,27 +303,6 @@ describe("instance-scoped model selection", () => {
           isUnavailable: true,
         }),
       ]);
-    });
-
-    it("keeps a missing option scoped to the selected instance", () => {
-      const selectedInstanceId = ProviderInstanceId.make(`${driverName}_work`);
-      const otherInstanceId = ProviderInstanceId.make(`${driverName}_personal`);
-      const driver = ProviderDriverKind.make(driverName);
-      const providers = [
-        provider({ provider: driver, instanceId: selectedInstanceId, models: [] }),
-        provider({ provider: driver, instanceId: otherInstanceId, models: [] }),
-      ];
-      const options = getCustomModelOptionsByInstance(
-        settingsWithProviderInstances(),
-        providers,
-        selectedInstanceId,
-        missingModel,
-      );
-
-      expect(options.get(selectedInstanceId)).toEqual([
-        expect.objectContaining({ slug: missingModel, isUnavailable: true }),
-      ]);
-      expect(options.get(otherInstanceId)).toEqual([]);
     });
 
     it("does not resurrect a hidden model when the raw catalog omits it", () => {

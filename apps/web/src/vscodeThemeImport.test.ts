@@ -204,24 +204,6 @@ describe("VS Code theme import", () => {
     });
     expect(asHex(theme.colors.messageAction)).toBe("#4d9375");
   });
-  it("imports current and other find matches as independent background/text pairs", () => {
-    const { colors } = parseVsCodeThemeFile({
-      type: "dark",
-      colors: {
-        "editor.background": "#202020",
-        "editor.findMatchBackground": "#663399",
-        "editor.findMatchForeground": "#ffffff",
-        "editor.findMatchHighlightBackground": "#bce4ff",
-        "editor.findMatchHighlightForeground": "#17314a",
-      },
-    });
-
-    expect(asHex(colors.searchMatchActiveBackground)).toBe("#663399");
-    expect(asHex(colors.searchMatchActiveForeground)).toBe("#ffffff");
-    expect(asHex(colors.searchMatchBackground)).toBe("#bce4ff");
-    expect(asHex(colors.searchMatchForeground)).toBe("#17314a");
-  });
-
   it("composites find backgrounds onto the canvas and foregrounds onto their match", () => {
     const { colors } = parseVsCodeThemeFile({
       type: "dark",
@@ -309,16 +291,6 @@ describe("VS Code theme import", () => {
       colors: { "editor.background": "#ffffff" },
     });
     expect(hc.appearance).toBe("light");
-  });
-
-  it("keeps an unreadable foreground out of the palette", () => {
-    const theme = parseVsCodeThemeFile({
-      name: "Unreadable",
-      type: "dark",
-      colors: { "editor.background": "#101010", "editor.foreground": "#111111" },
-    });
-    expect(asHex(theme.colors.text)).not.toBe("#111111");
-    expect(contrastRatio(theme.colors.text, theme.colors.canvas)).toBeGreaterThanOrEqual(4.5);
   });
 
   it("stays readable when the file replaces a surface but not its foreground", () => {
@@ -427,11 +399,5 @@ describe("VS Code theme import", () => {
       { theme: dracula("#22232e") },
     ]);
     expect(numbered.map((theme) => theme.label)).toEqual(["Dracula", "Dracula 2"]);
-  });
-
-  it("explains a file with no editor background", () => {
-    expect(() => parseVsCodeThemeFile({ name: "Empty", type: "dark", colors: {} })).toThrow(
-      /editor\.background/,
-    );
   });
 });

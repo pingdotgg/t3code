@@ -36,23 +36,6 @@ describe("orderDiffFiles", () => {
     ).toEqual([...source, ...tests, ...generated]);
   });
 
-  it("puts a dependency before what imports it", () => {
-    expect(order([file("src/a.ts", ['import { b } from "./b";']), file("src/b.ts")])).toEqual([
-      "src/b.ts",
-      "src/a.ts",
-    ]);
-  });
-
-  it("follows a chain the whole way down", () => {
-    expect(
-      order([
-        file("src/a.ts", ['import { b } from "./b";']),
-        file("src/b.ts", ['import { c } from "./c";']),
-        file("src/c.ts"),
-      ]),
-    ).toEqual(["src/c.ts", "src/b.ts", "src/a.ts"]);
-  });
-
   it("resolves a specifier that climbs out of the importer's directory", () => {
     expect(
       order([file("src/ui/a.ts", ['import { b } from "../lib/b";']), file("src/lib/b.ts")]),

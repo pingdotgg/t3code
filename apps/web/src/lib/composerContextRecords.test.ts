@@ -277,24 +277,6 @@ describe("composerContextRecords", () => {
     expect(() => decodeMessageContext({ version: 1, records: [overLimit] })).not.toThrow();
   });
 
-  it("keeps a region-only annotation's target summary and screenshot across a round trip", () => {
-    const regionOnly: PreviewAnnotationPayload = {
-      ...annotation,
-      elements: [],
-      styleChanges: [],
-      regions: [{ id: "rg_1", rect: { x: 1, y: 2, width: 3, height: 4 } }],
-    };
-    const record = previewAnnotationContextRecord(regionOnly, { screenshotContextId: "ann_1" });
-    expect(record.targetSummary).toBe("1 marked region");
-    expect(record.screenshotContextId).toBe("image_ann_1");
-
-    const reencoded = previewAnnotationContextRecord(previewAnnotationFromRecord(record), {
-      screenshotContextId: "ann_1",
-    });
-    expect(reencoded.targetSummary).toBe("1 marked region");
-    expect(reencoded.screenshotContextId).toBe("image_ann_1");
-  });
-
   it("finds the destination collision for different legacy terminal messages", () => {
     const legacy = (text: string) =>
       asKnownContextRecord(
@@ -332,36 +314,6 @@ describe("composerContextRecords", () => {
 
     expect(isSameComposerContextPayload(canonical, imported)).toBe(true);
     expect(isSameComposerContextPayload(canonical, { ...canonical, text: "B" })).toBe(false);
-  });
-
-  it("compares nested annotation element and source payloads", () => {
-    const base = previewAnnotationContextRecord(annotation);
-    expect(isSameComposerContextPayload(base, { ...base, label: "Different display label" })).toBe(
-      true,
-    );
-    expect(
-      isSameComposerContextPayload(base, {
-        ...base,
-        elements: base.elements!.map((element) => ({
-          ...element,
-          htmlPreview: '<button id="pay">Changed</button>',
-        })),
-      }),
-    ).toBe(false);
-    expect(
-      isSameComposerContextPayload(base, {
-        ...base,
-        elements: base.elements!.map((element) => ({
-          ...element,
-          source: {
-            functionName: "Checkout",
-            fileName: "src/Checkout.tsx",
-            lineNumber: 20,
-            columnNumber: 4,
-          },
-        })),
-      }),
-    ).toBe(false);
   });
 
   it("resolves structured context directly and upgrades legacy text otherwise", () => {

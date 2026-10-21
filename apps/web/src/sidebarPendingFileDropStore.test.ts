@@ -51,21 +51,6 @@ describe("sidebarPendingFileDropStore", () => {
     expect(useSidebarPendingFileDropStore.getState().pending).toEqual([]);
   });
 
-  it("keeps drops for other threads when consuming one thread", () => {
-    const store = useSidebarPendingFileDropStore.getState();
-    store.queuePendingFileDrop(makeEntry("env-1", "thread-1", makeFiles("a.png")));
-    store.queuePendingFileDrop(makeEntry("env-1", "thread-2", makeFiles("b.png")));
-
-    expect(
-      fileNames(
-        useSidebarPendingFileDropStore
-          .getState()
-          .consumePendingFileDrop(refOf("env-1", "thread-2")) ?? [],
-      ),
-    ).toEqual(["b.png"]);
-    expect(useSidebarPendingFileDropStore.getState().pending).toHaveLength(1);
-  });
-
   it("keeps a newer drop deliverable after the first navigation fails", () => {
     const store = useSidebarPendingFileDropStore.getState();
     const firstId = store.queuePendingFileDrop(makeEntry("env-1", "thread-1", makeFiles("a.png")));

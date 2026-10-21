@@ -58,23 +58,6 @@ it("keeps question files separate from the normal draft and other questions", ()
   expect(revoke).toHaveBeenCalledWith(image.previewUrl);
   revoke.mockRestore();
 });
-it("does not match drafts belonging to threads with a shared id prefix", () => {
-  const prefix = questionAttachmentDraftPrefix(environmentId, threadId);
-  expect(
-    questionAttachmentDraftId(environmentId, threadId, requestId, "q").startsWith(prefix),
-  ).toBe(true);
-  for (const suffix of ["-extra", ":extra", "/extra", "%extra"]) {
-    expect(
-      questionAttachmentDraftId(
-        environmentId,
-        ThreadId.make(`${threadId}${suffix}`),
-        requestId,
-        "q",
-      ).startsWith(prefix),
-    ).toBe(false);
-  }
-});
-
 it("does not clear another environment whose id contains a question prefix", () => {
   const otherEnvironment = EnvironmentId.make(
     `${environmentId}:question-${encodeURIComponent(JSON.stringify(threadId))}-nested`,

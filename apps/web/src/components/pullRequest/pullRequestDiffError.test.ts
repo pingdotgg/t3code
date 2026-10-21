@@ -14,6 +14,7 @@ describe("describePullRequestDiffError", () => {
     expect(result.description).not.toContain("PullRequestOperationError");
   });
 
+  // regression: #19945 diff load failures from a provider quota showed a generic error
   it("recognizes a provider's API quota error", () => {
     expect(describePullRequestDiffError("GitHub API rate limit exceeded.", "GitHub").title).toBe(
       "GitHub rate limit reached",

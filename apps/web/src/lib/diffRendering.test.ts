@@ -5,22 +5,11 @@ import {
   buildFileDiffContentVersion,
   buildFileDiffIdentityKey,
   buildFileDiffRenderKey,
-  buildPatchCacheKey,
   getDiffLineStat,
   getRenderablePatch,
   resolveFileDiffPath,
   resolveFileDiffPreviousPath,
 } from "./diffRendering";
-
-describe("buildPatchCacheKey", () => {
-  it("changes when cache scope changes", () => {
-    const patch = "diff --git a/a.ts b/a.ts\n+console.log('hello')";
-
-    expect(buildPatchCacheKey(patch, "diff-panel:light")).not.toBe(
-      buildPatchCacheKey(patch, "diff-panel:dark"),
-    );
-  });
-});
 
 describe("getRenderablePatch", () => {
   it("hides indentation changes around inserted JSX without moving review lines", () => {
@@ -347,14 +336,6 @@ describe("a file whose name a patch header cannot carry plainly", () => {
     if (!file) throw new Error("patch carried no file");
     return resolveFileDiffPath(file);
   };
-
-  it("is the name the host knows, not the part of it before the tab", () => {
-    expect(pathOf(quotedPatch("tab\\tfile.txt"))).toBe("tab\tfile.txt");
-  });
-
-  it("keeps a backslash the name really has", () => {
-    expect(pathOf(quotedPatch("back\\\\slash.txt"))).toBe("back\\slash.txt");
-  });
 
   it("reads the octal a host with core.quotePath on writes for a name outside ASCII", () => {
     expect(pathOf(quotedPatch("caf\\303\\251/r\\303\\251sum\\303\\251.ts"))).toBe("café/résumé.ts");

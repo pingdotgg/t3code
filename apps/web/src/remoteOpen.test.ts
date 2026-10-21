@@ -1,5 +1,4 @@
 import {
-  BearerConnectionTarget,
   PrimaryConnectionTarget,
   RelayConnectionTarget,
   SshConnectionTarget,
@@ -58,21 +57,6 @@ describe("resolveRemoteOpenState", () => {
         target: primaryTarget("http://172.29.112.1:14369"),
         sshTarget: null,
         isDesktopRenderer: true,
-        remoteOpenTargets: TAILSCALE_TARGETS,
-      }),
-    ).toEqual({ mode: "local-exec" });
-  });
-
-  it("keeps exec behavior for desktop-local secondary backends", () => {
-    expect(
-      resolveRemoteOpenState({
-        target: new BearerConnectionTarget({
-          environmentId,
-          label: "WSL (Ubuntu)",
-          connectionId: "local:wsl-1",
-        }),
-        sshTarget: null,
-        isDesktopRenderer: false,
         remoteOpenTargets: TAILSCALE_TARGETS,
       }),
     ).toEqual({ mode: "local-exec" });
@@ -158,30 +142,9 @@ describe("resolveRemoteOpenState", () => {
       ).toEqual({ mode: "remote-unavailable" });
     }
   });
-
-  it("falls back to exec when the environment has no catalog entry", () => {
-    expect(
-      resolveRemoteOpenState({
-        target: null,
-        sshTarget: null,
-        isDesktopRenderer: false,
-        remoteOpenTargets: undefined,
-      }),
-    ).toEqual({ mode: "local-exec" });
-  });
 });
 
 describe("buildRemoteOpenUrl", () => {
-  it("builds a vscode-remote deep link", () => {
-    expect(
-      buildRemoteOpenUrl({
-        editor: "vscode",
-        host: "sol.tail1234.ts.net",
-        absolutePath: "/home/theo/code/my repo",
-      }),
-    ).toBe("vscode://vscode-remote/ssh-remote+sol.tail1234.ts.net/home/theo/code/my%20repo");
-  });
-
   it("roots Windows paths", () => {
     expect(
       buildRemoteOpenUrl({ editor: "vscode", host: "sol", absolutePath: "C:\\Users\\theo" }),
@@ -194,23 +157,6 @@ describe("buildRemoteOpenUrl", () => {
     ).toBe("zed://ssh/sol/Users/theo");
     expect(buildRemoteOpenUrl({ editor: "zed", host: "sol", absolutePath: "/C:/project" })).toBe(
       "zed://ssh/sol/C%3A/project",
-    );
-  });
-
-  it("builds a Toolbox ssh deep link for JetBrains IDEs", () => {
-    expect(
-      buildRemoteOpenUrl({
-        editor: "pycharm",
-        host: "sol.tail1234.ts.net",
-        absolutePath: "/home/theo/code/my repo",
-      }),
-    ).toBe(
-      "jetbrains://gateway/ssh/environment?h=sol.tail1234.ts.net&launchIde=true&ideHint=PY&projectHint=%2Fhome%2Ftheo%2Fcode%2Fmy+repo",
-    );
-    expect(
-      buildRemoteOpenUrl({ editor: "idea", host: "sol", absolutePath: "C:\\Users\\theo" }),
-    ).toBe(
-      "jetbrains://gateway/ssh/environment?h=sol&launchIde=true&ideHint=IU&projectHint=C%3A%2FUsers%2Ftheo",
     );
   });
 

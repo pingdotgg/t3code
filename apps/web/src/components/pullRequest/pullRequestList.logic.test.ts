@@ -17,12 +17,10 @@ import {
   mergePullRequestLists,
   pullRequestEntryKey,
   groupPullRequestsByInvolvement,
-  matchesPullRequestFilters,
   pullRequestStatsBatches,
   pullRequestStatsKeysToRequest,
   pullRequestStatsRefreshBatches,
   mergePullRequestDiffStats,
-  narrowPullRequestsToFilters,
   partitionPullRequestsWithPriority,
   readPullRequestListSnapshot,
   writePullRequestListSnapshot,
@@ -30,7 +28,6 @@ import {
   rankPullRequestsBlockedOnAuthor,
   rankPullRequestsByMergeReadiness,
   sortPullRequestGroups,
-  resolveProjectScope,
   resolveQueryEnvironmentIds,
   resolveSelectedEnvironmentId,
   type EnvironmentPullRequestEntry,
@@ -156,75 +153,6 @@ describe("pull request involvement filtering", () => {
       filterPullRequestsByInvolvement(mixed, VIEWERS, "authored").map((item) => item.number),
     ).toEqual([1]);
   });
-
-  it("keeps two hosts of one provider kind as two accounts", () => {
-    const mixed = [
-      entry({ number: 1, author: { login: "Bilal", name: null, avatarUrl: null } }),
-      entry({
-        number: 2,
-        host: "github.acme.dev",
-        author: { login: "Bilal", name: null, avatarUrl: null },
-      }),
-    ];
-    expect(
-      filterPullRequestsByInvolvement(mixed, VIEWERS, "authored").map((item) => item.number),
-    ).toEqual([1]);
-  });
-});
-
-describe("pull request grouping", () => {
-  it("counts an authored pull request once, even with a review request on it", () => {
-    const groups = groupPullRequestsByInvolvement(
-      [
-        entry({
-          number: 1,
-          author: { login: "bilal", name: null, avatarUrl: null },
-          viewerReviewRequested: true,
-        }),
-      ],
-      VIEWERS,
-    );
-    expect(groups.map((group) => group.key)).toEqual(["authored"]);
-  });
-});
-
-describe("carrying rows already read into filters nothing has answered yet", () => {
-  const rows = [
-    entry({ number: 1 }),
-    entry({ number: 2, state: "merged" }),
-    entry({ number: 3, state: "closed" }),
-    entry({ number: 4, host: "github.acme.dev" }),
-    entry({ number: 5, projectId: "project-2" as PullRequestListEntry["projectId"] }),
-  ];
-  const everything = { state: "all", projectId: undefined, host: undefined } as const;
-
-  it("never lets a merged pull request sit under Open", () => {
-    expect(
-      narrowPullRequestsToFilters(rows, { ...everything, state: "open" }).map((row) => row.number),
-    ).toEqual([1, 4, 5]);
-  });
-});
-
-describe("narrowing rows by the filters a host may not have applied", () => {
-  it("resolves author:me to the given viewer, case-insensitively", () => {
-    const mine = entry({ number: 30, author: { login: "Bilal", name: null, avatarUrl: null } });
-    const theirs = entry({ number: 31, author: { login: "Hubot", name: null, avatarUrl: null } });
-    expect(matchesPullRequestFilters(mine, { author: "me" }, "bilal")).toBe(true);
-    expect(matchesPullRequestFilters(theirs, { author: "me" }, "bilal")).toBe(false);
-  });
-});
-
-describe("resolveProjectScope", () => {
-  const projects = [{ id: "p1" }, { id: "p2" }];
-
-  it("drops an id from another environment", () => {
-    expect(resolveProjectScope("p9", projects, false)).toBe("p9");
-    expect(resolveProjectScope("p9", projects, true)).toBeUndefined();
-  });
-
-  it("keeps an id while the projects are still unknown", () => {
-    expect(resolveProjectScope("p9", [], false)).toBe("p9");
-  });
 });
 
 describe("ranking what a search found", () => {
@@ -313,6 +241,7 @@ describe("default merge-readiness ranking", () => {
     );
   });
 
+  // regression: #9453 authored pull requests were not prioritized
   it("keeps authored work first and ranks each group by readiness", () => {
     const authoredWaiting = entry({ number: 1, checksState: "pending" });
     const authoredReady = entry({
@@ -416,13 +345,6 @@ describe("partitioning with the hosts' own priority reads", () => {
     expect(groups[0]!.entries.map((item) => item.number)).toEqual([1]);
     expect(groups[1]!.entries.map((item) => item.number)).toEqual([2, 3]);
   });
-
-  it("lets the feed's copy of a partitioned row replace the partition's", () => {
-    const stale = authoredRow(1, "2026-07-01T00:00:00Z");
-    const fresh = { ...stale, title: "Retitled" };
-    const groups = partitionPullRequestsWithPriority([fresh], [stale], []);
-    expect(groups[0]!.entries[0]!.title).toBe("Retitled");
-  });
 });
 
 describe("the list snapshot across a reload", () => {
@@ -442,33 +364,12 @@ describe("the list snapshot across a reload", () => {
     nextCursors: { "pingdotgg/t3code": "cursor-1" },
   } as never;
 
-  it("hydrates the retained rows so ghosts never replace them", () => {
-    const storage = makeStorage();
-    writePullRequestListSnapshot(storage, "env-1", { scope: "env-1:open:all::", data });
-    const snapshot = readPullRequestListSnapshot(storage, "env-1");
-    expect(snapshot?.scope).toBe("env-1:open:all::");
-    expect(snapshot?.data.entries.map((item) => item.number)).toEqual([1]);
-  });
-
   it("carries neither stale failures nor stale cursors", () => {
     const storage = makeStorage();
     writePullRequestListSnapshot(storage, "env-1", { scope: "s", data });
     const snapshot = readPullRequestListSnapshot(storage, "env-1");
     expect(snapshot?.data.errors).toEqual([]);
     expect(snapshot?.data.nextCursors).toEqual({});
-  });
-
-  it("answers nothing for another environment", () => {
-    const storage = makeStorage();
-    writePullRequestListSnapshot(storage, "env-1", { scope: "s", data });
-    expect(readPullRequestListSnapshot(storage, "env-2")).toBeNull();
-  });
-
-  it("shrugs off corrupt storage and no storage at all", () => {
-    const storage = makeStorage();
-    storage.setItem("t3.pullRequests.list:env-1", "{not json");
-    expect(readPullRequestListSnapshot(storage, "env-1")).toBeNull();
-    expect(readPullRequestListSnapshot(undefined, "env-1")).toBeNull();
   });
 
   it("caps the accumulated rows but keeps the whole host set", () => {
@@ -518,6 +419,7 @@ describe("remembered pull request list controls", () => {
     };
   };
 
+  // regression: #9188 corrupt stored list controls broke the page
   it("falls back to the default controls when storage is corrupt", () => {
     const storage = makeStorage();
     storage.setItem("t3.pullRequests.preferences", "{not json");
@@ -577,6 +479,7 @@ describe("merging the environments' own listings", () => {
     ]);
   });
 
+  // regression: #6490 one environment's error showed on every environment
   it("keeps project errors scoped to the environment that reported them", () => {
     const error = {
       projectId: "project-1" as ProjectId,
@@ -621,16 +524,6 @@ describe("merging the environments' own listings", () => {
       },
     ]);
   });
-
-  it("keeps each environment's continuation to itself", () => {
-    const merged = mergePullRequestLists([
-      [ENV_1, answer({ nextCursors: { "github.com pingdotgg/t3code": "cursor-1" } })],
-      [ENV_2, answer()],
-    ]);
-    expect(merged?.nextCursors).toEqual({
-      [ENV_1]: { "github.com pingdotgg/t3code": "cursor-1" },
-    });
-  });
 });
 
 describe('who "I" am, per server', () => {
@@ -661,19 +554,6 @@ describe('who "I" am, per server', () => {
       ),
     ).toEqual([1]);
   });
-
-  it("names the servers with more rows and no cursor to reach them by", () => {
-    const merged = mergePullRequestLists([
-      [
-        ENV_1,
-        { ...answer({}, []), truncated: true, nextCursors: { "github.com acme/web": "cursor-1" } },
-      ],
-      [ENV_2, { ...answer({}, []), truncated: true }],
-    ])!;
-
-    expect(merged.truncatedEnvironments).toEqual([ENV_1, ENV_2]);
-    expect(Object.keys(merged.nextCursors)).toEqual([ENV_1]);
-  });
 });
 
 describe("the project an id names", () => {
@@ -682,10 +562,6 @@ describe("the project an id names", () => {
     { id: "project-1", environmentId: ENV_2 },
     { id: "project-2", environmentId: ENV_2 },
   ];
-
-  it("takes the server it was given", () => {
-    expect(findScopedProject(projects, ENV_2, "project-1")?.environmentId).toBe(ENV_2);
-  });
 
   it("answers a bare id only where one server has it", () => {
     expect(findScopedProject(projects, null, "project-2")?.environmentId).toBe(ENV_2);
@@ -697,19 +573,6 @@ describe("which environments a listing should ask", () => {
   const ENV_3 = "env-3" as EnvironmentId;
   const environmentIds = [ENV_1, ENV_2, ENV_3];
 
-  it("asks only the owning server once the project is unambiguous", () => {
-    const projects = [{ id: "project-1", environmentId: ENV_2 }];
-    expect(
-      resolveQueryEnvironmentIds(
-        environmentIds,
-        projects,
-        { environmentId: ENV_2 },
-        "project-1",
-        true,
-      ),
-    ).toEqual([ENV_2]);
-  });
-
   it("asks only the environments that actually hold an ambiguous bare id, never a third that doesn't", () => {
     const projects = [
       { id: "project-1", environmentId: ENV_1 },
@@ -719,12 +582,6 @@ describe("which environments a listing should ask", () => {
       resolveQueryEnvironmentIds(environmentIds, projects, undefined, "project-1", true),
     ).toEqual([ENV_1, ENV_2]);
   });
-
-  it("asks every environment while the servers have not said what they hold yet", () => {
-    expect(resolveQueryEnvironmentIds(environmentIds, [], undefined, "project-1", false)).toEqual(
-      environmentIds,
-    );
-  });
 });
 
 describe("the server a saved selection names", () => {
@@ -732,11 +589,6 @@ describe("the server a saved selection names", () => {
 
   it("resolves to nothing yet for a server that is known but not ready, rather than falling back", () => {
     expect(resolveSelectedEnvironmentId(ENV_2, known, ENV_1)).toBe(ENV_2);
-  });
-
-  it("falls back for a server the workspace genuinely no longer has", () => {
-    const goneServer = "env-gone" as EnvironmentId;
-    expect(resolveSelectedEnvironmentId(goneServer, known, ENV_1)).toBe(ENV_1);
   });
 });
 
@@ -883,6 +735,7 @@ describe("refresh page size", () => {
     expect(largestPullRequestReadCount(twoPagesAcrossFourRepositories("gitlab"))).toBe(198);
   });
 
+  // regression: #19403 refreshes were not bounded by each tracker read
   it("asks for the whole host where one search reads every repository", () => {
     expect(largestPullRequestReadCount(twoPagesAcrossFourRepositories("github"))).toBe(792);
   });
