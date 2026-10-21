@@ -158,12 +158,7 @@ import {
   type ComposerBannerStackContent,
   type ComposerBannerStackItem,
 } from "./ComposerBannerStack";
-import {
-  compressImageForStash,
-  isHeicImageFile,
-  prepareImageForAttachment,
-} from "../../lib/imageCompression";
-import { AttachmentImage } from "../media/AttachmentImage";
+import { compressImageForStash, prepareImageForAttachment } from "../../lib/imageCompression";
 import {
   fileAttachmentTooLargeMessage,
   formatAttachmentSize,
@@ -201,7 +196,6 @@ import {
   toKindScopedComposerContextId,
 } from "@t3tools/shared/composerContextReferences";
 import {
-  getRestingComposerImagePreviewCounts,
   resolveRestingComposerControlsLayout,
   shouldAnimateComposerRestingTransition,
   shouldUseCompactComposerPrimaryActions,
@@ -286,11 +280,12 @@ import {
 } from "./ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
-import { ComposerImageThumbnail } from "./ComposerImageThumbnail";
 import {
   ComposerAttachmentFileList,
   ComposerAttachmentMediaRow,
   ComposerFilePreviewDialog,
+  ComposerQueuedAttachmentRow,
+  ComposerRestingImagePreviews,
 } from "./ComposerAttachmentStrip";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
@@ -344,7 +339,6 @@ import {
   submitComposerDraft,
 } from "./composerSubmission";
 import { ComposerPromptLengthValidation } from "./ComposerPromptLengthValidation";
-import { PierreEntryIcon } from "./PierreEntryIcon";
 import { pendingDraftWork } from "./pendingDraftWork";
 import {
   importComposerThreadAttachment,
@@ -989,7 +983,6 @@ import {
   PencilRulerIcon,
   PlayIcon,
   ShieldIcon,
-  XIcon,
 } from "lucide-react";
 import { proposedPlanTitle } from "@t3tools/shared/proposedPlanText";
 import { hasProviderSetup } from "./ProviderStatusBanner";
@@ -4830,85 +4823,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     measure();
     return observeResize(restingActionsElement, measure);
   }, [isComposerResting, restingActionsElement]);
-  const restingImagePreviewCounts = getRestingComposerImagePreviewCounts(
-    standaloneComposerImages.length,
-  );
-  const restingComposerImages = standaloneComposerImages.slice(
-    0,
-    restingImagePreviewCounts.visibleCount,
-  );
+  const showMoreRestingImages = () => {
+    if (isComposerCollapsedMobile) {
+      expandMobileComposer();
+      return;
+    }
+    setIsComposerScrollCollapsed(false);
+    setIsComposerFocused(true);
+    scheduleComposerFocus();
+  };
   const collapsedComposerImagePreviews =
-    restingComposerImages.length > 0 ? (
-      <div
-        data-chat-composer-resting-images="true"
-        className="flex shrink-0 items-center gap-1 ps-1"
-      >
-        {restingComposerImages.map((image) => (
-          <button
-            key={image.id}
-            type="button"
-            className="relative size-7 shrink-0 cursor-zoom-in overflow-hidden rounded-md border border-border/70 bg-muted/60"
-            aria-label={`Preview ${image.name}`}
-            onPointerDown={(event) => event.preventDefault()}
-            onClick={() => {
-              const preview = buildExpandedImagePreview(composerImages, image.id);
-              if (preview) onExpandImage(preview);
-            }}
-          >
-            {image.previewUrl ? (
-              <ComposerImageThumbnail
-                file={image.file}
-                alt=""
-                className="size-full object-cover"
-                fallback={
-                  isHeicImageFile({ name: image.name, type: image.mimeType }) ? (
-                    <AttachmentImage
-                      name={image.name}
-                      mimeType={image.mimeType}
-                      src={image.previewUrl}
-                      alt=""
-                      className="size-full object-cover"
-                    />
-                  ) : (
-                    <PierreEntryIcon
-                      pathValue={image.name}
-                      kind="file"
-                      theme={resolvedTheme}
-                      className="m-auto size-3.5"
-                    />
-                  )
-                }
-              />
-            ) : (
-              <PierreEntryIcon
-                pathValue={image.name}
-                kind="file"
-                theme={resolvedTheme}
-                className="m-auto size-3.5"
-              />
-            )}
-          </button>
-        ))}
-        {restingImagePreviewCounts.overflowCount > 0 ? (
-          <button
-            type="button"
-            className="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border/70 bg-muted/60 font-medium text-secondary-label text-xs tabular-nums outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
-            aria-label={`Show ${String(restingImagePreviewCounts.overflowCount)} more image attachments`}
-            onPointerDown={(event) => event.preventDefault()}
-            onClick={() => {
-              if (isComposerCollapsedMobile) {
-                expandMobileComposer();
-                return;
-              }
-              setIsComposerScrollCollapsed(false);
-              setIsComposerFocused(true);
-              scheduleComposerFocus();
-            }}
-          >
-            +{restingImagePreviewCounts.overflowCount}
-          </button>
-        ) : null}
-      </div>
+    standaloneComposerImages.length > 0 ? (
+      <ComposerRestingImagePreviews
+        images={standaloneComposerImages}
+        allImages={composerImages}
+        resolvedTheme={resolvedTheme}
+        onExpandImage={onExpandImage}
+        onShowMore={showMoreRestingImages}
+      />
     ) : null;
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
@@ -6695,35 +6627,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 pendingUserInputs.length === 0 &&
                 editingQueuedAttachments !== null &&
                 editingQueuedAttachments.length > 0 && (
-                  <div className="mb-3 flex flex-wrap gap-2">
-                    {editingQueuedAttachments.map(({ attachment, url }) => (
-                      <div
-                        key={attachment.id}
-                        className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-background"
-                      >
-                        {attachment.type === "image" && url ? (
-                          <img
-                            src={url}
-                            alt={attachment.name}
-                            className="h-full w-full object-cover"
-                          />
-                        ) : (
-                          <div className="flex h-full w-full items-center justify-center px-1 text-center text-3xs text-secondary-label">
-                            {attachment.name}
-                          </div>
-                        )}
-                        <Button
-                          variant="media-close"
-                          size="icon-xs"
-                          className="absolute right-1 top-1"
-                          onClick={() => onRemoveEditingQueuedAttachment(attachment.id)}
-                          aria-label={`Remove ${attachment.name}`}
-                        >
-                          <XIcon />
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
+                  <ComposerQueuedAttachmentRow
+                    attachments={editingQueuedAttachments}
+                    onRemove={onRemoveEditingQueuedAttachment}
+                  />
                 )}
 
               {composerAttachmentMediaRow}

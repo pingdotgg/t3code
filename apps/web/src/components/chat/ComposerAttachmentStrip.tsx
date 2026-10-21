@@ -1,4 +1,5 @@
 import type {
+  ChatAttachment,
   ChatFileAttachment,
   EnvironmentId,
   ScopedThreadRef,
@@ -24,6 +25,7 @@ import {
   shouldAnimateSnapShotArrival,
 } from "../../lib/snapShotAnimation";
 import { cn } from "~/lib/utils";
+import { getRestingComposerImagePreviewCounts } from "../composerFooterLayout";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { AttachmentFilePreview } from "../files/AttachmentFilePreview";
 import { AttachmentImage } from "../media/AttachmentImage";
@@ -531,5 +533,124 @@ export function ComposerFilePreviewDialog({
         />
       </DialogPopup>
     </Dialog>
+  );
+}
+
+/** Thumbnails beside the single-line prompt while the composer rests. */
+export function ComposerRestingImagePreviews({
+  images,
+  allImages,
+  resolvedTheme,
+  onExpandImage,
+  onShowMore,
+}: {
+  readonly images: ReadonlyArray<ComposerImageAttachment>;
+  readonly allImages: ReadonlyArray<ComposerImageAttachment>;
+  readonly resolvedTheme: "light" | "dark";
+  readonly onExpandImage: (preview: ExpandedImagePreview) => void;
+  readonly onShowMore: () => void;
+}) {
+  const counts = getRestingComposerImagePreviewCounts(images.length);
+  const visibleImages = images.slice(0, counts.visibleCount);
+  return (
+    <div data-chat-composer-resting-images="true" className="flex shrink-0 items-center gap-1 ps-1">
+      {visibleImages.map((image) => (
+        <button
+          key={image.id}
+          type="button"
+          className="relative size-7 shrink-0 cursor-zoom-in overflow-hidden rounded-md border border-border/70 bg-muted/60"
+          aria-label={`Preview ${image.name}`}
+          onPointerDown={(event) => event.preventDefault()}
+          onClick={() => {
+            const preview = buildExpandedImagePreview(allImages, image.id);
+            if (preview) onExpandImage(preview);
+          }}
+        >
+          {image.previewUrl ? (
+            <ComposerImageThumbnail
+              file={image.file}
+              alt=""
+              className="size-full object-cover"
+              fallback={
+                isHeicImageFile({ name: image.name, type: image.mimeType }) ? (
+                  <AttachmentImage
+                    name={image.name}
+                    mimeType={image.mimeType}
+                    src={image.previewUrl}
+                    alt=""
+                    className="size-full object-cover"
+                  />
+                ) : (
+                  <PierreEntryIcon
+                    pathValue={image.name}
+                    kind="file"
+                    theme={resolvedTheme}
+                    className="m-auto size-3.5"
+                  />
+                )
+              }
+            />
+          ) : (
+            <PierreEntryIcon
+              pathValue={image.name}
+              kind="file"
+              theme={resolvedTheme}
+              className="m-auto size-3.5"
+            />
+          )}
+        </button>
+      ))}
+      {counts.overflowCount > 0 ? (
+        <button
+          type="button"
+          className="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border/70 bg-muted/60 font-medium text-secondary-label text-xs tabular-nums outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+          aria-label={`Show ${String(counts.overflowCount)} more image attachments`}
+          onPointerDown={(event) => event.preventDefault()}
+          onClick={onShowMore}
+        >
+          +{counts.overflowCount}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+/** Attachments of the queued message being edited; they are already uploaded. */
+export function ComposerQueuedAttachmentRow({
+  attachments,
+  onRemove,
+}: {
+  readonly attachments: ReadonlyArray<{
+    readonly attachment: ChatAttachment;
+    readonly url: string | null;
+  }>;
+  readonly onRemove: (attachmentId: string) => void;
+}) {
+  return (
+    <div className="mb-3 flex flex-wrap gap-2">
+      {attachments.map(({ attachment, url }) => (
+        <div
+          key={attachment.id}
+          className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-background"
+        >
+          {attachment.type === "image" && url ? (
+            <img src={url} alt={attachment.name} className="h-full w-full object-cover" />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center px-1 text-center text-3xs text-secondary-label">
+              {attachment.name}
+            </div>
+          )}
+          <Button
+            variant="media-close"
+            size="icon-xs"
+            className="absolute right-1 top-1"
+            onClick={() => onRemove(attachment.id)}
+            aria-label={`Remove ${attachment.name}`}
+          >
+            <XIcon />
+          </Button>
+        </div>
+      ))}
+    </div>
   );
 }
