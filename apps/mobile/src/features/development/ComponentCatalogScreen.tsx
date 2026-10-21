@@ -277,7 +277,7 @@ export function ComponentCatalogScreen() {
         ) : null}
       </ScreenScrollView>
       {sheet ? (
-        <Sheet title="Example sheet" onClose={() => setSheet(false)}>
+        <Sheet prefersHorizontalBars title="Example sheet" onClose={() => setSheet(false)}>
           <ScreenScrollView
             contentInsetAdjustmentBehavior="automatic"
             contentContainerClassName="p-4"

@@ -149,7 +149,7 @@ import { NATIVE_LIQUID_GLASS_SUPPORTED } from "./native/native-glass";
 import { deriveLayout } from "./lib/layout";
 import { useNativeLayoutMetrics } from "./native/native-layout-metrics";
 import { nativeHeaderScrollEdgeEffects } from "./native/StackHeader";
-import { FORM_SHEET_PRESENTATION_OPTIONS } from "./native/sheet-surface";
+import { HORIZONTAL_FORM_SHEET_OPTIONS, formSheetDetents } from "./native/sheet-surface";
 import { useThreadOutboxDrain } from "./state/use-thread-outbox-drain";
 import { useComposerAttachmentUploadWorker } from "./state/composer-attachment-uploads";
 
@@ -368,7 +368,7 @@ const SettingsContentStack = createV5SheetStackNavigator({
         ...(Platform.OS === "android"
           ? { presentation: "card" as const }
           : {
-              ...FORM_SHEET_PRESENTATION_OPTIONS,
+              ...HORIZONTAL_FORM_SHEET_OPTIONS,
               sheetAllowedDetents: [1],
               sheetGrabberVisible: true,
             }),
@@ -513,7 +513,7 @@ const NewTaskSheetStack = createNativeStackNavigator({
         ...(Platform.OS === "android"
           ? { presentation: "card" as const }
           : {
-              ...FORM_SHEET_PRESENTATION_OPTIONS,
+              ...HORIZONTAL_FORM_SHEET_OPTIONS,
               sheetAllowedDetents: [1],
               sheetGrabberVisible: true,
             }),
@@ -734,8 +734,8 @@ const RootStackConfig = createWorkspaceStackNavigator({
       screen: PullRequestFilesSheet,
       options: {
         ...(Platform.OS === "ios" ? SHEET_GLASS_HEADER_OPTIONS : undefined),
-        ...FORM_SHEET_PRESENTATION_OPTIONS,
-        sheetAllowedDetents: [0.6, 0.92],
+        ...HORIZONTAL_FORM_SHEET_OPTIONS,
+        sheetAllowedDetents: formSheetDetents(0.6),
         sheetGrabberVisible: true,
         sheetCornerRadius: Platform.OS === "android" ? 28 : undefined,
       },
@@ -744,8 +744,8 @@ const RootStackConfig = createWorkspaceStackNavigator({
       screen: PullRequestReviewersScreen,
       options: {
         ...DETAIL_HEADER_OPTIONS,
-        ...FORM_SHEET_PRESENTATION_OPTIONS,
-        sheetAllowedDetents: [0.75, 0.92],
+        ...HORIZONTAL_FORM_SHEET_OPTIONS,
+        sheetAllowedDetents: formSheetDetents(0.75),
         sheetGrabberVisible: true,
         headerBackVisible: false,
       },
@@ -759,8 +759,8 @@ const RootStackConfig = createWorkspaceStackNavigator({
       options: {
         ...(Platform.OS === "android"
           ? { presentation: "fullScreenModal" as const }
-          : { ...SHEET_GLASS_HEADER_OPTIONS, ...FORM_SHEET_PRESENTATION_OPTIONS }),
-        sheetAllowedDetents: Platform.OS === "android" ? undefined : [0.75, 0.92],
+          : { ...SHEET_GLASS_HEADER_OPTIONS, ...HORIZONTAL_FORM_SHEET_OPTIONS }),
+        sheetAllowedDetents: Platform.OS === "android" ? undefined : formSheetDetents(0.75),
         sheetGrabberVisible: Platform.OS !== "android",
       },
     }),
@@ -768,8 +768,8 @@ const RootStackConfig = createWorkspaceStackNavigator({
       screen: PullRequestReviewSheet,
       options: {
         ...(Platform.OS === "ios" ? SHEET_GLASS_HEADER_OPTIONS : undefined),
-        ...FORM_SHEET_PRESENTATION_OPTIONS,
-        sheetAllowedDetents: [0.75, 0.92],
+        ...HORIZONTAL_FORM_SHEET_OPTIONS,
+        sheetAllowedDetents: formSheetDetents(0.75),
         sheetGrabberVisible: true,
       },
     }),
@@ -816,8 +816,8 @@ const RootStackConfig = createWorkspaceStackNavigator({
         // formSheet; use a full-screen modal there instead.
         ...(Platform.OS === "android"
           ? { presentation: "fullScreenModal" as const }
-          : FORM_SHEET_PRESENTATION_OPTIONS),
-        sheetAllowedDetents: Platform.OS === "android" ? undefined : [0.55, 0.92],
+          : HORIZONTAL_FORM_SHEET_OPTIONS),
+        sheetAllowedDetents: Platform.OS === "android" ? undefined : formSheetDetents(0.55),
         sheetGrabberVisible: Platform.OS !== "android",
       },
     }),
@@ -856,7 +856,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
         ...(Platform.OS === "android"
           ? { presentation: "card" as const }
           : {
-              ...FORM_SHEET_PRESENTATION_OPTIONS,
+              ...HORIZONTAL_FORM_SHEET_OPTIONS,
               sheetAllowedDetents: [1],
               sheetGrabberVisible: true,
             }),
@@ -865,27 +865,27 @@ const RootStackConfig = createWorkspaceStackNavigator({
     ThreadQueue: createNativeStackScreen({
       screen: ThreadQueueSheet,
       options: {
-        ...FORM_SHEET_PRESENTATION_OPTIONS,
+        ...HORIZONTAL_FORM_SHEET_OPTIONS,
         headerShown: false,
-        sheetAllowedDetents: [0.65, 0.95],
+        sheetAllowedDetents: formSheetDetents(0.65, 0.95),
         sheetGrabberVisible: true,
       },
     }),
     ThreadBackgroundWork: createNativeStackScreen({
       screen: ThreadBackgroundWorkSheet,
       options: {
-        ...FORM_SHEET_PRESENTATION_OPTIONS,
+        ...HORIZONTAL_FORM_SHEET_OPTIONS,
         headerShown: false,
-        sheetAllowedDetents: [0.5, 0.9],
+        sheetAllowedDetents: formSheetDetents(0.5, 0.9),
         sheetGrabberVisible: true,
       },
     }),
     ThreadAgents: createNativeStackScreen({
       screen: ThreadAgentsSheet,
       options: {
-        ...FORM_SHEET_PRESENTATION_OPTIONS,
+        ...HORIZONTAL_FORM_SHEET_OPTIONS,
         headerShown: false,
-        sheetAllowedDetents: [0.5, 0.9],
+        sheetAllowedDetents: formSheetDetents(0.5, 0.9),
         sheetGrabberVisible: true,
       },
     }),
@@ -893,8 +893,8 @@ const RootStackConfig = createWorkspaceStackNavigator({
       screen: GitOverviewSheet,
       linking: `${THREAD_LINKING_PREFIX}/git`,
       options: {
-        ...FORM_SHEET_PRESENTATION_OPTIONS,
-        sheetAllowedDetents: [0.55, 0.92],
+        ...HORIZONTAL_FORM_SHEET_OPTIONS,
+        sheetAllowedDetents: formSheetDetents(0.55),
         sheetGrabberVisible: true,
       },
     }),
@@ -902,8 +902,8 @@ const RootStackConfig = createWorkspaceStackNavigator({
       screen: ThreadPullRequestsSheet,
       linking: `${THREAD_LINKING_PREFIX}/pull-requests`,
       options: {
-        ...FORM_SHEET_PRESENTATION_OPTIONS,
-        sheetAllowedDetents: [0.55, 0.92],
+        ...HORIZONTAL_FORM_SHEET_OPTIONS,
+        sheetAllowedDetents: formSheetDetents(0.55),
         sheetGrabberVisible: true,
       },
     }),
@@ -912,8 +912,8 @@ const RootStackConfig = createWorkspaceStackNavigator({
       linking: `${THREAD_LINKING_PREFIX}/git/commit`,
       options: {
         ...(Platform.OS === "ios" ? SHEET_GLASS_HEADER_OPTIONS : undefined),
-        ...FORM_SHEET_PRESENTATION_OPTIONS,
-        sheetAllowedDetents: [0.8, 0.92],
+        ...HORIZONTAL_FORM_SHEET_OPTIONS,
+        sheetAllowedDetents: formSheetDetents(0.8),
         sheetGrabberVisible: true,
       },
     }),
@@ -921,8 +921,8 @@ const RootStackConfig = createWorkspaceStackNavigator({
       screen: GitBranchesSheet,
       linking: `${THREAD_LINKING_PREFIX}/git/branches`,
       options: {
-        ...FORM_SHEET_PRESENTATION_OPTIONS,
-        sheetAllowedDetents: [0.55, 0.92],
+        ...HORIZONTAL_FORM_SHEET_OPTIONS,
+        sheetAllowedDetents: formSheetDetents(0.55),
         sheetGrabberVisible: true,
       },
     }),
@@ -930,7 +930,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
       screen: GitConfirmSheet,
       linking: `${THREAD_LINKING_PREFIX}/git-confirm`,
       options: {
-        ...FORM_SHEET_PRESENTATION_OPTIONS,
+        ...HORIZONTAL_FORM_SHEET_OPTIONS,
         sheetAllowedDetents: [0.45, 0.7],
         sheetGrabberVisible: true,
       },
@@ -964,8 +964,8 @@ const RootStackConfig = createWorkspaceStackNavigator({
         ...(Platform.OS === "android" ? { headerShown: false } : SHEET_SOLID_HEADER_OPTIONS),
         title: "Set up T3 Connect",
         gestureEnabled: true,
-        ...FORM_SHEET_PRESENTATION_OPTIONS,
-        sheetAllowedDetents: [0.6, 0.95],
+        ...HORIZONTAL_FORM_SHEET_OPTIONS,
+        sheetAllowedDetents: formSheetDetents(0.6, 0.95),
         sheetGrabberVisible: true,
       },
     }),
@@ -977,7 +977,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
         ...(Platform.OS === "android"
           ? { presentation: "card" as const, headerShown: false }
           : {
-              ...FORM_SHEET_PRESENTATION_OPTIONS,
+              ...HORIZONTAL_FORM_SHEET_OPTIONS,
               sheetAllowedDetents: [0.55, 0.7],
               sheetGrabberVisible: true,
             }),
@@ -991,7 +991,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
         // native header stack mounts without remounting the pairing form.
         ...(Platform.OS === "ios" ? SHEET_GLASS_HEADER_OPTIONS : undefined),
         title: "Add Environment",
-        ...FORM_SHEET_PRESENTATION_OPTIONS,
+        ...HORIZONTAL_FORM_SHEET_OPTIONS,
         sheetAllowedDetents: [0.55, 0.7],
         sheetGrabberVisible: true,
       },
@@ -1009,6 +1009,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
       ),
       options: {
         ...NESTED_NAVIGATOR_OPTIONS,
+        sheetPrefersHorizontalBars: true,
         gestureEnabled: true,
         headerShown: false,
       },
@@ -1066,8 +1067,8 @@ export const RootStack = RootStackConfig.with(function AdaptiveRootStack({ Navig
         return usesWorkspaceFlowScreens
           ? { presentation: "card" }
           : {
-              ...FORM_SHEET_PRESENTATION_OPTIONS,
-              sheetAllowedDetents: [0.92],
+              presentation: "formSheet",
+              sheetAllowedDetents: [1],
               sheetGrabberVisible: true,
             };
       }}

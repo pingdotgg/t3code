@@ -369,6 +369,7 @@ export function V5SheetStackView(props: V5StackViewProps) {
             initialDetentIndex={options.sheetInitialDetentIndex}
             largestUndimmedDetentIndex={options.sheetLargestUndimmedDetentIndex}
             prefersGrabberVisible={options.sheetGrabberVisible}
+            prefersHorizontalBars={options.sheetPrefersHorizontalBars}
             preferredCornerRadius={options.sheetCornerRadius}
             prefersScrollingExpandsWhenScrolledToEdge={options.sheetExpandsWhenScrolledToEdge}
             nativeContainerStyle={{
