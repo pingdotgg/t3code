@@ -149,6 +149,17 @@ it("names an Azure DevOps repository by its own name, not its project path", () 
   expect(selector).toBe("checkout");
 });
 
+it("decodes an Azure DevOps repository name that the remote URL percent-encodes", () => {
+  // A remote spells a space as `%20`, and `az repos pr list --repository` reads that literally.
+  const selector = sourceControlRepositorySelector({
+    provider: "azure-devops",
+    displayName: "contoso/payments%20(eu)/_git/checkout%20(eu)",
+    owner: "contoso",
+    name: "checkout%20(eu)",
+  });
+  expect(selector).toBe("checkout (eu)");
+});
+
 it("keeps a GitLab identity's whole path, because a nested group is part of the name", () => {
   const selector = sourceControlRepositorySelector({
     provider: "gitlab",
