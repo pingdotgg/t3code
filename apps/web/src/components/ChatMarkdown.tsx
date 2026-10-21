@@ -3,7 +3,6 @@ import { MarkdownFindContext, findRevealRef } from "./chat/markdownFindContext";
 import {
   buildFileLinkParentSuffixByPath,
   fileLinkLabel,
-  resolvePathLinkTarget,
   splitFilePathPosition,
 } from "@t3tools/shared/fileLinks";
 import {
@@ -39,12 +38,10 @@ import {
   MessageSquareIcon,
   MessageSquareWarningIcon,
   OctagonAlertIcon,
-  PlayIcon,
   PresentationIcon,
   SparklesIcon,
   TriangleAlertIcon,
   WorkflowIcon,
-  WrapTextIcon,
   type LucideIcon,
 } from "lucide-react";
 import { Check, Copy, Maximize2, Minimize2 } from "lucide";
@@ -105,7 +102,6 @@ import type {
   Options as ReactMarkdownOptions,
 } from "react-markdown";
 import ReactMarkdown from "react-markdown";
-import { toHtml } from "hast-util-to-html";
 import { createIncrementalMarkdownPlugin } from "../markdown-incremental";
 import { defaultUrlTransform } from "react-markdown";
 import { parseAssistantCitationHref } from "@t3tools/shared/assistantCitations";
@@ -132,7 +128,6 @@ import { MediaActions, type MediaActionSource } from "./media/MediaActions";
 import { resolveProtocolRelativeMediaUrl } from "./media/mediaContent";
 import { WorkspaceEntryTooltip } from "./chat/WorkspaceEntryIcon";
 import { FileTagChipContent } from "./chat/FileTagChip";
-import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 import {
   revealInFileExplorerLabelForKind,
   revealInFileExplorerLabelForOs,
@@ -141,7 +136,6 @@ import {
   resolveExternalWebLinkHost,
   showExternalLinkContextMenu,
 } from "./chat/externalLinkContextMenu";
-import { hasSpecificPierreIconForFileName, syntheticFileNameForLanguageId } from "../pierre-icons";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { Button } from "./ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
@@ -157,13 +151,8 @@ import {
   usePreferredEditor,
 } from "../editorPreferences";
 import { openInEditorMenuLabel } from "../editorLabels";
-import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
-import { fnv1a32 } from "../lib/diffRendering";
-import { LRUCache } from "../lib/lruCache";
-import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
+import { resolveDiffThemeName } from "../lib/diffRendering";
 import { GitHubIcon } from "./Icons";
-import { createIncrementalHighlightedDocument } from "../lib/incrementalHighlighting";
-import { HighlightedCodeLines } from "./chat/HighlightedCodeLines";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
 import { MermaidDiagram } from "./chat/MermaidDiagram";
 import { useRenderedAppearance } from "../hooks/useTheme";
@@ -239,6 +228,16 @@ import {
 } from "../browser/openFileInPreview";
 import { resolveLinkTarget } from "../browser/browserLinkTarget";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
+import { MarkdownCodeBlock, SuspenseShikiCodeBlock } from "./chat/MarkdownCodeBlock";
+import {
+  extractCodeBlock,
+  extractFenceLanguage,
+  extractFenceTitle,
+  extractPreCodeMeta,
+  isClosedCodeFence,
+  nodeToPlainText,
+} from "./chat/MarkdownCodeBlock.logic";
+import { reportMarkdownActionFailure } from "./chat/markdownActionFailure";
 
 const isAssetNotFoundError = Schema.is(AssetWorkspaceAssetNotFoundError);
 
@@ -392,28 +391,7 @@ function CodexArtifactTemplateCard(props: {
   );
 }
 
-const CODE_FENCE_LANGUAGE_REGEX = /(?:^|\s)language-([^\s]+)/;
 const WINDOWS_DRIVE_PATH_REGEX = /^[A-Za-z]:[\\/]/;
-const MAX_HIGHLIGHT_CACHE_ENTRIES = 500;
-const MAX_HIGHLIGHT_CACHE_MEMORY_BYTES = 50 * 1024 * 1024;
-
-interface MarkdownActionFailureContext {
-  readonly operation: string;
-  readonly target?: string;
-  readonly format?: "markdown" | "csv";
-  readonly language?: string;
-  readonly fenceTitle?: string;
-  readonly copyTarget?: string;
-}
-
-function reportMarkdownActionFailure(context: MarkdownActionFailureContext, cause: unknown): void {
-  console.error("[chat-markdown] action failed", context, cause);
-}
-
-const highlightedCodeCache = new LRUCache<string>(
-  MAX_HIGHLIGHT_CACHE_ENTRIES,
-  MAX_HIGHLIGHT_CACHE_MEMORY_BYTES,
-);
 
 function findTaskListMarkerOffset(markdown: string, listItemStart: number): number | null {
   const firstLineEnd = markdown.indexOf("\n", listItemStart);
@@ -474,119 +452,6 @@ const GITHUB_ALERT_PRESENTATIONS: Record<
   },
 };
 
-function extractFenceLanguage(className: string | undefined): string {
-  const match = className?.match(CODE_FENCE_LANGUAGE_REGEX);
-  const raw = match?.[1] ?? "text";
-  // Shiki doesn't bundle a gitignore grammar; ini is a close match (#685)
-  return raw === "gitignore" ? "ini" : raw;
-}
-
-const FENCE_TITLE_ATTR_REGEX = /(?:^|\s)(?:title|file(?:name)?)=(?:"([^"]+)"|'([^']+)'|(\S+))/i;
-const FENCE_FILENAME_TOKEN_REGEX = /^[\w@][\w@./-]*\.[A-Za-z0-9]+$/;
-
-function extractFenceTitle(meta: string | undefined): string | null {
-  if (!meta) return null;
-  const attrMatch = FENCE_TITLE_ATTR_REGEX.exec(meta);
-  const attrTitle = attrMatch?.[1] ?? attrMatch?.[2] ?? attrMatch?.[3];
-  if (attrTitle) return attrTitle;
-  return meta.split(/\s+/).find((candidate) => FENCE_FILENAME_TOKEN_REGEX.test(candidate)) ?? null;
-}
-
-function extractPreCodeMeta(node: unknown): string | undefined {
-  const children = (
-    node as
-      | {
-          children?: Array<{
-            type?: string;
-            tagName?: string;
-            data?: { meta?: unknown };
-            properties?: { dataCodeMeta?: unknown };
-          }>;
-        }
-      | undefined
-  )?.children;
-  const codeNode = children?.find((child) => child?.type === "element" && child.tagName === "code");
-  const meta = codeNode?.properties?.dataCodeMeta ?? codeNode?.data?.meta;
-  return typeof meta === "string" && meta.trim().length > 0 ? meta.trim() : undefined;
-}
-
-function isClosedCodeFence(
-  node: ReactMarkdownExtraProps["node"],
-  text: string,
-  code: string,
-): boolean {
-  const start = node?.position?.start.offset;
-  const end = node?.position?.end.offset;
-  if (start === undefined || end === undefined) return false;
-  const source = text.slice(start, end);
-  const opening = /^(?:`{3,}|~{3,})/.exec(source)?.[0];
-  // One class for the blockquote prefix: nested quantifiers here backtrack
-  // exponentially on code lines that start with many `> ` markers.
-  const closing = /(?:^|\n)[ \t>]*(`{3,}|~{3,})[ \t\r]*$/.exec(source)?.[1];
-  return (
-    opening !== undefined &&
-    closing !== undefined &&
-    opening[0] === closing[0] &&
-    closing.length >= opening.length &&
-    // Only a real closer is omitted from parsed code. A CRLF stream cut after
-    // CR must not count as an extra source line.
-    source.replace(/\r$/, "").split(/\r\n|\r|\n/).length > code.split(/\r\n|\r|\n/).length
-  );
-}
-
-function nodeToPlainText(node: ReactNode): string {
-  if (typeof node === "string" || typeof node === "number") {
-    return String(node);
-  }
-  if (Array.isArray(node)) {
-    return node.map((child) => nodeToPlainText(child)).join("");
-  }
-  if (isValidElement<{ children?: ReactNode }>(node)) {
-    return nodeToPlainText(node.props.children);
-  }
-  return "";
-}
-
-function extractCodeBlock(
-  children: ReactNode,
-): { className: string | undefined; code: string } | null {
-  const childNodes = Children.toArray(children);
-  if (childNodes.length !== 1) {
-    return null;
-  }
-
-  const onlyChild = childNodes[0];
-  if (
-    !isValidElement<{ className?: string; children?: ReactNode; node?: { tagName?: string } }>(
-      onlyChild,
-    )
-  ) {
-    return null;
-  }
-  // With a custom `code` component the child's type is that component, not
-  // the "code" tag — the hast node react-markdown attaches still names it.
-  if (onlyChild.type !== "code" && onlyChild.props.node?.tagName !== "code") {
-    return null;
-  }
-
-  return {
-    className: onlyChild.props.className,
-    code: nodeToPlainText(onlyChild.props.children),
-  };
-}
-
-function createHighlightCacheKey(code: string, language: string, themeName: DiffThemeName): string {
-  return `${fnv1a32(code).toString(36)}:${code.length}:${language}:${themeName}`;
-}
-
-function estimateHighlightedSize(html: string, code: string): number {
-  return Math.max(html.length * 2, code.length * 3);
-}
-
-function readInitialWordWrapSetting(): boolean {
-  return getClientSettings().wordWrap;
-}
-
 /**
  * Whether any cell is clipped in the unwrapped layout. Only then does the wrap
  * toggle change anything, so short tables hide it. Measures with the container
@@ -615,7 +480,7 @@ function tableHasClippedCells(container: HTMLElement, table: HTMLTableElement): 
 function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const tableRef = useRef<HTMLTableElement | null>(null);
-  const [expanded, setExpanded] = useState(readInitialWordWrapSetting);
+  const [expanded, setExpanded] = useState(() => getClientSettings().wordWrap);
   const [hasClippedCells, setHasClippedCells] = useState(false);
   const [copied, setCopied] = useState(false);
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -792,261 +657,6 @@ function MarkdownDetails({
   );
 }
 
-const THREAD_FIND_IGNORE_PROPS = {
-  "data-thread-find-ignore": "",
-} as React.HTMLAttributes<HTMLDivElement>;
-
-export function MarkdownCodeBlockFrame({
-  as: Wrapper = "div",
-  language,
-  fenceTitle,
-  theme,
-  wrapped = true,
-  title,
-  actions,
-  headerProps,
-  children,
-}: {
-  as?: React.ElementType;
-  language: string;
-  fenceTitle: string | null;
-  theme: "light" | "dark";
-  wrapped?: boolean;
-  title?: React.ReactNode;
-  actions?: React.ReactNode;
-  headerProps?: React.HTMLAttributes<HTMLDivElement>;
-  children: React.ReactNode;
-}) {
-  return (
-    <Wrapper
-      className="chat-markdown-codeblock my-[0.65rem] overflow-hidden rounded-lg border border-border/70 bg-secondary leading-snug dark:border-transparent dark:bg-input/32"
-      data-language={language}
-      data-wrap={wrapped ? "true" : "false"}
-    >
-      <div
-        {...headerProps}
-        className={cn(
-          "chat-markdown-codeblock-header flex items-center justify-between gap-2 pt-1.5 pr-1.5 pb-0 pl-3 select-none",
-          headerProps?.className,
-        )}
-      >
-        {title ?? (
-          <span className="inline-flex min-w-0 items-center gap-1.5 font-mono text-2xs">
-            <MarkdownCodeBlockTitleContent
-              fenceTitle={fenceTitle}
-              language={language}
-              theme={theme}
-            />
-          </span>
-        )}
-        {actions}
-      </div>
-      {children}
-    </Wrapper>
-  );
-}
-
-function MarkdownCodeBlockTitleContent({
-  fenceTitle,
-  language,
-  theme,
-}: {
-  fenceTitle: string | null;
-  language: string;
-  theme: "light" | "dark";
-}) {
-  if (fenceTitle) {
-    return (
-      <>
-        <PierreEntryIcon pathValue={fenceTitle} kind="file" theme={theme} className="size-3.5" />
-        <span className="truncate">{fenceTitle}</span>
-      </>
-    );
-  }
-
-  const fileName = syntheticFileNameForLanguageId(language);
-  if (!hasSpecificPierreIconForFileName(fileName)) {
-    return <span className="truncate">{language}</span>;
-  }
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span className="inline-flex shrink-0 rounded-sm" aria-label={`Language: ${language}`} />
-        }
-      >
-        <PierreEntryIcon pathValue={fileName} kind="file" theme={theme} className="size-3.5" />
-      </TooltipTrigger>
-      <TooltipPopup side="top">{language}</TooltipPopup>
-    </Tooltip>
-  );
-}
-
-function MarkdownCodeBlock({
-  code,
-  language,
-  fenceTitle,
-  theme,
-  onRunShellCommand,
-  isStreaming,
-  viewToggle,
-  canWrap = true,
-  diagram = false,
-  children,
-}: {
-  code: string;
-  language: string;
-  fenceTitle: string | null;
-  theme: "light" | "dark";
-  onRunShellCommand?: ((command: string) => void) | undefined;
-  isStreaming: boolean;
-  viewToggle?: ReactNode;
-  canWrap?: boolean;
-  diagram?: boolean;
-  children: ReactNode;
-}) {
-  const [copied, setCopied] = useState(false);
-  const [wrapped, setWrapped] = useState(readInitialWordWrapSetting);
-  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const wrapLabel = wrapped ? "Disable line wrap" : "Wrap lines";
-  const copyLabel = copied ? "Copied" : "Copy code";
-  const command = code.trim();
-  const canRun =
-    onRunShellCommand !== undefined &&
-    !isStreaming &&
-    /^(?:sh|bash|zsh|fish|shell|powershell|pwsh)$/.test(language) &&
-    code.endsWith("\n") &&
-    command.length > 0 &&
-    !command.endsWith("\\") &&
-    // Control and invisible format characters (bidi overrides, zero-width) can
-    // make the rendered command differ from what the terminal would receive.
-    !/[\p{Cc}\p{Cf}]/u.test(code.slice(0, -1));
-
-  const handleCopy = () => {
-    if (typeof navigator === "undefined" || navigator.clipboard == null) {
-      return;
-    }
-    void navigator.clipboard
-      .writeText(code)
-      .then(() => {
-        if (copiedTimerRef.current != null) {
-          clearTimeout(copiedTimerRef.current);
-        }
-        setCopied(true);
-        copiedTimerRef.current = setTimeout(() => {
-          setCopied(false);
-          copiedTimerRef.current = null;
-        }, 1200);
-      })
-      .catch((cause) => {
-        reportMarkdownActionFailure(
-          {
-            operation: "copy-code-block",
-            language,
-            ...(fenceTitle ? { fenceTitle } : {}),
-          },
-          cause,
-        );
-      });
-  };
-
-  useEffect(
-    () => () => {
-      if (copiedTimerRef.current != null) {
-        clearTimeout(copiedTimerRef.current);
-        copiedTimerRef.current = null;
-      }
-    },
-    [],
-  );
-
-  const copyButton = (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            type="button"
-            variant="ghost-muted"
-            size="icon-xs"
-            onClick={handleCopy}
-            aria-label={copyLabel}
-          />
-        }
-      >
-        <MorphIcon className="size-3" icon={copied ? Check : Copy} />
-      </TooltipTrigger>
-      <TooltipPopup side="top">{copyLabel}</TooltipPopup>
-    </Tooltip>
-  );
-
-  if (diagram) {
-    return (
-      <div className="my-[0.65rem] border border-transparent" data-language={language}>
-        <div className="flex items-center justify-end gap-0.5 pt-1.5 pr-1.5 select-none">
-          {viewToggle}
-          {copyButton}
-        </div>
-        {children}
-      </div>
-    );
-  }
-
-  return (
-    <MarkdownCodeBlockFrame
-      language={language}
-      fenceTitle={fenceTitle}
-      theme={theme}
-      wrapped={wrapped}
-      headerProps={THREAD_FIND_IGNORE_PROPS}
-      actions={
-        <span className="flex items-center gap-0.5" role="toolbar" aria-label="Code block actions">
-          {canWrap ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    type="button"
-                    variant={wrapped ? "secondary" : "ghost-muted"}
-                    size="icon-xs"
-                    aria-pressed={wrapped}
-                    onClick={() => setWrapped((value) => !value)}
-                    aria-label={wrapLabel}
-                  />
-                }
-              >
-                <WrapTextIcon className="size-3" />
-              </TooltipTrigger>
-              <TooltipPopup side="top">{wrapLabel}</TooltipPopup>
-            </Tooltip>
-          ) : null}
-          {canRun ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    type="button"
-                    variant="ghost-muted"
-                    size="icon-xs"
-                    onClick={() => onRunShellCommand(command)}
-                    aria-label="Run in terminal"
-                  />
-                }
-              >
-                <PlayIcon className="size-3" />
-              </TooltipTrigger>
-              <TooltipPopup side="top">Run in terminal</TooltipPopup>
-            </Tooltip>
-          ) : null}
-          {viewToggle}
-          {copyButton}
-        </span>
-      }
-    >
-      {children}
-    </MarkdownCodeBlockFrame>
-  );
-}
-
 function MarkdownMermaidCodeBlock({
   code,
   fenceTitle,
@@ -1119,107 +729,6 @@ function MarkdownMermaidCodeBlock({
         children
       )}
     </MarkdownCodeBlock>
-  );
-}
-
-interface SuspenseShikiCodeBlockProps {
-  className: string | undefined;
-  code: string;
-  themeName: DiffThemeName;
-  isStreaming: boolean;
-}
-
-function SuspenseShikiCodeBlock({
-  className,
-  code,
-  themeName,
-  isStreaming,
-}: SuspenseShikiCodeBlockProps) {
-  const [hasStreamed, setHasStreamed] = useState(isStreaming);
-  if (isStreaming && !hasStreamed) setHasStreamed(true);
-  const language = extractFenceLanguage(className);
-  const cacheKey = createHighlightCacheKey(code, language, themeName);
-  // Once lines are mounted individually, keep that renderer when streaming
-  // finishes so switching to cached HTML cannot clear an existing selection.
-  const cachedHighlightedHtml =
-    !isStreaming && !hasStreamed ? highlightedCodeCache.get(cacheKey) : null;
-
-  if (cachedHighlightedHtml != null) {
-    return (
-      <div
-        className="chat-markdown-shiki"
-        dangerouslySetInnerHTML={{ __html: cachedHighlightedHtml }}
-      />
-    );
-  }
-
-  return (
-    <UncachedShikiCodeBlock
-      code={code}
-      language={language}
-      themeName={themeName}
-      cacheKey={cacheKey}
-      isStreaming={isStreaming}
-      preserveLines={isStreaming || hasStreamed}
-    />
-  );
-}
-
-interface UncachedShikiCodeBlockProps {
-  code: string;
-  language: string;
-  themeName: DiffThemeName;
-  cacheKey: string;
-  isStreaming: boolean;
-  preserveLines: boolean;
-}
-
-function UncachedShikiCodeBlock({
-  code,
-  language,
-  themeName,
-  cacheKey,
-  isStreaming,
-  preserveLines,
-}: UncachedShikiCodeBlockProps) {
-  const highlighter = use(getSyntaxHighlighterPromise(language));
-  const incrementalHighlight = preserveLines
-    ? createIncrementalHighlightedDocument(highlighter, language, themeName)
-    : null;
-  const highlighted = (() => {
-    try {
-      if (incrementalHighlight) return incrementalHighlight(code);
-      return preserveLines
-        ? highlighter.codeToHast(code, { lang: language, theme: themeName })
-        : highlighter.codeToHtml(code, { lang: language, theme: themeName });
-    } catch (error) {
-      console.warn(
-        `Code highlighting failed for language "${language}", falling back to plain text.`,
-        error instanceof Error ? error.message : error,
-      );
-      return preserveLines
-        ? highlighter.codeToHast(code, { lang: "text", theme: themeName })
-        : highlighter.codeToHtml(code, { lang: "text", theme: themeName });
-    }
-  })();
-
-  useEffect(() => {
-    if (!isStreaming) {
-      const highlightedHtml = typeof highlighted === "string" ? highlighted : toHtml(highlighted);
-      highlightedCodeCache.set(
-        cacheKey,
-        highlightedHtml,
-        estimateHighlightedSize(highlightedHtml, code),
-      );
-    }
-  }, [cacheKey, code, highlighted, isStreaming]);
-
-  return typeof highlighted === "string" ? (
-    <div className="chat-markdown-shiki" dangerouslySetInnerHTML={{ __html: highlighted }} />
-  ) : (
-    <div className="chat-markdown-shiki">
-      <HighlightedCodeLines root={highlighted} />
-    </div>
   );
 }
 
