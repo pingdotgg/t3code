@@ -7,6 +7,7 @@ import {
   EventId,
   ProviderInstanceId,
   ProviderSessionId,
+  RunId,
   ThreadId,
   type OrchestrationProjectShell,
   type OrchestrationV2AppThread,
@@ -49,7 +50,10 @@ function at(offsetMs: number): DateTime.Utc {
 }
 
 type SettlementShell = OrchestrationV2ThreadShell &
-  Pick<ProjectionStore.ProjectionSettlementCandidate, "latestUserAuthoredMessageAt">;
+  Pick<
+    ProjectionStore.ProjectionSettlementCandidate,
+    "latestUserAuthoredMessageAt" | "latestUserAuthoredRunCompletedAt"
+  >;
 
 function shell(overrides: Partial<SettlementShell> = {}): SettlementShell {
   return {
@@ -89,6 +93,7 @@ function shell(overrides: Partial<SettlementShell> = {}): SettlementShell {
     latestRunCompletedAt: null,
     latestUserMessageAt: null,
     latestUserAuthoredMessageAt: overrides.latestUserMessageAt ?? null,
+    latestUserAuthoredRunCompletedAt: null,
     createdAt: at(-30 * DAY_MS),
     updatedAt: at(-10 * DAY_MS),
     archivedAt: null,
@@ -774,6 +779,53 @@ const startHarness = Effect.fn("startThreadSettlementHarness")(function* (
 });
 
 describe("ThreadSettlementServiceV2 worker", () => {
+  it.effect.each(["merged", "closed"] as const)(
+    "keeps a reply finishing after the PR %s open, but settles background-only work",
+    (state) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const terminalAt = DateTime.makeUnsafe(NOW);
+          const requestedAt = DateTime.subtract(terminalAt, { seconds: 8 });
+          const completedAt = DateTime.add(terminalAt, { seconds: 5 });
+          yield* TestClock.setTime(DateTime.toEpochMillis(completedAt));
+          const reply = makeThread("user-reply", {
+            branch: "feature",
+            status: "completed",
+            latestRunId: RunId.make("user-reply-run"),
+            latestUserMessageAt: requestedAt,
+            latestRunRequestedAt: requestedAt,
+            latestRunStartedAt: requestedAt,
+            latestRunCompletedAt: completedAt,
+            latestUserAuthoredRunCompletedAt: completedAt,
+            updatedAt: completedAt,
+          });
+          const background = makeThread("background-reply", {
+            ...reply,
+            id: ThreadId.make("background-reply"),
+            latestRunId: RunId.make("background-reply-run"),
+            latestUserAuthoredRunCompletedAt: DateTime.subtract(terminalAt, { seconds: 1 }),
+          });
+          const fixture = yield* makeHarness({
+            snapshot: makeSnapshot([reply, background]),
+            settings: {
+              ...DEFAULT_SERVER_SETTINGS,
+              sidebarAutoSettleAfterDays: null,
+              sidebarAutoSettleOnMerge: true,
+            },
+            branchPullRequest: () => Effect.succeed(makeBranchPullRequest(state)),
+          });
+
+          yield* Effect.gen(function* () {
+            const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+            yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+            const commands = yield* Ref.get(fixture.commands);
+            expect(commands.map((command) => command.threadId)).toEqual([background.id]);
+            expect(commands[0]?.settledAt).toEqual(completedAt);
+          }).pipe(Effect.provide(fixture.layer));
+        }),
+      ),
+  );
+
   it.effect("settles a merged pull request stored only in the thread links", () =>
     Effect.scoped(
       Effect.gen(function* () {

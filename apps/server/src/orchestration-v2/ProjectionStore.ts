@@ -210,6 +210,7 @@ export type ProjectionSettlementCandidate = Pick<
 > &
   Pick<OrchestrationV2AppThread, "lastSnoozeWakeAt"> & {
     readonly latestUserAuthoredMessageAt: DateTime.Utc | null;
+    readonly latestUserAuthoredRunCompletedAt: DateTime.Utc | null;
   };
 
 const ProjectionCheckpointContext = Schema.Struct({
@@ -1095,7 +1096,7 @@ type SettlementThreadRow = Pick<
   | "latest_run_completed_at"
   | "latest_user_message_at"
   | "latest_user_authored_message_at"
->;
+> & { readonly latest_user_authored_run_completed_at: string | null };
 
 type ShellRunItemCountRow = {
   readonly thread_id: string;
@@ -5973,7 +5974,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   AND json_extract(message.payload_json, '$.createdBy') = 'user'
                 ORDER BY message.updated_at DESC, message.message_id DESC
                 LIMIT 1
-              ) AS latest_user_authored_message_at
+              ) AS latest_user_authored_message_at,
+              (
+                SELECT MAX(run.completed_at)
+                FROM orchestration_v2_projection_messages message
+                JOIN orchestration_v2_projection_runs run ON run.run_id = message.run_id
+                WHERE message.thread_id = t.thread_id AND message.role = 'user'
+                  AND json_extract(message.payload_json, '$.createdBy') = 'user'
+              ) AS latest_user_authored_run_completed_at
             FROM orchestration_v2_projection_threads t
             LEFT JOIN orchestration_v2_projection_runs r ON r.run_id = (
               SELECT latest.run_id FROM orchestration_v2_projection_runs latest
@@ -6039,6 +6047,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     row.latest_user_authored_message_at === null
                       ? null
                       : DateTime.makeUnsafe(row.latest_user_authored_message_at),
+                  latestUserAuthoredRunCompletedAt:
+                    row.latest_user_authored_run_completed_at === null
+                      ? null
+                      : DateTime.makeUnsafe(row.latest_user_authored_run_completed_at),
                   activityRunStatus: null,
                   activityRunStartedAt: null,
                   pendingRuntimeRequest: null,
@@ -6604,10 +6616,30 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
             )
             .map((projection) => {
               const shell = threadShellFromProjection(projection);
+              const userAuthoredRunIds = new Set(
+                projection.messages.flatMap((message) =>
+                  message.role === "user" && message.createdBy === "user" && message.runId !== null
+                    ? [message.runId]
+                    : [],
+                ),
+              );
+              let latestUserAuthoredRunCompletedAt: DateTime.Utc | null = null;
+              for (const run of projection.runs) {
+                if (
+                  userAuthoredRunIds.has(run.id) &&
+                  run.completedAt !== null &&
+                  (latestUserAuthoredRunCompletedAt === null ||
+                    DateTime.toEpochMillis(run.completedAt) >
+                      DateTime.toEpochMillis(latestUserAuthoredRunCompletedAt))
+                ) {
+                  latestUserAuthoredRunCompletedAt = run.completedAt;
+                }
+              }
               return {
                 ...shell,
                 lastSnoozeWakeAt: projection.thread.lastSnoozeWakeAt ?? null,
                 latestUserAuthoredMessageAt: shell.latestUserAuthoredMessageAt ?? null,
+                latestUserAuthoredRunCompletedAt,
               };
             })
             .toSorted(

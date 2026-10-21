@@ -76,6 +76,7 @@ const createRun = Effect.fn(function* (
   threadId: ThreadId,
   status: OrchestrationV2Run["status"] = "completed",
   ordinal = 1,
+  completedAt = old,
 ) {
   const store = yield* ProjectionStore.ProjectionStoreV2;
   const runId = RunId.make(`run:${threadId}:${ordinal}`);
@@ -97,7 +98,7 @@ const createRun = Effect.fn(function* (
       status,
       requestedAt: old,
       startedAt: status === "queued" ? null : old,
-      completedAt: ["completed", "rolled_back", "failed"].includes(status) ? old : null,
+      completedAt: ["completed", "rolled_back", "failed"].includes(status) ? completedAt : null,
       checkpointId: null,
       contextHandoffId: null,
     },
@@ -283,6 +284,7 @@ it.effect.each([
             thread: {
               ...expected,
               latestUserAuthoredMessageAt: candidate.latestUserAuthoredMessageAt,
+              latestUserAuthoredRunCompletedAt: candidate.latestUserAuthoredRunCompletedAt,
             },
           }),
         );
@@ -351,6 +353,62 @@ it.effect.each([
       DateTime.formatIso(written),
     );
   }).pipe(Effect.provide(testLayer)),
+);
+
+it.effect.each([
+  ["sql", layerSql],
+  ["memory", ProjectionStore.layerMemory],
+] as const)(
+  "%s: derives reply completion from user messages, including steering",
+  ([, testLayer]) =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = yield* createThread("reply-completion");
+      const firstReplyAt = DateTime.subtract(now, { minutes: 20 });
+      const latestReplyAt = DateTime.subtract(now, { minutes: 5 });
+      const message = (
+        id: string,
+        runId: RunId,
+        createdBy: "user" | "agent",
+        role: "user" | "assistant" = "user",
+      ) =>
+        store.apply({
+          id: EventId.make(`event:${id}`),
+          type: "message.updated",
+          threadId,
+          occurredAt: old,
+          payload: {
+            id: MessageId.make(id),
+            threadId,
+            runId,
+            createdBy,
+            creationSource: createdBy === "user" ? "web" : "provider",
+            nodeId: null,
+            role,
+            text: id,
+            attachments: [],
+            streaming: false,
+            createdAt: old,
+            updatedAt: old,
+          },
+        });
+      const completion = store
+        .getSettlementCandidates(threadId)
+        .pipe(Effect.map(([candidate]) => candidate!.latestUserAuthoredRunCompletedAt));
+
+      const steered = yield* createRun(threadId, "completed", 1, firstReplyAt);
+      yield* message(`message:${steered}`, steered, "agent");
+      yield* message("non-user-role", steered, "user", "assistant");
+      assert.isNull(yield* completion);
+      yield* message("steering", steered, "user");
+      assert.deepEqual(yield* completion, firstReplyAt);
+
+      const reply = yield* createRun(threadId, "completed", 2, latestReplyAt);
+      yield* message(`message:${reply}`, reply, "user");
+      const background = yield* createRun(threadId, "completed", 3, now);
+      yield* message(`message:${background}`, background, "agent");
+      assert.deepEqual(yield* completion, latestReplyAt);
+    }).pipe(Effect.provide(testLayer)),
 );
 
 const pullRequestLink = (number: number) => ({
