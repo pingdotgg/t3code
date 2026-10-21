@@ -212,7 +212,6 @@ import { settleAndAdvance } from "../settleAndAdvance";
 import { subscribeSnapShotComposerFocus } from "../lib/desktopSnapShot";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { FileMetadataThreadProvider } from "../hooks/FileMetadataThreadProvider";
-import { usePreviewPanelInlineSize } from "../hooks/usePreviewPanelInlineSize";
 import {
   RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY,
   type ThreadPanelPresentation,
@@ -247,7 +246,6 @@ import {
   usePreviewMiniPlayerStore,
 } from "../previewMiniPlayerStore";
 import { threadPullRequestPanelTarget } from "./pullRequest/pullRequestDetail.logic";
-import { RightPanelTabs } from "./RightPanelTabs";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
 import { useDeviceState } from "~/state/device";
 import { BranchToolbar, type BranchToolbarHandle } from "./BranchToolbar";
@@ -509,7 +507,6 @@ import {
   retryAttachmentUpload,
   startAttachmentUpload,
 } from "../lib/attachmentUploadQueue";
-import { RightPanelSheet } from "./RightPanelSheet";
 import { previewEnvironment } from "../state/preview";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -544,6 +541,7 @@ import {
 import { observeResize } from "~/lib/observeResize";
 import { ThreadVisitWatermark } from "./chat/ThreadVisitWatermark";
 import { ChatTerminalDrawers } from "./chat/ChatTerminalDrawers";
+import { ChatRightPanel } from "./chat/ChatRightPanel";
 import { useDraftHeroLayoutTransition } from "./chat/useDraftHeroLayoutTransition";
 import { useLocalDispatchState } from "./chat/useLocalDispatchState";
 import {
@@ -1209,10 +1207,6 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadRef?.environmentId ?? null,
   );
   const browserAvailable = isPreviewSupportedInRuntime() || activeEnvironmentServerBrowser;
-  const previewPanelInlineSize = usePreviewPanelInlineSize(undefined, {
-    container: workspaceLayoutElement,
-    widthStorageKey: `t3code:preview-panel-width:${activeThreadKey}`,
-  });
   const activeThreadShell = serverThread;
   const timelineThreadError =
     serverRuntime?.status === "failed" &&
@@ -8405,14 +8399,22 @@ export default function ChatView(props: ChatViewProps) {
         />
       </div>
 
-      {rightPanelPresent && !shouldUsePlanSidebarSheet && activeThreadRef ? (
-        <RightPanelTabs
-          mode="inline"
+      {rightPanelPresent && activeThreadRef ? (
+        <ChatRightPanel
+          sheet={shouldUsePlanSidebarSheet}
+          workspaceLayoutElement={workspaceLayoutElement}
+          widthStorageKey={`t3code:preview-panel-width:${activeThreadKey}`}
+          sheetAnimationDurationMs={panelAnimationsActive ? panelAnimationDurationMs : 0}
+          onCloseSheet={closePreviewPanelStable}
           open={rightPanelOpen}
           keybindings={keybindings}
           getShortcutContext={getShortcutContextStable}
           maximized={rightPanelMaximized}
-          inlineSize={previewPanelInlineSize}
+          layoutControls={
+            rightPanelOpen ? (
+              <div className="mr-px flex items-center">{panelToggleControls}</div>
+            ) : null
+          }
           surfaces={renderedRightPanelSurfaces}
           environmentId={activeThreadRef.environmentId}
           activeSurfaceId={renderedRightPanelSurface?.id ?? null}
@@ -8449,63 +8451,7 @@ export default function ChatView(props: ChatViewProps) {
           deviceAvailable={activeThreadRef !== null}
         >
           {rightPanelContent}
-        </RightPanelTabs>
-      ) : null}
-      {rightPanelPresent && shouldUsePlanSidebarSheet && activeThreadRef ? (
-        <RightPanelSheet
-          animationDurationMs={panelAnimationsActive ? panelAnimationDurationMs : 0}
-          open={rightPanelOpen}
-          onClose={closePreviewPanelStable}
-        >
-          <RightPanelTabs
-            mode="sheet"
-            open={rightPanelOpen}
-            keybindings={keybindings}
-            getShortcutContext={getShortcutContextStable}
-            inlineSize={previewPanelInlineSize}
-            layoutControls={
-              rightPanelOpen ? (
-                <div className="mr-px flex items-center">{panelToggleControls}</div>
-              ) : null
-            }
-            surfaces={renderedRightPanelSurfaces}
-            environmentId={activeThreadRef.environmentId}
-            activeSurfaceId={renderedRightPanelSurface?.id ?? null}
-            pendingSurfaceIds={pendingFileSurfaceIds}
-            previewSessions={activePreviewState.sessions}
-            desktopByTabId={activePreviewState.desktopByTabId}
-            previewRuntimeTabId={resolvePreviewRuntimeTabId}
-            terminalLabelsById={activeTerminalLabelsById}
-            onActivate={activateRightPanelSurfaceStable}
-            onCloseSurface={closeRightPanelSurfaceStable}
-            onRenameDevice={(surfaceId, title) => {
-              if (activeThreadRef)
-                useRightPanelStore.getState().renameDevice(activeThreadRef, surfaceId, title);
-            }}
-            onCloseOtherSurfaces={closeOtherRightPanelSurfacesStable}
-            onCloseSurfacesToRight={closeRightPanelSurfacesToRightStable}
-            onCloseAllSurfaces={closeAllRightPanelSurfacesStable}
-            onMoveSurface={moveRightPanelSurfaceStable}
-            onCopyFilePath={copyRightPanelFilePathStable}
-            onAddBrowser={() => createBrowserSurface()}
-            onAddBrowserInProfile={createBrowserSurfaceStable}
-            onAddTerminal={addTerminalSurfaceStable}
-            onAddDiff={addDiffSurfaceStable}
-            onAddFiles={addFilesSurfaceStable}
-            onAddPullRequest={addPullRequestSurfaceStable}
-            onAddPullRequests={addPullRequestsSurfaceStable}
-            onAddDevice={addDeviceSurfaceStable}
-            browserAvailable={canOperatePreview && browserAvailable}
-            terminalAvailable={activeProject !== null && canOperateTerminal}
-            diffAvailable={isServerThread && isGitRepo}
-            filesAvailable={activeProject !== null}
-            pullRequestAvailable={pullRequestSurfaceAvailable}
-            pullRequestsAvailable={pullRequestsSurfaceAvailable}
-            deviceAvailable={activeThreadRef !== null}
-          >
-            {rightPanelContent}
-          </RightPanelTabs>
-        </RightPanelSheet>
+        </ChatRightPanel>
       ) : null}
 
       <RevertConfirmHost threadKey={routeThreadKey} onConfirm={onConfirmRevertStable} />
