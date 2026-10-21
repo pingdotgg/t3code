@@ -1,3 +1,9 @@
+import {
+  deriveAvailableRevertTurnCounts,
+  deriveThreadPendingBackgroundTasks,
+  deriveWorkspaceMutationId,
+  presentThreadShellFromProjection,
+} from "./ChatView.logic";
 import { usePullRequestDraftThread } from "./chat/usePullRequestDraftThread";
 import { useComposerSelection } from "./chat/useComposerSelection";
 import { useProjectCloneBanner } from "./chat/useProjectCloneBanner";
@@ -55,21 +61,18 @@ import {
   type EnvironmentId,
   type MessageId,
   type ModelSelection,
-  type OrchestrationV2ProviderTurn,
   type PreviewAnnotationPayload,
   ProviderInstanceId,
   type ServerProvider,
   type ScopedThreadRef,
   type ThreadId,
   type RunId,
-  type RunAttemptId,
   ProviderInteractionMode,
   resolveIdleCompaction,
   RuntimeMode,
 } from "@t3tools/contracts";
 import { readPastedComposerContext } from "./composerInlineTokenPaste";
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
-import { presentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { useThreadActions } from "../hooks/useThreadActions";
 import {
   deriveProviderSubagentStatus,
@@ -100,11 +103,6 @@ import {
 } from "@t3tools/client-runtime/environment";
 import { formatModelSlugName, resolveSelectableModel } from "@t3tools/shared/model";
 import { projectScriptCwd, resolveProjectScripts } from "@t3tools/shared/projectScripts";
-import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
-import {
-  latestUnheldRun,
-  usageLimitRunPresentedAsLatest,
-} from "@t3tools/shared/orchestrationV2ThreadError";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/shared/threadReference";
@@ -477,48 +475,10 @@ export default function ChatView(props: ChatViewProps) {
   });
   const serverThreadProjection = useThreadProjection(routeThreadDetailRef);
   const serverProjection = serverThreadProjection?.projection ?? null;
-  const serverThread = (() => {
-    if (serverThreadShell !== null || serverProjection === null) {
-      return serverThreadShell;
-    }
-    const latestRun = deriveLatestThreadRun(serverProjection);
-    const runtime = deriveThreadRuntime(serverProjection);
-    const pendingRuntimeRequest =
-      serverProjection.runtimeRequests.findLast((request) => request.status === "pending") ?? null;
-    // Direct links can hydrate detail before the thread enters the shell index.
-    return {
-      ...presentThreadShell(environmentId, {
-        ...serverProjection.thread,
-        latestRunId: latestRun?.runId ?? null,
-        activeRunId: runtime?.activeRunId ?? null,
-        status: runtime?.status ?? "idle",
-        pendingRuntimeRequest,
-        latestVisibleMessage: null,
-        latestUserMessageAt:
-          serverProjection.messages.findLast((message) => message.role === "user")?.updatedAt ??
-          null,
-        hasActionableProposedPlan: serverProjection.plans.some(
-          (plan) => plan.kind === "proposed_plan" && plan.status === "active",
-        ),
-        providerInstanceHistory: [
-          ...new Set(
-            serverProjection.providerThreads
-              .filter((thread) => thread.appThreadId === threadId && thread.ownerNodeId === null)
-              .map((thread) => thread.providerInstanceId),
-          ),
-        ],
-        goal:
-          serverProjection.providerThreads.find(
-            (thread) => thread.id === serverProjection.thread.activeProviderThreadId,
-          )?.goal ?? null,
-        itemCount: serverProjection.turnItems.length,
-        visibleItemCount: serverProjection.visibleTurnItems.length,
-        updatedAt: serverProjection.updatedAt,
-      }),
-      latestRun,
-      runtime,
-    };
-  })();
+  const serverThread =
+    serverThreadShell !== null || serverProjection === null
+      ? serverThreadShell
+      : presentThreadShellFromProjection(environmentId, threadId, serverProjection);
   const promptRef = useRef("");
   const localComposerRef = useRef<ChatComposerHandle | null>(null);
   const composerRef = useComposerHandleContext() ?? localComposerRef;
@@ -1452,31 +1412,7 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadLiveTokenUsage,
     activeProviderThread,
   );
-  const pendingBackgroundTasks = (() => {
-    if (serverProjection === null || serverProjection === undefined) {
-      return [];
-    }
-    const sessionError =
-      serverProjection.providerSessions.findLast(
-        (session) => session.providerInstanceId === serverProjection.thread.providerInstanceId,
-      )?.lastError ?? null;
-    const latestRun =
-      usageLimitRunPresentedAsLatest(
-        serverProjection.runs,
-        serverProjection.turnItems,
-        sessionError,
-      ) ?? latestUnheldRun(serverProjection.runs);
-    return [
-      ...derivePendingBackgroundWork({
-        latestRun,
-        providerThreads: serverProjection.providerThreads,
-        turnItems: serverProjection.turnItems,
-        activeProviderThreadId: serverProjection.thread.activeProviderThreadId,
-        runs: serverProjection.runs,
-        pullRequests: serverProjection.thread.pullRequests,
-      }),
-    ];
-  })();
+  const pendingBackgroundTasks = deriveThreadPendingBackgroundTasks(serverProjection);
   const activeWorkStartedAt =
     deriveActiveWorkStartedAt(activeActivityRun, activeRuntime, localDispatchStartedAt) ??
     runlessWorkStartedAt;
@@ -1614,70 +1550,16 @@ export default function ChatView(props: ChatViewProps) {
     panelAnimationDurationMs,
   );
   const turnDiffSummaries = useThreadCheckpointSummaries(routeThreadDetailRef);
-  const availableRevertTurnCounts = (() => {
-    const available = new Set<number>();
-    const providerThread = serverProjection?.providerThreads.find(
-      (candidate) => candidate.id === serverProjection.thread.activeProviderThreadId,
-    );
-    if (
-      !providerThread?.providerSessionId ||
-      providerThread.providerInstanceId !== serverProjection?.thread.modelSelection.instanceId
-    )
-      return available;
-    available.add(0);
-    const attemptsById = new Map(serverProjection.attempts.map((attempt) => [attempt.id, attempt]));
-    const providerTurnsById = new Map<
-      OrchestrationV2ProviderTurn["id"],
-      OrchestrationV2ProviderTurn
-    >();
-    const latestTurnByAttempt = new Map<RunAttemptId, OrchestrationV2ProviderTurn>();
-    for (const turn of serverProjection.providerTurns) {
-      providerTurnsById.set(turn.id, turn);
-      if (turn.runAttemptId === null) continue;
-      const latest = latestTurnByAttempt.get(turn.runAttemptId);
-      if (latest === undefined || turn.ordinal > latest.ordinal) {
-        latestTurnByAttempt.set(turn.runAttemptId, turn);
-      }
-    }
-    for (const run of serverProjection.runs) {
-      if (run.activeAttemptId === null) continue;
-      const attempt = attemptsById.get(run.activeAttemptId);
-      const providerTurn =
-        latestTurnByAttempt.get(run.activeAttemptId) ??
-        (attempt?.providerTurnId == null
-          ? undefined
-          : providerTurnsById.get(attempt.providerTurnId));
-      // A ready file checkpoint alone cannot restore the provider conversation.
-      if (providerTurn?.providerThreadId === providerThread.id) available.add(run.ordinal);
-    }
-    return available;
-  })();
+  const availableRevertTurnCounts = deriveAvailableRevertTurnCounts(serverProjection);
   // A paged history window cannot identify the first loaded run as the thread start.
   const threadStartCheckpointReady =
     !serverThreadHistory.hasMoreHistory &&
     findRevertCheckpoint(serverProjection?.checkpoints ?? [], 0) !== undefined;
 
-  /**
-   * File tools are explicit; completed commands are included because a shell
-   * command can mutate the workspace without reporting the paths it touched.
-   */
-  const workspaceMutationId = (() => {
-    let itemId: string | null = null;
-    for (let index = serverVisibleTurnItems.length - 1; index >= 0; index -= 1) {
-      const item = serverVisibleTurnItems[index]?.item;
-      if (!item) continue;
-      if (item.type !== "command_execution" && item.type !== "file_change") continue;
-      if (item.status === "pending" || item.status === "running" || item.status === "waiting") {
-        continue;
-      }
-      itemId = item.id;
-      break;
-    }
-    const latestCheckpointCompletedAt = turnDiffSummaries.at(-1)?.completedAt ?? null;
-    return itemId === null && latestCheckpointCompletedAt === null
-      ? null
-      : JSON.stringify([itemId, latestCheckpointCompletedAt]);
-  })();
+  const workspaceMutationId = deriveWorkspaceMutationId(
+    serverVisibleTurnItems,
+    turnDiffSummaries.at(-1)?.completedAt ?? null,
+  );
 
   const gitCwd = activeProject
     ? projectScriptCwd({
