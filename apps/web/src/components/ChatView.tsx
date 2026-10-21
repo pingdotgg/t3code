@@ -23,9 +23,7 @@ import {
   recallCheckoutIsRepo,
   rememberCheckoutIsRepo,
 } from "./ChatView.logic";
-import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment";
 import { useLogicalProjectEnvironments } from "../hooks/useLogicalProjectEnvironments";
-import { useScratchProject } from "../hooks/useScratchProject";
 import { useStableCallback } from "../hooks/useStableCallback";
 import { useProjectScriptEditing } from "./chat/useProjectScriptEditing";
 import { RightPanelSurfaceContent } from "./chat/RightPanelSurfaceContent";
@@ -72,7 +70,6 @@ import {
   type RunId,
   type RunAttemptId,
   ProviderInteractionMode,
-  resolveProjectProviderInstanceEnabled,
   RuntimeMode,
 } from "@t3tools/contracts";
 import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
@@ -336,7 +333,6 @@ import {
   resolveThreadDetailRef,
   useEnvironmentSupportsServerBrowser,
   useProject,
-  useProjects,
   useThreadProjection,
   useThreadStatus,
   useThreadHistory,
@@ -486,6 +482,7 @@ import { observeResize } from "~/lib/observeResize";
 import { ThreadVisitWatermark } from "./chat/ThreadVisitWatermark";
 import { ChatTerminalDrawers } from "./chat/ChatTerminalDrawers";
 import { ChatRightPanel } from "./chat/ChatRightPanel";
+import { useDraftEnvironmentRouting } from "./chat/useDraftEnvironmentRouting";
 import {
   backgroundWorkBannerItem,
   branchMismatchBannerItem,
@@ -1479,7 +1476,6 @@ export default function ChatView(props: ChatViewProps) {
     useRightPanelStore.getState().reconcileFileSurfaces(activeThreadRef, activeProject !== null);
   }, [activeEnvironmentBootstrapComplete, activeProject, activeThreadRef]);
 
-  const allProjects = useProjects();
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
   useEffect(() => {
     if (!activeThreadRef || !activeProjectRef) return;
@@ -1501,7 +1497,6 @@ export default function ChatView(props: ChatViewProps) {
       connection: activeEnvironment.connection,
     };
   })() as EnvironmentUnavailableState | null;
-  const { openScratchProject } = useScratchProject();
   const activeProjectIsScratch =
     activeProject !== null &&
     isScratchProject(
@@ -2475,188 +2470,32 @@ export default function ChatView(props: ChatViewProps) {
   };
   const onToggleDiffStable = useStableCallback(onToggleDiff);
 
-  const needsLoadBalancing = automaticEnvironment && !draftThread?.loadBalancedEnvironmentId;
-  const loadBalancingCandidates = needsLoadBalancing
-    ? logicalProjectEnvironments
-        .filter((candidate) => {
-          const environment = environmentById.get(candidate.environmentId);
-          return (
-            environment?.connection.phase === "connected" &&
-            (loadBalancingSettings.loadBalancingWeights[candidate.environmentId] ?? 50) > 0 &&
-            referencedThreadContexts.every(
-              (record) => record.environmentId === candidate.environmentId,
-            ) &&
-            providersByEnvironment
-              .get(candidate.environmentId)
-              ?.some(
-                (provider) =>
-                  (activeProviderInstanceId === null ||
-                    provider.instanceId === activeProviderInstanceId) &&
-                  provider.driver === selectedProvider &&
-                  (environment.serverConfig?.settings
-                    ? resolveProjectProviderInstanceEnabled(
-                        environment.serverConfig.settings,
-                        candidate.projectId,
-                        provider.instanceId,
-                      )
-                    : provider.enabled) &&
-                  provider.installed &&
-                  provider.status !== "error" &&
-                  provider.auth.status !== "unauthenticated" &&
-                  provider.availability !== "unavailable",
-              )
-          );
-        })
-        .map((candidate) => candidate.environmentId)
-    : [];
-  const loadBalancing = useLoadBalancedEnvironment(
-    loadBalancingCandidates,
-    loadBalancingSettings.loadBalancingWeights,
-  );
-  useEffect(() => {
-    if (!needsLoadBalancing || loadBalancing.pending || !draftId || sendInFlightRef.current) return;
-    const target = logicalProjectEnvironments.find(
-      (environment) => environment.environmentId === loadBalancing.environmentId,
-    );
-    if (!target?.projectId) return;
-    setDraftThreadContext(draftId, {
-      projectRef: scopeProjectRef(target.environmentId, target.projectId),
-      environmentSelection: "auto",
-      loadBalancedEnvironmentId: target.environmentId,
-    });
-  }, [
+  const {
     needsLoadBalancing,
-    loadBalancing.pending,
-    loadBalancing.environmentId,
+    loadBalancing,
+    onAutoEnvironmentStable,
+    autoEnvironmentLabel,
+    isEnvironmentChanging,
+    readPendingEnvironmentChange,
+    onEnvironmentChangeStable,
+  } = useDraftEnvironmentRouting({
     draftId,
+    draftThread,
+    envLocked,
+    automaticEnvironment,
     logicalProjectEnvironments,
+    environmentById,
+    providersByEnvironment,
+    loadBalancingSettings,
+    referencedThreadContexts,
+    activeProviderInstanceId,
+    selectedProvider,
+    composerHasAttachments,
+    activeProjectKey,
+    activeProjectIsScratch,
+    projectGroupingSettings,
     sendInFlightRef,
-    setDraftThreadContext,
-  ]);
-  const onAutoEnvironment = () => {
-    if (envLocked || !draftId) return;
-    if (composerHasAttachments) {
-      toastManager.add({
-        type: "warning",
-        id: "load-balancing-attachments",
-        title: "Keep attachments on this machine",
-        description:
-          "Remove attachments before choosing automatic routing, then attach them on the selected machine.",
-      });
-      return;
-    }
-    loadBalancing.refresh(
-      logicalProjectEnvironments.map((environment) => environment.environmentId),
-    );
-    setDraftThreadContext(draftId, {
-      environmentSelection: "auto",
-      loadBalancedEnvironmentId: null,
-      branch: null,
-      worktreePath: null,
-    });
-  };
-  const onAutoEnvironmentStable = useStableCallback(onAutoEnvironment);
-  const autoEnvironmentLabel = automaticEnvironment
-    ? draftThread?.loadBalancedEnvironmentId
-      ? "Auto balance"
-      : loadBalancing.pending
-        ? "Checking machines…"
-        : loadBalancing.failed
-          ? "Auto balance unavailable"
-          : "Auto balance"
-    : undefined;
-
-  // A change in flight belongs to the draft and project it started on.
-  const environmentChangeScope = `${draftId ?? ""}:${activeProjectKey ?? ""}`;
-  const environmentChangeRef = useRef<{
-    readonly environmentId: EnvironmentId;
-    readonly scope: string;
-  } | null>(null);
-  const environmentChangeScopeRef = useRef("");
-  useLayoutEffect(() => {
-    environmentChangeScopeRef.current = environmentChangeScope;
   });
-  // Leaving the scope, or unmounting, abandons a change still in flight.
-  useLayoutEffect(
-    () => () => {
-      if (environmentChangeRef.current?.scope === environmentChangeScope) {
-        environmentChangeRef.current = null;
-      }
-    },
-    [environmentChangeScope],
-  );
-  const readPendingEnvironmentChange = () => {
-    const pending = environmentChangeRef.current;
-    return pending !== null && pending.scope === environmentChangeScopeRef.current ? pending : null;
-  };
-  // The busy state belongs to the request that set it, so an older request settling late
-  // (abandoned, or superseded by a newer switch) can never clear a newer one's.
-  const [busyEnvironmentChange, setBusyEnvironmentChange] = useState<{
-    readonly environmentId: EnvironmentId;
-    readonly scope: string;
-  } | null>(null);
-  const isEnvironmentChanging = busyEnvironmentChange?.scope === environmentChangeScope;
-
-  const onEnvironmentChange = (nextEnvironmentId: EnvironmentId) => {
-    if (envLocked || !draftId || sendInFlightRef.current) return;
-    const originalDraft = getDraftSession(draftId);
-    if (!originalDraft || originalDraft.promotedTo) return;
-    const target = logicalProjectEnvironments.find(
-      (env) => env.environmentId === nextEnvironmentId,
-    );
-    if (!target) return;
-    const request = { environmentId: target.environmentId, scope: environmentChangeScope };
-    environmentChangeRef.current = request;
-    setBusyEnvironmentChange(null);
-    const retarget = (project: (typeof allProjects)[number]) => {
-      const currentDraft = getDraftSession(draftId);
-      if (
-        environmentChangeRef.current !== request ||
-        environmentChangeScopeRef.current !== request.scope ||
-        sendInFlightRef.current ||
-        !currentDraft ||
-        currentDraft.promotedTo ||
-        currentDraft.environmentId !== originalDraft.environmentId ||
-        currentDraft.projectId !== originalDraft.projectId
-      )
-        return;
-      const projectRef = scopeProjectRef(target.environmentId, project.id);
-      if (activeProjectIsScratch) {
-        setLogicalProjectDraftThreadId(
-          deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings),
-          projectRef,
-          draftId,
-          { environmentSelection: "manual", loadBalancedEnvironmentId: null },
-        );
-      } else {
-        setDraftThreadContext(draftId, {
-          projectRef,
-          environmentSelection: "manual",
-          loadBalancedEnvironmentId: null,
-        });
-      }
-    };
-    const finish = () => {
-      if (environmentChangeRef.current === request) environmentChangeRef.current = null;
-      setBusyEnvironmentChange((busy) => (busy === request ? null : busy));
-    };
-    if (target.projectId !== null) {
-      const project = allProjects.find(
-        (project) =>
-          project.environmentId === target.environmentId && project.id === target.projectId,
-      );
-      if (project) retarget(project);
-      finish();
-      return;
-    }
-    setBusyEnvironmentChange(request);
-    void openScratchProject(target.environmentId, "Could not switch machine")
-      .then((project) => {
-        if (project) retarget(project);
-      })
-      .finally(finish);
-  };
-  const onEnvironmentChangeStable = useStableCallback(onEnvironmentChange);
 
   const activeTerminalGroup =
     terminalUiState.terminalGroups.find(
