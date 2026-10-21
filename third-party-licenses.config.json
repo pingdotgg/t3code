@@ -786,6 +786,21 @@
         "licenseId": "MIT",
         "copyrights": ["Copyright (c) 2019-present Fabio Spampinato, Andrew Maney"]
       }
+    },
+    {
+      "name": "sql.js",
+      "license": "MIT",
+      "sourceUrl": "https://github.com/sql-js/sql.js"
+    },
+    {
+      "name": "tiff",
+      "license": "MIT",
+      "sourceUrl": "https://github.com/image-js/tiff"
+    },
+    {
+      "name": "iobuffer",
+      "license": "MIT",
+      "sourceUrl": "https://github.com/image-js/iobuffer"
     }
   ]
 }

@@ -1,9 +1,9 @@
 import type { AssetResource, ThreadId } from "@t3tools/contracts";
 import {
-  filePreviewKind,
+  audioMimeTypeFromExtension,
   mediaMimeType,
   mediaMimeTypeFromExtension,
-} from "@t3tools/shared/filePreview";
+} from "@t3tools/shared/mediaPreview";
 
 import {
   classifyMarkdownImageSource,
@@ -69,15 +69,14 @@ export function resolveMediaSource(
       : splitFilePathPosition(classified.path).path;
   // Local paths have already been decoded. Do not interpret literal #, ?, or % characters again.
   const basename = fileBasename(path);
-  if (classified._tag === "WorkspaceFile" && filePreviewKind({ name: basename }) === "audio")
-    return null;
   const extensionIndex = basename.lastIndexOf(".");
   const detectedMimeType =
     classified._tag === "Direct"
       ? mediaMimeType(classified.uri)
       : extensionIndex < 0
         ? null
-        : mediaMimeTypeFromExtension(basename.slice(extensionIndex));
+        : (mediaMimeTypeFromExtension(basename.slice(extensionIndex)) ??
+          audioMimeTypeFromExtension(basename.slice(extensionIndex)));
   const mimeType = detectedMimeType ?? (input.imageEmbed ? "image/*" : null);
   if (mimeType === null || mimeType.startsWith("audio/")) return null;
   const kind = mimeType.startsWith("video/") ? "video" : "image";

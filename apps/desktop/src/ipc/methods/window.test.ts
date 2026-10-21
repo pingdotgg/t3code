@@ -232,6 +232,7 @@ describe("pickProjectFavicon", () => {
                   "gif",
                   "ico",
                   "heic",
+                  "heif",
                   "jpeg",
                   "jpg",
                   "png",

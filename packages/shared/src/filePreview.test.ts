@@ -13,6 +13,29 @@ import {
 } from "./filePreview.ts";
 
 describe("workspace file previews", () => {
+  it.each([
+    ["zip", "archive", "application/zip"],
+    ["jar", "archive", "application/java-archive"],
+    ["tar", "archive", "application/x-tar"],
+    ["gz", "archive", "application/gzip"],
+    ["tgz", "archive", "application/gzip"],
+    ["sqlite", "sqlite", "application/vnd.sqlite3"],
+    ["sqlite3", "sqlite", "application/vnd.sqlite3"],
+    ["db", "sqlite", "application/vnd.sqlite3"],
+  ])("recognizes binary preview %s", (extension, kind, mimeType) => {
+    const name = `files#draft/sample.${extension.toUpperCase()}`;
+    expect(filePreviewKind({ name, mimeType: "application/octet-stream" })).toBe(kind);
+    expect(filePreviewKind({ name: "download", mimeType })).toBe(kind);
+    expect(isWorkspacePreviewEntryPath(name)).toBe(true);
+    expect(isWorkspacePreviewEntryPath(`${name}?download=1`)).toBe(false);
+    expect(hostPreviewMimeTypeFromExtension(`.${extension}`)).toBe(mimeType);
+  });
+  it("recognizes compound archives and MIME aliases", () => {
+    expect(filePreviewKind({ name: "archive.tar.gz" })).toBe("archive");
+    expect(filePreviewKind({ name: "download", mimeType: "application/x-gzip" })).toBe("archive");
+    expect(filePreviewKind({ name: "download", mimeType: "application/x-sqlite3" })).toBe("sqlite");
+    expect(filePreviewKind({ name: "misleading.zip", mimeType: "application/pdf" })).toBe("pdf");
+  });
   it.each(["ttf", "otf", "woff", "woff2"])(
     "previews %s fonts through signed host assets",
     (extension) => {
@@ -25,7 +48,7 @@ describe("workspace file previews", () => {
       expect(hostPreviewMimeTypeFromExtension(`.${extension}`)).toBe(`font/${extension}`);
       expect(isWorkspaceFontPreviewPath(`sample.${extension}?download=1`)).toBe(false);
       expect(filePreviewKind({ name: `sample.${extension}`, mimeType: "application/zip" })).toBe(
-        "unsupported",
+        "archive",
       );
     },
   );
@@ -51,7 +74,7 @@ describe("workspace file previews", () => {
     expect(isWorkspacePreviewEntryPath(name)).toBe(true);
     expect(hostPreviewMimeTypeFromExtension(`.${kind}`)).toBe(mimeType);
     expect(filePreviewKind({ name: "download", mimeType })).toBe(kind);
-    expect(filePreviewKind({ name, mimeType: "application/zip" })).toBe("unsupported");
+    expect(filePreviewKind({ name, mimeType: "application/zip" })).toBe("archive");
   });
   // regression: #10311 previews classify by the literal filename, not URL-like suffixes
   it.each([
@@ -67,7 +90,7 @@ describe("workspace file previews", () => {
     expect(isWorkspacePreviewEntryPath(path)).toBe(false);
   });
 
-  it.each(["picture.bmp", "photo.heic", "scan.tif", "scan.TIFF"])(
+  it.each(["picture.bmp", "photo.heic", "photo.heif", "scan.tif", "scan.TIFF"])(
     "recognizes image preview path %s",
     (path) => {
       expect(isWorkspaceImagePreviewPath(path)).toBe(true);
@@ -132,8 +155,9 @@ describe("attachment preview classification", () => {
     ["recording.webm-audio", "", "audio"],
     ["recording.webm", "audio/webm", "audio"],
     ["payload", "application/problem+json", "text"],
+    ["archive.zip", "application/zip", "archive"],
     ["misleading.json", "application/pdf", "pdf"],
-    ["misleading.pdf", "application/zip", "unsupported"],
+    ["misleading.pdf", "application/zip", "archive"],
   ])("classifies %s (%s) as %s", (name, mimeType, expected) => {
     expect(filePreviewKind({ name, mimeType })).toBe(expected);
   });
@@ -141,7 +165,7 @@ describe("attachment preview classification", () => {
     expect(() => decodeFilePreviewText(new Uint8Array([65, 0, 66]))).toThrow("binary");
     expect(() => decodeFilePreviewText(new Uint8Array([255]))).toThrow("UTF-8");
   });
-  it.each(["doc", "xls", "ppt", "odt", "ods", "odp", "epub", "zip", "tar", "gz", "7z", "rar"])(
+  it.each(["doc", "xls", "ppt", "odt", "ods", "odp", "epub", "7z", "rar"])(
     "retains the binary fallback for %s, which opencode does not render",
     (extension) => {
       expect(filePreviewKind({ name: `sample.${extension}` })).toBe("unsupported");

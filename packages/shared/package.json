@@ -307,6 +307,10 @@
       "types": "./src/previewViewport.ts",
       "import": "./src/previewViewport.ts"
     },
+    "./mediaPreview": {
+      "types": "./src/mediaPreview.ts",
+      "import": "./src/mediaPreview.ts"
+    },
     "./filePreview": {
       "types": "./src/filePreview.ts",
       "import": "./src/filePreview.ts"

@@ -1,8 +1,19 @@
 import { assert, describe, it } from "vite-plus/test";
 
-import { resolvePierreIconForEntry, T3_PIERRE_ICONS } from "./pierre-icons";
+import {
+  hasSpecificPierreIconForFileName,
+  resolvePierreIconForEntry,
+  T3_PIERRE_ICONS,
+} from "./pierre-icons";
 
 describe("Pierre file icons", () => {
+  it.each(["photo.heic", "photo.heif", "PHOTO.HEIC", "folder/photo.HEIF"])(
+    "uses the image icon for %s",
+    (name) => {
+      assert.equal(resolvePierreIconForEntry(name, "file")?.token, "image");
+      assert.isTrue(hasSpecificPierreIconForFileName(name));
+    },
+  );
   it("uses detected types for extensionless files while keeping known filename icons", () => {
     assert.equal(
       resolvePierreIconForEntry("custom-script", "file", "text/x-python")?.token,
