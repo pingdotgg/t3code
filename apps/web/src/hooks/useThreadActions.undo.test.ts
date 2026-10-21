@@ -265,7 +265,7 @@ describe("settle and snooze Undo", () => {
   it("wakes the thread from the snooze notice", async () => {
     const add = vi.spyOn(toastManager, "add").mockReturnValue("toast");
     const actions = useThreadActions();
-    await actions.snoozeThread(target, new Date(Date.now() + 60_000).toISOString());
+    await actions.snoozeThread(target, "2100-01-01T00:00:00.000Z");
     expect(useThreadUndoNotice.getState().notice).toMatchObject({ action: "Snoozed", count: 1 });
     expect(add).not.toHaveBeenCalled();
     await currentUndo()();

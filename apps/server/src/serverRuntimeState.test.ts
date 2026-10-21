@@ -206,8 +206,8 @@ describe("server ownership", () => {
       const state = yield* makeState;
       yield* ServerRuntimeState.persistServerRuntimeState({
         path: statePath,
-        // @effect-diagnostics-next-line globalDateInEffect:off - Legacy identity uses the real process start time, not TestClock.
-        state: { ...state, startedAt: new Date().toISOString() },
+        // Any record time after this process started proves the PID was not reused.
+        state: { ...state, startedAt: "2100-01-01T00:00:00.000Z" },
       });
       const refused = yield* Effect.scoped(ServerOwnership.acquireServerOwnership(statePath)).pipe(
         Effect.flip,

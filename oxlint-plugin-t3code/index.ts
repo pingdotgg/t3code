@@ -20,6 +20,7 @@ import noTestInLoop from "./rules/no-test-in-loop.ts";
 import noTestTimeoutOrUnreasonedSkip from "./rules/no-test-timeout-or-unreasoned-skip.ts";
 import noRpcPermissionBypass from "./rules/no-rpc-permission-bypass.ts";
 import noUnscopedHas from "./rules/no-unscoped-has.ts";
+import noWallClockInTests from "./rules/no-wall-clock-in-tests.ts";
 import preferCatchTags from "./rules/prefer-catch-tags.ts";
 import preferEffectFn from "./rules/prefer-effect-fn.ts";
 import requireCenteredScrollGutter from "./rules/require-centered-scroll-gutter.ts";
@@ -51,6 +52,7 @@ export default definePlugin({
     "no-test-timeout-or-unreasoned-skip": noTestTimeoutOrUnreasonedSkip,
     "no-rpc-permission-bypass": noRpcPermissionBypass,
     "no-unscoped-has": noUnscopedHas,
+    "no-wall-clock-in-tests": noWallClockInTests,
     "prefer-catch-tags": preferCatchTags,
     "prefer-effect-fn": preferEffectFn,
     "require-centered-scroll-gutter": requireCenteredScrollGutter,

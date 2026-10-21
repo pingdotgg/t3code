@@ -192,6 +192,7 @@ export default defineConfig({
       "t3code/no-test-timeout-or-unreasoned-skip": "error",
       "t3code/no-rpc-permission-bypass": ["error", { allowRawClientAccess: true }],
       "t3code/no-unscoped-has": "error",
+      "t3code/no-wall-clock-in-tests": "error",
       "t3code/namespace-node-imports": "error",
       "t3code/prefer-catch-tags": "error",
       "t3code/prefer-effect-fn": "error",
