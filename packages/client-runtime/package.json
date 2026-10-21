@@ -367,6 +367,10 @@
       "types": "./src/pullRequestLinkInput.ts",
       "default": "./src/pullRequestLinkInput.ts"
     },
+    "./pull-request-project-filter": {
+      "types": "./src/pullRequestProjectFilter.ts",
+      "default": "./src/pullRequestProjectFilter.ts"
+    },
     "./thread-pull-request-compatibility": {
       "types": "./src/threadPullRequestCompatibility.ts",
       "default": "./src/threadPullRequestCompatibility.ts"

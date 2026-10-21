@@ -1,4 +1,5 @@
 import { parsePullRequestQuery } from "@t3tools/client-runtime/pull-request-query";
+import { pullRequestFilterProjects } from "@t3tools/client-runtime/pull-request-project-filter";
 import {
   pullRequestHostOf,
   type EnvironmentId,
@@ -38,7 +39,6 @@ import {
 import type { PullRequestExpectedHost } from "./PullRequestListFilters";
 import type { PullRequestListPreferences, PullRequestListSort } from "./pullRequestListPreferences";
 import { assignProjectsToEnvironments } from "./pullRequestProjectAssignment.logic";
-import { pullRequestFilterProjects } from "./pullRequestProjectFilter.logic";
 import { pullRequestListEntryId } from "./pullRequestListGroups.logic";
 
 export interface PullRequestsSearch extends PullRequestListPreferences {
