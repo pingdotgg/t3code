@@ -588,6 +588,47 @@ describe("ClaudeAdapterV2 context usage", () => {
   });
 });
 
+describe("ClaudeAdapterV2 approval presentation", () => {
+  it("marks asks that full access could not auto-allow and keeps the CLI's reason", () => {
+    const presentation = ClaudeAdapterV2.claudeApprovalPresentation({
+      permissionMode: "bypassPermissions",
+      prompt: 'Claude wants to run rm -r -- "$rr/$h"',
+      callbackOptions: {
+        decisionReason: "\u001b[33mDangerous rm on a path built from a variable\u001b[39m",
+        suppressAlwaysAllowRule: true,
+      },
+    });
+    assert.deepEqual(presentation, {
+      reason: "Dangerous rm on a path built from a variable",
+      fullAccessOverride: "provider_check",
+      options: [
+        { decision: "decline", label: "Decline" },
+        { decision: "accept", label: "Approve" },
+      ],
+    });
+  });
+
+  it("attributes a bypass ask to the user's ask rule when one matched", () => {
+    const presentation = ClaudeAdapterV2.claudeApprovalPresentation({
+      permissionMode: "bypassPermissions",
+      prompt: "Claude wants to run git push",
+      callbackOptions: {
+        matchedAskRule: { source: "userSettings", toolName: "Bash", ruleContent: "git push:*" },
+      },
+    });
+    assert.deepEqual(presentation, { fullAccessOverride: "ask_rule" });
+  });
+
+  it("adds nothing to ordinary approvals outside full access", () => {
+    const presentation = ClaudeAdapterV2.claudeApprovalPresentation({
+      permissionMode: "default",
+      prompt: "Run make?",
+      callbackOptions: { decisionReason: "Run make?" },
+    });
+    assert.deepEqual(presentation, {});
+  });
+});
+
 describe("ClaudeAdapterV2 session permissions", () => {
   // regression: #15892 an explicit user refusal must stay user_reject, not a tool failure
   it("keeps explicit user refusals classified as user_reject", () => {
