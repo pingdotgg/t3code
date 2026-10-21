@@ -41,11 +41,27 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
   );
   const text = liveText ?? row.message.text;
   const messageText = text || (row.message.streaming ? "" : "(empty response)");
+  const isCommentary = row.assistantLabel === "Commentary";
 
   return (
     <>
-      <div className="relative min-w-0 px-1 py-0.5">
-        <MessageAuthorHeading>T3 Code</MessageAuthorHeading>
+      <div
+        className={cn(
+          "relative min-w-0",
+          isCommentary
+            ? "border-s-2 border-border/70 py-0.5 ps-3 pe-1"
+            : "mt-2 border-t border-border px-1 pt-3 pb-0.5",
+        )}
+      >
+        <h3
+          className={cn(
+            "mb-2 select-none text-xs font-medium",
+            isCommentary ? "text-muted-foreground" : "text-foreground",
+          )}
+          aria-label={`T3 Code: ${row.assistantLabel}`}
+        >
+          {row.assistantLabel}
+        </h3>
         <div data-thread-find-text="true">
           <AssistantCitationSource
             messageId={row.message.id}

@@ -55,6 +55,54 @@ describe("resolveAssistantMessageCopyState", () => {
 });
 
 describe("deriveMessagesTimelineRows", () => {
+  it.each([
+    ["completed", "Final response"],
+    ["interrupted", "Incomplete response"],
+    ["failed", "Incomplete response"],
+    ["cancelled", "Incomplete response"],
+  ] as const)("updates the response label when the run becomes %s", (status, label) => {
+    const runId = RunId.make("labelled-run");
+    const createdAt = "2026-01-01T00:00:00Z";
+    const input = {
+      timelineEntries: [
+        {
+          kind: "message" as const,
+          id: "response",
+          createdAt,
+          message: {
+            id: MessageId.make("response"),
+            role: "assistant" as const,
+            text: "Checking the workspace.",
+            runId,
+            streaming: false,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        },
+      ],
+      isWorking: false,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    };
+    const active = deriveMessagesTimelineRowsWithState({
+      ...input,
+      latestRun: { runId, status: "running", startedAt: createdAt, completedAt: null },
+    });
+    expect(active.rows.find((row) => row.id === "response")).toMatchObject({
+      assistantLabel: "Commentary",
+    });
+    const settled = deriveMessagesTimelineRowsWithState(
+      {
+        ...input,
+        latestRun: { runId, status, startedAt: createdAt, completedAt: createdAt },
+      },
+      active,
+    );
+    expect(settled.rows.find((row) => row.id === "response")).toMatchObject({
+      assistantLabel: label,
+    });
+  });
+
   it("stops stranded thinking after a steer and follows the next thought or tool", () => {
     const runId = RunId.make("steered-run");
     const at = "2026-10-01T06:19:10Z";
@@ -3845,7 +3893,15 @@ describe("linked timeline resources", () => {
         timelineEntries,
         expandedRunIds: new Set(expanded),
       }).map((row) => row.id);
-    const expected = ["intro", "steer", "created", "after-steer", "final", "summary:created", "assistant-meta:final"];
+    const expected = [
+      "intro",
+      "steer",
+      "created",
+      "after-steer",
+      "final",
+      "summary:created",
+      "assistant-meta:final",
+    ];
     expect(rowIds([runId])).toEqual(expected);
     expect(rowIds([segmentKey])).toEqual(expected);
   });

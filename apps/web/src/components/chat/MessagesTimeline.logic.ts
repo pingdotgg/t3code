@@ -1,3 +1,4 @@
+import { assistantMessageLabel } from "@t3tools/client-runtime/assistant-message";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
@@ -600,6 +601,7 @@ type MessagesTimelineRowContent =
       createdAt: string;
       message: ChatMessage;
       projectedItem?: OrchestrationV2ProjectedTurnItem;
+      assistantLabel?: ReturnType<typeof assistantMessageLabel>;
       showAssistantMeta: boolean;
       showAssistantCopyButton: boolean;
       assistantCopyStreaming: boolean;
@@ -2166,6 +2168,20 @@ export function deriveMessagesTimelineRows(input: {
       ...(timelineEntry.projectedItem === undefined
         ? {}
         : { projectedItem: timelineEntry.projectedItem }),
+      ...(timelineEntry.message.role === "assistant"
+        ? {
+            assistantLabel: assistantMessageLabel({
+              isTerminal: terminalAssistantMessageIds.has(timelineEntry.message.id),
+              isInProgress: assistantResponseStillInProgress || timelineEntry.message.streaming,
+              runStatus:
+                timelineEntry.message.runId && failedRunIds.has(timelineEntry.message.runId)
+                  ? "failed"
+                  : input.latestRun?.runId === timelineEntry.message.runId
+                    ? input.latestRun?.status
+                    : undefined,
+            }),
+          }
+        : {}),
       showAssistantMeta,
       showAssistantCopyButton: showAssistantMeta,
       assistantCopyStreaming: timelineEntry.message.streaming || assistantResponseStillInProgress,
@@ -2633,6 +2649,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
     case "message": {
       const bm = b as typeof a;
       return (
+        a.assistantLabel === bm.assistantLabel &&
         a.message === bm.message &&
         a.projectedItem === bm.projectedItem &&
         a.showAssistantMeta === bm.showAssistantMeta &&
