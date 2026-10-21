@@ -5,7 +5,47 @@ import {
   resolveNewTaskBranchWorktreePath,
   resolveNewTaskBranchLabel,
   resolveNewTaskLocalWorkspaceSelection,
+  resolveNewTaskWorkspaceSelection,
 } from "./new-task-context-presentation";
+
+describe("resolveNewTaskWorkspaceSelection", () => {
+  const fallback = { mode: "worktree", branch: null, worktreePath: null } as const;
+
+  it("falls back to the current checkout when a non-git project defaults to worktree", () => {
+    expect(
+      resolveNewTaskWorkspaceSelection({ selection: undefined, fallback, isGitRepo: false }),
+    ).toEqual({ mode: "local", branch: null, worktreePath: null });
+  });
+
+  it.each(["local", "worktree"] as const)(
+    "clears stale %s selections for non-git projects",
+    (mode) => {
+      expect(
+        resolveNewTaskWorkspaceSelection({
+          selection: {
+            mode,
+            branch: "main",
+            worktreePath: "/old-worktree",
+            startFromOrigin: true,
+            pullRequestReference: "https://github.com/acme/repo/pull/123",
+          },
+          fallback,
+          isGitRepo: false,
+        }),
+      ).toEqual({ mode: "local", branch: null, worktreePath: null });
+    },
+  );
+
+  it("preserves the selection and defaults for git projects", () => {
+    const selection = { mode: "local", branch: "feature", worktreePath: "/worktree" } as const;
+    expect(resolveNewTaskWorkspaceSelection({ selection, fallback, isGitRepo: true })).toBe(
+      selection,
+    );
+    expect(
+      resolveNewTaskWorkspaceSelection({ selection: undefined, fallback, isGitRepo: true }),
+    ).toBe(fallback);
+  });
+});
 
 describe("resolveNewTaskLocalWorkspaceSelection", () => {
   it("waits for refs instead of carrying a worktree base into Current checkout", () => {

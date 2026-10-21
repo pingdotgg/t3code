@@ -13,6 +13,7 @@ import {
   resolveNewThreadEnvMode,
   resolveProjectFileBackedSetting,
   resolveProjectSettings,
+  resolveSendEnvMode,
   resolveWorktreeCleanup,
   withProjectSettingsOverrides,
 } from "./projectSettings.ts";
@@ -20,6 +21,19 @@ import { applyServerSettingsPatch } from "./serverSettings.ts";
 
 const projectId = ProjectId.make("project-a");
 const otherProjectId = ProjectId.make("project-b");
+
+describe("resolveSendEnvMode", () => {
+  it.each(["local", "worktree"] as const)(
+    "uses local for non-git projects requesting %s",
+    (mode) => {
+      expect(resolveSendEnvMode({ requestedEnvMode: mode, isGitRepo: false })).toBe("local");
+    },
+  );
+
+  it.each(["local", "worktree"] as const)("preserves %s for git repositories", (mode) => {
+    expect(resolveSendEnvMode({ requestedEnvMode: mode, isGitRepo: true })).toBe(mode);
+  });
+});
 
 describe("resolveProjectSettings", () => {
   it("inherits every scopable key when the project has no overrides", () => {
