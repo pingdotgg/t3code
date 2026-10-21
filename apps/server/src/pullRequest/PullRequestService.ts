@@ -102,7 +102,10 @@ export interface PullRequestMergeEvent extends PullRequestRef {
   readonly mergedAt: string;
 }
 
-type PullRequestReading = Pick<PullRequestSummary, "state" | "updatedAt" | "observedAt">;
+type PullRequestReading = Pick<
+  PullRequestSummary,
+  "state" | "isDraft" | "updatedAt" | "observedAt"
+>;
 
 function supersedesReading(current: PullRequestReading | undefined, next: PullRequestReading) {
   if (current === undefined) return true;
@@ -2891,10 +2894,12 @@ export const make = Effect.gen(function* () {
       }
       detailStates.set(scope, {
         state: next.state,
+        isDraft: next.isDraft,
         updatedAt: next.updatedAt,
         observedAt: next.observedAt,
       });
-      return current?.state !== next.state && ref.host !== undefined
+      return (current?.state !== next.state || current?.isDraft !== next.isDraft) &&
+        ref.host !== undefined
         ? PubSub.publish(stateChanges, {
             host: ref.host,
             repository: ref.repository,
@@ -2906,22 +2911,34 @@ export const make = Effect.gen(function* () {
   // must never outrank a reading this environment made itself.
   const reportedStates = new Map<
     string,
-    { readonly state: PullRequestState; readonly atMs: number }
+    {
+      readonly state: PullRequestState;
+      readonly isDraft: boolean | undefined;
+      readonly atMs: number;
+    }
   >();
-  const reportState: PullRequestService["Service"]["reportState"] = ({ reference, state }) =>
+  const reportState: PullRequestService["Service"]["reportState"] = ({
+    reference,
+    state,
+    isDraft,
+  }) =>
     Effect.all([canonicalRef(reference), Clock.currentTimeMillis]).pipe(
       Effect.flatMap(([ref, nowMs]) =>
         Effect.suspend(() => {
           const scope = refScope(ref);
           const reported = reportedStates.get(scope);
-          if (reported?.state === state && nowMs - reported.atMs < REPORTED_STATE_DEDUPE_MS)
+          if (
+            reported?.state === state &&
+            reported.isDraft === isDraft &&
+            nowMs - reported.atMs < REPORTED_STATE_DEDUPE_MS
+          )
             return Effect.void;
           reportedStates.delete(scope);
           if (reportedStates.size >= REF_EPOCH_CAPACITY) {
             const oldest = reportedStates.keys().next().value;
             if (oldest !== undefined) reportedStates.delete(oldest);
           }
-          reportedStates.set(scope, { state, atMs: nowMs });
+          reportedStates.set(scope, { state, isDraft, atMs: nowMs });
           return ref.host === undefined
             ? Effect.void
             : PubSub.publish(stateChanges, {

@@ -818,63 +818,68 @@ it.effect.each(
   ),
 );
 
-it.live("keeps source workspace metadata when an alternate answers a detail read", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const noted = yield* Deferred.make<unknown>();
-      const clientFor = (local: boolean) =>
-        ({
-          [local ? WS_METHODS.pullRequestsRoutingIdentity : WS_METHODS.pullRequestsRouting]: () =>
-            Effect.succeed({
-              host: "github.com",
-              provider: "github",
-              viewer: "maria-rcks",
-              accountId: "123",
-              projectTitle: local ? "local project" : "source project",
-              workspaceRoot: local ? "/Users/local/repo" : "/srv/source/repo",
-            }),
-          [WS_METHODS.pullRequestsDetail]: () =>
-            local
-              ? Effect.succeed({
-                  projectId: "local-project",
-                  projectTitle: "local project",
-                  workspaceRoot: "/Users/local/repo",
-                  title: "github title",
-                  state: "closed",
-                  updatedAt: "2026-10-10T01:52:36Z",
-                })
-              : Effect.never,
-          [WS_METHODS.pullRequestsReportState]: (input: unknown) =>
-            Deferred.succeed(noted, input).pipe(Effect.asVoid),
-        }) as unknown as WsRpcProtocolClient;
-      const { environmentRegistry, supervisor } = yield* makeTestRuntime(
-        clientFor(false),
-        clientFor(true),
-      );
-      const result = yield* createPullRequestRouter()(WS_METHODS.pullRequestsDetail, {
-        projectId: ProjectId.make("project-1"),
-        repository: "acme/web",
-        number: 7,
-      }).pipe(
-        Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
-        Effect.provideService(GitHubRoutingPermissions, trustedRouting),
-        Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
-        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
-      );
-      expect(result).toEqual({
-        projectId: "project-1",
-        projectTitle: "source project",
-        workspaceRoot: "/srv/source/repo",
-        title: "github title",
-        state: "closed",
-        updatedAt: "2026-10-10T01:52:36Z",
-      });
-      expect(yield* Deferred.await(noted)).toEqual({
-        reference: { projectId: "project-1", repository: "acme/web", number: 7 },
-        state: "closed",
-      });
-    }),
-  ),
+it.live.each([undefined, true, false])(
+  "keeps source workspace metadata and reports draft %s when an alternate answers a detail read",
+  (isDraft) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const noted = yield* Deferred.make<unknown>();
+        const clientFor = (local: boolean) =>
+          ({
+            [local ? WS_METHODS.pullRequestsRoutingIdentity : WS_METHODS.pullRequestsRouting]: () =>
+              Effect.succeed({
+                host: "github.com",
+                provider: "github",
+                viewer: "maria-rcks",
+                accountId: "123",
+                projectTitle: local ? "local project" : "source project",
+                workspaceRoot: local ? "/Users/local/repo" : "/srv/source/repo",
+              }),
+            [WS_METHODS.pullRequestsDetail]: () =>
+              local
+                ? Effect.succeed({
+                    projectId: "local-project",
+                    projectTitle: "local project",
+                    workspaceRoot: "/Users/local/repo",
+                    title: "github title",
+                    state: "closed",
+                    ...(isDraft === undefined ? {} : { isDraft }),
+                    updatedAt: "2026-10-10T01:52:36Z",
+                  })
+                : Effect.never,
+            [WS_METHODS.pullRequestsReportState]: (input: unknown) =>
+              Deferred.succeed(noted, input).pipe(Effect.asVoid),
+          }) as unknown as WsRpcProtocolClient;
+        const { environmentRegistry, supervisor } = yield* makeTestRuntime(
+          clientFor(false),
+          clientFor(true),
+        );
+        const result = yield* createPullRequestRouter()(WS_METHODS.pullRequestsDetail, {
+          projectId: ProjectId.make("project-1"),
+          repository: "acme/web",
+          number: 7,
+        }).pipe(
+          Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+          Effect.provideService(GitHubRoutingPermissions, trustedRouting),
+          Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
+          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        );
+        expect(result).toEqual({
+          projectId: "project-1",
+          projectTitle: "source project",
+          workspaceRoot: "/srv/source/repo",
+          title: "github title",
+          state: "closed",
+          ...(isDraft === undefined ? {} : { isDraft }),
+          updatedAt: "2026-10-10T01:52:36Z",
+        });
+        expect(yield* Deferred.await(noted)).toEqual({
+          reference: { projectId: "project-1", repository: "acme/web", number: 7 },
+          state: "closed",
+          ...(isDraft === undefined ? {} : { isDraft }),
+        });
+      }),
+    ),
 );
 
 it.live(
