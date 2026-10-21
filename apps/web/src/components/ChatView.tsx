@@ -60,7 +60,6 @@ import {
   AuthTerminalOperateScope,
   type AssistantCitation,
   type ChatFileAttachment,
-  CommandId,
   DEFAULT_MODEL,
   isProviderNativeSubagentThread,
   type EnvironmentId,
@@ -75,19 +74,13 @@ import {
   type ThreadId,
   type RunId,
   type RunAttemptId,
-  type RuntimeRequestId,
-  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ProviderInteractionMode,
-  ProviderDriverKind,
   resolveProjectProviderInstanceEnabled,
   RuntimeMode,
 } from "@t3tools/contracts";
 import { type EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
-import {
-  wasBootstrapThreadDeleted,
-  wasBootstrapThreadNotCreated,
-} from "@t3tools/client-runtime/errors";
+import { wasBootstrapThreadDeleted } from "@t3tools/client-runtime/errors";
 import { readPastedComposerContext } from "./composerInlineTokenPaste";
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { effectiveSnoozed, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
@@ -128,10 +121,8 @@ import {
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
 import {
-  applyClaudePromptEffortPrefix,
   createModelSelection,
   formatModelSlugName,
-  resolvePromptInjectedEffort,
   resolveSelectableModel,
 } from "@t3tools/shared/model";
 import {
@@ -152,7 +143,6 @@ import { resolveThreadReferenceCopyTarget } from "@t3tools/shared/threadReferenc
 import { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import { Debouncer } from "@tanstack/react-pacer";
 import { useAtomValue } from "@effect/atom-react";
-import { Atom } from "effect/reactivity";
 import {
   Fragment,
   type SetStateAction,
@@ -214,13 +204,7 @@ import {
   buildPlanImplementationPrompt,
   resolvePlanFollowUpSubmission,
 } from "../proposedPlan";
-import {
-  DEFAULT_INTERACTION_MODE,
-  MAX_TERMINALS_PER_GROUP,
-  type ChatMessage,
-  type SessionPhase,
-  type Thread,
-} from "../types";
+import { DEFAULT_INTERACTION_MODE, MAX_TERMINALS_PER_GROUP, type ChatMessage } from "../types";
 import { useTheme } from "../hooks/useTheme";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
@@ -284,13 +268,12 @@ import {
   TargetIcon,
   WifiOffIcon,
 } from "lucide-react";
-import { cn, randomUUID } from "~/lib/utils";
+import { cn } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { projectScriptIdFromCommand } from "~/projectScripts";
 import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { registerFaviconProjectForThread } from "~/browserFaviconStore";
-import { getProviderModelCapabilities } from "../providerModels";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -395,7 +378,6 @@ import {
   useThreadStatus,
   useThreadHistory,
   useQuietThreadShell,
-  useThreadShell,
   useChildThreadInputs,
   useThreadRefs,
   useThreadVisibleTurnItems,
@@ -480,8 +462,6 @@ import {
   latestProviderTurnTokenUsage,
 } from "../lib/contextWindow";
 import {
-  DRAFT_HERO_TRANSITION_ANIMATION_ID,
-  DRAFT_HERO_TRANSITION_EASING,
   MOBILE_COMPOSER_VIEW_TRANSITION_NAME,
   MOBILE_DRAFT_HEADLINE_VIEW_TRANSITION_NAME,
   runMobileComposerTransition,
@@ -493,13 +473,11 @@ import {
   buildExpiredTerminalContextToastCopy,
   buildLocalDraftThread,
   collectUserMessageBlobPreviewUrls,
-  createLocalDispatchSnapshot,
   deriveCommittedServerUserMessageIds,
   deriveComposerSendState,
   dismissBranchMismatchForSession,
   hasEnvironmentReconnectWarningGraceElapsed,
   scheduleEnvironmentReconnectWarning,
-  hasServerAcknowledgedLocalDispatch,
   isBranchMismatchDismissedForSession,
   shouldShowBranchMismatchBanner,
   shouldShowPlanFollowUpPrompt,
@@ -508,13 +486,10 @@ import {
   getStartedThreadModelChangeBlockReason,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
   LastInvokedScriptByProjectSchema,
-  type LocalDispatchSnapshot,
   cloneComposerImageForRetry,
   deriveLockedProvider,
   readFileAsDataUrl,
   resolveFileAttachmentUrl,
-  prepareRevertedMessageAttachments,
-  waitForRevertedMessage,
   reconcileMountedTerminalThreadIds,
   resolveComposerInteractionMode,
   resolveComposerProviderSelection,
@@ -538,7 +513,6 @@ import {
   retryAttachmentUpload,
   startAttachmentUpload,
 } from "../lib/attachmentUploadQueue";
-import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
 import { RightPanelSheet } from "./RightPanelSheet";
 import { previewEnvironment } from "../state/preview";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
@@ -571,8 +545,25 @@ import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   threadContextsOutsideEnvironment,
 } from "@t3tools/shared/composerContextReferences";
-import { recallableComposerPrompt } from "./chat/composerPromptHistory";
 import { observeResize } from "~/lib/observeResize";
+import { ThreadVisitWatermark } from "./chat/ThreadVisitWatermark";
+import { useDraftHeroLayoutTransition } from "./chat/useDraftHeroLayoutTransition";
+import { useLocalDispatchState } from "./chat/useLocalDispatchState";
+import {
+  draftFanoutSelectionsAtom,
+  draftSendState,
+  rewindToMessage,
+  startFanoutThread,
+} from "./chat/chatViewSend";
+import {
+  chatActionErrorMessage,
+  formatOutgoingPrompt,
+  isCompactCommandMessage,
+  type LocalThreadErrorEntry,
+  makeModelDisabledReason,
+  makeThreadErrorSetter,
+  releaseChatTimelineAnchor,
+} from "./ChatView.logic";
 
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_MODELS: ServerProvider["models"] = [];
@@ -581,75 +572,9 @@ import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplat
 
 const TIMELINE_SCROLL_CANCEL_SENTINEL = Object.freeze({});
 const EMPTY_FEEDBACK_SUBMISSIONS: ReadonlyArray<CodexFeedbackSubmission> = [];
-// During an active turn the thread's updatedAt advances several times per
-// second, and every server-side visit is a full command dispatch plus a
-// broadcast to all shell subscribers.
-const VISIT_DISPATCH_THROTTLE_MS = 10_000;
 const RELATED_THREAD_SHELL_WAIT_MS = 1_000;
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const EMPTY_AUTO_UPDATE_ENVIRONMENTS: ReadonlyArray<EnvironmentPresentation> = [];
-function useDraftHeroLayoutTransition(
-  isDraftHeroState: boolean,
-  animationsActive: boolean,
-  animationDurationMs: number,
-) {
-  const transitionGroupRef = useRef<HTMLDivElement | null>(null);
-  const composerAnchorRef = useRef<HTMLDivElement | null>(null);
-  const previousStateRef = useRef(isDraftHeroState);
-  const previousComposerRectRef = useRef<DOMRect | null>(null);
-  const animationRef = useRef<Animation | null>(null);
-  const captureComposerRect = useStableCallback(() => {
-    previousComposerRectRef.current = composerAnchorRef.current?.getBoundingClientRect() ?? null;
-  });
-
-  useLayoutEffect(() => {
-    const transitionGroup = transitionGroupRef.current;
-    const nextComposerRect = composerAnchorRef.current?.getBoundingClientRect() ?? null;
-    const stateChanged = previousStateRef.current !== isDraftHeroState;
-    const mobileComposerTransitionActive =
-      typeof document !== "undefined" &&
-      document.documentElement.dataset.mobileComposerRouteTransition === "true";
-
-    animationRef.current?.cancel();
-    animationRef.current = null;
-    const previousComposerRect = previousComposerRectRef.current;
-    if (
-      stateChanged &&
-      animationsActive &&
-      !mobileComposerTransitionActive &&
-      transitionGroup &&
-      previousComposerRect &&
-      nextComposerRect &&
-      typeof transitionGroup.animate === "function"
-    ) {
-      const translateX = previousComposerRect.left - nextComposerRect.left;
-      const translateY = previousComposerRect.top - nextComposerRect.top;
-      if (Math.abs(translateX) >= 0.5 || Math.abs(translateY) >= 0.5) {
-        const animation = transitionGroup.animate(
-          [
-            { transform: `translate3d(${translateX}px, ${translateY}px, 0)` },
-            { transform: "translate3d(0, 0, 0)" },
-          ],
-          {
-            duration: animationDurationMs,
-            easing: DRAFT_HERO_TRANSITION_EASING,
-          },
-        );
-        animation.id = DRAFT_HERO_TRANSITION_ANIMATION_ID;
-        animationRef.current = animation;
-        void animation.finished
-          .catch(() => undefined)
-          .then(() => {
-            if (animationRef.current === animation) animationRef.current = null;
-          });
-      }
-    }
-    previousStateRef.current = isDraftHeroState;
-    previousComposerRectRef.current = nextComposerRect;
-  }, [animationDurationMs, animationsActive, isDraftHeroState]);
-
-  return { transitionGroupRef, composerAnchorRef, captureComposerRect } as const;
-}
 
 const EMPTY_PENDING_FILE_SURFACE_IDS: ReadonlySet<string> = new Set();
 type EnvironmentUnavailableState = {
@@ -658,229 +583,8 @@ type EnvironmentUnavailableState = {
   readonly connection: EnvironmentConnectionPresentation;
 };
 
-// Kept per route so a send in flight, and the multiple-model selections, survive
-// ChatView remounting while the user navigates.
-const draftFanoutSelectionsAtom = Atom.family((_routeKey: string) =>
-  Atom.make<ReadonlyArray<ModelSelection> | null>(null).pipe(Atom.keepAlive),
-);
-const draftSendStateByRouteKey = new Map<
-  string,
-  {
-    readonly sendInFlight: { current: boolean };
-    readonly uncertainSubmissions: { current: Map<string, ThreadId> };
-  }
->();
-function draftSendState(routeKey: string) {
-  let state = draftSendStateByRouteKey.get(routeKey);
-  if (!state) {
-    state = { sendInFlight: { current: false }, uncertainSubmissions: { current: new Map() } };
-    draftSendStateByRouteKey.set(routeKey, state);
-  }
-  return state;
-}
-
-/**
- * Starts one thread of a multiple-model send. A request that may have
- * reached the server before failing is remembered by `retryKey`, so sending
- * again cannot silently create a duplicate thread; its failure toast offers
- * to open that thread or to allow the retry.
- */
-async function startFanoutThread(input: {
-  readonly retryKey: string;
-  readonly model: string;
-  readonly uncertainSubmissions: Map<string, ThreadId>;
-  readonly start: (threadId: ThreadId) => Promise<AtomCommandResult<unknown, unknown>>;
-  readonly openThread: (threadId: ThreadId) => void;
-}): Promise<boolean> {
-  const { retryKey, uncertainSubmissions } = input;
-  const uncertainThreadId = uncertainSubmissions.get(retryKey);
-  const targetThreadId = uncertainThreadId ?? newThreadId();
-  let requestMayHaveStarted = false;
-  try {
-    if (uncertainThreadId) {
-      throw new Error(
-        "The previous request may have started. Open its thread to check before sending again.",
-      );
-    }
-    requestMayHaveStarted = true;
-    const result = await input.start(targetThreadId);
-    if (result._tag === "Failure") {
-      const error = squashAtomCommandFailure(result);
-      if (wasBootstrapThreadDeleted(error) || wasBootstrapThreadNotCreated(error)) {
-        requestMayHaveStarted = false;
-      }
-      throw error;
-    }
-    return true;
-  } catch (error) {
-    if (requestMayHaveStarted && !uncertainSubmissions.has(retryKey)) {
-      uncertainSubmissions.set(retryKey, targetThreadId);
-    }
-    const retainedThreadId = uncertainSubmissions.get(retryKey);
-    const failureToastId = toastManager.add(
-      stackedThreadToast({
-        type: "error",
-        title: `Could not start ${input.model}`,
-        description: error instanceof Error ? error.message : "Failed to send message.",
-        ...(retainedThreadId
-          ? {
-              timeout: 0,
-              data: {
-                secondaryActionProps: {
-                  children: "Allow retry",
-                  onClick: () => {
-                    void readLocalApi()
-                      ?.dialogs.confirm(
-                        "The previous request may already be running. Check its thread first. Allow another send that could create a duplicate thread?",
-                      )
-                      .then(
-                        (confirmed) => {
-                          if (
-                            confirmed &&
-                            uncertainSubmissions.get(retryKey) === retainedThreadId
-                          ) {
-                            uncertainSubmissions.delete(retryKey);
-                            toastManager.close(failureToastId);
-                          }
-                        },
-                        () => undefined,
-                      );
-                  },
-                },
-              },
-              actionProps: {
-                children: "Open thread",
-                onClick: () => input.openThread(retainedThreadId),
-              },
-            }
-          : {}),
-      }),
-    );
-    return false;
-  }
-}
-
-/**
- * Reverts the thread to before `message` and puts that message's text and
- * attachments back in the composer draft. Returns the restored prompt, or the
- * error to show; on error the draft is untouched.
- */
-async function rewindToMessage(input: {
-  readonly message: ChatMessage;
-  readonly environmentId: EnvironmentId;
-  readonly routeThreadRef: ScopedThreadRef;
-  readonly threadId: ThreadId;
-  readonly turnCount: number;
-  readonly restoreFiles: boolean;
-  readonly checkpoint: ReturnType<typeof findRevertCheckpoint>;
-  readonly draftTarget: ScopedThreadRef | DraftId;
-  readonly composerHasPendingAttachments: boolean;
-  readonly createAssetUrl: Parameters<
-    typeof prepareRevertedMessageAttachments
-  >[0]["createAssetUrl"];
-  readonly revertThreadCheckpoint: (value: {
-    environmentId: EnvironmentId;
-    input: {
-      commandId: CommandId;
-      threadId: ThreadId;
-      turnCount: number;
-      restoreFiles: boolean;
-      checkpointId?: string;
-      scopeId?: string;
-    };
-  }) => Promise<AtomCommandResult<unknown, unknown>>;
-}): Promise<
-  | { readonly error: string; readonly prompt?: never }
-  | { readonly error: null; readonly prompt: string }
-> {
-  const { message, environmentId, draftTarget } = input;
-  try {
-    if (input.composerHasPendingAttachments) {
-      throw new Error("Wait for attachments to finish preparing before rewinding.");
-    }
-    const connection = readPreparedConnection(environmentId);
-    if (!connection) throw new Error("The environment is not connected.");
-    const files = await prepareRevertedMessageAttachments({
-      message,
-      environmentId,
-      httpBaseUrl: connection.httpBaseUrl,
-      createAssetUrl: input.createAssetUrl,
-    });
-    const store = useComposerDraftStore.getState();
-    const draft = store.getComposerDraft(draftTarget);
-    if (
-      (draft?.images.length ?? 0) + (draft?.files.length ?? 0) + files.length >
-      PROVIDER_SEND_TURN_MAX_ATTACHMENTS
-    ) {
-      throw new Error("Make room for this message's attachments in the composer before rewinding.");
-    }
-    const commandId = CommandId.make(randomUUID());
-    await waitForRevertedMessage(input.routeThreadRef, input.turnCount, commandId, async () => {
-      const result = await input.revertThreadCheckpoint({
-        environmentId,
-        input: {
-          commandId,
-          threadId: input.threadId,
-          turnCount: input.turnCount,
-          restoreFiles: input.restoreFiles,
-          ...(input.checkpoint === undefined
-            ? {}
-            : { checkpointId: input.checkpoint.id, scopeId: input.checkpoint.scopeId }),
-        },
-      });
-      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-    });
-    const currentPrompt = store.getComposerDraft(draftTarget)?.prompt ?? "";
-    const restoredPrompt = recallableComposerPrompt(message.text);
-    const nextPrompt =
-      restoredPrompt.length === 0
-        ? currentPrompt
-        : currentPrompt.length > 0
-          ? `${currentPrompt}\n\n${restoredPrompt}`
-          : restoredPrompt;
-    store.setPrompt(draftTarget, nextPrompt);
-    const images: ComposerImageAttachment[] = [];
-    const restoredFiles: ComposerFileAttachment[] = [];
-    files.forEach((file, index) => {
-      const attachment = {
-        id: randomUUID(),
-        name: file.name,
-        mimeType: file.type,
-        sizeBytes: file.size,
-        file,
-      };
-      if (message.attachments?.[index]?.type === "image") {
-        images.push({ ...attachment, type: "image", previewUrl: URL.createObjectURL(file) });
-      } else {
-        restoredFiles.push({ ...attachment, type: "file" });
-      }
-    });
-    store.addImages(draftTarget, images, { allowDuplicates: true });
-    store.addFiles(draftTarget, restoredFiles, { allowDuplicates: true });
-    return { error: null, prompt: nextPrompt };
-  } catch (error) {
-    return { error: error instanceof Error ? error.message : "Failed to revert thread state." };
-  }
-}
-
-function formatOutgoingPrompt(params: {
-  provider: ProviderDriverKind;
-  model: string | null;
-  models: ReadonlyArray<ServerProvider["models"][number]>;
-  effort: string | null;
-  text: string;
-}): string {
-  const caps = getProviderModelCapabilities(params.models, params.model, params.provider);
-  const promptEffort = resolvePromptInjectedEffort(caps, params.effort);
-  return applyClaudePromptEffortPrefix(params.text, promptEffort);
-}
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
-
-function isCompactCommandMessage(message: ChatMessage): boolean {
-  const text = message.text.trim().toLowerCase();
-  return message.role === "user" && text === "/compact" && !message.attachments?.length;
-}
 
 type ChatViewProps =
   | {
@@ -908,150 +612,11 @@ interface TerminalLaunchContext {
   worktreePath: string | null;
 }
 
-function useLocalDispatchState(input: {
-  activeThread: Thread | undefined;
-  activeLatestRun: Thread["latestRun"] | null;
-  latestUserMessageId: MessageId | null;
-  phase: SessionPhase;
-  activePendingApproval: RuntimeRequestId | null;
-  activePendingUserInput: RuntimeRequestId | null;
-  threadError: string | null | undefined;
-}) {
-  const [localDispatch, setLocalDispatch] = useState<LocalDispatchSnapshot | null>(null);
-
-  const resetLocalDispatch = () => {
-    setLocalDispatch(null);
-  };
-
-  const serverAcknowledgedLocalDispatch = hasServerAcknowledgedLocalDispatch({
-    localDispatch,
-    phase: input.phase,
-    latestRun: input.activeLatestRun,
-    latestUserMessageId: input.latestUserMessageId,
-    runtime: input.activeThread?.runtime ?? null,
-    hasPendingApproval: input.activePendingApproval !== null,
-    hasPendingUserInput: input.activePendingUserInput !== null,
-    threadError: input.threadError,
-  });
-  const activeLocalDispatch = serverAcknowledgedLocalDispatch ? null : localDispatch;
-  const beginLocalDispatch = (options?: {
-    preparingWorktree?: boolean;
-    submissionIntent?: ComposerSubmissionIntent;
-  }) => {
-    const preparingWorktree = Boolean(options?.preparingWorktree);
-    setLocalDispatch((current) => {
-      const active = serverAcknowledgedLocalDispatch ? null : current;
-      if (active) {
-        const submissionIntent = options?.submissionIntent ?? active.submissionIntent;
-        return active.preparingWorktree === preparingWorktree &&
-          active.submissionIntent === submissionIntent
-          ? active
-          : { ...active, preparingWorktree, submissionIntent };
-      }
-      return createLocalDispatchSnapshot(input.activeThread, {
-        ...options,
-        latestUserMessageId: input.latestUserMessageId,
-      });
-    });
-  };
-
-  return {
-    beginLocalDispatch,
-    resetLocalDispatch,
-    localDispatchStartedAt: activeLocalDispatch?.startedAt ?? null,
-    isPreparingWorktree: activeLocalDispatch?.preparingWorktree ?? false,
-    isSendBusy: activeLocalDispatch !== null,
-    backgroundSubmissionPending: activeLocalDispatch?.submissionIntent === "background",
-  };
-}
-
-// Errors surface through two maps (draft-keyed and thread-keyed) whose entries
-// can race around promotion, so each write carries its time to let the latest
-// one win when they collide.
-type LocalThreadErrorEntry = {
-  readonly message: string | null;
-  readonly at: number;
-};
-
-function chatActionErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "An error occurred.";
-}
-
 const ENVIRONMENT_UNAVAILABLE_SEND_TOAST_TRAIL_SIZE = 3;
 const EMPTY_HELD_TURN_DIFF_SUMMARIES: readonly never[] = [];
 const noopHeldTurnDiff = (_turnId: RunId, _filePath?: string) => {};
 const noopHeldRevert = (_targetTurnCount: number) => {};
 const noopHeldAttachment = (_attachment: ChatFileAttachment) => {};
-
-function releaseChatTimelineAnchor<T extends { readonly messageId: MessageId | null }>(
-  current: T,
-): T {
-  return current.messageId === null ? current : { ...current, messageId: null };
-}
-
-// The factories below build functions ChatView calls during render, or hands
-// to ChatComposer, which can call them after an await. They live outside the
-// component so each closure keeps only its inputs, not a whole render scope
-// (see useStableCallback), while still acting on the render that made them.
-
-/** Records a thread error in local state, keyed by the route the making render saw. */
-function makeThreadErrorSetter(input: {
-  readonly routeThreadRef: ScopedThreadRef;
-  readonly routeThreadKey: string;
-  readonly draftId: DraftId | null;
-  readonly serverThreadRef: ScopedThreadRef | null;
-  readonly setLocalServerErrorsByThreadKey: (
-    update: SetStateAction<Record<string, LocalThreadErrorEntry>>,
-  ) => void;
-  readonly setLocalDraftErrorsByDraftId: (
-    update: SetStateAction<Record<string, LocalThreadErrorEntry>>,
-  ) => void;
-}) {
-  return (targetThreadId: ThreadId | null, error: string | null) => {
-    if (!targetThreadId) return;
-    const nextError = sanitizeThreadErrorMessage(error);
-    const nextEntry: LocalThreadErrorEntry = { message: nextError, at: Date.now() };
-    const { routeThreadRef, serverThreadRef } = input;
-    if (
-      serverThreadRef &&
-      targetThreadId === routeThreadRef.threadId &&
-      serverThreadRef.environmentId === routeThreadRef.environmentId &&
-      serverThreadRef.threadId === targetThreadId
-    ) {
-      input.setLocalServerErrorsByThreadKey((existing) => {
-        if ((existing[input.routeThreadKey]?.message ?? null) === nextError) {
-          return existing;
-        }
-        return { ...existing, [input.routeThreadKey]: nextEntry };
-      });
-      return;
-    }
-    const localDraftErrorKey = input.draftId ?? targetThreadId;
-    input.setLocalDraftErrorsByDraftId((existing) => {
-      if ((existing[localDraftErrorKey]?.message ?? null) === nextError) {
-        return existing;
-      }
-      return { ...existing, [localDraftErrorKey]: nextEntry };
-    });
-  };
-}
-
-/** Why the model picker should disable a model, or null when it can be chosen. */
-function makeModelDisabledReason(
-  context: Omit<
-    Parameters<typeof getStartedThreadModelChangeBlockReason>[0],
-    "nextModelSelection"
-  > | null,
-) {
-  return (instanceId: ProviderInstanceId, model: string): string | null => {
-    if (!context) return null;
-    const reason = getStartedThreadModelChangeBlockReason({
-      ...context,
-      nextModelSelection: { instanceId, model },
-    });
-    return reason ? `${reason.description} Start a new thread to use this model.` : null;
-  };
-}
 
 export default function ChatView(props: ChatViewProps) {
   const {
@@ -9016,78 +8581,5 @@ export default function ChatView(props: ChatViewProps) {
 
 function PreviewSessionSync(props: { readonly threadRef: ScopedThreadRef }) {
   usePreviewSession(props.threadRef);
-  return null;
-}
-
-// The visit watermark is the one part of the chat view that follows the
-// shell's updatedAt, which ticks while a run streams. Keeping it in a leaf lets
-// ChatView read the quiet shell.
-function ThreadVisitWatermark(props: { readonly threadRef: ScopedThreadRef }) {
-  const serverThread = useThreadShell(props.threadRef);
-  const threadKey = scopedThreadKey(props.threadRef);
-  const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
-  const activeThreadLocalLastVisitedAt = useUiStateStore(
-    (store) => store.threadLastVisitedAtById[threadKey],
-  );
-  const visitThreadMutation = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
-  const lastDispatchedVisitRef = useRef<string | null>(null);
-  const lastVisitDispatchAtRef = useRef(0);
-
-  useEffect(() => {
-    if (!serverThread?.id) return;
-    const threadUpdatedAt = Date.parse(serverThread.updatedAt);
-    if (Number.isNaN(threadUpdatedAt)) return;
-    const effectiveLastVisitedAt = resolveThreadLastVisitedAt(
-      serverThread.lastVisitedAt,
-      activeThreadLocalLastVisitedAt,
-    );
-    const lastVisitedAt = effectiveLastVisitedAt ? Date.parse(effectiveLastVisitedAt) : NaN;
-    if (!Number.isNaN(lastVisitedAt) && lastVisitedAt >= threadUpdatedAt) return;
-
-    if (serverThread.lastVisitedAt !== undefined) {
-      // Dedupe per watermark — the effect re-runs before the command's echo
-      // lands. The dedupe also keeps a mark-unread on the open thread sticky:
-      // the rewind leaves updatedAt untouched, so the already-dispatched key
-      // skips a fresh visit until new activity lands or the thread is reopened.
-      const dispatchKey = `${threadKey}:${serverThread.updatedAt}`;
-      if (lastDispatchedVisitRef.current === dispatchKey) return;
-      const dispatch = () => {
-        lastDispatchedVisitRef.current = dispatchKey;
-        lastVisitDispatchAtRef.current = Date.now();
-        void visitThreadMutation({
-          environmentId: serverThread.environmentId,
-          input: { threadId: serverThread.id, visitedAt: serverThread.updatedAt },
-        });
-      };
-      const latestRunCompletedAtMs = serverThread.latestRun?.completedAt
-        ? Date.parse(serverThread.latestRun.completedAt)
-        : NaN;
-      const hasUnseenCompletion =
-        !Number.isNaN(latestRunCompletedAtMs) &&
-        (Number.isNaN(lastVisitedAt) || latestRunCompletedAtMs > lastVisitedAt);
-      const elapsed = Date.now() - lastVisitDispatchAtRef.current;
-      if (hasUnseenCompletion || elapsed >= VISIT_DISPATCH_THROTTLE_MS) {
-        dispatch();
-        return;
-      }
-      const timer = setTimeout(dispatch, VISIT_DISPATCH_THROTTLE_MS - elapsed);
-      return () => clearTimeout(timer);
-    }
-
-    markThreadVisited(
-      scopedThreadKey(scopeThreadRef(serverThread.environmentId, serverThread.id)),
-      serverThread.updatedAt,
-    );
-  }, [
-    activeThreadLocalLastVisitedAt,
-    markThreadVisited,
-    threadKey,
-    serverThread?.environmentId,
-    serverThread?.id,
-    serverThread?.lastVisitedAt,
-    serverThread?.latestRun?.completedAt,
-    serverThread?.updatedAt,
-    visitThreadMutation,
-  ]);
   return null;
 }

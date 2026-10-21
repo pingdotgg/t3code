@@ -1,4 +1,8 @@
 import * as Option from "effect/Option";
+import type { SetStateAction } from "react";
+import { applyClaudePromptEffortPrefix, resolvePromptInjectedEffort } from "@t3tools/shared/model";
+import { getProviderModelCapabilities } from "../providerModels";
+import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
@@ -48,7 +52,11 @@ import {
   type Thread,
   type TurnDiffSummary,
 } from "../types";
-import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
+import {
+  type ComposerImageAttachment,
+  type DraftId,
+  type DraftThreadState,
+} from "../composerDraftStore";
 import * as Schema from "effect/Schema";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentThreadShells, environmentThreadDetails } from "../state/threads";
@@ -1335,3 +1343,102 @@ export function mergeDirectPreviewAnnotation(input: {
 }
 
 export { isThreadWokeUnseen } from "@t3tools/client-runtime/state/thread-settled";
+
+export function formatOutgoingPrompt(params: {
+  provider: ProviderDriverKind;
+  model: string | null;
+  models: ReadonlyArray<ServerProvider["models"][number]>;
+  effort: string | null;
+  text: string;
+}): string {
+  const caps = getProviderModelCapabilities(params.models, params.model, params.provider);
+  const promptEffort = resolvePromptInjectedEffort(caps, params.effort);
+  return applyClaudePromptEffortPrefix(params.text, promptEffort);
+}
+
+export function isCompactCommandMessage(message: ChatMessage): boolean {
+  const text = message.text.trim().toLowerCase();
+  return message.role === "user" && text === "/compact" && !message.attachments?.length;
+}
+
+// Errors surface through two maps (draft-keyed and thread-keyed) whose entries
+// can race around promotion, so each write carries its time to let the latest
+// one win when they collide.
+export type LocalThreadErrorEntry = {
+  readonly message: string | null;
+  readonly at: number;
+};
+
+export function chatActionErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "An error occurred.";
+}
+
+export function releaseChatTimelineAnchor<T extends { readonly messageId: MessageId | null }>(
+  current: T,
+): T {
+  return current.messageId === null ? current : { ...current, messageId: null };
+}
+
+// The factories below build functions ChatView calls during render, or hands
+// to ChatComposer, which can call them after an await. They live outside the
+// component so each closure keeps only its inputs, not a whole render scope
+// (see useStableCallback), while still acting on the render that made them.
+
+/** Records a thread error in local state, keyed by the route the making render saw. */
+export function makeThreadErrorSetter(input: {
+  readonly routeThreadRef: ScopedThreadRef;
+  readonly routeThreadKey: string;
+  readonly draftId: DraftId | null;
+  readonly serverThreadRef: ScopedThreadRef | null;
+  readonly setLocalServerErrorsByThreadKey: (
+    update: SetStateAction<Record<string, LocalThreadErrorEntry>>,
+  ) => void;
+  readonly setLocalDraftErrorsByDraftId: (
+    update: SetStateAction<Record<string, LocalThreadErrorEntry>>,
+  ) => void;
+}) {
+  return (targetThreadId: ThreadId | null, error: string | null) => {
+    if (!targetThreadId) return;
+    const nextError = sanitizeThreadErrorMessage(error);
+    const nextEntry: LocalThreadErrorEntry = { message: nextError, at: Date.now() };
+    const { routeThreadRef, serverThreadRef } = input;
+    if (
+      serverThreadRef &&
+      targetThreadId === routeThreadRef.threadId &&
+      serverThreadRef.environmentId === routeThreadRef.environmentId &&
+      serverThreadRef.threadId === targetThreadId
+    ) {
+      input.setLocalServerErrorsByThreadKey((existing) => {
+        if ((existing[input.routeThreadKey]?.message ?? null) === nextError) {
+          return existing;
+        }
+        return { ...existing, [input.routeThreadKey]: nextEntry };
+      });
+      return;
+    }
+    const localDraftErrorKey = input.draftId ?? targetThreadId;
+    input.setLocalDraftErrorsByDraftId((existing) => {
+      if ((existing[localDraftErrorKey]?.message ?? null) === nextError) {
+        return existing;
+      }
+      return { ...existing, [localDraftErrorKey]: nextEntry };
+    });
+  };
+}
+
+/** Why the model picker should disable a model, or null when it can be chosen. */
+export function makeModelDisabledReason(
+  context: Omit<
+    Parameters<typeof getStartedThreadModelChangeBlockReason>[0],
+    "nextModelSelection"
+  > | null,
+) {
+  return (instanceId: ProviderInstanceId, model: string): string | null => {
+    if (!context) return null;
+    const reason = getStartedThreadModelChangeBlockReason({
+      ...context,
+      nextModelSelection: { instanceId, model },
+    });
+    return reason ? `${reason.description} Start a new thread to use this model.` : null;
+  };
+}
