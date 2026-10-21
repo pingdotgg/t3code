@@ -164,12 +164,16 @@ messages, review titles, and descriptions from your changes. Descriptions also d
 the thread, including the checks it ran.
 
 For stacked branches, T3 Code looks for the nearest published ancestor branch with an open
-review and generates the title and description from only the changes above it. The review
-still targets your usual base branch, such as `development`; its full diff on the hosting
-service is still measured against that target. If equally close branches have open reviews,
-choose the description comparison branch with
-`git config branch.<your-branch>.t3-description-base <parent-branch>`.
-This setting affects generated text only. Existing reviews keep their target and description.
+review. It targets that branch and generates the title and description from only the changes
+above it. An explicitly configured target takes priority. If equally close branches have open
+reviews, choose the target with
+`git config branch.<your-branch>.gh-merge-base <parent-branch>`.
+Existing reviews keep their target and description.
+
+On GitLab, merge the parent review first and delete its source branch as part of that merge.
+GitLab then retargets the child review to the parent's target, such as `development`, so each
+review can merge separately. Deleting the parent branch after merging does not trigger this
+automatic retargeting.
 
 An existing fork PR can appear beside the branch even if you pushed without setting an upstream.
 If its badge is missing because several remotes hold that branch, set the branch's upstream to

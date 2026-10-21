@@ -155,6 +155,14 @@ export const GitRewriteCommitMessagesInput = Schema.Struct({
 });
 export type GitRewriteCommitMessagesInput = typeof GitRewriteCommitMessagesInput.Type;
 
+export const GitRegeneratePullRequestDescriptionInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  projectId: ProjectId,
+  threadId: Schema.optional(ThreadId),
+});
+export type GitRegeneratePullRequestDescriptionInput =
+  typeof GitRegeneratePullRequestDescriptionInput.Type;
+
 export const VcsListRefsInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   query: Schema.optional(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(256))),

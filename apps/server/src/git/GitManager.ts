@@ -29,6 +29,7 @@ import {
   GitPreparePullRequestThreadResult,
   GitPullRequestRefInput,
   GitResolvePullRequestResult,
+  GitRegeneratePullRequestDescriptionInput,
   GitRunStackedActionInput,
   GitRunStackedActionResult,
   GitRewriteCommitMessagesInput,
@@ -173,6 +174,12 @@ export class GitManager extends Context.Service<
     readonly listRewriteableCommits: (
       input: GitListRewriteableCommitsInput,
     ) => Effect.Effect<GitListRewriteableCommitsResult, GitManagerServiceError>;
+    readonly generatePullRequestDescription: (
+      input: GitRegeneratePullRequestDescriptionInput,
+    ) => Effect.Effect<
+      GitResolvePullRequestResult & { readonly body: string },
+      GitManagerServiceError
+    >;
     readonly rewriteCommitMessages: (
       input: GitRewriteCommitMessagesInput,
     ) => Effect.Effect<GitRewriteCommitMessagesResult, GitManagerServiceError>;
@@ -2217,41 +2224,18 @@ export const make = Effect.gen(function* () {
     };
   });
 
-  const resolveDescriptionBaseBranch = Effect.fn("resolveDescriptionBaseBranch")(function* (
+  const resolveStackedBaseBranch = Effect.fn("resolveStackedBaseBranch")(function* (
     cwd: string,
     branch: string,
     targetBranch: string,
   ) {
-    const configured = yield* gitCore.readConfigValue(cwd, `branch.${branch}.t3-description-base`);
-    if (configured) {
-      const descriptionBranch = yield* gitCore.resolveBranchName(cwd, configured);
-      const comparisonRef = descriptionBranch
-        ? yield* resolveBaseRangeRef(cwd, descriptionBranch)
-        : null;
-      const ancestor = comparisonRef
-        ? yield* gitCore.execute({
-            operation: "GitManager.resolveDescriptionBaseBranch.ancestor",
-            cwd,
-            args: ["merge-base", "--is-ancestor", comparisonRef, `refs/heads/${branch}`],
-            allowNonZeroExit: true,
-          })
-        : null;
-      if (ancestor?.exitCode !== 0) {
-        return yield* new GitManagerError({
-          operation: "resolveDescriptionBaseBranch",
-          cwd,
-          detail: "The configured t3-description-base must name an ancestor branch.",
-        });
-      }
-      return descriptionBranch;
-    }
     const remoteName = yield* gitCore.resolvePrimaryRemoteName(cwd);
     if (!(yield* gitCore.remoteBranchExists({ cwd, remoteName, refName: targetBranch }))) {
       return null;
     }
     const prefix = `refs/remotes/${remoteName}/`;
     const refs = yield* gitCore.execute({
-      operation: "GitManager.resolveDescriptionBaseBranch.refs",
+      operation: "GitManager.resolveStackedBaseBranch.refs",
       cwd,
       args: [
         "for-each-ref",
@@ -2276,7 +2260,7 @@ export const make = Effect.gen(function* () {
       branchesByCommit,
       Effect.fnUntraced(function* ([commit, branches]) {
         const distance = yield* gitCore.execute({
-          operation: "GitManager.resolveDescriptionBaseBranch.distance",
+          operation: "GitManager.resolveStackedBaseBranch.distance",
           cwd,
           args: ["rev-list", "--count", `${commit}..refs/heads/${branch}`],
         });
@@ -2300,10 +2284,10 @@ export const make = Effect.gen(function* () {
         if (!pullRequest || pullRequest.isCrossRepository === true) continue;
         if (match) {
           return yield* new GitManagerError({
-            operation: "resolveDescriptionBaseBranch",
+            operation: "resolveStackedBaseBranch",
             cwd,
             detail:
-              "Several ancestor branches have open change requests at the same distance. Set this branch's t3-description-base to choose the description comparison branch.",
+              "Several ancestor branches have open change requests at the same distance. Set this branch's gh-merge-base to choose its target.",
           });
         }
         match = { branch: candidateBranch, distance: candidate.distance };
@@ -2360,19 +2344,15 @@ export const make = Effect.gen(function* () {
       Effect.flatMap((provider) => provider.getDefaultBranch({ cwd })),
       Effect.orElseSucceed(() => null),
     );
-    if (defaultFromProvider) {
-      return { baseBranch: defaultFromProvider, baseRef: defaultFromProvider };
-    }
-
-    const defaultFromRemote = yield* gitCore.resolvePrimaryRemoteName(cwd).pipe(
-      Effect.flatMap((remoteName) => gitCore.resolveDefaultBranchName(cwd, remoteName)),
-      Effect.orElseSucceed(() => null),
-    );
-    if (defaultFromRemote) {
-      return { baseBranch: defaultFromRemote, baseRef: defaultFromRemote };
-    }
-
-    return { baseBranch: "main", baseRef: "main" };
+    const defaultBranch =
+      defaultFromProvider ??
+      (yield* gitCore.resolvePrimaryRemoteName(cwd).pipe(
+        Effect.flatMap((remoteName) => gitCore.resolveDefaultBranchName(cwd, remoteName)),
+        Effect.orElseSucceed(() => null),
+      )) ??
+      "main";
+    const stacked = (yield* resolveStackedBaseBranch(cwd, branch, defaultBranch)) ?? defaultBranch;
+    return { baseBranch: stacked, baseRef: stacked };
   });
 
   const resolveBaseRangeRef = Effect.fn("resolveBaseRangeRef")(function* (
@@ -2750,6 +2730,55 @@ export const make = Effect.gen(function* () {
     return lastCommit ?? { status: "skipped_no_changes" as const };
   });
 
+  const generatePrContent = Effect.fn("GitManager.generatePrContent")(function* (
+    settings: SourceControlTextGenerationSettings,
+    cwd: string,
+    baseBranch: string,
+    headBranch: string,
+    threadId?: ThreadId,
+    baseRef?: string,
+  ) {
+    const provider = yield* sourceControlProvider(cwd);
+    const baseRangeRef = yield* resolveBaseRangeRef(cwd, baseRef ?? baseBranch);
+    const rangeContext = yield* gitCore.readRangeContext(cwd, baseRangeRef);
+    const stylePolicy = yield* resolveStylePolicy(cwd, settings);
+    const repositoryChangeRequestInstructions = yield* readRepositoryInstructions(
+      cwd,
+      ".t3code/change-request.md",
+    );
+    const policy = repositoryChangeRequestInstructions
+      ? {
+          ...stylePolicy,
+          changeRequestInstructions: [
+            stylePolicy.changeRequestInstructions,
+            repositoryChangeRequestInstructions,
+          ]
+            .filter((instructions): instructions is string => Boolean(instructions))
+            .join("\n\n"),
+        }
+      : stylePolicy;
+    const changeRequestTemplate =
+      settings.style.followChangeRequestTemplates && provider.readChangeRequestTemplate
+        ? Option.getOrUndefined(
+            yield* provider.readChangeRequestTemplate({ cwd, treeish: baseRangeRef }),
+          )
+        : undefined;
+
+    const threadContext = yield* readThreadContext(threadId);
+    return yield* textGeneration.generatePrContent({
+      cwd,
+      baseBranch,
+      headBranch,
+      commitSummary: limitContext(rangeContext.commitSummary, 20_000),
+      diffSummary: limitContext(rangeContext.diffSummary, 20_000),
+      diffPatch: limitContext(rangeContext.diffPatch, 60_000),
+      ...(changeRequestTemplate ? { changeRequestTemplate } : {}),
+      ...(policy ? { policy } : {}),
+      ...(threadContext ? { threadContext } : {}),
+      modelSelection: settings.modelSelection,
+    });
+  });
+
   const runPrStep = Effect.fn("runPrStep")(function* (
     settings: SourceControlTextGenerationSettings,
     cwd: string,
@@ -2804,56 +2833,14 @@ export const make = Effect.gen(function* () {
       phase: "pr",
       label: `Generating ${terms.shortLabel} content...`,
     });
-    const descriptionBaseBranch =
-      (yield* resolveDescriptionBaseBranch(cwd, branch, baseBranch)) ?? baseBranch;
-    const baseRangeRef = yield* resolveBaseRangeRef(cwd, baseRef);
-    const descriptionRangeRef =
-      descriptionBaseBranch === baseBranch
-        ? baseRangeRef
-        : yield* resolveBaseRangeRef(cwd, descriptionBaseBranch);
-    const rangeContext = yield* gitCore.readRangeContext(cwd, descriptionRangeRef);
-    const stylePolicy = yield* resolveStylePolicy(cwd, settings);
-    const repositoryChangeRequestInstructions = yield* readRepositoryInstructions(
-      cwd,
-      ".t3code/change-request.md",
-    );
-    const descriptionScopeInstructions =
-      descriptionBaseBranch !== baseBranch
-        ? `This change request targets ${baseBranch}. Describe only the supplied commits and diff above ${descriptionBaseBranch}; earlier changes belong to a separate review.`
-        : undefined;
-    const policy =
-      repositoryChangeRequestInstructions || descriptionScopeInstructions
-        ? {
-            ...stylePolicy,
-            changeRequestInstructions: [
-              stylePolicy.changeRequestInstructions,
-              repositoryChangeRequestInstructions,
-              descriptionScopeInstructions,
-            ]
-              .filter((instructions): instructions is string => Boolean(instructions))
-              .join("\n\n"),
-          }
-        : stylePolicy;
-    const changeRequestTemplate =
-      settings.style.followChangeRequestTemplates && provider.readChangeRequestTemplate
-        ? Option.getOrUndefined(
-            yield* provider.readChangeRequestTemplate({ cwd, treeish: baseRangeRef }),
-          )
-        : undefined;
-    const threadContext = yield* readThreadContext(threadId);
-
-    const generated = yield* textGeneration.generatePrContent({
+    const generated = yield* generatePrContent(
+      settings,
       cwd,
       baseBranch,
-      headBranch: headContext.headBranch,
-      commitSummary: limitContext(rangeContext.commitSummary, 20_000),
-      diffSummary: limitContext(rangeContext.diffSummary, 20_000),
-      diffPatch: limitContext(rangeContext.diffPatch, 60_000),
-      ...(changeRequestTemplate ? { changeRequestTemplate } : {}),
-      ...(threadContext ? { threadContext } : {}),
-      ...(policy ? { policy } : {}),
-      modelSelection: settings.modelSelection,
-    });
+      headContext.headBranch,
+      threadId,
+      baseRef,
+    );
 
     const bodyFile = path.join(
       tempDir,
@@ -4077,6 +4064,66 @@ export const make = Effect.gen(function* () {
     };
   });
 
+  const generatePullRequestDescription: GitManager["Service"]["generatePullRequestDescription"] =
+    Effect.fn("GitManager.generatePullRequestDescription")(function* (input) {
+      const details = yield* gitCore.statusDetails(input.cwd);
+      if (!details.branch) {
+        return yield* new GitManagerError({
+          operation: "generatePullRequestDescription",
+          cwd: input.cwd,
+          detail: "Cannot regenerate a change request description from detached HEAD.",
+        });
+      }
+      const headContext = yield* resolveBranchHeadContext(input.cwd, {
+        branch: details.branch,
+        upstreamRef: details.upstreamRef,
+      });
+      const existing = yield* findOpenPr(input.cwd, headContext);
+      if (!existing) {
+        return yield* new GitManagerError({
+          operation: "generatePullRequestDescription",
+          cwd: input.cwd,
+          detail: "The current branch has no open change request to update.",
+        });
+      }
+      const resolved = yield* projectSettingsFor(input).pipe(
+        Effect.mapError(
+          (cause) =>
+            new GitManagerError({
+              operation: "generatePullRequestDescription",
+              cwd: input.cwd,
+              detail: "Failed to get server settings.",
+              cause,
+            }),
+        ),
+      );
+      const providers = yield* providerRegistry.getProviders;
+      const generated = yield* generatePrContent(
+        {
+          modelSelection: ServerSettings.resolveSourceControlWriterModelSelection(
+            resolved.settings,
+            providers,
+            input.projectId,
+          ),
+          style: resolved.settings.sourceControlWritingStyle,
+        },
+        input.cwd,
+        existing.baseRefName,
+        headContext.headBranch,
+      );
+      return {
+        pullRequest: {
+          number: existing.number,
+          title: existing.title,
+          url: existing.url,
+          baseBranch: existing.baseRefName,
+          headBranch: existing.headRefName,
+          state: existing.state,
+        },
+        body: generated.body,
+      };
+    });
+
   const runStackedAction: GitManager["Service"]["runStackedAction"] = Effect.fn("runStackedAction")(
     function* (input, options) {
       const progress = yield* createProgressEmitter(input, options);
@@ -4358,6 +4405,7 @@ export const make = Effect.gen(function* () {
     preparePullRequestThread,
     listRewriteableCommits,
     rewriteCommitMessages,
+    generatePullRequestDescription,
     runStackedAction,
     subscribePullRequestStateChanges: PubSub.subscribe(pullRequestStateChanges).pipe(
       Effect.map((subscription) => Stream.fromSubscription(subscription)),

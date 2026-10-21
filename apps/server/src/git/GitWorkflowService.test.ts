@@ -1,4 +1,6 @@
-import { assert, it } from "@effect/vitest";
+import { ProjectId } from "@t3tools/contracts";
+import * as PullRequestService from "../pullRequest/PullRequestService.ts";
+import { assert, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -10,10 +12,62 @@ import * as ServerConfig from "../config.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitManager from "./GitManager.ts";
 import * as GitWorkflowService from "./GitWorkflowService.ts";
+import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("GitWorkflowService", (it) => {
+  it.effect("regenerates and saves only the existing change request description", () => {
+    const pullRequest = {
+      number: 42,
+      title: "Existing title",
+      url: "https://gitlab.com/group/subgroup/repo/-/merge_requests/42",
+      baseBranch: "release",
+      headBranch: "feature",
+      state: "open" as const,
+    };
+    const update = vi.fn(() => Effect.void);
+    const invalidate = vi.fn(() => Effect.void);
+    return Effect.gen(function* () {
+      const workflow = yield* GitWorkflowService.GitWorkflowService;
+      const result = yield* workflow.regeneratePullRequestDescription({
+        cwd: "/repo",
+        projectId: ProjectId.make("project"),
+      });
+      expect(result).toEqual({ pullRequest });
+      expect(update).toHaveBeenCalledExactlyOnceWith({
+        projectId: "project",
+        host: "gitlab.com",
+        repository: "group/subgroup/repo",
+        number: 42,
+        body: "Fresh description from branch changes",
+      });
+      expect(invalidate).toHaveBeenCalledExactlyOnceWith("/repo");
+    }).pipe(
+      Effect.provide(
+        GitWorkflowService.layer.pipe(
+          Layer.provide(
+            Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
+              resolve: () => Effect.succeed({ kind: "git" } as VcsDriverRegistry.VcsDriverHandle),
+            }),
+          ),
+          Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+          Layer.provide(
+            Layer.mock(GitManager.GitManager)({
+              generatePullRequestDescription: () =>
+                Effect.succeed({
+                  pullRequest,
+                  body: "Fresh description from branch changes",
+                }),
+              invalidateRemoteStatus: invalidate,
+            }),
+          ),
+          Layer.provide(Layer.mock(PullRequestService.PullRequestService)({ update })),
+        ),
+      ),
+    );
+  });
+
   it.effect("finds a name among the refs of every namespace", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -38,12 +92,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("GitWorkflowServi
       Effect.scoped,
       Effect.provide(
         GitWorkflowService.layer.pipe(
+          Layer.provide(Layer.mock(PullRequestService.PullRequestService)({})),
           Layer.provide(
             Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
               resolve: () => Effect.succeed({ kind: "git" } as VcsDriverRegistry.VcsDriverHandle),
             }),
           ),
           Layer.provide(Layer.mock(GitManager.GitManager)({})),
+          Layer.provide(Layer.mock(PullRequestService.PullRequestService)({})),
           Layer.provideMerge(GitVcsDriver.layer),
           Layer.provideMerge(VcsProcess.layer),
           Layer.provideMerge(
