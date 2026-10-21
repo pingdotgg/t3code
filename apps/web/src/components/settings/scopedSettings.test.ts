@@ -754,3 +754,15 @@ describe("model selection patches at project scope", () => {
     ).toEqual({ ...saved, options });
   });
 });
+
+it("keeps sidebar position on this device even when editing a remote project", async () => {
+  const persistServer = vi.fn();
+  const persistClient = vi.fn();
+  await persistScopedSettingsPatch(
+    planScopedSettingsPatch(project, environments, { sidebarSide: "right" }),
+    persistServer,
+    persistClient,
+  );
+  expect(persistClient).toHaveBeenCalledExactlyOnceWith({ sidebarSide: "right" });
+  expect(persistServer).not.toHaveBeenCalled();
+});

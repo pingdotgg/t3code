@@ -315,3 +315,21 @@ describe("server model preferences", () => {
     expect(decodeServerSettingsPatch(input)).toEqual(input);
   });
 });
+
+describe("sidebar position", () => {
+  it("keeps existing installations on the left", () => {
+    expect(decodeClientSettings({}).sidebarSide).toBe("left");
+  });
+
+  it("round trips the device preference without changing other settings", () => {
+    const settings = decodeClientSettings({ sidebarSide: "right", chatWidth: "wide" });
+    expect(decodeClientSettings(encodeClientSettings(settings))).toEqual(settings);
+    expect(settings.chatWidth).toBe("wide");
+    expect(decodeClientSettingsPatch({ sidebarSide: "left" })).toEqual({ sidebarSide: "left" });
+  });
+
+  it("rejects unsupported positions in stored settings and patches", () => {
+    expect(() => decodeClientSettings({ sidebarSide: "bottom" })).toThrow();
+    expect(() => decodeClientSettingsPatch({ sidebarSide: "bottom" })).toThrow();
+  });
+});

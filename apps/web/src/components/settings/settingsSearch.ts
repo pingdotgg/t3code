@@ -233,6 +233,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["red green blue orange additions deletions changes counts palette colorblind"],
   },
   {
+    id: "sidebar-side",
+    title: "Sidebar position",
+    to: "/settings/appearance",
+    searchTerms: ["left right navigation layout split screen device"],
+  },
+  {
     id: "chat-width",
     title: "Chat width",
     to: "/settings/appearance",

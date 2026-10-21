@@ -320,6 +320,39 @@ export function AppearanceSettingsPanel() {
         />
 
         <SettingsRow
+          {...searchableSetting("sidebar-side")}
+          description="Choose which edge of this device’s window shows the main sidebar. Mobile navigation stays on the left."
+          resetAction={
+            settings.sidebarSide !== DEFAULT_UNIFIED_SETTINGS.sidebarSide ? (
+              <SettingResetButton
+                label="sidebar position"
+                onClick={() =>
+                  updateSettings({ sidebarSide: DEFAULT_UNIFIED_SETTINGS.sidebarSide })
+                }
+              />
+            ) : null
+          }
+          control={
+            <div className="w-full sm:w-40">
+              <Select
+                value={settings.sidebarSide}
+                onValueChange={(value) => {
+                  if (value === "left" || value === "right") updateSettings({ sidebarSide: value });
+                }}
+              >
+                <SelectTrigger size="sm" aria-label="Sidebar position">
+                  <SelectValue>{settings.sidebarSide === "right" ? "Right" : "Left"}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem value="left">Left (default)</SelectItem>
+                  <SelectItem value="right">Right</SelectItem>
+                </SelectPopup>
+              </Select>
+            </div>
+          }
+        />
+
+        <SettingsRow
           {...searchableSetting("chat-width")}
           description="Set how wide messages and the composer can grow on large screens."
           resetAction={
