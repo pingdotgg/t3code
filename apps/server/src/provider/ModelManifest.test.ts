@@ -289,7 +289,7 @@ describe("ModelManifest service", () => {
     ),
   );
 
-  it.live("does not fetch when provider update checks are disabled", () =>
+  it.live("does not fetch when model catalog updates are disabled", () =>
     Effect.gen(function* () {
       let fetchCount = 0;
       const service = yield* ModelManifest.make.pipe(
@@ -309,7 +309,57 @@ describe("ModelManifest service", () => {
         layerService({
           prefix: "model-manifest-optout-test",
           response: () => Response.json(REMOTE_MANIFEST),
+          settings: { enableModelCatalogUpdates: false },
+        }),
+      ),
+    ),
+  );
+
+  it.live("follows provider update checks until model catalog updates are set", () =>
+    Effect.gen(function* () {
+      let fetchCount = 0;
+      const service = yield* ModelManifest.make.pipe(
+        Effect.provide(
+          layerHttpClient(() => {
+            fetchCount += 1;
+            return Response.json(REMOTE_MANIFEST);
+          }),
+        ),
+      );
+      assert.deepStrictEqual(yield* service.forceRefresh, ModelManifest.BUNDLED_MODEL_MANIFEST);
+      assert.strictEqual(fetchCount, 0);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerService({
+          prefix: "model-manifest-inherit-test",
+          response: () => Response.json(REMOTE_MANIFEST),
           settings: { enableProviderUpdateChecks: false },
+        }),
+      ),
+    ),
+  );
+
+  it.live("fetches with provider update checks off when model catalog updates are on", () =>
+    Effect.gen(function* () {
+      let fetchCount = 0;
+      const service = yield* ModelManifest.make.pipe(
+        Effect.provide(
+          layerHttpClient(() => {
+            fetchCount += 1;
+            return Response.json(REMOTE_MANIFEST);
+          }),
+        ),
+      );
+      assert.deepStrictEqual(yield* service.refresh, REMOTE_MANIFEST);
+      assert.strictEqual(fetchCount, 1);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerService({
+          prefix: "model-manifest-catalog-only-test",
+          response: () => Response.json(REMOTE_MANIFEST),
+          settings: { enableProviderUpdateChecks: false, enableModelCatalogUpdates: true },
         }),
       ),
     ),
