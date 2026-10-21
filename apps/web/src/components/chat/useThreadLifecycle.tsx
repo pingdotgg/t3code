@@ -23,7 +23,9 @@ import {
   RuntimeMode,
 } from "@t3tools/contracts";
 import { effectiveSnoozed, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
-import { useAcknowledgeThreadWoke } from "../../hooks/useThreadActions";
+import { useAcknowledgeThreadWoke, useThreadActions } from "../../hooks/useThreadActions";
+import { settleAndAdvance } from "../../settleAndAdvance";
+import type { ChatShortcutCommands } from "./useChatShortcuts";
 import { resolveThreadLastVisitedAt } from "../Sidebar.logic";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { type SetStateAction, useEffect, useRef, useState } from "react";
@@ -148,6 +150,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   } = input;
   const navigate = useNavigate();
   const router = useRouter();
+  const { settleThread, pinThread, confirmAndUnpinThread } = useThreadActions();
   const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
   const switchGitRef = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
   const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
@@ -558,25 +561,56 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       onAction={acknowledgeActiveThreadWokeStable}
     />
   ) : null;
+  const toastThreadActionFailure =
+    (title: string) => (result: AtomCommandResult<unknown, unknown>) => {
+      if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
+      const error = squashAtomCommandFailure(result);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title,
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    };
+  const shortcuts = {
+    "thread.settle": () => {
+      if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
+      if (!activeThreadShell || !activeThreadRef || !supportsSettlement) return;
+      if (activeThreadSettled) {
+        void handleUnsettleActiveThread();
+        return;
+      }
+      if (settleAndAdvance(activeThreadRef)) return;
+      void settleThread(activeThreadRef).then(toastThreadActionFailure("Failed to settle thread"));
+    },
+    "thread.pin": () => {
+      if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
+      if (!activeThreadShell || !activeThreadRef || !supportsPinning) return;
+      void (
+        activeThreadPinned ? confirmAndUnpinThread(activeThreadRef) : pinThread(activeThreadRef)
+      ).then(
+        toastThreadActionFailure(
+          activeThreadPinned ? "Failed to unpin thread" : "Failed to pin thread",
+        ),
+      );
+    },
+  } satisfies ChatShortcutCommands;
   return {
+    shortcuts,
     acknowledgeActiveThreadWoke,
     activeBranchMismatchKey,
-    activeThreadPinned,
-    activeThreadSettled,
     backgroundWorkBanner,
     childInputBanner,
     goalBanner,
     handleSwitchCheckoutToThread,
     handleSwitchCheckoutToThreadStable,
-    handleUnsettleActiveThreadStable,
     isRestoringThreadBranch,
     onOpenRelatedThread,
     onOpenRelatedThreadStable,
     sendStandaloneCommand,
     setBranchMismatchDismissTick,
     showBranchMismatchBanner,
-    supportsPinning,
-    supportsSettlement,
     threadStatusLine,
   };
 }

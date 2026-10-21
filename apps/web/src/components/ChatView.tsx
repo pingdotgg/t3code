@@ -47,13 +47,12 @@ import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
 import { useUsageLimitsPanel } from "./chat/useUsageLimitsPanel";
 import { useWorktreeSetup } from "./chat/useWorktreeSetup";
-import { useChatShortcuts, type ChatShortcutHandler } from "./chat/useChatShortcuts";
+import { useChatShortcuts } from "./chat/useChatShortcuts";
 import * as Schema from "effect/Schema";
 import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
   AuthPreviewOperateScope,
-  AuthTerminalReadScope,
   AuthTerminalOperateScope,
   type AssistantCitation,
   type ChatFileAttachment,
@@ -71,7 +70,6 @@ import {
   resolveIdleCompaction,
   RuntimeMode,
 } from "@t3tools/contracts";
-import { useThreadActions } from "../hooks/useThreadActions";
 import {
   deriveProviderSubagentStatus,
   deriveReportedModelSelection,
@@ -138,7 +136,6 @@ import { useWorkspaceMutationRefresh } from "../hooks/useWorkspaceMutationRefres
 import { DEFAULT_INTERACTION_MODE, type ChatMessage } from "../types";
 import { useTheme } from "../hooks/useTheme";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
-import { settleAndAdvance } from "../settleAndAdvance";
 import { subscribeSnapShotComposerFocus } from "../lib/desktopSnapShot";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { FileMetadataThreadProvider } from "../hooks/FileMetadataThreadProvider";
@@ -411,10 +408,8 @@ export default function ChatView(props: ChatViewProps) {
   } = props;
   const canOperateThread = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
-  const canReadTerminal = useEnvironmentScope(environmentId, AuthTerminalReadScope);
   const draftId = routeKind === "draft" ? props.draftId : null;
   const handleNewThread = useNewThreadHandler();
-  const { settleThread, pinThread, confirmAndUnpinThread } = useThreadActions();
   const routeThreadRef = scopeThreadRef(environmentId, threadId);
   const routeThreadKey = scopedThreadKey(routeThreadRef);
   const currentRouteThreadKeyRef = useRef<string | null>(routeThreadKey);
@@ -1847,17 +1842,13 @@ export default function ChatView(props: ChatViewProps) {
     addTerminalContextToDraftStable,
     addTerminalSurfaceStable,
     closePanelTerminalStable,
-    createNewTerminalStable,
     lastInvokedScriptByProjectId,
-    requestClosePanelTerminalStable,
-    requestCloseTerminalStable,
     runProjectScriptStable,
     runShellCommandStable,
-    setTerminalOpenStable,
     splitPanelTerminalStable,
     splitPanelTerminalVerticalStable,
-    splitTerminalStable,
     toggleTerminalVisibilityStable,
+    shortcuts: terminalShortcuts,
   } = useChatTerminalActions({
     environmentId,
     composerRef,
@@ -2382,7 +2373,6 @@ export default function ChatView(props: ChatViewProps) {
       },
     );
   };
-  const copyActiveThreadReferenceStable = useStableCallback(copyActiveThreadReference);
   const pullRequestPanelTarget = activeThread
     ? threadPullRequestPanelTarget({
         projectId: activeThread.projectId,
@@ -2404,12 +2394,12 @@ export default function ChatView(props: ChatViewProps) {
     createBrowserSurfaceStable,
     moveRightPanelSurfaceStable,
     onOpenTurnDiffStable,
-    onToggleDiffStable,
     openChangesFromThreadPanelStable,
     openFileSurfaceStable,
     toggleRightPanelMaximizedStable,
     toggleRightPanelStable,
     toggleThreadPanelStable,
+    shortcuts: rightPanelShortcuts,
   } = useRightPanelActions({
     activeThreadRef,
     activeProject,
@@ -2434,29 +2424,26 @@ export default function ChatView(props: ChatViewProps) {
     explicitDiffOpenRef,
     setTerminalFocusRequestId,
     onDiffPanelOpen,
+    closeRightPanelSurface,
   });
   const pullRequestSurfaceAvailable = supportsPullRequests && pullRequestPanelTarget !== null;
   const nowMinute = useNowMinute();
   const {
     acknowledgeActiveThreadWoke,
     activeBranchMismatchKey,
-    activeThreadPinned,
-    activeThreadSettled,
     backgroundWorkBanner,
     childInputBanner,
     goalBanner,
     handleSwitchCheckoutToThread,
     handleSwitchCheckoutToThreadStable,
-    handleUnsettleActiveThreadStable,
     isRestoringThreadBranch,
     onOpenRelatedThread,
     onOpenRelatedThreadStable,
     sendStandaloneCommand,
     setBranchMismatchDismissTick,
     showBranchMismatchBanner,
-    supportsPinning,
-    supportsSettlement,
     threadStatusLine,
+    shortcuts: threadLifecycleShortcuts,
   } = useThreadLifecycle({
     environmentId,
     routeThreadKey,
@@ -2705,120 +2692,31 @@ export default function ChatView(props: ChatViewProps) {
   const threadFindControlsRef = useRef<ThreadFindControls | null>(null);
   const [isThreadFindActive, setIsThreadFindActive] = useState(false);
   const openThreadFind = () => threadFindControlsRef.current?.open();
-  const openThreadFindStable = useStableCallback(openThreadFind);
   const closeThreadFind = () => threadFindControlsRef.current?.close();
-  const closeThreadFindStable = useStableCallback(closeThreadFind);
 
-  const toastPinFailure = (title: string) => (result: AtomCommandResult<unknown, unknown>) => {
-    if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
-    const error = squashAtomCommandFailure(result);
-    toastManager.add(
-      stackedThreadToast({
-        type: "error",
-        title,
-        description: error instanceof Error ? error.message : "An error occurred.",
-      }),
-    );
-  };
-  const openTerminalIfClosed = () => {
-    if (!terminalUiState.terminalOpen) setTerminalOpenStable(true);
-  };
-  const openComposerControl = (command: Parameters<ChatComposerHandle["openControl"]>[0]) =>
-    (({ event }) => {
-      if (!event.repeat) composerRef.current?.openControl(command);
-    }) satisfies ChatShortcutHandler;
   useChatShortcuts({
     enabled: activeThreadId !== null,
     keybindings,
     scriptKeybindings,
-    getShortcutContext: getShortcutContextStable,
+    getShortcutContext,
     threadFindActive: isThreadFindActive,
-    typeIntoComposer: (key) => composerRef.current?.insertTextAtEnd(key) === true,
+    composerRef,
+    branchToolbarRef,
     closeThreadFind: () => {
-      closeThreadFindStable();
+      closeThreadFind();
       focusComposerStable();
     },
     commands: {
+      ...terminalShortcuts,
+      ...rightPanelShortcuts,
+      ...threadLifecycleShortcuts,
       "thread.copyReference": ({ event }) => {
-        if (!event.repeat) copyActiveThreadReferenceStable();
-      },
-      "thread.settle": () => {
-        if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
-        if (!isServerThread || !activeThreadRef || !supportsSettlement) return;
-        if (activeThreadSettled) {
-          void handleUnsettleActiveThreadStable();
-          return;
-        }
-        if (settleAndAdvance(activeThreadRef)) return;
-        void settleThread(activeThreadRef).then(toastPinFailure("Failed to settle thread"));
-      },
-      "thread.pin": () => {
-        if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
-        if (!isServerThread || !activeThreadRef || !supportsPinning) return;
-        void (
-          activeThreadPinned ? confirmAndUnpinThread(activeThreadRef) : pinThread(activeThreadRef)
-        ).then(
-          toastPinFailure(activeThreadPinned ? "Failed to unpin thread" : "Failed to pin thread"),
-        );
-      },
-      "terminal.toggle": () => {
-        if (!terminalUiState.terminalOpen && !canReadTerminal && !canOperateTerminal) return false;
-        toggleTerminalVisibilityStable();
+        if (!event.repeat) copyActiveThreadReference();
       },
       "chat.find": () => {
         if (!isServerThread || serverConfig?.threadFind !== true) return false;
-        openThreadFindStable();
+        openThreadFind();
       },
-      "rightPanel.toggle": () => toggleRightPanelStable(),
-      "rightPanel.toggleMaximized": ({ event }) => {
-        if (!event.repeat) toggleRightPanelMaximizedStable();
-      },
-      "threadPanel.toggle": () => toggleThreadPanelStable(),
-      "rightPanel.close": ({ event }) => {
-        if (!activeRightPanelSurface) return false;
-        if (!event.repeat) closeRightPanelSurfaceStable(activeRightPanelSurface);
-      },
-      "terminal.split": ({ terminalFocusOwner }) => {
-        if (!canOperateTerminal) return false;
-        if (terminalFocusOwner === "right-panel") return void splitPanelTerminalStable();
-        openTerminalIfClosed();
-        splitTerminalStable();
-      },
-      "terminal.splitVertical": ({ terminalFocusOwner }) => {
-        if (!canOperateTerminal) return false;
-        if (terminalFocusOwner === "right-panel") return void splitPanelTerminalStable("vertical");
-        openTerminalIfClosed();
-        splitTerminalStable("vertical");
-      },
-      "terminal.close": ({ terminalFocusOwner }) => {
-        if (!canOperateTerminal) return false;
-        if (terminalFocusOwner === "right-panel" && activeRightPanelSurface?.kind === "terminal") {
-          requestClosePanelTerminalStable(activeRightPanelSurface.activeTerminalId);
-          return;
-        }
-        if (terminalUiState.terminalOpen)
-          requestCloseTerminalStable(terminalUiState.activeTerminalId);
-      },
-      "terminal.new": ({ terminalFocusOwner }) => {
-        if (!canOperateTerminal) return false;
-        if (terminalFocusOwner === "right-panel") return void addTerminalSurfaceStable();
-        openTerminalIfClosed();
-        createNewTerminalStable();
-      },
-      "diff.toggle": () => onToggleDiffStable(),
-      "modelPicker.toggle": ({ event }) => {
-        if (!event.repeat) composerRef.current?.toggleModelPicker();
-      },
-      "composer.increaseEffort": ({ event }) => {
-        if (!event.repeat) composerRef.current?.stepReasoningEffort(1);
-      },
-      "composer.decreaseEffort": ({ event }) => {
-        if (!event.repeat) composerRef.current?.stepReasoningEffort(-1);
-      },
-      "composer.host": openComposerControl("composer.host"),
-      "composer.effort": openComposerControl("composer.effort"),
-      "composer.mode": openComposerControl("composer.mode"),
-      "composer.workspace": openComposerControl("composer.workspace"),
       "composer.cycleHost": ({ event }) => {
         if (!canChangeEnvironment) return false;
         if (event.repeat) return;
@@ -2828,12 +2726,6 @@ export default function ChatView(props: ChatViewProps) {
         );
         const next = logicalProjectEnvironments[(index + 1) % logicalProjectEnvironments.length];
         if (next) onEnvironmentChangeStable(next.environmentId);
-      },
-      "composer.branch": ({ event }) => {
-        if (!event.repeat) branchToolbarRef.current?.openBranchPicker();
-      },
-      "composer.previousWorktree": ({ event }) => {
-        if (!event.repeat) branchToolbarRef.current?.usePreviousWorktree();
       },
       "thread.steerQueuedMessage": ({ event }) =>
         routeKind !== "draft" && queuedRunsControlRef.current?.steerNext(event.repeat) === true,

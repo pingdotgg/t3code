@@ -30,6 +30,7 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { openDeviceSetupDialog } from "./ChatOverlayHosts";
 import { previewEnvironment } from "../../state/preview";
 import { useAtomCommand } from "../../state/use-atom-command";
+import type { ChatShortcutCommands } from "./useChatShortcuts";
 interface RightPanelActionsInput {
   readonly activeThreadRef: ScopedThreadRef | null;
   readonly activeProject: EnvironmentProject | null;
@@ -54,6 +55,7 @@ interface RightPanelActionsInput {
   readonly explicitDiffOpenRef: { current: ScopedThreadRef | null };
   readonly setTerminalFocusRequestId: Dispatch<SetStateAction<number>>;
   readonly onDiffPanelOpen: (() => void) | undefined;
+  readonly closeRightPanelSurface: (surface: RightPanelSurface) => void;
 }
 
 /**
@@ -62,6 +64,7 @@ interface RightPanelActionsInput {
  */
 export function useRightPanelActions(input: RightPanelActionsInput) {
   const {
+    closeRightPanelSurface,
     activeThreadRef,
     activeProject,
     activeRightPanelSurface,
@@ -290,7 +293,21 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     [togglePreviewPanelStable],
   );
 
+  const shortcuts = {
+    "rightPanel.toggle": () => toggleRightPanel(),
+    "rightPanel.toggleMaximized": ({ event }) => {
+      if (!event.repeat) toggleRightPanelMaximized();
+    },
+    "threadPanel.toggle": () => toggleThreadPanel(),
+    "rightPanel.close": ({ event }) => {
+      if (!activeRightPanelSurface) return false;
+      if (!event.repeat) closeRightPanelSurface(activeRightPanelSurface);
+    },
+    "diff.toggle": () => onToggleDiff(),
+  } satisfies ChatShortcutCommands;
+
   return {
+    shortcuts,
     activateRightPanelSurfaceStable,
     addDeviceSurfaceStable,
     addDiffSurfaceStable,
