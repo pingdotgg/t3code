@@ -1,4 +1,5 @@
 import * as Dialog from "../../components/ui/Dialog";
+import { environmentDisplayLabel } from "@t3tools/client-runtime/connection";
 import {
   AuthTerminalReadScope,
   AuthTerminalOperateScope,
@@ -1180,9 +1181,12 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
           {!isEnvironmentReady ? (
             <EnvironmentConnectionNotice
               environmentLabel={
-                environment.presentation?.entry.target.label ??
-                selectedEnvironmentConnection?.environmentLabel ??
-                "Environment"
+                environment.presentation
+                  ? environmentDisplayLabel(
+                      environment.presentation.entry,
+                      environment.presentation.serverConfig,
+                    )
+                  : (selectedEnvironmentConnection?.environmentLabel ?? "Environment")
               }
               connection={
                 environment.presentation?.connection ?? {

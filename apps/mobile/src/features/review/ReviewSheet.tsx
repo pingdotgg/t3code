@@ -1,5 +1,6 @@
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/reactivity";
+import { environmentDisplayLabel } from "@t3tools/client-runtime/connection";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
@@ -705,7 +706,14 @@ export function ReviewSheet(props: ReviewSheetProps) {
           {showConnectionNotice ? (
             <View className="flex-1" style={{ paddingTop: topContentInset }}>
               <EnvironmentConnectionNotice
-                environmentLabel={environment.presentation?.entry.target.label ?? "Environment"}
+                environmentLabel={
+                  environment.presentation
+                    ? environmentDisplayLabel(
+                        environment.presentation.entry,
+                        environment.presentation.serverConfig,
+                      )
+                    : "Environment"
+                }
                 connection={
                   environment.presentation?.connection ?? {
                     phase: "available",

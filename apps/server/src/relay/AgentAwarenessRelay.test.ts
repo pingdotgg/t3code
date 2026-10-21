@@ -256,6 +256,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     Effect.provideService(ServerEnvironment.ServerEnvironment, {
       getEnvironmentId: Effect.succeed(EnvironmentId.make("relay-environment")),
       getDescriptor: unused(),
+      getDescriptorForSettings: unused,
     }),
     Effect.provideService(ProjectService.ProjectService, {
       create: unused,

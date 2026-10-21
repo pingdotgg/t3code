@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, type ServerConfig } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Option from "effect/Option";
 
@@ -11,12 +11,15 @@ import {
   BearerConnectionTarget,
   ConnectionTransientError,
   RelayConnectionTarget,
+  PrimaryConnectionTarget,
+  SshConnectionTarget,
   type SupervisorConnectionState,
 } from "./model.ts";
 import {
   environmentMcpUrl,
   presentEnvironmentConnection,
   presentConnectionState,
+  environmentDisplayLabel,
 } from "./presentation.ts";
 
 const TARGET = new BearerConnectionTarget({
@@ -54,6 +57,51 @@ function supervisorState(overrides: Partial<SupervisorConnectionState>): Supervi
 }
 
 describe("connection presentation", () => {
+  it("preserves manual aliases across live host changes and alternate relay routes", () => {
+    const config = { environment: { label: "Shared host" } } as ServerConfig;
+    const relay = new RelayConnectionTarget({
+      environmentId: TARGET.environmentId,
+      label: "Connect host",
+    });
+    const entry = {
+      ...ENTRY,
+      alternateRoutes: [
+        { target: TARGET, profile: ENTRY.profile },
+        { target: relay, profile: Option.none() },
+      ],
+    };
+    expect(environmentDisplayLabel(entry, config)).toBe("Remote environment");
+    expect(
+      environmentDisplayLabel(
+        {
+          ...ENTRY,
+          target: new SshConnectionTarget({
+            environmentId: TARGET.environmentId,
+            label: "SSH alias",
+            connectionId: "ssh",
+          }),
+        },
+        config,
+      ),
+    ).toBe("SSH alias");
+    expect(environmentDisplayLabel({ ...ENTRY, target: relay }, config)).toBe("Shared host");
+    expect(environmentDisplayLabel({ ...ENTRY, target: relay }, null)).toBe("Connect host");
+    expect(
+      environmentDisplayLabel(
+        {
+          ...ENTRY,
+          target: new PrimaryConnectionTarget({
+            environmentId: TARGET.environmentId,
+            label: "Local host",
+            httpBaseUrl: "http://localhost",
+            wsBaseUrl: "ws://localhost",
+          }),
+        },
+        config,
+      ),
+    ).toBe("Shared host");
+  });
+
   it("copies the MCP address of the route this device is connected over", () => {
     const route = (connectionId: string, httpBaseUrl: string): ConnectionRoute => {
       const target = new BearerConnectionTarget({ ...TARGET, connectionId });

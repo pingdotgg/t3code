@@ -11,10 +11,13 @@ import {
   AuthOrchestrationReadScope,
   AuthPreviewOperateScope,
   AuthSettingsWriteScope,
+  AuthProvidersManageScope,
   AuthSourceControlWriteScope,
   ThreadId,
   EnvironmentId,
   ScheduledTaskId,
+  ProviderInstanceId,
+  DEFAULT_SERVER_SETTINGS,
   WS_METHODS,
   type AuthSessionState,
 } from "@t3tools/contracts";
@@ -87,6 +90,107 @@ describe("command permissions", () => {
         );
       }),
     ),
+  );
+
+  it("checks the destination settings grant again when renaming a host", async () => {
+    const registry = AtomRegistry.make();
+    const unmounts = [registry.mount(sessions(env)), registry.mount(sessions(other))];
+    const input = { patch: { environmentLabel: "Studio Mac" } };
+    const writes: Array<typeof input> = [];
+    const command = createEnvironmentRpcCommand(runtime, {
+      label: "test.rename-host",
+      tag: WS_METHODS.serverUpdateSettings,
+      execute: (payload) =>
+        Effect.sync(() => {
+          writes.push(payload as typeof input);
+          return DEFAULT_SERVER_SETTINGS;
+        }),
+    });
+    try {
+      registry.set(
+        sessions(env),
+        AsyncResult.success({
+          ...grant(false),
+          scopes: [AuthSettingsWriteScope],
+          permissions: [AuthSettingsWriteScope],
+        }),
+      );
+      registry.set(sessions(other), AsyncResult.success(grant(false)));
+      expect(registry.get(command.permissionAtom(env, input))).toBe(true);
+      expect(registry.get(command.permissionAtom(other, input))).toBe(false);
+      expect((await command.run(registry, { environmentId: other, input }))._tag).toBe("Failure");
+      expect(writes).toHaveLength(0);
+      expect((await command.run(registry, { environmentId: env, input }))._tag).toBe("Success");
+      expect(writes).toEqual([input]);
+      registry.set(sessions(env), AsyncResult.success(grant(false)));
+      expect(registry.get(command.permissionAtom(env, input))).toBe(false);
+      expect((await command.run(registry, { environmentId: env, input }))._tag).toBe("Failure");
+      expect(writes).toHaveLength(1);
+    } finally {
+      unmounts.forEach((unmount) => unmount());
+      registry.dispose();
+    }
+  });
+
+  it.effect(
+    "requires provider permission for provider-only settings and both grants for mixed changes",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const registry = yield* setup;
+          const settings = createCommandPermissions(runtime, WS_METHODS.serverUpdateSettings);
+          const providerOnly = {
+            patch: {},
+            providerInstanceMutation: {
+              operation: "remove",
+              instanceId: ProviderInstanceId.make("work"),
+            },
+          };
+          const mixed = { ...providerOnly, patch: { environmentLabel: "Studio" } };
+          const providerPatch = { patch: { providerInstances: {} } };
+          registry.set(
+            sessions(env),
+            AsyncResult.success({
+              ...grant(false),
+              scopes: [AuthProvidersManageScope],
+              permissions: [AuthProvidersManageScope],
+            }),
+          );
+          expect(registry.get(settings.permissionAtom(env))).toBe(false);
+          expect(registry.get(settings.permissionAtom(env, providerOnly))).toBe(true);
+          yield* settings.authorize(registry, env, providerOnly);
+          expect(registry.get(settings.permissionAtom(env, providerPatch))).toBe(true);
+          yield* settings.authorize(registry, env, providerPatch);
+          expect(registry.get(settings.permissionAtom(env, mixed))).toBe(false);
+          expect(
+            (yield* settings.authorize(registry, env, mixed).pipe(Effect.flip)).requiredPermission,
+          ).toBe(AuthSettingsWriteScope);
+          registry.set(
+            sessions(env),
+            AsyncResult.success({
+              ...grant(false),
+              scopes: [AuthSettingsWriteScope],
+              permissions: [AuthSettingsWriteScope],
+            }),
+          );
+          expect(registry.get(settings.permissionAtom(env, providerOnly))).toBe(false);
+          expect(registry.get(settings.permissionAtom(env, providerPatch))).toBe(false);
+          expect(
+            (yield* settings.authorize(registry, env, providerOnly).pipe(Effect.flip))
+              .requiredPermission,
+          ).toBe(AuthProvidersManageScope);
+          registry.set(
+            sessions(env),
+            AsyncResult.success({
+              ...grant(false),
+              scopes: [AuthSettingsWriteScope, AuthProvidersManageScope],
+              permissions: [AuthSettingsWriteScope, AuthProvidersManageScope],
+            }),
+          );
+          expect(registry.get(settings.permissionAtom(env, mixed))).toBe(true);
+          yield* settings.authorize(registry, env, mixed);
+        }),
+      ),
   );
 
   it.effect("requires the destination settings grant to run storage cleanup", () =>

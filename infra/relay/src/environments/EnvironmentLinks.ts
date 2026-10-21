@@ -9,7 +9,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { and, eq, isNull, or, sql } from "drizzle-orm";
+import { and, eq, isNull, lte, or, sql } from "drizzle-orm";
 
 import * as RelayDb from "../db.ts";
 import { relayEnvironmentLinks } from "../persistence/schema.ts";
@@ -87,6 +87,18 @@ export class EnvironmentLinkEnvironmentLookupPersistenceError extends Schema.Tag
   }
 }
 
+export class EnvironmentLinkLabelUpdatePersistenceError extends Schema.TaggedError<EnvironmentLinkLabelUpdatePersistenceError>()(
+  "EnvironmentLinkLabelUpdatePersistenceError",
+  {
+    environmentId: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to update the label for environment '${this.environmentId}'`;
+  }
+}
+
 export class EnvironmentLinkRevokePersistenceError extends Schema.TaggedError<EnvironmentLinkRevokePersistenceError>()(
   "EnvironmentLinkRevokePersistenceError",
   {
@@ -149,6 +161,23 @@ export class EnvironmentLinks extends Context.Service<
       readonly environmentPublicKey: string;
       readonly holdWebhooksWhileOffline: boolean;
     }) => Effect.Effect<void, EnvironmentLinkEnvironmentLookupPersistenceError>;
+    readonly updateLabel: (input: {
+      readonly userId: string;
+      readonly environmentId: string;
+      readonly environmentPublicKey: string;
+      readonly label: string;
+      readonly checkedAt: string;
+    }) => Effect.Effect<void, EnvironmentLinkLabelUpdatePersistenceError>;
+    /**
+     * Stores a label the environment pushed on every active link to its
+     * verified key, stamped with relay time so an earlier status probe cannot
+     * restore the previous name.
+     */
+    readonly recordEnvironmentLabel: (input: {
+      readonly environmentId: string;
+      readonly environmentPublicKey: string;
+      readonly label: string;
+    }) => Effect.Effect<void, EnvironmentLinkLabelUpdatePersistenceError>;
     readonly revokeForUser: (input: {
       readonly userId: string;
       readonly environmentId: string;
@@ -173,6 +202,42 @@ function agentAwarenessDeliveryUserKeyCondition(input: {
 
 const make = Effect.gen(function* () {
   const db = yield* RelayDb.RelayDb;
+
+  const updateLinkLabels = Effect.fn("relay.environment_links.update_label")(function* (input: {
+    readonly userId?: string;
+    readonly environmentId: string;
+    readonly environmentPublicKey: string;
+    readonly label: string;
+    readonly checkedAt: string;
+  }) {
+    yield* Effect.annotateCurrentSpan({
+      "relay.environment_id": input.environmentId,
+    });
+    yield* db
+      .update(relayEnvironmentLinks)
+      .set({
+        environmentLabel: input.label,
+        updatedAt: input.checkedAt,
+      })
+      .where(
+        and(
+          input.userId === undefined ? undefined : eq(relayEnvironmentLinks.userId, input.userId),
+          eq(relayEnvironmentLinks.environmentId, input.environmentId),
+          eq(relayEnvironmentLinks.environmentPublicKey, input.environmentPublicKey),
+          isNull(relayEnvironmentLinks.revokedAt),
+          lte(relayEnvironmentLinks.updatedAt, input.checkedAt),
+        ),
+      )
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new EnvironmentLinkLabelUpdatePersistenceError({
+              environmentId: input.environmentId,
+              cause,
+            }),
+        ),
+      );
+  });
 
   return EnvironmentLinks.of({
     upsert: Effect.fn("relay.environment_links.upsert")(function* (input) {
@@ -451,6 +516,15 @@ const make = Effect.gen(function* () {
           ),
         );
     }),
+
+    updateLabel: updateLinkLabels,
+
+    recordEnvironmentLabel: Effect.fn("relay.environment_links.record_environment_label")(
+      function* (input) {
+        const checkedAt = DateTime.formatIso(yield* DateTime.now);
+        yield* updateLinkLabels({ ...input, checkedAt });
+      },
+    ),
 
     revokeForUser: Effect.fn("relay.environment_links.revoke_for_user")(function* (input) {
       yield* Effect.annotateCurrentSpan({

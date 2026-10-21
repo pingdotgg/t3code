@@ -21,6 +21,7 @@ import { resolveServerSelfUpdateCapability } from "../cloud/selfUpdate.ts";
 import { resolveServiceLauncherMode } from "../cloud/serviceLauncherClient.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
 import { detectServerEnvironmentMachineKind } from "./ServerEnvironmentMachine.ts";
 
@@ -45,6 +46,9 @@ export class ServerEnvironment extends Context.Service<
   {
     readonly getEnvironmentId: Effect.Effect<EnvironmentId>;
     readonly getDescriptor: Effect.Effect<ExecutionEnvironmentDescriptor>;
+    readonly getDescriptorForSettings: (settings: {
+      readonly environmentLabel: string;
+    }) => Effect.Effect<ExecutionEnvironmentDescriptor>;
   }
 >()("t3/environment/ServerEnvironment") {}
 
@@ -185,12 +189,13 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig.ServerConfig;
   const secrets = yield* ServerSecretStore.ServerSecretStore;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
   const identity = yield* ServerEnvironmentIdentity;
   const hostPlatform = yield* HostProcess.Platform;
   const hostArchitecture = yield* HostProcess.Architecture;
   const environmentId = yield* identity.getEnvironmentId;
   const cwdBaseName = path.basename(serverConfig.cwd).trim();
-  const label = yield* resolveServerEnvironmentLabel({ cwdBaseName });
+  const defaultLabel = yield* resolveServerEnvironmentLabel({ cwdBaseName });
   const machine = yield* detectServerEnvironmentMachineKind();
   const launcher = yield* resolveServiceLauncherMode();
   const serverSelfUpdate = resolveServerSelfUpdateCapability({
@@ -205,9 +210,9 @@ export const make = Effect.gen(function* () {
   const desktopAppUpdate =
     serverSelfUpdate === "desktop-managed" && serverConfig.desktopTelemetryControlFd !== undefined;
 
-  const descriptor: ExecutionEnvironmentDescriptor = {
+  const defaultDescriptor: ExecutionEnvironmentDescriptor = {
     environmentId,
-    label,
+    label: defaultLabel,
     platform: {
       os: platformOs(hostPlatform),
       arch: platformArch(hostArchitecture),
@@ -257,6 +262,7 @@ export const make = Effect.gen(function* () {
       serverResolvedCommandContext: true,
       threadStop: true,
       environmentIcon: true,
+      environmentLabel: true,
       projectCloneTracking: true,
       ignoredFileListing: true,
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
@@ -268,18 +274,29 @@ export const make = Effect.gen(function* () {
       serverBrowser: true,
     },
   };
+  // Relay publishing can change while the server is running; read it for every descriptor.
+  const getDescriptorForSettings = (settings: { readonly environmentLabel: string }) =>
+    readAgentActivityPublishingActive(secrets).pipe(
+      Effect.map((agentActivityPublishing): ExecutionEnvironmentDescriptor => ({
+        ...defaultDescriptor,
+        label: settings.environmentLabel || defaultLabel,
+        capabilities: { ...defaultDescriptor.capabilities, agentActivityPublishing },
+      })),
+    );
 
   return ServerEnvironment.of({
     getEnvironmentId: Effect.succeed(environmentId),
-    // The publish opt-in and relay link change at runtime (`t3 connect
-    // publish`, the client settings toggle), so the capability is read per
-    // descriptor request rather than baked in at startup.
-    getDescriptor: readAgentActivityPublishingActive(secrets).pipe(
-      Effect.map((agentActivityPublishing) => ({
-        ...descriptor,
-        capabilities: { ...descriptor.capabilities, agentActivityPublishing },
-      })),
+    getDescriptor: serverSettings.getSettings.pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Failed to read the configured environment label.", {
+          settingsPath: error.settingsPath,
+          operation: error.operation,
+          cause: error.cause,
+        }).pipe(Effect.as({ environmentLabel: "" })),
+      ),
+      Effect.flatMap(getDescriptorForSettings),
     ),
+    getDescriptorForSettings,
   });
 });
 

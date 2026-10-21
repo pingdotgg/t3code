@@ -563,6 +563,25 @@ const make = Effect.gen(function* () {
           operation: "status",
         });
       }
+      // Order persistence by relay probe start time, matching the clock used for link writes.
+      // Record unchanged labels too so a newer reset probe blocks an older rename response.
+      yield* links
+        .updateLabel({
+          userId: input.userId,
+          environmentId: input.environmentId,
+          environmentPublicKey: link.environmentPublicKey,
+          label: decoded.descriptor.label,
+          checkedAt,
+        })
+        .pipe(
+          Effect.tapError((error) =>
+            Effect.logWarning("managed environment label persistence failed", {
+              environmentId: input.environmentId,
+              errorTag: error._tag,
+            }),
+          ),
+          Effect.ignore,
+        );
       return {
         environmentId: link.environmentId,
         endpoint,

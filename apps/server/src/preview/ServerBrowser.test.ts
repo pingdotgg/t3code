@@ -255,6 +255,7 @@ const dependencies = Layer.mergeAll(
   Layer.succeed(ServerEnvironment.ServerEnvironment, {
     getEnvironmentId: Effect.succeed(scope.environmentId),
     getDescriptor: Effect.die("unused descriptor"),
+    getDescriptorForSettings: () => Effect.die("unused descriptor"),
   }),
   Layer.succeed(PreviewBrowser.PreviewBrowser, {
     executable: Effect.die("mock Chromium does not need an executable"),

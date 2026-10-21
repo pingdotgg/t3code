@@ -201,6 +201,19 @@ describe("ServerSettings worktree defaults", () => {
   });
 });
 
+describe("ServerSettings environment label", () => {
+  it("uses an empty override for legacy configs", () => {
+    expect(decodeServerSettings({}).environmentLabel).toBe("");
+  });
+
+  it("trims environment label updates and allows clearing the override", () => {
+    expect(decodeServerSettingsPatch({ environmentLabel: "  Studio Mac  " }).environmentLabel).toBe(
+      "Studio Mac",
+    );
+    expect(decodeServerSettingsPatch({ environmentLabel: "   " }).environmentLabel).toBe("");
+  });
+});
+
 describe("ServerSettings.sourceControlWritingStyle", () => {
   it.each([
     { legacy: "", mode: "repo_conventions", customInstructions: "" },

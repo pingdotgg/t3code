@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   connectionCatalogDisplayUrl,
+  environmentDisplayLabel,
   hasRelayRoute,
   type EnvironmentPresentation as BaseEnvironmentPresentation,
 } from "@t3tools/client-runtime/connection";
@@ -32,7 +33,7 @@ function projectEnvironmentPresentation(
   return {
     ...presentation,
     environmentId,
-    label: presentation.entry.target.label,
+    label: environmentDisplayLabel(presentation.entry, presentation.serverConfig),
     displayUrl: connectionCatalogDisplayUrl(presentation.entry),
     relayManaged: hasRelayRoute(presentation.entry),
   };

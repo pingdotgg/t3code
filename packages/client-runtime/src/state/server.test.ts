@@ -381,6 +381,35 @@ describe("server state projection", () => {
     ).toBe(true);
   });
 
+  it("carries the live environment name through settings updates", () => {
+    const snapshot = applyServerConfigProjection(Option.none(), {
+      version: 1,
+      type: "snapshot",
+      config: CONFIG,
+    });
+    const settings = { ...CONFIG.settings };
+    const environment = {
+      ...CONFIG.environment,
+      label: "Renamed environment",
+    } as ServerConfig["environment"];
+    const projected = applyServerConfigProjection(snapshot, {
+      version: 1,
+      type: "settingsUpdated",
+      payload: { settings, environment },
+    });
+
+    expect(Option.getOrThrow(projected).config.environment).toBe(environment);
+
+    const legacyUpdate = Option.getOrThrow(
+      applyServerConfigProjection(projected, {
+        version: 1,
+        type: "settingsUpdated",
+        payload: { settings },
+      }),
+    );
+    expect(legacyUpdate.config.environment).toBe(environment);
+  });
+
   it("keeps published themes across a reconnect snapshot", () => {
     const themes = [
       {

@@ -1,3 +1,4 @@
+import { environmentDisplayLabel } from "@t3tools/client-runtime/connection";
 import { useAtomValue } from "@effect/atom-react";
 import { AuthSettingsWriteScope, type EnvironmentId, sessionGrantsScope } from "@t3tools/contracts";
 import { ChevronDownIcon, PlusIcon, RotateCcwIcon, XIcon } from "lucide-react";
@@ -59,7 +60,7 @@ const priceTargetsAtom = Atom.make((get): readonly UsagePriceTarget[] =>
             : "denied";
     return {
       environmentId,
-      label: environment.entry.target.label,
+      label: environmentDisplayLabel(environment.entry, environment.serverConfig),
       prices: settings?.usagePriceOverrides ?? null,
       aliases:
         environment.serverConfig?.environment.capabilities.usageModelAliases === true

@@ -40,6 +40,7 @@ import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Button } from "../ui/button";
+import { DraftInput } from "../ui/draft-input";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import {
   resolveServerConfigVersionMismatch,
@@ -105,6 +106,48 @@ function savedBackendStatus(environment: EnvironmentPresentation): {
   }
 }
 
+/**
+ * Renames a Connect host for every client. Manual connections keep the label
+ * saved on this device, so only Connect rows offer this.
+ */
+function RemoteHostNameField({ environment }: { readonly environment: EnvironmentPresentation }) {
+  const environmentId = environment.environmentId;
+  const updateSettings = useAtomCommand(serverEnvironment.updateSettings, "Update host name");
+  const canUpdateSettings = useAtomValue(
+    serverEnvironment.updateSettings.permissionAtom(environmentId),
+  );
+  const connected = environment.connection.phase === "connected";
+  const supported = environment.serverConfig?.environment.capabilities.environmentLabel === true;
+  return (
+    <div className="mt-2 flex flex-col gap-1.5 border-t border-border/50 py-2">
+      <DraftInput
+        size="sm"
+        className="w-full sm:w-64"
+        value={environment.serverConfig?.settings.environmentLabel ?? ""}
+        onCommit={(next) =>
+          void updateSettings({
+            environmentId,
+            input: { patch: { environmentLabel: next.trim() } },
+          })
+        }
+        placeholder="Use the machine’s name"
+        aria-label={`Host name for ${environment.label}`}
+        disabled={!connected || !supported || !canUpdateSettings}
+        spellCheck={false}
+      />
+      <p className="text-xs text-muted-foreground">
+        {!connected
+          ? "Connect to this environment to change its host name."
+          : !supported
+            ? "Update this environment to change its host name."
+            : !canUpdateSettings
+              ? "You need permission to update this environment’s settings."
+              : "Shown to every client. Clear it to use the machine’s name."}
+      </p>
+    </div>
+  );
+}
+
 export function SavedBackendListRow({
   environment,
   removingEnvironmentId,
@@ -115,7 +158,9 @@ export function SavedBackendListRow({
   const [routesOpen, setRoutesOpen] = useState(false);
   const [permissionsOpen, setPermissionsOpen] = useState(false);
   const [diagnosisOpen, setDiagnosisOpen] = useState(false);
+  const [hostNameOpen, setHostNameOpen] = useState(false);
   const environmentId = environment.environmentId;
+  const isConnectHost = environment.entry.target._tag === "RelayConnectionTarget";
   const unsupported = environment.connection.phase === "unsupported";
   const blocked = unsupported && !hasSavedBearerRoute(environment.entry);
   const enabled = environment.entry.enabled && !unsupported;
@@ -324,6 +369,7 @@ export function SavedBackendListRow({
       }
       detail={
         <>
+          {hostNameOpen && isConnectHost && <RemoteHostNameField environment={environment} />}
           {diagnosis && diagnosisOpen ? (
             <ConnectionDiagnosisPanel
               hostLabel={environment.label}
@@ -412,6 +458,11 @@ export function SavedBackendListRow({
             environmentId={environmentId}
             serverConfig={environment.serverConfig}
           />
+          {isConnectHost ? (
+            <MenuItem onClick={() => setHostNameOpen((open) => !open)}>
+              {hostNameOpen ? "Hide host name" : "Host name"}
+            </MenuItem>
+          ) : null}
           <MenuItem onClick={() => setRoutesOpen((open) => !open)}>
             <RouteIcon />
             {routesOpen ? "Hide routes" : "Routes"}

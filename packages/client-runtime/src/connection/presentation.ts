@@ -33,6 +33,17 @@ export interface EnvironmentPresentation {
   readonly serverConfig: EnvironmentServerConfig | null;
 }
 
+/** Manual routes keep their device-local alias; primary and Connect hosts share a live name. */
+export function environmentDisplayLabel(
+  entry: ConnectionCatalogEntry,
+  serverConfig: Pick<ServerConfig, "environment"> | null,
+): string {
+  return entry.target._tag === "PrimaryConnectionTarget" ||
+    entry.target._tag === "RelayConnectionTarget"
+    ? (serverConfig?.environment.label ?? entry.target.label)
+    : entry.target.label;
+}
+
 export function presentConnectionState(
   state: SupervisorConnectionState,
 ): EnvironmentConnectionPresentation {

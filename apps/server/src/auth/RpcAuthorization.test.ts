@@ -143,6 +143,37 @@ describe("settings mutation authorization", () => {
     instanceId: ProviderInstanceId.make("codex_work"),
   };
 
+  it.effect("allows a remote host rename only with settings permission", () =>
+    Effect.gen(function* () {
+      const renamed: Array<string | undefined> = [];
+      const handlers = group.toLayerHandler(WS_METHODS.serverUpdateSettings, (input) =>
+        Effect.sync(() => {
+          renamed.push(input.patch.environmentLabel);
+          return DEFAULT_SERVER_SETTINGS;
+        }),
+      );
+      const denied = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(handlers, RpcAuthorization.layer([AuthProvidersManageScope])),
+        ),
+      );
+      expect(
+        yield* denied[WS_METHODS.serverUpdateSettings]({
+          patch: { environmentLabel: "Studio Mac" },
+        }).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthSettingsWriteScope });
+      expect(renamed).toEqual([]);
+      const allowed = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(Layer.mergeAll(handlers, RpcAuthorization.layer([AuthSettingsWriteScope]))),
+      );
+      yield* allowed[WS_METHODS.serverUpdateSettings]({
+        patch: { environmentLabel: "Studio Mac" },
+      });
+      yield* allowed[WS_METHODS.serverUpdateSettings]({ patch: { environmentLabel: "" } });
+      expect(renamed).toEqual(["Studio Mac", ""]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("allows provider-only mutations while denying mixed settings without their grant", () =>
     Effect.gen(function* () {
       let handled = 0;

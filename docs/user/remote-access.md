@@ -32,6 +32,19 @@ connection. Pull request diffs and provider settings keep working after the
 previous credential expires. A failed renewal affects that request; it does not
 disconnect an otherwise healthy conversation.
 
+## Name this host
+
+In the web or desktop app, open Settings → Connections and edit Host name. Connected clients and
+T3 Connect use the new name without a server restart.
+
+To rename another T3 Connect host, open its row menu in Settings → Connections and choose Host
+name. On mobile, open Settings → Environments, choose a T3 Connect host, and edit Host name.
+You need permission to update that environment’s settings. Labels on manually paired
+connections remain local to your device.
+
+Clear the field to return to the name detected from the host operating system. This setting changes
+the environment name shown by T3 Code; it does not change the machine's operating-system hostname.
+
 ## Pair over a LAN or private network
 
 Use direct pairing when the other device can reach the host's network address.

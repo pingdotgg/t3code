@@ -10,12 +10,22 @@ import {
   filterSharedServerPatch,
   findSharedSettingsMismatches,
   pickSharedServerSettings,
+  splitSharedServerPatch,
 } from "./sharedSettings.ts";
 
 const primaryId = EnvironmentId.make("env-primary");
 const laptopId = EnvironmentId.make("env-laptop");
 const boxId = EnvironmentId.make("env-box");
 const restartCapabilities = { threadRestartContinuation: true };
+
+describe("splitSharedServerPatch", () => {
+  it("keeps host names on the environment being edited", () => {
+    expect(splitSharedServerPatch({ environmentLabel: "Studio Mac" })).toEqual({
+      sharedPatch: {},
+      localPatch: { environmentLabel: "Studio Mac" },
+    });
+  });
+});
 
 describe("filterSharedServerPatch", () => {
   it.each([true, false])(

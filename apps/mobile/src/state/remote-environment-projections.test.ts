@@ -2,7 +2,11 @@ import type {
   EnvironmentPresentation,
   PreparedConnection,
 } from "@t3tools/client-runtime/connection";
-import { PrimaryConnectionTarget } from "@t3tools/client-runtime/connection";
+import {
+  PrimaryConnectionTarget,
+  RelayConnectionTarget,
+  BearerConnectionTarget,
+} from "@t3tools/client-runtime/connection";
 import type { ServerConfig } from "@t3tools/contracts";
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
@@ -76,6 +80,56 @@ function makeHarness() {
 }
 
 describe("remote environment projections", () => {
+  it("updates a Connect label live while keeping manual aliases and credentials stable", () => {
+    const harness = makeHarness();
+    const relay = presentation(ENVIRONMENT_ID);
+    const manual = presentation(OTHER_ENVIRONMENT_ID);
+    const relayPresentation = {
+      ...relay,
+      entry: {
+        ...relay.entry,
+        target: new RelayConnectionTarget({ environmentId: ENVIRONMENT_ID, label: "Catalog host" }),
+      },
+    };
+    const manualPresentation = {
+      ...manual,
+      entry: {
+        ...manual.entry,
+        target: new BearerConnectionTarget({
+          environmentId: OTHER_ENVIRONMENT_ID,
+          label: "My alias",
+          connectionId: "manual",
+        }),
+      },
+    };
+    harness.registry.set(harness.presentationAtom(ENVIRONMENT_ID), relayPresentation);
+    harness.registry.set(harness.presentationAtom(OTHER_ENVIRONMENT_ID), manualPresentation);
+    harness.registry.set(
+      harness.preparedConnectionAtom(ENVIRONMENT_ID),
+      Option.some(prepared(ENVIRONMENT_ID, "direct-fallback", "test-token")),
+    );
+    const relayAtom = harness.projections.savedConnectionAtom(ENVIRONMENT_ID);
+    const manualAtom = harness.projections.savedConnectionAtom(OTHER_ENVIRONMENT_ID);
+    const manualBefore = harness.registry.get(manualAtom);
+    const routeBefore = harness.registry.get(relayAtom);
+    for (const label of ["Studio Mac", "Detected Mac"]) {
+      const config = { environment: { label } } as ServerConfig;
+      harness.registry.set(harness.presentationAtom(ENVIRONMENT_ID), {
+        ...relayPresentation,
+        serverConfig: config,
+      });
+      harness.registry.set(harness.presentationAtom(OTHER_ENVIRONMENT_ID), {
+        ...manualPresentation,
+        serverConfig: config,
+      });
+      expect(harness.registry.get(relayAtom)?.environmentLabel).toBe(label);
+      expect(harness.registry.get(relayAtom)?.bearerToken).toBe(routeBefore?.bearerToken);
+      expect(harness.registry.get(relayAtom)?.httpBaseUrl).toBe(routeBefore?.httpBaseUrl);
+      expect(harness.registry.get(manualAtom)).toBe(manualBefore);
+      expect(harness.registry.get(manualAtom)?.environmentLabel).toBe("My alias");
+    }
+    harness.registry.dispose();
+  });
   it("shares each environment projection and invalidates only changed inputs", () => {
     const harness = makeHarness();
     const firstConsumer = Atom.make((get) =>

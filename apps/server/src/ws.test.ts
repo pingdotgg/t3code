@@ -116,18 +116,29 @@ import {
 const snapshotConfig = (fields: Partial<ServerConfig>) =>
   ({ availableEditors: [], settings: {}, ...fields }) as unknown as ServerConfig;
 
-const settingsUpdated = (settings: object): ServerConfigStreamEvent => ({
+const settingsUpdated = (
+  settings: object,
+  environment?: ServerConfig["environment"],
+): ServerConfigStreamEvent => ({
   version: 1,
   type: "settingsUpdated",
-  payload: { settings: settings as ServerConfig["settings"] },
+  payload: {
+    settings: settings as ServerConfig["settings"],
+    ...(environment === undefined ? {} : { environment }),
+  },
 });
 
 it.effect("resends late editors without rolling back updates already sent", () =>
   Effect.gen(function* () {
     const settingsSent = yield* Deferred.make<void>();
     const events = yield* withLateEditorConfig(
-      snapshotConfig({ settings: { enableProviderUpdateChecks: true } as never }),
-      Stream.make(settingsUpdated({ enableProviderUpdateChecks: false })),
+      snapshotConfig({
+        settings: { enableProviderUpdateChecks: true } as never,
+        environment: { label: "Initial host" } as never,
+      }),
+      Stream.make(
+        settingsUpdated({ enableProviderUpdateChecks: false }, { label: "Renamed host" } as never),
+      ),
       {
         resolveAvailableEditors: () => Effect.succeed(["file-manager"]),
         resolveFileManagerRevealKind: () =>
@@ -148,6 +159,7 @@ it.effect("resends late editors without rolling back updates already sent", () =
       assert.deepEqual(second.config.availableEditors, ["file-manager"]);
       assert.equal(second.config.shellRevealInFileManagerKind, "file-explorer");
       assert.deepEqual(second.config.settings, { enableProviderUpdateChecks: false } as never);
+      assert.equal(second.config.environment.label, "Renamed host");
     }
   }),
 );
@@ -374,6 +386,13 @@ it.effect(
   "preserves settings during discovery and keybindings during snapshot ACK at the config RPC boundary",
   () =>
     Effect.gen(function* () {
+      const configTestDescriptor = {
+        environmentId: EnvironmentId.make("config-test"),
+        label: "Config test",
+        platform: { os: "linux" as const, arch: "x64" as const },
+        serverVersion: "0.0.0",
+        capabilities: { repositoryIdentity: false },
+      };
       const keybindings = yield* Keybindings.Keybindings;
       const settings = yield* ServerSettings.ServerSettingsService;
       const keybindingsSubscribed = yield* Deferred.make<void>();
@@ -412,13 +431,8 @@ it.effect(
           namedProjectsRoot: process.cwd(),
         }),
         Layer.mock(ServerEnvironment.ServerEnvironment)({
-          getDescriptor: Effect.succeed({
-            environmentId: EnvironmentId.make("config-test"),
-            label: "Config test",
-            platform: { os: "linux", arch: "x64" },
-            serverVersion: "0.0.0",
-            capabilities: { repositoryIdentity: false },
-          }),
+          getDescriptor: Effect.succeed(configTestDescriptor),
+          getDescriptorForSettings: () => Effect.succeed(configTestDescriptor),
         }),
         Layer.mock(EnvironmentAuth.EnvironmentAuth)({
           getDescriptor: () =>
