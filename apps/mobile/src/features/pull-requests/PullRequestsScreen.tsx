@@ -204,7 +204,9 @@ export function PullRequestsScreen(
   const projects = pullRequestFilterProjects(
     allProjects.filter(
       (project) =>
-        !project.isScratch && (environmentId === null || project.environmentId === environmentId),
+        !project.isScratch &&
+        configs.get(project.environmentId)?.environment.capabilities.pullRequests === true &&
+        (environmentId === null || project.environmentId === environmentId),
     ),
     new Map(environments.map((item) => [item.environmentId, item.environmentLabel])),
     allProjects.find(
