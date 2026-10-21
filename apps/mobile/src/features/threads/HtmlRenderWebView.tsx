@@ -136,9 +136,8 @@ export function HtmlRenderWebView(props: {
         showsVerticalScrollIndicator={!props.nested}
         showsHorizontalScrollIndicator={!props.nested}
         scrollEnabled={scrollable}
-        // Android only: the page holds vertical drags until it reaches an edge,
-        // then hands them to the feed (patches/react-native-webview). A page
-        // that only overflows sideways leaves vertical drags to the feed.
+        // Android's patched WebView always keeps horizontal drags. Only pages
+        // with vertical overflow hold vertical drags until they reach an edge.
         nestedScrollEnabled={props.nested && overflow.y}
         overScrollMode={props.nested ? "never" : "always"}
         onShouldStartLoadWithRequest={(request) =>
