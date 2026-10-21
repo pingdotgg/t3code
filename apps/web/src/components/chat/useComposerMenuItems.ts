@@ -14,7 +14,7 @@ import {
 } from "@t3tools/shared/composerPullRequestMatches";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 
-import type { ComposerTrigger } from "../../composer-logic";
+import { searchComposerMentionModels, type ComposerTrigger } from "../../composer-logic";
 import { basenameOfPath } from "../../pierre-icons";
 import {
   getProviderSkillsForSlashMenu,
@@ -44,7 +44,7 @@ const COMPOSER_PULL_REQUEST_RESULT_LIMIT = 12;
 const EMPTY_PULL_REQUEST_LIST_TARGETS: ReadonlyArray<EnvironmentQueryTarget<PullRequestListInput>> =
   [];
 
-/** Builds the @, /, $ and # suggestion lists, running the searches each trigger needs. */
+/** Builds the @, /, $, # and ^ suggestion lists, running the searches each trigger needs. */
 export function useComposerMenuItems({
   composerTrigger,
   environmentId,
@@ -56,6 +56,8 @@ export function useComposerMenuItems({
   planModeUiEnabled,
   compactSlashCommandAvailable,
   selectedProvider,
+  selectedProviderModels,
+  selectedInstanceId,
   selectedProviderSkills,
   selectedProviderSlashCommands,
   showSkillsInSlashMenu,
@@ -70,6 +72,8 @@ export function useComposerMenuItems({
   readonly planModeUiEnabled: boolean;
   readonly compactSlashCommandAvailable: boolean;
   readonly selectedProvider: ProviderDriverKind;
+  readonly selectedProviderModels: ServerProvider["models"];
+  readonly selectedInstanceId: ServerProvider["instanceId"];
   readonly selectedProviderSkills: ServerProvider["skills"];
   readonly selectedProviderSlashCommands: ServerProvider["slashCommands"];
   readonly showSkillsInSlashMenu: boolean;
@@ -155,6 +159,18 @@ export function useComposerMenuItems({
 
   const items = ((): ComposerCommandItem[] => {
     if (!composerTrigger) return [];
+    if (composerTrigger.kind === "model-mention") {
+      return searchComposerMentionModels(selectedProviderModels, composerTrigger.query).map(
+        (model) => ({
+          id: `model-mention:${selectedInstanceId}:${model.slug}`,
+          type: "model-mention" as const,
+          instanceId: selectedInstanceId,
+          model: model.slug,
+          label: `^${model.slug}`,
+          description: model.name,
+        }),
+      );
+    }
     if (composerTrigger.kind === "path") {
       return [
         ...matchComposerThreadItems({
@@ -318,6 +334,7 @@ export function useComposerMenuItems({
         pullRequestTriggerNumber !== debouncedPullRequestNumber ||
         exactPullRequestLookup.isPending));
   const emptyState = (() => {
+    if (composerTriggerKind === "model-mention") return "No matching OMP models.";
     if (composerTriggerKind === "skill") {
       return "No skills found. Try / to browse provider commands.";
     }

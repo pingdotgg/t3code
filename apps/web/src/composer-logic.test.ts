@@ -1,5 +1,12 @@
 import { filterComposerPullRequestMatches } from "@t3tools/shared/composerPullRequestMatches";
-import { EnvironmentId, MessageId, ThreadId, type AssistantCitation } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  MessageId,
+  ThreadId,
+  ProviderDriverKind,
+  type AssistantCitation,
+  type ServerProviderModel,
+} from "@t3tools/contracts";
 import {
   collectAssistantCitations,
   expandAssistantCitationsForProvider,
@@ -23,6 +30,8 @@ import {
   isCollapsedCursorAdjacentToInlineToken,
   isPathSuggestionCurrent,
   replaceTextRange,
+  supportsOmpModelMentions,
+  searchComposerMentionModels,
 } from "./composer-logic";
 import { carryDisplacedCustomAnswerIntoPrompt } from "./pendingUserInput";
 import { formatTerminalContextReference } from "./lib/terminalContext";
@@ -46,6 +55,94 @@ const citation: AssistantCitation = {
   suffix: " 後",
 };
 const citationSource = serializeAssistantCitation(citation).replaceAll("+", "%20");
+
+describe("OMP model mentions", () => {
+  const omp = {
+    driver: ProviderDriverKind.make("acpRegistry"),
+    config: {
+      source: "local",
+      commandPath: "/home/ubuntu/.local/bin/omp",
+      commandArgs: ["acp", "--config", "/config/t3.yml"],
+    },
+  };
+
+  it("recognizes the configured ACP executable, independent of the instance label", () => {
+    expect(supportsOmpModelMentions(omp)).toBe(true);
+    expect(supportsOmpModelMentions({ ...omp, displayName: "Renamed agent" })).toBe(true);
+    expect(
+      supportsOmpModelMentions({
+        ...omp,
+        config: { ...omp.config, commandPath: "C:\\tools\\omp.exe" },
+      }),
+    ).toBe(true);
+    expect(supportsOmpModelMentions(undefined)).toBe(false);
+    expect(supportsOmpModelMentions({ ...omp, driver: ProviderDriverKind.make("codex") })).toBe(
+      false,
+    );
+    expect(
+      supportsOmpModelMentions({
+        ...omp,
+        config: { ...omp.config, commandPath: "/bin/other", displayName: "OMP" },
+      }),
+    ).toBe(false);
+    expect(supportsOmpModelMentions({ ...omp, config: { ...omp.config, commandArgs: [] } })).toBe(
+      false,
+    );
+  });
+
+  it.each(["^", "Please delegate to ^", "first\n^openai-codex/gpt", "first\t^gpt"])(
+    "detects a whitespace-delimited model mention in %j",
+    (text) => {
+      expect(detectComposerTrigger(text, text.length, true)).toEqual({
+        kind: "model-mention",
+        query: text.slice(text.lastIndexOf("^") + 1),
+        rangeStart: text.lastIndexOf("^"),
+        rangeEnd: text.length,
+      });
+      expect(detectComposerTrigger(text, text.length)).toBeNull();
+    },
+  );
+
+  it.each(["x^gpt", "(^gpt", "2^3", "^gpt "])(
+    "does not trigger inside another token or after whitespace in %j",
+    (text) => {
+      expect(detectComposerTrigger(text, text.length, true)).toBeNull();
+    },
+  );
+
+  const models: ServerProviderModel[] = [
+    { slug: "openai-codex/gpt-6.1-sol", name: "GPT 6.1 Sol", isCustom: false, capabilities: null },
+    {
+      slug: "maisa-codex/gpt-daybreak-blue-latest",
+      name: "Daybreak Blue",
+      isCustom: false,
+      capabilities: null,
+    },
+    { slug: "default", name: "Default", isCustom: false, capabilities: null },
+  ];
+
+  it("uses qualified catalog IDs verbatim and searches their names and selectors", () => {
+    expect(searchComposerMentionModels(models, "").map((model) => model.slug)).toEqual(
+      models.slice(0, 2).map((model) => model.slug),
+    );
+    expect(searchComposerMentionModels(models, "OPENAI-CODEX/GPT")).toEqual([models[0]]);
+    expect(searchComposerMentionModels(models, "Daybreak Blue")).toEqual([models[1]]);
+    expect(searchComposerMentionModels(models, "nonexistent")).toEqual([]);
+  });
+
+  it("inserts a literal selector in the middle of a prompt and preserves the rest", () => {
+    const text = "Delegate to ^openai and report back";
+    const trigger = detectComposerTrigger(text, text.indexOf(" and"), true)!;
+    const model = searchComposerMentionModels(models, trigger.query)[0]!;
+    const inserted = replaceTextRange(text, trigger.rangeStart, trigger.rangeEnd, `^${model.slug}`);
+    expect(inserted.text).toBe("Delegate to ^openai-codex/gpt-6.1-sol and report back");
+    expect(expandCollapsedComposerCursor(inserted.text, inserted.cursor)).toBe(inserted.cursor);
+    expect(composerStateAtPromptEnd("delegate ^openai", false, true).trigger?.kind).toBe(
+      "model-mention",
+    );
+    expect(composerStateAtPromptEnd("delegate ^openai", true, true).trigger).toBeNull();
+  });
+});
 
 describe("isPathSuggestionCurrent", () => {
   const searchedTarget = {

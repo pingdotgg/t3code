@@ -3,6 +3,8 @@ import type {
   AssistantCitation,
   EnvironmentId,
   ResolvedKeybindingsConfig,
+  ProviderInstanceConfig,
+  ServerProviderModel,
 } from "@t3tools/contracts";
 import type { ComposerPathSearchTarget } from "@t3tools/client-runtime/state/threads";
 import {
@@ -17,7 +19,12 @@ import {
 
 import { resolveShortcutCommand, type ShortcutEventLike } from "./keybindings";
 
-export type ComposerTriggerKind = "path" | "pull-request" | "slash-command" | "skill";
+export type ComposerTriggerKind =
+  | "path"
+  | "pull-request"
+  | "slash-command"
+  | "skill"
+  | "model-mention";
 export type ComposerSlashCommand = "model" | "plan" | "default";
 export type ComposerSubmissionIntent = "foreground" | "background" | "alternate";
 
@@ -278,10 +285,53 @@ export function isCollapsedCursorAdjacentToInlineToken(
   return false;
 }
 
-export function detectComposerTrigger(text: string, cursorInput: number): ComposerTrigger | null {
+/** Local ACP commands have no registry agent ID; identify OMP by its executable, never its label. */
+export function supportsOmpModelMentions(instance: ProviderInstanceConfig | undefined): boolean {
+  if (instance?.driver !== "acpRegistry") return false;
+  const config = instance.config;
+  if (typeof config !== "object" || config === null) return false;
+  return (
+    "source" in config &&
+    config.source === "local" &&
+    "commandPath" in config &&
+    typeof config.commandPath === "string" &&
+    /^omp(?:\.exe|\.cmd|\.bat)?$/i.test(config.commandPath.split(/[\\/]/).at(-1) ?? "") &&
+    "commandArgs" in config &&
+    Array.isArray(config.commandArgs) &&
+    config.commandArgs[0] === "acp"
+  );
+}
+
+export function searchComposerMentionModels(
+  models: ReadonlyArray<ServerProviderModel>,
+  query: string,
+) {
+  const normalizedQuery = query.toLowerCase();
+  // ACP model IDs are already OMP's selectors. Never manufacture one from a display name.
+  return models.filter(
+    (model) =>
+      /^[^/\s^]+\/[^\s^]+$/.test(model.slug) &&
+      (model.slug.toLowerCase().includes(normalizedQuery) ||
+        model.name.toLowerCase().includes(normalizedQuery)),
+  );
+}
+
+export function detectComposerTrigger(
+  text: string,
+  cursorInput: number,
+  modelMentionsEnabled = false,
+): ComposerTrigger | null {
   const cursor = clampCursor(text, cursorInput);
   const tokenStart = tokenStartForCursor(text, cursor);
   const token = text.slice(tokenStart, cursor);
+  if (modelMentionsEnabled && token.startsWith("^")) {
+    return {
+      kind: "model-mention",
+      query: token.slice(1),
+      rangeStart: tokenStart,
+      rangeEnd: cursor,
+    };
+  }
   if (token.startsWith("/")) {
     if (isPathWord(text, tokenStart, cursor, isWhitespace)) return null;
     return {
@@ -334,6 +384,7 @@ export function pastedPathQueryLength(
 export function composerStateAtPromptEnd(
   text: string,
   literalText = false,
+  modelMentionsEnabled = false,
 ): {
   cursor: number;
   trigger: ComposerTrigger | null;
@@ -343,7 +394,11 @@ export function composerStateAtPromptEnd(
     cursor,
     trigger: literalText
       ? null
-      : detectComposerTrigger(text, expandCollapsedComposerCursor(text, cursor)),
+      : detectComposerTrigger(
+          text,
+          expandCollapsedComposerCursor(text, cursor),
+          modelMentionsEnabled,
+        ),
   };
 }
 
