@@ -36,6 +36,7 @@ export function ComposerInlineControl(props: {
   readonly icon?: ComponentProps<typeof SymbolView>["name"];
   readonly renderIcon?: (size: number) => ReactNode;
   readonly label: string;
+  readonly suffix?: ReactNode;
   /** Show only the icon and chevron; the label still names the control for accessibility. */
   readonly iconOnly?: boolean;
   readonly maxWidth?: ViewStyle["maxWidth"];
@@ -105,6 +106,9 @@ export function ComposerInlineControl(props: {
             </Text>
           </Animated.View>
         )}
+        {!props.iconOnly && props.suffix ? (
+          <View className="min-w-0 shrink">{props.suffix}</View>
+        ) : null}
         {props.showChevron === false ? null : (
           <SymbolView
             name={props.chevronDirection === "right" ? "chevron.right" : "chevron.down"}

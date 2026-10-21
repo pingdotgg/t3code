@@ -67,7 +67,7 @@ import {
 } from "../../state/composer-attachment-uploads";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
 import { VideoPreviewModal, type VideoPreviewSource } from "../../components/VideoPreviewModal";
-import { ProviderIcon } from "../../components/ProviderIcon";
+import { ComposerModelControl } from "../../components/ComposerModelControl";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { hasProviderUsageLimits, isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
@@ -1726,19 +1726,13 @@ export function NewTaskDraftScreen(props: {
                   />
                   <View className="min-w-0 flex-1 flex-row items-center justify-end gap-2">
                     <View className="min-w-0 shrink">
-                      <ComposerInlineControl
-                        accessibilityLabel="Model and reasoning settings"
+                      <ComposerModelControl
+                        modelOption={flow.selectedModelOption}
+                        selection={flow.selectedModel}
+                        provider={flow.selectedProviderStatus?.driver}
+                        prompt={flow.prompt}
+                        surfaceColor={theme["--color-composer-panel"]}
                         disabled={isComposerInteractionLocked}
-                        emphasized
-                        renderIcon={(size) => (
-                          <ProviderIcon
-                            iconUrl={flow.selectedModelOption?.providerIconUrl}
-                            provider={flow.selectedModelOption?.providerDriver}
-                            size={size}
-                          />
-                        )}
-                        label={flow.selectedModelOption?.label ?? "Choose model"}
-                        maxWidth="100%"
                         onPress={settingsSheetPresentation.open}
                       />
                     </View>

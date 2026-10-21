@@ -74,12 +74,8 @@ import { VideoPreviewModal, type VideoPreviewSource } from "../../components/Vid
 import { GlassSurface } from "../../components/ui/GlassSurface";
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
 import { fileRoutePathSegments } from "../files/filePath";
-import {
-  ComposerActionButton,
-  ComposerInlineControl,
-  ComposerToolbarRow,
-} from "../../components/ComposerToolbar";
-import { ProviderIcon } from "../../components/ProviderIcon";
+import { ComposerActionButton, ComposerToolbarRow } from "../../components/ComposerToolbar";
+import { ComposerModelControl } from "../../components/ComposerModelControl";
 import {
   composerStripAttachments,
   type DraftComposerFileAttachment,
@@ -657,6 +653,8 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     ...(lockedProviderInstanceId ? { lockedProviderInstanceId } : {}),
     providerGroups: threadProviderGroups,
     selectedModel: currentModelSelection,
+    prompt: draftMessage,
+    onPromptChange: (text) => setComposerDraftText(composerDraftKey, text),
     reportedModelSelection: props.reportedModelSelection,
     onSelectModel: (option) =>
       props.onUpdateModelSelection(withRememberedModelOptions(option.selection)),
@@ -761,22 +759,18 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   ) : null;
 
   // The row and the card's toolbar share this picker. It shrinks to the provider
-  // icon once the draft has text, so the draft keeps the width.
+  // icon in the row once the draft has text, so the draft keeps the width.
   const modelControl = (
     <View className="min-w-0 shrink">
-      <ComposerInlineControl
-        accessibilityLabel="Model and reasoning settings"
-        emphasized
-        renderIcon={(size) => (
-          <ProviderIcon
-            iconUrl={currentModelOption?.providerIconUrl}
-            provider={currentModelOption?.providerDriver}
-            size={size}
-          />
-        )}
-        label={currentModelOption?.label ?? currentModelSelection.model}
-        iconOnly={draftMessage.length > 0}
-        maxWidth="100%"
+      <ComposerModelControl
+        modelOption={currentModelOption}
+        selection={currentModelSelection}
+        provider={selectedProviderStatus?.driver}
+        reportedSelection={props.reportedModelSelection}
+        prompt={draftMessage}
+        surfaceColor={composerPanel}
+        iconOnly={!usesCard && draftMessage.length > 0}
+        showSummary={usesCard}
         onPress={openSettings}
       />
     </View>

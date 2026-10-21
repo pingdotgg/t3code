@@ -245,6 +245,127 @@ describe("mobile model options", () => {
     );
   });
 
+  it("keeps accounts in the continuation group and excludes other providers", () => {
+    const config = {
+      providers: [
+        { instanceId: "codex", driver: "codex", continuation: { groupKey: "shared" } },
+        { instanceId: "codex_work", driver: "codex", continuation: { groupKey: "shared" } },
+        { instanceId: "codex_other", driver: "codex", continuation: { groupKey: "other" } },
+        { instanceId: "claude", driver: "claudeAgent", continuation: { groupKey: "shared" } },
+      ].map((provider) => ({
+        ...provider,
+        enabled: true,
+        installed: true,
+        auth: { status: "authenticated" },
+        models: [{ slug: "test", name: "Test", capabilities: null }],
+      })),
+    } as unknown as ServerConfig;
+    expect(
+      buildModelOptions(config, null, ProviderInstanceId.make("codex"), null).map(
+        (option) => option.providerKey,
+      ),
+    ).toEqual(["codex", "codex_work"]);
+  });
+
+  it("matches the web driver fallback without moving unknown Antigravity history", () => {
+    const config = {
+      providers: [
+        { instanceId: "codex", driver: "codex" },
+        { instanceId: "codex_work", driver: "codex" },
+        { instanceId: "google", driver: "antigravity" },
+        { instanceId: "google_work", driver: "antigravity" },
+      ].map((provider) => ({
+        ...provider,
+        enabled: true,
+        installed: true,
+        auth: { status: "authenticated" },
+        models: [{ slug: "test", name: "Test", capabilities: null }],
+      })),
+    } as unknown as ServerConfig;
+    expect(
+      buildModelOptions(config, null, ProviderInstanceId.make("codex"), null).map(
+        (option) => option.providerKey,
+      ),
+    ).toEqual(["codex", "codex_work"]);
+    expect(
+      buildModelOptions(config, null, ProviderInstanceId.make("google"), null).map(
+        (option) => option.providerKey,
+      ),
+    ).toEqual(["google"]);
+  });
+
+  it("carries account badges into catalog and saved fallback models", () => {
+    const config = {
+      providers: [
+        { instanceId: "codex", driver: "codex", displayName: "Personal" },
+        { instanceId: "codex_work", driver: "codex", displayName: "Work", accentColor: "#123456" },
+      ].map((provider) => ({
+        ...provider,
+        enabled: true,
+        installed: true,
+        auth: { status: "authenticated" },
+        models: [{ slug: "test", name: "Test", capabilities: null }],
+      })),
+    } as unknown as ServerConfig;
+    const selection = { instanceId: ProviderInstanceId.make("codex_work"), model: "saved" };
+    const options = buildModelOptions(config, selection, undefined, null);
+    expect(options[0]?.providerBadge).toEqual({ displayName: "Personal", showBadge: true });
+    expect(options[1]?.providerBadge).toEqual({
+      displayName: "Work",
+      accentColor: "#123456",
+      showBadge: true,
+    });
+    expect(options[2]?.providerBadge).toEqual(options[1]?.providerBadge);
+    expect(
+      buildModelOptions(
+        { ...config, providers: config.providers.slice(0, 1) },
+        null,
+        undefined,
+        null,
+      )[0]?.providerBadge?.showBadge,
+    ).toBe(false);
+  });
+
+  it("only badges ACP accounts that share the same agent", () => {
+    const config = {
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        providerInstances: {
+          acp_one: { driver: "acpRegistry", enabled: true, config: { agentId: "one" } },
+          acp_two: { driver: "acpRegistry", enabled: true, config: { agentId: "two" } },
+        },
+      },
+      providers: ["acp_one", "acp_two"].map((instanceId) => ({
+        instanceId,
+        driver: "acpRegistry",
+        enabled: true,
+        installed: true,
+        auth: { status: "authenticated" },
+        models: [{ slug: "test", name: "Test", capabilities: null }],
+      })),
+    } as unknown as ServerConfig;
+    expect(
+      buildModelOptions(config, null, undefined, null).map(
+        (option) => option.providerBadge?.showBadge,
+      ),
+    ).toEqual([false, false]);
+    const shared = {
+      ...config,
+      settings: {
+        ...config.settings,
+        providerInstances: {
+          ...config.settings.providerInstances,
+          acp_two: config.settings.providerInstances[ProviderInstanceId.make("acp_one")]!,
+        },
+      },
+    };
+    expect(
+      buildModelOptions(shared, null, undefined, null).map(
+        (option) => option.providerBadge?.showBadge,
+      ),
+    ).toEqual([true, true]);
+  });
+
   it.each(["disabled", "unavailable", "missing"] as const)(
     "retains the selected %s provider's fallback in a filtered catalog",
     (state) => {
@@ -763,6 +884,7 @@ describe("synchronized mobile model visibility", () => {
     },
     providers: [provider, other].map((instanceId) => ({
       instanceId,
+      continuation: { groupKey: instanceId },
       driver: "codex",
       enabled: true,
       installed: true,
