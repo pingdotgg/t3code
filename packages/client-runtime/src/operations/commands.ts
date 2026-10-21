@@ -219,6 +219,10 @@ export interface MergeThreadBackInput extends CommandMetadata {
   readonly runId: RunId;
 }
 
+export interface ResumeThreadQueueInput extends ThreadCommandInput {
+  readonly runId?: RunId;
+}
+
 export interface ReorderQueuedRunInput extends ThreadCommandInput {
   readonly runId: RunId;
   readonly beforeRunId: RunId | null;
@@ -994,10 +998,12 @@ export const mergeThreadBack = Effect.fn("EnvironmentCommands.mergeThreadBack")(
 });
 
 export const resumeThreadQueue = Effect.fn("EnvironmentCommands.resumeThreadQueue")(function* (
-  input: ThreadCommandInput,
+  input: ResumeThreadQueueInput,
 ) {
   return yield* dispatch({
-    type: "queue.resume",
+    ...(input.runId === undefined
+      ? { type: "queue.resume" as const }
+      : { type: "queued-run.start" as const, runId: input.runId }),
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
   });

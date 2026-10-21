@@ -135,7 +135,45 @@ describe("thread workflows", () => {
     expect(state.activeRun?.id).toBe("active");
     expect(state.canReorder).toBe(true);
     expect(state.canPromoteToSteer).toBe(true);
+    expect(state.canSendNow).toBe(false);
   });
+
+  it.each(["completed", "interrupted", "cancelled", "failed"])(
+    "allows sending a held message after a %s turn without a live session",
+    (status) => {
+      const state = deriveThreadQueueWorkflowState({
+        thread: { id: "thread", activeProviderThreadId: null },
+        runs: [
+          { id: "previous", status, ordinal: 1 },
+          { id: "queued", status: "queued", userMessageId: "message", ordinal: 2, queueHeld: true },
+        ],
+        messages: [{ id: "message", text: "Send this" }],
+        providerThreads: [],
+        providerTurns: [],
+        providerSessions: [],
+      } as never);
+
+      expect(state.canSendNow).toBe(true);
+      expect(state.canPromoteToSteer).toBe(false);
+      expect(state.isHeld).toBe(true);
+    },
+  );
+
+  it.each(["preparing", "starting", "running", "waiting"])(
+    "does not offer send now while a turn is %s",
+    (status) => {
+      const state = deriveThreadQueueWorkflowState({
+        thread: { id: "thread", activeProviderThreadId: null },
+        runs: [{ id: "active", status, ordinal: 1 }],
+        messages: [],
+        providerThreads: [],
+        providerTurns: [],
+        providerSessions: [],
+      } as never);
+
+      expect(state.canSendNow).toBe(false);
+    },
+  );
 
   it("keeps held messages visible and clears the hold when they leave the queue", () => {
     for (const status of ["queued", "cancelled", "starting"] as const) {

@@ -477,6 +477,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "subagent.stop":
     case "run.interrupt":
     case "queued-message.promote-to-steer":
+    case "queued-run.start":
     case "queue.resume":
     case "queued-run.reorder":
     case "queued-run.cancel":
@@ -1277,13 +1278,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const failQueuedRunStart = Effect.fn("Orchestrator.failQueuedRunStart")(function* (
     threadId: ThreadId,
     cause: unknown,
+    queuedRunId?: RunId,
   ) {
     const projection = yield* projectionStore.getThreadRecords(
       threadId,
       ["runs", "nodes", "attempts", "providerThreads", "turnItems", "messages"],
       { turnItemTypes: [], messageRoles: ["user"] },
     );
-    const queuedRun = nextQueuedRun(projection);
+    const queuedRun =
+      queuedRunId === undefined
+        ? nextQueuedRun(projection)
+        : projection.runs.find((run) => run.id === queuedRunId && run.status === "queued");
     if (queuedRun === undefined) return;
     const now = yield* DateTime.now;
     const rootNode = projection.nodes.find((node) => node.id === queuedRun.rootNodeId);
@@ -1384,7 +1389,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const startNextQueuedRun = Effect.fn("Orchestrator.startNextQueuedRun")(
     function* (
       threadId: ThreadId,
-      options?: { readonly failedRunId?: RunId; readonly endedRunId?: RunId },
+      options?: {
+        readonly failedRunId?: RunId;
+        readonly endedRunId?: RunId;
+        readonly queuedRunId?: RunId;
+      },
     ) {
       if (!(yield* projectionStore.canStartQueuedRun(threadId))) return;
       const projection = yield* readCommandProjection(threadId);
@@ -1397,7 +1406,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return;
       }
 
-      const storedQueuedRun = nextQueuedRun(projection);
+      const storedQueuedRun =
+        options?.queuedRunId === undefined
+          ? nextQueuedRun(projection)
+          : projection.runs.find(
+              (run) => run.id === options.queuedRunId && run.status === "queued",
+            );
       if (storedQueuedRun === undefined) {
         return;
       }
@@ -2087,8 +2101,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ],
       );
     },
-    (effect, threadId, _options?) =>
-      effect.pipe(Effect.catch((cause) => failQueuedRunStart(threadId, cause))),
+    (effect, threadId, options?) =>
+      effect.pipe(
+        Effect.catch((cause) => failQueuedRunStart(threadId, cause, options?.queuedRunId)),
+      ),
   );
 
   const resumeQueuedRuns = Effect.gen(function* () {
@@ -11423,6 +11439,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "queued-message.promote-to-steer":
         yield* dispatchQueuedMessagePromoteToSteer(command, events, effects);
         break;
+      case "queued-run.start":
       case "queue.resume": {
         const projection = yield* loadProjectionForCommand(
           command,
@@ -11436,7 +11453,30 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause: `Thread ${command.threadId} is not active.`,
           });
         }
-        const nextRun = nextQueuedRun(projection);
+        const selectedRunId = command.type === "queued-run.start" ? command.runId : undefined;
+        const selectedRun =
+          selectedRunId === undefined
+            ? undefined
+            : projection.runs.find((run) => run.id === selectedRunId && run.status === "queued");
+        if (selectedRunId !== undefined) {
+          const selectedMessage = projection.messages.find(
+            (message) => message.id === selectedRun?.userMessageId,
+          );
+          if (
+            selectedRun === undefined ||
+            selectedMessage === undefined ||
+            selectedMessage.delegatedCompletion !== undefined ||
+            selectedMessage.notification !== undefined ||
+            projection.runs.some(isBlockingRun)
+          ) {
+            return yield* new OrchestratorDispatchError({
+              commandId: command.commandId,
+              commandType: command.type,
+              cause: "A queued user message can only be sent now while the thread is stopped.",
+            });
+          }
+        }
+        const nextRun = selectedRun ?? nextQueuedRun(projection);
         if (
           usageLimitHoldsQueue(
             projection,
@@ -11579,8 +11619,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
         ),
       );
-      if (command.type === "queue.resume") {
-        yield* mapDispatchError(command)(startNextQueuedRun(command.threadId));
+      if (command.type === "queue.resume" || command.type === "queued-run.start") {
+        yield* mapDispatchError(command)(
+          startNextQueuedRun(
+            command.threadId,
+            command.type === "queued-run.start" ? { queuedRunId: command.runId } : undefined,
+          ),
+        );
       }
       return {
         sequence: receipt.resultSequence,
@@ -11712,8 +11757,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         detail: committed.receipt.error ?? "Previously rejected.",
       });
     }
-    if (command.type === "queue.resume") {
-      yield* mapDispatchError(command)(startNextQueuedRun(command.threadId));
+    if (command.type === "queue.resume" || command.type === "queued-run.start") {
+      yield* mapDispatchError(command)(
+        startNextQueuedRun(
+          command.threadId,
+          command.type === "queued-run.start" ? { queuedRunId: command.runId } : undefined,
+        ),
+      );
     }
     if (command.type === "notification.delivery.accept") {
       yield* mapDispatchError(command)(offerDelegatedCompletionDeliveries(command.threadId));

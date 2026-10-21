@@ -2880,6 +2880,12 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
   }),
   Schema.Struct({
+    type: Schema.Literal("queued-run.start"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+  }),
+  Schema.Struct({
     type: Schema.Literal("queued-run.reorder"),
     commandId: CommandId,
     threadId: ThreadId,
