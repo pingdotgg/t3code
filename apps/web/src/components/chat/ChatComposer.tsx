@@ -64,16 +64,15 @@ import {
   type ComposerSubmissionIntent,
   collapseExpandedComposerCursor,
   composerRequiresModifier,
-  composerSubmissionIntentForKey,
   composerStateAtPromptEnd,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
   formatAssistantCitationForComposer,
   isPathSuggestionCurrent,
+  extendReplacementRangeForTrailingSpace,
   replaceTextRange,
 } from "../../composer-logic";
 import { DISCONNECTED_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
-import { listContinuationForEnter, listIndentForTab } from "../../composer-list-continuation";
 import {
   deriveComposerSendState,
   getAntigravitySendBlockReason,
@@ -259,11 +258,7 @@ import {
   type Thread,
   type ThreadShell,
 } from "../../types";
-import {
-  buildComposerPromptHistoryEntries,
-  stepComposerPromptHistory,
-  type ComposerPromptHistoryPosition,
-} from "./composerPromptHistory";
+import { type ComposerPromptHistoryPosition } from "./composerPromptHistory";
 import type { PendingUserInputDraftAnswer } from "../../pendingUserInput";
 import type {
   LatestProposedPlanState,
@@ -296,6 +291,7 @@ import { useComposerStash } from "./useComposerStash";
 import { useComposerContextImport } from "./useComposerContextImport";
 import { useComposerAttachmentIntake } from "./useComposerAttachmentIntake";
 import { ComposerControlsBar } from "./ComposerControlsBar";
+import { useComposerCommandKey } from "./useComposerCommandKey";
 
 /** Reads and disarms a paste-as-text deadline: the shortcut applies to one paste only. */
 function consumePasteAsTextShortcut(deadline: { current: number }): boolean {
@@ -303,17 +299,6 @@ function consumePasteAsTextShortcut(deadline: { current: number }): boolean {
   deadline.current = 0;
   return armed;
 }
-
-const extendReplacementRangeForTrailingSpace = (
-  text: string,
-  rangeEnd: number,
-  replacement: string,
-): number => {
-  if (!replacement.endsWith(" ")) {
-    return rangeEnd;
-  }
-  return text[rangeEnd] === " " ? rangeEnd + 1 : rangeEnd;
-};
 
 const runtimeModeOptions = runtimeModes.map((mode) => ({ mode, ...runtimeModeConfig[mode] }));
 
@@ -2258,147 +2243,43 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
   const expandMobileComposerStable = useStableCallback(expandMobileComposer);
 
-  // Entries are built on the keypress, not per render: the timeline changes
-  // on every streamed delta and ArrowUp is rare.
-  const promptHistoryMessagesRef = useRef(promptHistoryMessages);
-  useLayoutEffect(() => {
-    promptHistoryMessagesRef.current = promptHistoryMessages;
+  const { onComposerCommandKey } = useComposerCommandKey({
+    keybindings,
+    sendShortcut: settings.sendShortcut,
+    routeKind,
+    phase,
+    isCompacting,
+    followUpBehavior,
+    isSoftwareKeyboardOpen,
+    planModeUiEnabled,
+    isLiteralPendingAnswer,
+    pendingUserInputs,
+    promptHistoryMessages,
+    promptHistoryPositionRef,
+    composerDraftTarget,
+    promptRef,
+    composerImagesRef,
+    composerFilesRef,
+    composerTerminalContextsRef,
+    composerPreviewAnnotations,
+    composerReviewComments,
+    composerEditorRef,
+    composerMenuOpenRef,
+    composerMenuItemsRef,
+    activeComposerMenuItemRef,
+    setComposerDraftPrompt,
+    setComposerCursor,
+    setComposerTrigger,
+    setComposerHighlightedItemId,
+    dismissComposerTrigger,
+    toggleInteractionMode,
+    nudgeComposerMenuHighlight,
+    onSelectComposerItem,
+    resolveActiveComposerTrigger,
+    readComposerSnapshot,
+    applyPromptReplacement,
+    submitComposer,
   });
-
-  // The composer persists across threads. A recall from thread A must not
-  // be treated as active in thread B, where the text-match fallback could
-  // otherwise turn B's own draft into a browsing position.
-  const promptHistoryTargetKey = composerTargetKey(composerDraftTarget);
-
-  const replacePromptFromHistory = (nextPrompt: string) => {
-    promptRef.current = nextPrompt;
-    setComposerDraftPrompt(composerDraftTarget, nextPrompt);
-    setComposerCursor(collapseExpandedComposerCursor(nextPrompt, nextPrompt.length));
-    setComposerTrigger(null);
-    setComposerHighlightedItemId(null);
-  };
-
-  const navigatePromptHistory = (
-    direction: "backward" | "forward",
-    event: KeyboardEvent,
-  ): boolean => {
-    if (event.shiftKey || event.altKey || event.metaKey || event.ctrlKey || event.isComposing) {
-      return false;
-    }
-    if (pendingUserInputs.length > 0) return false;
-    if (
-      composerImagesRef.current.length > 0 ||
-      composerFilesRef.current.length > 0 ||
-      composerTerminalContextsRef.current.length > 0 ||
-      composerPreviewAnnotations.length > 0 ||
-      composerReviewComments.length > 0
-    ) {
-      return false;
-    }
-    const recalled = promptHistoryPositionRef.current;
-    const position = recalled?.targetKey === promptHistoryTargetKey ? recalled.position : null;
-    if (position === null && promptRef.current.length > 0) {
-      return false;
-    }
-    const editor = composerEditorRef.current;
-    if (!editor?.isCaretOnVisualEdge(direction === "backward" ? "start" : "end")) {
-      return false;
-    }
-    const step = stepComposerPromptHistory({
-      direction,
-      entries: buildComposerPromptHistoryEntries(promptHistoryMessagesRef.current),
-      position,
-      currentPrompt: promptRef.current,
-    });
-    if (!step) return false;
-    promptHistoryPositionRef.current = step.position
-      ? { targetKey: promptHistoryTargetKey, position: step.position }
-      : null;
-    replacePromptFromHistory(step.prompt);
-    return true;
-  };
-
-  const onComposerCommandKey = (key: string, event: KeyboardEvent, isTaskItem = false) => {
-    const submissionIntent = composerSubmissionIntentForKey({
-      event,
-      keybindings,
-      isSoftwareKeyboardOpen,
-      isDraftThread: routeKind === "draft",
-      isRunning: phase === "running",
-      sendShortcut: settings.sendShortcut,
-      prompt: promptRef.current,
-    });
-    if (key === "Tab" && event.shiftKey && submissionIntent === null) {
-      if (!planModeUiEnabled) return false;
-      toggleInteractionMode();
-      return true;
-    }
-    const { trigger } = resolveActiveComposerTrigger();
-    const menuIsActive =
-      !isLiteralPendingAnswer && (composerMenuOpenRef.current || trigger !== null);
-    if (key === "Escape") {
-      if (!menuIsActive || event.isComposing || event.keyCode === 229) return false;
-      dismissComposerTrigger(trigger);
-      composerMenuOpenRef.current = false;
-      return true;
-    }
-    if (menuIsActive && (submissionIntent === null || submissionIntent === "foreground")) {
-      const currentItems = composerMenuItemsRef.current;
-      const selectedItem = activeComposerMenuItemRef.current ?? currentItems[0];
-      if (key === "ArrowDown" && currentItems.length > 0) {
-        nudgeComposerMenuHighlight("ArrowDown");
-        return true;
-      }
-      if (key === "ArrowUp" && currentItems.length > 0) {
-        nudgeComposerMenuHighlight("ArrowUp");
-        return true;
-      }
-      if ((key === "Enter" || key === "Tab") && selectedItem) {
-        onSelectComposerItem(selectedItem);
-        return true;
-      }
-    }
-    if ((key === "ArrowUp" || key === "ArrowDown") && submissionIntent === null) {
-      return navigatePromptHistory(key === "ArrowUp" ? "backward" : "forward", event);
-    }
-    if (submissionIntent) {
-      submitComposer(
-        undefined,
-        resolveComposerDispatchMode({
-          running: phase === "running",
-          alternateModifier: submissionIntent === "alternate",
-          activeTurnDefault: followUpBehavior,
-          canSteer: !isCompacting,
-        }),
-        submissionIntent,
-      );
-      return true;
-    }
-    if (key === "Enter" && isTaskItem) return false;
-    if (
-      !isLiteralPendingAnswer &&
-      !event.isComposing &&
-      (key === "Enter" || (key === "Tab" && !event.shiftKey))
-    ) {
-      const selection = composerEditorRef.current?.readSelectionRange();
-      const snapshot = readComposerSnapshot();
-      if (selection && selection.start === selection.end && snapshot.value === promptRef.current) {
-        const edit =
-          key === "Enter"
-            ? listContinuationForEnter(snapshot.value, selection.start)
-            : listIndentForTab(snapshot.value, selection.start, selection.end);
-        if (
-          edit &&
-          applyPromptReplacement(edit.start, edit.end, edit.replacement, {
-            expandedCursorAfterReplace: edit.cursorAfter,
-          })
-        ) {
-          return true;
-        }
-      }
-    }
-    return false;
-  };
 
   const {
     stashQueue,

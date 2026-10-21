@@ -359,6 +359,21 @@ export function parseStandaloneComposerSlashCommand(
   return "default";
 }
 
+/**
+ * A replacement ending in a space swallows one space already after the range, so inserting
+ * `@file ` before existing text does not leave a double space.
+ */
+export function extendReplacementRangeForTrailingSpace(
+  text: string,
+  rangeEnd: number,
+  replacement: string,
+): number {
+  if (!replacement.endsWith(" ")) {
+    return rangeEnd;
+  }
+  return text[rangeEnd] === " " ? rangeEnd + 1 : rangeEnd;
+}
+
 export function replaceTextRange(
   text: string,
   rangeStart: number,
