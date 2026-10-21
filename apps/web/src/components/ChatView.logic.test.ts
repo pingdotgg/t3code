@@ -1108,6 +1108,13 @@ describe("planComposerTurn", () => {
     expect(
       planComposerTurn({ ...base, resumeCompactionTokens: 120_000, messageText: "/COMPACT" }),
     ).toMatchObject({ compactBeforeSend: false, turnDispatchMode: "auto" });
+    expect(
+      planComposerTurn({ ...base, resumeCompactionTokens: 250_000, keepFullHistory: true }),
+    ).toMatchObject({
+      compactBeforeSend: false,
+      turnDispatchMode: "auto",
+      shouldQueueBehindActiveRun: false,
+    });
   });
 
   it("queues behind a running turn only when asked to", () => {

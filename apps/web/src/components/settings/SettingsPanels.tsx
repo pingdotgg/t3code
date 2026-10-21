@@ -998,7 +998,7 @@ export function GeneralSettingsPanel() {
           serverScoped
           settingKeys={["compactIdleThreads"]}
           {...searchableSetting("compact-idle-threads")}
-          description="When to compact an idle Claude thread over 200,000 tokens: after you return, just before its prompt cache expires, or never. Each Claude provider can override this."
+          description="When to compact an idle Claude thread over 200,000 tokens, or suggest compaction when you return. Each Claude provider can override this."
           resetAction={
             settings.compactIdleThreads !== DEFAULT_UNIFIED_SETTINGS.compactIdleThreads ? (
               <SettingResetButton

@@ -136,6 +136,32 @@ describe("custom model settings", () => {
 });
 
 describe("resolveIdleCompaction", () => {
+  it("inherits Suggest globally and allows independent instance overrides", () => {
+    expect(decodeServerSettingsPatch({ compactIdleThreads: "suggestOnReturn" })).toEqual({
+      compactIdleThreads: "suggestOnReturn",
+    });
+    const settings = decodeServerSettings({
+      compactIdleThreads: "suggestOnReturn",
+      providerInstances: {
+        claude_auto: { driver: "claudeAgent", config: { idleCompaction: "onReturn" } },
+      },
+    });
+    expect(resolveIdleCompaction(settings, ProviderInstanceId.make("claudeAgent"))).toBe(
+      "suggestOnReturn",
+    );
+    expect(resolveIdleCompaction(settings, ProviderInstanceId.make("claude_auto"))).toBe(
+      "onReturn",
+    );
+    const override = decodeServerSettings({
+      providerInstances: {
+        claude_suggest: { driver: "claudeAgent", config: { idleCompaction: "suggestOnReturn" } },
+      },
+    });
+    expect(resolveIdleCompaction(override, ProviderInstanceId.make("claude_suggest"))).toBe(
+      "suggestOnReturn",
+    );
+  });
+
   it("lets a Claude instance override the global default", () => {
     const settings = decodeServerSettings({
       compactIdleThreads: "off",
@@ -156,6 +182,7 @@ describe("resolveIdleCompaction", () => {
       "beforeCacheExpires",
     );
     expect(decodeServerSettings({}).compactIdleThreads).toBe("onReturn");
+    expect(decodeServerSettings({ compactIdleThreads: false }).compactIdleThreads).toBe("onReturn");
   });
 });
 
