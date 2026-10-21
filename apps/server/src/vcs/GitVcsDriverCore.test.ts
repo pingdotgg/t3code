@@ -2100,6 +2100,66 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("reads Changes totals without minimizing and keeps review diffs minimal", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["config", "diff.algorithm", "myers"]);
+        // Repeated lines make the default and minimal algorithms choose different edits.
+        const lines = Array.from({ length: 2000 }, (_, index) => index);
+        yield* writeTextFile(
+          cwd,
+          "repeated.txt",
+          lines.map((index) => `${(index ^ (index >> 3)) % 16}\n`).join(""),
+        );
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "repeated lines"]);
+        yield* git(cwd, ["checkout", "-b", "feature/totals"]);
+        yield* writeTextFile(
+          cwd,
+          "repeated.txt",
+          lines.map((index) => `${(index ^ (index >> 5)) % 16}\n`).join(""),
+        );
+        const defaultStat = yield* git(cwd, ["diff", "--numstat", "HEAD", "--"]);
+        const minimalStat = yield* git(cwd, ["diff", "--minimal", "--numstat", "HEAD", "--"]);
+        assert.notEqual(defaultStat, minimalStat);
+        const [insertions, deletions] = defaultStat.split("\t");
+        const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
+        assert.deepStrictEqual(status.branchChanges, {
+          baseRef: initialBranch,
+          insertions: Number(insertions),
+          deletions: Number(deletions),
+        });
+
+        const [additions, removals] = minimalStat.split("\t");
+        const minimalPatch = yield* git(cwd, [
+          "diff",
+          "--minimal",
+          "--patch",
+          "--no-color",
+          "--no-ext-diff",
+          "--no-textconv",
+          "--src-prefix=a/",
+          "--dst-prefix=b/",
+          "HEAD",
+          "--",
+        ]);
+        const preview = yield* driver.getReviewDiffPreview({ cwd });
+        for (const source of preview.sources) {
+          assert.deepStrictEqual(source.files, [
+            {
+              path: "repeated.txt",
+              previousPath: null,
+              additions: Number(additions),
+              deletions: Number(removals),
+            },
+          ]);
+          assert.strictEqual(source.diff.trim(), minimalPatch);
+        }
+      }),
+    );
+
     it.effect.skipIf(!symlinksSupported)(
       "lists the real repository through a symlink when a decoy repo occupies the lexical common dir",
       () =>
