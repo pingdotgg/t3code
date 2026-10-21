@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   OrchestrationDispatchCommandError,
   ProjectId,
+  projectCloneProgressSummary,
   SourceControlRepositoryError,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
@@ -102,6 +103,45 @@ describe("ProjectCloneTracker", () => {
 
       yield* TestClock.adjust("31 seconds");
       expect(yield* tracker.get(projectId)).toBeNull();
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("flags a clone stalled when git goes quiet and clears it when git speaks", () => {
+    const release = Deferred.makeUnsafe<void>();
+    const resumed = Deferred.makeUnsafe<void>();
+    const harness = makeHarness({
+      clone: (input, options) =>
+        Effect.gen(function* () {
+          const report = options?.onProgress ?? (() => Effect.void);
+          yield* report({ stage: "receiving", percent: 24, detail: "168.80 MiB | 20.69 MiB/s" });
+          yield* Deferred.await(resumed);
+          yield* report({ stage: "receiving", percent: 25, detail: "170.00 MiB | 1.00 MiB/s" });
+          yield* Deferred.await(release);
+          return { cwd: input.destinationPath, remoteUrl: input.remoteUrl ?? "", repository: null };
+        }),
+    });
+    return Effect.gen(function* () {
+      const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+      yield* tracker.start(startInput, harness.hooks);
+      yield* Effect.yieldNow;
+      expect((yield* tracker.get(projectId))?.stalled).toBe(false);
+
+      yield* TestClock.adjust("19 seconds");
+      expect((yield* tracker.get(projectId))?.stalled).toBe(false);
+      yield* TestClock.adjust("1 second");
+      const stalled = yield* tracker.get(projectId);
+      expect(stalled).toMatchObject({ stalled: true, percent: 24 });
+      expect(projectCloneProgressSummary(stalled!)).toBe("Receiving objects · 24% · Stalled");
+
+      yield* Deferred.succeed(resumed, undefined);
+      yield* Effect.yieldNow;
+      expect(yield* tracker.get(projectId)).toMatchObject({ stalled: false, percent: 25 });
+
+      yield* TestClock.adjust("20 seconds");
+      expect((yield* tracker.get(projectId))?.stalled).toBe(true);
+      yield* Deferred.succeed(release, undefined);
+      yield* Effect.yieldNow;
+      expect(yield* tracker.get(projectId)).toMatchObject({ phase: "done", stalled: false });
     }).pipe(Effect.provide(harness.layer));
   });
 
