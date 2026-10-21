@@ -573,8 +573,9 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # One job per platform and architecture (see release-desktop.yml), each on
-  # hardware of its own architecture, and each gated only on the JS bundle.
+  # One job per platform and architecture (see release-desktop.yml), each
+  # gated only on the JS bundle. Windows targets build on Linux and run their
+  # native checks on a Windows runner of their own architecture.
   # The Windows jobs also embed the same-arch Linux CLI archive as the WSL
   # runtime; they wait for that artifact partway through instead of for the
   # whole Linux job. Every job builds the desktop app; all but macOS x64 also
@@ -677,9 +678,11 @@ jobs:
       resource_key: linux-arm64
       cli_archive: true
 
-  # The Windows jobs start with the other platforms. Their checkout, install,
-  # and toolchain setup take longer than the same-arch Linux job needs to
-  # upload its CLI archive, so the wait inside is usually instant.
+  # The Windows jobs start with the other platforms and wait for the same-arch
+  # Linux CLI archive after their other setup. Packaging is mostly CPU and
+  # small-file work, which Linux runners do faster than Windows ones, so both
+  # Windows targets build and sign on Linux and only the native checks run on
+  # Windows.
   desktop_win_x64:
     name: Desktop Windows x64
     needs: [preflight, relay_public_config, build_bundle]
@@ -695,7 +698,8 @@ jobs:
       clerk_cli_oauth_client_id: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
       relay_url: ${{ needs.relay_public_config.outputs.relay_url }}
       label: Windows x64
-      runner: blacksmith-32vcpu-windows-2025
+      runner: blacksmith-16vcpu-ubuntu-2404
+      verify_runner: windows-2025
       platform: win
       target: nsis
       arch: x64
@@ -703,8 +707,6 @@ jobs:
       resource_key: win32-x64
       cli_archive: true
 
-  # Windows arm64 runners have 4 vCPUs, and the packaging is mostly CPU-bound,
-  # so the build runs on Linux and only the native checks run on arm64.
   desktop_win_arm64:
     name: Desktop Windows arm64
     needs: [preflight, relay_public_config, build_bundle]
