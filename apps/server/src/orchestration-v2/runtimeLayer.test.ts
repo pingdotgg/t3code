@@ -4576,6 +4576,291 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       }),
   );
 
+  const setupEditingQueue = (name: string) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make(`runtime-layer-queued-editing-${name}`);
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${threadId}:create`),
+        threadId,
+        projectId: ProjectId.make(`${threadId}:project`),
+        title: "Edit queued work",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      for (const [index, text] of ["Active", "First", "Second"].entries()) {
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${threadId}:message:${index}`),
+          threadId,
+          messageId: MessageId.make(`${threadId}:message:${index}`),
+          text,
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: index === 0 ? "start_immediately" : "queue_after_active" },
+        });
+      }
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      const [activeRun, first, second] = projection.runs as [
+        (typeof projection.runs)[number],
+        (typeof projection.runs)[number],
+        (typeof projection.runs)[number],
+      ];
+      const runStatus = (runId: typeof first.id) =>
+        orchestrator
+          .getThreadProjection(threadId)
+          .pipe(Effect.map((current) => current.runs.find((run) => run.id === runId)));
+      const setEditing = (key: string, runId: typeof first.id, editing: boolean) =>
+        orchestrator.dispatch({
+          type: "queued-run.editing",
+          commandId: CommandId.make(`${threadId}:${key}`),
+          threadId,
+          runId,
+          editing,
+        });
+      const interruptAndDrain = (holdQueue?: boolean) =>
+        Effect.gen(function* () {
+          yield* orchestrator.dispatch({
+            type: "run.interrupt",
+            commandId: CommandId.make(`${threadId}:interrupt`),
+            threadId,
+            runId: activeRun.id,
+            ...(holdQueue === undefined ? {} : { holdQueue }),
+          });
+          yield* orchestrator.resumeQueuedRuns;
+        });
+      return { threadId, activeRun, first, second, runStatus, setEditing, interruptAndDrain };
+    });
+
+  it.effect("a queued message being edited waits, and the messages behind it wait with it", () =>
+    Effect.gen(function* () {
+      const { activeRun, first, second, runStatus, setEditing, interruptAndDrain } =
+        yield* setupEditingQueue("head");
+
+      yield* setEditing("edit", first.id, true);
+      const editing = yield* runStatus(first.id);
+      assert.equal(editing?.status, "queued");
+      assert.isTrue(editing?.editing);
+      assert.isUndefined(editing?.queueHeld);
+
+      yield* interruptAndDrain();
+      assert.equal((yield* runStatus(activeRun.id))?.status, "interrupted");
+      assert.equal((yield* runStatus(first.id))?.status, "queued");
+      assert.equal((yield* runStatus(second.id))?.status, "queued");
+
+      yield* setEditing("release", first.id, false);
+      assert.equal((yield* runStatus(first.id))?.status, "starting");
+      assert.equal((yield* runStatus(second.id))?.status, "queued");
+
+      const startedError = yield* setEditing("edit-again", first.id, true).pipe(Effect.flip);
+      assert.equal(startedError._tag, "OrchestratorDispatchError");
+    }),
+  );
+
+  it.effect("editing a later queued message does not block the one ahead of it", () =>
+    Effect.gen(function* () {
+      const { first, second, runStatus, setEditing, interruptAndDrain } =
+        yield* setupEditingQueue("later");
+
+      yield* setEditing("edit", second.id, true);
+      yield* interruptAndDrain();
+      assert.equal((yield* runStatus(first.id))?.status, "starting");
+      const later = yield* runStatus(second.id);
+      assert.equal(later?.status, "queued");
+      assert.isTrue(later?.editing);
+    }),
+  );
+
+  it.effect("reordering past an edited message starts the one moved ahead", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const { threadId, first, second, runStatus, setEditing, interruptAndDrain } =
+        yield* setupEditingQueue("reorder");
+
+      yield* setEditing("edit", first.id, true);
+      yield* interruptAndDrain();
+      assert.equal((yield* runStatus(second.id))?.status, "queued");
+
+      yield* orchestrator.dispatch({
+        type: "queued-run.reorder",
+        commandId: CommandId.make(`${threadId}:reorder`),
+        threadId,
+        runId: second.id,
+        beforeRunId: first.id,
+      });
+      assert.equal((yield* runStatus(second.id))?.status, "starting");
+      const edited = yield* runStatus(first.id);
+      assert.equal(edited?.status, "queued");
+      assert.isTrue(edited?.editing);
+    }),
+  );
+
+  it.effect("an edit release does not start a message after the provider failed", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const { threadId, activeRun, first, second, runStatus, setEditing } =
+        yield* setupEditingQueue("failed");
+      assert.isNotNull(activeRun.rootNodeId);
+
+      yield* setEditing("edit", first.id, true);
+      const heldRunIds = yield* Queue.unbounded<RunId>();
+      const afterSequence = yield* orchestrator.getThreadEventSequence(threadId);
+      yield* eventSink.stream({ threadId, afterSequence }).pipe(
+        Stream.runForEach((stored) =>
+          stored.event.type === "run.updated" && stored.event.payload.queueHeld === true
+            ? Queue.offer(heldRunIds, stored.event.payload.id)
+            : Effect.void,
+        ),
+        Effect.forkScoped,
+      );
+      yield* Effect.yieldNow;
+
+      const now = yield* DateTime.now;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}:error`),
+            type: "turn-item.updated",
+            threadId,
+            runId: activeRun.id,
+            nodeId: activeRun.rootNodeId,
+            providerInstanceId: activeRun.providerInstanceId,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make(`${threadId}:error`),
+              type: "error",
+              threadId,
+              runId: activeRun.id,
+              nodeId: activeRun.rootNodeId,
+              providerThreadId: activeRun.providerThreadId,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 2,
+              status: "failed",
+              title: "Provider failure",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              failure: {
+                class: "provider_error",
+                message: "Provider failed.",
+                code: "provider_failed",
+                retryable: null,
+              },
+            },
+          },
+          {
+            id: EventId.make(`${threadId}:failed`),
+            type: "run.updated",
+            threadId,
+            runId: activeRun.id,
+            nodeId: activeRun.rootNodeId,
+            providerInstanceId: activeRun.providerInstanceId,
+            occurredAt: now,
+            payload: { ...activeRun, status: "failed", completedAt: now },
+          },
+        ],
+      });
+      assert.sameMembers(
+        [yield* Queue.take(heldRunIds), yield* Queue.take(heldRunIds)],
+        [first.id, second.id],
+      );
+
+      yield* setEditing("release", first.id, false);
+      const released = yield* runStatus(first.id);
+      assert.equal(released?.status, "queued");
+      assert.isTrue(released?.queueHeld);
+    }),
+  );
+
+  it.effect("an edit release judges a failure the listener has not recorded yet", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const { threadId, activeRun, first, second, runStatus, setEditing } =
+        yield* setupEditingQueue("race");
+      assert.isNotNull(activeRun.rootNodeId);
+
+      yield* setEditing("edit", first.id, true);
+      const now = yield* DateTime.now;
+      yield* projections.apply({
+        id: EventId.make(`${threadId}:error`),
+        type: "turn-item.updated",
+        threadId,
+        runId: activeRun.id,
+        nodeId: activeRun.rootNodeId,
+        providerInstanceId: activeRun.providerInstanceId,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make(`${threadId}:error`),
+          type: "error",
+          threadId,
+          runId: activeRun.id,
+          nodeId: activeRun.rootNodeId,
+          providerThreadId: activeRun.providerThreadId,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 2,
+          status: "failed",
+          title: "Provider failure",
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          failure: {
+            class: "provider_error",
+            message: "Provider failed.",
+            code: "provider_failed",
+            retryable: null,
+          },
+        },
+      });
+      yield* projections.apply({
+        id: EventId.make(`${threadId}:failed`),
+        type: "run.updated",
+        threadId,
+        runId: activeRun.id,
+        nodeId: activeRun.rootNodeId,
+        providerInstanceId: activeRun.providerInstanceId,
+        occurredAt: now,
+        payload: { ...activeRun, status: "failed", completedAt: now },
+      });
+      const unrecorded = yield* runStatus(first.id);
+      assert.equal(unrecorded?.status, "queued");
+      assert.isUndefined(unrecorded?.queueHeld);
+
+      yield* setEditing("release", first.id, false);
+      for (const runId of [first.id, second.id]) {
+        const waiting = yield* runStatus(runId);
+        assert.equal(waiting?.status, "queued");
+        assert.isTrue(waiting?.queueHeld);
+      }
+    }),
+  );
+
+  it.effect("an edit release does not resume a stopped queue", () =>
+    Effect.gen(function* () {
+      const { first, runStatus, setEditing, interruptAndDrain } =
+        yield* setupEditingQueue("stopped");
+
+      yield* setEditing("edit", first.id, true);
+      yield* interruptAndDrain(true);
+      yield* setEditing("release", first.id, false);
+      const stopped = yield* runStatus(first.id);
+      assert.equal(stopped?.status, "queued");
+      assert.isTrue(stopped?.queueHeld);
+    }),
+  );
+
   it.effect("edits and removes queued runs", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

@@ -110,3 +110,25 @@ export function latestUnheldRun(
   }
   return latest;
 }
+
+/**
+ * The run a thread presents as its latest. Besides a held queue, a queued
+ * message being edited and the messages behind it wait on the user, so they
+ * are not the thread's current work either.
+ */
+export function latestRunNotWaitingOnUser(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+): OrchestrationV2Run | null {
+  const editPosition = runs.reduce(
+    (position, run) =>
+      run.status === "queued" && run.editing === true
+        ? Math.min(position, run.queuePosition ?? run.ordinal)
+        : position,
+    Number.POSITIVE_INFINITY,
+  );
+  return latestUnheldRun(
+    runs.filter(
+      (run) => run.status !== "queued" || (run.queuePosition ?? run.ordinal) < editPosition,
+    ),
+  );
+}

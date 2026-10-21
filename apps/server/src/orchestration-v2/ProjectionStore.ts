@@ -9,6 +9,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   latestRootProviderFailure,
+  latestRunNotWaitingOnUser,
   latestUnheldRun,
   threadErrorSummary,
   usageLimitRunPresentedAsLatest,
@@ -1518,7 +1519,7 @@ export function threadShellFromProjection(
       projection.runs,
       projection.turnItems,
       providerSession?.lastError ?? null,
-    ) ?? latestUnheldRun(projection.runs);
+    ) ?? latestRunNotWaitingOnUser(projection.runs);
   const activeRun =
     projection.runs
       .filter(isInterruptibleRunForShell)
@@ -5791,14 +5792,31 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ORDER BY r.ordinal DESC, r.run_id DESC
               LIMIT 1
             )
-            -- The newest run not waiting in a held queue, matching latestUnheldRun.
+            -- The newest run not waiting in a held queue or behind an edited message,
+            -- matching latestRunNotWaitingOnUser. The edit-position lookup sits in
+            -- the last OR branch so it only runs for a queued, unheld candidate; a
+            -- thread whose newest run is not queued never evaluates it.
             LEFT JOIN orchestration_v2_projection_runs presented ON presented.run_id = (
               SELECT candidate.run_id
               FROM orchestration_v2_projection_runs candidate
               WHERE candidate.thread_id = t.thread_id
                 AND NOT (
                   candidate.status = 'queued'
-                  AND json_extract(candidate.payload_json, '$.queueHeld') IS 1
+                  AND (
+                    json_extract(candidate.payload_json, '$.queueHeld') IS 1
+                    OR COALESCE(
+                      COALESCE(json_extract(candidate.payload_json, '$.queuePosition'), candidate.ordinal) >= (
+                        SELECT MIN(
+                          COALESCE(json_extract(edit.payload_json, '$.queuePosition'), edit.ordinal)
+                        )
+                        FROM orchestration_v2_projection_runs edit
+                        WHERE edit.thread_id = t.thread_id
+                          AND edit.status = 'queued'
+                          AND json_extract(edit.payload_json, '$.editing') IS 1
+                      ),
+                      0
+                    )
+                  )
                 )
               ORDER BY candidate.ordinal DESC, candidate.run_id DESC
               LIMIT 1

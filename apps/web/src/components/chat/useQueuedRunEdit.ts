@@ -44,6 +44,7 @@ import { prepareQueuedEditAttachments, recoverQueuedMessageEdit } from "./queued
 import type { EditQueuedRunRequest } from "./QueuedRunsControl";
 
 interface EditingQueuedRun {
+  readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly runId: RunId;
   readonly messageId: MessageId;
@@ -184,6 +185,9 @@ export function useQueuedRunEdit(input: {
     composerRef,
   } = input;
   const editQueuedRunCommand = useEditQueuedRunCommand();
+  const setQueuedRunEditingCommand = useAtomCommand(threadEnvironment.setQueuedRunEditing, {
+    reportFailure: false,
+  });
   const [editing, setEditing] = useState<EditingQueuedRun | null>(null);
   const saveInFlightRef = useRef(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -217,14 +221,30 @@ export function useQueuedRunEdit(input: {
       .getState()
       .clearComposerContent(queuedEditDraftTarget(routeThreadRef, runId));
 
+  // The edited run is addressed explicitly rather than through the hook's
+  // current props: by the time the cleanup below clears the flag, navigation
+  // may already have pointed this view at another environment.
+  const markQueuedRunEditing = useStableCallback(
+    (
+      target: Pick<EditingQueuedRun, "environmentId" | "threadId" | "runId">,
+      isEditing: boolean,
+    ) => {
+      void setQueuedRunEditingCommand({
+        environmentId: target.environmentId,
+        input: { threadId: target.threadId, runId: target.runId, editing: isEditing },
+      });
+    },
+  );
   const beginEdit = useStableCallback((request: EditQueuedRunRequest) => {
     if (activeThreadId === null) return;
     if (editing !== null && editing.runId !== request.runId) clearEditDraft(editing.runId);
+    markQueuedRunEditing({ environmentId, threadId: activeThreadId, runId: request.runId }, true);
     const target = queuedEditDraftTarget(routeThreadRef, request.runId);
     const store = useComposerDraftStore.getState();
     store.clearComposerContent(target);
     store.setPrompt(target, request.text);
     setEditing({
+      environmentId,
       threadId: activeThreadId,
       runId: request.runId,
       messageId: request.messageId,
@@ -253,6 +273,22 @@ export function useQueuedRunEdit(input: {
           },
     );
   });
+
+  const editingEnvironmentId = editing?.environmentId ?? null;
+  const editingThreadId = editing?.threadId ?? null;
+  const editingRunId = editing?.runId ?? null;
+  // beginEdit marks the run before this effect runs, so switching to another
+  // queued message never leaves a gap in which the queue could start it. The
+  // cleanup is the single place an edit ends: save, cancel, leaving the thread
+  // and unmount all pass through it.
+  useEffect(() => {
+    if (editingEnvironmentId === null || editingThreadId === null || editingRunId === null) return;
+    return () =>
+      markQueuedRunEditing(
+        { environmentId: editingEnvironmentId, threadId: editingThreadId, runId: editingRunId },
+        false,
+      );
+  }, [editingEnvironmentId, editingThreadId, editingRunId, markQueuedRunEditing]);
 
   // Exit edit mode when the edited run leaves the queue (it started, or was
   // cancelled from another client). A dirty edit moves into the thread's own

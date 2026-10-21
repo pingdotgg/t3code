@@ -1,6 +1,6 @@
 import {
   latestRootProviderFailure,
-  latestUnheldRun,
+  latestRunNotWaitingOnUser,
   threadErrorSummary,
   usageLimitRunPresentedAsLatest,
 } from "@t3tools/shared/orchestrationV2ThreadError";
@@ -89,7 +89,7 @@ function presentedUsageLimitRun(
 function presentedLatestRun(
   projection: OrchestrationV2ThreadProjection,
 ): OrchestrationV2ThreadProjection["runs"][number] | null {
-  return presentedUsageLimitRun(projection) ?? latestUnheldRun(projection.runs);
+  return presentedUsageLimitRun(projection) ?? latestRunNotWaitingOnUser(projection.runs);
 }
 
 export function deriveLatestThreadRun(

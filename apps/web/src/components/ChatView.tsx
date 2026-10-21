@@ -142,7 +142,7 @@ import {
 import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import {
-  latestUnheldRun,
+  latestRunNotWaitingOnUser,
   usageLimitRunPresentedAsLatest,
 } from "@t3tools/shared/orchestrationV2ThreadError";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -1551,8 +1551,9 @@ export default function ChatView(props: ChatViewProps) {
   const activeRuntime = isServerThread ? serverRuntime : (activeThread?.runtime ?? null);
   const hasHeldQueuedRuns =
     isServerThread &&
-    serverProjection?.runs.some((run) => run.status === "queued" && run.queueHeld === true) ===
-      true;
+    serverProjection?.runs.some(
+      (run) => run.status === "queued" && (run.queueHeld === true || run.editing === true),
+    ) === true;
   const resumableRunId = (() => {
     if (!isServerThread || serverProjection === null) return null;
     const run = latestExecutedRun(serverProjection.runs);
@@ -2661,7 +2662,7 @@ export default function ChatView(props: ChatViewProps) {
         serverProjection.runs,
         serverProjection.turnItems,
         sessionError,
-      ) ?? latestUnheldRun(serverProjection.runs);
+      ) ?? latestRunNotWaitingOnUser(serverProjection.runs);
     return [
       ...derivePendingBackgroundWork({
         latestRun,

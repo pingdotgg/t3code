@@ -438,6 +438,11 @@ function isGoalCommand(message: {
 
 const threadPullRequestLinksEqual = Schema.toEquivalence(Schema.NullOr(ThreadLinkedPullRequest));
 
+const kicksQueue = (command: OrchestrationV2ServerCommand) =>
+  command.type === "queue.resume" ||
+  command.type === "queued-run.reorder" ||
+  (command.type === "queued-run.editing" && !command.editing);
+
 function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
   switch (command.type) {
     case "thread.create":
@@ -481,6 +486,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "queued-run.reorder":
     case "queued-run.cancel":
     case "queued-run.edit":
+    case "queued-run.editing":
     case "runtime-request.respond":
     case "thread.user-input.dismiss":
     case "checkpoint.rollback":
@@ -1384,7 +1390,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const startNextQueuedRun = Effect.fn("Orchestrator.startNextQueuedRun")(
     function* (
       threadId: ThreadId,
-      options?: { readonly failedRunId?: RunId; readonly endedRunId?: RunId },
+      options?: {
+        readonly failedRunId?: RunId;
+        readonly endedRunId?: RunId;
+        readonly afterLatestRun?: boolean;
+      },
     ) {
       if (!(yield* projectionStore.canStartQueuedRun(threadId))) return;
       const projection = yield* readCommandProjection(threadId);
@@ -1416,14 +1426,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       // A message queued behind a worktree that was cancelled or never created
       // would run in the project checkout instead, so it waits for the user.
-      const failedRun = latestExecutedRun(projection.runs);
-      const failureClass =
-        failedRun?.id === options?.failedRunId
-          ? latestRootProviderFailure(failedRun, projection.turnItems)?.class
-          : undefined;
+      const latestRun = latestExecutedRun(projection.runs);
+      // An edit release or a reorder can reach the queue before the listener for
+      // the last run did, so they judge that run themselves. The listener passes
+      // the ids it saw, and queue.resume is the user overriding the pause.
+      const endedRun =
+        options?.afterLatestRun === true || latestRun?.id === options?.endedRunId
+          ? latestRun
+          : null;
+      const failedRun =
+        options?.afterLatestRun === true || latestRun?.id === options?.failedRunId
+          ? latestRun
+          : null;
+      const failureClass = latestRootProviderFailure(failedRun, projection.turnItems)?.class;
       const worktreeMissing =
-        failedRun?.id === options?.endedRunId &&
-        failedRun?.workspacePreparation?.type === "worktree" &&
+        endedRun?.workspacePreparation?.type === "worktree" &&
         projection.thread.worktreePath === null;
       const settings = yield* serverSettings.getSettings.pipe(Effect.orDie);
       const projectOverride =
@@ -1462,6 +1479,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         );
         return;
       }
+      // A message the user is still editing waits for that edit to end, and the
+      // messages behind it wait with it so the queue keeps its order.
+      if (storedQueuedRun.editing === true) return;
       // Run ordinals order the transcript, checkpoints, and the latest run. A
       // run that started while this one waited (a resume of a held queue, a
       // reorder, a delivery that jumps the queue) has a newer ordinal, so this
@@ -8299,6 +8319,35 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
   });
 
+  const dispatchQueuedRunEditing = Effect.fn("Orchestrator.dispatchQueuedRunEditing")(function* (
+    command: Extract<OrchestrationV2Command, { readonly type: "queued-run.editing" }>,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const projection = yield* projectionStore
+      .getThreadRecords(command.threadId, ["runs"])
+      .pipe(Effect.mapError(() => new OrchestratorProjectionError({ threadId: command.threadId })));
+    const queuedRun = projection.runs.find((candidate) => candidate.id === command.runId);
+    if (queuedRun === undefined || queuedRun.status !== "queued") {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Run ${command.runId} is not queued.`,
+      });
+    }
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "run.updated",
+      threadId: command.threadId,
+      runId: queuedRun.id,
+      ...(queuedRun.rootNodeId === null ? {} : { nodeId: queuedRun.rootNodeId }),
+      providerInstanceId: queuedRun.providerInstanceId,
+      occurredAt: yield* DateTime.now,
+      payload: { ...queuedRun, editing: command.editing },
+    });
+  });
+
   const loadProjectionForCommand = <K extends ProjectionRecordField>(
     command: OrchestrationV2Command,
     fields: ReadonlyArray<K>,
@@ -11463,7 +11512,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             runId: run.id,
             providerInstanceId: run.providerInstanceId,
             occurredAt: now,
-            payload: { ...run, queueHeld: false },
+            payload: { ...run, queueHeld: false, editing: false },
           });
         }
         if (queued.length === 0) {
@@ -11487,6 +11536,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "queued-run.edit":
         yield* dispatchQueuedRunEdit(command, events);
+        break;
+      case "queued-run.editing":
+        yield* dispatchQueuedRunEditing(command, events);
         break;
       case "checkpoint.rollback":
         yield* dispatchCheckpointRollback(command, events, effects);
@@ -11579,8 +11631,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
         ),
       );
-      if (command.type === "queue.resume") {
-        yield* mapDispatchError(command)(startNextQueuedRun(command.threadId));
+      if (kicksQueue(command)) {
+        yield* mapDispatchError(command)(
+          startNextQueuedRun(
+            commandThreadId(command),
+            command.type === "queue.resume" ? undefined : { afterLatestRun: true },
+          ),
+        );
       }
       return {
         sequence: receipt.resultSequence,
@@ -11712,8 +11769,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         detail: committed.receipt.error ?? "Previously rejected.",
       });
     }
-    if (command.type === "queue.resume") {
-      yield* mapDispatchError(command)(startNextQueuedRun(command.threadId));
+    if (kicksQueue(command)) {
+      yield* mapDispatchError(command)(
+        startNextQueuedRun(
+          commandThreadId(command),
+          command.type === "queue.resume" ? undefined : { afterLatestRun: true },
+        ),
+      );
     }
     if (command.type === "notification.delivery.accept") {
       yield* mapDispatchError(command)(offerDelegatedCompletionDeliveries(command.threadId));

@@ -2901,6 +2901,70 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       }
 
       yield* projectionStore.apply({
+        id: EventId.make("event:clock:newer:editing"),
+        type: "run.updated",
+        threadId,
+        occurredAt: later,
+        payload: {
+          ...run,
+          id: RunId.make("run:clock:newer"),
+          ordinal: 2,
+          status: "queued",
+          editing: true,
+          requestedAt: later,
+          startedAt: null,
+          completedAt: null,
+        },
+      });
+      const editingProjection = yield* projectionStore.getThreadProjection(threadId);
+      const editingSqlShell = (yield* projectionStore.getShellSnapshot()).threads.find(
+        (row) => row.id === threadId,
+      )!;
+      for (const editingShell of [
+        editingSqlShell,
+        ProjectionStore.threadShellFromProjection(editingProjection),
+      ]) {
+        assert.equal(editingShell.latestRunId, runId);
+        assert.equal(editingShell.status, "completed");
+      }
+
+      const aheadOfEdit = {
+        ...run,
+        id: RunId.make("run:clock:ahead"),
+        ordinal: 3,
+        status: "queued" as const,
+        queuePosition: 1,
+        requestedAt: later,
+        startedAt: null,
+        completedAt: null,
+      };
+      yield* projectionStore.apply({
+        id: EventId.make("event:clock:ahead:queued"),
+        type: "run.updated",
+        threadId,
+        occurredAt: later,
+        payload: aheadOfEdit,
+      });
+      const aheadProjection = yield* projectionStore.getThreadProjection(threadId);
+      const aheadSqlShell = (yield* projectionStore.getShellSnapshot()).threads.find(
+        (row) => row.id === threadId,
+      )!;
+      for (const aheadShell of [
+        aheadSqlShell,
+        ProjectionStore.threadShellFromProjection(aheadProjection),
+      ]) {
+        assert.equal(aheadShell.latestRunId, "run:clock:ahead");
+        assert.equal(aheadShell.status, "queued");
+      }
+      yield* projectionStore.apply({
+        id: EventId.make("event:clock:ahead:held"),
+        type: "run.updated",
+        threadId,
+        occurredAt: later,
+        payload: { ...aheadOfEdit, queueHeld: true },
+      });
+
+      yield* projectionStore.apply({
         id: EventId.make("event:projection-shell-interruptible:held-first"),
         type: "run.updated",
         threadId,
