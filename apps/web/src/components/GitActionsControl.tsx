@@ -976,9 +976,7 @@ export default function GitActionsControl({
     activeServerThreadShell ?? activeServerThreadProjection?.projection.thread ?? null;
   const isLocalDraftThread = activeDraftThread !== null && activeServerThread === null;
   const canChangeThreadBranch = canWriteSourceControl && (isLocalDraftThread || canOperateThread);
-  const draftRefreshKey = isLocalDraftThread
-    ? (draftId ?? activeThreadRef?.threadId ?? null)
-    : null;
+  const threadRefreshKey = draftId ?? activeThreadRef?.threadId ?? null;
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
   const [isRefreshingQuickAction, setIsRefreshingQuickAction] = useState(false);
@@ -1097,11 +1095,11 @@ export default function GitActionsControl({
     reportFailure: false,
   });
   useEffect(() => {
-    // A new draft can reuse a status snapshot from before an IDE checkout.
-    if (draftRefreshKey !== null) {
+    // Threads can share a cached checkout whose status changed outside the app.
+    if (threadRefreshKey !== null) {
       requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd);
     }
-  }, [activeEnvironmentId, draftRefreshKey, gitCwd, refreshVcsStatus]);
+  }, [activeEnvironmentId, threadRefreshKey, gitCwd, refreshVcsStatus]);
   const { data: gitStatus, error: gitStatusError } = gitStatusQuery;
   const sourceControlPresentation = getSourceControlPresentation(gitStatus?.sourceControlProvider);
   const changeRequestTerminology = sourceControlPresentation.terminology;
