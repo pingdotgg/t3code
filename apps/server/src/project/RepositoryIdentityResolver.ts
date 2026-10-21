@@ -105,7 +105,7 @@ function buildRepositoryOrigin(
   const originKey = normalizeGitRemoteUrl(originUrl);
   if (originKey === canonicalKey) return undefined;
   const displayName = repositoryPathOf(originKey, originUrl);
-  return { canonicalKey: originKey, ...(displayName ? { displayName } : {}) };
+  return { canonicalKey: originKey, remoteUrl: originUrl, ...(displayName ? { displayName } : {}) };
 }
 
 function buildRepositoryIdentity(input: {
