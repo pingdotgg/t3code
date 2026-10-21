@@ -1,5 +1,8 @@
 import {
   MessageId,
+  CheckpointId,
+  CheckpointRef,
+  CheckpointScopeId,
   RuntimeRequestId,
   NodeId,
   ProviderInstanceId,
@@ -14,6 +17,8 @@ import {
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
+import { deriveThreadCheckpointSummaries } from "@t3tools/client-runtime/state/thread-checkpoints";
+import { getReviewSectionIdForCheckpoint } from "../features/review/reviewModel";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -208,6 +213,125 @@ describe("buildThreadFeed", () => {
       expect(
         deriveThreadFeedPresentation(feed, null, new Set([runId])).map((entry) => entry.type),
       ).toEqual(["message", "run-fold", "activity-group", "activity-group", "message"]);
+    },
+  );
+
+  it.each([false, true])(
+    "carries a late checkpoint to only the final answer without changing cached messages (cache: %s)",
+    (cached) => {
+      const cache = cached ? createThreadFeedCache() : undefined;
+      const earlier = {
+        ...assistantMessage(),
+        id: TurnItemId.make("earlier-item"),
+        messageId: MessageId.make("earlier-message"),
+        text: "Working on the files",
+      };
+      const final = assistantMessage("2026-06-20T00:00:04.000Z");
+      const rows = [projected(earlier, 0), projected(final, 1)];
+      const before = buildThreadFeed(rows, { cache });
+      const [summary] = deriveThreadCheckpointSummaries({
+        messages: [earlier, final].map((message) => ({
+          ...message,
+          id: message.messageId,
+          role: "assistant",
+          createdBy: "agent",
+          creationSource: "provider",
+          attachments: [],
+          createdAt: message.startedAt,
+        })),
+        checkpoints: [
+          {
+            id: CheckpointId.make("checkpoint-final"),
+            threadId,
+            scopeId: CheckpointScopeId.make("scope"),
+            runId,
+            nodeId: NodeId.make("node"),
+            parentCheckpointId: null,
+            ordinalWithinScope: 1,
+            appRunOrdinal: 2,
+            ref: CheckpointRef.make("checkpoint-ref"),
+            status: "ready",
+            capturedAt: final.updatedAt,
+            files: [
+              { path: "src/one.ts", kind: "modified", additions: 10, deletions: 2 },
+              { path: "src/two.ts", kind: "added", additions: 5, deletions: 0 },
+            ],
+          },
+        ],
+      });
+      expect(summary).toBeDefined();
+      if (!summary) return;
+      const after = buildThreadFeed(rows, { checkpointSummaries: [summary], cache });
+      expect(after[0]).toBe(before[0]);
+      expect(after[1]).toMatchObject({
+        type: "message",
+        message: { id: final.messageId, checkpointSummary: summary },
+      });
+      expect(before[1]).not.toHaveProperty("message.checkpointSummary");
+      expect(getReviewSectionIdForCheckpoint(summary)).toBe("turn:2");
+      const fallback = deriveThreadFeedPresentation(
+        [after.at(-1)!],
+        null,
+        new Set(),
+        new Set(),
+        null,
+        false,
+        cache,
+      );
+      expect(fallback.at(-1)).toMatchObject({ message: { checkpointSummary: summary } });
+      const workRows = [
+        projected(userMessage(), 0),
+        projected(command(), 1),
+        projected({ ...command(), id: TurnItemId.make("second-command") }, 2),
+        projected(final, 3),
+      ];
+      const workBefore = buildThreadFeed(workRows, { cache });
+      deriveThreadFeedPresentation(workBefore, null, new Set(), new Set(), null, false, cache);
+      const workAfter = buildThreadFeed(workRows, { checkpointSummaries: [summary], cache });
+      for (const expanded of [new Set<RunId>(), new Set([runId])]) {
+        const presented = deriveThreadFeedPresentation(
+          workAfter,
+          null,
+          expanded,
+          new Set(),
+          null,
+          false,
+          cache,
+        );
+        expect(presented.find((entry) => entry.type === "run-fold")).toMatchObject({
+          checkpointSummary: summary,
+        });
+        expect(presented.at(-1)).not.toHaveProperty("message.checkpointSummary");
+      }
+      const active = deriveThreadFeedPresentation(
+        workAfter,
+        {
+          runId,
+          status: "running",
+          startedAt: "2026-06-20T00:00:00.000Z",
+          completedAt: null,
+        },
+        new Set(),
+        new Set(),
+        null,
+        false,
+        cache,
+      );
+      expect(active.find((entry) => entry.type === "work-toggle")).toMatchObject({
+        checkpointSummary: summary,
+      });
+      expect(active.at(-1)).not.toHaveProperty("message.checkpointSummary");
+      expect(workBefore.at(-1)).not.toHaveProperty("message.checkpointSummary");
+
+      for (const checkpoint of [
+        { ...summary, files: [] },
+        ...(["missing", "error", "stale"] as const).map((status) => ({ ...summary, status })),
+        { ...summary, runId: RunId.make("another-run") },
+        { ...summary, assistantMessageId: MessageId.make("unloaded-message") },
+      ]) {
+        expect(buildThreadFeed(rows, { checkpointSummaries: [checkpoint], cache })).toEqual(before);
+      }
+      expect(buildThreadFeed(rows, { cache })).toEqual(before);
     },
   );
 

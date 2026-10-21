@@ -26,6 +26,8 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { HandoffEndpoints } from "@t3tools/client-runtime/handoff";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
+import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
+import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
   AuthFilesystemReadScope,
@@ -153,6 +155,8 @@ import {
   type MediaVideoPreviewSource,
 } from "../../lib/videoPreviewSource";
 import { CopyTextButton } from "./CopyTextButton";
+import { getReviewSectionIdForCheckpoint } from "../review/reviewModel";
+import { setReviewSelectedSectionId } from "../review/reviewState";
 import { Menu } from "../../components/ui/Menu";
 import { copyPromptLink } from "../prompt-links/prompt-link-actions";
 import { parseReviewCommentMessageSegments } from "../review/reviewCommentSelection";
@@ -1002,6 +1006,7 @@ function renderFeedEntry(
     readonly onToggleWorkGroup: (groupId: string, anchorKey?: string) => void;
     readonly onToggleWorkRow: (rowId: string, anchorKey?: string, groupId?: string) => void;
     readonly onToggleTurnFold: (runId: RunId) => void;
+    readonly onOpenTurnDiff: (checkpoint: ThreadCheckpointSummary) => void;
     readonly onPressPreview: (source: FilePreviewSource) => void;
     readonly onPressVideo: (attachment: ChatFileAttachment, sourceIdentifier: string) => void;
     readonly markdownLinkHandlers: MarkdownLinkHandlers;
@@ -1028,29 +1033,38 @@ function renderFeedEntry(
 
   if (entry.type === "run-fold") {
     return (
-      <Pressable
-        accessibilityRole="button"
-        accessibilityState={{ expanded: entry.expanded }}
-        onPress={() => props.onToggleTurnFold(entry.runId)}
-        hitSlop={4}
-        className="mb-1 min-h-11 flex-row items-center gap-2 border-b border-border-subtle px-2"
-        style={{
-          minHeight: Math.max(TURN_FOLD_HEIGHT - 3.5, props.workRowSizing.estimatedRowHeight),
-        }}
-      >
-        <Text
-          key={props.workRowSizing.textSizeKey}
-          className="font-t3-medium text-sm tabular-nums text-foreground-muted"
+      <View className="mb-1 flex-row items-center border-b border-border-subtle px-2">
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ expanded: entry.expanded }}
+          onPress={() => props.onToggleTurnFold(entry.runId)}
+          hitSlop={4}
+          className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2"
+          style={{
+            minHeight: Math.max(TURN_FOLD_HEIGHT - 3.5, props.workRowSizing.estimatedRowHeight),
+          }}
         >
-          {entry.label}
-        </Text>
-        <ThreadDisclosureChevron
-          expanded={entry.expanded}
-          collapsedDirection="right"
-          size={15}
-          tintColor={iconSubtleColor}
-        />
-      </Pressable>
+          <Text
+            key={props.workRowSizing.textSizeKey}
+            numberOfLines={1}
+            className="shrink font-t3-medium text-sm tabular-nums text-foreground-muted"
+          >
+            {entry.label}
+          </Text>
+          <ThreadDisclosureChevron
+            expanded={entry.expanded}
+            collapsedDirection="right"
+            size={15}
+            tintColor={iconSubtleColor}
+          />
+        </Pressable>
+        {entry.checkpointSummary ? (
+          <TurnDiffStat
+            checkpoint={entry.checkpointSummary}
+            onOpenTurnDiff={props.onOpenTurnDiff}
+          />
+        ) : null}
+      </View>
     );
   }
 
@@ -1102,6 +1116,14 @@ function renderFeedEntry(
         hasFailure={entry.hasFailure}
         shimmer={entry.shimmer}
         thought={entry.thought}
+        trailing={
+          entry.checkpointSummary ? (
+            <TurnDiffStat
+              checkpoint={entry.checkpointSummary}
+              onOpenTurnDiff={props.onOpenTurnDiff}
+            />
+          ) : null
+        }
         onToggle={() => props.onToggleWorkGroup(entry.groupId, entry.id)}
       />
     );
@@ -1425,6 +1447,12 @@ function renderFeedEntry(
             <MessageAttachmentUnknown key={attachment.id} name={attachment.name} />
           );
         })}
+        {showAssistantMeta && message.checkpointSummary ? (
+          <TurnDiffStat
+            checkpoint={message.checkpointSummary}
+            onOpenTurnDiff={props.onOpenTurnDiff}
+          />
+        ) : null}
         {showAssistantMeta ? (
           <View className="mt-1 flex-row items-center gap-1">
             <CopyTextButton
@@ -1472,6 +1500,32 @@ function renderFeedEntry(
       renderReasoning={props.renderReasoning}
       onPressPreview={props.onPressPreview}
     />
+  );
+}
+
+function TurnDiffStat(props: {
+  readonly checkpoint: ThreadCheckpointSummary;
+  readonly onOpenTurnDiff: (checkpoint: ThreadCheckpointSummary) => void;
+}) {
+  const { files } = props.checkpoint;
+  const additions = files.reduce((total, file) => total + file.additions, 0);
+  const deletions = files.reduce((total, file) => total + file.deletions, 0);
+  const fileCountLabel = `${files.length} file${files.length === 1 ? "" : "s"} changed`;
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Review ${fileCountLabel}, ${additions} additions, ${deletions} deletions`}
+      onPress={() => props.onOpenTurnDiff(props.checkpoint)}
+      className="min-h-11 shrink-0 flex-row items-center gap-2 px-2 active:bg-subtle"
+    >
+      <Text className="font-t3-medium text-xs tabular-nums text-adaptive-emerald-700-300">
+        +{formatDiffCount(additions)}
+      </Text>
+      <Text className="font-t3-medium text-xs tabular-nums text-adaptive-rose-700-300">
+        −{formatDiffCount(deletions)}
+      </Text>
+      <SymbolView name="chevron.right" size={12} tintColorClassName="accent-foreground-muted" />
+    </Pressable>
   );
 }
 
@@ -1687,6 +1741,19 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const duoColumns = useNativeWorkspaceColumnsSupported() && isDuoDevice(deviceType);
   const openPullRequest = useOpenPullRequest();
   const navigation = useNavigation();
+  const onOpenTurnDiff = useCallback(
+    (checkpoint: ThreadCheckpointSummary) => {
+      setReviewSelectedSectionId(
+        scopedThreadKey(props.environmentId, props.threadId),
+        getReviewSectionIdForCheckpoint(checkpoint),
+      );
+      navigation.navigate("ThreadReview", {
+        environmentId: props.environmentId,
+        threadId: props.threadId,
+      });
+    },
+    [navigation, props.environmentId, props.threadId],
+  );
   const { themeAppearance } = useAppearancePreferences();
   const copyFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const disclosureSettleFrameRef = useRef<number | null>(null);
@@ -2469,7 +2536,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     if (entry.type === "html-render") {
       return htmlRenderRowHeight(htmlRenderFrameHeight(entry.render, contentWidth));
     }
-    if (workRowSizing.fixedRowHeight === undefined) {
+    if (workRowSizing.fixedRowHeight === undefined || entry.checkpointSummary) {
       return undefined;
     }
     switch (entry.type) {
@@ -2546,6 +2613,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             onToggleWorkGroup,
             onToggleWorkRow,
             onToggleTurnFold,
+            onOpenTurnDiff,
             onPressPreview,
             onPressVideo,
             markdownLinkHandlers,
