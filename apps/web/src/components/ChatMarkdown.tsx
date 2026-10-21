@@ -27,7 +27,6 @@ import {
 } from "@t3tools/shared/composerContextClipboard";
 import {
   ChevronRightIcon,
-  CodeIcon,
   FileSpreadsheetIcon,
   FileTextIcon,
   GlobeIcon,
@@ -41,7 +40,6 @@ import {
   PresentationIcon,
   SparklesIcon,
   TriangleAlertIcon,
-  WorkflowIcon,
   type LucideIcon,
 } from "lucide-react";
 import { Check, Copy, Maximize2, Minimize2 } from "lucide";
@@ -154,7 +152,6 @@ import { openInEditorMenuLabel } from "../editorLabels";
 import { resolveDiffThemeName } from "../lib/diffRendering";
 import { GitHubIcon } from "./Icons";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
-import { MermaidDiagram } from "./chat/MermaidDiagram";
 import { useRenderedAppearance } from "../hooks/useTheme";
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import {
@@ -229,6 +226,7 @@ import {
 import { resolveLinkTarget } from "../browser/browserLinkTarget";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
 import { MarkdownCodeBlock, SuspenseShikiCodeBlock } from "./chat/MarkdownCodeBlock";
+import { MarkdownMermaidCodeBlock } from "./chat/MarkdownMermaidCodeBlock";
 import {
   extractCodeBlock,
   extractFenceLanguage,
@@ -654,81 +652,6 @@ function MarkdownDetails({
         </CollapsiblePanel>
       </Collapsible>
     </div>
-  );
-}
-
-function MarkdownMermaidCodeBlock({
-  code,
-  fenceTitle,
-  theme,
-  isStreaming,
-  onExpand,
-  children,
-}: {
-  code: string;
-  fenceTitle: string | null;
-  theme: "light" | "dark";
-  isStreaming: boolean;
-  onExpand: (imageUrl: string) => void;
-  children: ReactNode;
-}) {
-  const [showCode, setShowCode] = useState(false);
-  const searching = use(MarkdownFindContext);
-  const revealSource = () => setShowCode(true);
-  const sourceRevealRef = findRevealRef(revealSource);
-  const showDiagram = !showCode && !isStreaming && code.trim().length > 0;
-  const toggleLabel = showCode ? "Show diagram" : "Show code";
-  return (
-    <MarkdownCodeBlock
-      code={code}
-      language="mermaid"
-      fenceTitle={fenceTitle}
-      theme={theme}
-      isStreaming={isStreaming}
-      canWrap={!showDiagram}
-      diagram={showDiagram}
-      viewToggle={
-        isStreaming ? null : (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  variant="ghost-muted"
-                  size="icon-xs"
-                  onClick={() => setShowCode((value) => !value)}
-                  aria-label={toggleLabel}
-                />
-              }
-            >
-              {showCode ? <WorkflowIcon className="size-3" /> : <CodeIcon className="size-3" />}
-            </TooltipTrigger>
-            <TooltipPopup side="top">{toggleLabel}</TooltipPopup>
-          </Tooltip>
-        )
-      }
-    >
-      {showDiagram ? (
-        <RenderErrorBoundary resetKeys={[code, theme]} fallback={children}>
-          <Suspense
-            fallback={
-              <pre className="invisible" aria-hidden>
-                {code}
-              </pre>
-            }
-          >
-            <MermaidDiagram source={code} onExpand={onExpand} />
-          </Suspense>
-          {searching ? (
-            <pre ref={sourceRevealRef} hidden aria-hidden>
-              {code}
-            </pre>
-          ) : null}
-        </RenderErrorBoundary>
-      ) : (
-        children
-      )}
-    </MarkdownCodeBlock>
   );
 }
 
