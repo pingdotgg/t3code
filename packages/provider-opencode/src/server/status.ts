@@ -245,11 +245,46 @@ function openCodeCapabilitiesForModel(input: {
   });
 }
 
+interface OpenCodeRelease {
+  readonly providerID: string;
+  readonly family?: string | undefined;
+  readonly released?: number | undefined;
+  readonly deprecated?: boolean | undefined;
+}
+
+/**
+ * OpenCode catalogs keep every release of a family, such as Claude Opus 4.5
+ * through 5.5. Only the newest active release of each family within a
+ * sub-provider stays current; older releases and deprecated models are legacy.
+ */
+function markOpenCodeLegacy(
+  entries: ReadonlyArray<{
+    readonly model: ServerProviderModel;
+    readonly release: OpenCodeRelease;
+  }>,
+): Array<ServerProviderModel> {
+  const familyKey = ({ providerID, family }: OpenCodeRelease) =>
+    family ? `${providerID}/${family}` : undefined;
+  const newest = new Map<string, number>();
+  for (const { release } of entries) {
+    const key = familyKey(release);
+    if (key === undefined || release.released === undefined || release.deprecated) continue;
+    newest.set(key, Math.max(newest.get(key) ?? release.released, release.released));
+  }
+  return entries.map(({ model, release }) => {
+    const key = familyKey(release);
+    const latest = key === undefined ? undefined : newest.get(key);
+    const superseded =
+      latest !== undefined && release.released !== undefined && release.released < latest;
+    return release.deprecated || superseded ? { ...model, isLegacy: true } : model;
+  });
+}
+
 function flattenOpenCodeModels(
   input: OpenCodeRuntime.OpenCodeInventory,
 ): ReadonlyArray<ServerProviderModel> {
   const connected = new Set(input.providerList.connected);
-  const models: Array<ServerProviderModel> = [];
+  const entries: Array<{ model: ServerProviderModel; release: OpenCodeRelease }> = [];
 
   for (const provider of input.providerList.all) {
     if (!connected.has(provider.id)) {
@@ -263,21 +298,30 @@ function flattenOpenCodeModels(
       }
 
       const subProvider = nonEmptyTrimmed(provider.name);
-      models.push({
-        slug: `${provider.id}/${model.id}`,
-        name,
-        ...(subProvider ? { subProvider } : {}),
-        isCustom: false,
-        capabilities: openCodeCapabilitiesForModel({
+      const released = Date.parse(model.release_date);
+      entries.push({
+        model: {
+          slug: `${provider.id}/${model.id}`,
+          name,
+          ...(subProvider ? { subProvider } : {}),
+          isCustom: false,
+          capabilities: openCodeCapabilitiesForModel({
+            providerID: provider.id,
+            model,
+            agents: input.agents,
+          }),
+        },
+        release: {
           providerID: provider.id,
-          model,
-          agents: input.agents,
-        }),
+          family: model.family,
+          released: Number.isNaN(released) ? undefined : released,
+          deprecated: model.status === "deprecated",
+        },
       });
     }
   }
 
-  return models.toSorted((left, right) => left.name.localeCompare(right.name));
+  return markOpenCodeLegacy(entries).toSorted((left, right) => left.name.localeCompare(right.name));
 }
 
 function trimOptional(value: string | null | undefined): string | undefined {
@@ -372,8 +416,7 @@ export const makePendingOpenCodeProvider = Effect.fn(
   });
 });
 
-export interface OpenCode2Model {
-  readonly providerID: string;
+export interface OpenCode2Model extends OpenCodeRelease {
   readonly id: string;
   readonly name: string;
   readonly providerName?: string;
@@ -564,18 +607,21 @@ const checkOpenCode2 = Effect.fn("checkOpenCode2")(function* (
     });
   }
   const models = providerModelsFromSettings(
-    result.value
-      .map((model) => {
+    markOpenCodeLegacy(
+      result.value.map((model) => {
         const subProvider = subProviderLabelFor(model);
         return {
-          slug: `${model.providerID}/${model.id}`,
-          name: model.name,
-          ...(subProvider ? { subProvider } : {}),
-          isCustom: false,
-          capabilities: openCode2ModelCapabilities(model),
+          model: {
+            slug: `${model.providerID}/${model.id}`,
+            name: model.name,
+            ...(subProvider ? { subProvider } : {}),
+            isCustom: false,
+            capabilities: openCode2ModelCapabilities(model),
+          },
+          release: model,
         };
-      })
-      .toSorted((left, right) => left.name.localeCompare(right.name)),
+      }),
+    ).toSorted((left, right) => left.name.localeCompare(right.name)),
     settings.customModels,
     DEFAULT_OPENCODE_MODEL_CAPABILITIES,
   );

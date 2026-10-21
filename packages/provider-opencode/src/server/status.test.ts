@@ -665,6 +665,72 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
     }),
   );
 
+  it.effect("marks older releases of a family and deprecated models as legacy", () =>
+    Effect.gen(function* () {
+      const releases = [
+        ["opencode", "opus-4-5", "claude-opus", "2025-11-24", "active"],
+        ["opencode", "opus-5-5", "claude-opus", "2026-09-22", "active"],
+        ["opencode", "opus-preview", "claude-opus", "2026-10-01", "deprecated"],
+        ["opencode", "flash", "flash", "2026-09-10", "active"],
+        ["opencode", "flash-free", "flash", "2026-09-10", "active"],
+        ["opencode", "big-pickle", undefined, "2025-10-17", "active"],
+        ["openrouter", "opus-4-5", "claude-opus", "2025-11-24", "active"],
+      ] as const;
+      const legacySlugs = (
+        models: ReadonlyArray<{ readonly slug: string; readonly isLegacy?: boolean | undefined }>,
+      ) =>
+        models
+          .filter((model) => model.isLegacy)
+          .map((model) => model.slug)
+          .toSorted();
+      const expected = ["opencode/opus-4-5", "opencode/opus-preview"];
+
+      runtimeMock.state.inventory = {
+        providerList: {
+          connected: ["opencode", "openrouter"],
+          all: ["opencode", "openrouter"].map((providerID) => ({
+            id: providerID,
+            name: providerID,
+            models: Object.fromEntries(
+              releases
+                .filter(([provider]) => provider === providerID)
+                .map(([, id, family, releaseDate, status]) => [
+                  id,
+                  { id, name: id, family, release_date: releaseDate, status, variants: {} },
+                ]),
+            ),
+          })),
+          default: {},
+        },
+        agents: [],
+      };
+      NodeAssert.deepEqual(
+        legacySlugs((yield* checkProvider(makeOpenCodeSettings())).models),
+        expected,
+      );
+
+      runtimeMock.state.versionStdout = "opencode v2.0.18\n";
+      const openCode2 = yield* checkProvider(
+        makeOpenCodeSettings(),
+        process.cwd(),
+        undefined,
+        undefined,
+        Effect.succeed(
+          releases.map(([providerID, id, family, releaseDate, status]) => ({
+            providerID,
+            id,
+            name: id,
+            variants: [],
+            family,
+            released: Date.parse(releaseDate),
+            deprecated: status === "deprecated",
+          })),
+        ),
+      );
+      NodeAssert.deepEqual(legacySlugs(openCode2.models), expected);
+    }),
+  );
+
   it.effect("reports a failed OpenCode 2 model list without the server's response", () =>
     Effect.gen(function* () {
       runtimeMock.state.versionStdout = "opencode v2.0.18\n";

@@ -13,7 +13,9 @@ import {
   type OrchestrationV2ThreadLaunchWorkspaceStrategy,
   type OrchestrationV2TurnItem,
   OrchestratorMcpFailure,
+  type OrchestratorMcpCapabilitiesInput,
   type OrchestratorMcpCapabilitiesResult,
+  type OrchestratorMcpModelOption,
   type OrchestratorMcpCreateThreadsInput,
   type OrchestratorMcpCreateThreadsResult,
   type OrchestratorMcpCreatedThread,
@@ -59,9 +61,11 @@ import {
   type ScheduledTask,
   type ScheduledTaskUpsertInput,
   type ServerProvider,
+  type ServerProviderModel,
   ThreadId,
   isOrchestrationV2WorkActive,
 } from "@t3tools/contracts";
+import { getProviderOptionCurrentValue } from "@t3tools/shared/model";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import {
   normalizeThreadPullRequestKey,
@@ -136,6 +140,7 @@ type TerminalTaskStatus = Extract<
 export interface OrchestratorMcpServiceShape {
   readonly capabilities: (
     scope: McpInvocationScope,
+    input?: OrchestratorMcpCapabilitiesInput,
   ) => Effect.Effect<OrchestratorMcpCapabilitiesResult, OrchestratorMcpFailure>;
   readonly delegateTask: (
     scope: McpInvocationScope,
@@ -300,6 +305,61 @@ function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): Orchestrato
     ...(task.webhook === undefined
       ? {}
       : { webhookSignature: task.webhook.hasSecret ? "set" : "none" }),
+  };
+}
+
+/**
+ * Large catalogs (OpenCode, Cursor, Pi) can list hundreds of models, so agents
+ * get a short list by default and search for the rest. These providers have
+ * small official catalogs, so all their current models are listed.
+ */
+const FULL_CATALOG_DRIVERS: ReadonlySet<string> = new Set(["codex", "claudeAgent", "muse", "grok"]);
+const LISTED_MODEL_LIMIT = 8;
+
+/**
+ * Picks the models orchestrator_capabilities shows for one provider. Hidden
+ * models never appear. With search terms, lists matches; otherwise lists pinned
+ * models (custom, favorite, the caller's own) plus the provider's non-legacy
+ * models, or only the first few in the user's model order for large catalogs.
+ */
+function listCapabilityModels(input: {
+  readonly provider: ServerProvider;
+  readonly preferences:
+    | { readonly hiddenModels: ReadonlyArray<string>; readonly modelOrder: ReadonlyArray<string> }
+    | undefined;
+  readonly isPinned: (model: ServerProviderModel) => boolean;
+  readonly searchTerms: ReadonlyArray<string>;
+}) {
+  const rank = new Map(input.preferences?.modelOrder.map((slug, index) => [slug, index]));
+  const visible = input.provider.models
+    .filter((model) => model.isCustom || !input.preferences?.hiddenModels.includes(model.slug))
+    .toSorted((a, b) => (rank.get(a.slug) ?? rank.size) - (rank.get(b.slug) ?? rank.size));
+  if (input.searchTerms.length > 0) {
+    const matches = visible.filter((model) => {
+      const text = `${model.slug} ${model.name} ${model.subProvider ?? ""}`.toLowerCase();
+      return input.searchTerms.every((term) => text.includes(term));
+    });
+    const listed = matches.slice(0, LISTED_MODEL_LIMIT);
+    return { listed, omitted: matches.length - listed.length };
+  }
+  const current = visible.filter((model) => !model.isLegacy);
+  const shown = new Set(
+    FULL_CATALOG_DRIVERS.has(input.provider.driver)
+      ? current
+      : current.slice(0, LISTED_MODEL_LIMIT),
+  );
+  const listed = visible.filter((model) => input.isPinned(model) || shown.has(model));
+  return { listed, omitted: visible.length - listed.length };
+}
+
+/** Option ids and allowed values are all a delegating agent needs; labels are UI copy. */
+function capabilityModelOption(descriptor: ProviderOptionDescriptor): OrchestratorMcpModelOption {
+  const defaultValue = getProviderOptionCurrentValue(descriptor);
+  return {
+    id: descriptor.id,
+    values:
+      descriptor.type === "boolean" ? [false, true] : descriptor.options.map((choice) => choice.id),
+    ...(defaultValue === undefined ? {} : { default: defaultValue }),
   };
 }
 
@@ -2011,19 +2071,20 @@ const make = Effect.gen(function* () {
       return { status, secretRef: secretRef.value };
     }),
 
-    capabilities: Effect.fn("OrchestratorMcpService.capabilities")(function* (scope) {
+    capabilities: Effect.fn("OrchestratorMcpService.capabilities")(function* (scope, input = {}) {
       const { parent, limits } = yield* loadCaller(scope);
       const providers = yield* loadProviders;
       const orchestrationCapableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
-      const modelPreferences = yield* serverSettings.getSettings.pipe(
-        Effect.map((settings) => settings.providerModelPreferences ?? {}),
+      const settings = yield* serverSettings.getSettings.pipe(
         Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
       );
+      const inherited = parent?.thread.modelSelection;
+      const searchTerms = input.search?.toLowerCase().split(/\s+/) ?? [];
       return {
         parentThreadId: parent?.thread.id ?? null,
-        inheritedProviderInstanceId: parent?.thread.modelSelection.instanceId ?? null,
-        inheritedModel: parent?.thread.modelSelection.model ?? null,
-        inheritedOptions: parent?.thread.modelSelection.options ?? [],
+        inheritedProviderInstanceId: inherited?.instanceId ?? null,
+        inheritedModel: inherited?.model ?? null,
+        inheritedOptions: inherited?.options ?? [],
         runtimeMode: limits.runtimeMode,
         interactionMode: limits.interactionMode,
         providers: providers.map((provider) => {
@@ -2031,24 +2092,33 @@ const make = Effect.gen(function* () {
             provider,
             orchestrationCapableInstanceIds.has(provider.instanceId),
           );
+          const { listed, omitted } = listCapabilityModels({
+            provider,
+            preferences: settings.providerModelPreferences?.[provider.instanceId],
+            searchTerms,
+            isPinned: (model) =>
+              model.isCustom ||
+              (inherited?.instanceId === provider.instanceId && inherited.model === model.slug) ||
+              (settings.favorites ?? []).some(
+                (favorite) =>
+                  favorite.provider === provider.instanceId && favorite.model === model.slug,
+              ),
+          });
           return {
             providerInstanceId: provider.instanceId,
             driverKind: provider.driver,
-            displayName: provider?.displayName ?? null,
-            models:
-              provider?.models
-                .filter(
-                  (model) =>
-                    model.isCustom ||
-                    !modelPreferences[provider.instanceId]?.hiddenModels.includes(model.slug),
-                )
-                .map((model) => ({
-                  id: model.slug,
-                  label: model.name ?? null,
-                  ...(model.capabilities?.optionDescriptors === undefined
-                    ? {}
-                    : { options: model.capabilities.optionDescriptors }),
-                })) ?? [],
+            displayName: provider.displayName ?? null,
+            models: listed.map((model) => {
+              const options = model.capabilities?.optionDescriptors ?? [];
+              return {
+                id: model.slug,
+                ...(model.name.toLowerCase() === model.slug.toLowerCase()
+                  ? {}
+                  : { label: model.name }),
+                ...(options.length === 0 ? {} : { options: options.map(capabilityModelOption) }),
+              };
+            }),
+            ...(omitted === 0 ? {} : { omittedModels: omitted }),
             ...(provider.supportedRuntimeModes === undefined ||
             provider.supportedRuntimeModes.length === 0
               ? {}
