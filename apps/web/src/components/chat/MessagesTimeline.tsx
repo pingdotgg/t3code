@@ -1,5 +1,4 @@
 import { ThreadFindTimelineContext } from "./ThreadFindProvider";
-import { shallow } from "zustand/vanilla/shallow";
 import { MarkdownFindContext } from "./markdownFindContext";
 import { useChatCanvas } from "./ChatCanvasContext";
 import { WorkLogBlock } from "./WorkLog";
@@ -60,9 +59,6 @@ import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection
 import { type AssistantCitationRequest } from "./AssistantCitationSource";
 import { useAssistantCitationTarget, type CitationHistoryPage } from "./useAssistantCitationTarget";
 import {
-  computeStableMessagesTimelineRows,
-  deriveMessagesTimelineRowsWithState,
-  type MessagesTimelineRowsProjection,
   resolveTimelineIsAtEnd,
   resolveTimelineMinimapHasPersistentGutter,
   resolveTimelineMinimapCurrentIndex,
@@ -71,13 +67,11 @@ import {
   resolveTimelineMinimapHitStripWidth,
   timelineTurnFoldRunIdsByEntryId,
   worktreeSetupAgentStarted,
-  type StableMessagesTimelineRowsState,
   type MessagesTimelineRow,
   type TimelineLatestRun,
 } from "./MessagesTimeline.logic";
 import { type ThreadFindMatch } from "./threadFind";
 import { useThreadFindNavigation } from "./useThreadFindNavigation";
-import { readThreadFindPosition } from "./threadFindPosition";
 import type { ThreadFindPositionReader } from "./threadFind";
 import { TooltipScrollDismissArea } from "../ui/tooltip";
 import { WorktreeSetupCard } from "./WorktreeSetupCard";
@@ -116,6 +110,9 @@ import {
   McpAppTimelineRow,
 } from "./TimelineAssistantRows";
 import { V2EventTimelineRow } from "./TimelineV2EventRow";
+import { useTimelinePositionRestore } from "./useTimelinePositionRestore";
+import { useThreadFindPositionReader } from "./useThreadFindPositionReader";
+import { useStableHandoffRuns, useIncrementalTimelineRows, useStableRows } from "./useTimelineRows";
 
 function timelineListStateFor(identity: string): {
   readonly identity: string;
@@ -163,7 +160,6 @@ const TIMELINE_MAINTAIN_SCROLL_AT_END = {
     layout: true,
   },
 } as const satisfies MaintainScrollAtEndOptions;
-const EMPTY_TIMELINE_RUNS: ReadonlyArray<HandoffTimelineRun> = [];
 const EMPTY_RUN_IDS: ReadonlySet<RunId> = new Set();
 const TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH = {
   ...TIMELINE_MAINTAIN_SCROLL_AT_END,
@@ -609,145 +605,23 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const runs = useStableHandoffRuns(runsProp);
   const minimapItems = deriveTimelineMinimapItems(rows);
   const minimapRowIndices = minimapItems.map((item) => item.rowIndex);
-  // Preserve initialScrollAtEnd's measured target until the list is reused
-  // for another thread; scrollToEnd would replace it with an estimated offset.
-  const listOpenedOnRef = useRef<{
-    readonly list: LegendListRef;
-    identity: string | null;
-  } | null>(null);
-  useLayoutEffect(() => {
-    const list = listRef.current;
-    const opened = listOpenedOnRef.current;
-    if (!list) return;
-    if (opened?.list !== list) {
-      listOpenedOnRef.current = { list, identity: listIdentityKey };
-    } else if (opened.identity !== listIdentityKey) {
-      opened.identity = null;
-    }
-  });
   const restoreRowIndex =
     restoringThreadPosition && rememberedPosition?.atEnd === false
       ? rows.findIndex((row) => row.id === rememberedPosition.rowId)
       : -1;
   const restoringAlwaysRender =
     restoringThreadPosition && restoreRowIndex >= 0 ? { indices: [restoreRowIndex] } : undefined;
-  useLayoutEffect(() => {
-    if (!restoringThreadPosition || rows.length === 0) return;
-    const list = listRef.current;
-    if (!list) return;
-    if (citationRequest !== null) {
-      // oxlint-disable-next-line react/set-state-in-effect -- The citation scroll owns positioning once the list has mounted.
-      setPositionedThreadKey(listIdentityKey);
-      return;
-    }
-    let cancelled = false;
-    let settleFrame: number | null = null;
-    const viewport: HTMLElement | null = list.getScrollableNode();
-    const cancelRestoration = () => {
-      if (cancelled) return;
-      cancelled = true;
-      if (settleFrame !== null) cancelAnimationFrame(settleFrame);
-      if (viewport) void list.scrollToOffset({ offset: viewport.scrollTop, animated: false });
-      setPositionedThreadKey(listIdentityKey);
-    };
-    const cancelForNavigation = () => {
-      cancelRestoration();
-      onManualNavigation();
-    };
-    const onScrollKey = (event: globalThis.KeyboardEvent) => {
-      if (
-        ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key) &&
-        !(
-          event.target instanceof Element &&
-          event.target.closest("input, textarea, [contenteditable=true]")
-        )
-      )
-        cancelForNavigation();
-    };
-    viewport?.addEventListener("wheel", cancelForNavigation, { passive: true });
-    viewport?.addEventListener("touchmove", cancelForNavigation, { passive: true });
-    viewport?.addEventListener("pointerdown", cancelForNavigation, { passive: true });
-    viewport?.ownerDocument.addEventListener("keydown", onScrollKey);
-    const position = rememberedPosition;
-    const index = position ? rows.findIndex((row) => row.id === position.rowId) : -1;
-    if (position?.atEnd === false) onManualNavigation();
-    if (cancelPositionRestoreRef) cancelPositionRestoreRef.current = cancelRestoration;
-    const scrolling =
-      position?.atEnd === false
-        ? index >= 0
-          ? list.scrollToIndex({
-              index,
-              animated: false,
-              viewPosition: 0,
-              viewOffset: -position.offsetWithinRow,
-            })
-          : list.scrollToOffset({ offset: position.scrollOffset, animated: false })
-        : listOpenedOnRef.current?.identity === listIdentityKey
-          ? undefined
-          : list.scrollToEnd({ animated: false });
-    void Promise.resolve(scrolling).then(() => {
-      if (cancelled) return;
-      if (position?.atEnd !== false || index < 0) {
-        setPositionedThreadKey(listIdentityKey);
-        return;
-      }
-      // Index scrolling starts from estimates. Keep the saved row mounted
-      // until its measured position and the DOM agree for two layout frames.
-      let stableFrames = 0;
-      const reconcile = () => {
-        if (cancelled) return;
-        const state = list.getState();
-        const rowIndex = state.indexByKey(position.rowId);
-        const row = rowIndex === undefined ? undefined : state.elementAtIndex(rowIndex);
-        const element = list.getScrollableNode();
-        if (!row || !element) return;
-        const offset = Math.max(
-          0,
-          Math.min(
-            element.scrollTop +
-              row.getBoundingClientRect().top -
-              element.getBoundingClientRect().top +
-              position.offsetWithinRow,
-            element.scrollHeight - element.clientHeight,
-          ),
-        );
-        if (Math.abs(element.scrollTop - offset) > 1) {
-          stableFrames = 0;
-          void list.scrollToOffset({ offset, animated: false }).then(() => {
-            if (!cancelled) settleFrame = requestAnimationFrame(reconcile);
-          });
-          return;
-        }
-        stableFrames += 1;
-        if (stableFrames >= 2) {
-          setPositionedThreadKey(listIdentityKey);
-        } else {
-          settleFrame = requestAnimationFrame(reconcile);
-        }
-      };
-      settleFrame = requestAnimationFrame(reconcile);
-    });
-    return () => {
-      cancelled = true;
-      if (cancelPositionRestoreRef?.current === cancelRestoration) {
-        cancelPositionRestoreRef.current = null;
-      }
-      if (settleFrame !== null) cancelAnimationFrame(settleFrame);
-      viewport?.removeEventListener("wheel", cancelForNavigation);
-      viewport?.removeEventListener("touchmove", cancelForNavigation);
-      viewport?.removeEventListener("pointerdown", cancelForNavigation);
-      viewport?.ownerDocument.removeEventListener("keydown", onScrollKey);
-    };
-  }, [
+  useTimelinePositionRestore({
+    listRef,
+    listIdentityKey,
+    restoringThreadPosition,
+    rememberedPosition,
+    rows,
     citationRequest,
     cancelPositionRestoreRef,
-    listIdentityKey,
-    listRef,
     onManualNavigation,
-    rememberedPosition,
-    restoringThreadPosition,
-    rows,
-  ]);
+    onPositioned: setPositionedThreadKey,
+  });
 
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,
@@ -1112,70 +986,18 @@ const ConversationTimeline = memo(function ConversationTimeline({
     registerTimeline?.(list?.getScrollableNode() ?? null);
   };
 
-  useLayoutEffect(() => {
-    if (!findPositionReaderRef || !timelineViewportElement) return;
-    const read: ThreadFindPositionReader = (query) => {
-      const foldRunIds =
-        findFoldRunIds ??
-        timelineTurnFoldRunIdsByEntryId({
-          timelineEntries,
-          latestRun,
-          runningRunId,
-          isWorking,
-          runlessWorkActive,
-        });
-      const entryById = new Map(timelineEntries.map((entry) => [entry.id, entry]));
-      return readThreadFindPosition(
-        timelineViewportElement,
-        query,
-        (rowId) => {
-          const rowIndex = rows.findIndex((row) => row.id === rowId);
-          for (const row of rows.slice(Math.max(0, rowIndex))) {
-            if (row.kind !== "turn-fold" && row.kind !== "attempt-fold") {
-              const entry = entryById.get(row.kind === "assistant-meta" ? row.message.id : row.id);
-              if (entry && (entry.kind === "message" || entry.kind === "proposed-plan"))
-                return entry.id;
-              continue;
-            }
-            const entry = timelineEntries.find((entry) => {
-              const runId =
-                row.kind === "turn-fold"
-                  ? foldRunIds.get(entry.id)
-                  : entry.kind === "message"
-                    ? entry.message.runId
-                    : entry.kind === "proposed-plan"
-                      ? entry.proposedPlan.runId
-                      : null;
-              return (
-                runId === row.runId &&
-                (entry.kind !== "message" || entry.message.role === "assistant") &&
-                (row.kind !== "attempt-fold" || entry.attempt?.id === row.attemptId)
-              );
-            });
-            if (entry && (entry.kind === "message" || entry.kind === "proposed-plan"))
-              return entry.id;
-          }
-          return undefined;
-        },
-        contentInsetEndAdjustment,
-      );
-    };
-    findPositionReaderRef.current = read;
-    return () => {
-      if (findPositionReaderRef.current === read) findPositionReaderRef.current = null;
-    };
-  }, [
-    contentInsetEndAdjustment,
-    findFoldRunIds,
+  useThreadFindPositionReader({
     findPositionReaderRef,
-    isWorking,
-    latestRun,
-    rows,
-    runlessWorkActive,
-    runningRunId,
-    timelineEntries,
     timelineViewportElement,
-  ]);
+    findFoldRunIds,
+    timelineEntries,
+    latestRun,
+    runningRunId,
+    isWorking,
+    runlessWorkActive,
+    rows,
+    contentInsetEndAdjustment,
+  });
 
   useThreadFindNavigation({
     listReady: findListReady,
@@ -1555,90 +1377,4 @@ function AttemptFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "at
       <span className="text-2xs text-muted-foreground">Cut off by a steer</span>
     </button>
   );
-}
-
-function handoffRunsSignature(runs: ReadonlyArray<HandoffTimelineRun>): string {
-  return runs
-    .map(
-      (run) =>
-        `${run.id}\0${run.providerInstanceId}\0${run.ordinal}\0${run.modelSelection.instanceId}\0${run.modelSelection.model}`,
-    )
-    .join("\n");
-}
-
-function useStableHandoffRuns(
-  runs: ReadonlyArray<HandoffTimelineRun>,
-): ReadonlyArray<HandoffTimelineRun> {
-  const [state, setState] = useState<{
-    readonly source: ReadonlyArray<HandoffTimelineRun> | null;
-    readonly signature: string;
-    readonly value: ReadonlyArray<HandoffTimelineRun>;
-  }>({ source: null, signature: "", value: EMPTY_TIMELINE_RUNS });
-  if (state.source === runs) return state.value;
-  const signature = handoffRunsSignature(runs);
-  const value =
-    signature === state.signature
-      ? state.value
-      : runs.map((run) => ({
-          id: run.id,
-          ordinal: run.ordinal,
-          providerInstanceId: run.providerInstanceId,
-          modelSelection: run.modelSelection,
-        }));
-  setState({ source: runs, signature, value });
-  return value;
-}
-
-type MessagesTimelineRowsInput = MessagesTimelineRowsProjection["input"];
-
-// Expanded-id sets can be rebuilt during render; comparing them by content keeps
-// the render-time state update below from repeating forever.
-function sameRowsInput(left: MessagesTimelineRowsInput, right: MessagesTimelineRowsInput): boolean {
-  for (const key of Object.keys(right) as Array<keyof MessagesTimelineRowsInput>) {
-    const previous = left[key];
-    const next = right[key];
-    if (Object.is(previous, next)) continue;
-    if (previous instanceof Set && next instanceof Set && shallow(previous, next)) continue;
-    return false;
-  }
-  return Object.keys(left).length === Object.keys(right).length;
-}
-
-/**
- * Rows derived from the previous projection of the same list, so a streamed
- * text update patches its message rows instead of deriving every row again.
- */
-function useIncrementalTimelineRows(
-  identity: string,
-  input: MessagesTimelineRowsInput,
-): MessagesTimelineRow[] {
-  const [state, setState] = useState(() => ({
-    identity,
-    input,
-    projection: deriveMessagesTimelineRowsWithState(input),
-  }));
-  if (state.identity === identity && sameRowsInput(state.input, input)) {
-    return state.projection.rows;
-  }
-  const projection = deriveMessagesTimelineRowsWithState(
-    input,
-    state.identity === identity ? state.projection : null,
-  );
-  setState({ identity, input, projection });
-  return projection.rows;
-}
-
-function useStableRows(rows: MessagesTimelineRow[], identity: string): MessagesTimelineRow[] {
-  const [state, setState] = useState<{
-    readonly identity: string;
-    readonly source: MessagesTimelineRow[] | null;
-    readonly stable: StableMessagesTimelineRowsState;
-  }>({ identity, source: null, stable: { byId: new Map(), result: [] } });
-  if (state.identity === identity && state.source === rows) return state.stable.result;
-  const stable = computeStableMessagesTimelineRows(
-    rows,
-    state.identity === identity ? state.stable : { byId: new Map(), result: [] },
-  );
-  setState({ identity, source: rows, stable });
-  return stable.result;
 }
