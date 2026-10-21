@@ -53,6 +53,19 @@ describe("effect-acp errors", () => {
     });
   });
 
+  it("includes the authored detail but not the cause in the transport message", () => {
+    const cause = new Error("connection refused at a private endpoint");
+    const error = new AcpError.AcpTransportError({
+      detail: "ACP replay did not consume all frames",
+      cause,
+    });
+
+    expect(error.message).toBe(
+      "ACP transport operation failed: ACP replay did not consume all frames.",
+    );
+    expect(error.cause).toBe(cause);
+  });
+
   it("preserves structured extension handler failures behind stable request errors", () => {
     const cause = new AcpError.AcpTransportError({
       operation: "read-input-stream",

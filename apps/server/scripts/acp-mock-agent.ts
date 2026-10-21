@@ -1466,9 +1466,9 @@ const program = Effect.gen(function* () {
           },
         });
         if (exitAfterRunningCommandLaunch) {
+          // The test sends `_test/exit` once T3 has recorded the published processes.
           yield* Effect.promise(() => runningCommandPublished);
-          yield* Effect.sleep("100 millis");
-          return yield* Effect.sync(() => process.exit(0));
+          return yield* Effect.never;
         }
         while (!cancelledSessions.has(requestedSessionId)) {
           yield* Effect.sleep("25 millis");
@@ -2448,8 +2448,14 @@ const program = Effect.gen(function* () {
     return Effect.succeed({});
   });
 
-  yield* agent.handleUnknownExtNotification((method) =>
-    method === "_test/exit" ? Effect.sync(() => process.exit(19)) : Effect.void,
+  yield* agent.handleUnknownExtNotification((method, params) =>
+    method === "_test/exit"
+      ? Effect.sync(() => {
+          const code =
+            typeof params === "object" && params !== null ? Reflect.get(params, "code") : undefined;
+          process.exit(typeof code === "number" ? code : 19);
+        })
+      : Effect.void,
   );
 
   return yield* Effect.never;
