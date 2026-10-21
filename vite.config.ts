@@ -397,7 +397,10 @@ export default defineConfig({
           "react/jsx-no-constructed-context-values": "off",
           "react/memo-dependencies": "error",
           "react/preserve-manual-memoization": "error",
-          "react/purity": "error",
+          // oxlint 1.88 treats `new Date()` as impure (oxc#26894) and also flags it inside event
+          // handlers (oxc#27309). The compiler we ship (oxc-transform-react) still compiles
+          // those files, and reactCompilerCoverage.test.ts fails on real bailouts.
+          "react/purity": "warn",
           "react/refs": "error",
           "react/set-state-in-effect": "error",
           "react/set-state-in-render": "error",

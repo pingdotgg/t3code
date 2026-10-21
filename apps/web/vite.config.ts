@@ -181,6 +181,15 @@ const allowedHosts = [".ts.net", ...configuredAllowedHosts];
 
 export default defineConfig(() => {
   return {
+    run: {
+      tasks: {
+        // tsc-rs rewrites the tsbuildinfo it reads, which keeps a task out of the cache.
+        typecheck: {
+          command: "tsc-rs --noEmit",
+          cache: { input: [{ auto: true }, "!*.tsbuildinfo"] },
+        },
+      },
+    },
     assetsInclude: ["**/*.wasm"],
     plugins: [
       devCompressionPlugin(),
