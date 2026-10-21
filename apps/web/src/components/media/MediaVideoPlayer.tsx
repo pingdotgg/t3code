@@ -60,7 +60,7 @@ export function MediaVideoPlayer({
   const failed = src !== null ? failedSrc === src : sourceFailed;
   const preloaded = preloadedSrc === src || typeof IntersectionObserver === "undefined";
 
-  // Re-signing must not reset the playhead. Changed files refresh once playback pauses.
+  // Re-signing must not reset the playhead. Changed files refresh unless playback is active.
   if (
     playbackSource !== null &&
     playbackSource.revision !== revision &&
@@ -174,7 +174,11 @@ export function MediaVideoPlayer({
             videoClassName,
           )}
           style={style}
-          onLoadedMetadata={(event) => prepareVideoFirstFrame(event.currentTarget)}
+          onLoadedMetadata={(event) => {
+            prepareVideoFirstFrame(event.currentTarget);
+            // Loaded media holds its source too, so a paused playhead survives re-signing.
+            setPlaybackSource({ src, revision: sourceRevision });
+          }}
           onPlay={(event) => {
             setPlayingVideo(event.currentTarget);
             setPlaybackSource({ src, revision: sourceRevision });

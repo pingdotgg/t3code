@@ -560,6 +560,35 @@ describe("AssetAccess", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("reports one media revision per file content across re-signed URLs", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-media-revision-" });
+      const filePath = path.join(root, "recording.mp4");
+      yield* fs.writeFileString(filePath, "original");
+      const input = {
+        resource: {
+          _tag: "media-file" as const,
+          threadId: ThreadId.make("thread-1"),
+          path: filePath,
+        },
+      };
+      const original = yield* issueAssetUrl(input);
+      expect(original.revision).toBeDefined();
+      expect((yield* issueAssetUrl(input)).revision).toBe(original.revision);
+
+      yield* fs.writeFileString(filePath, "in-place edit");
+      const edited = yield* issueAssetUrl(input);
+      expect(edited.revision).not.toBe(original.revision);
+
+      const replacement = path.join(root, "replacement.mp4");
+      yield* fs.writeFileString(replacement, "in-place edit");
+      yield* fs.rename(replacement, filePath);
+      expect((yield* issueAssetUrl(input)).revision).not.toBe(edited.revision);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("keeps in-place edits readable but requires a new URL after atomic replacement", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

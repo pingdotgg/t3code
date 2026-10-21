@@ -346,6 +346,14 @@ const readImageDimensionsFromHeader = (filePath: string) =>
     Effect.orElseSucceed((): ImageDimensions | null => null),
   );
 
+/**
+ * Re-signing an unchanged file must not reload a paused player, so clients compare this instead
+ * of the URL. Stat identity is enough: an in-place write moves mtime/ctime and a replacement
+ * moves the inode, and hashing a large video on every request would be too slow.
+ */
+const mediaFileRevision = (info: OpenMediaFile["info"]) =>
+  [info.dev, info.ino, info.size, info.mtimeNs, info.ctimeNs].join(":");
+
 const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMediaFileAsset")(
   function* (input: {
     readonly requestedPath: string;
@@ -378,6 +386,7 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
                 : Effect.succeed(null),
               (dimensions) => ({
                 identity: { device: file.info.dev.toString(), inode: file.info.ino.toString() },
+                revision: mediaFileRevision(file.info),
                 dimensions,
               }),
             ),
@@ -403,6 +412,7 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
       },
       fileName: path.basename(canonicalFile),
       imageDimensions: opened.dimensions,
+      revision: opened.revision,
     };
   },
 );
@@ -504,6 +514,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
   let fileName: string;
   let sourcePath: string | undefined;
   let imageDimensions: ImageDimensions | null = null;
+  let revision: string | undefined;
 
   switch (input.resource._tag) {
     case "media-file": {
@@ -530,6 +541,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       claims = finalized.claims;
       fileName = finalized.fileName;
       imageDimensions = finalized.imageDimensions;
+      revision = finalized.revision;
       break;
     }
     case "workspace-file": {
@@ -572,6 +584,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         claims = finalized.claims;
         fileName = finalized.fileName;
         imageDimensions = finalized.imageDimensions;
+        revision = finalized.revision;
         break;
       }
       const workspaceRoot = yield* workspacePaths.normalizeWorkspaceRoot(draftWorkspaceRoot).pipe(
@@ -827,6 +840,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
     expiresAt,
     ...(sourcePath !== undefined ? { sourcePath } : {}),
     ...(imageDimensions !== null ? { imageDimensions } : {}),
+    ...(revision !== undefined ? { revision } : {}),
   };
 });
 

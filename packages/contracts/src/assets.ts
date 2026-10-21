@@ -75,6 +75,8 @@ export const AssetCreateUrlResult = Schema.Struct({
     TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
   ),
   imageDimensions: Schema.optional(AssetImageDimensions),
+  /** Changes only when the file's content may have; the signed URL changes on every mint. */
+  revision: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(256))),
 });
 export type AssetCreateUrlResult = typeof AssetCreateUrlResult.Type;
 
