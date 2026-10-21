@@ -333,6 +333,7 @@ patchedDependencies:
   alchemy@2.0.0-beta.80: patches/alchemy@2.0.0-beta.80.patch
   expo-audio@58.0.9: patches/expo-audio@58.0.9.patch
   expo-network@58.0.3: patches/expo-network@58.0.3.patch
+  "@clerk/electron@0.1.1": patches/@clerk__electron@0.1.1.patch
   "@clerk/expo-native-components@0.2.0": patches/@clerk__expo-native-components@0.2.0.patch
   "@effect/vitest@4.0.5": patches/@effect__vitest@4.0.5.patch
   "@expo/metro-config@58.0.14": patches/@expo__metro-config@58.0.14.patch

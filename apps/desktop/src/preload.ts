@@ -10,6 +10,7 @@ import type {
 import { exposeClerkBridge } from "@clerk/electron/preload";
 import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
 
+import { createClerkOAuthCancel } from "./clerkOAuthCancel.ts";
 import * as IpcChannels from "./ipc/channels.ts";
 import { mergeLegacyLocalStorage } from "./legacyLocalStorageMerge.ts";
 
@@ -30,7 +31,8 @@ function isSnapShotEvent(value: unknown): value is DesktopSnapShotEvent {
   );
 }
 
-exposeClerkBridge({ passkeys: true });
+const clerkOAuthCancel = createClerkOAuthCancel();
+exposeClerkBridge({ passkeys: true, wrapOAuthOpen: clerkOAuthCancel.wrapOpen });
 
 // Runs before any app script reads localStorage. See DesktopLegacyLocalStorage.
 try {
@@ -251,6 +253,9 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.removeListener(IpcChannels.QUIT_SHORTCUT_CHANNEL, wrappedListener);
     };
   },
+  isClerkOAuthPending: clerkOAuthCancel.isPending,
+  onClerkOAuthPendingChange: clerkOAuthCancel.onPendingChange,
+  cancelClerkOAuth: clerkOAuthCancel.cancel,
   getWindowFullscreenState: () =>
     ipcRenderer.sendSync(IpcChannels.GET_WINDOW_FULLSCREEN_STATE_CHANNEL) === true,
   getWindowZoomFactor: () => webFrame.getZoomFactor(),
