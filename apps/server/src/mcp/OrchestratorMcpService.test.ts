@@ -14,6 +14,7 @@ import {
   ProviderInstanceId,
   RunId,
   ThreadId,
+  type OrchestrationV2ServerCommand,
   type OrchestrationV2ThreadProjection,
   type ServerProvider,
 } from "@t3tools/contracts";
@@ -364,6 +365,109 @@ describe("OrchestratorMcpService", () => {
         assert.deepEqual(yield* Ref.get(dispatched), []);
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
     }),
+  );
+
+  it.effect.each(["no runs", "a finished run"] as const)(
+    "cancels an orphaned follow-up through its parent when the child has %s",
+    (childState) =>
+      Effect.gen(function* () {
+        const parentThreadId = ThreadId.make("thread:mcp-orphan-parent");
+        const childThreadId = ThreadId.make("thread:mcp-orphan-child");
+        const taskId = NodeId.make("node:mcp-orphan-task");
+        const parentRunId = RunId.make("run:mcp-orphan-parent");
+        const dispatched = yield* Ref.make<ReadonlyArray<OrchestrationV2ServerCommand>>([]);
+        const status = yield* Ref.make("running");
+        const parentProjection = (taskStatus: string) =>
+          ({
+            thread: { id: parentThreadId },
+            runs: [],
+            contextTransfers: [],
+            subagents: [
+              {
+                id: taskId,
+                threadId: parentThreadId,
+                runId: parentRunId,
+                origin: "app_owned",
+                childThreadId,
+                driver: "codex",
+                model: "gpt-5.6-terra",
+                status: taskStatus,
+                result: null,
+                completionDelivery: { state: "pending" },
+              },
+            ],
+          }) as unknown as OrchestrationV2ThreadProjection;
+        // A finished run whose binding to the follow-up was lost (#19002).
+        const childProjection = {
+          thread: { id: childThreadId },
+          runs:
+            childState === "no runs"
+              ? []
+              : [{ id: RunId.make("run:mcp-orphan-child"), ordinal: 1, status: "completed" }],
+          contextTransfers: [],
+          messages: [],
+          subagents: [],
+          providerThreads: [],
+          runtimeRequests: [],
+          turnItems: [],
+        } as unknown as OrchestrationV2ThreadProjection;
+        const layerDependencies = Layer.mergeAll(
+          NodeServices.layer,
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            getThreadRecords: (threadId) =>
+              threadId === parentThreadId
+                ? Effect.map(Ref.get(status), parentProjection)
+                : Effect.succeed(childProjection),
+            getThreadShell: (threadId) => Effect.succeed(liveThreadShell(threadId)),
+            delegatedTaskResultPending: () => Effect.succeed(false),
+            // The orchestrator's subagent.stop repair is covered in ThreadStop.test.ts.
+            dispatch: (command) =>
+              Ref.update(dispatched, (commands) => [...commands, command]).pipe(
+                Effect.andThen(
+                  command.type === "subagent.stop" ? Ref.set(status, "cancelled") : Effect.void,
+                ),
+                Effect.as({} as never),
+              ),
+          }),
+          ServerSettings.layerTest(),
+          Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+          Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+            list: () => Effect.succeed([]),
+          }),
+          Layer.mock(ProjectService.ProjectService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        );
+        const scope: McpInvocationScope = {
+          environmentId: EnvironmentId.make("environment:mcp-orphan"),
+          requestNamespace: "provider-session:mcp-orphan",
+          thread: {
+            threadId: parentThreadId,
+            providerSessionId: "provider-session:mcp-orphan",
+            providerInstanceId: ProviderInstanceId.make("codex"),
+          },
+          client: undefined,
+          capabilities: new Set(["orchestration"]),
+          issuedAt: 1,
+        };
+
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const result = yield* service.cancelTask(scope, {
+            taskId,
+            clientRequestId: "cancel-orphan-task",
+          });
+          assert.deepEqual(result, { taskId, status: "cancelled" });
+          const [stop, ...rest] = yield* Ref.get(dispatched);
+          assert.isEmpty(rest);
+          assert.equal(stop?.type, "subagent.stop");
+          if (stop?.type !== "subagent.stop") return;
+          assert.deepEqual(
+            { threadId: stop.threadId, runId: stop.runId, subagentId: stop.subagentId },
+            { threadId: parentThreadId, runId: parentRunId, subagentId: taskId },
+          );
+        }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+      }),
   );
 
   it.effect("does not dispose delivery when the child stop fails", () =>

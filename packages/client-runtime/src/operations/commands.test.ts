@@ -588,6 +588,65 @@ describe("V2 environment commands", () => {
       }).pipe(Effect.provide(layerTestCrypto)),
   );
 
+  it.effect(
+    "an app-owned subagent stop asks the parent to clear an orphan, then stops the child",
+    () =>
+      Effect.gen(function* () {
+        const subagentId = NodeId.make("app-owned-subagent");
+        const runId = RunId.make("parent-run");
+        const childThreadId = ThreadId.make("app-owned-child-thread");
+        const commands: OrchestrationV2Command[] = [];
+        const supervisor = yield* makeSupervisor({
+          commands,
+          projects: [],
+          advertiseThreadStop: true,
+          projection: {
+            ...v2Projection,
+            subagents: [
+              {
+                id: subagentId,
+                threadId: v2ThreadId,
+                runId,
+                parentNodeId: NodeId.make("owner-node"),
+                origin: "app_owned",
+                createdBy: "agent",
+                driver: ProviderDriverKind.make("codex"),
+                providerInstanceId: ProviderInstanceId.make("codex"),
+                providerThreadId: null,
+                childThreadId,
+                nativeTaskRef: null,
+                prompt: "Work",
+                title: null,
+                model: null,
+                result: null,
+                status: "running",
+                startedAt: v2Now,
+                completedAt: null,
+                updatedAt: v2Now,
+              },
+            ],
+          },
+        });
+        yield* interruptThreadTurn({
+          commandId: CommandId.make("lineage-stop"),
+          threadId: v2ThreadId,
+          subagentId,
+          // A parent run must not be interrupted on the child thread.
+          runId,
+        }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+        expect(commands).toEqual([
+          {
+            type: "subagent.stop",
+            commandId: expect.any(String),
+            threadId: v2ThreadId,
+            runId,
+            subagentId,
+          },
+          { type: "thread.stop", commandId: "lineage-stop", threadId: childThreadId },
+        ]);
+      }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
   it.effect("stops a thread without relying on background work in the history window", () =>
     Effect.gen(function* () {
       const commands: OrchestrationV2Command[] = [];
