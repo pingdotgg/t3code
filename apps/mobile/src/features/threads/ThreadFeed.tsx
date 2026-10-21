@@ -3,6 +3,7 @@ import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { useWorkspaceSettledContentWidth } from "../layout/workspace-content-width";
 import { ThreadMarkdownVideo, ThreadMediaVisibleContext } from "./ThreadMarkdownVideo";
+import { assistantMessageLabel } from "@t3tools/client-runtime/assistant-message";
 import { useMarkdownImageSource } from "../../native/useMarkdownImageSource";
 import {
   enrichedContextLinkCustomization,
@@ -1665,6 +1666,8 @@ function renderFeedEntry(
     | "onEditPendingMessage"
     | "threadId"
     | "workspaceRoot"
+    | "latestRun"
+    | "runlessWorkActive"
   > & {
     readonly copiedRowId: string | null;
     readonly expandedWorkRows: Record<string, boolean>;
@@ -1886,8 +1889,20 @@ function renderFeedEntry(
     const hasWideBlock = hasWideMarkdownBlock(renderedText, WIDE_MARKDOWN_BLOCK_OPTIONS);
     const assistantTurnStillInProgress =
       message.role === "assistant" &&
-      props.unsettledTurnId !== null &&
-      message.runId === props.unsettledTurnId;
+      (message.runId === null
+        ? props.runlessWorkActive === true
+        : props.unsettledTurnId !== null && message.runId === props.unsettledTurnId);
+    const assistantLabel = assistantMessageLabel({
+      isTerminal: props.terminalAssistantMessageIds.has(message.id),
+      isInProgress: assistantTurnStillInProgress || message.streaming,
+      runStatus:
+        message.runId && props.failedRunIds.has(message.runId)
+          ? "failed"
+          : props.latestRun?.runId === message.runId
+            ? props.latestRun?.status
+            : undefined,
+    });
+    const isCommentary = assistantLabel === "Commentary";
     const showAssistantMeta =
       message.role === "assistant" &&
       props.terminalAssistantMessageIds.has(message.id) &&
@@ -2257,9 +2272,19 @@ function renderFeedEntry(
             ? "mb-5 px-1"
             : "mb-1 px-1",
           hasWideBlock && "w-full",
+          isCommentary ? "border-l-2 border-border pl-3" : "mt-2 border-t border-border pt-3",
         )}
         {...(enterAnimated ? { entering: FadeIn.duration(220) } : {})}
       >
+        <Text
+          accessibilityRole="header"
+          className={cn(
+            "mb-2 font-t3-medium text-xs",
+            isCommentary ? "text-foreground-secondary" : "text-foreground",
+          )}
+        >
+          {assistantLabel}
+        </Text>
         {renderedText.trim().length > 0 ? (
           <MarkdownImageAvailableWidthContext value={props.markdownContentWidth}>
             <AssistantMarkdownContent
@@ -3253,6 +3278,8 @@ export const ThreadFeed = memo(function ThreadFeed({
   // Include turn completion so unchanged message rows reveal their footer and spacing
   // even when the final message update arrives before the turn settles.
   const listAppearanceData = {
+    latestRunStatus: props.latestRun?.status,
+    runlessWorkActive: props.runlessWorkActive,
     disclosureLayout,
     reduceMotion,
     worktreeSetup: props.worktreeSetup,
@@ -3482,10 +3509,17 @@ export const ThreadFeed = memo(function ThreadFeed({
   );
   const failedRunIds = failedFeedRunIds(props.feed, props.latestRun);
   const terminalAssistantMessageIds = (() => {
-    const terminalIdsByTurn = new Map<RunId, string>();
+    const terminalIdsByTurn = new Map<string, string>();
+    let unkeyedResponseIndex = 0;
     for (const entry of props.feed) {
-      if (entry.type === "message" && entry.message.role === "assistant" && entry.message.runId) {
-        terminalIdsByTurn.set(entry.message.runId, entry.message.id);
+      if (entry.type !== "message") continue;
+      if (entry.message.role === "user") {
+        unkeyedResponseIndex += 1;
+      } else if (entry.message.role === "assistant") {
+        const key = entry.message.runId
+          ? `turn:${entry.message.runId}`
+          : `unkeyed:${unkeyedResponseIndex}`;
+        terminalIdsByTurn.set(key, entry.message.id);
       }
     }
     return new Set(terminalIdsByTurn.values());
@@ -3793,6 +3827,8 @@ export const ThreadFeed = memo(function ThreadFeed({
           {renderFeedEntry(info, {
             userMessageGrouping: info.item.userMessageGrouping,
             environmentId: props.environmentId,
+            latestRun: props.latestRun,
+            runlessWorkActive: props.runlessWorkActive,
             dispatchingMessageId: props.dispatchingMessageId,
             onEditPendingMessage: props.onEditPendingMessage,
             onUseArtifactTemplate: props.onUseArtifactTemplate,
