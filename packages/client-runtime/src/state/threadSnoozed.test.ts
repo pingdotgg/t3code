@@ -11,6 +11,7 @@ import {
   snoozeWakeLabel,
   threadRaisedHandWhileSnoozed,
   threadWokeAt,
+  isThreadWokeUnseen,
   type ThreadSnoozeShell,
 } from "./threadSettled.ts";
 
@@ -417,4 +418,17 @@ describe("resolveSnoozePresets", () => {
     const tomorrow = new Date(presets.find((preset) => preset.id === "tomorrow")!.snoozedUntil);
     expect(tomorrow.getDay()).toBe(1);
   });
+});
+
+it("dismisses a wake at its timestamp without hiding a later wake", () => {
+  const firstWake = "2026-04-10T10:00:00.000Z";
+  const state = {
+    wokeAt: firstWake,
+    settled: false,
+    lastVisitedAt: null,
+    latestRunCompletedAt: null,
+  };
+  expect(isThreadWokeUnseen(state)).toBe(true);
+  expect(isThreadWokeUnseen({ ...state, lastVisitedAt: firstWake })).toBe(false);
+  expect(isThreadWokeUnseen({ ...state, lastVisitedAt: firstWake, wokeAt: NOW })).toBe(true);
 });

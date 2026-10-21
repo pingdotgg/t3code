@@ -1362,21 +1362,4 @@ export function mergeDirectPreviewAnnotation(input: {
   return { images, previewAnnotations };
 }
 
-/**
- * Whether a woken thread woke after the user last saw it. A run that completed
- * after the last visit counts as seeing it, since the user watched it finish.
- */
-export function isThreadWokeUnseen(input: {
-  readonly wokeAt: string | null;
-  readonly settled: boolean;
-  readonly lastVisitedAt: string | null | undefined;
-  readonly latestRunCompletedAt: string | null;
-}): boolean {
-  if (input.wokeAt === null || input.settled) return false;
-  const wokeAtMs = Date.parse(input.wokeAt);
-  if (Number.isNaN(wokeAtMs)) return false;
-  const seenAt = [input.lastVisitedAt, input.latestRunCompletedAt]
-    .map((value) => (value ? Date.parse(value) : NaN))
-    .filter((ms) => !Number.isNaN(ms));
-  return seenAt.every((ms) => ms < wokeAtMs);
-}
+export { isThreadWokeUnseen } from "@t3tools/client-runtime/state/thread-settled";
