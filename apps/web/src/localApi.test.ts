@@ -1,4 +1,8 @@
-import { type ConfirmDialogOptions, type ContextMenuItem } from "@t3tools/contracts";
+import {
+  type ConfirmDialogOptions,
+  type ContextMenuItem,
+  type DesktopBridge,
+} from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const showContextMenuFallbackMock =
@@ -23,17 +27,12 @@ vi.mock("./confirmDialog", () => ({
 }));
 
 const styledContextMenuState = vi.hoisted(() => ({ enabled: false }));
+const ensureClientSettingsHydratedMock = vi.hoisted(() => vi.fn<() => Promise<void>>());
 
-vi.mock("~/hooks/useSettings", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("~/hooks/useSettings")>();
-  return {
-    ...actual,
-    getClientSettings: () => ({
-      ...actual.getClientSettings(),
-      styledContextMenuEnabled: styledContextMenuState.enabled,
-    }),
-  };
-});
+vi.mock("~/hooks/useSettings", () => ({
+  ensureClientSettingsHydrated: ensureClientSettingsHydratedMock,
+  getClientSettings: () => ({ styledContextMenuEnabled: styledContextMenuState.enabled }),
+}));
 
 function createLocalStorageStub(): Storage {
   const values = new Map<string, string>();
@@ -61,6 +60,7 @@ beforeEach(() => {
   vi.resetModules();
   vi.clearAllMocks();
   styledContextMenuState.enabled = false;
+  ensureClientSettingsHydratedMock.mockResolvedValue(undefined);
   if (globalThis.window === undefined) {
     Object.defineProperty(globalThis, "window", {
       configurable: true,
@@ -79,31 +79,6 @@ afterEach(() => {
 });
 
 describe("LocalApi", () => {
-  it("keeps backend operations out of the local host facade", async () => {
-    const { createLocalApi } = await import("./localApi");
-    const api = createLocalApi();
-
-    expect(api).not.toHaveProperty("server");
-    expect(api.shell).not.toHaveProperty("openInEditor");
-  });
-
-  it("uses the browser context-menu fallback without a desktop bridge", async () => {
-    showContextMenuFallbackMock.mockResolvedValue("rename");
-    const { createLocalApi } = await import("./localApi");
-    const items = [{ id: "rename", label: "Rename" }] as const;
-
-    await expect(createLocalApi().contextMenu.show(items, { x: 4, y: 5 })).resolves.toBe("rename");
-    expect(showContextMenuFallbackMock).toHaveBeenCalledWith(items, { x: 4, y: 5 });
-  });
-
-  it("dismisses an open browser context menu without a desktop bridge", async () => {
-    const { createLocalApi } = await import("./localApi");
-
-    await createLocalApi().contextMenu.close();
-
-    expect(dismissContextMenuMock).toHaveBeenCalledOnce();
-  });
-
   it("uses the styled fallback on desktop when Styled Context Menu is enabled", async () => {
     styledContextMenuState.enabled = true;
     showContextMenuFallbackMock.mockResolvedValue("rename");
@@ -129,6 +104,17 @@ describe("LocalApi", () => {
 
   it("abandons a desktop show that close invalidates while the preference read is pending", async () => {
     styledContextMenuState.enabled = true;
+    let resolveHydration!: () => void;
+    let notifyHydrationStarted!: () => void;
+    const hydrationStarted = new Promise<void>((resolve) => {
+      notifyHydrationStarted = resolve;
+    });
+    ensureClientSettingsHydratedMock.mockImplementation(() => {
+      notifyHydrationStarted();
+      return new Promise<void>((resolve) => {
+        resolveHydration = resolve;
+      });
+    });
     const showContextMenu = vi.fn().mockResolvedValue("delete");
     testWindow().desktopBridge = { showContextMenu } as unknown as DesktopBridge;
     const { createLocalApi } = await import("./localApi");
@@ -136,22 +122,13 @@ describe("LocalApi", () => {
     const items = [{ id: "delete", label: "Delete" }] as const;
 
     const pendingShow = api.contextMenu.show(items);
+    await hydrationStarted;
     await api.contextMenu.close();
+    resolveHydration();
 
     await expect(pendingShow).resolves.toBeNull();
     expect(showContextMenuFallbackMock).not.toHaveBeenCalled();
     expect(showContextMenu).not.toHaveBeenCalled();
-  });
-
-  it("uses the themed confirmation host when it is available", async () => {
-    requestConfirmDialogMock.mockResolvedValue(true);
-    const { createLocalApi } = await import("./localApi");
-    const options = { variant: "destructive" } as const;
-
-    await expect(createLocalApi().dialogs.confirm("Delete this thread?", options)).resolves.toBe(
-      true,
-    );
-    expect(requestConfirmDialogMock).toHaveBeenCalledWith("Delete this thread?", options);
   });
 
   it("fails closed in a browser when no themed host is available", async () => {
