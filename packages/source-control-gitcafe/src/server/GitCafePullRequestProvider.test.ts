@@ -167,12 +167,27 @@ describe("GitCafePullRequestProvider", () => {
     );
     return Effect.gen(function* () {
       const provider = yield* GitCafePullRequestProvider.make;
-      const summary = yield* provider.getChangeRequestSummary!({
+      const input = {
         ...target,
         host: "staging.git.cafe",
+      };
+      const preview = yield* provider.getChangeRequestPreview!(input);
+      assert.deepInclude(preview, {
+        number: 7,
+        title: "Change",
+        url: "https://staging.git.cafe/owner/repo/pulls/7",
+        author: { login: "alice", name: null, avatarUrl: "https://staging.git.cafe/avatars/one" },
+        state: "open",
+        isDraft: false,
+        createdAt: timestamp,
       });
+      const summary = yield* provider.getChangeRequestSummary!(input);
       assert.strictEqual(summary.url, "https://staging.git.cafe/owner/repo/pulls/7");
       assert.isTrue(server.sent.every((request) => request.host === "staging.git.cafe"));
+      assert.deepStrictEqual(
+        server.sent.map((request) => `${request.method} ${request.path}`),
+        ["GET /repos/owner/repo/pulls/7", "GET /repos/owner/repo/pulls/7"],
+      );
     }).pipe(Effect.provide(server.layer));
   });
 

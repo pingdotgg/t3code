@@ -281,6 +281,7 @@ export const make = Effect.gen(function* () {
         return { items, truncated: more, continues: true, cursorAdvance: consumed };
       },
     ),
+    getChangeRequestPreview: (input) => getPull(input).pipe(Effect.map(forgejoChangeRequest)),
     getChangeRequestSummary: (input) => getPull(input).pipe(Effect.map(forgejoChangeRequest)),
     getChangeRequestChecks: Effect.fn("ForgejoPullRequestProvider.getChangeRequestChecks")(
       function* (input) {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -64,6 +64,25 @@ describe("getChangeRequest base freshness", () => {
     viewerCanMerge: true,
     reviewerIds: [],
   };
+
+  it.effect.each(["getChangeRequestPreview", "getChangeRequestSummary"] as const)(
+    "%s preserves merge request fields without fetching project settings",
+    (operation) =>
+      Effect.gen(function* () {
+        const provider = yield* make.pipe(
+          Effect.provide(
+            Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+              getMergeRequestDetail: () => Effect.succeed(detail),
+            }),
+          ),
+        );
+        const read = provider[operation];
+        assert.isDefined(read);
+        expect(
+          yield* read({ cwd: "/w", repository: "acme/web", host: "gitlab.com", number: 7 }),
+        ).toEqual(detail);
+      }),
+  );
 
   const readWith = (divergence: { readonly divergedCommits?: number }) =>
     Effect.gen(function* () {

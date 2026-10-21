@@ -525,6 +525,10 @@ export const make = Effect.gen(function* () {
         };
       },
     ),
+    getChangeRequestPreview: (input) =>
+      readPull("getChangeRequestPreview", input).pipe(
+        Effect.map((pull) => Json.toChangeRequest(pull, input)),
+      ),
     getChangeRequestSummary: (input) =>
       readPull("getChangeRequestSummary", input).pipe(
         Effect.map((pull) => ({

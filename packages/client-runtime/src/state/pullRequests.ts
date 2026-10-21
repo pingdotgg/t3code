@@ -205,6 +205,18 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
     }),
   );
+  // Hover cards read their own atoms, so a pending or failed hover read never decides where a
+  // click on the same link goes.
+  const previewCard = writableQueryFamily(
+    createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:pull-requests:preview-card",
+      persistence: persistQuery(PullRequestPreview),
+      tag: WS_METHODS.pullRequestsPreview,
+      execute: (input) => routedRequest(WS_METHODS.pullRequestsPreview, input),
+      staleTimeMs: 60_000,
+      refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+    }),
+  );
   const labelCandidates = writableQueryFamily(
     createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:label-candidates",
@@ -319,6 +331,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     }),
     detail,
     preview,
+    previewCard,
     checks: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:checks",
       persistence: persistQuery(Schema.NullOr(PullRequestChecks)),
@@ -403,7 +416,10 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       // every preceding action, and preparing outside the lane could reorder the clicks.
       execute: runAction,
       onSuccess: ({ environmentId, input }, registry) =>
-        Effect.sync(() => registry.refresh(preview({ environmentId, input }))),
+        Effect.sync(() => {
+          registry.refresh(preview({ environmentId, input }));
+          registry.refresh(previewCard({ environmentId, input }));
+        }),
       scheduler: commandScheduler,
       concurrency: serialPerEnvironment,
     }),
@@ -601,6 +617,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         Effect.sync(() => {
           if (input.reference !== undefined) {
             registry.refresh(preview({ environmentId, input: input.reference }));
+            registry.refresh(previewCard({ environmentId, input: input.reference }));
           }
         }),
       scheduler: commandScheduler,

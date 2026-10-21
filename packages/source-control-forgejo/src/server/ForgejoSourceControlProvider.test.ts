@@ -248,11 +248,23 @@ it.effect.each([
       merged_at: null,
       labels: [],
     };
+    const requests: string[] = [];
     return Effect.gen(function* () {
       const provider = yield* ForgejoPullRequestProvider.make;
       const readSummary = provider.getChangeRequestSummary;
       if (readSummary === undefined) return yield* Effect.die("summary read missing");
+      const readPreview = provider.getChangeRequestPreview;
+      if (readPreview === undefined) return yield* Effect.die("preview read missing");
       const input = { cwd: "/repo", repository: "maria/project", host: "forgejo.test", number: 42 };
+      const preview = yield* readPreview(input);
+      assert.deepStrictEqual(requests, ["repos/maria/project/pulls/42"]);
+      assert.strictEqual(preview.isDraft, isDraft);
+      assert.strictEqual(preview.title, title);
+      assert.strictEqual(preview.state, "open");
+      assert.strictEqual(preview.number, 42);
+      assert.strictEqual(preview.url, pr.html_url);
+      assert.deepStrictEqual(preview.author, { login: "maria", name: null, avatarUrl: null });
+      assert.strictEqual(preview.createdAt, "2026-09-16T00:00:00.000Z");
       const list = yield* provider.listChangeRequests({
         ...input,
         state: "open",
@@ -272,6 +284,7 @@ it.effect.each([
       Effect.provide(
         Layer.mock(ForgejoCli.ForgejoCli)({
           api: (input) => {
+            requests.push(input.path);
             const [path, query] = input.path.split("?");
             let response: unknown;
             switch (path) {
