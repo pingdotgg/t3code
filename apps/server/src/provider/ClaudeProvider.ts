@@ -1,3 +1,4 @@
+import { readClaudeLaunchAccount, ClaudeLaunchCapacityError } from "./ClaudeDelegatedLaunch.ts";
 import {
   type ClaudeSettings,
   type ModelCapabilities,
@@ -266,6 +267,7 @@ export type ClaudeCapabilitiesProbe = {
    */
   readonly usage?: Pick<SDKControlGetUsageResponse, "rate_limits_available" | "rate_limits">;
   readonly usageCheckedAt?: string;
+  readonly credentialFingerprint?: string;
 };
 
 function parseClaudeInitializationCommands(
@@ -351,6 +353,7 @@ const probeClaudeCapabilities = (
   environment?: NodeJS.ProcessEnv,
   cwd?: string,
   includeUsage = true,
+  verifyLaunchAccount = false,
 ) => {
   const abort = new AbortController();
   return Effect.gen(function* () {
@@ -377,15 +380,18 @@ const probeClaudeCapabilities = (
         }),
       });
       const init = await q.initializationResult();
-      return { q, init };
+      return { q, init, claudeEnvironment };
     });
   }).pipe(
     Effect.timeout(CAPABILITIES_PROBE_TIMEOUT_MS),
-    Effect.flatMap(({ q, init }) =>
+    Effect.flatMap(({ q, init, claudeEnvironment }) =>
       Effect.gen(function* () {
         // Usage has its own deadline so a slow optional request cannot discard initialization.
         // Only the rate limits are read, so skip the local transcript scan that fills
         // `behaviors`: with a few GB of transcripts it outlasts the deadline.
+        const launchAccount = verifyLaunchAccount
+          ? yield* readClaudeLaunchAccount(q, claudeEnvironment)
+          : undefined;
         const usageCheckedAt = DateTime.formatIso(yield* DateTime.now);
         const usageResult = includeUsage
           ? yield* Effect.tryPromise(() =>
@@ -399,6 +405,11 @@ const probeClaudeCapabilities = (
                 rate_limits: usageResult.success.rate_limits,
               }
             : undefined;
+        if (launchAccount) {
+          const confirmed = yield* readClaudeLaunchAccount(q, claudeEnvironment);
+          if (launchAccount.credentialFingerprint !== confirmed.credentialFingerprint)
+            return yield* new ClaudeLaunchCapacityError({ code: "delegated_capacity_unverified" });
+        }
         const account = init.account as
           | {
               readonly email?: string;
@@ -409,7 +420,8 @@ const probeClaudeCapabilities = (
             }
           | undefined;
         return {
-          email: account?.email,
+          email: launchAccount?.email ?? account?.email,
+          ...(launchAccount ? { credentialFingerprint: launchAccount.credentialFingerprint } : {}),
           subscriptionType: account?.subscriptionType,
           tokenSource: account?.tokenSource,
           apiKeySource: account?.apiKeySource,
@@ -694,7 +706,13 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         ...(authMetadata ? authMetadata : {}),
       },
       ...(versionUpgradeMessage ? { message: versionUpgradeMessage } : {}),
-      usageLimits: resetCredits ? { ...usageLimits, resetCredits } : usageLimits,
+      usageLimits: {
+        ...usageLimits,
+        ...(resetCredits ? { resetCredits } : {}),
+        ...(capabilities.credentialFingerprint
+          ? { credentialFingerprint: capabilities.credentialFingerprint }
+          : {}),
+      },
     },
   });
 });

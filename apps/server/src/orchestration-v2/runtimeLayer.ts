@@ -1,3 +1,4 @@
+import * as DelegatedLaunchAdmission from "./DelegatedLaunchAdmission.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as Layer from "effect/Layer";
@@ -164,6 +165,11 @@ const layerRunExecutionServiceProvided = RunExecutionService.layer.pipe(
 const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      DelegatedLaunchAdmission.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(ProjectionStore.layer, layerEventSinkProvided, IdAllocator.layer),
+        ),
+      ),
       layerContextHandoffServiceProvided,
       layerEventSinkProvided,
       IdAllocator.layer,

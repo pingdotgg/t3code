@@ -1,0 +1,416 @@
+{
+  "delegatedLaunchRoutes": [
+    {
+      "from": {
+        "instanceId": "codex",
+        "model": "gpt-6.1-sol"
+      },
+      "fallback": [
+        {
+          "instanceId": "copilot_native_scale",
+          "model": "gpt-6.1-sol"
+        },
+        {
+          "instanceId": "claudeAgent",
+          "model": "claude-opus-5-5"
+        },
+        {
+          "instanceId": "copilot_native_scale",
+          "model": "claude-opus-5.5"
+        },
+        {
+          "instanceId": "codex",
+          "model": "gpt-6-astra"
+        },
+        {
+          "instanceId": "copilot_native_scale",
+          "model": "gpt-6-astra"
+        }
+      ]
+    },
+    {
+      "from": {
+        "instanceId": "copilot_native_scale",
+        "model": "gpt-6.1-sol"
+      },
+      "fallback": [
+        {
+          "instanceId": "codex",
+          "model": "gpt-6.1-sol"
+        },
+        {
+          "instanceId": "claudeAgent",
+          "model": "claude-opus-5-5"
+        },
+        {
+          "instanceId": "copilot_native_scale",
+          "model": "claude-opus-5.5"
+        },
+        {
+          "instanceId": "codex",
+          "model": "gpt-6-astra"
+        },
+        {
+          "instanceId": "copilot_native_scale",
+          "model": "gpt-6-astra"
+        }
+      ]
+    },
+    {
+      "from": {
+        "instanceId": "claudeAgent",
+        "model": "claude-opus-5-5"
+      },
+      "fallback": [
+        {
+          "instanceId": "codex",
+          "model": "gpt-6-astra"
+        },
+        {
+          "instanceId": "copilot_native_scale",
+          "model": "gpt-6-astra"
+        }
+      ]
+    },
+    {
+      "from": {
+        "instanceId": "copilot_native_scale",
+        "model": "claude-opus-5.5"
+      },
+      "fallback": [
+        {
+          "instanceId": "claudeAgent",
+          "model": "claude-opus-5-5"
+        },
+        {
+          "instanceId": "codex",
+          "model": "gpt-6-astra"
+        },
+        {
+          "instanceId": "copilot_native_scale",
+          "model": "gpt-6-astra"
+        }
+      ]
+    },
+    {
+      "from": {
+        "instanceId": "codex",
+        "model": "gpt-6-astra"
+      },
+      "fallback": [
+        {
+          "instanceId": "copilot_native_scale",
+          "model": "gpt-6-astra"
+        }
+      ]
+    },
+    {
+      "from": {
+        "instanceId": "copilot_native_scale",
+        "model": "gpt-6-astra"
+      },
+      "fallback": [
+        {
+          "instanceId": "codex",
+          "model": "gpt-6-astra"
+        }
+      ]
+    },
+    {
+      "from": {
+        "instanceId": "claudeAgent",
+        "model": "claude-sonnet-5-5"
+      },
+      "fallback": [
+        {
+          "instanceId": "codex",
+          "model": "gpt-6.1-sol"
+        },
+        {
+          "instanceId": "copilot_native_scale",
+          "model": "gpt-6.1-sol"
+        },
+        {
+          "instanceId": "claudeAgent",
+          "model": "claude-opus-5-5"
+        },
+        {
+          "instanceId": "copilot_native_scale",
+          "model": "claude-opus-5.5"
+        },
+        {
+          "instanceId": "codex",
+          "model": "gpt-6-astra"
+        },
+        {
+          "instanceId": "copilot_native_scale",
+          "model": "gpt-6-astra"
+        }
+      ]
+    },
+    {
+      "from": {
+        "instanceId": "copilot_native_scale",
+        "model": "claude-sonnet-5.5"
+      },
+      "fallback": [
+        {
+          "instanceId": "claudeAgent",
+          "model": "claude-sonnet-5-5"
+        },
+        {
+          "instanceId": "codex",
+          "model": "gpt-6.1-sol"
+        },
+        {
+          "instanceId": "copilot_native_scale",
+          "model": "gpt-6.1-sol"
+        },
+        {
+          "instanceId": "claudeAgent",
+          "model": "claude-opus-5-5"
+        },
+        {
+          "instanceId": "copilot_native_scale",
+          "model": "claude-opus-5.5"
+        },
+        {
+          "instanceId": "codex",
+          "model": "gpt-6-astra"
+        },
+        {
+          "instanceId": "copilot_native_scale",
+          "model": "gpt-6-astra"
+        }
+      ]
+    },
+    {
+      "from": {
+        "instanceId": "claudeAgent",
+        "model": "claude-haiku-5-5"
+      },
+      "fallback": [
+        {
+          "instanceId": "codex",
+          "model": "gpt-6.1-sol"
+        },
+        {
+          "instanceId": "copilot_native_scale",
+          "model": "gpt-6.1-sol"
+        },
+        {
+          "instanceId": "claudeAgent",
+          "model": "claude-opus-5-5"
+        },
+        {
+          "instanceId": "copilot_native_scale",
+          "model": "claude-opus-5.5"
+        },
+        {
+          "instanceId": "codex",
+          "model": "gpt-6-astra"
+        },
+        {
+          "instanceId": "copilot_native_scale",
+          "model": "gpt-6-astra"
+        }
+      ]
+    },
+    {
+      "from": {
+        "instanceId": "copilot_native_scale",
+        "model": "claude-haiku-5.5"
+      },
+      "fallback": [
+        {
+          "instanceId": "claudeAgent",
+          "model": "claude-haiku-5-5"
+        },
+        {
+          "instanceId": "codex",
+          "model": "gpt-6.1-sol"
+        },
+        {
+          "instanceId": "copilot_native_scale",
+          "model": "gpt-6.1-sol"
+        },
+        {
+          "instanceId": "claudeAgent",
+          "model": "claude-opus-5-5"
+        },
+        {
+          "instanceId": "copilot_native_scale",
+          "model": "claude-opus-5.5"
+        },
+        {
+          "instanceId": "codex",
+          "model": "gpt-6-astra"
+        },
+        {
+          "instanceId": "copilot_native_scale",
+          "model": "gpt-6-astra"
+        }
+      ]
+    },
+    {
+      "from": {
+        "instanceId": "kimi_api",
+        "model": "kimi-code-plan-global/k3"
+      },
+      "fallback": [
+        {
+          "instanceId": "codex",
+          "model": "gpt-6.1-sol"
+        },
+        {
+          "instanceId": "copilot_native_scale",
+          "model": "gpt-6.1-sol"
+        },
+        {
+          "instanceId": "claudeAgent",
+          "model": "claude-opus-5-5"
+        },
+        {
+          "instanceId": "copilot_native_scale",
+          "model": "claude-opus-5.5"
+        },
+        {
+          "instanceId": "codex",
+          "model": "gpt-6-astra"
+        },
+        {
+          "instanceId": "copilot_native_scale",
+          "model": "gpt-6-astra"
+        }
+      ]
+    },
+    {
+      "from": {
+        "instanceId": "kimi_api",
+        "model": "kimi-code-plan-global/kimi-for-coding-highspeed"
+      },
+      "fallback": [
+        {
+          "instanceId": "codex",
+          "model": "gpt-6.1-sol"
+        },
+        {
+          "instanceId": "copilot_native_scale",
+          "model": "gpt-6.1-sol"
+        },
+        {
+          "instanceId": "claudeAgent",
+          "model": "claude-opus-5-5"
+        },
+        {
+          "instanceId": "copilot_native_scale",
+          "model": "claude-opus-5.5"
+        },
+        {
+          "instanceId": "codex",
+          "model": "gpt-6-astra"
+        },
+        {
+          "instanceId": "copilot_native_scale",
+          "model": "gpt-6-astra"
+        }
+      ]
+    },
+    {
+      "from": {
+        "instanceId": "antigravity",
+        "model": "gemini-3.8-flash-high"
+      },
+      "fallback": [
+        {
+          "instanceId": "codex",
+          "model": "gpt-6.1-sol"
+        },
+        {
+          "instanceId": "copilot_native_scale",
+          "model": "gpt-6.1-sol"
+        },
+        {
+          "instanceId": "claudeAgent",
+          "model": "claude-opus-5-5"
+        },
+        {
+          "instanceId": "copilot_native_scale",
+          "model": "claude-opus-5.5"
+        },
+        {
+          "instanceId": "codex",
+          "model": "gpt-6-astra"
+        },
+        {
+          "instanceId": "copilot_native_scale",
+          "model": "gpt-6-astra"
+        }
+      ]
+    },
+    {
+      "from": {
+        "instanceId": "antigravity",
+        "model": "gemini-3.8-flash-medium"
+      },
+      "fallback": [
+        {
+          "instanceId": "codex",
+          "model": "gpt-6.1-sol"
+        },
+        {
+          "instanceId": "copilot_native_scale",
+          "model": "gpt-6.1-sol"
+        },
+        {
+          "instanceId": "claudeAgent",
+          "model": "claude-opus-5-5"
+        },
+        {
+          "instanceId": "copilot_native_scale",
+          "model": "claude-opus-5.5"
+        },
+        {
+          "instanceId": "codex",
+          "model": "gpt-6-astra"
+        },
+        {
+          "instanceId": "copilot_native_scale",
+          "model": "gpt-6-astra"
+        }
+      ]
+    },
+    {
+      "from": {
+        "instanceId": "antigravity",
+        "model": "gemini-3.8-flash-low"
+      },
+      "fallback": [
+        {
+          "instanceId": "codex",
+          "model": "gpt-6.1-sol"
+        },
+        {
+          "instanceId": "copilot_native_scale",
+          "model": "gpt-6.1-sol"
+        },
+        {
+          "instanceId": "claudeAgent",
+          "model": "claude-opus-5-5"
+        },
+        {
+          "instanceId": "copilot_native_scale",
+          "model": "claude-opus-5.5"
+        },
+        {
+          "instanceId": "codex",
+          "model": "gpt-6-astra"
+        },
+        {
+          "instanceId": "copilot_native_scale",
+          "model": "gpt-6-astra"
+        }
+      ]
+    }
+  ]
+}

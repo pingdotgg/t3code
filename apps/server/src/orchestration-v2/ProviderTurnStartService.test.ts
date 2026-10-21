@@ -1,9 +1,12 @@
+import * as DelegatedLaunchAdmission from "./DelegatedLaunchAdmission.ts";
+import * as AdmissionTestkit from "./ProviderTurnStartService.testkit.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it, vi } from "vite-plus/test";
 import { it as effectIt } from "@effect/vitest";
 import {
   CheckpointScopeId,
   MessageId,
+  type DelegatedLaunchBinding,
   NodeId,
   ProviderSessionId,
   ProviderThreadId,
@@ -63,6 +66,7 @@ const layerWorktreeLocation = (worktreesDir = managedWorktreesDir) =>
     Path.layer,
     Layer.mock(ServerConfig.ServerConfig)({ worktreesDir } as ServerConfig.ServerConfig["Service"]),
     ServerSettings.layerTest(),
+    AdmissionTestkit.layer,
   );
 
 /** Starts a run on a thread whose worktree folder is missing, with routing reads failing after. */
@@ -271,6 +275,9 @@ function makeLocalCommandHarness(input: {
   readonly interruptRunBeforeOpenFailure?: boolean;
   readonly writeFailure?: unknown;
   readonly failReadsAfterRunning?: boolean;
+  readonly admissionPrepare?: DelegatedLaunchAdmission.DelegatedLaunchAdmission["Service"]["prepare"];
+  readonly recoverBoundLaunch?: DelegatedLaunchAdmission.DelegatedLaunchAdmission["Service"]["recoverBoundLaunch"];
+  readonly delegatedLaunchBinding?: DelegatedLaunchBinding;
 }) {
   const now = DateTime.makeUnsafe("2026-09-04T12:00:00Z");
   const threadId = ThreadId.make("thread-native-account-command");
@@ -300,6 +307,19 @@ function makeLocalCommandHarness(input: {
     completedAt: null,
     checkpointId: null,
     contextHandoffId: null,
+    ...(input.delegatedLaunchBinding
+      ? {
+          delegatedTaskId: NodeId.make("task-native-account-command"),
+          delegatedLaunch: {
+            requested: { instanceId: newInstanceId, model: "gpt-5.4" },
+            blockedDomains: [],
+            admittedDomains: input.delegatedLaunchBinding.result.quotaDomains,
+            generation: 0,
+            blockedUntil: DateTime.formatIso(now),
+            binding: input.delegatedLaunchBinding,
+          },
+        }
+      : {}),
   };
   const providerThread: OrchestrationV2ThreadProjection["providerThreads"][number] = {
     id: providerThreadId,
@@ -611,6 +631,14 @@ function makeLocalCommandHarness(input: {
         Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
         IdAllocator.layer,
         layerWorktreeLocation(input.worktreesDir),
+        input.admissionPrepare || input.recoverBoundLaunch
+          ? Layer.mock(DelegatedLaunchAdmission.DelegatedLaunchAdmission)({
+              prepare: input.admissionPrepare ?? (() => Effect.succeed(true)),
+              recover: () => Effect.succeed(false),
+              recoverBoundLaunch: input.recoverBoundLaunch ?? (() => Effect.succeed(false)),
+              markStarted: () => Effect.void,
+            })
+          : Layer.empty,
         input.fileSystem === undefined
           ? FileSystem.layerNoop({ exists: () => Effect.succeed(true) })
           : Layer.succeed(FileSystem.FileSystem, input.fileSystem),
@@ -764,6 +792,66 @@ effectIt.effect.each(["cleanup-first", "startup-first"])(
         }),
       );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+effectIt.effect("reads only thread state before taking the startup lease", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({ text: "/logout", previousNativeSession: true });
+    yield* harness.start;
+    expect(harness.getThreadRecords).toHaveBeenCalledExactlyOnceWith(
+      harness.projection().thread.id,
+      [],
+    );
+    expect(harness.getTurnStartContext).toHaveBeenCalledOnce();
+    expect(harness.projection().runs.at(-1)?.status).toBe("completed");
+  }),
+);
+
+effectIt.effect(
+  "does not probe before the workspace queue drains and denies capacity lost while queued",
+  () =>
+    Effect.gen(function* () {
+      const worktreePath = "/tmp/provider-start-capacity-queue";
+      const release = yield* Deferred.make<void>();
+      const readEntered = yield* Deferred.make<void>();
+      let healthy = true;
+      let probes = 0;
+      const harness = makeLocalCommandHarness({
+        text: "Continue",
+        worktreePath,
+        admissionPrepare: () =>
+          Effect.suspend(() => {
+            probes++;
+            return healthy
+              ? Effect.succeed(true)
+              : Effect.fail(
+                  new DelegatedLaunchAdmission.WaitingForDelegatedCapacity({
+                    retryAt: "2026-10-21T10:00:00Z",
+                  }),
+                );
+          }),
+      });
+      harness.getThreadRecords.mockImplementationOnce(() =>
+        Deferred.succeed(readEntered, undefined).pipe(Effect.as(harness.projection())),
+      );
+      const holder = yield* withWorkspaceLease(worktreePath, Deferred.await(release)).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      const startup = yield* harness.start.pipe(
+        Effect.flip,
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Deferred.await(readEntered);
+      expect(probes).toBe(0);
+      healthy = false;
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(holder);
+      const error = yield* Fiber.join(startup);
+      expect(DelegatedLaunchAdmission.capacityWaitCause(error)).toBeDefined();
+      expect(probes).toBe(1);
+      expect(harness.open).not.toHaveBeenCalled();
+      expect(harness.startRootRun).not.toHaveBeenCalled();
+    }),
 );
 
 effectIt.effect("reads current startup state after waiting for the workspace lease", () =>
@@ -1050,3 +1138,113 @@ for (const previousMessages of [[], ["/compact", " /COMPACT "]]) {
       }),
   );
 }
+
+const boundLaunchBinding: DelegatedLaunchBinding = {
+  protocol: "codex-t3-pool-v2",
+  instanceId: ProviderInstanceId.make("codex-personal"),
+  prepareRequest: {
+    clientRequestId: "t3.request-turn-start",
+    sessionId: "t3.session-turn-start",
+    provider: "codex",
+    model: "gpt-5.4",
+    blockedQuotaDomains: [],
+  },
+  result: {
+    protocolVersion: 2,
+    status: "ready",
+    checkedAt: "2026-09-04T12:00:00Z",
+    expiresAt: "2026-09-04T12:00:30Z",
+    ordinaryUsageAllowed: true,
+    quotaDomains: ["codex:credential:acct-turn-start"],
+    bindingId: "e".repeat(48),
+    basePath: `/v1/delegated-launch/bindings/${"e".repeat(48)}/sessions/t3.session-turn-start`,
+    provider: "codex",
+    model: "gpt-5.4",
+    sessionId: "t3.session-turn-start",
+    windows: [{ id: "primary", usedPercent: 1, resetsAt: "2026-09-04T17:00:00Z" }],
+  },
+};
+
+effectIt.effect("routes a bound session-open refusal to pool recovery without a failed run", () =>
+  Effect.gen(function* () {
+    const recovered: Array<unknown> = [];
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      openFailure: new Error("pool-launch refused"),
+      delegatedLaunchBinding: boundLaunchBinding,
+      recoverBoundLaunch: (_threadId, _runId, generation, failure) =>
+        Effect.sync(() => {
+          recovered.push({ generation, failure });
+          return true;
+        }),
+    });
+
+    yield* harness.start;
+
+    expect(recovered).toHaveLength(1);
+    expect(harness.open).toHaveBeenCalledWith(
+      expect.objectContaining({ delegatedLaunchBinding: boundLaunchBinding }),
+    );
+    expect(harness.writeIfRunCurrent).not.toHaveBeenCalled();
+    expect(harness.startRootRun).not.toHaveBeenCalled();
+    expect(harness.events).toEqual([]);
+  }),
+);
+
+effectIt.effect("settles a bound session-open failure when pool state proves it ordinary", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      openFailure: new Error("provider session rejected"),
+      delegatedLaunchBinding: boundLaunchBinding,
+      recoverBoundLaunch: () => Effect.succeed(false),
+    });
+
+    yield* harness.start.pipe(Effect.exit);
+
+    expect(harness.writeIfRunCurrent).toHaveBeenCalled();
+    expect(harness.startRootRun).not.toHaveBeenCalled();
+  }),
+);
+
+effectIt.effect("keeps a completed launch pinned when opening a continuation session", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      delegatedLaunchBinding: boundLaunchBinding,
+      openFailure: new Error("bound continuation stopped"),
+    });
+    const run = harness.projection().runs[0]!;
+    Object.assign(run, { delegatedLaunch: { ...run.delegatedLaunch!, complete: true } });
+    yield* harness.start.pipe(Effect.exit);
+    expect(harness.open).toHaveBeenCalledWith(
+      expect.objectContaining({ delegatedLaunchBinding: boundLaunchBinding }),
+    );
+  }),
+);
+
+effectIt.effect(
+  "inherits the pin from an earlier run when a new continuation has no launch record",
+  () =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text: "Continue",
+        delegatedLaunchBinding: boundLaunchBinding,
+        openFailure: new Error("bound continuation stopped"),
+      });
+      const current = harness.projection().runs[0]!;
+      const { delegatedLaunch, ...withoutLaunch } = current;
+      const previous = {
+        ...current,
+        id: RunId.make("previous-bound-run"),
+        ordinal: current.ordinal - 1,
+        status: "completed" as const,
+        delegatedLaunch: { ...delegatedLaunch!, complete: true },
+      };
+      Object.assign(harness.projection(), { runs: [previous, withoutLaunch] });
+      yield* harness.start.pipe(Effect.exit);
+      expect(harness.open).toHaveBeenCalledWith(
+        expect.objectContaining({ delegatedLaunchBinding: boundLaunchBinding }),
+      );
+    }),
+);

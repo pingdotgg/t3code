@@ -107,7 +107,7 @@ export function resolveUsageLimitsAfterProbe(input: {
 }): ServerProviderUsageLimits | undefined {
   const { published, probed } = input;
   if (probed?.unavailable?.reason === "probeFailed" && published && !published.unavailable) {
-    return published;
+    return { ...published, unavailable: probed.unavailable };
   }
   if (
     published &&

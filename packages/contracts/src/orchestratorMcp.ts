@@ -35,6 +35,7 @@ import {
   OrchestrationV2Actor,
   OrchestrationV2CreationSource,
   OrchestrationV2RunStatus,
+  OrchestrationV2Run,
   OrchestrationV2TurnItemStatus,
 } from "./orchestrationV2.ts";
 import { ProviderOptionSelection, ProviderOptionSelectionValue } from "./model.ts";
@@ -192,6 +193,7 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
 export type OrchestratorMcpDelegateTaskInput = typeof OrchestratorMcpDelegateTaskInput.Type;
 
 export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
+  capacityWait: OrchestrationV2Run.fields.capacityWait,
   taskId: NodeId,
   childThreadId: ThreadId,
   childRunId: Schema.NullOr(RunId),
@@ -295,6 +297,7 @@ export type OrchestratorMcpCreateThreadsResult = typeof OrchestratorMcpCreateThr
 export const OrchestratorMcpThreadStatus = Schema.Union([
   Schema.Literal("idle"),
   OrchestrationV2RunStatus,
+  OrchestrationV2Run,
 ]);
 export type OrchestratorMcpThreadStatus = typeof OrchestratorMcpThreadStatus.Type;
 

@@ -1,4 +1,4 @@
-import type { OrchestrationV2HistoricalMessage } from "@t3tools/contracts";
+import type { DelegatedLaunchBinding, OrchestrationV2HistoricalMessage } from "@t3tools/contracts";
 import {
   ChatAttachment,
   CheckpointId,
@@ -403,6 +403,8 @@ export const ProviderAdapterV2Error = Schema.Union([
 export type ProviderAdapterV2Error = typeof ProviderAdapterV2Error.Type;
 
 export interface ProviderAdapterV2OpenSessionInput {
+  /** Adapters without a binding protocol must refuse rather than ignore it. */
+  readonly delegatedLaunchBinding?: DelegatedLaunchBinding;
   readonly threadId: ThreadId;
   readonly providerSessionId: ProviderSessionId;
   readonly modelSelection: ModelSelection;
@@ -422,6 +424,9 @@ export interface ProviderAdapterV2EnsureThreadInput {
 }
 
 export interface ProviderAdapterV2TurnInput {
+  readonly delegatedLaunchDomains?: ReadonlyArray<string>;
+  /** Present only for the first turn of a pool-bound delegated launch. */
+  readonly delegatedLaunchBinding?: DelegatedLaunchBinding;
   readonly appThread: OrchestrationV2AppThread;
   readonly threadId: ThreadId;
   readonly runId: RunId;

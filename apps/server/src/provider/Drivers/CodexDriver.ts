@@ -22,10 +22,13 @@ import { ProviderDriverError } from "../Errors.ts";
 import * as ResetCreditCoordinator from "../resetCreditCoordinator.ts";
 import {
   checkCodexProviderStatus,
+  codexAppServerEnvironment,
   makePendingCodexProvider,
   probeCodexSkillsForCwd,
   withCodexAppServerClient,
 } from "../CodexProvider.ts";
+import { readCodexLaunchCapacity } from "../CodexDelegatedLaunch.ts";
+import { makeCodexPoolControl } from "../CodexPoolControl.ts";
 import { resolveCodexLaunchArgs } from "../codexLaunchArgs.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
@@ -177,6 +180,17 @@ export const CodexDriver: ProviderDriver<
       ),
     );
 
+    // Only an explicitly named launcher protocol is consulted; the launcher must
+    // still prove it per call. Other custom providers stay unverified.
+    const delegatedLaunchPool =
+      effectiveConfig.delegatedLaunchControl === "codex-t3-pool-v2"
+        ? yield* makeCodexPoolControl({
+            instanceId,
+            binaryPath: effectiveConfig.binaryPath,
+            environment: codexAppServerEnvironment(processEnv),
+            launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
+          }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner))
+        : undefined;
     const orchestrationAdapter = yield* createCodexAdapterV2(
       {
         instanceId,
@@ -186,7 +200,10 @@ export const CodexDriver: ProviderDriver<
         enabled,
         config,
       },
-      { onUsageLimits: (update) => snapshot.applyUsageLimits(update) },
+      {
+        onUsageLimits: (update) => snapshot.applyUsageLimits(update),
+        ...(delegatedLaunchPool ? { delegatedLaunchPool } : {}),
+      },
     ).pipe(
       Effect.mapError(
         (cause) =>
@@ -320,9 +337,8 @@ export const CodexDriver: ProviderDriver<
               }),
           ),
           // The windows just changed; re-probe so the snapshot says so. A
-          // failed probe republishes the pre-redemption limits rather than
-          // marking them failed, so "confirmed" means `checkedAt` moved past
-          // what was published before the redemption started.
+          // failed probe retains the old bars with an unavailable marker, so
+          // confirmation needs both a successful probe and a newer checkedAt.
           Effect.tap((outcome) =>
             Effect.gen(function* () {
               const before = (yield* snapshot.getSnapshot).usageLimits?.checkedAt;
@@ -354,6 +370,29 @@ export const CodexDriver: ProviderDriver<
       enabled,
       snapshot,
       snapshotForCwd,
+      ...(delegatedLaunchPool ? { delegatedLaunchPool } : {}),
+      probeDelegatedLaunch: Effect.fn("CodexDriver.probeDelegatedLaunch")(
+        function* () {
+          const provider = yield* snapshot.refresh;
+          const { client } = yield* withCodexAppServerClient({
+            binaryPath: effectiveConfig.binaryPath,
+            homePath: effectiveConfig.homePath,
+            launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
+            cwd: process.cwd(),
+            environment: processEnv,
+          });
+          const capacity = yield* readCodexLaunchCapacity(client, processEnv);
+          return {
+            ...provider,
+            auth: { ...provider.auth, email: capacity.email },
+            usageLimits: capacity.usageLimits,
+          };
+        },
+        Effect.scoped,
+        Effect.timeout("8 seconds"),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.orElseSucceed(() => undefined),
+      ),
       consumeResetCredit,
       orchestrationAdapter,
       textGeneration,

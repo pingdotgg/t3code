@@ -631,6 +631,11 @@ export const CodexSettings = makeProviderSettingsSchema(
         description: "Additional CLI arguments passed to codex app-server on session start.",
       }),
     ),
+    // Names the launcher's control protocol only. The launcher must still
+    // answer that protocol's capabilities before any launch is admitted.
+    delegatedLaunchControl: Schema.optionalKey(Schema.Literal("codex-t3-pool-v2")).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
     customModels: Schema.Array(CustomModelSetting).pipe(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
@@ -1132,6 +1137,10 @@ export const StorageCleanupSettings = Schema.Struct({
 });
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
+const DelegatedLaunchRoutes = Schema.Array(
+  Schema.Struct({ from: ModelSelection, fallback: Schema.Array(ModelSelection) }),
+);
+
 export const ServerSettings = Schema.Struct({
   // Null means no client has migrated this preference yet; an empty value is
   // authoritative so another device cannot resurrect cleared preferences.
@@ -1206,6 +1215,7 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed("onReturn" as const)),
   ),
   snoozeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  delegatedLaunchRoutes: DelegatedLaunchRoutes.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   autoResumeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   sidebarAutoSettleKeepPullRequests: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
@@ -1538,6 +1548,7 @@ export const ServerSettingsPatch = Schema.Struct({
   compactIdleThreads: Schema.optionalKey(IdleCompactionMode),
   sidebarAutoSettleKeepPullRequests: Schema.optionalKey(Schema.Boolean),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
+  delegatedLaunchRoutes: Schema.optionalKey(DelegatedLaunchRoutes),
   autoResumeLimitedThreads: Schema.optionalKey(Schema.Boolean),
   snoozeLimitedThreads: Schema.optionalKey(Schema.Boolean),
   backgroundActivity: Schema.optionalKey(

@@ -1,3 +1,4 @@
+import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 import {
   officialAcpRegistryIconUrlForAgentId,
   ProviderDriverKind,
@@ -571,6 +572,14 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     const checkProvider = checkAcpRegistryProviderReadiness(readinessInput).pipe(
       Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
       Effect.flatMap(withLiveRuntimeState),
+      Effect.map((provider) => ({
+        ...provider,
+        usageLimits: makeUnavailableUsageLimits({
+          checkedAt: provider.checkedAt,
+          reason: "unsupported",
+          message: "ACP does not expose quota bound to the runtime account.",
+        }),
+      })),
     );
     const enrichProvider = checkAcpRegistryProviderStatus(
       {

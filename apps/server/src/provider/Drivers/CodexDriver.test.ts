@@ -9,6 +9,7 @@ import { EnvironmentId, ProviderInstanceId, ProviderSessionId, ThreadId } from "
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -16,6 +17,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import * as Queue from "effect/Queue";
+import { selectLaunchCandidate } from "../../orchestration-v2/DelegatedLaunchAdmission.ts";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/http";
@@ -96,6 +99,220 @@ const noSpawn = ChildProcessSpawner.make(() =>
 const encodeCredentials = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 it.layer(layerTest)("CodexDriver", (it) => {
+  it.effect(
+    "preserves exhausted direct-account identity across models, allows independent capacity and denies pools",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const homePath = yield* fs.makeTempDirectoryScoped();
+        yield* fs.writeFileString(
+          `${homePath}/models_cache.json`,
+          JSON.stringify({ fetched_at: DateTime.formatIso(yield* DateTime.now) }),
+        );
+        let provider = "openai";
+        let starts = 0;
+        let usage = 1;
+        let ordinaryUsageAllowed = true;
+        let accountId = "backend-account";
+        let email = "direct@example.com";
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            const output = yield* Queue.unbounded<Uint8Array>();
+            const stopped = yield* Deferred.make<void>();
+            const version =
+              ChildProcess.isStandardCommand(command) && command.args.includes("--version");
+            yield* Effect.addFinalizer(() => Deferred.succeed(stopped, undefined));
+            return ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(1),
+              exitCode: version
+                ? Effect.succeed(ChildProcessSpawner.ExitCode(0))
+                : Deferred.await(stopped).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+              isRunning: Deferred.isDone(stopped).pipe(Effect.map((done) => !done)),
+              kill: () => Deferred.succeed(stopped, undefined).pipe(Effect.asVoid),
+              unref: Effect.succeed(Effect.void),
+              stdin: Sink.forEach((bytes: Uint8Array) =>
+                Effect.forEach(
+                  new TextDecoder().decode(bytes).split("\n").filter(Boolean),
+                  (line) => {
+                    const { id, method } = JSON.parse(line) as { id?: number; method: string };
+                    if (id === undefined) return Effect.void;
+                    if (method === "turn/start") starts++;
+                    const result =
+                      method === "initialize"
+                        ? {
+                            userAgent: "codex/0.163.0",
+                            codexHome: homePath,
+                            platformFamily: "unix",
+                            platformOs: "linux",
+                          }
+                        : method === "account/read"
+                          ? {
+                              account: {
+                                type: "chatgpt",
+                                email,
+                                planType: "pro",
+                              },
+                              requiresOpenaiAuth: true,
+                            }
+                          : method === "config/read"
+                            ? { config: { model_provider: provider }, origins: {}, layers: null }
+                            : method === "account/rateLimits/read"
+                              ? {
+                                  accountId,
+                                  ordinaryUsageAllowed,
+                                  rateLimits: {
+                                    primary: {
+                                      usedPercent: usage,
+                                      windowDurationMins: 300,
+                                      resetsAt: null,
+                                    },
+                                    secondary: {
+                                      usedPercent: 2,
+                                      windowDurationMins: 10080,
+                                      resetsAt: null,
+                                    },
+                                    credits: null,
+                                    planType: "pro",
+                                  },
+                                }
+                              : { data: [], nextCursor: null };
+                    return Queue.offer(
+                      output,
+                      new TextEncoder().encode(`${JSON.stringify({ id, result })}\n`),
+                    );
+                  },
+                  { discard: true },
+                ),
+              ),
+              stdout: version
+                ? Stream.encodeText(Stream.make("codex-cli 0.163.0\n"))
+                : Stream.fromQueue(output),
+              stderr: Stream.empty,
+              all: Stream.empty,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            });
+          }),
+        );
+        yield* Effect.gen(function* () {
+          const instanceId = ProviderInstanceId.make("direct-codex-capacity");
+          const instance = yield* CodexDriver.create({
+            instanceId,
+            displayName: undefined,
+            enabled: true,
+            environment: [],
+            config: {
+              ...CodexDriver.defaultConfig(),
+              binaryPath: process.execPath,
+              homePath,
+              customModels: [{ slug: "gpt-6.1-sol" }, { slug: "gpt-6-astra" }],
+            },
+          });
+          const candidate = { instanceId, model: "gpt-6.1-sol" };
+          const decision = yield* selectLaunchCandidate({
+            candidates: [candidate],
+            probe: () =>
+              Effect.gen(function* () {
+                const probeStartedAt = DateTime.toEpochMillis(yield* DateTime.now);
+                const observed = yield* instance.probeDelegatedLaunch!(candidate.model);
+                return observed ? { provider: observed, probeStartedAt } : undefined;
+              }),
+          });
+          expect(decision.status).toBe("ready");
+          if (decision.status === "ready")
+            expect(decision.domains).toContain("codex:credential:backend-account");
+          for (const exhaustedUsage of [100, 12]) {
+            usage = exhaustedUsage;
+            ordinaryUsageAllowed = false;
+            const observedModels: string[] = [];
+            const denied = yield* selectLaunchCandidate({
+              candidates: [candidate, { instanceId, model: "gpt-6-astra" }],
+              probe: (target) =>
+                Effect.gen(function* () {
+                  observedModels.push(target.model);
+                  const probeStartedAt = DateTime.toEpochMillis(yield* DateTime.now);
+                  const observed = yield* instance.probeDelegatedLaunch!(target.model);
+                  usage = 1;
+                  ordinaryUsageAllowed = true;
+                  return observed ? { provider: observed, probeStartedAt } : undefined;
+                }),
+            });
+            expect(denied.status).toBe("waiting");
+            expect(observedModels).toEqual(["gpt-6.1-sol", "gpt-6-astra"]);
+          }
+          usage = 12;
+          ordinaryUsageAllowed = false;
+          const fallback = yield* selectLaunchCandidate({
+            candidates: [candidate, { instanceId, model: "gpt-6-astra" }],
+            probe: (target) =>
+              Effect.gen(function* () {
+                const probeStartedAt = DateTime.toEpochMillis(yield* DateTime.now);
+                const observed = yield* instance.probeDelegatedLaunch!(target.model);
+                usage = 1;
+                ordinaryUsageAllowed = true;
+                accountId = "independent-account";
+                email = "independent@example.com";
+                return observed ? { provider: observed, probeStartedAt } : undefined;
+              }),
+          });
+          expect(fallback.status).toBe("ready");
+          if (fallback.status === "ready") {
+            expect(fallback.selection.model).toBe("gpt-6-astra");
+            expect(fallback.domains).toContain("codex:credential:independent-account");
+          }
+          provider = "external-pool";
+          expect(yield* instance.probeDelegatedLaunch!(candidate.model)).toBeUndefined();
+        }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+        expect(starts).toBe(0);
+      }),
+  );
+
+  it.effect("exposes pool control only for the named launcher protocol", () =>
+    Effect.gen(function* () {
+      const spawned: Array<{
+        command: string;
+        args: ReadonlyArray<string>;
+        account: string | undefined;
+      }> = [];
+      const recording = ChildProcessSpawner.make((command) => {
+        if (ChildProcess.isStandardCommand(command))
+          spawned.push({
+            command: command.command,
+            args: command.args,
+            account: command.options.env?.CODEX_T3_ACCOUNT,
+          });
+        return Effect.fail(
+          PlatformError.systemError({ _tag: "NotFound", module: "ChildProcess", method: "spawn" }),
+        );
+      });
+      const create = (config: Partial<ReturnType<typeof CodexDriver.defaultConfig>>) =>
+        CodexDriver.create({
+          instanceId: ProviderInstanceId.make("codex_pool"),
+          displayName: "Pool",
+          enabled: true,
+          environment: [{ name: "CODEX_T3_ACCOUNT", value: "pool", sensitive: false }],
+          config: { ...CodexDriver.defaultConfig(), binaryPath: "/opt/fake/codex-t3", ...config },
+        }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, recording));
+
+      expect((yield* create({})).delegatedLaunchPool).toBeUndefined();
+      const pooled = yield* create({ delegatedLaunchControl: "codex-t3-pool-v2" });
+      expect(pooled.delegatedLaunchPool).toBeDefined();
+      spawned.length = 0;
+      // An unreachable launcher is unverified, never an exemption.
+      expect(
+        yield* pooled.delegatedLaunchPool!.prepare({
+          runId: "run-driver",
+          generation: 0,
+          model: "gpt-6.1-sol",
+          blockedQuotaDomains: [],
+        }),
+      ).toEqual({ status: "unverified" });
+      expect(spawned).toEqual([
+        { command: "/opt/fake/codex-t3", args: ["pool-control"], account: "pool" },
+      ]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("disconnect refreshes a restored managed account while its auth flow is idle", () =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("restored-managed-account");

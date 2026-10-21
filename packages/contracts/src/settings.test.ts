@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
+import launchRoutesExample from "../../../docs/operations/examples/delegated-launch-routes.json" with { type: "json" };
 
 import { type CommandId, ProjectId } from "./baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
@@ -23,6 +24,43 @@ const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
+
+it("ships a settings fragment covering the enabled catalog with valid exact model routes", () => {
+  const catalog: Record<string, ReadonlyArray<string>> = {
+    codex: ["gpt-6.1-sol", "gpt-6-astra"],
+    claudeAgent: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
+    copilot_native_scale: [
+      "claude-opus-5.5",
+      "claude-sonnet-5.5",
+      "claude-haiku-5.5",
+      "gpt-6.1-sol",
+      "gpt-6-astra",
+    ],
+    kimi_api: ["kimi-code-plan-global/k3", "kimi-code-plan-global/kimi-for-coding-highspeed"],
+    antigravity: ["gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low"],
+  };
+  const routes = decodeServerSettingsPatch(launchRoutesExample).delegatedLaunchRoutes!;
+  const expectedSources = Object.entries(catalog).flatMap(([id, models]) =>
+    models.map((model) => `${id}/${model}`),
+  );
+  expect(routes.map((r) => `${r.from.instanceId}/${r.from.model}`).sort()).toEqual(
+    expectedSources.sort(),
+  );
+  for (const route of routes) {
+    for (const target of [route.from, ...route.fallback])
+      expect(catalog[target.instanceId]).toContain(target.model);
+    if (route.from.instanceId === "codex")
+      expect(route.fallback[0]).toEqual({
+        instanceId: "copilot_native_scale",
+        model: route.from.model,
+      });
+    if (route.from.instanceId === "copilot_native_scale" && route.from.model.startsWith("claude-"))
+      expect(route.fallback[0]).toEqual({
+        instanceId: "claudeAgent",
+        model: route.from.model.replace("5.5", "5-5"),
+      });
+  }
+});
 
 describe("storage cleanup settings", () => {
   it("keeps cleanup disabled for existing installations", () => {

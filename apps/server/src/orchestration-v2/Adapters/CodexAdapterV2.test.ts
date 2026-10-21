@@ -1,3 +1,6 @@
+import * as ServerConfig from "../../config.ts";
+import * as PlatformError from "effect/PlatformError";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
 import {
   makeProviderTextDeltaCoalescer,
@@ -35,6 +38,9 @@ import type * as CodexSchema from "effect-codex-app-server/schema";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Crypto from "effect/Crypto";
+import * as Exit from "effect/Exit";
+import type { DelegatedLaunchPool } from "@t3tools/provider-core/server/driver";
+import type { CodexPoolBindingState, DelegatedLaunchBinding } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as FileSystem from "effect/FileSystem";
@@ -202,6 +208,86 @@ describe("CodexAdapterV2 runtime policy", () => {
       });
       assert.isDefined(withT3.additionalContext?.["t3_code_runtime"]);
     }),
+  );
+});
+
+describe("CodexAdapterV2 bound process spawning", () => {
+  it.effect("launches a bound session through pool-launch with one nonsecret argument", () =>
+    Effect.gen(function* () {
+      const spawned: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+      const spawner = ChildProcessSpawner.make((command) => {
+        if (ChildProcess.isStandardCommand(command))
+          spawned.push({ command: command.command, args: command.args });
+        return Effect.fail(
+          PlatformError.systemError({ _tag: "NotFound", module: "ChildProcess", method: "spawn" }),
+        );
+      });
+      const fake = makeFakePool(() => launchableState);
+      const create = (config: Partial<typeof DEFAULT_CODEX_SETTINGS>, pooled = true) =>
+        CodexAdapterV2.createCodexAdapterV2(
+          {
+            instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
+            displayName: undefined,
+            environment: [{ name: "CODEX_T3_ACCOUNT", value: "pool", sensitive: false }],
+            enabled: true,
+            config: { ...DEFAULT_CODEX_SETTINGS, binaryPath: "/opt/fake/codex-t3", ...config },
+          },
+          pooled ? { delegatedLaunchPool: fake.pool } : {},
+        ).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              CodexAdapterV2.layerAppServerClientFactory,
+              ServerConfig.layerTest(process.cwd(), { prefix: "t3-codex-pool-launch-" }),
+            ),
+          ),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(
+            ProviderEventLoggers.ProviderEventLoggers,
+            ProviderEventLoggers.NoOpProviderEventLoggers,
+          ),
+        );
+      const binding = makePoolBinding();
+      const open = (adapter: ProviderAdapter.ProviderAdapterV2["Service"]) =>
+        adapter
+          .openSession({
+            threadId: ThreadId.make("thread-pool-launch"),
+            providerSessionId: ProviderSessionId.make("provider-session-pool-launch"),
+            modelSelection: CODEX_TEST_MODEL_SELECTION,
+            runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+            delegatedLaunchBinding: binding,
+          })
+          .pipe(Effect.scoped, Effect.exit);
+
+      // Without the opt-in, a pool control, or with extra launch arguments,
+      // nothing is spawned for a bound launch.
+      for (const [config, pooled] of [
+        [{}, true],
+        [{ delegatedLaunchControl: "codex-t3-pool-v2" as const }, false],
+        [{ delegatedLaunchControl: "codex-t3-pool-v2" as const, launchArgs: "--profile x" }, true],
+      ] as const) {
+        const exit = yield* open(yield* create(config, pooled));
+        assert.isTrue(Exit.isFailure(exit));
+      }
+      assert.lengthOf(spawned, 0);
+
+      yield* open(yield* create({ delegatedLaunchControl: "codex-t3-pool-v2" }));
+      assert.lengthOf(spawned, 1);
+      const [mode, payload, ...rest] = spawned[0]!.args;
+      assert.equal(spawned[0]!.command, "/opt/fake/codex-t3");
+      assert.equal(mode, "pool-launch");
+      assert.lengthOf(rest, 0);
+      assert.deepEqual(yield* decodePoolLaunchPayload(payload), {
+        protocolVersion: 2,
+        prepareRequest: binding.prepareRequest,
+        binding: binding.result,
+        options: {},
+      });
+    }).pipe(
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
   );
 });
 
@@ -437,6 +523,59 @@ const CODEX_TEST_RUNTIME_POLICY = ProviderAdapter.ProviderAdapterV2RuntimePolicy
   interactionMode: "default",
   cwd: "/workspace",
 });
+
+const POOL_BINDING_ID = "c".repeat(48);
+const decodePoolLaunchPayload = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
+const makePoolBinding = (
+  overrides: { readonly clientRequestId?: string; readonly bindingId?: string } = {},
+): DelegatedLaunchBinding => {
+  const bindingId = overrides.bindingId ?? POOL_BINDING_ID;
+  const sessionId = "t3.session-adapter";
+  return {
+    protocol: "codex-t3-pool-v2",
+    instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
+    prepareRequest: {
+      clientRequestId: overrides.clientRequestId ?? "t3.request-adapter",
+      sessionId,
+      provider: "codex",
+      model: CODEX_TEST_MODEL_SELECTION.model,
+      blockedQuotaDomains: [],
+    },
+    result: {
+      protocolVersion: 2,
+      status: "ready",
+      checkedAt: "2026-10-20T10:00:00.000Z",
+      expiresAt: "2026-10-20T10:00:30.000Z",
+      ordinaryUsageAllowed: true,
+      quotaDomains: ["codex:credential:acct-adapter"],
+      bindingId,
+      basePath: `/v1/delegated-launch/bindings/${bindingId}/sessions/${sessionId}`,
+      provider: "codex",
+      model: CODEX_TEST_MODEL_SELECTION.model,
+      sessionId,
+      windows: [{ id: "primary", usedPercent: 5, resetsAt: "2026-10-20T15:00:00.000Z" }],
+    },
+  };
+};
+const makeFakePool = (state: () => CodexPoolBindingState | undefined) => {
+  const calls: Array<string> = [];
+  const pool: DelegatedLaunchPool = {
+    prepare: () => Effect.die("adapters never prepare"),
+    state: () => Effect.sync(() => (calls.push("state"), state())),
+    touch: () => Effect.sync(() => (calls.push("touch"), true)),
+    release: () => Effect.sync(() => (calls.push("release"), true)),
+    resume: (_, version) => Effect.sync(() => (calls.push(`resume:${version}`), true)),
+    cancel: () => Effect.sync(() => (calls.push("cancel"), true)),
+  };
+  return { pool, calls };
+};
+const launchableState: CodexPoolBindingState = {
+  protocolVersion: 2,
+  state: "pending",
+  active: false,
+  executorAttempts: 0,
+  refusalVersion: 0,
+};
 
 function makeCodexTestAppThread(input: {
   readonly threadId: ThreadId;
@@ -881,6 +1020,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       Effect.void,
     onRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
     readChildMetadata?: Parameters<typeof withCodexReplayChildMetadata>[2],
+    capacity?: {
+      readonly accountId: string;
+      readonly used: number;
+      readonly ordinaryUsageAllowed?: boolean;
+      readonly threadProvider: string;
+    },
+    bound?: { readonly pool: DelegatedLaunchPool; readonly binding: DelegatedLaunchBinding },
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -909,10 +1055,37 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   (client) =>
                     ({
                       ...client,
-                      request: (method, params) =>
-                        onRequest(method, params).pipe(
+                      request: ((method, params) => {
+                        if (capacity) {
+                          const response =
+                            method === "config/read"
+                              ? { config: { model_provider: "openai" } }
+                              : method === "account/read"
+                                ? {
+                                    account: {
+                                      type: "chatgpt",
+                                      email: "direct@example.com",
+                                      planType: "pro",
+                                    },
+                                  }
+                                : method === "account/rateLimits/read"
+                                  ? {
+                                      accountId: capacity.accountId,
+                                      ordinaryUsageAllowed: capacity.ordinaryUsageAllowed ?? true,
+                                      rateLimits: {
+                                        primary: { usedPercent: capacity.used },
+                                        secondary: { usedPercent: 2 },
+                                      },
+                                    }
+                                  : method === "thread/read"
+                                    ? { thread: { modelProvider: capacity.threadProvider } }
+                                    : undefined;
+                          if (response) return onRequest(method, params).pipe(Effect.as(response));
+                        }
+                        return onRequest(method, params).pipe(
                           Effect.andThen(client.request(method, params)),
-                        ),
+                        );
+                      }) as typeof client.request,
                     }) satisfies CodexClient.CodexAppServerClient["Service"],
                 ),
                 Effect.provide(context),
@@ -922,9 +1095,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       };
       const adapter = yield* CodexAdapterV2.makeCodexAdapterV2({
         instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
-        settings: DEFAULT_CODEX_SETTINGS,
+        settings: bound
+          ? { ...DEFAULT_CODEX_SETTINGS, delegatedLaunchControl: "codex-t3-pool-v2" }
+          : DEFAULT_CODEX_SETTINGS,
         environment: {},
         clientFactory,
+        ...(bound ? { delegatedLaunchPool: bound.pool } : {}),
         crypto: yield* Crypto.Crypto,
         fileSystem,
         idAllocator,
@@ -942,6 +1118,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         providerSessionId: ProviderSessionId.make(`provider-session-${transcript.scenario}`),
         modelSelection: CODEX_TEST_MODEL_SELECTION,
         runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+        ...(bound ? { delegatedLaunchBinding: bound.binding } : {}),
       });
       const providerThread = yield* runtime.ensureThread({
         threadId,
@@ -1001,6 +1178,200 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         awaitTerminal: (count: number) => changes.until(() => terminalEvents().length >= count),
       };
     });
+
+  it.effect.each([
+    { accountId: "backend-account", used: 1, threadProvider: "openai", starts: true },
+    { accountId: "changed-account", used: 1, threadProvider: "openai", starts: false },
+    { accountId: "backend-account", used: 100, threadProvider: "openai", starts: false },
+    {
+      accountId: "backend-account",
+      used: 12,
+      ordinaryUsageAllowed: false,
+      threadProvider: "openai",
+      starts: false,
+    },
+    { accountId: "backend-account", used: 1, threadProvider: "pool", starts: false },
+  ])("checks delegated binding on the actual Codex start path: %j", (capacity) =>
+    Effect.gen(function* () {
+      const preamble = codexReplayPreamble({
+        nativeThreadId: "capacity-thread",
+        nativeTurnId: "capacity-turn",
+        prompt: "work",
+      });
+      const requests: string[] = [];
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: "delegated-capacity",
+          entries: capacity.starts ? preamble : preamble.slice(0, 5),
+        }),
+        () => Effect.void,
+        (method) =>
+          Effect.sync(() => {
+            requests.push(method);
+          }),
+        undefined,
+        capacity,
+      );
+      const result = yield* harness.runtime
+        .startTurn({
+          ...makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("capacity-attempt"),
+            text: "work",
+          }),
+          delegatedLaunchDomains: [
+            "codex:account:direct@example.com",
+            "codex:credential:backend-account",
+          ],
+        })
+        .pipe(Effect.result);
+      assert.equal(result._tag, capacity.starts ? "Success" : "Failure");
+      assert.equal(
+        requests.filter((method) => method === "turn/start").length,
+        capacity.starts ? 1 : 0,
+      );
+      if (capacity.starts)
+        assert.isBelow(requests.indexOf("account/rateLimits/read"), requests.indexOf("turn/start"));
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect.each([
+    { name: "launchable lease", starts: true },
+    { name: "refused lease", refusal: true, starts: false, code: "usage_limit" },
+    { name: "active lease", active: true, starts: false },
+    { name: "attempted lease", attempts: 1, starts: false },
+    { name: "unbound native provider", threadProvider: "openai", starts: false },
+    { name: "different lease", otherBinding: true, starts: false },
+    { name: "missing state", missing: true, starts: false },
+  ])("verifies the pool lease before the first bound turn: $name", (fixture) =>
+    Effect.gen(function* () {
+      const preamble = codexReplayPreamble({
+        nativeThreadId: "pool-thread",
+        nativeTurnId: "pool-turn",
+        prompt: "work",
+      });
+      const requests: string[] = [];
+      const fake = makeFakePool(() =>
+        fixture.missing
+          ? undefined
+          : {
+              ...launchableState,
+              active: fixture.active ?? false,
+              executorAttempts: fixture.attempts ?? 0,
+              ...(fixture.refusal
+                ? {
+                    refusalVersion: 1,
+                    refusal: {
+                      code: "usage_limit" as const,
+                      quotaScope: "account" as const,
+                      quotaDomains: ["codex:credential:acct-adapter"],
+                    },
+                  }
+                : {}),
+            },
+      );
+      const binding = makePoolBinding();
+      const result = yield* Effect.gen(function* () {
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: "delegated-pool",
+            entries: fixture.starts ? preamble : preamble.slice(0, 5),
+          }),
+          () => Effect.void,
+          (method) =>
+            Effect.sync(() => {
+              requests.push(method);
+            }),
+          undefined,
+          {
+            accountId: "unused",
+            used: 0,
+            threadProvider: fixture.threadProvider ?? "cliproxy_bound",
+          },
+          { pool: fake.pool, binding },
+        );
+        return yield* harness.runtime
+          .startTurn({
+            ...makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("pool-attempt"),
+              text: "work",
+            }),
+            delegatedLaunchBinding: fixture.otherBinding
+              ? makePoolBinding({ clientRequestId: "t3.request-other", bindingId: "d".repeat(48) })
+              : binding,
+          })
+          .pipe(Effect.result);
+      }).pipe(Effect.scoped);
+      assert.equal(result._tag, fixture.starts ? "Success" : "Failure");
+      assert.equal(
+        requests.filter((method) => method === "turn/start").length,
+        fixture.starts ? 1 : 0,
+      );
+      if (result._tag === "Failure" && fixture.code) {
+        const cause = (result.failure as { cause?: unknown }).cause;
+        assert.equal((cause as { code?: string }).code, fixture.code);
+      }
+      // No local account evidence is read for a launcher-owned lease.
+      assert.notInclude(requests, "account/rateLimits/read");
+      // The session's lease is released with its only native process.
+      assert.equal(fake.calls.at(-1), "release");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("acknowledges only the observed refusal version on a later explicit turn", () =>
+    Effect.gen(function* () {
+      const preamble = codexReplayPreamble({
+        nativeThreadId: "pool-continuation-thread",
+        nativeTurnId: "pool-continuation-turn",
+        prompt: "continue",
+      });
+      const fake = makeFakePool(() => ({
+        ...launchableState,
+        state: "established",
+        executorAttempts: 2,
+        refusalVersion: 4,
+        refusal: { code: "throttled", quotaScope: "transient", quotaDomains: [] },
+      }));
+      yield* Effect.gen(function* () {
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({ scenario: "delegated-pool-continuation", entries: preamble }),
+          () => Effect.void,
+          () => Effect.void,
+          undefined,
+          undefined,
+          { pool: fake.pool, binding: makePoolBinding() },
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("pool-continuation-attempt"),
+            text: "continue",
+          }),
+        );
+      }).pipe(Effect.scoped);
+      assert.deepEqual(fake.calls, ["state", "resume:4", "release"]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
 
   it.effect.each(["supported", "unsupported", "invalid"] as const)(
     "delivers native history with %s app-server protocol",

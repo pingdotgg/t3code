@@ -42,6 +42,7 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("provider-turn.start"),
     runId: RunId,
+    launchGeneration: Schema.optional(Schema.Number),
   }),
   Schema.Struct({
     type: Schema.Literal("provider-turn.interrupt"),
@@ -215,6 +216,7 @@ export interface EffectOutboxV2Shape {
     readonly threadId: ThreadId;
     readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
     readonly reason: string;
+    readonly preserveCapacityWaitingStarts?: boolean;
   }) => Effect.Effect<ReadonlyArray<string>, EffectOutboxError>;
   readonly signalCancellations: (effectIds: ReadonlyArray<string>) => Effect.Effect<void>;
   readonly awaitCancellation: (effectId: string) => Effect.Effect<void>;
@@ -298,6 +300,19 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
   EffectOutboxV2,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    // A capacity waiter has no live provider process to lose. Its one start
+    // effect must survive recovery without making cancellation replay-safe.
+    const capacityWaitingStart = sql`(
+      effect_type = 'provider-turn.start' AND EXISTS (
+        SELECT 1 FROM orchestration_v2_projection_runs capacity_run
+        WHERE capacity_run.run_id = json_extract(orchestration_v2_effect_outbox.payload_json, '$.runId')
+          AND capacity_run.thread_id = orchestration_v2_effect_outbox.thread_id
+          AND capacity_run.status = 'starting'
+          AND json_extract(capacity_run.payload_json, '$.delegatedTaskId') IS NOT NULL
+          AND json_extract(capacity_run.payload_json, '$.capacityWait') IS NOT NULL
+      )
+    )`;
+
     const available = yield* Queue.dropping<void>(64);
     const cancellationSignals = new Map<string, Deferred.Deferred<void>>();
     const settledSignals = new Map<string, Deferred.Deferred<void>>();
@@ -445,7 +460,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
           ),
         ),
       cancelUnsettled: Effect.fn("EffectOutbox.cancelUnsettled")(
-        function* ({ threadId, effectTypes, reason }) {
+        function* ({ threadId, effectTypes, reason, preserveCapacityWaitingStarts = false }) {
           if (effectTypes.length === 0) return [];
           const now = DateTime.formatIso(yield* DateTime.now);
           const rows = yield* sql<{ readonly effect_id: string }>`
@@ -460,6 +475,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             WHERE thread_id = ${threadId}
               AND status IN ('pending', 'running')
               AND effect_type IN ${sql.in(effectTypes)}
+              AND NOT (${preserveCapacityWaitingStarts ? 1 : 0} AND ${capacityWaitingStart})
             RETURNING effect_id
           `;
           return rows.map(({ effect_id }) => effect_id);
@@ -506,6 +522,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             last_error = 'Cancelled because the server process ended before the effect completed.'
           WHERE status IN ('pending', 'running')
             AND effect_type IN ${sql.in(PROCESS_BOUND_EFFECT_TYPES)}
+            AND NOT ${capacityWaitingStart}
           RETURNING effect_id
         `;
         const requeuedRows = yield* sql<{ readonly effect_id: string }>`
@@ -518,7 +535,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             updated_at = ${now},
             last_error = 'Requeued after the previous server process ended.'
           WHERE status = 'running'
-            AND effect_type IN ${sql.in(REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS)}
+            AND (effect_type IN ${sql.in(REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS)} OR ${capacityWaitingStart})
           RETURNING effect_id
         `;
         if (requeuedRows.length > 0) yield* notifyAvailable(requeuedRows.length);

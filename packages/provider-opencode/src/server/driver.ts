@@ -21,7 +21,7 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { openCodeUsageReader, type OpenCodeUsageReaderEnv } from "./usage.ts";
-import { readOpenCodeGoUsageLimits } from "./usageLimits.ts";
+import { readOpenCodeGoUsageLimits, readKimiUsageLimits } from "./usageLimits.ts";
 import { loadOpenCode2Catalog } from "./openCode2Catalog.ts";
 import {
   checkOpenCodeProviderStatus,
@@ -351,6 +351,17 @@ export const OpenCodeDriver: ProviderDriver<
           runtimeProbe.refresh,
           loadOpenCode2Models,
         ),
+        kimiGlobalUsageLimits: readKimiUsageLimits({
+          providerId: "kimi-code-plan-global",
+          enabled: effectiveConfig.enabled,
+          serverUrl: effectiveConfig.serverUrl,
+          environment: processEnv,
+        }),
+        kimiUsageLimits: readKimiUsageLimits({
+          enabled: effectiveConfig.enabled,
+          serverUrl: effectiveConfig.serverUrl,
+          environment: processEnv,
+        }),
         usageLimits: readOpenCodeGoUsageLimits({
           enabled: effectiveConfig.enabled,
           serverUrl: effectiveConfig.serverUrl,
@@ -359,7 +370,19 @@ export const OpenCodeDriver: ProviderDriver<
       },
       { concurrency: "unbounded" },
     ).pipe(
-      Effect.map(({ provider, usageLimits }) => ({ ...provider, usageLimits })),
+      Effect.map(({ provider, usageLimits, kimiUsageLimits, kimiGlobalUsageLimits }) => ({
+        ...provider,
+        usageLimits,
+        usageLimitsByModel: Object.fromEntries(
+          provider.models.flatMap((model) =>
+            model.slug.startsWith("kimi-for-coding/")
+              ? [[model.slug, kimiUsageLimits]]
+              : model.slug.startsWith("kimi-code-plan-global/")
+                ? [[model.slug, kimiGlobalUsageLimits]]
+                : [],
+          ),
+        ),
+      })),
       Effect.map(stampIdentity),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, pathService),

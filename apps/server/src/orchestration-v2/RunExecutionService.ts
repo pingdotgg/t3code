@@ -1,3 +1,4 @@
+import { isLaunchQuotaFailure } from "./DelegatedLaunchAdmission.ts";
 import { makeAssistantStreamingFilter } from "./assistantStreaming.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -572,6 +573,15 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly relatedProviderThreadIds?: ReadonlyArray<ProviderThreadId>;
   readonly shouldStartProviderTurn?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly shouldFinalizeRun?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
+  readonly onLaunchWorkStarted?: () => Effect.Effect<void, RunExecutionStartError>;
+  readonly onLaunchQuotaFailure?: (
+    failure: unknown,
+  ) => Effect.Effect<boolean, RunExecutionStartError>;
+  /**
+   * Which pre-work failures may be launch refusals. Defaults to the quota class;
+   * a bound launch widens it because only its binding state can tell.
+   */
+  readonly isLaunchFailureCandidate?: (failure: unknown) => boolean;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
   readonly message: ProviderAdapter.ProviderAdapterV2TurnMessage;
   readonly modelSelection: ModelSelection;
@@ -852,6 +862,11 @@ export const layer: Layer.Layer<
 
     return RunExecutionServiceV2.of({
       startRootRun: Effect.fn("RunExecutionService.startRootRun")(function* (input) {
+        let launchDidWork = false;
+        const runAtFinalization = () =>
+          launchDidWork && input.run.delegatedLaunch
+            ? { ...input.run, delegatedLaunch: { ...input.run.delegatedLaunch, complete: true } }
+            : input.run;
         // Startup failure and stream shutdown can report the same attempt.
         const refreshAfterTurn = yield* Effect.cached(
           finalizationObserver.refreshAfterTurn(input.appThread.projectId).pipe(
@@ -924,7 +939,7 @@ export const layer: Layer.Layer<
                 cause,
               });
               yield* writeFinalRunEvents({
-                run: input.run,
+                run: runAtFinalization(),
                 rootNode: input.rootNode,
                 checkpointScope: input.checkpointScope,
                 providerThread: input.providerThread,
@@ -1019,7 +1034,7 @@ export const layer: Layer.Layer<
           const providerThread = yield* Ref.get(latestProviderThread);
           const openSubagents = yield* Ref.get(openRunOwnedSubagents);
           yield* writeFinalRunEvents({
-            run: input.run,
+            run: runAtFinalization(),
             rootNode: input.rootNode,
             checkpointScope: input.checkpointScope,
             providerThread,
@@ -1238,6 +1253,35 @@ export const layer: Layer.Layer<
         const filterAssistantEvent = makeAssistantStreamingFilter(responseStreamingMode);
         // Held text writes nothing, so its item would take a position only
         // when finally written, behind every item that began after it.
+        // A quota terminal is retryable only before the provider has produced
+        // content, requested input, or executed a tool. Administrative lifecycle
+        // events alone do not mean the first request did useful work.
+        const launchErrors: Array<
+          Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn_item.updated" }>
+        > = [];
+        const flushLaunchErrors = Effect.fn("RunExecutionService.flushLaunchErrors")(
+          function* () {
+            for (const event of launchErrors.splice(0)) {
+              yield* providerEventIngestor.ingestNormalized({
+                analyticsContext: {
+                  modelSelection: input.modelSelection,
+                  runtimeMode: input.runtimePolicy.runtimeMode,
+                  interactionMode: input.runtimePolicy.interactionMode,
+                },
+                providerSessionId: input.providerSessionId,
+                providerInstanceId: input.run.providerInstanceId,
+                threadId: input.run.threadId,
+                runId: input.run.id,
+                nodeId: input.rootNode.id,
+                event,
+              });
+              yield* Ref.update(latestTurnItemOrdinal, (current) =>
+                Math.max(current, event.turnItem.ordinal),
+              );
+            }
+          },
+          Effect.mapError((cause) => new RunExecutionIngestError({ runId: input.run.id, cause })),
+        );
         const reservedHeldTurnItemIds = new Set<TurnItemId>();
         const providerEventFiber = yield* eventSubscription.events.pipe(
           Stream.mapEffect((event) =>
@@ -1318,6 +1362,45 @@ export const layer: Layer.Layer<
           Stream.tap(({ event, accepted }) =>
             Effect.gen(function* () {
               if (!accepted) return;
+              const launchFailure = (failure: { readonly class: string } | undefined) =>
+                input.isLaunchFailureCandidate?.(failure) ?? failure?.class === "usage_limit";
+              const quotaErrorItem =
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "error" &&
+                launchFailure(event.turnItem.failure);
+              if (
+                !launchDidWork &&
+                input.onLaunchQuotaFailure &&
+                quotaErrorItem &&
+                event.type === "turn_item.updated"
+              ) {
+                launchErrors.push(event);
+                return;
+              }
+              if (
+                event.type === "turn.terminal" &&
+                event.status === "failed" &&
+                launchFailure(event.failure) &&
+                !launchDidWork &&
+                input.onLaunchQuotaFailure &&
+                (yield* input.onLaunchQuotaFailure(event.failure))
+              ) {
+                yield* Ref.set(terminalEvent, event);
+                yield* Ref.set(rootTerminalSeen, true);
+                yield* Ref.set(rootRunFinalized, true);
+                return;
+              }
+              if (
+                !launchDidWork &&
+                ((event.type === "turn_item.updated" && event.turnItem.type !== "error") ||
+                  event.type === "runtime_request.updated" ||
+                  event.type === "subagent.updated" ||
+                  event.type === "plan.updated")
+              ) {
+                launchDidWork = true;
+                yield* input.onLaunchWorkStarted?.() ?? Effect.void;
+              }
+              if (launchDidWork || event.type === "turn.terminal") yield* flushLaunchErrors();
               let storedEventCount = 0;
               const deliveredEvent = filterAssistantEvent(
                 event,
@@ -1435,12 +1518,22 @@ export const layer: Layer.Layer<
                   cause,
                 });
                 if (yield* Ref.get(rootRunFinalized)) return;
+                if (
+                  !launchDidWork &&
+                  input.onLaunchQuotaFailure &&
+                  (input.isLaunchFailureCandidate ?? isLaunchQuotaFailure)(Cause.squash(cause)) &&
+                  (yield* input.onLaunchQuotaFailure(Cause.squash(cause)))
+                ) {
+                  yield* Ref.set(rootRunFinalized, true);
+                  return;
+                }
+                yield* flushLaunchErrors();
                 const providerThread = yield* Ref.get(latestProviderThread);
                 const latestItemOrdinal = yield* Ref.get(latestTurnItemOrdinal);
                 const openSubagents = yield* Ref.get(openRunOwnedSubagents);
                 let nextRetryWarningAt = completedAt;
                 yield* writeFinalRunEvents({
-                  run: input.run,
+                  run: runAtFinalization(),
                   rootNode: input.rootNode,
                   checkpointScope: input.checkpointScope,
                   providerThread,
@@ -1542,6 +1635,14 @@ export const layer: Layer.Layer<
           providerThread: input.providerThread,
           message: input.message,
           modelSelection: input.modelSelection,
+          ...(input.run.delegatedLaunch && !input.run.delegatedLaunch.complete
+            ? {
+                delegatedLaunchDomains: input.run.delegatedLaunch.admittedDomains,
+                ...(input.run.delegatedLaunch.binding
+                  ? { delegatedLaunchBinding: input.run.delegatedLaunch.binding }
+                  : {}),
+              }
+            : {}),
           runtimePolicy: input.runtimePolicy,
           ...(appContext.length === 0 ? {} : { appContext }),
         };
@@ -1581,52 +1682,65 @@ export const layer: Layer.Layer<
             ),
           ),
           Effect.catchCause((cause) =>
-            Effect.logError("orchestration V2 provider turn start failed", {
-              runId: input.run.id,
-              cause,
-            }).pipe(
-              Effect.andThen(Fiber.interrupt(providerEventFiber)),
-              Effect.andThen(Ref.get(latestProviderThread)),
-              Effect.flatMap((providerThread) =>
-                Ref.get(latestTurnItemOrdinal).pipe(
-                  Effect.flatMap((latestItemOrdinal) =>
-                    Ref.get(openRunOwnedSubagents).pipe(
-                      Effect.flatMap((openSubagents) =>
-                        writeFinalRunEvents({
-                          run: input.run,
-                          rootNode: input.rootNode,
-                          checkpointScope: input.checkpointScope,
-                          providerThread,
-                          attempt: input.attempt,
-                          writeIfRunCurrent: {
-                            activeAttemptId: input.attempt.id,
-                            expectedStatus: "running",
-                          },
-                          openRunOwnedSubagents: openSubagents,
-                          terminal: makeFailedTerminalEvent(
-                            makeProviderFailure({
-                              cause: Cause.squash(cause),
-                              class: Exit.isFailure(shouldStart) ? "unknown" : "provider_error",
-                            }),
-                            latestItemOrdinal + 1,
-                          ),
-                          failureItemPersisted: false,
-                          refreshAfterTurn,
-                        }),
+            Effect.gen(function* () {
+              if (
+                !launchDidWork &&
+                input.onLaunchQuotaFailure &&
+                (input.isLaunchFailureCandidate ?? isLaunchQuotaFailure)(Cause.squash(cause)) &&
+                (yield* input.onLaunchQuotaFailure(Cause.squash(cause)))
+              ) {
+                yield* Ref.set(rootRunFinalized, true);
+                yield* Fiber.interrupt(providerEventFiber);
+                return;
+              }
+              yield* flushLaunchErrors();
+              return yield* Effect.logError("orchestration V2 provider turn start failed", {
+                runId: input.run.id,
+                cause,
+              }).pipe(
+                Effect.andThen(Fiber.interrupt(providerEventFiber)),
+                Effect.andThen(Ref.get(latestProviderThread)),
+                Effect.flatMap((providerThread) =>
+                  Ref.get(latestTurnItemOrdinal).pipe(
+                    Effect.flatMap((latestItemOrdinal) =>
+                      Ref.get(openRunOwnedSubagents).pipe(
+                        Effect.flatMap((openSubagents) =>
+                          writeFinalRunEvents({
+                            run: runAtFinalization(),
+                            rootNode: input.rootNode,
+                            checkpointScope: input.checkpointScope,
+                            providerThread,
+                            attempt: input.attempt,
+                            writeIfRunCurrent: {
+                              activeAttemptId: input.attempt.id,
+                              expectedStatus: "running",
+                            },
+                            openRunOwnedSubagents: openSubagents,
+                            terminal: makeFailedTerminalEvent(
+                              makeProviderFailure({
+                                cause: Cause.squash(cause),
+                                class: Exit.isFailure(shouldStart) ? "unknown" : "provider_error",
+                              }),
+                              latestItemOrdinal + 1,
+                            ),
+                            failureItemPersisted: false,
+                            refreshAfterTurn,
+                          }),
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-              Effect.mapError(
-                (writeCause) =>
-                  new RunExecutionStartError({
-                    commandId: input.commandId,
-                    runId: input.run.id,
-                    cause: { start: cause, write: writeCause },
-                  }),
-              ),
-            ),
+                Effect.mapError(
+                  (writeCause) =>
+                    new RunExecutionStartError({
+                      commandId: input.commandId,
+                      runId: input.run.id,
+                      cause: { start: cause, write: writeCause },
+                    }),
+                ),
+              );
+            }),
           ),
         );
       }),

@@ -164,3 +164,52 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
     }).pipe(Effect.provide(realQueryRunner)),
   );
 });
+
+it.effect(
+  "checks fresh account and usage on the actual Claude query without delivering a prompt",
+  () =>
+    Effect.gen(function* () {
+      let organization = "org";
+      const accountInfo = vi.fn(async () => ({
+        email: "direct@example.com",
+        organization,
+        apiProvider: "firstParty",
+        subscriptionType: "max",
+        tokenSource: "oauth",
+      }));
+      const usage = vi.fn(async () => ({
+        rate_limits_available: true,
+        rate_limits: { five_hour: { utilization: 1 }, seven_day: { utilization: 2 } },
+      }));
+      const query = vi.spyOn(ClaudeSdk, "query").mockReturnValue({
+        accountInfo,
+        usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: usage,
+        close: () => {},
+      } as unknown as ClaudeSdk.Query);
+      yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+      const runner = yield* ClaudeAgentSdkQueryRunner;
+      const session = yield* runner.open({
+        threadId: ThreadId.make("capacity"),
+        providerSessionId: ProviderSessionId.make("capacity"),
+        options: {
+          sessionId: "native-capacity",
+          model: "claude-sonnet-5-5",
+          tools: [],
+          permissionMode: "default",
+          env: {},
+        },
+      });
+      const domains = [
+        "claudeAgent:account:direct@example.com",
+        `claudeAgent:credential:${JSON.stringify(["direct@example.com", "org", "max", "oauth"])}`,
+      ];
+      yield* session.verifyDelegatedLaunch!(domains, "claude-sonnet-5-5");
+      assert.equal(accountInfo.mock.calls.length, 2);
+      assert.deepEqual(usage.mock.calls, [[{ skipBehaviors: true }]]);
+      organization = "changed-org";
+      const rejected = yield* session.verifyDelegatedLaunch!(domains, "claude-sonnet-5-5").pipe(
+        Effect.result,
+      );
+      assert.equal(rejected._tag, "Failure");
+    }).pipe(Effect.scoped, Effect.provide(forkRunnerLayer.pipe(Layer.provide(NodeServices.layer)))),
+);

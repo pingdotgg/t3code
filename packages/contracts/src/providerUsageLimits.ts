@@ -40,6 +40,7 @@ export const ServerProviderUsageLimits = Schema.Struct({
   checkedAt: IsoDateTime,
   windows: ForwardCompatibleArray(ServerProviderUsageWindow),
   credentialFingerprint: Schema.optional(TrimmedNonEmptyString),
+  ordinaryUsageAllowed: Schema.optional(Schema.Boolean),
   resetCredits: Schema.optional(ServerProviderResetCredits),
   externalUsage: Schema.optional(
     Schema.Struct({

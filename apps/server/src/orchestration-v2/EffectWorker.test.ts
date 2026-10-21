@@ -1,3 +1,4 @@
+import { WaitingForDelegatedCapacity } from "./DelegatedLaunchAdmission.ts";
 import { assert, it } from "@effect/vitest";
 import {
   CheckpointId,
@@ -585,4 +586,69 @@ it.effect.each(["confirmed", "unconfirmed", "failed"] as const)(
         outcome === "confirmed" ? ["stop-child", "settle-child"] : ["stop-child"],
       );
     }),
+);
+
+it.effect("durably reschedules capacity waiting even beyond the normal retry budget", () =>
+  Effect.gen(function* () {
+    const timestamp = DateTime.formatIso(yield* DateTime.now);
+    const effectId = "effect:waiting-capacity";
+    let retries = 0;
+    const claimed: EffectOutbox.OrchestrationEffectV2 = {
+      id: effectId,
+      commandId: CommandId.make("command:waiting-capacity"),
+      threadId: ThreadId.make("thread:waiting-capacity"),
+      request: { type: "provider-turn.start", runId: RunId.make("run:waiting-capacity") },
+      status: "running",
+      attemptCount: 100,
+      availableAt: timestamp,
+      leaseOwner: "worker:capacity",
+      leaseExpiresAt: timestamp,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      completedAt: null,
+      lastError: null,
+    };
+    const layer = EffectWorker.layerWithOptions({
+      workerId: "worker:capacity",
+      maxAttempts: 1,
+    }).pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(EffectOutbox.EffectOutboxV2)({
+            claimNext: () => Effect.succeed(Option.some(claimed)),
+            get: () => Effect.succeed(Option.some(claimed)),
+            awaitCancellation: () => Effect.never,
+            clearCancellation: () => Effect.void,
+            retry: (input) =>
+              Effect.sync(() => {
+                assert.equal(input.error, "waiting_for_capacity");
+                assert.equal(input.delayMs, 60_000);
+                retries++;
+                return true;
+              }),
+            fail: () => Effect.die("capacity waiting must not terminalize"),
+          }),
+          Layer.succeed(EffectWorker.OrchestrationEffectExecutorV2, {
+            execute: () =>
+              Effect.fail(
+                new EffectWorker.OrchestrationEffectExecutionError({
+                  effectId,
+                  effectType: "provider-turn.start",
+                  cause: new WaitingForDelegatedCapacity({
+                    retryAt: DateTime.formatIso(
+                      DateTime.add(DateTime.makeUnsafe(timestamp), { minutes: 1 }),
+                    ),
+                  }),
+                }),
+              ),
+          }),
+        ),
+      ),
+    );
+    yield* EffectWorker.OrchestrationEffectWorkerV2.pipe(
+      Effect.flatMap((worker) => worker.runOnce),
+      Effect.provide(layer),
+    );
+    assert.equal(retries, 1);
+  }),
 );

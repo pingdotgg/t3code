@@ -8,6 +8,8 @@ import type {
   AcpRegistryListProvidersResult,
   AcpRegistryOperationError,
   AcpRegistrySetProviderInput,
+  CodexPoolBindingState,
+  DelegatedLaunchBinding,
   ProviderDriverKind,
   ProviderInstanceEnvironment,
   ProviderInstanceId,
@@ -39,6 +41,36 @@ export interface ProviderDriverMetadata {
 export type ProviderWorkspaceSnapshot = ServerProvider &
   Pick<ServerProviderWorkspaceSnapshot, "slashCommandsPending" | "optionDescriptors">;
 
+export type DelegatedLaunchPoolPrepareOutcome =
+  | { readonly status: "ready"; readonly binding: DelegatedLaunchBinding }
+  | { readonly status: "waiting"; readonly quotaDomains: ReadonlyArray<string> }
+  | { readonly status: "unverified" };
+
+/**
+ * A launcher-owned account binding: prepare selects and leases an account,
+ * the bound launch can only use that lease, and control calls never generate.
+ * Control failures are `undefined`/`false`; callers must treat them as unknown.
+ */
+export interface DelegatedLaunchPool {
+  /** One logical prepare per run, launch generation, model and blocked set. */
+  readonly prepare: (input: {
+    readonly runId: string;
+    readonly generation: number;
+    readonly model: string;
+    readonly blockedQuotaDomains: ReadonlyArray<string>;
+  }) => Effect.Effect<DelegatedLaunchPoolPrepareOutcome>;
+  readonly state: (
+    binding: DelegatedLaunchBinding,
+  ) => Effect.Effect<CodexPoolBindingState | undefined>;
+  readonly touch: (binding: DelegatedLaunchBinding) => Effect.Effect<boolean>;
+  readonly release: (binding: DelegatedLaunchBinding) => Effect.Effect<boolean>;
+  readonly resume: (
+    binding: DelegatedLaunchBinding,
+    expectedRefusalVersion: number,
+  ) => Effect.Effect<boolean>;
+  readonly cancel: (clientRequestId: string) => Effect.Effect<boolean>;
+}
+
 export interface ProviderInstance {
   readonly instanceId: ProviderInstanceId;
   readonly driverKind: ProviderDriverKind;
@@ -46,6 +78,9 @@ export interface ProviderInstance {
   readonly displayName: string | undefined;
   readonly accentColor?: string | undefined;
   readonly enabled: boolean;
+  /** Fresh runtime-owned usage, with the identity revalidated on the dispatch session. */
+  readonly probeDelegatedLaunch?: (model: string) => Effect.Effect<ServerProvider | undefined>;
+  readonly delegatedLaunchPool?: DelegatedLaunchPool;
   readonly snapshot: ManagedServerProvider;
   readonly snapshotForCwd?: (
     cwd: string,

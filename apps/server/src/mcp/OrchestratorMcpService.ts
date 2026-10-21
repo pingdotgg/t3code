@@ -1568,20 +1568,22 @@ const make = Effect.gen(function* () {
     const workState =
       task.result !== null ? "result_available" : heldForRestart ? "working" : taskWorkState;
     const status =
-      task.result !== null
-        ? taskStatusForRun(
-            task.status === "completed" ||
-              task.status === "failed" ||
-              task.status === "cancelled" ||
-              task.status === "interrupted"
-              ? { status: task.status }
-              : childRun,
-          )
-        : workState === "result_available"
-          ? taskStatusForRun(taskResultRun ?? childRun)
-          : taskStatusForRun(taskResultRun ?? childRun) === "queued"
-            ? "queued"
-            : "running";
+      childRun?.status === "starting" && childRun.capacityWait
+        ? "waiting"
+        : task.result !== null
+          ? taskStatusForRun(
+              task.status === "completed" ||
+                task.status === "failed" ||
+                task.status === "cancelled" ||
+                task.status === "interrupted"
+                ? { status: task.status }
+                : childRun,
+            )
+          : workState === "result_available"
+            ? taskStatusForRun(taskResultRun ?? childRun)
+            : taskStatusForRun(taskResultRun ?? childRun) === "queued"
+              ? "queued"
+              : "running";
     const derivedResult =
       task.result !== null
         ? task.result
@@ -1618,6 +1620,7 @@ const make = Effect.gen(function* () {
       };
     const response = {
       taskId: task.id,
+      ...(childRun?.capacityWait ? { capacityWait: childRun.capacityWait } : {}),
       childThreadId: task.childThreadId,
       childRunId: childRun?.id ?? null,
       childNodeId: task.id,

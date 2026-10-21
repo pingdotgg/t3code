@@ -1,3 +1,5 @@
+import * as DelegatedLaunchAdmission from "../DelegatedLaunchAdmission.ts";
+import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -262,6 +264,7 @@ export function layerWithRegistry<Error>(
     McpProviderSessions.McpProviderSessions
   >,
   options: {
+    readonly providerInstances?: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"];
     readonly databaseLayer?: Layer.Layer<
       SqlClient.SqlClient,
       MigrationError | PlatformError.PlatformError | SqlError
@@ -272,6 +275,7 @@ export function layerWithRegistry<Error>(
     readonly continueThreadsAfterServerUpdate?: boolean;
   } = {},
 ): Layer.Layer<
+  | ProviderTurnStartService.ProviderTurnStartServiceV2
   | Orchestrator.OrchestratorV2
   | EffectWorker.OrchestrationEffectWorkerV2
   | EventSink.EventSinkV2
@@ -392,6 +396,20 @@ export function layerWithRegistry<Error>(
   const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        options.providerInstances === undefined
+          ? Layer.empty
+          : DelegatedLaunchAdmission.layer.pipe(
+              Layer.provide(
+                Layer.mergeAll(
+                  layerPersistence,
+                  layerServerSettings,
+                  Layer.succeed(
+                    ProviderInstanceRegistry.ProviderInstanceRegistry,
+                    options.providerInstances,
+                  ),
+                ),
+              ),
+            ),
         layerContextHandoffServiceProvided,
         layerEventSinkProvided,
         IdAllocator.layer,
@@ -508,6 +526,7 @@ export function layerWithRegistry<Error>(
     Layer.provide(Layer.merge(layerStores, layerEffectExecutorProvided)),
   );
   const layerReplayRuntime = Layer.mergeAll(
+    layerProviderTurnStartServiceProvided,
     layerOrchestratorProvided,
     layerProviderSessionManagerProvided,
     layerEffectWorkerProvided,

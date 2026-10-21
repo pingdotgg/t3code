@@ -275,6 +275,7 @@ export const ServerProvider = Schema.Struct({
   skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   workspaceSnapshots: Schema.optionalKey(Schema.Array(ServerProviderWorkspaceSnapshot)),
   usageLimits: Schema.optional(ServerProviderUsageLimits),
+  usageLimitsByModel: Schema.optional(Schema.Record(Schema.String, ServerProviderUsageLimits)),
   versionAdvisory: Schema.optionalKey(ServerProviderVersionAdvisory),
   compatibilityAdvisory: Schema.optionalKey(ServerProviderCompatibilityAdvisory),
   updateState: Schema.optionalKey(ServerProviderUpdateState),

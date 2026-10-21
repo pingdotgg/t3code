@@ -7127,6 +7127,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Delegated child thread ${childThreadId} did not create a run.`,
         });
       }
+      yield* emitEvent({
+        type: "run.updated",
+        threadId: childThreadId,
+        runId: childRun.id,
+        occurredAt: now,
+        payload: { ...childRun, delegatedTaskId: taskNodeId },
+      });
       const spawnTransferId = yield* mapDispatchError(command)(
         idAllocator.allocate.contextTransfer({
           sourceThreadId: command.parentThreadId,

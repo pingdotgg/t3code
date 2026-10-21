@@ -205,6 +205,7 @@ export const make = Effect.gen(function* () {
       const now = yield* DateTime.now;
       const runs = [] as Array<OrchestrationV2ThreadProjection["runs"][number]>;
       for (const run of nonterminalRuns(projection)) {
+        if (run.status === "starting" && run.delegatedTaskId && run.capacityWait) continue;
         if (run.status === "waiting") {
           const checkpointEffects = yield* outbox
             .listByCommandId(CommandId.make(`command:effect:checkpoint.capture:${run.id}`))
@@ -647,6 +648,7 @@ export const make = Effect.gen(function* () {
           .cancelUnsettled({
             threadId: projection.thread.id,
             effectTypes: EffectOutbox.PROCESS_BOUND_EFFECT_TYPES,
+            preserveCapacityWaitingStarts: true,
             reason: detail,
           })
           .pipe(
@@ -672,6 +674,7 @@ export const make = Effect.gen(function* () {
             effects,
             cancelUnsettledEffects: {
               effectTypes: EffectOutbox.PROCESS_BOUND_EFFECT_TYPES,
+              preserveCapacityWaitingStarts: true,
               reason: detail,
             },
           })

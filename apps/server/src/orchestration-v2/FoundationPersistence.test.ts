@@ -1,9 +1,15 @@
+import * as TestClock from "effect/testing/TestClock";
+import * as DelegatedLaunchAdmission from "./DelegatedLaunchAdmission.ts";
+import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
+import type { DelegatedLaunchPool, ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as ServerSettings from "../serverSettings.ts";
 import { assert, it } from "@effect/vitest";
 import {
   CheckpointId,
+  type CodexPoolBindingState,
+  type DelegatedLaunchBinding,
   CheckpointRef,
   CheckpointScopeId,
   CommandId,
@@ -59,6 +65,7 @@ import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 
+const isWaitingForCapacity = Schema.is(DelegatedLaunchAdmission.WaitingForDelegatedCapacity);
 const isLiveStreamBufferError = Schema.is(LiveStreamBufferError);
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
@@ -3217,4 +3224,820 @@ it.effect.each(["events", "receipts"] as const)(
         assert.deepEqual(retained, [{ id: "pending" }]);
       }).pipe(Effect.provide(maintenanceLayer));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  "persists capacity waiting through projection rebuild, replays the accepted request, and cancels before probing",
+  () =>
+    Effect.gen(function* () {
+      const sink = yield* EventSink.EventSinkV2;
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:capacity-persistence");
+      const runId = RunId.make("run:capacity-persistence");
+      const attemptId = RunAttemptId.make("attempt:capacity-persistence");
+      const providerThreadId = ProviderThreadId.make("provider-thread:capacity-persistence");
+      const commandId = CommandId.make("client-request:capacity-persistence");
+      const thread = makeThread(threadId, now);
+      const run: OrchestrationV2Run = {
+        id: runId,
+        threadId,
+        ordinal: 1,
+        providerInstanceId,
+        modelSelection,
+        providerThreadId,
+        userMessageId: MessageId.make("message:capacity-persistence"),
+        rootNodeId: null,
+        activeAttemptId: attemptId,
+        status: "starting",
+        requestedAt: now,
+        startedAt: null,
+        completedAt: null,
+        checkpointId: null,
+        contextHandoffId: null,
+        delegatedTaskId: NodeId.make("task:capacity-persistence"),
+      };
+      const receipt = {
+        commandId,
+        commandType: "delegated_task.request",
+        acceptedAt: now,
+        threadId,
+        events: [
+          threadCreatedEvent({ id: "event:capacity:thread", thread, now }),
+          {
+            id: EventId.make("event:capacity:run"),
+            type: "run.created" as const,
+            threadId,
+            occurredAt: now,
+            payload: run,
+          },
+          {
+            id: EventId.make("event:capacity:attempt"),
+            type: "run-attempt.updated" as const,
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: attemptId,
+              runId,
+              attemptOrdinal: 1,
+              rootNodeId: NodeId.make("node:capacity"),
+              providerInstanceId,
+              providerThreadId,
+              providerTurnId: null,
+              reason: "initial" as const,
+              status: "pending" as const,
+              startedAt: null,
+              completedAt: null,
+            },
+          },
+          {
+            id: EventId.make("event:capacity:provider-thread"),
+            type: "provider-thread.updated" as const,
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: providerThreadId,
+              driver: providerDriver,
+              providerInstanceId,
+              providerSessionId: ProviderSessionId.make("session:capacity"),
+              appThreadId: threadId,
+              ownerNodeId: null,
+              nativeThreadRef: null,
+              nativeConversationHeadRef: null,
+              status: "not_loaded" as const,
+              firstRunOrdinal: 1,
+              lastRunOrdinal: 1,
+              handoffIds: [],
+              forkedFrom: null,
+              createdAt: now,
+              updatedAt: now,
+            },
+          },
+        ],
+        effects: [],
+      };
+      assert.isTrue((yield* sink.commitCommand(receipt)).committed);
+      let probes = 0;
+      let providerStarts = 0;
+      let pinned = true;
+      let healthy = false;
+      let fresh = false;
+      let email = "test@example.com";
+      const instance = {
+        instanceId: providerInstanceId,
+        driverKind: providerDriver,
+        get probeDelegatedLaunch(): ProviderInstance["probeDelegatedLaunch"] {
+          return pinned ? () => instance.snapshot.refresh : undefined;
+        },
+        enabled: true,
+        snapshot: {
+          refresh: Effect.gen(function* () {
+            probes++;
+            const checkedAt = DateTime.formatIso(fresh ? yield* DateTime.now : now);
+            return {
+              instanceId: providerInstanceId,
+              driver: providerDriver,
+              enabled: true,
+              installed: true,
+              version: null,
+              status: "ready" as const,
+              auth: { status: "authenticated" as const, email },
+              checkedAt,
+              usageLimits: {
+                checkedAt,
+                windows: [
+                  {
+                    id: "primary",
+                    kind: "session" as const,
+                    label: "Session",
+                    usedPercent: healthy ? 0 : 100,
+                  },
+                  { id: "secondary", kind: "weekly" as const, label: "Weekly", usedPercent: 0 },
+                ],
+              },
+              models: [
+                {
+                  slug: modelSelection.model,
+                  name: modelSelection.model,
+                  isCustom: false,
+                  capabilities: null,
+                },
+              ],
+              slashCommands: [],
+              skills: [],
+            };
+          }),
+        },
+      } as unknown as ProviderInstance;
+      const admissionLayer = DelegatedLaunchAdmission.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            ServerSettings.layerTest(),
+            Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+              getInstance: () => Effect.succeed(instance),
+            }),
+          ),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const admission = yield* DelegatedLaunchAdmission.DelegatedLaunchAdmission;
+        const result = yield* admission.prepare(threadId, runId, 0).pipe(
+          Effect.andThen(() =>
+            Effect.sync(() => {
+              providerStarts++;
+            }),
+          ),
+          Effect.flip,
+        );
+        assert.isTrue(isWaitingForCapacity(result));
+        const waiting = (yield* store.getTurnStartContext(threadId, runId)).runs[0]!;
+        assert.equal(waiting.status, "starting");
+        assert.equal(waiting.capacityWait?.reason, "exhausted");
+        yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild;
+        const restored = (yield* store.getTurnStartContext(threadId, runId)).runs;
+        assert.lengthOf(restored, 1);
+        assert.deepEqual(restored[0]?.capacityWait, waiting.capacityWait);
+        // Replayed clientRequestId is answered by the receipt, even after capacity changes.
+        assert.isFalse((yield* sink.commitCommand(receipt)).committed);
+        assert.equal(probes, 1);
+        assert.equal(providerStarts, 0);
+        // Recreate admission against durable projections. An unpinned pool may
+        // not spend even a healthy direct-account snapshot.
+        pinned = false;
+        healthy = true;
+        yield* Effect.gen(function* () {
+          const restarted = yield* DelegatedLaunchAdmission.DelegatedLaunchAdmission;
+          const denied = yield* restarted.prepare(threadId, runId, 0).pipe(Effect.flip);
+          assert.isTrue(isWaitingForCapacity(denied));
+        }).pipe(Effect.provide(Layer.fresh(admissionLayer)));
+        assert.equal(probes, 1);
+        pinned = true;
+        yield* TestClock.adjust("61 seconds");
+        const stale = yield* admission.prepare(threadId, runId, 0).pipe(Effect.flip);
+        assert.isTrue(isWaitingForCapacity(stale));
+        assert.equal(
+          (yield* store.getTurnStartContext(threadId, runId)).runs[0]?.capacityWait?.reason,
+          "unverified",
+        );
+        fresh = true;
+        email = "replacement@example.com";
+        yield* Effect.gen(function* () {
+          const restarted = yield* DelegatedLaunchAdmission.DelegatedLaunchAdmission;
+          assert.isTrue(yield* restarted.prepare(threadId, runId, 0));
+        }).pipe(Effect.provide(Layer.fresh(admissionLayer)));
+        const admitted = (yield* store.getTurnStartContext(threadId, runId)).runs[0]!;
+        assert.isUndefined(admitted.capacityWait);
+        assert.include(
+          admitted.delegatedLaunch!.admittedDomains,
+          "codex:account:replacement@example.com",
+        );
+        assert.isFalse((yield* sink.commitCommand(receipt)).committed);
+        healthy = false;
+        const switched = yield* admission.prepare(threadId, runId, 0).pipe(Effect.flip);
+        assert.isTrue(isWaitingForCapacity(switched));
+        assert.equal(providerStarts, 0);
+        const nextGeneration = {
+          ...waiting,
+          delegatedLaunch: {
+            ...waiting.delegatedLaunch!,
+            generation: 1,
+            admittedDomains: ["codex:account:test@example.com"],
+          },
+        };
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("event:capacity:generation"),
+              type: "run.updated",
+              threadId,
+              occurredAt: now,
+              payload: nextGeneration,
+            },
+          ],
+        });
+        assert.isFalse(yield* admission.prepare(threadId, runId, 0));
+        assert.equal(probes, 4);
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("event:capacity:running"),
+              type: "run.updated",
+              threadId,
+              occurredAt: now,
+              payload: { ...nextGeneration, status: "running" },
+            },
+          ],
+        });
+        assert.isTrue(yield* admission.recover(threadId, runId, 1));
+        const recovered = (yield* store.getTurnStartContext(threadId, runId)).runs[0]!;
+        assert.equal(recovered.delegatedLaunch?.generation, 2);
+        assert.deepEqual(recovered.delegatedLaunch?.blockedDomains, [
+          "codex:account:test@example.com",
+        ]);
+        assert.isFalse(yield* admission.recover(threadId, runId, 1));
+        const effects = yield* (yield* EffectOutbox.EffectOutboxV2).listByCommandId(
+          CommandId.make(`capacity-race:${runId}:2`),
+        );
+        assert.lengthOf(
+          effects.filter((e) => e.request.type === "provider-turn.start"),
+          1,
+        );
+        assert.isFalse(yield* admission.prepare(threadId, runId, 1));
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("event:capacity:running-after-race"),
+              type: "run.updated",
+              threadId,
+              occurredAt: now,
+              payload: { ...recovered, status: "running" },
+            },
+          ],
+        });
+        yield* admission.markStarted(threadId, runId);
+        assert.isTrue(
+          (yield* store.getTurnStartContext(threadId, runId)).runs[0]?.delegatedLaunch?.complete,
+        );
+        assert.isFalse(yield* admission.recover(threadId, runId, 2));
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("event:capacity:cancel"),
+              type: "run.updated",
+              threadId,
+              occurredAt: now,
+              payload: { ...waiting, status: "cancelled", completedAt: now },
+            },
+          ],
+        });
+        assert.isFalse(yield* admission.prepare(threadId, runId, 0));
+        assert.equal(probes, 4);
+      }).pipe(Effect.provide(admissionLayer));
+    }).pipe(Effect.provide(Layer.fresh(layerTest))),
+);
+
+it.effect(
+  "admits pool launches by binding, separates throttle from exhaustion, and never recovers after work",
+  () =>
+    Effect.gen(function* () {
+      const sink = yield* EventSink.EventSinkV2;
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:pool-admission");
+      const runId = RunId.make("run:pool-admission");
+      const attemptId = RunAttemptId.make("attempt:pool-admission");
+      const providerThreadId = ProviderThreadId.make("provider-thread:pool-admission");
+      const thread = makeThread(threadId, now);
+      const run: OrchestrationV2Run = {
+        id: runId,
+        threadId,
+        ordinal: 1,
+        providerInstanceId,
+        modelSelection,
+        providerThreadId,
+        userMessageId: MessageId.make("message:pool-admission"),
+        rootNodeId: null,
+        activeAttemptId: attemptId,
+        status: "starting",
+        requestedAt: now,
+        startedAt: null,
+        completedAt: null,
+        checkpointId: null,
+        contextHandoffId: null,
+        delegatedTaskId: NodeId.make("task:pool-admission"),
+      };
+      assert.isTrue(
+        (yield* sink.commitCommand({
+          commandId: CommandId.make("client-request:pool-admission"),
+          commandType: "delegated_task.request",
+          acceptedAt: now,
+          threadId,
+          events: [
+            threadCreatedEvent({ id: "event:pool:thread", thread, now }),
+            {
+              id: EventId.make("event:pool:run"),
+              type: "run.created" as const,
+              threadId,
+              occurredAt: now,
+              payload: run,
+            },
+            {
+              id: EventId.make("event:pool:attempt"),
+              type: "run-attempt.updated" as const,
+              threadId,
+              occurredAt: now,
+              payload: {
+                id: attemptId,
+                runId,
+                attemptOrdinal: 1,
+                rootNodeId: NodeId.make("node:pool"),
+                providerInstanceId,
+                providerThreadId,
+                providerTurnId: null,
+                reason: "initial" as const,
+                status: "pending" as const,
+                startedAt: null,
+                completedAt: null,
+              },
+            },
+            {
+              id: EventId.make("event:pool:provider-thread"),
+              type: "provider-thread.updated" as const,
+              threadId,
+              occurredAt: now,
+              payload: {
+                id: providerThreadId,
+                driver: providerDriver,
+                providerInstanceId,
+                providerSessionId: ProviderSessionId.make("session:pool"),
+                appThreadId: threadId,
+                ownerNodeId: null,
+                nativeThreadRef: null,
+                nativeConversationHeadRef: null,
+                status: "not_loaded" as const,
+                firstRunOrdinal: 1,
+                lastRunOrdinal: 1,
+                handoffIds: [],
+                forkedFrom: null,
+                createdAt: now,
+                updatedAt: now,
+              },
+            },
+          ],
+          effects: [],
+        })).committed,
+      );
+
+      const sol = "gpt-6.1-sol";
+      const exhausted = "codex:credential:acct-exhausted";
+      const spare = "codex:credential:acct-spare";
+      const prepares: Array<{ model: string; blocked: ReadonlyArray<string>; generation: number }> =
+        [];
+      const lifecycle: Array<string> = [];
+      const bindingIds = new Map<string, string>();
+      // Per model: what the proxy answers for a fresh prepare.
+      let answers: Record<string, "waiting" | "ready" | "unverified"> = {
+        [modelSelection.model]: "waiting",
+        [sol]: "ready",
+      };
+      let state: CodexPoolBindingState | undefined;
+      let stateReads = 0;
+      const bindingFor = (
+        model: string,
+        generation: number,
+        blocked: ReadonlyArray<string>,
+        at: number,
+      ): DelegatedLaunchBinding => {
+        const clientRequestId = `t3.req-${generation}-${model}-${blocked.length}`;
+        const bindingId =
+          bindingIds.get(clientRequestId) ?? String(bindingIds.size + 1).padStart(48, "0");
+        bindingIds.set(clientRequestId, bindingId);
+        const sessionId = `t3.session-${generation}-${model}`;
+        return {
+          protocol: "codex-t3-pool-v2",
+          instanceId: providerInstanceId,
+          prepareRequest: {
+            clientRequestId,
+            sessionId,
+            provider: "codex",
+            model,
+            blockedQuotaDomains: blocked,
+          },
+          result: {
+            protocolVersion: 2,
+            status: "ready",
+            checkedAt: DateTime.formatIso(DateTime.makeUnsafe(at)),
+            expiresAt: DateTime.formatIso(DateTime.makeUnsafe(at + 30_000)),
+            ordinaryUsageAllowed: true,
+            quotaDomains: [spare],
+            bindingId,
+            basePath: `/v1/delegated-launch/bindings/${bindingId}/sessions/${sessionId}`,
+            provider: "codex",
+            model,
+            sessionId,
+            windows: [
+              {
+                id: "primary",
+                usedPercent: 10,
+                resetsAt: DateTime.formatIso(DateTime.makeUnsafe(at + 3_600_000)),
+              },
+            ],
+          },
+        };
+      };
+      const pool: DelegatedLaunchPool = {
+        prepare: (input) =>
+          Effect.gen(function* () {
+            const blocked = input.blockedQuotaDomains.filter((d) =>
+              d.startsWith("codex:credential:"),
+            );
+            prepares.push({ model: input.model, blocked, generation: input.generation });
+            const answer = answers[input.model] ?? "unverified";
+            if (answer === "waiting") return { status: "waiting", quotaDomains: [exhausted] };
+            if (answer === "unverified" || blocked.includes(spare)) return { status: "unverified" };
+            const at = DateTime.toEpochMillis(yield* DateTime.now);
+            return {
+              status: "ready",
+              binding: bindingFor(input.model, input.generation, blocked, at),
+            };
+          }),
+        state: () =>
+          Effect.sync(() => {
+            stateReads++;
+            return state;
+          }),
+        touch: () => Effect.succeed(true),
+        release: (b) =>
+          Effect.sync(() => lifecycle.push(`release:${b.result.bindingId}`)).pipe(Effect.as(true)),
+        resume: () => Effect.succeed(true),
+        cancel: (id) => Effect.sync(() => lifecycle.push(`cancel:${id}`)).pipe(Effect.as(true)),
+      };
+      const instance = {
+        instanceId: providerInstanceId,
+        driverKind: providerDriver,
+        enabled: true,
+        delegatedLaunchPool: pool,
+        snapshot: {
+          getSnapshot: Effect.succeed({
+            instanceId: providerInstanceId,
+            driver: providerDriver,
+            enabled: true,
+            installed: true,
+            version: null,
+            status: "ready" as const,
+            auth: { status: "unknown" as const },
+            checkedAt: DateTime.formatIso(now),
+            models: [modelSelection.model, sol].map((slug) => ({
+              slug,
+              name: slug,
+              isCustom: false,
+              capabilities: null,
+            })),
+            slashCommands: [],
+            skills: [],
+          }),
+          refresh: Effect.die("pool admission never spends a local usage snapshot"),
+        },
+      } as unknown as ProviderInstance;
+      const admissionLayer = DelegatedLaunchAdmission.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            ServerSettings.layerTest({
+              delegatedLaunchRoutes: [
+                {
+                  from: modelSelection,
+                  fallback: [{ instanceId: providerInstanceId, model: sol }],
+                },
+              ],
+            }),
+            Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+              getInstance: () => Effect.succeed(instance),
+            }),
+          ),
+        ),
+      );
+      const current = () =>
+        store.getTurnStartContext(threadId, runId).pipe(Effect.map((c) => c.runs[0]!));
+      const providerThread = () =>
+        store
+          .getTurnStartContext(threadId, runId)
+          .pipe(Effect.map((c) => c.providerThreads.find((p) => p.id === providerThreadId)!));
+      const setStatus = (id: string, status: "running" | "starting") =>
+        Effect.gen(function* () {
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make(id),
+                type: "run.updated",
+                threadId,
+                occurredAt: now,
+                payload: { ...(yield* current()), status },
+              },
+            ],
+          });
+        });
+
+      yield* Effect.gen(function* () {
+        const admission = yield* DelegatedLaunchAdmission.DelegatedLaunchAdmission;
+        // The requested model's account is exhausted: the fallback prepare
+        // carries that account as blocked, so the proxy cannot pin it again.
+        assert.isTrue(yield* admission.prepare(threadId, runId, 0));
+        assert.deepEqual(prepares, [
+          { model: modelSelection.model, blocked: [], generation: 0 },
+          { model: sol, blocked: [exhausted], generation: 0 },
+        ]);
+        const admitted = yield* current();
+        assert.equal(admitted.modelSelection.model, sol);
+        assert.isUndefined(admitted.capacityWait);
+        assert.deepEqual(admitted.delegatedLaunch?.admittedDomains, [spare]);
+        const binding = admitted.delegatedLaunch!.binding!;
+        assert.equal(binding.prepareRequest.model, sol);
+        // A lease always gets a fresh native process.
+        assert.notEqual((yield* providerThread()).providerSessionId, "session:pool");
+
+        // Duplicate delivery at the same generation reuses the same logical prepare.
+        assert.isTrue(yield* admission.prepare(threadId, runId, 0));
+        assert.deepEqual((yield* current()).delegatedLaunch?.binding, binding);
+        assert.deepEqual(lifecycle, []);
+
+        // Dispatch-time throttle before useful work: skip this candidate only.
+        state = {
+          protocolVersion: 2,
+          state: "established",
+          active: false,
+          executorAttempts: 1,
+          refusalVersion: 1,
+          refusal: { code: "throttled", quotaScope: "transient", quotaDomains: [] },
+        };
+        yield* setStatus("event:pool:running-1", "running");
+        assert.isTrue(yield* admission.recoverBoundLaunch(threadId, runId, 0, new Error("429")));
+        const throttled = yield* current();
+        assert.equal(throttled.delegatedLaunch?.generation, 1);
+        assert.include(
+          throttled.delegatedLaunch?.blockedDomains ?? [],
+          `launch:candidate:codex:${sol}`,
+        );
+        assert.notInclude(throttled.delegatedLaunch?.blockedDomains ?? [], spare);
+        assert.isFalse(yield* admission.recoverBoundLaunch(threadId, runId, 0, new Error("dup")));
+
+        answers = { [modelSelection.model]: "unverified", [sol]: "ready" };
+        const waiting = yield* admission.prepare(threadId, runId, 1).pipe(Effect.flip);
+        assert.isTrue(isWaitingForCapacity(waiting));
+        assert.equal((yield* current()).capacityWait?.reason, "throttled");
+        assert.isFalse(prepares.some((p) => p.generation === 1 && p.model === sol));
+        // The superseded lease is cancelled and released, never launched.
+        assert.deepEqual(lifecycle, [
+          `cancel:${binding.prepareRequest.clientRequestId}`,
+          `release:${binding.result.bindingId}`,
+        ]);
+
+        // After the throttle window the same model is eligible again.
+        yield* TestClock.adjust("61 seconds");
+        assert.isTrue(yield* admission.prepare(threadId, runId, 1));
+        const second = (yield* current()).delegatedLaunch!.binding!;
+        assert.notEqual(
+          second.prepareRequest.clientRequestId,
+          binding.prepareRequest.clientRequestId,
+        );
+
+        // Verified account exhaustion blocks that account for every model.
+        state = {
+          protocolVersion: 2,
+          state: "established",
+          active: false,
+          executorAttempts: 1,
+          refusalVersion: 2,
+          refusal: { code: "usage_limit", quotaScope: "account", quotaDomains: [spare] },
+        };
+        yield* setStatus("event:pool:running-2", "running");
+        assert.isTrue(yield* admission.recoverBoundLaunch(threadId, runId, 1, new Error("429")));
+        assert.include((yield* current()).delegatedLaunch?.blockedDomains ?? [], spare);
+        answers = { [modelSelection.model]: "ready", [sol]: "ready" };
+        const exhaustedWait = yield* admission.prepare(threadId, runId, 2).pipe(Effect.flip);
+        assert.isTrue(isWaitingForCapacity(exhaustedWait));
+        assert.isTrue(
+          prepares.filter((p) => p.generation === 2).every((p) => p.blocked.includes(spare)),
+        );
+
+        // Once useful work starts, no refusal may relaunch the run.
+        yield* TestClock.adjust("61 seconds");
+        state = undefined;
+        assert.isTrue(yield* admission.prepare(threadId, runId, 2));
+        yield* setStatus("event:pool:running-3", "running");
+        yield* admission.markStarted(threadId, runId);
+        const reads = stateReads;
+        state = {
+          protocolVersion: 2,
+          state: "established",
+          active: false,
+          executorAttempts: 1,
+          refusalVersion: 3,
+          refusal: { code: "usage_limit", quotaScope: "account", quotaDomains: [spare] },
+        };
+        assert.isFalse(yield* admission.recoverBoundLaunch(threadId, runId, 2, new Error("429")));
+        assert.equal(stateReads, reads);
+        assert.equal((yield* current()).delegatedLaunch?.generation, 2);
+      }).pipe(Effect.provide(admissionLayer));
+    }).pipe(Effect.provide(Layer.fresh(layerTest))),
+);
+
+it.effect("reopens a capacity waiting database and replays exactly one start after recovery", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "capacity-restart-" });
+    const database = SqlitePersistence.layerFromPath(path.join(directory, "state.sqlite"));
+    const stores = Layer.mergeAll(
+      EventStore.layer,
+      ProjectionStore.layer,
+      CommandReceiptStore.layer,
+      EffectOutbox.layer,
+    ).pipe(Layer.provideMerge(database));
+    const services = Layer.mergeAll(
+      stores,
+      EventSink.layer.pipe(Layer.provide(stores)),
+      IdAllocator.layer,
+      ServerSettings.layerTest(),
+      Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({
+        runRecoveryOnce: Effect.succeed(false),
+      }),
+    );
+    const disk = Layer.mergeAll(
+      services,
+      ProviderRuntimeRecovery.layer.pipe(Layer.provide(services)),
+    );
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make("thread:capacity-persistence");
+    const runId = RunId.make("run:capacity-persistence");
+    const attemptId = RunAttemptId.make("attempt:capacity-persistence");
+    const providerThreadId = ProviderThreadId.make("provider-thread:capacity-persistence");
+    const commandId = CommandId.make("client-request:capacity-persistence");
+    const thread = makeThread(threadId, now);
+    const run: OrchestrationV2Run = {
+      id: runId,
+      threadId,
+      ordinal: 1,
+      providerInstanceId,
+      modelSelection,
+      providerThreadId,
+      userMessageId: MessageId.make("message:capacity-persistence"),
+      rootNodeId: null,
+      activeAttemptId: attemptId,
+      status: "starting",
+      requestedAt: now,
+      startedAt: null,
+      completedAt: null,
+      checkpointId: null,
+      contextHandoffId: null,
+      delegatedTaskId: NodeId.make("task:capacity-persistence"),
+      capacityWait: {
+        reason: "exhausted",
+        checkedAt: DateTime.formatIso(now),
+        retryAt: DateTime.formatIso(DateTime.add(now, { minutes: 1 })),
+      },
+    };
+    const receipt = {
+      commandId,
+      commandType: "delegated_task.request",
+      acceptedAt: now,
+      threadId,
+      events: [
+        threadCreatedEvent({ id: "event:capacity:thread", thread, now }),
+        {
+          id: EventId.make("event:capacity:run"),
+          type: "run.created" as const,
+          threadId,
+          occurredAt: now,
+          payload: run,
+        },
+        {
+          id: EventId.make("event:capacity:attempt"),
+          type: "run-attempt.updated" as const,
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: attemptId,
+            runId,
+            attemptOrdinal: 1,
+            rootNodeId: NodeId.make("node:capacity"),
+            providerInstanceId,
+            providerThreadId,
+            providerTurnId: null,
+            reason: "initial" as const,
+            status: "pending" as const,
+            startedAt: null,
+            completedAt: null,
+          },
+        },
+        {
+          id: EventId.make("event:capacity:provider-thread"),
+          type: "provider-thread.updated" as const,
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: providerThreadId,
+            driver: providerDriver,
+            providerInstanceId,
+            providerSessionId: ProviderSessionId.make("session:capacity"),
+            appThreadId: threadId,
+            ownerNodeId: null,
+            nativeThreadRef: null,
+            nativeConversationHeadRef: null,
+            status: "not_loaded" as const,
+            firstRunOrdinal: 1,
+            lastRunOrdinal: 1,
+            handoffIds: [],
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        },
+      ],
+      effects: [],
+    };
+
+    const effectId = "effect:capacity-restart";
+    yield* Effect.gen(function* () {
+      const sink = yield* EventSink.EventSinkV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      assert.isTrue((yield* sink.commitCommand(receipt)).committed);
+      yield* outbox.enqueue([
+        { id: effectId, commandId, threadId, request: { type: "provider-turn.start", runId } },
+      ]);
+      assert.isTrue(
+        Option.isSome(
+          yield* outbox.claimNext({ workerId: "old-process", leaseDurationMs: 120_000 }),
+        ),
+      );
+      assert.isTrue(
+        yield* outbox.retry({
+          effectId,
+          workerId: "old-process",
+          error: "waiting_for_capacity",
+          delayMs: 60_000,
+        }),
+      );
+    }).pipe(Effect.provide(Layer.fresh(disk)), Effect.scoped);
+    // All SQLite connections and in-memory service state above are now closed.
+    yield* Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      assert.equal(
+        (yield* store.getTurnStartContext(threadId, runId)).runs[0]?.capacityWait?.reason,
+        "exhausted",
+      );
+      assert.equal(
+        (yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).reconcile(
+          "startup",
+        )).terminalizedRuns,
+        0,
+      );
+      assert.equal((yield* outbox.reconcileAfterProcessLoss).cancelled, 0);
+      assert.isFalse((yield* sink.commitCommand(receipt)).committed);
+      assert.isTrue(
+        Option.isNone(
+          yield* outbox.claimNext({ workerId: "new-process", leaseDurationMs: 120_000 }),
+        ),
+      );
+      yield* TestClock.adjust("60 seconds");
+      const claims = yield* Effect.all(
+        ["new-process", "parallel-worker"].map((workerId) =>
+          outbox.claimNext({ workerId, leaseDurationMs: 120_000 }),
+        ),
+        { concurrency: "unbounded" },
+      );
+      const claimed = claims.flatMap((claim) => (Option.isSome(claim) ? [claim.value] : []));
+      assert.lengthOf(claimed, 1);
+      assert.equal(claimed[0]!.id, effectId);
+      assert.deepEqual(claimed[0]!.request, { type: "provider-turn.start", runId });
+      assert.isTrue(yield* outbox.succeed({ effectId, workerId: claimed[0]!.leaseOwner! }));
+      assert.isTrue(
+        Option.isNone(
+          yield* outbox.claimNext({ workerId: "replay-worker", leaseDurationMs: 120_000 }),
+        ),
+      );
+      assert.equal((yield* store.getTurnStartContext(threadId, runId)).runs[0]?.status, "starting");
+    }).pipe(Effect.provide(Layer.fresh(disk)), Effect.scoped);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

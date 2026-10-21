@@ -1,3 +1,4 @@
+import { capacityWaitCause } from "./DelegatedLaunchAdmission.ts";
 import { CommandId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -140,7 +141,14 @@ export const layerExecutor: Layer.Layer<
               );
           case "provider-turn.start":
             return providerTurnStart
-              .start({ threadId: effect.threadId, runId: effect.request.runId, willRetry })
+              .start({
+                threadId: effect.threadId,
+                runId: effect.request.runId,
+                willRetry,
+                ...(effect.request.launchGeneration === undefined
+                  ? {}
+                  : { launchGeneration: effect.request.launchGeneration }),
+              })
               .pipe(
                 Effect.mapError(
                   (cause) =>
@@ -757,6 +765,33 @@ export const layerWithOptions = (
           }
 
           const error = Cause.pretty(exit.cause);
+          const waiting =
+            effect.request.type === "provider-turn.start"
+              ? Cause.findErrorOption(exit.cause).pipe(
+                  Option.flatMap((error) => Option.fromUndefinedOr(capacityWaitCause(error))),
+                )
+              : Option.none();
+          if (Option.isSome(waiting)) {
+            const delayMs = Math.max(
+              1_000,
+              Math.min(
+                60_000,
+                Date.parse(waiting.value.retryAt) - DateTime.toEpochMillis(yield* DateTime.now),
+              ),
+            );
+            const updated = yield* outbox.retry({
+              effectId: effect.id,
+              workerId,
+              error: "waiting_for_capacity",
+              delayMs,
+            });
+            if (!updated && !(yield* wasCancelled(effect.id)))
+              return yield* new OrchestrationEffectWorkerError({
+                operation: "capacity-wait",
+                effectId: effect.id,
+              });
+            return true;
+          }
           const nonRetryable = isNonRetryableProviderTurnControlFailure(effect.request.type, error);
           yield* Effect.logWarning("Orchestration effect execution failed", {
             effectId: effect.id,

@@ -24,6 +24,7 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
+import * as DelegatedLaunchAdmission from "./DelegatedLaunchAdmission.ts";
 import * as ServerConfig from "../config.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
@@ -88,6 +89,7 @@ export interface ProviderTurnStartServiceV2Shape {
     readonly threadId: ThreadId;
     readonly runId: RunId;
     readonly willRetry?: boolean;
+    readonly launchGeneration?: number;
   }) => Effect.Effect<void, ProviderTurnStartError>;
 }
 
@@ -99,6 +101,7 @@ export class ProviderTurnStartServiceV2 extends Context.Service<
 export const layer: Layer.Layer<
   ProviderTurnStartServiceV2,
   never,
+  | DelegatedLaunchAdmission.DelegatedLaunchAdmission
   | EventSink.EventSinkV2
   | ContextHandoffService.ContextHandoffServiceV2
   | IdAllocator.IdAllocatorV2
@@ -116,6 +119,7 @@ export const layer: Layer.Layer<
 > = Layer.effect(
   ProviderTurnStartServiceV2,
   Effect.gen(function* () {
+    const launchAdmission = yield* DelegatedLaunchAdmission.DelegatedLaunchAdmission;
     const eventSink = yield* EventSink.EventSinkV2;
     const contextHandoffService = yield* ContextHandoffService.ContextHandoffServiceV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -532,6 +536,28 @@ export const layer: Layer.Layer<
         inheritedBackgroundTurnItems,
       });
       const { isCurrentAttemptInStatus } = runControls;
+      const launchGeneration = run.delegatedLaunch?.generation ?? 0;
+      const boundLaunch =
+        run.delegatedLaunch?.binding ??
+        projection.runs.findLast(
+          (previous) =>
+            previous.providerThreadId === run.providerThreadId &&
+            previous.providerInstanceId === run.providerInstanceId &&
+            previous.delegatedLaunch?.binding !== undefined,
+        )?.delegatedLaunch?.binding;
+      // A launch refusal before useful work returns to admission instead of
+      // failing the delegated task.
+      const recoverLaunch = (failure: unknown) =>
+        boundLaunch
+          ? launchAdmission.recoverBoundLaunch(input.threadId, run.id, launchGeneration, failure)
+          : DelegatedLaunchAdmission.isLaunchQuotaFailure(failure)
+            ? launchAdmission.recover(
+                input.threadId,
+                run.id,
+                launchGeneration,
+                DelegatedLaunchAdmission.launchQuotaScope(failure),
+              )
+            : Effect.succeed(false);
 
       const resolvedRuntimePolicy = yield* runtimePolicy.resolve({
         thread: projection.thread,
@@ -543,6 +569,7 @@ export const layer: Layer.Layer<
       );
       const sessionResult = yield* Effect.result(
         providerSessions.open({
+          ...(boundLaunch ? { delegatedLaunchBinding: boundLaunch } : {}),
           threadId: projection.thread.id,
           providerSessionId,
           modelSelection: run.modelSelection,
@@ -593,6 +620,7 @@ export const layer: Layer.Layer<
         },
       );
       if (sessionResult._tag === "Failure") {
+        if (yield* recoverLaunch(sessionResult.failure)) return;
         if (input.willRetry === true) return yield* sessionResult.failure;
         yield* settleStartFailure({
           signal: "provider-session-open-failure",
@@ -608,6 +636,7 @@ export const layer: Layer.Layer<
       ) {
         const loaded = yield* Effect.result(load);
         if (loaded._tag === "Success") return loaded.success;
+        if (yield* recoverLaunch(loaded.failure)) return undefined;
         if (input.willRetry === true) return yield* loaded.failure;
         yield* settleStartFailure({
           signal: "provider-thread-load-failure",
@@ -1223,6 +1252,33 @@ export const layer: Layer.Layer<
           : makeDeliverySession(session, startWithHandoffs);
       return runExecution.startRootRun({
         commandId: CommandId.make(`command:effect:provider-turn.start:${run.id}`),
+        ...(run.delegatedLaunch && !run.delegatedLaunch.complete
+          ? {
+              onLaunchWorkStarted: () =>
+                launchAdmission.markStarted(input.threadId, run.id).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new RunExecutionService.RunExecutionStartError({
+                        commandId: CommandId.make(`command:effect:provider-turn.start:${run.id}`),
+                        runId: run.id,
+                        cause,
+                      }),
+                  ),
+                ),
+              onLaunchQuotaFailure: (failure: unknown) =>
+                recoverLaunch(failure).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new RunExecutionService.RunExecutionStartError({
+                        commandId: CommandId.make(`command:effect:provider-turn.start:${run.id}`),
+                        runId: run.id,
+                        cause,
+                      }),
+                  ),
+                ),
+              ...(boundLaunch ? { isLaunchFailureCandidate: () => true } : {}),
+            }
+          : {}),
         appThread: projection.thread,
         providerSessionId,
         session: deliverySession,
@@ -1275,12 +1331,23 @@ export const layer: Layer.Layer<
     return ProviderTurnStartServiceV2.of({
       start: Effect.fn("ProviderTurnStartService.start")(
         function* (input) {
-          // Storage cleanup removes worktrees under the same lease. Only startup
-          // holds it; the provider turn runs after it is released.
+          // A lease may queue for minutes. Probe after acquiring it so queued
+          // launches cannot spend evidence checked before that wait.
+          const admittedStart = Effect.gen(function* () {
+            if (
+              !(yield* launchAdmission.prepare(
+                input.threadId,
+                input.runId,
+                input.launchGeneration ?? 0,
+              ))
+            )
+              return;
+            return yield* start(input);
+          });
           const { thread } = yield* projectionStore.getThreadRecords(input.threadId, []);
           const providerTurn = yield* thread.worktreePath === null
-            ? start(input)
-            : withWorkspaceLease(path.resolve(thread.worktreePath), start(input));
+            ? admittedStart
+            : withWorkspaceLease(path.resolve(thread.worktreePath), admittedStart);
           if (providerTurn !== undefined) yield* providerTurn;
         },
         (effect, input) =>

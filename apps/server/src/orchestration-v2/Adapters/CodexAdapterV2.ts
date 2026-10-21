@@ -1,3 +1,10 @@
+import {
+  verifyCodexLaunchBinding,
+  verifyCodexPoolLaunch,
+  CodexLaunchCapacityError,
+} from "../../provider/CodexDelegatedLaunch.ts";
+import { codexPoolLaunchArgs } from "../../provider/CodexPoolControl.ts";
+import type { DelegatedLaunchPool } from "@t3tools/provider-core/server/driver";
 import { revertCodexThread } from "../../provider/CodexThreadRevert.ts";
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
@@ -45,6 +52,7 @@ import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3too
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import type {
   ChatAttachment,
+  DelegatedLaunchBinding,
   OrchestrationV2AppThread,
   OrchestrationV2ConversationMessage,
   OrchestrationV2ExecutionNode,
@@ -151,6 +159,8 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const CODEX_PROVIDER = ProviderDriverKind.make("codex");
+const isCodexLaunchCapacityError = Schema.is(CodexLaunchCapacityError);
+
 export const CODEX_DRIVER_KIND = CODEX_PROVIDER;
 export const CODEX_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CODEX_DRIVER_KIND);
 
@@ -1303,6 +1313,8 @@ export interface CodexAppServerClientFactoryShape {
     readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
     readonly settings: CodexSettings;
     readonly environment: NodeJS.ProcessEnv;
+    /** Replaces `app-server` with the launcher's bound `pool-launch`. */
+    readonly delegatedLaunchBinding?: DelegatedLaunchBinding;
   }) => Effect.Effect<
     CodexClient.CodexAppServerClient["Service"],
     ProviderAdapter.ProviderAdapterOpenSessionError,
@@ -1429,7 +1441,9 @@ const layerCodexAppServerClientFactoryCommand = (
           const scope = yield* Scope.Scope;
           const command = yield* makeCodexAppServerSpawnCommand({
             command: options.command,
-            args: [...(options.args ?? [])],
+            args: input.delegatedLaunchBinding
+              ? codexPoolLaunchArgs(input.delegatedLaunchBinding)
+              : [...(options.args ?? [])],
             ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
             ...(options.env === undefined ? {} : { env: options.env, extendEnv: true }),
           });
@@ -1547,9 +1561,11 @@ export const layerAppServerClientFactory: Layer.Layer<
         };
         const command = yield* makeCodexAppServerSpawnCommand({
           command: input.settings.binaryPath || "codex",
-          args: codexAppServerArgs(
-            resolveCodexLaunchArgs(input.settings.launchArgs, input.environment),
-          ),
+          args: input.delegatedLaunchBinding
+            ? codexPoolLaunchArgs(input.delegatedLaunchBinding)
+            : codexAppServerArgs(
+                resolveCodexLaunchArgs(input.settings.launchArgs, input.environment),
+              ),
           env: environment,
           threadId: input.threadId,
         }).pipe(Effect.provideService(AgentScope, agentScope));
@@ -1597,7 +1613,10 @@ export type CodexAdapterV2DriverEnv =
 
 export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapterV2")(function* (
   { instanceId, environment, enabled, config }: ProviderAdapterDriverCreateInput<CodexSettings>,
-  hooks: Pick<CodexAdapterV2Options, "onUsageLimits" | "resolveRuntime"> = {},
+  hooks: Pick<
+    CodexAdapterV2Options,
+    "onUsageLimits" | "resolveRuntime" | "delegatedLaunchPool"
+  > = {},
 ) {
   const clientFactory = yield* CodexAppServerClientFactory;
   const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
@@ -1689,6 +1708,8 @@ export interface CodexAdapterV2Options {
   readonly clientFactory: CodexAppServerClientFactoryShape;
   readonly onUsageLimits?: ManagedServerProvider["applyUsageLimits"];
   readonly resolveRuntime?: Effect.Effect<CodexEffectiveRuntime, ProviderSetupError, Scope.Scope>;
+  /** The instance's launcher binding control; absent means bound launches are refused. */
+  readonly delegatedLaunchPool?: DelegatedLaunchPool;
   readonly crypto: Crypto.Crypto;
   readonly fileSystem: FileSystem.FileSystem;
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
@@ -1734,14 +1755,42 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     }),
                 ),
               );
+        const sessionSettings = resolvedRuntime?.config ?? adapterOptions.settings;
+        const sessionEnvironment = resolvedRuntime?.environment ?? adapterOptions.environment;
+        const sessionBinding = input.delegatedLaunchBinding;
+        const pool = adapterOptions.delegatedLaunchPool;
+        if (
+          sessionBinding &&
+          (!pool ||
+            sessionBinding.instanceId !== adapterOptions.instanceId ||
+            sessionSettings.delegatedLaunchControl !== sessionBinding.protocol ||
+            resolveCodexLaunchArgs(sessionSettings.launchArgs, sessionEnvironment) !== "")
+        )
+          return yield* new ProviderAdapter.ProviderAdapterOpenSessionError({
+            driver: CODEX_PROVIDER,
+            providerSessionId: input.providerSessionId,
+            cause: new CodexLaunchCapacityError({ code: "delegated_capacity_unverified" }),
+          });
         const client = yield* clientFactory.open({
           instanceId: adapterOptions.instanceId,
           threadId: input.threadId,
           providerSessionId: input.providerSessionId,
           runtimePolicy: input.runtimePolicy,
-          settings: resolvedRuntime?.config ?? adapterOptions.settings,
-          environment: resolvedRuntime?.environment ?? adapterOptions.environment,
+          settings: sessionSettings,
+          environment: sessionEnvironment,
+          ...(sessionBinding ? { delegatedLaunchBinding: sessionBinding } : {}),
         });
+        if (sessionBinding && pool) {
+          // The lease must not outlive its only native process.
+          yield* Effect.addFinalizer(() =>
+            pool.release(sessionBinding).pipe(Effect.timeout("10 seconds"), Effect.ignore),
+          );
+          // The proxy evicts an established pin after 30 idle minutes, including
+          // during long local tool work; touch never refreshes quota admission.
+          yield* pool
+            .touch(sessionBinding)
+            .pipe(Effect.delay("10 minutes"), Effect.forever, Effect.forkIn(scope));
+        }
         const additionalContextByThread = yield* Ref.make(
           new Map<
             string,
@@ -6768,33 +6817,76 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 }),
             ),
           ),
-          startTurn: (turnInput) => {
-            const goalCommand =
-              turnInput.message.attachments.length === 0 &&
-              turnInput.restartContinuationOfRunId === undefined
-                ? parseCodexGoalCommand(turnInput.message.text)
-                : null;
-            if (goalCommand !== null) return runGoalCommand(turnInput, goalCommand);
-            return Effect.gen(function* () {
+          startTurn: Effect.fn("CodexAdapterV2.startTurn")(
+            function* (turnInput) {
+              if (turnInput.delegatedLaunchBinding) {
+                yield* verifyCodexPoolLaunch({
+                  client,
+                  ...(pool ? { pool } : {}),
+                  ...(sessionBinding ? { sessionBinding } : {}),
+                  binding: turnInput.delegatedLaunchBinding,
+                  nativeThreadId: yield* getNativeThreadId(turnInput.providerThread),
+                }).pipe(
+                  Effect.timeout("60 seconds"),
+                  Effect.mapError((cause) =>
+                    isCodexLaunchCapacityError(cause)
+                      ? cause
+                      : new CodexLaunchCapacityError({ code: "delegated_capacity_unverified" }),
+                  ),
+                );
+              } else if (turnInput.delegatedLaunchDomains) {
+                yield* verifyCodexLaunchBinding(
+                  client,
+                  resolvedRuntime?.environment ?? adapterOptions.environment,
+                  turnInput.delegatedLaunchDomains,
+                  yield* getNativeThreadId(turnInput.providerThread),
+                ).pipe(
+                  Effect.timeout("8 seconds"),
+                  Effect.mapError((cause) =>
+                    isCodexLaunchCapacityError(cause)
+                      ? cause
+                      : new CodexLaunchCapacityError({ code: "delegated_capacity_unverified" }),
+                  ),
+                );
+              } else if (sessionBinding && pool) {
+                // A new turn on an established pin is an explicit continuation:
+                // acknowledge only the refusal version actually observed.
+                const state = yield* pool.state(sessionBinding);
+                if (!state || state.state !== "established")
+                  return yield* new CodexLaunchCapacityError({
+                    code: "delegated_capacity_unverified",
+                  });
+                if (state.refusal && !state.active)
+                  yield* pool.resume(sessionBinding, state.refusalVersion);
+              }
+
+              const goalCommand =
+                turnInput.message.attachments.length === 0 &&
+                turnInput.restartContinuationOfRunId === undefined
+                  ? parseCodexGoalCommand(turnInput.message.text)
+                  : null;
+              if (goalCommand !== null) return yield* runGoalCommand(turnInput, goalCommand);
               yield* startNativeTurn(
                 turnInput,
                 turnInput.restartContinuationOfRunId === undefined
                   ? yield* toCodexInput(turnInput)
                   : [],
               );
-            }).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProviderAdapter.ProviderAdapterTurnStartError({
-                    driver: CODEX_PROVIDER,
-                    threadId: turnInput.threadId,
-                    providerThreadId: turnInput.providerThread.id,
-                    runId: turnInput.runId,
-                    cause,
-                  }),
+            },
+            (effect, turnInput) =>
+              effect.pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterTurnStartError({
+                      driver: CODEX_PROVIDER,
+                      threadId: turnInput.threadId,
+                      providerThreadId: turnInput.providerThread.id,
+                      runId: turnInput.runId,
+                      cause,
+                    }),
+                ),
               ),
-            );
-          },
+          ),
           steerTurn: Effect.fn("CodexAdapterV2.steerTurn")(
             function* (turnInput) {
               const threadId = yield* getNativeThreadId(turnInput.providerThread);

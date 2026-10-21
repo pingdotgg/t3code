@@ -255,38 +255,50 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       Effect.map((result) => result.capabilities),
     );
 
-    const checkProvider = catalogService.refreshInBackground.pipe(
-      Effect.andThen(
-        modelCatalog.pipe(
-          Effect.flatMap((catalog) =>
-            checkClaudeProviderStatus(
-              effectiveConfig,
-              () => resolveCapabilities,
-              processEnv,
-              stateDir,
-              catalog,
-              scopedLimitNames,
-              (version) =>
-                ClaudeResetCredits.readClaudeResetCredits(configDir, version).pipe(
-                  Effect.provideService(HttpClient.HttpClient, httpClient),
-                  Effect.provideService(FileSystem.FileSystem, fileSystem),
-                  Effect.provideService(Path.Path, path),
-                ),
+    const checkProviderWith = (capabilities: typeof resolveCapabilities) =>
+      catalogService.refreshInBackground.pipe(
+        Effect.andThen(
+          modelCatalog.pipe(
+            Effect.flatMap((catalog) =>
+              checkClaudeProviderStatus(
+                effectiveConfig,
+                () => capabilities,
+                processEnv,
+                stateDir,
+                catalog,
+                scopedLimitNames,
+                (version) =>
+                  ClaudeResetCredits.readClaudeResetCredits(configDir, version).pipe(
+                    Effect.provideService(HttpClient.HttpClient, httpClient),
+                    Effect.provideService(FileSystem.FileSystem, fileSystem),
+                    Effect.provideService(Path.Path, path),
+                  ),
+              ),
             ),
+            Effect.tap((provider) =>
+              provider.auth.status === "unauthenticated"
+                ? Cache.invalidateAll(capabilitiesProbeCache)
+                : Effect.void,
+            ),
+            Effect.map(stampIdentity),
           ),
-          Effect.tap((provider) =>
-            provider.auth.status === "unauthenticated"
-              ? Cache.invalidateAll(capabilitiesProbeCache)
-              : Effect.void,
-          ),
-          Effect.map(stampIdentity),
         ),
-      ),
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      );
+
+    const checkProvider = checkProviderWith(resolveCapabilities);
+    const freshCapabilities = probeClaudeCapabilities(
+      effectiveConfig,
+      processEnv,
+      stateDir,
+      true,
+      true,
+    ).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
     );
-
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
     const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<ClaudeSettings>>({
       resolveMaintenance,
@@ -404,6 +416,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(Path.Path, path),
         ),
+      probeDelegatedLaunch: () =>
+        checkProviderWith(freshCapabilities).pipe(Effect.orElseSucceed(() => undefined)),
       orchestrationAdapter,
       textGeneration,
       consumeResetCredit,

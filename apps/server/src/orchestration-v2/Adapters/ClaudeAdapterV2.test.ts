@@ -2144,6 +2144,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly backgroundTasks?: (
       toolUseId: string,
     ) => Effect.Effect<boolean, ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError>;
+    readonly verifyDelegatedLaunch?: ClaudeAdapterV2.ClaudeAgentSdkQuerySession["verifyDelegatedLaunch"];
     readonly environment?: NodeJS.ProcessEnv;
     readonly subagentLaunchToolUseId?: string;
     readonly nativeSessionId?: string;
@@ -2249,6 +2250,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 processQueues.push(processMessages);
                 return {
                   messages,
+                  ...(options?.verifyDelegatedLaunch
+                    ? { verifyDelegatedLaunch: options.verifyDelegatedLaunch }
+                    : {}),
                   offer: (message: SDKUserMessage) =>
                     Effect.sync(() => {
                       offeredMessages.push(message);
@@ -2270,6 +2274,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               processQueues.push(sdkMessages);
               return {
                 messages,
+                ...(options?.verifyDelegatedLaunch
+                  ? { verifyDelegatedLaunch: options.verifyDelegatedLaunch }
+                  : {}),
                 offer: (message) =>
                   Effect.sync(() => {
                     offeredMessages.push(message);
@@ -2379,6 +2386,49 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       };
     });
   const makeWakeHarness = makeWakeHarnessWithOptions();
+
+  it.effect.each([true, false])(
+    "verifies delegated Claude capacity before offering the prompt: %s",
+    (healthy) =>
+      Effect.gen(function* () {
+        let verified = false;
+        const harness = yield* makeWakeHarnessWithOptions({
+          verifyDelegatedLaunch: () =>
+            Effect.suspend(() => {
+              verified = true;
+              return healthy
+                ? Effect.void
+                : Effect.fail(
+                    new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+                      method: "verifyDelegatedLaunch",
+                      cause: { code: "delegated_capacity_unverified" },
+                    }),
+                  );
+            }),
+        });
+        const result = yield* harness.runtime
+          .startTurn({
+            ...makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("delegated-capacity"),
+              text: "work",
+              attachments: [],
+            }),
+            delegatedLaunchDomains: ["claudeAgent:account:direct@example.com"],
+          })
+          .pipe(Effect.result);
+        assert.isTrue(verified);
+        assert.equal(result._tag, healthy ? "Success" : "Failure");
+        assert.lengthOf(harness.offeredMessages, healthy ? 1 : 0);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
 
   describe("Claude settings restrictions", () => {
     it.effect("resolves cached managed policy from the configured home through the real SDK", () =>

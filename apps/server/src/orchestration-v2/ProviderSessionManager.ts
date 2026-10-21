@@ -145,6 +145,7 @@ export type ProviderSessionManagerV2Error = typeof ProviderSessionManagerV2Error
 export interface ProviderSessionManagerV2Shape {
   readonly shutdown: Effect.Effect<void>;
   readonly open: (input: {
+    readonly delegatedLaunchBinding?: ProviderAdapter.ProviderAdapterV2OpenSessionInput["delegatedLaunchBinding"];
     readonly threadId: ThreadId;
     readonly providerSessionId: ProviderSessionId;
     readonly modelSelection: ModelSelection;
@@ -2117,6 +2118,16 @@ export const layerWithOptions = (
                   });
                 }
               }
+              // Only the instance that prepared a lease can launch with it.
+              if (
+                input.delegatedLaunchBinding !== undefined &&
+                input.delegatedLaunchBinding.instanceId !== input.modelSelection.instanceId
+              )
+                return yield* new ProviderSessionOpenError({
+                  instanceId: input.modelSelection.instanceId,
+                  providerSessionId: input.providerSessionId,
+                  cause: "Delegated launch binding belongs to another provider instance.",
+                });
               const key = sessionKey(input.providerSessionId);
               const existing = (yield* Ref.get(sessions)).get(key);
               if (existing !== undefined) {
@@ -2164,6 +2175,9 @@ export const layerWithOptions = (
               yield* agentScope.clear(input.threadId);
               const runtime = yield* adapter
                 .openSession({
+                  ...(input.delegatedLaunchBinding === undefined
+                    ? {}
+                    : { delegatedLaunchBinding: input.delegatedLaunchBinding }),
                   threadId: input.threadId,
                   providerSessionId: input.providerSessionId,
                   modelSelection: input.modelSelection,

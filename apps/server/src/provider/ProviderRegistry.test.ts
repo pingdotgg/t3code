@@ -1,3 +1,9 @@
+import { ClaudeAgentSdkQueryRunner } from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { ClaudeDriver } from "./Drivers/ClaudeDriver.ts";
+import * as FileSystem from "effect/FileSystem";
+import * as ClaudeSdk from "@anthropic-ai/claude-agent-sdk";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import { vi } from "vite-plus/test";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
@@ -2140,6 +2146,125 @@ it.layer(
   });
 
   describe("checkClaudeProviderStatus", () => {
+    it.effect("keeps live usage through a refresh of cached Claude capabilities", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const homePath = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-usage-cache-" });
+        const initializationStarted = yield* Deferred.make<void>();
+        const usageStarted = yield* Deferred.make<void>();
+        const initialization = Promise.withResolvers<ClaudeSdk.SDKControlInitializeResponse>();
+        const usage = Promise.withResolvers<ClaudeSdk.SDKControlGetUsageResponse>();
+        const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
+          () =>
+            ({
+              accountInfo: async () => ({
+                apiProvider: "firstParty",
+                email: "direct@example.com",
+                organization: "org",
+                subscriptionType: "max",
+                tokenSource: "oauth",
+              }),
+              initializationResult: () => {
+                Deferred.doneUnsafe(initializationStarted, Effect.void);
+                return initialization.promise;
+              },
+              usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: () => {
+                Deferred.doneUnsafe(usageStarted, Effect.void);
+                return usage.promise;
+              },
+            }) as ReturnType<typeof ClaudeSdk.query>,
+        );
+        yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+
+        const instance = yield* ClaudeDriver.create({
+          instanceId: ProviderInstanceId.make("claude-usage-cache"),
+          displayName: undefined,
+          environment: [
+            { name: "ANTHROPIC_BASE_URL", value: "", sensitive: false },
+            { name: "ANTHROPIC_API_KEY", value: "", sensitive: true },
+            { name: "ANTHROPIC_AUTH_TOKEN", value: "", sensitive: true },
+          ],
+          enabled: true,
+          config: { ...defaultClaudeSettings, homePath },
+        });
+        yield* Deferred.await(initializationStarted);
+        yield* TestClock.adjust("1 second");
+        const usageCheckedAt = DateTime.formatIso(yield* DateTime.now);
+        initialization.resolve({
+          account: { subscriptionType: "max", tokenSource: "oauth" },
+          commands: [],
+          agents: [],
+          output_style: "default",
+          available_output_styles: [],
+          models: [],
+        });
+        yield* Deferred.await(usageStarted);
+        yield* TestClock.adjust("1 second");
+        usage.resolve({
+          rate_limits_available: true,
+          rate_limits: { five_hour: { utilization: 12, resets_at: null } },
+        } as ClaudeSdk.SDKControlGetUsageResponse);
+
+        const first = yield* instance.snapshot.refresh;
+        assert.strictEqual(first.status, "ready");
+        const firstWindow = first.usageLimits?.windows[0];
+        assert.isDefined(firstWindow);
+        assert.strictEqual(firstWindow?.usedPercent, 12);
+
+        yield* TestClock.adjust("1 second");
+        const liveCheckedAt = DateTime.formatIso(yield* DateTime.now);
+        yield* instance.snapshot.applyUsageLimits({
+          checkedAt: liveCheckedAt,
+          windows: [{ ...firstWindow!, usedPercent: 95 }],
+        });
+        const live = yield* instance.snapshot.getSnapshot;
+        yield* TestClock.adjust("1 second");
+        const refreshCheckedAt = DateTime.formatIso(yield* DateTime.now);
+        const refreshed = yield* instance.snapshot.refresh;
+
+        assert.strictEqual(query.mock.calls.length, 1);
+        assert.strictEqual(refreshed.checkedAt, refreshCheckedAt);
+        assert.deepStrictEqual(refreshed.usageLimits, live.usageLimits);
+        assert.strictEqual(refreshed.usageLimits?.checkedAt, liveCheckedAt);
+        assert.strictEqual(refreshed.usageLimits?.windows[0]?.usedPercent, 95);
+        assert.strictEqual(first.usageLimits?.checkedAt, usageCheckedAt);
+        const admitted = yield* instance.probeDelegatedLaunch!("claude-sonnet-5-5");
+        assert.strictEqual(query.mock.calls.length, 2);
+        assert.strictEqual(admitted?.usageLimits?.checkedAt, refreshCheckedAt);
+        assert.strictEqual(admitted?.usageLimits?.windows[0]?.usedPercent, 12);
+        // Ordinary refresh still owns its capability cache and live telemetry.
+        yield* instance.snapshot.refresh;
+        assert.strictEqual(query.mock.calls.length, 2);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            TestProviderHost.layer({ runBackgroundWork: false }),
+            ServerConfig.layerTest(process.cwd(), { prefix: "t3-claude-usage-cache-" }),
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            ResetCreditCoordinator.layerTest,
+            ProviderLatestVersions.layer,
+            Layer.succeed(
+              ProviderEventLoggers.ProviderEventLoggers,
+              ProviderEventLoggers.NoOpProviderEventLoggers,
+            ),
+            Layer.mock(ClaudeAgentSdkQueryRunner)({
+              open: () => Effect.die("Usage probing must not start a conversation"),
+            }),
+          ).pipe(
+            Layer.provideMerge(
+              layerMockSpawner((args) => {
+                if (args.join(" ") === "--version") {
+                  return { stdout: "2.1.288\n", stderr: "", code: 0 };
+                }
+                throw new Error(`Unexpected args: ${args.join(" ")}`);
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+
     it.effect("reports a logged-out CLI as unauthenticated", () =>
       Effect.gen(function* () {
         // The capability probe resolves for a logged-out CLI, so `tokenSource:
