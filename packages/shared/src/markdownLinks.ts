@@ -1,4 +1,9 @@
-import { isWindowsAbsolutePath, stripSlashPrefixedWindowsDrive } from "./path.ts";
+import {
+  isNetworkPath,
+  isWindowsAbsolutePath,
+  stripSlashPrefixedWindowsDrive,
+  workspaceRelativeFilePath,
+} from "./path.ts";
 import {
   type FilePathPosition,
   formatFilePathPosition,
@@ -391,7 +396,13 @@ export function resolveMarkdownFileLinkTarget(
   if (!target) return null;
 
   const pathWithPosition = formatFilePathPosition(target);
-  if (!isRelativeFilePath(pathWithPosition)) return pathWithPosition;
+  if (!isRelativeFilePath(pathWithPosition)) {
+    // Opening a network path makes Windows sign in to its host with the user's
+    // NTLM credentials, so only the project's own share becomes a file link.
+    return isNetworkPath(target.path) && workspaceRelativeFilePath(target.path, cwd) === null
+      ? null
+      : pathWithPosition;
+  }
   if (!baseDir) return null;
   return resolvePathLinkTarget(pathWithPosition, baseDir);
 }

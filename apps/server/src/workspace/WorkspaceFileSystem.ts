@@ -13,6 +13,7 @@ import type {
 } from "@t3tools/contracts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { isNetworkPath } from "@t3tools/shared/path";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -142,7 +143,9 @@ export const make = Effect.gen(function* () {
 
   const metadataForPath = Effect.fnUntraced(function* (requestedPath: string) {
     const expandedPath = expandHomePath(requestedPath, yield* HostProcess.HomeDirectory);
-    if (!path.isAbsolute(expandedPath)) return null;
+    // Chips ask as soon as an agent's message renders, and touching a network
+    // path makes Windows sign in to its host with the user's NTLM credentials.
+    if (!path.isAbsolute(expandedPath) || isNetworkPath(expandedPath)) return null;
     const stat = yield* fileSystem.stat(expandedPath).pipe(Effect.option);
     if (stat._tag === "None") return null;
     if (stat.value.type === "Directory") return { kind: "directory" } as const;
@@ -222,7 +225,8 @@ export const make = Effect.gen(function* () {
   /**
    * Workspace-relative paths must stay inside the root, symlinks included. An
    * absolute or `~/` path reads a host file in place, such as a report an agent
-   * wrote to a temp directory; it gets no root check.
+   * wrote to a temp directory; it gets no root check. A network path does, since
+   * Windows signs in to its host with the user's NTLM credentials.
    */
   const resolveReadTarget = Effect.fn("WorkspaceFileSystem.resolveReadTarget")(function* (
     input: ProjectReadFileInput,
@@ -231,15 +235,28 @@ export const make = Effect.gen(function* () {
     const hostPath = requestedPath.startsWith("~/")
       ? expandHomePath(requestedPath, yield* HostProcess.HomeDirectory)
       : requestedPath;
+    if (
+      isNetworkPath(hostPath) &&
+      !KnownWorkspaces.isWithinRoot(path, path.resolve(hostPath), path.resolve(input.cwd))
+    ) {
+      return yield* new WorkspacePaths.WorkspacePathOutsideRootError({
+        workspaceRoot: input.cwd,
+        relativePath: input.relativePath,
+      });
+    }
     if (path.isAbsolute(hostPath)) {
+      // Native realpath hands Windows a `\\?\` path as written, `..` included,
+      // so a network path must be the resolved one the check above approved.
+      // Others keep POSIX `link/..` semantics, which resolving first would change.
+      const absolutePath = isNetworkPath(hostPath) ? path.resolve(hostPath) : hostPath;
       const realTargetPath = yield* Effect.tryPromise({
-        try: () => NodeFSP.realpath(hostPath),
+        try: () => NodeFSP.realpath(absolutePath),
         catch: (cause) =>
           new WorkspaceFileSystemOperationError({
             workspaceRoot: input.cwd,
             relativePath: input.relativePath,
-            resolvedPath: hostPath,
-            operationPath: hostPath,
+            resolvedPath: absolutePath,
+            operationPath: absolutePath,
             operation: "realpath-target",
             cause,
           }),

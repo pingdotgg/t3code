@@ -35,7 +35,6 @@ describe("resolveMediaSource", () => {
     it.each([
       ["/tmp/frame%23one.png:12", "/tmp/frame#one.png"],
       ["/tmp/frame%2523one.png:12", "/tmp/frame%23one.png"],
-      ["file://server/share/frame.png", "\\\\server\\share\\frame.png"],
     ])("resolves %s through the environment", (href, path) => {
       expect(resolveMediaSource(href, { threadId, workspaceRoot: "/repo" })).toEqual({
         kind: "image",

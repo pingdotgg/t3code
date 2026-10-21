@@ -38,10 +38,10 @@ describe("resolveMarkdownMediaPreview", () => {
     ["/tmp/frame%23one.png:12", "/tmp/frame#one.png"],
     ["/tmp/frame%3Fone.png:12:3", "/tmp/frame?one.png"],
     ["/tmp/frame%2523one.png:12", "/tmp/frame%23one.png"],
-    ["file://server/share/frame.png", "\\\\server\\share\\frame.png"],
-    ["\\\\server\\share\\frame.png", "\\\\server\\share\\frame.png"],
-  ])("keeps encoded filename and UNC semantics for %s", (href, path) => {
-    expect(resolveMarkdownMediaPreview(href, input)).toMatchObject({
+    ["file://server/share/frame.png", "\\\\server\\share\\frame.png", "\\\\server\\share"],
+    ["\\\\server\\share\\frame.png", "\\\\server\\share\\frame.png", "\\\\server\\share"],
+  ])("keeps encoded filename and UNC semantics for %s", (href, path, workspaceRoot = "/repo") => {
+    expect(resolveMarkdownMediaPreview(href, { ...input, workspaceRoot })).toMatchObject({
       kind: "image",
       source: {
         resource: { path },
