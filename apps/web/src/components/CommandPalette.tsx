@@ -24,7 +24,6 @@ import {
 } from "@t3tools/client-runtime/operations/projects";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { connectionStatusText } from "@t3tools/client-runtime/connection";
-import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/shared/threadReference";
 import {
   canPreloadBrowsePath,
@@ -42,11 +41,9 @@ import {
   AuthSourceControlWriteScope,
   AuthFilesystemReadScope,
   type DesktopWslState,
-  type ClientSettings,
   type EnvironmentId,
   type EnvironmentMachineKind,
   type FilesystemBrowseResult,
-  type ProjectId,
   type SourceControlDiscoveryResult,
   SourceControlProviderKind,
   type SourceControlRepositoryInfo,
@@ -121,7 +118,6 @@ import {
   usePrimaryEnvironmentId,
 } from "../state/environments";
 import { useProjects, useServerConfigs, useThreadShells, waitForProject } from "../state/entities";
-import { useThreadSearch } from "../state/queries";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import {
   appendBrowsePathSegment,
@@ -166,7 +162,6 @@ import {
   buildCommandPaletteProjectMetadata,
   buildProjectActionItems,
   buildRootGroups,
-  buildThreadActionItems,
   buildLinkedThreadActionItems,
   buildCommandPaletteRows,
   enumerateCommandPaletteItems,
@@ -188,9 +183,15 @@ import {
   reduceCommandPaletteSearchState,
   type SearchOverlayMode,
 } from "./CommandPalette.logic";
-import { orderItemsByPreferredIds, sortLogicalProjectsForSidebar } from "./Sidebar.logic";
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { CommandPaletteContent } from "./CommandPaletteContent";
+import {
+  selectCommandPaletteClientSettings,
+  useEnvironmentLookups,
+  useProjectLookups,
+  useSortedProjectGroups,
+} from "./CommandPaletteLookups";
+import { useCommandPaletteThreadItems } from "./CommandPaletteThreadItems";
 import {
   APPEARANCE_OPTIONS,
   notifyThemeSaveFailure,
@@ -210,22 +211,8 @@ import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { toggleThemeEditorForTheme } from "./settings/themeEditorStore";
 import { searchSettings, SETTINGS_SECTION_LABELS } from "./settings/settingsSearch";
-import {
-  COMMAND_PALETTE_META_ICON_CLASS,
-  CommandPaletteMetaDot,
-  ThreadCommandSubtitle,
-} from "./ThreadCommandSubtitle";
-import {
-  ThreadRowLeadingStatus,
-  ThreadRowTrailingStatus,
-  ThreadSearchPullRequestNumber,
-} from "./ThreadStatusIndicators";
-import { primaryServerKeybindingsAtom, primaryServerProvidersAtom } from "../state/server";
-import {
-  applyProviderInstanceSettings,
-  deriveProviderInstanceEntries,
-  type ProviderInstanceEntry,
-} from "../providerInstances";
+import { COMMAND_PALETTE_META_ICON_CLASS, CommandPaletteMetaDot } from "./ThreadCommandSubtitle";
+import { primaryServerKeybindingsAtom } from "../state/server";
 import { resolveShortcutCommand, threadJumpIndexFromCommand } from "../keybindings";
 import { CommandDialog, CommandDialogPopup, CommandFooterAction } from "./ui/command";
 import { Button } from "./ui/button";
@@ -235,12 +222,7 @@ import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ComposerHandleContext, useComposerHandleContext } from "../composerHandleContext";
 import type { ChatComposerHandle } from "./chat/ChatComposer";
-import { getProjectOrderKey } from "../logicalProject";
-import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
-import {
-  buildSidebarProjectPickerEntries,
-  buildSidebarProjectSnapshots,
-} from "../sidebarProjectGrouping";
+import { buildSidebarProjectPickerEntries } from "../sidebarProjectGrouping";
 import type { Project } from "../types";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { readPullRequestListPreferences } from "~/components/pullRequest/pullRequestListPreferences";
@@ -348,99 +330,6 @@ function overlayModeForCommand(command: string | null): SearchOverlayMode | null
   return command in OVERLAY_MODE_BY_COMMAND
     ? OVERLAY_MODE_BY_COMMAND[command as keyof typeof OVERLAY_MODE_BY_COMMAND]
     : null;
-}
-
-// Each helper reads its own source hook so the compiler caches the derived value on that
-// source. Taking the source as an argument instead leaves the helper hook-free, and the
-// compiler then treats it as a plain function and caches nothing.
-function useThreadSearchWithContentMatches(
-  environmentIds: ReadonlyArray<EnvironmentId>,
-  query: string,
-) {
-  const threadSearch = useThreadSearch(environmentIds, query);
-  const contentMatchByKey = new Map(
-    threadSearch.matches.flatMap((match) =>
-      match.source === "user" || match.source === "assistant"
-        ? [[threadSearchMatchKey(match), match] as const]
-        : [],
-    ),
-  );
-  return { threadSearch, contentMatchByKey };
-}
-
-function useEnvironmentLookups() {
-  const { environments } = useEnvironments();
-  const environmentLabelById = new Map(
-    environments.map((environment) => [environment.environmentId, environment.label] as const),
-  );
-  const projectEnvironmentLocationById = new Map(
-    environments.map((environment) => {
-      const isPrimary = environment.entry.target._tag === "PrimaryConnectionTarget";
-      const isLocal = isPrimary || isDesktopLocalConnectionTarget(environment.entry.target);
-      return [
-        environment.environmentId,
-        {
-          kind: isLocal ? "local" : "remote",
-          label: isPrimary ? "Local" : isLocal ? `${environment.label} (Local)` : environment.label,
-          machine: resolveEnvironmentMachineKind(environment.serverConfig),
-        },
-      ] as const;
-    }),
-  );
-  return { environmentLabelById, projectEnvironmentLocationById };
-}
-
-function useProjectLookups() {
-  const projects = useProjects();
-  const projectCwdById = new Map<ProjectId, string>(
-    projects.map((project) => [project.id, project.workspaceRoot]),
-  );
-  const projectByKey = new Map(
-    projects.map((project) => [`${project.environmentId}:${project.id}`, project]),
-  );
-  const projectTitleById = new Map<ProjectId, string>(
-    projects.map((project) => [project.id, project.title]),
-  );
-  return { projectCwdById, projectByKey, projectTitleById };
-}
-
-const selectCommandPaletteClientSettings = (settings: ClientSettings) => ({
-  sidebarProjectGroupingMode: settings.sidebarProjectGroupingMode,
-  sidebarProjectGroupingOverrides: settings.sidebarProjectGroupingOverrides,
-  sidebarProjectSortOrder: settings.sidebarProjectSortOrder,
-  sidebarThreadSortOrder: settings.sidebarThreadSortOrder,
-});
-
-function useSortedProjectGroups(environmentLabelById: ReadonlyMap<EnvironmentId, string>) {
-  const projects = useProjects();
-  const threads = useThreadShells();
-  const projectOrder = useUiStateStore((store) => store.projectOrder);
-  const clientSettings = useClientSettings(selectCommandPaletteClientSettings);
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const projectGroupingSettings = {
-    sidebarProjectGroupingMode: clientSettings.sidebarProjectGroupingMode,
-    sidebarProjectGroupingOverrides: clientSettings.sidebarProjectGroupingOverrides,
-  };
-  const orderedProjects = orderItemsByPreferredIds({
-    items: projects,
-    preferredIds: projectOrder,
-    getId: getProjectOrderKey,
-    getPreferenceIds: (project) => [
-      getProjectOrderKey(project),
-      legacyProjectCwdPreferenceKey(project.workspaceRoot),
-    ],
-  });
-  const unsortedProjectGroups = buildSidebarProjectSnapshots({
-    projects: clientSettings.sidebarProjectSortOrder === "manual" ? orderedProjects : projects,
-    settings: projectGroupingSettings,
-    primaryEnvironmentId,
-    resolveEnvironmentLabel: (environmentId) => environmentLabelById.get(environmentId) ?? null,
-  });
-  return sortLogicalProjectsForSidebar(
-    unsortedProjectGroups,
-    threads,
-    clientSettings.sidebarProjectSortOrder,
-  );
 }
 
 export function CommandPalette({ children }: { children: ReactNode }) {
@@ -778,31 +667,10 @@ function OpenCommandPaletteDialog(props: {
   };
   const threads = useThreadShells();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const { changeThemeItem, changeAppearanceItem, themeEditorItem } = useCommandPaletteThemeItems();
-  const providers = useAtomValue(primaryServerProvidersAtom);
   const providersByEnvironment = useEnvironmentProviders();
-  const providerEntryByEnvironmentAndInstanceId = new Map<string, ProviderInstanceEntry>(
-    environments.flatMap((environment) => {
-      const serverConfig = environment.serverConfig;
-      const derived = deriveProviderInstanceEntries(
-        providersByEnvironment.get(environment.environmentId) ??
-          (environment.environmentId === primaryEnvironmentId ? providers : []),
-      );
-      const entries = serverConfig
-        ? applyProviderInstanceSettings(derived, serverConfig.settings, null)
-        : derived;
-      return entries.map(
-        (entry) => [`${environment.environmentId}:${entry.instanceId}`, entry] as const,
-      );
-    }),
-  );
+  const { changeThemeItem, changeAppearanceItem, themeEditorItem } = useCommandPaletteThemeItems();
   const currentView = viewStack.at(-1)?.view ?? null;
-  const environmentIds = environments
-    .filter((environment) => environment.connection.phase === "connected")
-    .map((environment) => environment.environmentId);
   const threadSearchQuery = currentView === null && !isActionsOnly ? deferredQuery : "";
-  const { threadSearch, contentMatchByKey: threadContentMatchByKey } =
-    useThreadSearchWithContentMatches(environmentIds, threadSearchQuery);
   const [browseGeneration, setBrowseGeneration] = useState(0);
   const [browseNavigation] = useState(createBrowseNavigationCoordinator);
   const [addProjectEnvironmentId, setAddProjectEnvironmentId] = useState<EnvironmentId | null>(
@@ -1183,70 +1051,8 @@ function OpenCommandPaletteDialog(props: {
     ];
   })();
 
-  const allThreadItems = buildThreadActionItems({
-    threads,
-    ...(activeThreadId ? { activeThreadId } : {}),
-    projectTitleById,
-    sortOrder: clientSettings.sidebarThreadSortOrder,
-    icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
-    renderLeadingContent: (thread) => <ThreadRowLeadingStatus thread={thread} />,
-    renderTrailingContent: (thread) => (
-      <>
-        <ThreadSearchPullRequestNumber
-          thread={thread}
-          query={threadSearchQuery}
-          settled={thread.settledOverride === "settled"}
-        />
-        <ThreadRowTrailingStatus thread={thread} />
-      </>
-    ),
-    renderDescription: (thread, { projectTitle }) => {
-      const modelInstanceId =
-        thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId;
-      const providerEntry =
-        providerEntryByEnvironmentAndInstanceId.get(`${thread.environmentId}:${modelInstanceId}`) ??
-        null;
-      return (
-        <ThreadCommandSubtitle
-          project={projectByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null}
-          projectTitle={projectTitle ?? null}
-          environmentLabel={
-            projectEnvironmentLocationById.get(thread.environmentId)?.label ?? "Remote"
-          }
-          branch={thread.branch}
-          worktreePath={thread.worktreePath}
-          isCurrent={thread.id === activeThreadId}
-          driverKind={providerEntry?.driverKind ?? null}
-          providerDisplayName={
-            thread.runtime?.providerName ?? providerEntry?.displayName ?? modelInstanceId
-          }
-          acpRegistryAgentId={providerEntry?.acpRegistryAgentId}
-          acpRegistryIconUrl={providerEntry?.acpRegistryIconUrl}
-        />
-      );
-    },
-    getContentMatch: (thread) => {
-      const match = threadContentMatchByKey.get(
-        threadSearchMatchKey({
-          environmentId: thread.environmentId,
-          threadId: thread.id,
-        }),
-      );
-      return match && (match.source === "user" || match.source === "assistant")
-        ? {
-            source: match.source,
-            snippet: match.snippet,
-            query: threadSearch.query,
-          }
-        : undefined;
-    },
-    runThread: async (thread) => {
-      await navigate({
-        to: "/$environmentId/$threadId",
-        params: buildThreadRouteParams(scopeThreadRef(thread.environmentId, thread.id)),
-      });
-    },
-  });
+  const { threadItems: allThreadItems, isSearchPending: isThreadSearchPending } =
+    useCommandPaletteThreadItems({ activeThreadId, threadSearchQuery });
   const recentThreadItems = allThreadItems.slice(0, RECENT_THREAD_LIMIT);
 
   // Stable so the item builders that capture it during render never see the
@@ -3208,7 +3014,7 @@ function OpenCommandPaletteDialog(props: {
                 ? {
                     emptyStateMessage: "Press Enter to create this folder and add it as a project.",
                   }
-                : threadSearch.isPending
+                : isThreadSearchPending
                   ? { emptyStateMessage: "Searching thread messages…" }
                   : {})}
       />
