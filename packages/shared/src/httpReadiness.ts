@@ -7,7 +7,7 @@ import { HttpClient, HttpClientRequest } from "effect/http";
 
 const DEFAULT_HTTP_READY_PROBE_TIMEOUT_MS = 1_000;
 
-export function describeReadinessCause(cause: unknown): unknown {
+function describeReadinessCause(cause: unknown): unknown {
   if (cause instanceof Error) {
     const tag = (cause as { readonly _tag?: unknown })._tag;
     const nested = (cause as { readonly cause?: unknown }).cause;

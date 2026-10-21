@@ -513,7 +513,7 @@ export interface ToolchainReport {
   readonly nodeVersion: string | null;
 }
 
-export const parseToolchainReport = (stdout: string): ToolchainReport => {
+const parseToolchainReport = (stdout: string): ToolchainReport => {
   const lines = stdout
     .split("\n")
     .map((line) => line.trim())
@@ -528,7 +528,7 @@ export const parseToolchainReport = (stdout: string): ToolchainReport => {
   return { missingTools, nodeVersion };
 };
 
-export const parseNodePath = (stdout: string): string | null => {
+const parseNodePath = (stdout: string): string | null => {
   const path = stdout
     .split("\n")
     .map((line) => line.trim())
@@ -538,7 +538,7 @@ export const parseNodePath = (stdout: string): string | null => {
   return path ?? null;
 };
 
-export const parseNodeVersion = (stdout: string): string | null => {
+const parseNodeVersion = (stdout: string): string | null => {
   const version = stdout
     .split("\n")
     .map((line) => line.trim())
@@ -558,7 +558,7 @@ export const parseResolvedPath = (stdout: string): string | null => {
   return resolvedPath.length > 0 ? resolvedPath : null;
 };
 
-export const formatMissingToolsReason = (
+const formatMissingToolsReason = (
   report: ToolchainReport,
   requiredRange: string | null,
 ): string | null => {
@@ -888,7 +888,7 @@ const invalidateWslRuntimeImpl = Effect.fn("desktop.wsl.invalidateRuntimeImpl")(
   });
 });
 
-export const probeWslDistros: Effect.Effect<
+const probeWslDistros: Effect.Effect<
   readonly WslDistro[],
   DesktopWslDistroListError,
   ChildProcessSpawner.ChildProcessSpawner

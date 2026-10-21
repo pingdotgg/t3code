@@ -66,7 +66,7 @@ const REJECTED_BATCH_STATUSES = new Set([400, 401, 413]);
 declare const __T3CODE_TELEMETRY_CHANNEL__: "stable" | "nightly" | "preview" | "dev" | undefined;
 
 /** `random` is in [0, 1). */
-export function retryDelayMs(failures: number, random: number): number {
+function retryDelayMs(failures: number, random: number): number {
   const ceiling = Math.min(RETRY_MAX_DELAY_MS, RETRY_BASE_DELAY_MS * 2 ** (failures - 1));
   return Math.round(ceiling / 2 + (ceiling / 2) * random);
 }

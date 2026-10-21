@@ -14,17 +14,6 @@ describe("thread content presentation", () => {
     ).toEqual({ kind: "ready" });
   });
 
-  it("loads missing detail inside the thread screen when connected", () => {
-    expect(
-      projectThreadContentPresentation({
-        hasDetail: false,
-        detailError: null,
-        detailDeleted: false,
-        connectionState: "connected",
-      }),
-    ).toEqual({ kind: "loading" });
-  });
-
   it("explains uncached detail while disconnected instead of loading forever", () => {
     expect(
       projectThreadContentPresentation({

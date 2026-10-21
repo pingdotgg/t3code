@@ -58,7 +58,7 @@ export interface AnchoredTurnMetrics {
   readonly scrollDeltaToRevealEnd: number;
 }
 
-export function getRowBottom(state: TimelineListMeasurementState, index: number): number | null {
+function getRowBottom(state: TimelineListMeasurementState, index: number): number | null {
   const top = state.positionAtIndex(index);
   const height = state.sizeAtIndex(index);
   if (

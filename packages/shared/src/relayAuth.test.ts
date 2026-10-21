@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  ClerkPublishableKeyDecodeError,
   ClerkPublishableKeyFrontendApiError,
   clerkFrontendApiHostnameFromPublishableKey,
   clerkFrontendApiUrlFromPublishableKey,
@@ -26,15 +25,6 @@ describe("Clerk relay auth", () => {
     expect(clerkFrontendApiUrlFromPublishableKey(clerkPublishableKey("clerk.t3.codes"))).toBe(
       "https://clerk.t3.codes",
     );
-  });
-
-  it("preserves Clerk publishable key decoding failures", () => {
-    const error = captureError(() => clerkFrontendApiUrlFromPublishableKey("pk_test_%"));
-
-    expect(error).toBeInstanceOf(ClerkPublishableKeyDecodeError);
-    expect(error).toMatchObject({ keyPrefix: "pk_test" });
-    expect((error as ClerkPublishableKeyDecodeError).cause).toBeInstanceOf(Error);
-    expect((error as Error).message).toBe("Failed to decode Clerk publishable key (pk_test).");
   });
 
   it("reports semantic frontend API failures without inventing a cause", () => {

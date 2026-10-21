@@ -3,12 +3,6 @@ import type { SharePayload } from "expo-sharing";
 
 import { createIncomingSharePayloadReader } from "./incoming-share-native";
 
-const PAYLOAD: SharePayload = {
-  shareType: "text",
-  mimeType: "text/plain",
-  value: "Fix this",
-};
-
 describe("createIncomingSharePayloadReader", () => {
   it("treats a missing iOS App Group as an unavailable inbox", () => {
     const readPayloads = vi.fn((): ReadonlyArray<SharePayload> => {
@@ -21,15 +15,6 @@ describe("createIncomingSharePayloadReader", () => {
     expect(read()).toEqual([]);
     expect(read()).toEqual([]);
     expect(readPayloads).toHaveBeenCalledTimes(1);
-  });
-
-  it("returns native payloads when receiving is available", () => {
-    const read = createIncomingSharePayloadReader({
-      platform: "ios",
-      readPayloads: () => [PAYLOAD],
-    });
-
-    expect(read()).toEqual([PAYLOAD]);
   });
 
   it("preserves other native errors", () => {

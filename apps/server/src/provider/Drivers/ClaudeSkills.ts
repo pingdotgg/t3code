@@ -124,7 +124,7 @@ function claudeManagedSettingsPath(
   return "/etc/claude-code/managed-settings.json";
 }
 
-export function skillOverrideSettingsPaths(
+function skillOverrideSettingsPaths(
   path: Path.Path,
   configDirPath: string,
   cwd: string | undefined,

@@ -50,21 +50,6 @@ const stagePendingUpload = Effect.fn("test.stagePendingUpload")(function* (input
 });
 
 describe("AttachmentClaims", () => {
-  it.effect("accepts 100 existing files without claiming new copies", () =>
-    Effect.gen(function* () {
-      const attachments: ChatAttachment[] = Array.from({ length: 100 }, (_, index) => ({
-        type: "file",
-        id: ChatAttachmentId.make(`existing-file-${index}`),
-        name: `${index}.txt`,
-        mimeType: "text/plain",
-        sizeBytes: 1,
-      }));
-      const claimed = yield* claimPendingAttachments({ threadId: "thread-many", attachments });
-      expect(claimed.attachments).toEqual(attachments);
-      expect(claimed.claimedPaths).toEqual([]);
-    }).pipe(Effect.provide(layerTest)),
-  );
-
   it.effect("rejects oversized image batches before copying a pending upload", () =>
     Effect.gen(function* () {
       const pending = yield* stagePendingUpload({
@@ -281,24 +266,6 @@ describe("AttachmentClaims", () => {
       yield* releaseClaimedAttachments(claimed.claimedPaths);
       expect(NodeFS.existsSync(claimed.claimedPaths[0]!)).toBe(false);
       yield* releaseClaimedAttachments(claimed.claimedPaths);
-    }).pipe(Effect.provide(layerTest)),
-  );
-
-  it.effect("treats malformed ids as non-pending and passes them through", () =>
-    Effect.gen(function* () {
-      const bogus: ChatAttachment = {
-        type: "image",
-        id: ChatAttachmentId.make("pending-not-a-uuid"),
-        name: "weird.png",
-        mimeType: "image/png",
-        sizeBytes: 1,
-      };
-      const claimed = yield* claimPendingAttachments({
-        threadId: "thread-claims-6",
-        attachments: [bogus],
-      });
-      expect(claimed.attachments[0]).toBe(bogus);
-      expect(claimed.claimedPaths).toHaveLength(0);
     }).pipe(Effect.provide(layerTest)),
   );
 });

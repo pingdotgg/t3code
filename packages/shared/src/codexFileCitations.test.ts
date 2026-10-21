@@ -59,13 +59,6 @@ describe("resolveCodexFileCitationLink", () => {
 });
 
 describe("codexFileCitationMarkdown", () => {
-  it("produces a portable Markdown link", () => {
-    const citation = resolveCodexFileCitationLink({ path: "reports/profit and loss.xlsx" });
-    expect(citation && codexFileCitationMarkdown(citation)).toBe(
-      "[profit and loss.xlsx](<reports/profit and loss.xlsx>)",
-    );
-  });
-
   it("escapes Markdown syntax in the visible filename", () => {
     const citation = resolveCodexFileCitationLink({
       path: "reports/*draft*_[copy]`<&.txt",

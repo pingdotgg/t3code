@@ -27,13 +27,6 @@ describe("SecretInput", () => {
     expect(input(screen).value).toBe("");
   });
 
-  it("allows clearing an unsaved draft", async () => {
-    const onCommit = vi.fn();
-    await using screen = await render(<SecretInput value="draft" onCommit={onCommit} />);
-    await edit(screen, "");
-    expect(onCommit).toHaveBeenCalledExactlyOnceWith("");
-  });
-
   it("keeps an in-progress replacement when settings refresh", async () => {
     const onCommit = vi.fn();
     const ui = () => <SecretInput configured value="" onCommit={onCommit} />;

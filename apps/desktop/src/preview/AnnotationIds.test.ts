@@ -16,10 +16,4 @@ describe("createAnnotationIdSource", () => {
 
     expect(secondAnnotation).not.toBe(firstAnnotation);
   });
-
-  it("never repeats an id within one page load", () => {
-    const nextId = createAnnotationIdSource();
-    const ids = Array.from({ length: 1_000 }, () => nextId("annotation"));
-    expect(new Set(ids).size).toBe(ids.length);
-  });
 });

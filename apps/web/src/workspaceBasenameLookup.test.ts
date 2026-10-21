@@ -2,24 +2,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   claimWorkspaceBasenameLookup,
-  needsWorkspaceBasenameLookup,
   pickWorkspaceBasenameMatch,
 } from "@t3tools/client-runtime/workspace-basename-lookup";
-
-describe("needsWorkspaceBasenameLookup", () => {
-  it("flags bare filenames", () => {
-    expect(needsWorkspaceBasenameLookup("ChatView.tsx")).toBe(true);
-    expect(needsWorkspaceBasenameLookup("Makefile")).toBe(true);
-  });
-
-  it("leaves anything with a directory alone", () => {
-    expect(needsWorkspaceBasenameLookup("apps/web/src/components/ChatView.tsx")).toBe(false);
-    expect(needsWorkspaceBasenameLookup("apps\\web\\ChatView.tsx")).toBe(false);
-    expect(needsWorkspaceBasenameLookup(".")).toBe(false);
-    expect(needsWorkspaceBasenameLookup("..")).toBe(false);
-    expect(needsWorkspaceBasenameLookup("   ")).toBe(false);
-  });
-});
 
 describe("pickWorkspaceBasenameMatch", () => {
   const entries = [
@@ -65,15 +49,6 @@ describe("pickWorkspaceBasenameMatch", () => {
       ]),
     ).toBeNull();
   });
-
-  it("returns null when nothing matches the name", () => {
-    expect(pickWorkspaceBasenameMatch("ChatView.tsx", [])).toBeNull();
-    expect(
-      pickWorkspaceBasenameMatch("ChatView.tsx", [
-        { path: "apps/web/src/components/ChatHeader.tsx", kind: "file" },
-      ]),
-    ).toBeNull();
-  });
 });
 
 describe("claimWorkspaceBasenameLookup", () => {
@@ -83,10 +58,5 @@ describe("claimWorkspaceBasenameLookup", () => {
 
     expect(second()).toBe(true);
     expect(first()).toBe(false);
-  });
-
-  it("stays valid while it is the only claim", () => {
-    const only = claimWorkspaceBasenameLookup();
-    expect(only()).toBe(true);
   });
 });

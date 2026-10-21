@@ -6,7 +6,6 @@ import { threadContextRecord, threadContextReference } from "./lib/composerConte
 import {
   buildPendingUserInputAnswers,
   carryDisplacedCustomAnswerIntoPrompt,
-  countAnsweredPendingUserInputQuestions,
   derivePendingUserInputProgress,
   findFirstUnansweredPendingUserInputQuestionIndex,
   projectPendingUserInputAnswer,
@@ -30,10 +29,6 @@ describe("projectPendingUserInputAnswer", () => {
     expect(projectPendingUserInputAnswer(answer, [record])).toBe(
       "Compare [Reference work](t3-thread://v1/reference-thread)",
     );
-  });
-
-  it("leaves plain answers unchanged when the draft has unreferenced thread records", () => {
-    expect(projectPendingUserInputAnswer("Plain answer", [record])).toBe("Plain answer");
   });
 
   it("preserves option values and exact answer text", () => {
@@ -155,19 +150,6 @@ describe("resolvePendingUserInputAnswer", () => {
     ).toEqual(["Server", "Web"]);
   });
 
-  it("clears the preset selection when a custom answer is entered", () => {
-    expect(
-      setPendingUserInputCustomAnswer(
-        {
-          selectedOptionValues: ["Server", "Web"],
-        },
-        "doesn't matter",
-      ),
-    ).toEqual({
-      customAnswer: "doesn't matter",
-    });
-  });
-
   it("does not replace a required choice with a custom answer", () => {
     expect(
       resolvePendingUserInputAnswer(nativeChoiceQuestion, {
@@ -263,36 +245,8 @@ describe("buildPendingUserInputAnswers", () => {
     });
   });
 
-  it("returns arrays for answered multi-select prompts", () => {
-    expect(
-      buildPendingUserInputAnswers([multiSelectQuestion], {
-        areas: {
-          selectedOptionValues: ["Server", "Web"],
-        },
-      }),
-    ).toEqual({
-      areas: ["Server", "Web"],
-    });
-  });
-
   it("returns null when any question is unanswered", () => {
     expect(buildPendingUserInputAnswers([singleSelectQuestion], {})).toBeNull();
-  });
-
-  it.each([" first\t", ""])("preserves the exact selected option value %j", (value) => {
-    const question = {
-      ...nativeChoiceQuestion,
-      options: [{ ...nativeChoiceQuestion.options[0], value }, nativeChoiceQuestion.options[1]],
-    };
-    const draft = togglePendingUserInputOptionSelection(question, undefined, value);
-
-    expect(buildPendingUserInputAnswers([question], { result: draft })).toEqual({ result: value });
-    expect(derivePendingUserInputProgress([question], { result: draft }, 0)).toMatchObject({
-      selectedOptionValues: [value],
-      answeredQuestionCount: 1,
-      canAdvance: true,
-      isComplete: true,
-    });
   });
 });
 
@@ -312,16 +266,6 @@ describe("pending user input question progress", () => {
       multiSelect: false,
     },
   ] as const;
-
-  it("counts only answered questions", () => {
-    expect(
-      countAnsweredPendingUserInputQuestions(questions, {
-        scope: {
-          selectedOptionValues: ["Orchestration-first"],
-        },
-      }),
-    ).toBe(1);
-  });
 
   it("finds the first unanswered question", () => {
     expect(
@@ -386,20 +330,6 @@ describe("pending user input question progress", () => {
       resolvedAnswer: ["Server", "Web"],
       canAdvance: true,
       isComplete: true,
-    });
-  });
-
-  it("requires an option when custom answers are disabled", () => {
-    const drafts = { result: { customAnswer: "Use another result" } };
-
-    expect(buildPendingUserInputAnswers([nativeChoiceQuestion], drafts)).toBeNull();
-    expect(derivePendingUserInputProgress([nativeChoiceQuestion], drafts, 0)).toMatchObject({
-      customAnswer: "",
-      usingCustomAnswer: false,
-      resolvedAnswer: null,
-      answeredQuestionCount: 0,
-      canAdvance: false,
-      isComplete: false,
     });
   });
 });

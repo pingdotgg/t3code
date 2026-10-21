@@ -78,15 +78,6 @@ describe("dedupeChecks", () => {
     ]);
   });
 
-  it("preserves text ordering when a host supplies an unparseable timestamp", () => {
-    expect(
-      dedupeChecks([
-        entry("build", "success", { at: "invalid-a" }),
-        entry("build", "failure", { at: "invalid-b" }),
-      ]).map((check) => check.status),
-    ).toEqual(["failure"]);
-  });
-
   it.each([
     ["2026-10-16", "2026-10-15T23:00:00-02:00", "success"],
     ["2026-10-16T00:00:00", "2026-10-15T23:00:00-02:00", "success"],

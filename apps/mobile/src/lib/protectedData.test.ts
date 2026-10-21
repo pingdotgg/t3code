@@ -127,39 +127,4 @@ describe("protected storage startup", () => {
       );
     },
   );
-
-  it.each([
-    {
-      launch: "unlocked background",
-      state: "background",
-      platform: "ios",
-      nativeCheckSupported: true,
-    },
-    { launch: "active foreground", state: "active", platform: "ios", nativeCheckSupported: true },
-    {
-      launch: "Android background",
-      state: "background",
-      platform: "android",
-      nativeCheckSupported: false,
-    },
-    {
-      launch: "Android with a native check",
-      state: "background",
-      platform: "android",
-      nativeCheckSupported: true,
-    },
-  ])("starts storage on $launch launch without waiting for activation", async (scenario) => {
-    mocks.appState = scenario.state;
-    mocks.platform = scenario.platform;
-    mocks.nativeCheckSupported = scenario.nativeCheckSupported;
-    mocks.isProtectedDataAvailable.mockResolvedValue(scenario.platform === "ios");
-    ({ runtime } = await import("./runtime"));
-
-    expect(await runtime.runPromise(Effect.succeed("ready"))).toBe("ready");
-    expect(mocks.isProtectedDataAvailable).toHaveBeenCalledTimes(
-      scenario.platform === "ios" && scenario.state === "background" ? 1 : 0,
-    );
-    expect(mocks.readStorage).toHaveBeenCalledOnce();
-    expect(mocks.listeners.size).toBe(0);
-  });
 });

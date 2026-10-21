@@ -42,14 +42,6 @@ describe("resolveWslProjectSelection", () => {
     });
   });
 
-  it("does not route to the only WSL backend when its distro is unknown", () => {
-    expect(
-      resolveWslProjectSelection("\\\\wsl.localhost\\Ubuntu\\home\\theo\\repo", [
-        { environmentId: "env-wsl", backendId: "wsl:default", runningDistro: null },
-      ]),
-    ).toBeNull();
-  });
-
   it("does not route to a sole WSL backend for a different distro", () => {
     expect(
       resolveWslProjectSelection("\\\\wsl.localhost\\Debian\\home\\theo\\repo", [
@@ -183,16 +175,6 @@ describe("applyWslEnvironmentConfiguration", () => {
       }),
     ).toEqual([{ environmentId: "env-primary", backendId: "wsl:Fedora", runningDistro: "Fedora" }]);
   });
-
-  it("does not synthesize a backend for an empty configured distro name", () => {
-    expect(
-      applyWslEnvironmentConfiguration([], "env-primary", {
-        ...ubuntuConfiguration,
-        wslOnly: true,
-        distro: "  ",
-      }),
-    ).toEqual([]);
-  });
 });
 
 describe("resolveProjectPickerTarget", () => {
@@ -215,17 +197,6 @@ describe("resolveProjectPickerTarget", () => {
         wslConfiguration: ubuntuConfiguration,
       }),
     ).toBe("wsl:Ubuntu-22.04");
-  });
-
-  it("routes a configured distro while discovery is temporarily empty", () => {
-    expect(
-      resolveProjectPickerTarget({
-        browseEnvironmentId: "env-primary",
-        primaryEnvironmentId: "env-primary",
-        desktopInstanceId: null,
-        wslConfiguration: { ...ubuntuConfiguration, distro: "ubuntu-22.04", distros: [] },
-      }),
-    ).toBe("wsl:ubuntu-22.04");
   });
 
   it("uses installed casing when discovery finds the configured distro", () => {

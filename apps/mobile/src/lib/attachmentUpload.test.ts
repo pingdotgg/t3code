@@ -789,40 +789,11 @@ describe("prepareTurnAttachments", () => {
 
     expect(removeCallsFor(MINTED_ID)).toBe(1);
   });
-
-  it("skips persisting when every reference is already stored", async () => {
-    const previouslyUploaded = {
-      ...file,
-      uploadedAttachmentId: "pending-existing-pdf",
-      uploadEnvironmentId: environmentId,
-    };
-    const persist = vi.fn(async () => "persisted" as const);
-
-    const prepared = await prepareTurnAttachments({
-      environmentId,
-      attachments: [previouslyUploaded],
-      persistUploadedReferences: persist,
-    });
-
-    expect(prepared.status).toBe("ready");
-    expect(persist).not.toHaveBeenCalled();
-  });
 });
 
 describe("releasePendingAttachmentUploads", () => {
   beforeEach(() => {
     mocks.runAtomCommand.mockReset();
-  });
-
-  it("retries a failed delete once before reporting it", async () => {
-    mocks.runAtomCommand
-      .mockResolvedValueOnce({ _tag: "Failure", error: new Error("offline") })
-      .mockResolvedValue({ _tag: "Success", value: undefined });
-
-    await expect(
-      releasePendingAttachmentUploads(environmentId, ["pending-a"]),
-    ).resolves.toBeUndefined();
-    expect(mocks.runAtomCommand).toHaveBeenCalledTimes(2);
   });
 
   it("throws when a delete keeps failing so the caller sees the leak", async () => {

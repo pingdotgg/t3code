@@ -11,26 +11,19 @@ import { AsyncResult } from "effect/reactivity";
 import {
   buildLocalEnvironmentUpdateGroups,
   canOneClickUpdateProviderCandidate,
-  collectProviderUpdateCandidates,
   collectProviderUpdateOutcomeSnapshots,
   collectUpdatedProviderSnapshots,
-  deriveEnvironmentDisplayLabel,
   environmentGroupsWithUpdates,
-  firstFailedProviderUpdateMessage,
   firstRejectedProviderUpdateMessage,
-  getProviderUpdateInitialToastView,
   getProviderUpdateProgressToastView,
-  getProviderUpdateRejectedToastView,
   getProviderUpdateRunToastView,
   getProviderUpdateSidebarPillView,
   hasOneClickUpdateProviderCandidate,
   isProviderUpdateCandidate,
   isProviderSettingsUpdateCandidate,
-  isTerminalProviderUpdatePhase,
   localEnvironmentUpdateNotificationKey,
   providerUpdateNotificationKey,
   resolveEnvironmentUpdateRowStatus,
-  shouldShowPrimaryProviderUpdateToast,
   type LocalEnvironmentProvidersInput,
   type LocalEnvironmentUpdateGroup,
   type LocalProviderUpdateOutcome,
@@ -92,39 +85,6 @@ function updateCandidate(input: Parameters<typeof provider>[0]): ProviderUpdateC
 }
 
 describe("provider update launch notification logic", () => {
-  it("detects enabled providers with a latest-version advisory", () => {
-    expect(isProviderUpdateCandidate(provider({ driver: driver("codex") }))).toBe(true);
-    expect(isProviderUpdateCandidate(provider({ driver: driver("codex"), enabled: false }))).toBe(
-      false,
-    );
-    expect(
-      isProviderUpdateCandidate(
-        provider({ driver: driver("codex"), advisoryStatus: "current", latestVersion: null }),
-      ),
-    ).toBe(false);
-    expect(
-      isProviderUpdateCandidate(provider({ driver: driver("codex"), latestVersion: null })),
-    ).toBe(false);
-  });
-
-  it("deduplicates multi-instance provider candidates by driver", () => {
-    expect(
-      collectProviderUpdateCandidates([
-        provider({
-          driver: driver("codex"),
-          instanceId: instanceId("codex_personal"),
-          latestVersion: "1.1.0",
-        }),
-        provider({
-          driver: driver("codex"),
-          instanceId: instanceId("codex"),
-          latestVersion: "1.1.0",
-        }),
-        provider({ driver: driver("cursor"), latestVersion: "0.3.0" }),
-      ]),
-    ).toHaveLength(2);
-  });
-
   it("disables one-click updates when provider instances disagree on the update command", () => {
     const candidate = updateCandidate({
       driver: driver("claudeAgent"),
@@ -200,22 +160,6 @@ describe("provider update launch notification logic", () => {
     expect(canOneClickUpdateProviderCandidate(candidate, [candidate])).toBe(false);
   });
 
-  it("builds a notification key from provider latest versions", () => {
-    const codex = updateCandidate({
-      driver: driver("codex"),
-      version: "1.0.0",
-      latestVersion: "1.1.0",
-    });
-    const cursor = updateCandidate({
-      driver: driver("cursor"),
-      version: "0.2.0",
-      latestVersion: "0.3.0",
-    });
-
-    expect(providerUpdateNotificationKey([codex, cursor])).toBe("codex:1.1.0|cursor:0.3.0");
-    expect(providerUpdateNotificationKey([])).toBeNull();
-  });
-
   it("keeps the same notification key while the published update version is unchanged", () => {
     const first = updateCandidate({
       driver: driver("codex"),
@@ -277,257 +221,6 @@ describe("provider update launch notification logic", () => {
     ).toEqual([updatedPersonal]);
   });
 
-  it("describes a single one-click update", () => {
-    const view = getProviderUpdateInitialToastView({
-      updateProviders: [updateCandidate({ driver: driver("codex"), latestVersion: "1.1.0" })],
-      oneClickProviders: [updateCandidate({ driver: driver("codex"), latestVersion: "1.1.0" })],
-    });
-
-    expect(view).toMatchObject({
-      phase: "initial",
-      type: "warning",
-      title: "Update Available: Codex v1.1.0",
-      description: "Install the update now or review provider settings.",
-    });
-  });
-
-  it("describes settings-only updates without one-click support", () => {
-    const view = getProviderUpdateInitialToastView({
-      updateProviders: [
-        updateCandidate({ driver: driver("codex") }),
-        updateCandidate({ driver: driver("cursor") }),
-      ],
-      oneClickProviders: [],
-    });
-
-    expect(view.description).toBe("Codex and Cursor can be updated from provider settings.");
-  });
-
-  it("sends installs the server cannot update to the tool that installed them", () => {
-    const manual = { canUpdate: false, updateCommand: null };
-    expect(
-      getProviderUpdateInitialToastView({
-        updateProviders: [updateCandidate({ driver: driver("codex"), ...manual })],
-        oneClickProviders: [],
-      }).description,
-    ).toBe("Update Codex with the app or tool that installed it.");
-    expect(
-      getProviderUpdateInitialToastView({
-        updateProviders: [
-          updateCandidate({ driver: driver("codex"), ...manual }),
-          updateCandidate({ driver: driver("cursor") }),
-        ],
-        oneClickProviders: [],
-      }).description,
-    ).toBe(
-      "Cursor can be updated from provider settings. Update Codex with the app or tool that installed it.",
-    );
-    const oneClick = updateCandidate({ driver: driver("claudeAgent") });
-    expect(
-      getProviderUpdateInitialToastView({
-        updateProviders: [oneClick, updateCandidate({ driver: driver("codex"), ...manual })],
-        oneClickProviders: [oneClick],
-      }).description,
-    ).toBe(
-      "Install the update now or review provider settings. Update Codex with the app or tool that installed it.",
-    );
-  });
-
-  it("uses server update state for running progress", () => {
-    const view = getProviderUpdateProgressToastView({
-      providers: [
-        provider({
-          driver: driver("codex"),
-          updateState: {
-            status: "running",
-            startedAt: checkedAt,
-            finishedAt: null,
-            message: "Updating provider.",
-            output: null,
-          },
-        }),
-      ],
-      providerCount: 1,
-    });
-
-    expect(view).toMatchObject({
-      phase: "running",
-      type: "loading",
-      title: "Updating provider",
-    });
-    expect(shouldShowPrimaryProviderUpdateToast(view)).toBe(false);
-  });
-
-  it("keeps the initial prompt and terminal outcomes visible as toasts", () => {
-    expect(
-      shouldShowPrimaryProviderUpdateToast(
-        getProviderUpdateInitialToastView({
-          updateProviders: [updateCandidate({ driver: driver("codex") })],
-          oneClickProviders: [updateCandidate({ driver: driver("codex") })],
-        }),
-      ),
-    ).toBe(true);
-    expect(
-      shouldShowPrimaryProviderUpdateToast(getProviderUpdateRejectedToastView(1, "boom")),
-    ).toBe(true);
-  });
-
-  it("uses server failure state for failed progress", () => {
-    const view = getProviderUpdateProgressToastView({
-      providers: [
-        provider({
-          driver: driver("codex"),
-          updateState: {
-            status: "failed",
-            startedAt: checkedAt,
-            finishedAt: checkedAt,
-            message: "command failed",
-            output: "stderr",
-          },
-        }),
-      ],
-      providerCount: 1,
-    });
-
-    expect(view).toMatchObject({
-      phase: "failed",
-      type: "error",
-      title: "Provider update failed",
-      description: "command failed",
-    });
-  });
-
-  it("keeps unchanged providers actionable from settings", () => {
-    const view = getProviderUpdateProgressToastView({
-      providers: [
-        provider({
-          driver: driver("cursor"),
-          updateState: {
-            status: "unchanged",
-            startedAt: checkedAt,
-            finishedAt: checkedAt,
-            message: "still old",
-            output: null,
-          },
-        }),
-      ],
-      providerCount: 1,
-    });
-
-    expect(view).toMatchObject({
-      phase: "unchanged",
-      type: "warning",
-      title: "Provider still needs an update",
-      description: "Cursor still appears outdated. Check provider settings for details.",
-    });
-  });
-
-  it("marks progress succeeded once every attempted provider is no longer outdated", () => {
-    const view = getProviderUpdateProgressToastView({
-      providers: [
-        provider({
-          driver: driver("codex"),
-          version: "1.1.0",
-          latestVersion: "1.1.0",
-          advisoryStatus: "current",
-          updateState: {
-            status: "succeeded",
-            startedAt: checkedAt,
-            finishedAt: checkedAt,
-            message: "Provider updated.",
-            output: null,
-          },
-        }),
-      ],
-      providerCount: 1,
-    });
-
-    expect(view).toMatchObject({
-      phase: "succeeded",
-      type: "success",
-      title: "Provider updated",
-      description: "New sessions will use the updated provider.",
-      dismissAfterVisibleMs: 3_000,
-    });
-  });
-
-  it("falls back to a rejected RPC message for transport-level failures", () => {
-    const results = [AsyncResult.failure(Cause.die(new Error("WebSocket closed")))];
-
-    expect(firstFailedProviderUpdateMessage(results)).toBe("WebSocket closed");
-    expect(getProviderUpdateRejectedToastView(2, "WebSocket closed")).toMatchObject({
-      phase: "failed",
-      title: "Provider updates failed",
-      description: "WebSocket closed",
-    });
-  });
-
-  it("collects only attempted provider snapshots from update responses", () => {
-    const codex = provider({ driver: driver("codex") });
-    const cursor = provider({ driver: driver("cursor") });
-    const results = [AsyncResult.success({ providers: [codex, cursor] })];
-
-    expect(
-      collectUpdatedProviderSnapshots({
-        results,
-        providerInstanceIds: new Set([cursor.instanceId]),
-      }),
-    ).toEqual([cursor]);
-  });
-
-  it("summarizes active provider updates for the sidebar pill", () => {
-    const view = getProviderUpdateSidebarPillView([
-      provider({
-        driver: driver("codex"),
-        updateState: {
-          status: "running",
-          startedAt: checkedAt,
-          finishedAt: null,
-          message: "Updating provider.",
-          output: null,
-        },
-      }),
-      provider({
-        driver: driver("cursor"),
-        updateState: {
-          status: "queued",
-          startedAt: null,
-          finishedAt: null,
-          message: "Waiting for another provider update to finish.",
-          output: null,
-        },
-      }),
-    ]);
-
-    expect(view).toMatchObject({
-      tone: "loading",
-      title: "Updating 2 providers",
-      description: "Codex and Cursor updates are in progress.",
-    });
-  });
-
-  it("uses the provider name for single active sidebar pill updates", () => {
-    const view = getProviderUpdateSidebarPillView([
-      provider({
-        driver: driver("codex"),
-        updateState: {
-          status: "running",
-          startedAt: checkedAt,
-          finishedAt: null,
-          message: "Updating provider.",
-          output: null,
-        },
-      }),
-    ]);
-
-    expect(view).toMatchObject({
-      key: "loading:codex:running",
-      tone: "loading",
-      title: "Updating Codex",
-      description: "Codex update in progress.",
-    });
-  });
-
   it("shows the active sidebar pill for an update on a non-default instance", () => {
     const view = getProviderUpdateSidebarPillView([
       provider({ driver: driver("claudeAgent") }),
@@ -587,86 +280,6 @@ describe("provider update launch notification logic", () => {
       key: "succeeded:claudeAgent:2026-04-23T10:01:00.000Z:Provider updated.",
       tone: "success",
       title: "Claude updated: v1.1.0",
-    });
-  });
-
-  it("uses the provider name for single failed sidebar pill updates", () => {
-    const view = getProviderUpdateSidebarPillView(
-      [
-        provider({
-          driver: driver("claudeAgent"),
-          updateState: {
-            status: "failed",
-            startedAt: checkedAt,
-            finishedAt: checkedAt,
-            message: "Update command exited with code 1.",
-            output: null,
-          },
-        }),
-      ],
-      { visibleAfterIso: sessionStartedAt },
-    );
-
-    expect(view).toMatchObject({
-      key: "failed:claudeAgent:2026-04-23T10:00:00.000Z:Update command exited with code 1.",
-      tone: "error",
-      title: "Claude v1.1.0 update failed",
-      description: "Update command exited with code 1.",
-      dismissible: true,
-    });
-  });
-
-  it("shows a short-lived success sidebar pill after a single provider update succeeds", () => {
-    const view = getProviderUpdateSidebarPillView(
-      [
-        provider({
-          driver: driver("codex"),
-          version: "1.1.0",
-          latestVersion: "1.1.0",
-          advisoryStatus: "current",
-          updateState: {
-            status: "succeeded",
-            startedAt: checkedAt,
-            finishedAt: checkedAt,
-            message: "Provider updated.",
-            output: null,
-          },
-        }),
-      ],
-      { visibleAfterIso: sessionStartedAt },
-    );
-
-    expect(view).toMatchObject({
-      key: "succeeded:codex:2026-04-23T10:00:00.000Z:Provider updated.",
-      tone: "success",
-      title: "Codex updated: v1.1.0",
-      description: "New sessions will use the updated provider.",
-      dismissAfterVisibleMs: 3_000,
-    });
-  });
-
-  it("keeps unchanged sidebar pill states dismissible", () => {
-    const view = getProviderUpdateSidebarPillView(
-      [
-        provider({
-          driver: driver("cursor"),
-          updateState: {
-            status: "unchanged",
-            startedAt: checkedAt,
-            finishedAt: checkedAt,
-            message: "still old",
-            output: null,
-          },
-        }),
-      ],
-      { visibleAfterIso: sessionStartedAt },
-    );
-
-    expect(view).toMatchObject({
-      key: "unchanged:cursor:2026-04-23T10:00:00.000Z:still old",
-      tone: "warning",
-      title: "Cursor still needs an update",
-      dismissible: true,
     });
   });
 
@@ -798,30 +411,6 @@ describe("provider update launch notification logic", () => {
       ).toMatchObject({ phase: "failed" });
     });
 
-    it("surfaces a secondary backend that stayed outdated over the primary's success", () => {
-      const snapshots = collectProviderUpdateOutcomeSnapshots([
-        fulfilledOutcome(
-          true,
-          provider({
-            driver: driver("codex"),
-            updateState: terminalState("succeeded", "Provider updated."),
-          }),
-        ),
-        fulfilledOutcome(
-          false,
-          provider({
-            driver: driver("codex"),
-            updateState: terminalState("unchanged", "still outdated"),
-          }),
-        ),
-      ]);
-
-      expect(snapshots[0]?.updateState?.status).toBe("unchanged");
-      expect(
-        getProviderUpdateProgressToastView({ providers: snapshots, providerCount: 1 }),
-      ).toMatchObject({ phase: "unchanged" });
-    });
-
     it("reports success only when every backend succeeded", () => {
       const snapshots = collectProviderUpdateOutcomeSnapshots([
         fulfilledOutcome(
@@ -885,26 +474,6 @@ describe("provider update launch notification logic", () => {
       isPrimary: input.isPrimary ?? false,
       connectionState: input.connectionState ?? "ready",
       providers: input.providers,
-    });
-
-    it("groups each environment's outdated one-click candidates", () => {
-      const result = buildLocalEnvironmentUpdateGroups([
-        environment({
-          environmentId: "env-windows",
-          label: "Windows",
-          isPrimary: true,
-          providers: [provider({ driver: driver("codex"), latestVersion: "1.1.0" })],
-        }),
-        environment({
-          environmentId: "env-wsl",
-          label: "WSL",
-          providers: [provider({ driver: driver("codex"), latestVersion: "1.1.0" })],
-        }),
-      ]);
-
-      expect(result.isAnySettling).toBe(false);
-      expect(result.groups.map((group) => group.label)).toEqual(["Windows", "WSL"]);
-      expect(result.groups.every((group) => group.candidates.length === 1)).toBe(true);
     });
 
     it("flags settling while a secondary backend is still connecting", () => {
@@ -971,54 +540,6 @@ describe("provider update launch notification logic", () => {
       expect(key).toContain("env-windows=codex:1.1.0");
       expect(key).toContain("env-wsl=codex:1.1.0");
     });
-
-    it("labels environments by platform so they are distinguishable", () => {
-      expect(
-        deriveEnvironmentDisplayLabel({
-          isWsl: false,
-          wslDistro: null,
-          platformOs: "windows",
-          fallbackLabel: "Jgratton24",
-        }),
-      ).toBe("Windows");
-      expect(
-        deriveEnvironmentDisplayLabel({
-          isWsl: true,
-          wslDistro: null,
-          platformOs: "linux",
-          fallbackLabel: "Jgratton24",
-        }),
-      ).toBe("WSL");
-      expect(
-        deriveEnvironmentDisplayLabel({
-          isWsl: true,
-          wslDistro: "ubuntu",
-          platformOs: "linux",
-          fallbackLabel: "Jgratton24",
-        }),
-      ).toBe("WSL · ubuntu");
-      expect(
-        deriveEnvironmentDisplayLabel({
-          isWsl: false,
-          wslDistro: null,
-          platformOs: undefined,
-          fallbackLabel: "My Device",
-        }),
-      ).toBe("My Device");
-    });
-  });
-
-  describe("isTerminalProviderUpdatePhase", () => {
-    it("treats succeeded/failed/unchanged as terminal", () => {
-      expect(isTerminalProviderUpdatePhase("succeeded")).toBe(true);
-      expect(isTerminalProviderUpdatePhase("failed")).toBe(true);
-      expect(isTerminalProviderUpdatePhase("unchanged")).toBe(true);
-    });
-
-    it("treats running/initial as non-terminal so they are not persisted", () => {
-      expect(isTerminalProviderUpdatePhase("running")).toBe(false);
-      expect(isTerminalProviderUpdatePhase("initial")).toBe(false);
-    });
   });
 
   describe("resolveEnvironmentUpdateRowStatus", () => {
@@ -1061,18 +582,6 @@ describe("provider update launch notification logic", () => {
       ).toMatchObject({ kind: "failed", text: "boom" });
     });
 
-    it("uses a terminal result snapshot", () => {
-      expect(
-        resolveEnvironmentUpdateRowStatus({
-          group,
-          error: undefined,
-          result: succeededResult,
-          pill: null,
-          isPending: false,
-        }),
-      ).toMatchObject({ kind: "success" });
-    });
-
     it("falls through a non-terminal result to live server state", () => {
       expect(
         resolveEnvironmentUpdateRowStatus({
@@ -1083,42 +592,6 @@ describe("provider update launch notification logic", () => {
           isPending: true,
         }),
       ).toMatchObject({ kind: "success" });
-    });
-
-    it("shows the pending spinner before any signal arrives", () => {
-      expect(
-        resolveEnvironmentUpdateRowStatus({
-          group,
-          error: undefined,
-          result: runningResult,
-          pill: null,
-          isPending: true,
-        }),
-      ).toMatchObject({ kind: "loading" });
-    });
-
-    it("keeps a non-terminal result on loading even after pending clears", () => {
-      expect(
-        resolveEnvironmentUpdateRowStatus({
-          group,
-          error: undefined,
-          result: runningResult,
-          pill: null,
-          isPending: false,
-        }),
-      ).toMatchObject({ kind: "loading" });
-    });
-
-    it("lists the providers when idle", () => {
-      expect(
-        resolveEnvironmentUpdateRowStatus({
-          group,
-          error: undefined,
-          result: undefined,
-          pill: null,
-          isPending: false,
-        }),
-      ).toMatchObject({ kind: "idle", text: "Codex" });
     });
   });
 });

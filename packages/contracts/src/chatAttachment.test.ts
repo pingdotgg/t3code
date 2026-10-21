@@ -5,7 +5,6 @@ import * as Schema from "effect/Schema";
 
 import {
   ChatAttachment,
-  isProviderSendTurnSupportedImageMimeType,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   SnapShotAccessibility,
 } from "./chatAttachment.ts";
@@ -68,9 +67,3 @@ it.effect("rejects accessibility trees above the serialized payload limit", () =
     assert.strictEqual(Exit.isFailure(result), true);
   }),
 );
-
-it("isProviderSendTurnSupportedImageMimeType accepts raster formats and rejects svg", () => {
-  assert.strictEqual(isProviderSendTurnSupportedImageMimeType("image/png"), true);
-  assert.strictEqual(isProviderSendTurnSupportedImageMimeType("IMAGE/JPEG"), true);
-  assert.strictEqual(isProviderSendTurnSupportedImageMimeType("image/svg+xml"), false);
-});

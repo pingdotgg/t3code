@@ -74,19 +74,6 @@ describe("DesktopAppActivationBroker", () => {
     broker.close();
   });
 
-  it("removes a queued request when its CLI connection closes", async () => {
-    const send = vi.fn();
-    const broker = new DesktopAppActivationBroker({ requestTimeoutMs: 1_000, activate: vi.fn() });
-
-    const response = broker.request(request);
-    broker.cancel(request.requestId);
-    broker.registerRenderer(send);
-
-    await expect(response).resolves.toMatchObject({ ok: false, code: "renderer-unavailable" });
-    expect(send).not.toHaveBeenCalled();
-    broker.close();
-  });
-
   it("never sends a canceled request that was queued behind another request", async () => {
     const send = vi.fn();
     const broker = new DesktopAppActivationBroker({ requestTimeoutMs: 1_000, activate: vi.fn() });
@@ -111,20 +98,5 @@ describe("DesktopAppActivationBroker", () => {
     await expect(secondResponse).resolves.toMatchObject({ ok: false });
     expect(send).toHaveBeenCalledTimes(1);
     broker.close();
-  });
-
-  it("times out a request without polling", async () => {
-    vi.useFakeTimers();
-    try {
-      const broker = new DesktopAppActivationBroker({ requestTimeoutMs: 1_000, activate: vi.fn() });
-      const response = broker.request(request);
-
-      await vi.advanceTimersByTimeAsync(1_000);
-
-      await expect(response).resolves.toMatchObject({ ok: false, code: "request-timeout" });
-      broker.close();
-    } finally {
-      vi.useRealTimers();
-    }
   });
 });

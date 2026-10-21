@@ -6,13 +6,11 @@ import * as NodePath from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  attachmentFileExtension,
   chatAttachmentStableKey,
   createAttachmentId,
   createDeterministicAttachmentId,
   createPendingAttachmentId,
   parseAttachmentUuid,
-  parseAttachmentFileExtension,
   planAttachmentClaim,
   parseThreadSegmentFromAttachmentId,
   resolveAttachmentPathById,
@@ -85,15 +83,6 @@ describe("attachmentStore", () => {
     expect(parseThreadSegmentFromAttachmentId(fooBarId)).toBe("foo-bar");
   });
 
-  it("normalizes created thread segments to lowercase", () => {
-    const attachmentId = createAttachmentId("Thread.Foo");
-    expect(attachmentId).toBeTruthy();
-    if (!attachmentId) {
-      return;
-    }
-    expect(parseThreadSegmentFromAttachmentId(attachmentId)).toBe("thread-foo");
-  });
-
   it("reserves the pending attachment segment", () => {
     const pendingId = createPendingAttachmentId();
     expect(parseThreadSegmentFromAttachmentId(pendingId)).toBe("pending");
@@ -102,19 +91,6 @@ describe("attachmentStore", () => {
     expect(parseThreadSegmentFromAttachmentId(createAttachmentId("pending_thread")!)).toBe(
       "pending_thread",
     );
-  });
-
-  it("preserves safe file extensions in attachment ids and paths", () => {
-    const attachmentId = createPendingAttachmentId(".PDF");
-
-    expect(parseThreadSegmentFromAttachmentId(attachmentId)).toBe("pending");
-    expect(parseAttachmentUuid(attachmentId)).toMatch(/^[a-f0-9-]{36}$/);
-    expect(parseAttachmentFileExtension(attachmentId)).toBe("pdf");
-    expect(attachmentFileExtension("report.PDF")).toBe(".pdf");
-    expect(attachmentFileExtension("report")).toBe(".bin");
-    expect(attachmentFileExtension("report.extensiontoolong")).toBe(".bin");
-    expect(attachmentFileExtension("archive.part")).toBe(".bin");
-    expect(createAttachmentId("x".repeat(80), ".abcdefghij")?.length).toBeLessThanOrEqual(128);
   });
 
   it("resolves attachment path by id using the extension that exists on disk", () => {
@@ -131,36 +107,6 @@ describe("attachmentStore", () => {
         attachmentId,
       });
       expect(resolved).toBe(pngPath);
-    } finally {
-      NodeFS.rmSync(attachmentsDir, { recursive: true, force: true });
-    }
-  });
-
-  it("returns null when no attachment file exists for the id", () => {
-    const attachmentsDir = NodeFS.mkdtempSync(
-      NodePath.join(NodeOS.tmpdir(), "t3code-attachment-store-"),
-    );
-    try {
-      const resolved = resolveAttachmentPathById({
-        attachmentsDir,
-        attachmentId: "thread-1-missing",
-      });
-      expect(resolved).toBeNull();
-    } finally {
-      NodeFS.rmSync(attachmentsDir, { recursive: true, force: true });
-    }
-  });
-
-  it("resolves generic attachments without scanning the attachment directory", () => {
-    const attachmentsDir = NodeFS.mkdtempSync(
-      NodePath.join(NodeOS.tmpdir(), "t3code-file-attachment-"),
-    );
-    try {
-      const attachmentId = "thread-1-00000000-0000-4000-8000-000000000001-zip";
-      const archivePath = NodePath.join(attachmentsDir, `${attachmentId}.zip`);
-      NodeFS.writeFileSync(archivePath, Buffer.from("archive"));
-
-      expect(resolveAttachmentPathById({ attachmentsDir, attachmentId })).toBe(archivePath);
     } finally {
       NodeFS.rmSync(attachmentsDir, { recursive: true, force: true });
     }

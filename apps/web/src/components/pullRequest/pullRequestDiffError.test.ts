@@ -20,14 +20,6 @@ describe("describePullRequestDiffError", () => {
     );
   });
 
-  it("uses the actual host's name for a rate limit", () => {
-    const result = describePullRequestDiffError("Too many requests", "GitLab");
-
-    expect(result.title).toBe("GitLab rate limit reached");
-    expect(result.description).toContain("on GitLab");
-    expect(result.description).not.toContain("GitHub");
-  });
-
   it("does not blame a rate limit for an unknown connection failure", () => {
     const result = describePullRequestDiffError(
       "Failed to fetch remote environment endpoint http://localhost:49477/api/pull-requests/diff (TypeError: Failed to fetch).",

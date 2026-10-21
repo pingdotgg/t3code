@@ -27,7 +27,7 @@ export function useComposerMenuProps() {
   };
 }
 
-export function isInsideComposerFloatingLayer(target: EventTarget | null): boolean {
+function isInsideComposerFloatingLayer(target: EventTarget | null): boolean {
   return target instanceof Element && target.closest(COMPOSER_FLOATING_LAYER_SELECTOR) !== null;
 }
 

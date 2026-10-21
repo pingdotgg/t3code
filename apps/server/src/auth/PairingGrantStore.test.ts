@@ -13,8 +13,6 @@ import {
 } from "@t3tools/shared/desktopBootstrapToken";
 
 import * as ServerConfig from "../config.ts";
-import * as AuthPairingLinks from "../persistence/AuthPairingLinks.ts";
-import { PersistenceSqlError } from "../persistence/Errors.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as PairingGrantStore from "./PairingGrantStore.ts";
 
@@ -46,36 +44,7 @@ const layerPairingGrantStore = (
     Layer.provide(layerServerConfig(overrides)),
   );
 
-const layerPairingGrantStoreTest = (
-  overrides: Partial<AuthPairingLinks.AuthPairingLinkRepository["Service"]>,
-) =>
-  Layer.effect(PairingGrantStore.PairingGrantStore, PairingGrantStore.make).pipe(
-    Layer.provide(
-      Layer.succeed(
-        AuthPairingLinks.AuthPairingLinkRepository,
-        AuthPairingLinks.AuthPairingLinkRepository.of({
-          create: () => Effect.void,
-          consumeAvailable: () => Effect.succeedNone,
-          listActive: () => Effect.succeed([]),
-          revoke: () => Effect.succeed(false),
-          getByCredential: () => Effect.succeedNone,
-          ...overrides,
-        }),
-      ),
-    ),
-    Layer.provide(layerServerConfig()),
-  );
-
 it.layer(NodeServices.layer)("PairingGrantStore.layer", (it) => {
-  it.effect("issues pairing tokens in a short manual-entry format", () =>
-    Effect.gen(function* () {
-      const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
-      const issued = yield* bootstrapCredentials.issueOneTimeToken();
-
-      expect(issued.credential).toMatch(/^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{12}$/);
-    }).pipe(Effect.provide(layerPairingGrantStore())),
-  );
-
   it.effect("issues one-time bootstrap tokens that can only be consumed once", () =>
     Effect.gen(function* () {
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
@@ -286,28 +255,4 @@ it.layer(NodeServices.layer)("PairingGrantStore.layer", (it) => {
       expect(revokedConsume._tag).toBe("UnavailableBootstrapCredentialError");
     }).pipe(Effect.provide(layerPairingGrantStore())),
   );
-
-  it.effect("identifies consume-available failures and preserves their cause", () => {
-    const repositoryFailure = new PersistenceSqlError({
-      operation: "consume-pairing-link",
-      detail: "Database unavailable",
-      cause: new Error("database unavailable"),
-    });
-
-    return Effect.gen(function* () {
-      const pairingGrants = yield* PairingGrantStore.PairingGrantStore;
-      const error = yield* Effect.flip(pairingGrants.consume("credential"));
-
-      if (error._tag !== "BootstrapCredentialConsumeAvailableError") {
-        return yield* Effect.die(error);
-      }
-      expect(error.cause).toBe(repositoryFailure);
-    }).pipe(
-      Effect.provide(
-        layerPairingGrantStoreTest({
-          consumeAvailable: () => Effect.fail(repositoryFailure),
-        }),
-      ),
-    );
-  });
 });

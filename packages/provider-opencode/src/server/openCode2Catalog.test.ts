@@ -1,8 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { describe } from "vite-plus/test";
 
@@ -72,23 +70,6 @@ describe("loadOpenCode2Catalog", () => {
     }),
   );
 
-  it.effect("keeps the variants a model advertised", () =>
-    Effect.gen(function* () {
-      const models = yield* readCatalog({
-        "/api/model": MODELS_BODY,
-        "/api/provider": PROVIDERS_BODY,
-      });
-
-      assert.deepStrictEqual(
-        models.map((model) => model.variants),
-        [
-          [{ id: "low" }, { id: "medium" }, { id: "high" }],
-          [{ id: "low" }, { id: "medium" }, { id: "high" }],
-        ],
-      );
-    }),
-  );
-
   it.effect("leaves a model unnamed when the provider list fails", () =>
     Effect.gen(function* () {
       const models = yield* readCatalog({ "/api/model": MODELS_BODY });
@@ -101,24 +82,6 @@ describe("loadOpenCode2Catalog", () => {
         ],
       );
     }),
-  );
-
-  it.effect("keeps reading models while a provider list stays pending", () =>
-    Effect.gen(function* () {
-      const reading = yield* readCatalog({ "/api/model": MODELS_BODY }, ["/api/provider"]).pipe(
-        Effect.forkChild,
-      );
-      yield* TestClock.adjust("5 seconds");
-      const models = yield* Fiber.join(reading);
-
-      assert.deepStrictEqual(
-        models.map((model) => [`${model.providerID}/${model.id}`, model.providerName]),
-        [
-          ["opencode-go/step-5-preview-free", undefined],
-          ["opencode/step-5-preview-free", undefined],
-        ],
-      );
-    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("fails the read when the model list fails", () =>

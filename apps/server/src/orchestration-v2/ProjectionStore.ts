@@ -1374,7 +1374,7 @@ function makeForkMarkerTurnItem(input: {
   };
 }
 
-export function isTurnItemAtOrBeforeRun(input: {
+function isTurnItemAtOrBeforeRun(input: {
   readonly historyOrigin: OrchestrationV2ThreadProjection["thread"]["historyOrigin"];
   readonly itemRunId: OrchestrationV2TurnItem["runId"];
   readonly runOrdinalById: ReadonlyMap<NonNullable<OrchestrationV2TurnItem["runId"]>, number>;

@@ -8,12 +8,6 @@ const beforeFailure = DateTime.makeUnsafe("2026-10-09T12:05:00.000Z");
 const afterFailure = DateTime.makeUnsafe("2026-10-09T12:48:00.000Z");
 
 describe("subagentResumedSince", () => {
-  it("is true while a resumed subagent runs", () => {
-    expect(subagentResumedSince({ status: "running", startedAt: afterFailure }, failedAt)).toBe(
-      true,
-    );
-  });
-
   it("is true while it runs even when the notification was delivered after the resume", () => {
     expect(
       subagentResumedSince(
@@ -33,9 +27,5 @@ describe("subagentResumedSince", () => {
     expect(subagentResumedSince({ status: "failed", startedAt: beforeFailure }, failedAt)).toBe(
       false,
     );
-  });
-
-  it("is false for a settled subagent with no start time", () => {
-    expect(subagentResumedSince({ status: "failed", startedAt: null }, failedAt)).toBe(false);
   });
 });

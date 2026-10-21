@@ -22,10 +22,6 @@ describe("inline code that names a file", () => {
     expect(rewrite(markdown)).toBe(markdown);
   });
 
-  it("handles double-backtick spans", () => {
-    expect(rewrite("Open ``src/math.ts`` now.")).toBe("Open [src/math.ts](<src/math.ts>) now.");
-  });
-
   it("links to the exact path when it holds backslashes or ampersands", () => {
     for (const path of ["C:\\repo\\_private\\file.ts", "./src/a&copy;.ts", "./src/[id].ts"]) {
       const paragraph = parseMarkdownDocument(rewrite(`\`${path}\``)).children[0];

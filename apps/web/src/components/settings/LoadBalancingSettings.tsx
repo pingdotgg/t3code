@@ -31,7 +31,7 @@ function preferenceLabel(preference: LoadPreference): string {
   return preferences.find((entry) => entry.value === preference)!.label;
 }
 
-export function summarizeLoadPreferences(
+function summarizeLoadPreferences(
   environments: ReadonlyArray<Pick<EnvironmentPresentation, "environmentId" | "label">>,
   weights: Readonly<Record<string, number>>,
 ): string | null {

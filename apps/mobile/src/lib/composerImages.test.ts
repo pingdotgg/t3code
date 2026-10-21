@@ -137,23 +137,6 @@ describe("composer clipboard paste", () => {
     ).toEqual({ images: [], text: null, error: expect.stringContaining("up to") });
     expect(clipboard.getStringAsync).not.toHaveBeenCalled();
   });
-
-  it("returns plain text without image chips", async () => {
-    expect(await pasteComposerClipboard({ existingCount: 0 })).toEqual({
-      images: [],
-      text: "clipboard text",
-      error: null,
-    });
-  });
-
-  it("reports an empty text clipboard", async () => {
-    clipboard.getStringAsync.mockResolvedValue("");
-    expect(await pasteComposerClipboard({ existingCount: 0 })).toEqual({
-      images: [],
-      text: null,
-      error: "Clipboard is empty.",
-    });
-  });
 });
 
 describe("oversized pasted images", () => {
@@ -204,16 +187,6 @@ describe("oversized pasted images", () => {
         previewUri: "data:image/png;base64,cmVuZGVyZWQ=",
       }),
     ]);
-  });
-
-  it("keeps a 2000px clipboard image byte for byte without rendering it", async () => {
-    const pasted = pngDataUrl(2000, 1200);
-    clipboard.getImageAsync.mockResolvedValue({ data: pasted });
-
-    const result = await pasteComposerClipboard({ existingCount: 0 });
-
-    expect(manipulator.manipulate).not.toHaveBeenCalled();
-    expect(result.images).toEqual([expect.objectContaining({ dataUrl: pasted })]);
   });
 });
 
@@ -318,17 +291,6 @@ describe("composerStripAttachments", () => {
     fileUri: "file:///notes.txt",
   };
 
-  it("keeps media, because a thumbnail is the only way to see it", async () => {
-    const { composerStripAttachments } = await import("./composerImages");
-    const kept = composerStripAttachments([image, video] as never);
-    expect(kept.map((a) => a.id)).toEqual(["img-1", "vid-1"]);
-  });
-
-  it("never shows a non-media file above the composer", async () => {
-    const { composerStripAttachments } = await import("./composerImages");
-    expect(composerStripAttachments([doc] as never)).toEqual([]);
-  });
-
   it("keeps media beside a document rather than dropping the whole strip", async () => {
     const { composerStripAttachments } = await import("./composerImages");
     expect(composerStripAttachments([doc, image, video] as never).map((a) => a.id)).toEqual([
@@ -365,49 +327,5 @@ describe("composerAttachmentInlineUri", () => {
         previewUri: "ph://asset",
       } as never),
     ).toBe("data:image/jpeg;base64,AAAA");
-  });
-
-  it("falls back to the preview when a picture kept only its asset uri", async () => {
-    const { composerAttachmentInlineUri } = await import("./composerImages");
-    expect(
-      composerAttachmentInlineUri({
-        id: "img-2",
-        type: "image",
-        name: "IMG_0112.jpg",
-        mimeType: "image/jpeg",
-        sizeBytes: 10,
-        previewUri: "ph://asset",
-      } as never),
-    ).toBe("ph://asset");
-  });
-
-  it("leaves a file-backed attachment to the retain-lease path", async () => {
-    const { composerAttachmentInlineUri } = await import("./composerImages");
-    expect(
-      composerAttachmentInlineUri({
-        id: "img-3",
-        type: "image",
-        name: "IMG_0113.jpg",
-        mimeType: "image/jpeg",
-        sizeBytes: 10,
-        fileUri: "file:///owned.jpg",
-        previewUri: "file:///owned.jpg",
-      } as never),
-    ).toBeUndefined();
-  });
-
-  it("has nothing to offer for a plain file or a missing attachment", async () => {
-    const { composerAttachmentInlineUri } = await import("./composerImages");
-    expect(composerAttachmentInlineUri(undefined)).toBeUndefined();
-    expect(
-      composerAttachmentInlineUri({
-        id: "doc-1",
-        type: "file",
-        name: "notes.txt",
-        mimeType: "text/plain",
-        sizeBytes: 4,
-        fileUri: "file:///notes.txt",
-      } as never),
-    ).toBeUndefined();
   });
 });

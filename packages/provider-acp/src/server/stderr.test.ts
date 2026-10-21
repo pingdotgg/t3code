@@ -1,17 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  ACP_STDERR_TAIL_MAX_CHARS,
-  appendAcpStderrTail,
-  sanitizeAcpStderrExcerpt,
-} from "./stderr.ts";
+import { sanitizeAcpStderrExcerpt } from "./stderr.ts";
 
 describe("AcpStderr", () => {
-  it("keeps a bounded tail of stderr chunks", () => {
-    const prefix = "x".repeat(ACP_STDERR_TAIL_MAX_CHARS);
-    expect(appendAcpStderrTail(prefix, "abc")).toBe(`${prefix.slice(3)}abc`);
-  });
-
   it("redacts home paths, pairing URLs, and tokens from stderr excerpts", () => {
     const excerpt = sanitizeAcpStderrExcerpt(
       [

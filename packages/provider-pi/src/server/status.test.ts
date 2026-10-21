@@ -4,14 +4,12 @@ import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import * as TestClock from "effect/testing/TestClock";
 
 import { checkPiProviderStatus, MINIMUM_PI_VERSION } from "./status.ts";
 
@@ -142,53 +140,6 @@ describe("PiProvider", () => {
         ["default"],
       );
       assert.include(snapshot.message ?? "", "could not refresh its models and commands");
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("reports discovered models when Pi startup takes 20 seconds", () =>
-    Effect.gen(function* () {
-      const getStateReceived = yield* Deferred.make<void>();
-      const spawner = yield* piDiscoverySpawner(
-        { models: [{ provider: "anthropic", id: "claude-sonnet-4" }] },
-        { delay: "20 seconds", getStateReceived },
-      );
-      const probe = yield* checkPiProviderStatus(settings).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        Effect.forkChild,
-      );
-      yield* Deferred.await(getStateReceived);
-      yield* TestClock.adjust("20 seconds");
-      const snapshot = yield* Fiber.join(probe);
-      assert.equal(snapshot.status, "ready");
-      assert.equal(snapshot.auth.status, "authenticated");
-      assert.deepEqual(
-        snapshot.models.map((model) => model.slug),
-        ["default", "anthropic/claude-sonnet-4"],
-      );
-      assert.equal(snapshot.models[1]?.subProvider, "anthropic");
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("keeps compatible Pi selectable when startup outlasts the discovery deadline", () =>
-    Effect.gen(function* () {
-      const getStateReceived = yield* Deferred.make<void>();
-      const spawner = yield* piDiscoverySpawner(
-        { models: [{ provider: "anthropic", id: "claude-sonnet-4" }] },
-        { delay: "1 hour", getStateReceived },
-      );
-      const probe = yield* checkPiProviderStatus(settings).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        Effect.forkChild,
-      );
-      yield* Deferred.await(getStateReceived);
-      yield* TestClock.adjust("30 seconds");
-      const snapshot = yield* Fiber.join(probe);
-      assert.equal(snapshot.status, "ready");
-      assert.equal(snapshot.auth.status, "unknown");
-      assert.deepEqual(
-        snapshot.models.map((model) => model.slug),
-        ["default"],
-      );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

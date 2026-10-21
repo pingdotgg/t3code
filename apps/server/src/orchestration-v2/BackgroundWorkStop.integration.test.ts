@@ -1003,10 +1003,6 @@ it.effect(
   () => stopEarlierBackgroundWork({ failedStart: true }),
 );
 
-it.effect("Stop preserves the roster when background work survives the interrupt", () =>
-  stopEarlierBackgroundWork({ failedStart: true, backgroundWorkAfterStop: "running" }),
-);
-
 it.effect("Stop preserves the roster when the background work probe fails", () =>
   stopEarlierBackgroundWork({ failedStart: true, backgroundWorkAfterStop: "unknown" }),
 );

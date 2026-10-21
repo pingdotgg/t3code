@@ -20,7 +20,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { DeviceScreenshotToolkit, DeviceStandardToolkit, DeviceToolkit } from "./tools.ts";
 
-export function agentDeviceTargetArgs(device: DeviceSummary): ReadonlyArray<string> {
+function agentDeviceTargetArgs(device: DeviceSummary): ReadonlyArray<string> {
   return device.platform === "ios"
     ? ["--platform", "ios", "--udid", device.id]
     : ["--platform", "android", "--serial", device.id];

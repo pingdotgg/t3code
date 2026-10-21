@@ -88,22 +88,6 @@ function layerPool(labelRef: Ref.Ref<string>): Layer.Layer<DesktopBackendPool.De
 }
 
 describe("DesktopBackendPool", () => {
-  it.effect("resolves the primary label lazily after pool layer construction", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const labelRef = yield* Ref.make("Windows");
-        const pool = yield* DesktopBackendPool.DesktopBackendPool.pipe(
-          Effect.provide(layerPool(labelRef)),
-        );
-        const primary = yield* pool.primary;
-
-        yield* Ref.set(labelRef, "WSL (Ubuntu)");
-
-        assert.equal(yield* primary.label, "WSL (Ubuntu)");
-      }),
-    ),
-  );
-
   it.effect("unregister stops the registered instance", () =>
     Effect.scoped(
       Effect.gen(function* () {

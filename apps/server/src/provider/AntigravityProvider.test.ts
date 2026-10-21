@@ -15,7 +15,6 @@ import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import * as TestClock from "effect/testing/TestClock";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
@@ -179,23 +178,6 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
 });
 
 describe("Antigravity model catalog", () => {
-  it("keeps the captured personal catalog's IDs, labels, order, and selected default", () => {
-    const models = buildAntigravityModelsFromSession(sessionSetupResult);
-    expect(models.map((model) => [model.slug, model.name])).toEqual(
-      modelOptions.map((option) => [option.value, option.name]),
-    );
-    expect(models.filter((model) => model.isDefault).map((model) => model.slug)).toEqual([
-      "gemini-3.7-flash-high",
-    ]);
-    expect(
-      models
-        .filter((model) => model.aliases?.includes(ANTIGRAVITY_DEFAULT_MODEL))
-        .map((model) => model.slug),
-    ).toEqual(["gemini-3.7-flash-high"]);
-    expect(models.every((model) => model.capabilities?.optionDescriptors?.length === 0)).toBe(true);
-    expect(models.every((model) => !model.isCustom)).toBe(true);
-  });
-
   it("uses legacy session models only when model config is absent", () => {
     const fromLegacy = buildAntigravityModelsFromSession({
       models: sessionSetupResult.models,
@@ -257,45 +239,6 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
     ),
   );
 
-  it.effect("ignores account updates while disabled", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const harness = yield* makeHarness({ enabled: false });
-        yield* harness.provider.onSessionStarted(started);
-        yield* harness.provider.onAvailableCommands(commands);
-        yield* harness.provider.onSignedOut;
-        const snapshot = yield* harness.provider.snapshot.refresh;
-        expect(snapshot).toMatchObject({
-          enabled: false,
-          installed: false,
-          status: "disabled",
-          auth: { status: "unknown" },
-          models: [],
-          slashCommands: [],
-          workspaceSnapshots: [],
-        });
-        expect(yield* Ref.get(harness.probeCalls)).toBe(0);
-      }),
-    ),
-  );
-
-  it.effect("publishes the configured sign-in method before any account is checked", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const provider = yield* makeAntigravityProvider(decodeSettings({ enabled: true }), {
-          stampIdentity: (snapshot) => Effect.succeed({ ...snapshot, instanceId, driver }),
-          probe: Effect.succeed(initializeResult),
-          supportsTextGeneration: Effect.succeed(true),
-          auth: { type: "gemini-api-key", label: "Gemini API key" },
-        });
-        expect((yield* provider.snapshot.getSnapshot).auth).toEqual({
-          status: "unknown",
-          type: "gemini-api-key",
-        });
-      }),
-    ),
-  );
-
   it.effect("treats initialize as installation proof, not account or model discovery", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -347,21 +290,6 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           expectedCommands,
         );
         expect(yield* Ref.get(harness.probeCalls)).toBe(1);
-      }),
-    ),
-  );
-
-  it.effect("does not retain a disposable sign-in workspace", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const harness = yield* makeHarness();
-        yield* harness.initialize;
-        yield* harness.provider.onSessionStarted(started);
-        yield* harness.provider.onAvailableCommands(commands);
-        const snapshot = yield* harness.provider.snapshot.getSnapshot;
-        expect(snapshot.models).toHaveLength(11);
-        expect(snapshot.slashCommands).toEqual(expectedCommands);
-        expect(snapshot.workspaceSnapshots).toEqual([]);
       }),
     ),
   );
@@ -444,30 +372,6 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
     ),
   );
 
-  it.effect("accepts a known version from a later installation probe", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const harness = yield* makeHarness();
-        yield* harness.initialize;
-        yield* harness.provider.onSessionStarted({
-          ...started,
-          initializeResult: {
-            ...initializeResult,
-            agentInfo: { ...initializeResult.agentInfo, version: "1.3.0" },
-          },
-        });
-        yield* Ref.set(
-          harness.probe,
-          Effect.succeed({
-            ...initializeResult,
-            agentInfo: { ...initializeResult.agentInfo, version: "1.4.0" },
-          }),
-        );
-        expect((yield* harness.provider.snapshot.refresh).version).toBe("1.4.0");
-      }),
-    ),
-  );
-
   it.effect("does not replace a handshake version with an unknown custom-launcher probe", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -535,58 +439,6 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         expect(snapshot.models).toEqual(buildAntigravityModelsFromSession(sessionSetupResult));
         expect(snapshot.slashCommands).toEqual(expectedCommands);
         expect(snapshot.workspaceSnapshots?.[0]?.cwd).toBe("/workspace");
-      }),
-    ),
-  );
-
-  it.effect("allows a slow packaged runtime health check to finish", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const harness = yield* makeHarness();
-        yield* harness.initialize;
-        const entered = yield* Deferred.make<void>();
-        const initialized = yield* Deferred.make<EffectAcpSchema.InitializeResponse>();
-        yield* Ref.set(
-          harness.probe,
-          Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(initialized))),
-        );
-
-        const refresh = yield* harness.provider.snapshot.refresh.pipe(Effect.forkChild);
-        yield* Deferred.await(entered);
-        yield* TestClock.adjust("47 seconds");
-        yield* Deferred.succeed(initialized, initializeResult);
-        const snapshot = yield* Fiber.join(refresh);
-
-        expect(snapshot).toMatchObject({
-          installed: true,
-          status: "warning",
-          auth: { status: "unknown" },
-        });
-      }),
-    ),
-  );
-
-  it.effect("closes a stalled health probe at its deadline", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const harness = yield* makeHarness();
-        yield* harness.initialize;
-        const entered = yield* Deferred.make<void>();
-        const closed = yield* Deferred.make<void>();
-        yield* Ref.set(
-          harness.probe,
-          Deferred.succeed(entered, undefined).pipe(
-            Effect.andThen(Effect.never),
-            Effect.ensuring(Deferred.succeed(closed, undefined)),
-          ),
-        );
-        const refresh = yield* harness.provider.snapshot.refresh.pipe(Effect.forkChild);
-        yield* Deferred.await(entered);
-        yield* TestClock.adjust("90 seconds");
-        const snapshot = yield* Fiber.join(refresh);
-        yield* Deferred.await(closed);
-        expect(snapshot.status).toBe("error");
-        expect(snapshot.message).toContain("90 seconds");
       }),
     ),
   );

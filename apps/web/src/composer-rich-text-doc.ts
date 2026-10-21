@@ -1140,7 +1140,7 @@ function listItemTypeAt($pos: ResolvedPos): "listItem" | "taskItem" | null {
  * Tiptap's list keymap, which StarterKit loads, does both by moving nodes
  * without touching their indent or marker, so the composer turns it off.
  */
-export function backspaceAcrossList(editor: Editor): boolean {
+function backspaceAcrossList(editor: Editor): boolean {
   const { state } = editor;
   const { $from, empty } = state.selection;
   if (!empty || $from.parentOffset !== 0) return false;
@@ -1166,7 +1166,7 @@ export function backspaceAcrossList(editor: Editor): boolean {
  * Tiptap's default would instead nest the next item, or a whole list, under
  * this one at its old indent.
  */
-export function deleteAcrossList(editor: Editor): boolean {
+function deleteAcrossList(editor: Editor): boolean {
   const { state } = editor;
   const { $from, empty } = state.selection;
   if (!empty || !$from.parent.isTextblock || $from.depth === 0) return false;

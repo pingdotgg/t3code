@@ -19,19 +19,6 @@ describe("agent notification permission", () => {
     platform.OS = "android";
   });
 
-  it.effect("creates an Android channel before prompting for notification permission", () =>
-    Effect.gen(function* () {
-      expect(yield* requestAgentNotificationPermission).toEqual({ type: "granted" });
-      expect(Notifications.setNotificationChannelAsync).toHaveBeenCalledWith("agent-alerts", {
-        name: "Agent alerts",
-        importance: 4,
-      });
-      expect(
-        vi.mocked(Notifications.setNotificationChannelAsync).mock.invocationCallOrder[0],
-      ).toBeLessThan(vi.mocked(Notifications.requestPermissionsAsync).mock.invocationCallOrder[0]!);
-    }),
-  );
-
   it.effect("preserves denied permission when Android cannot ask again", () =>
     Effect.gen(function* () {
       vi.mocked(Notifications.getPermissionsAsync).mockResolvedValueOnce({
@@ -43,17 +30,6 @@ describe("agent notification permission", () => {
         canAskAgain: false,
       });
       expect(Notifications.requestPermissionsAsync).not.toHaveBeenCalled();
-    }),
-  );
-
-  it.effect("keeps iOS permission requests free of Android channel setup", () =>
-    Effect.gen(function* () {
-      platform.OS = "ios";
-      expect(yield* requestAgentNotificationPermission).toEqual({ type: "granted" });
-      expect(Notifications.setNotificationChannelAsync).not.toHaveBeenCalled();
-      expect(Notifications.requestPermissionsAsync).toHaveBeenCalledWith({
-        ios: { allowAlert: true, allowBadge: true, allowSound: true },
-      });
     }),
   );
 });

@@ -141,7 +141,7 @@ export interface StallLogOptions {
   readonly maxBytes: number;
 }
 
-export const layerWith = (
+const layerWith = (
   makeSampler: Effect.Effect<Effect.Effect<EventLoopReadings>, never, Scope.Scope>,
   stallLog: StallLogOptions,
 ) =>

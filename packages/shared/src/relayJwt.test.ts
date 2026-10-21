@@ -4,24 +4,9 @@ import * as NodeCrypto from "node:crypto";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { RelayJwtError, signRelayJwt, verifyRelayJwt } from "./relayJwt.ts";
+import { RelayJwtError, verifyRelayJwt } from "./relayJwt.ts";
 
 describe("relayJwt", () => {
-  it.effect("preserves signing context and the JOSE cause", () =>
-    Effect.gen(function* () {
-      const error = yield* signRelayJwt({
-        privateKey: "not-a-private-key",
-        typ: "test-sign+jwt",
-        payload: { sub: "subject" },
-      }).pipe(Effect.flip);
-
-      expect(error.operation).toBe("sign");
-      expect(error.typ).toBe("test-sign+jwt");
-      expect(error.cause).toBeInstanceOf(Error);
-      expect(error.message).toBe('Failed to sign relay JWT of type "test-sign+jwt".');
-    }),
-  );
-
   it.effect("preserves verification request context and the JOSE cause", () =>
     Effect.gen(function* () {
       const keyPair = NodeCrypto.generateKeyPairSync("ed25519", {

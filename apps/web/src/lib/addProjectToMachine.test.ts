@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { cloneUrlForProtocol, cloneUrlProtocol, isDefaultCopiedFile } from "./addProjectToMachine";
+import { cloneUrlForProtocol, cloneUrlProtocol } from "./addProjectToMachine";
 
 describe("cloneUrlForProtocol", () => {
   it("switches between scp-style SSH and HTTPS", () => {
@@ -32,15 +32,5 @@ describe("cloneUrlForProtocol", () => {
     );
     expect(cloneUrlForProtocol("/srv/git/repo.git", "https")).toBeNull();
     expect(cloneUrlProtocol("file:///srv/git/repo.git")).toBeNull();
-  });
-});
-
-describe("isDefaultCopiedFile", () => {
-  it("selects env files anywhere in the tree", () => {
-    expect(
-      [".env", "apps/web/.env.local", ".envrc", ".dev.vars", "dist.log", ".environment"].filter(
-        isDefaultCopiedFile,
-      ),
-    ).toEqual([".env", "apps/web/.env.local", ".envrc", ".dev.vars"]);
   });
 });

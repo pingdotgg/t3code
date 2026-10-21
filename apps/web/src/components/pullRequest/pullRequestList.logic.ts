@@ -753,7 +753,7 @@ export function rankPullRequestsBlockedOnAuthor<Entry extends PullRequestListEnt
   });
 }
 
-export function rankPullRequestsBlockedOnReviewer<Entry extends PullRequestListEntry>(
+function rankPullRequestsBlockedOnReviewer<Entry extends PullRequestListEntry>(
   entries: ReadonlyArray<Entry>,
 ): ReadonlyArray<Entry> {
   return rankByTierThenRecency(entries, (entry) => (entry.state === "open" ? 0 : 1));

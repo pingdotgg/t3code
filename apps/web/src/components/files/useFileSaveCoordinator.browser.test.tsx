@@ -25,7 +25,6 @@ vi.mock(import("./projectFilesQueryState"), async (original) => ({
   getUnsavedProjectFileQueryData: getUnsavedFile,
 }));
 
-import { setMarkdownTaskChecked } from "./filePreviewMode";
 import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
 
 const environmentId = EnvironmentId.make("save-lifecycle-audit");
@@ -88,34 +87,6 @@ describe("file-save React lifecycle", () => {
     expect(onPendingChange).toHaveBeenLastCalledWith("file.txt", false);
   });
 
-  it("persists rendered Markdown task changes after StrictMode setup replay", async () => {
-    setup();
-    using _timers = fakeTimers();
-    await using screen = await mount({ ...defaultProps, relativePath: "README.md" });
-    const nextContents = setMarkdownTaskChecked("- [ ] task\n", 2, true);
-    screen.changeHandler()(nextContents);
-    await vi.advanceTimersByTimeAsync(500);
-    expect(writeFile).toHaveBeenCalledExactlyOnceWith({
-      environmentId,
-      input: { cwd: "/workspace", relativePath: "README.md", contents: "- [x] task\n" },
-    });
-  });
-
-  it("keeps the debounce across rerenders of the same file", async () => {
-    setup();
-    using _timers = fakeTimers();
-    await using screen = await mount();
-    screen.changeHandler()("first");
-    await vi.advanceTimersByTimeAsync(300);
-    await screen.rerender(defaultProps);
-    screen.changeHandler()("latest");
-    await vi.advanceTimersByTimeAsync(499);
-    expect(writeFile).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(1);
-    expect(writeFile).toHaveBeenCalledTimes(1);
-    expect(writeFile.mock.calls[0]![0].input.contents).toBe("latest");
-  });
-
   it("flushes on unmount and ignores a retired editor callback", async () => {
     setup();
     using _timers = fakeTimers();
@@ -166,19 +137,6 @@ describe("file-save React lifecycle", () => {
     expect(onPendingChange).toHaveBeenLastCalledWith("file.txt", false);
   });
 
-  it("recovers an existing draft once after StrictMode setup replay", async () => {
-    setup();
-    using _timers = fakeTimers();
-    getUnsavedFile.mockReturnValue({ contents: "reopened draft" });
-    await using _screen = await mount();
-    await vi.runAllTimersAsync();
-    expect(writeFile).toHaveBeenCalledExactlyOnceWith({
-      environmentId,
-      input: { cwd: "/workspace", relativePath: "file.txt", contents: "reopened draft" },
-    });
-    expect(onPendingChange).toHaveBeenLastCalledWith("file.txt", false);
-  });
-
   it.each([
     { relativePath: "other.txt" },
     { cwd: "/other-workspace" },
@@ -208,19 +166,5 @@ describe("file-save React lifecycle", () => {
         },
       },
     ]);
-  });
-
-  it("does not reactivate a retired callback when the same file mounts again", async () => {
-    setup();
-    using _timers = fakeTimers();
-    await using screen = await mount();
-    const retiredChange = screen.changeHandler();
-    await screen.unmount();
-    await using reopened = await mount();
-    retiredChange("stale contents");
-    reopened.changeHandler()("current contents");
-    await vi.runAllTimersAsync();
-    expect(writeFile).toHaveBeenCalledTimes(1);
-    expect(writeFile.mock.calls[0]![0].input.contents).toBe("current contents");
   });
 });

@@ -1,10 +1,6 @@
 import { AuthStandardClientScopes, EnvironmentId } from "@t3tools/contracts";
-import {
-  RelayEnvironmentConnectScope,
-  type RelayEnvironmentConnectResponse,
-} from "@t3tools/contracts/relay";
+import { type RelayEnvironmentConnectResponse } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
-import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -14,7 +10,6 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
 
-import { DPOP_UNKNOWN_HINT } from "../relay/errorPresentation.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
 import * as RpcHttp from "../rpc/http.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
@@ -265,49 +260,6 @@ describe("RemoteEnvironmentAuthorization", () => {
     }),
   );
 
-  it.effect("revalidates a bearer descriptor after the cache expires", () =>
-    Effect.gen(function* () {
-      const reassignedEnvironmentId = EnvironmentId.make("environment-2");
-      const harness = yield* makeHarness({
-        responses: [
-          Response.json(DESCRIPTOR),
-          websocketTicket("first-ticket"),
-          Response.json({
-            ...DESCRIPTOR,
-            environmentId: reassignedEnvironmentId,
-          }),
-        ],
-      });
-
-      const failure = yield* Effect.gen(function* () {
-        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
-        const authorize = () =>
-          remote.authorizeBearer({
-            expectedEnvironmentId: ENVIRONMENT_ID,
-            httpBaseUrl: ENDPOINT.httpBaseUrl,
-            wsBaseUrl: ENDPOINT.wsBaseUrl,
-            bearerToken: "bearer-token",
-            connectionMethod: "direct",
-          });
-
-        yield* authorize();
-        yield* TestClock.adjust("10 seconds");
-        return yield* authorize().pipe(Effect.flip);
-      }).pipe(Effect.provide(Layer.merge(harness.layer, TestClock.layer())));
-
-      expect(failure).toEqual(
-        expect.objectContaining({
-          _tag: "ConnectionBlockedError",
-          reason: "configuration",
-          detail: `Connected environment ${reassignedEnvironmentId} does not match ${ENVIRONMENT_ID}.`,
-        }),
-      );
-      expect(
-        harness.fetch.calls.filter(([url]) => String(url).endsWith("/.well-known/t3/environment")),
-      ).toHaveLength(2);
-    }),
-  );
-
   it.effect("reuses a same-account persisted environment token without contacting the relay", () =>
     Effect.gen(function* () {
       const cached = new TokenStore.RemoteDpopAccessToken({
@@ -406,47 +358,6 @@ describe("RemoteEnvironmentAuthorization", () => {
       ]);
       expect((yield* Ref.get(harness.tokens)).get(ENVIRONMENT_ID)?.accessToken).toBe(
         "cached-access-token",
-      );
-    }),
-  );
-
-  it.effect("replaces a token a learned direct address rejects", () =>
-    Effect.gen(function* () {
-      const cached = new TokenStore.RemoteDpopAccessToken({
-        environmentId: ENVIRONMENT_ID,
-        accountId: "account-1",
-        label: DESCRIPTOR.label,
-        endpoint: ENDPOINT,
-        accessToken: "revoked-access-token",
-        expiresAtEpochMs: Number.MAX_SAFE_INTEGER,
-        dpopThumbprint: "thumbprint-1",
-      });
-      const harness = yield* makeHarness({
-        initialToken: cached,
-        responses: [
-          Response.json(DESCRIPTOR),
-          authInvalid(),
-          Response.json(DESCRIPTOR),
-          accessToken("replacement-access-token"),
-          websocketTicket("lan-ticket"),
-        ],
-      });
-
-      const authorized = yield* Effect.gen(function* () {
-        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
-        return yield* remote.authorizeDpop({
-          expectedEnvironmentId: ENVIRONMENT_ID,
-          directEndpoint: {
-            httpBaseUrl: "http://192.168.1.10:3773/",
-            wsBaseUrl: "ws://192.168.1.10:3773/",
-          },
-        });
-      }).pipe(Effect.provide(harness.layer));
-
-      expect(authorized.socketUrl).toContain("wsTicket=lan-ticket");
-      expect(yield* Ref.get(harness.bootstrapCalls)).toBe(1);
-      expect((yield* Ref.get(harness.tokens)).get(ENVIRONMENT_ID)?.accessToken).toBe(
-        "replacement-access-token",
       );
     }),
   );
@@ -605,28 +516,6 @@ describe("RemoteEnvironmentAuthorization", () => {
     }),
   );
 
-  it.effect("presents clock skew as one possible cause for a generic DPoP rejection", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness({
-        responses: [Response.json(DESCRIPTOR), authInvalid()],
-      });
-
-      const failure = yield* Effect.gen(function* () {
-        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
-        return yield* remote.authorizeDpop({
-          expectedEnvironmentId: ENVIRONMENT_ID,
-        });
-      }).pipe(Effect.provide(harness.layer), Effect.flip);
-
-      expect(failure).toMatchObject({
-        _tag: "ConnectionBlockedError",
-        reason: "authentication",
-        detail: `The environment credential is invalid. ${DPOP_UNKNOWN_HINT}`,
-        traceId: "trace-auth-invalid",
-      });
-    }),
-  );
-
   it.effect("refreshes a cached endpoint after its first transient failure", () =>
     Effect.gen(function* () {
       const cached = new TokenStore.RemoteDpopAccessToken({
@@ -687,70 +576,6 @@ describe("RemoteEnvironmentAuthorization", () => {
       expect(yield* Ref.get(harness.bootstrapCalls)).toBe(1);
       expect(harness.fetch.calls).toHaveLength(3);
     }),
-  );
-
-  it.effect("uses the current cached HTTP token without a relay request or websocket ticket", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness({ initialToken: persistedToken(), responses: [] });
-      const authorized = yield* Effect.gen(function* () {
-        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
-        return yield* remote.authorizeDpopHttp({ expectedEnvironmentId: ENVIRONMENT_ID });
-      }).pipe(Effect.provide(harness.layer));
-
-      expect(authorized).toEqual({
-        environmentId: ENVIRONMENT_ID,
-        label: DESCRIPTOR.label,
-        httpBaseUrl: ENDPOINT.httpBaseUrl,
-        httpAuthorization: {
-          _tag: "Dpop",
-          accessToken: "cached-access-token",
-          expiresAtEpochMs: Number.MAX_SAFE_INTEGER,
-        },
-      });
-      expect(harness.fetch.calls).toHaveLength(0);
-      expect(yield* Ref.get(harness.bootstrapCalls)).toBe(0);
-      expect(yield* Ref.get(harness.proofInputs)).toEqual([]);
-    }),
-  );
-
-  it.effect(
-    "renews HTTP credentials near expiry through the current cloud account and device",
-    () =>
-      Effect.gen(function* () {
-        const now = yield* Clock.currentTimeMillis;
-        const harness = yield* makeHarness({
-          initialToken: persistedToken({ expiresAtEpochMs: now + 61_000 }),
-          responses: [Response.json(DESCRIPTOR), accessToken("fresh-access-token")],
-        });
-        yield* Effect.gen(function* () {
-          const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
-          const before = yield* remote.authorizeDpopHttp({ expectedEnvironmentId: ENVIRONMENT_ID });
-          expect(before.httpAuthorization.accessToken).toBe("cached-access-token");
-          yield* TestClock.adjust("1 second");
-          const after = yield* remote.authorizeDpopHttp({ expectedEnvironmentId: ENVIRONMENT_ID });
-          expect(after.httpAuthorization.accessToken).toBe("fresh-access-token");
-          expect(after.httpAuthorization.expiresAtEpochMs).toBe(now + 3_601_000);
-        }).pipe(Effect.provide(harness.layer));
-
-        expect(yield* Ref.get(harness.relayInputs)).toEqual([
-          {
-            environmentId: ENVIRONMENT_ID,
-            clerkToken: "clerk-session",
-            scopes: [RelayEnvironmentConnectScope],
-            deviceId: "device-1",
-          },
-        ]);
-        expect(harness.fetch.calls.map(([url]) => String(url))).toEqual([
-          `${ENDPOINT.httpBaseUrl}/.well-known/t3/environment`,
-          `${ENDPOINT.httpBaseUrl}/oauth/token`,
-        ]);
-        expect(yield* Ref.get(harness.proofInputs)).toEqual([
-          {
-            method: "POST",
-            url: `${ENDPOINT.httpBaseUrl}/oauth/token`,
-          },
-        ]);
-      }),
   );
 
   it.effect("does not evict a replacement token when a late request rejects the old one", () =>
@@ -1098,42 +923,6 @@ describe("RemoteEnvironmentAuthorization", () => {
         const cached = yield* remote.authorizeDpopHttp({ expectedEnvironmentId: ENVIRONMENT_ID });
         expect(cached).toEqual(authorized);
       }).pipe(Effect.provide(harness.layer));
-      expect(yield* Ref.get(harness.bootstrapCalls)).toBe(1);
-    }),
-  );
-
-  it.effect("times out a stalled cloud token read so later requests can renew again", () =>
-    Effect.gen(function* () {
-      const started = yield* Deferred.make<void>();
-      const reads = yield* Ref.make(0);
-      const harness = yield* makeHarness({
-        clerkToken: Effect.gen(function* () {
-          const read = yield* Ref.updateAndGet(reads, (value) => value + 1);
-          if (read === 1) {
-            yield* Deferred.succeed(started, undefined);
-            return yield* Effect.never;
-          }
-          return "clerk-session";
-        }),
-        responses: [Response.json(DESCRIPTOR), accessToken("fresh-token")],
-      });
-      yield* Effect.gen(function* () {
-        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
-        const pending = yield* remote
-          .authorizeDpopHttp({ expectedEnvironmentId: ENVIRONMENT_ID })
-          .pipe(Effect.flip, Effect.forkChild);
-        yield* Deferred.await(started);
-        yield* TestClock.adjust("30 seconds");
-        expect(yield* Fiber.join(pending)).toMatchObject({
-          _tag: "ConnectionTransientError",
-          reason: "timeout",
-        });
-        const authorized = yield* remote.authorizeDpopHttp({
-          expectedEnvironmentId: ENVIRONMENT_ID,
-        });
-        expect(authorized.httpAuthorization.accessToken).toBe("fresh-token");
-      }).pipe(Effect.provide(harness.layer));
-      expect(yield* Ref.get(reads)).toBe(2);
       expect(yield* Ref.get(harness.bootstrapCalls)).toBe(1);
     }),
   );

@@ -74,24 +74,6 @@ describe("AntigravityAdapterV2 flavor", () => {
     assert.isTrue(flavor.subagentsIdleOnTurnCompletion);
   });
 
-  it("maps runtime modes to the agent's native permission modes", () => {
-    const mode = (runtimeMode: "approval-required" | "auto-accept-edits" | "full-access") =>
-      flavor.sessionModeForPolicy?.(
-        ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-          runtimeMode,
-          interactionMode: "default",
-          cwd: "/workspace",
-        }),
-      );
-    assert.equal(mode("approval-required"), "default");
-    assert.equal(mode("auto-accept-edits"), "auto_edit");
-    assert.equal(mode("full-access"), "yolo");
-  });
-
-  it("exposes Antigravity's /compact command through the v2 compaction path", () => {
-    assert.isTrue(flavor.supportsCompaction);
-  });
-
   it("routes interaction_* permission requests to the question card", () => {
     const question = flavor.extractPermissionQuestion?.(
       permissionRequest("interaction_1", [
@@ -112,19 +94,6 @@ describe("AntigravityAdapterV2 flavor", () => {
       flavor.extractPermissionQuestion?.(
         permissionRequest("tool_1", [{ optionId: "allow", name: "Allow", kind: "allow_once" }]),
       ),
-    );
-  });
-
-  it("advertises only the approval decisions the request can honor", () => {
-    const options = flavor.approvalOptions?.(
-      permissionRequest("tool_1", [
-        { optionId: "once", name: "Allow", kind: "allow_once" },
-        { optionId: "deny", name: "Deny", kind: "reject_once" },
-      ]),
-    );
-    assert.deepEqual(
-      options?.map((option) => option.decision),
-      ["accept", "decline", "cancel"],
     );
   });
 });

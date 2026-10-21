@@ -33,7 +33,7 @@ const GiB = 1024 ** 3;
  * working. Small machines still give agents at least half of RAM before
  * throttling and three quarters before a kill.
  */
-export function agentSliceMemoryLimits(totalBytes: number) {
+function agentSliceMemoryLimits(totalBytes: number) {
   return {
     high: Math.max(totalBytes - 6 * GiB, Math.floor(totalBytes / 2)),
     max: Math.max(totalBytes - 4 * GiB, Math.floor(totalBytes * 0.75)),

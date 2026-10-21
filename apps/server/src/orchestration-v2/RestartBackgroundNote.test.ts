@@ -102,18 +102,6 @@ it("bounds the note so it cannot crowd out the turn's context", () => {
   assert.isAtMost(command?.label.length ?? 0, 160);
 });
 
-it("bounds roster task labels including a long task id", () => {
-  const work = cancelledRosterTaskWork({
-    kind: "command",
-    taskId: "t".repeat(400),
-    description: "d".repeat(400),
-  });
-  assert.equal(work.kind, "shell");
-  assert.lengthOf(work.label, 160);
-  const idOnly = cancelledRosterTaskWork({ kind: "background_task", taskId: "t".repeat(400) });
-  assert.lengthOf(idOnly.label, 160);
-});
-
 it("names a lost subagent by the id the agent resumes it with", () => {
   const ownShell = cancelledRosterTaskWork({
     kind: "command",

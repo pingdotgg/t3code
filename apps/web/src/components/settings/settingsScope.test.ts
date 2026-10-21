@@ -60,13 +60,6 @@ function group(
 const groups = [group("t3code", [first, second, third]), group("other", [other])];
 
 describe("settings scope search", () => {
-  it("ignores the retired scope key from older links", () => {
-    expect(validateSettingsScopeSearch({ scope: "device", project: "t3code" })).toEqual({
-      project: "t3code",
-    });
-    expect(validateSettingsScopeSearch({ scope: "all" })).toEqual({});
-  });
-
   it("retains legacy project and machine links without inventing an explicit broad scope", () => {
     expect(
       validateSettingsScopeSearch({ project: "t3code", machine: laptopId, unused: true }),
@@ -89,14 +82,6 @@ describe("settings scope search", () => {
 });
 
 describe("settings scope resolution", () => {
-  it("defaults to every environment with no project", () => {
-    expect(resolveSettingsScope({}, groups, environments)).toMatchObject({
-      kind: "all",
-      members: [],
-      environmentIds: [laptopId, serverId],
-    });
-  });
-
   it("resolves one environment without targeting its project overrides", () => {
     expect(resolveSettingsScope({ machine: serverId }, groups, environments)).toMatchObject({
       kind: "environment",

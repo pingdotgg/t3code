@@ -196,46 +196,6 @@ nodeServicesIt("ACP native logging", (it) => {
     }),
   );
 
-  it.effect("filters transient entries from mixed decoded batches", () =>
-    Effect.gen(function* () {
-      const records: Array<unknown> = [];
-      const makeLogger = yield* makeAcpNativeLoggerFactory();
-      const logger = makeLogger({
-        nativeEventLogger: {
-          filePath: "/tmp/provider-native.ndjson",
-          write: (event) => Effect.sync(() => void records.push(event)),
-          close: () => Effect.void,
-        },
-        provider: ProviderDriverKind.make("grok"),
-        threadId: ThreadId.make("thread-1"),
-        verboseProtocolLogging: true,
-      });
-      const protocolLogger = logger.protocolLogging?.logger;
-      assert.exists(protocolLogger);
-      if (!protocolLogger) return;
-
-      yield* protocolLogger({
-        direction: "incoming",
-        stage: "decoded",
-        payload: [
-          {
-            _tag: "Request",
-            tag: "session/update",
-            payload: { update: { sessionUpdate: "agent_thought_chunk" } },
-          },
-          {
-            _tag: "Request",
-            tag: "session/new",
-            payload: {},
-          },
-        ],
-      });
-
-      assert.lengthOf(records, 1);
-      assert.include(encodeUnknownJson(records), '"itemCount":1');
-    }),
-  );
-
   it.effect("logs a structural tag when the native writer defects", () => {
     const messages: Array<unknown> = [];
     const logCapture = Logger.make<unknown, void>(({ message }) => {

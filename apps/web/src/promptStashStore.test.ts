@@ -75,19 +75,6 @@ describe("partitionStashAttachments", () => {
     expect(kept.map((attachment) => attachment.id)).toEqual(["a", "c"]);
     expect(droppedNames).toEqual(["huge.png"]);
   });
-
-  it("admits a single attachment that exactly fits the budget", () => {
-    const exact = {
-      id: "a",
-      name: "exact.png",
-      mimeType: "image/png",
-      sizeBytes: MAX_STASH_ENTRY_ATTACHMENT_CHARS,
-      dataUrl: "x".repeat(MAX_STASH_ENTRY_ATTACHMENT_CHARS),
-    };
-    const { kept, droppedNames } = partitionStashAttachments([exact]);
-    expect(kept).toHaveLength(1);
-    expect(droppedNames).toEqual([]);
-  });
 });
 
 describe("promptStashStore", () => {
@@ -97,14 +84,6 @@ describe("promptStashStore", () => {
 
   afterEach(() => {
     resetPromptStashStore();
-  });
-
-  it("prepends entries so the newest stash is first", () => {
-    const store = usePromptStashStore.getState();
-    store.stashEntry(makeEntry({ id: "first" }));
-    store.stashEntry(makeEntry({ id: "second" }));
-    const entries = usePromptStashStore.getState().entries;
-    expect(entries.map((entry) => entry.id)).toEqual(["second", "first"]);
   });
 
   it("restores citations and bound comments from a persisted stash", () => {

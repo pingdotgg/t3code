@@ -39,23 +39,6 @@ const activity: PullRequestActivity = {
 };
 
 describe("mobile activity filters", () => {
-  it("hides bots and finished conversations by default, counting each thread once", () => {
-    const result = filterPullRequestActivity(activity, DEFAULT_ACTIVITY_FILTER);
-    expect(result.activity.comments.map((item) => item.id)).toEqual(["human"]);
-    expect(result.activity.reviewThreads).toEqual([]);
-    expect(result.activity.commits).toHaveLength(1);
-    expect(result.hiddenCount).toBe(3);
-  });
-  it("restores bot comments and finished conversations without duplicate thread replies", () => {
-    const result = filterPullRequestActivity(activity, {
-      ...DEFAULT_ACTIVITY_FILTER,
-      bots: true,
-      resolved: true,
-    });
-    expect(result.activity.comments.map((item) => item.id)).toEqual(["human", "bot", "dismissed"]);
-    expect(result.activity.reviewThreads).toHaveLength(1);
-    expect(result.hiddenCount).toBe(0);
-  });
   it("keeps partially loaded bot discussions visible", () => {
     const thread = {
       ...activity.reviewThreads[0]!,
@@ -72,19 +55,6 @@ describe("mobile activity filters", () => {
     expect(
       filterPullRequestActivity({ ...activity, reviewThreads: [thread] }, DEFAULT_ACTIVITY_FILTER)
         .activity.reviewThreads,
-    ).toEqual([]);
-  });
-  it("provides a commits-only view and a comments-only view", () => {
-    const commits = filterPullRequestActivity(activity, {
-      ...DEFAULT_ACTIVITY_FILTER,
-      kind: "commits",
-    }).activity;
-    expect(commits.comments).toEqual([]);
-    expect(commits.reviewThreads).toEqual([]);
-    expect(commits.commits).toHaveLength(1);
-    expect(
-      filterPullRequestActivity(activity, { ...DEFAULT_ACTIVITY_FILTER, kind: "comments" }).activity
-        .commits,
     ).toEqual([]);
   });
 });

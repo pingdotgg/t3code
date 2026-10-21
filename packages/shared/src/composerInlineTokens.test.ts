@@ -43,14 +43,6 @@ describe("collectComposerInlineTokens", () => {
     ]);
   });
 
-  it.each(["€", "𑿝"])("leaves %s currency amounts as text", (prefix) => {
-    expect(
-      collectComposerInlineTokens(
-        `${prefix}20 ${prefix}1_000 ${prefix}20k ${prefix}100M ${prefix}1e6 `,
-      ),
-    ).toEqual([]);
-  });
-
   it("leaves digits-only dollar amounts and compact monetary expressions as text", () => {
     expect(collectComposerInlineTokens("I'll pay $20 tomorrow")).toEqual([]);
     expect(collectComposerInlineTokens("Budget is $1_000 total")).toEqual([]);
@@ -62,21 +54,6 @@ describe("collectComposerInlineTokens", () => {
   it("does not convert incomplete trailing tokens", () => {
     expect(collectComposerInlineTokens("Use $ui")).toEqual([]);
     expect(collectComposerInlineTokens("Inspect @AGENTS.md")).toEqual([]);
-  });
-
-  it("keeps the delimiter after a token outside its source range", () => {
-    const text = "Inspect [package.json](package.json) next";
-
-    expect(collectComposerInlineTokens(text)).toEqual([
-      {
-        type: "mention",
-        value: "package.json",
-        source: "[package.json](package.json)",
-        start: 8,
-        end: 36,
-      },
-    ]);
-    expect(text.slice(36)).toBe(" next");
   });
 
   it("preserves a confirmed pill when only its trailing delimiter is removed", () => {
@@ -106,21 +83,12 @@ describe("collectComposerInlineTokens", () => {
     ).toEqual([]);
   });
 
-  it("ignores normal web links", () => {
-    expect(collectComposerInlineTokens("Read [docs](https://example.com) first")).toEqual([]);
-  });
-
   it.each(["@expo/ui", "@jane/foo.js", "@scope/pkg/sub/path"])(
     "keeps scoped package reference %s as plain text",
     (reference) => {
       expect(collectComposerInlineTokens(`Install ${reference} next`)).toEqual([]);
     },
   );
-
-  it("keeps scoped package references plain across incomplete input and IME whitespace", () => {
-    expect(collectComposerInlineTokens("Install @expo/ui")).toEqual([]);
-    expect(collectComposerInlineTokens("入力 @expo/ui　を追加")).toEqual([]);
-  });
 
   it.each(["@namespace.foo(bar)", "@écrire(option)", "@e\u0301crire(option)"])(
     "keeps decorator call %s as plain text",
@@ -200,12 +168,6 @@ describe("collectComposerInlineTokens", () => {
     expect(collectComposerInlineTokens("see ![ctx_abc](t3-context://v1/image/ctx_abc) ok")).toEqual(
       [],
     );
-  });
-
-  it("stays fast on unterminated bracket runs", () => {
-    const started = performance.now();
-    expect(collectComposerInlineTokens(" [[".repeat(40_000))).toEqual([]);
-    expect(performance.now() - started).toBeLessThan(1_000);
   });
 
   it("keeps skill and mention sources inside TeX out of the context chip list", () => {

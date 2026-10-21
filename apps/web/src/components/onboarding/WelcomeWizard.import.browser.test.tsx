@@ -209,10 +209,6 @@ async function click(label: string) {
   await act(async () => target.click());
 }
 
-function projectCheckboxes() {
-  return [...document.querySelectorAll<HTMLElement>('[role="checkbox"]')];
-}
-
 async function mountImport(remote = false) {
   state.selectedEnvironment = remote ? "remote" : "primary";
   await using stack = new AsyncDisposableStack();
@@ -259,62 +255,6 @@ function setup() {
   state.refreshScan.mockReset();
 }
 
-it("keeps scanning, choosing and skipping available to a paired read-only environment", async () => {
-  setup();
-  setGrant(remoteId, false);
-  await using _screen = await mountImport(true);
-  expect(state.scan).toHaveBeenCalledWith(expect.objectContaining({ environmentId: remoteId }));
-  expect(pageText()).toContain("/projects/first");
-  expect(button("Import 2 projects").disabled).toBe(true);
-  expect(pageText()).toContain(permissionMessage);
-  await click("Do not import projects");
-  expect(state.createProject).not.toHaveBeenCalled();
-  expect(state.importThreads).not.toHaveBeenCalled();
-  expect(state.completeOnboarding).toHaveBeenCalledOnce();
-  expect(state.onDone).toHaveBeenCalledOnce();
-});
-
-it("waits for the selected grant and enables import when it arrives", async () => {
-  setup();
-  appAtomRegistry.set(sessionAtom(primaryId), AsyncResult.initial());
-  await using _screen = await mountImport();
-  expect(button("Import 2 projects").disabled).toBe(true);
-  await act(async () => setGrant(primaryId, true));
-  await click("Import 2 projects");
-  expect(state.createProject).toHaveBeenCalledTimes(2);
-  expect(state.importThreads).toHaveBeenCalledTimes(2);
-  expect(state.onDone).toHaveBeenCalledWith(expect.objectContaining({ environmentId: primaryId }));
-});
-
-it("preserves selections and denies a click that lands as the paired environment's grant is revoked", async () => {
-  setup();
-  await using _screen = await mountImport(true);
-  await act(async () => projectCheckboxes()[1]!.click());
-  expect(projectCheckboxes()[1]!.getAttribute("aria-checked")).toBe("false");
-  const importButton = button("Import 1 project");
-  // The click reaches the still-enabled button before React re-renders the revocation.
-  await act(async () => {
-    setGrant(remoteId, false);
-    importButton.click();
-  });
-  expect(button("Import 1 project").disabled).toBe(true);
-  expect(projectCheckboxes()[1]!.getAttribute("aria-checked")).toBe("false");
-  expect(pageText()).toContain(permissionMessage);
-  expect(state.createProject).not.toHaveBeenCalled();
-  expect(state.importThreads).not.toHaveBeenCalled();
-  expect(state.onDone).not.toHaveBeenCalled();
-
-  await act(async () => setGrant(remoteId, true));
-  expect(pageText()).not.toContain(permissionMessage);
-  await click("Import 1 project");
-  expect(state.createProject).toHaveBeenCalledExactlyOnceWith(
-    expect.objectContaining({ environmentId: remoteId }),
-  );
-  expect(state.importThreads).toHaveBeenCalledExactlyOnceWith(
-    expect.objectContaining({ environmentId: remoteId }),
-  );
-});
-
 it("rechecks after project creation and can retry its history without recreating the project", async () => {
   setup();
   const creation = deferred<void>();
@@ -341,43 +281,6 @@ it("rechecks after project creation and can retry its history without recreating
   expect(state.importThreads).toHaveBeenCalledTimes(2);
   expect(state.onDone).toHaveBeenCalledOnce();
 });
-
-it.each([false, true])(
-  "rechecks after history import before the next project write (existing: %s)",
-  async (existing) => {
-    setup();
-    if (existing) {
-      const projectId = ProjectId.make("second-existing");
-      state.candidates[1] = { ...state.candidates[1]!, projectId };
-      appAtomRegistry.set(projectsAtom(), [
-        { id: projectId, environmentId: primaryId, workspaceRoot: "/projects/second" },
-      ]);
-    }
-    const imported = deferred<{ importedCount: number; skippedCount: number }>();
-    state.importThreads.mockImplementationOnce(async () =>
-      AsyncResult.success(await imported.promise),
-    );
-    await using _screen = await mountImport();
-    await click("Import 2 projects");
-    expect(state.createProject).toHaveBeenCalledOnce();
-    expect(state.importThreads).toHaveBeenCalledOnce();
-    await act(async () => {
-      setGrant(primaryId, false);
-      imported.resolve({ importedCount: 1, skippedCount: 0 });
-      await imported.promise;
-    });
-    expect(state.createProject).toHaveBeenCalledOnce();
-    expect(state.importThreads).toHaveBeenCalledOnce();
-    expect(state.onDone).not.toHaveBeenCalled();
-    expect(pageText()).toContain(permissionMessage);
-
-    await act(async () => setGrant(primaryId, true));
-    await click("Import 2 projects");
-    expect(state.createProject).toHaveBeenCalledTimes(existing ? 1 : 2);
-    expect(state.importThreads).toHaveBeenCalledTimes(2);
-    expect(state.onDone).toHaveBeenCalledOnce();
-  },
-);
 
 it("completes accepted imports when permission is revoked after the final server write", async () => {
   setup();

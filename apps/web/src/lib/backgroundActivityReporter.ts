@@ -75,7 +75,7 @@ function resolveClientKind(): ClientActivityReportInput["clientKind"] {
   return window.desktopBridge ? "desktop-renderer" : "web";
 }
 
-export function wasRecentlyInteracted(lastInteractionAtMs: number, observedAtMs: number): boolean {
+function wasRecentlyInteracted(lastInteractionAtMs: number, observedAtMs: number): boolean {
   return (
     lastInteractionAtMs <= observedAtMs &&
     observedAtMs - lastInteractionAtMs <= RECENT_INTERACTION_WINDOW_MS

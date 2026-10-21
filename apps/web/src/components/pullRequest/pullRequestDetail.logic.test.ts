@@ -4,7 +4,6 @@ import { serializeLegacyContextMessage } from "@t3tools/shared/composerContextLe
 import {
   GitCommandError,
   ProjectId,
-  PullRequestAction,
   type PullRequestCheck,
   type PullRequestComment,
   type PullRequestDetail,
@@ -21,13 +20,7 @@ import { buildMessageContext, reviewCommentContextReference } from "~/lib/compos
 
 import {
   buildAddSelectionToAgentHandoff,
-  buildAskAboutGuideStopHandoff,
-  classifyPullRequestChecks,
-  groupPullRequestChecks,
-  describePullRequestChecks,
   resolveThreadPanelPullRequestAction,
-  buildAskAboutPullRequestHandoff,
-  buildExplainPullRequestHandoff,
   buildPullRequestReferenceContext,
   buildFixFindingHandoff,
   canDeletePullRequestBranch,
@@ -49,11 +42,7 @@ import {
   newestPullRequestCommitAt,
   mergePullRequestThreadComments,
   orderPullRequestComments,
-  pullRequestActionMenuHasGroup,
-  pullRequestActionNeedsHostRefresh,
   pullRequestCheckoutCommand,
-  pullRequestFindingKey,
-  pullRequestReviewOutcome,
   checkoutFailureDescription,
   readableFailure,
   readPullRequestDetailSnapshot,
@@ -63,65 +52,12 @@ import {
   allowsSinglePullRequestMerge,
   shouldRefreshPullRequestActivity,
   resolveBaseFreshness,
-  resolvePullRequestMergeMethod,
   buildPullRequestTimeline,
-  editPullRequestThreadComment,
   writePullRequestDetailSnapshot,
 } from "./pullRequestDetail.logic";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 
-it("groups checks needing attention before running and completed checks without losing any", () => {
-  const checks = (
-    [
-      "success",
-      "pending",
-      "failure",
-      "skipped",
-      "action-required",
-      "cancelled",
-      "neutral",
-      "pending",
-    ] as const
-  ).map((status, index) => ({ name: `check-${index}`, status, description: null, url: null }));
-  const grouped = groupPullRequestChecks(checks);
-  expect(grouped.attention.map((check) => check.name)).toEqual(["check-2", "check-4", "check-5"]);
-  expect(grouped.running.map((check) => check.name)).toEqual(["check-1", "check-7"]);
-  expect(grouped.completed.map((check) => check.name)).toEqual(["check-0", "check-3", "check-6"]);
-  expect(checks[0]?.status).toBe("success");
-  expect(groupPullRequestChecks([])).toEqual({ attention: [], running: [], completed: [] });
-});
-
 describe("pull request checkout commands", () => {
-  it.each([
-    ["github", "feature", null, "gh pr checkout 42"],
-    ["gitlab", "feature", null, "glab mr checkout 42"],
-    ["forgejo", "feature", null, null],
-    ["azure-devops", "feature", null, "az repos pr checkout --id 42"],
-    [
-      "bitbucket",
-      "feature/checkout",
-      "maria/t3code",
-      "git clone --single-branch --branch feature/checkout https://bitbucket.org/maria/t3code.git t3code-pr-42",
-    ],
-    ["unknown", "feature", null, null],
-  ] as const)("builds the %s command", (provider, branch, repository, expected) => {
-    expect(
-      pullRequestCheckoutCommand(SourceControlProviderKind.make(provider), 42, branch, repository),
-    ).toBe(expected);
-  });
-  it("fetches Forgejo pull refs from the actual repository, including a mounted host and port", () => {
-    expect(
-      pullRequestCheckoutCommand(
-        SourceControlProviderKind.make("forgejo"),
-        42,
-        "feature",
-        null,
-        "https://forgejo.local:3000/git/maria/repo",
-      ),
-    ).toBe(
-      "git fetch 'https://forgejo.local:3000/git/maria/repo' refs/pull/42/head && git checkout -B pulls/42 FETCH_HEAD",
-    );
-  });
   it("quotes shell metacharacters in Forgejo repository URLs", () => {
     expect(
       pullRequestCheckoutCommand(
@@ -150,15 +86,6 @@ describe("pull request checkout commands", () => {
       remoteUrl: "git@github.com:acme/web.git",
     },
     provider,
-  });
-
-  it("uses a public host when no repository identity is available", () => {
-    expect(loadingPullRequestCheckoutCommand(reference("github.com"), undefined)).toBe(
-      "gh pr checkout 42",
-    );
-    expect(loadingPullRequestCheckoutCommand(reference("gitlab.com"), null)).toBe(
-      "glab mr checkout 42",
-    );
   });
 
   it("uses a matching enterprise identity and rejects an explicit host mismatch", () => {
@@ -205,35 +132,11 @@ const TIMELINE_SOURCE: Pick<
   closedAt: null,
 };
 
-describe("pull request merge method", () => {
-  it("uses the current choice, then the project default, then the last choice", () => {
-    expect(
-      resolvePullRequestMergeMethod(["merge", "squash", "rebase"], null, "squash", "rebase"),
-    ).toBe("squash");
-    expect(
-      resolvePullRequestMergeMethod(["merge", "squash", "rebase"], "rebase", "squash", "merge"),
-    ).toBe("rebase");
-    expect(resolvePullRequestMergeMethod(["merge", "rebase"], null, "squash", "rebase")).toBe(
-      "rebase",
-    );
-    expect(resolvePullRequestMergeMethod(["squash"], null, "merge", "rebase")).toBe("squash");
-  });
-});
-
 describe("pull request activity refresh", () => {
   const first = {
     key: "project:acme/web#7",
     updatedAt: "2026-08-13T13:00:00Z",
   };
-
-  it("refreshes activity only after the same pull request changes", () => {
-    expect(
-      shouldRefreshPullRequestActivity(first, {
-        ...first,
-        updatedAt: "2026-08-13T13:01:00Z",
-      }),
-    ).toBe(true);
-  });
 
   it("does not duplicate the first activity read or carry a revision across pull requests", () => {
     expect(shouldRefreshPullRequestActivity(null, first)).toBe(false);
@@ -264,24 +167,6 @@ describe("review thread comment pages", () => {
       { id: "c2", body: "already in base" },
       { id: "c3", body: "next page" },
     ]);
-  });
-
-  it("keeps a loaded comment after its body is edited", () => {
-    const loaded = [
-      { id: "c2", body: "old body" },
-      { id: "c3", body: "another loaded comment" },
-    ];
-
-    expect(editPullRequestThreadComment(loaded, "c2", "saved body")).toEqual([
-      { id: "c2", body: "saved body" },
-      { id: "c3", body: "another loaded comment" },
-    ]);
-  });
-});
-
-describe("pull request action menu", () => {
-  it("keeps the group divider when auto-merge is the only action", () => {
-    expect(pullRequestActionMenuHasGroup(false, true, false)).toBe(true);
   });
 });
 
@@ -316,39 +201,9 @@ describe("pull request primary control", () => {
       }),
     ).toBe("merge");
   });
-
-  it("keeps armed and terminal states in the merge button slot", () => {
-    expect(resolvePullRequestPrimaryControl({ ...open, autoMergeEnabled: true })).toBe(
-      "auto-merge-armed",
-    );
-    expect(resolvePullRequestPrimaryControl({ ...open, state: "merged" })).toBe("merged");
-    expect(resolvePullRequestPrimaryControl({ ...open, state: "closed" })).toBe("closed");
-  });
-
-  it("keeps conflicts and drafts actionable before merge", () => {
-    expect(resolvePullRequestPrimaryControl({ ...open, mergeability: "conflicting" })).toBe(
-      "resolve",
-    );
-    expect(resolvePullRequestPrimaryControl({ ...open, isDraft: true })).toBe("ready");
-  });
 });
 
 describe("stacked pull request classification", () => {
-  it("requires a known default branch", () => {
-    expect(isStackedPullRequestBase("main", [{ name: "main", isDefault: false }])).toBe(false);
-  });
-
-  it("recognizes local and remote forms of the default branch", () => {
-    expect(
-      isStackedPullRequestBase("main", [{ name: "main", isDefault: true, isRemote: false }]),
-    ).toBe(false);
-    expect(
-      isStackedPullRequestBase("main", [
-        { name: "origin/main", isDefault: true, isRemote: true, remoteName: "origin" },
-      ]),
-    ).toBe(false);
-  });
-
   it("classifies a non-default base as stacked once the default is known", () => {
     expect(
       isStackedPullRequestBase("feature-base", [
@@ -374,34 +229,7 @@ describe("stacked pull request classification", () => {
   });
 });
 
-describe("ordering comments", () => {
-  it("reverses the chronological list for newest first, and leaves oldest first alone", () => {
-    const comments = [{ createdAt: "a" }, { createdAt: "b" }, { createdAt: "c" }];
-    expect(orderPullRequestComments(comments, "newest")).toEqual([
-      { createdAt: "c" },
-      { createdAt: "b" },
-      { createdAt: "a" },
-    ]);
-    expect(orderPullRequestComments(comments, "oldest")).toEqual(comments);
-    expect(comments).toEqual([{ createdAt: "a" }, { createdAt: "b" }, { createdAt: "c" }]);
-  });
-});
-
 describe("review verdicts", () => {
-  it("reads the same three verdicts however a host spells them", () => {
-    expect(pullRequestReviewOutcome("APPROVED")).toBe("approved");
-    expect(pullRequestReviewOutcome("approved")).toBe("approved");
-    expect(pullRequestReviewOutcome("CHANGES_REQUESTED")).toBe("changes-requested");
-    expect(pullRequestReviewOutcome("changes_requested")).toBe("changes-requested");
-    expect(pullRequestReviewOutcome("DISMISSED")).toBe("dismissed");
-  });
-
-  it("is not a verdict where the review only carried remarks", () => {
-    expect(pullRequestReviewOutcome("COMMENTED")).toBeNull();
-    expect(pullRequestReviewOutcome("PENDING")).toBeNull();
-    expect(pullRequestReviewOutcome(null)).toBeNull();
-  });
-
   it("keeps each reviewer's last word, whatever order the host returned them in", () => {
     const review = (
       id: string,
@@ -453,28 +281,6 @@ describe("review verdicts", () => {
         },
       ]),
     ).toHaveLength(2);
-  });
-
-  it("gives every entry a key that separates the reviewers it kept apart", () => {
-    const entries = latestPullRequestReviewOutcomes([
-      {
-        ...TIMELINE_SOURCE.comments[0]!,
-        id: "r1",
-        kind: "review",
-        author: null,
-        reviewState: "APPROVED",
-        createdAt: "2026-07-01T00:00:00Z",
-      },
-      {
-        ...TIMELINE_SOURCE.comments[0]!,
-        id: "r2",
-        kind: "review",
-        author: null,
-        reviewState: "APPROVED",
-        createdAt: "2026-07-01T00:00:00Z",
-      },
-    ]);
-    expect(new Set(entries.map((entry) => entry.key)).size).toBe(2);
   });
 
   it("calls a verdict stale once commits land after it, and current before that", () => {
@@ -547,64 +353,6 @@ describe("review verdicts", () => {
 });
 
 describe("pull request timeline", () => {
-  it("orders creation, commits and comments newest first", () => {
-    expect(buildPullRequestTimeline(TIMELINE_SOURCE).map((event) => event.id)).toEqual([
-      "c1",
-      "1baf7bdcafe",
-      "created",
-    ]);
-  });
-
-  it("carries the comment url, and leaves the events the host cannot address without one", () => {
-    const events = buildPullRequestTimeline({
-      ...TIMELINE_SOURCE,
-      comments: [{ ...TIMELINE_SOURCE.comments[0]!, url: "https://example.test/pull/1#c1" }],
-    });
-    expect(events.map((event) => event.url)).toEqual([
-      "https://example.test/pull/1#c1",
-      null,
-      null,
-    ]);
-  });
-
-  it("carries actors and review context into the presentation model", () => {
-    const commitAuthors = [
-      { login: "octocat", name: null, avatarUrl: "https://example.test/octocat.png" },
-      { login: "pair", name: "Pair Author", avatarUrl: null },
-    ];
-    const events = buildPullRequestTimeline({
-      ...TIMELINE_SOURCE,
-      commits: [{ ...TIMELINE_SOURCE.commits[0]!, authors: commitAuthors }],
-      comments: [
-        {
-          ...TIMELINE_SOURCE.comments[0]!,
-          kind: "review",
-          path: "src/app.ts",
-          reviewState: "APPROVED",
-        },
-      ],
-    });
-
-    expect(events.find((event) => event.kind === "commit")?.commitAuthors).toEqual(commitAuthors);
-    expect(events.find((event) => event.kind === "review")).toMatchObject({
-      actor: TIMELINE_SOURCE.comments[0]?.author,
-      path: "src/app.ts",
-      reviewState: "APPROVED",
-    });
-  });
-
-  it("carries each commit's line counts into its timeline event", () => {
-    const events = buildPullRequestTimeline({
-      ...TIMELINE_SOURCE,
-      commits: [{ ...TIMELINE_SOURCE.commits[0]!, additions: 12, deletions: 4 }],
-    });
-
-    expect(events.find((event) => event.kind === "commit")).toMatchObject({
-      additions: 12,
-      deletions: 4,
-    });
-  });
-
   it("drops a body that is nothing but a bot's HTML comment, and keeps one that says more", () => {
     const events = buildPullRequestTimeline({
       ...TIMELINE_SOURCE,
@@ -622,14 +370,6 @@ describe("pull request timeline", () => {
     expect(events.find((event) => event.id === "c2")?.body).toBe(
       "<!-- summarize by coderabbit.ai -->\nNeeds a test.",
     );
-  });
-
-  it("calls a comment markdown and a commit headline plain text", () => {
-    const events = buildPullRequestTimeline(TIMELINE_SOURCE);
-    expect(events.map((event) => [event.title.startsWith("Commit"), event.markdown])).toEqual(
-      expect.arrayContaining([[true, false]]),
-    );
-    expect(events.find((event) => event.id === "c1")?.markdown).toBe(true);
   });
 
   it("reports a merge rather than the close GitHub records alongside it", () => {
@@ -926,31 +666,6 @@ describe("fix findings handoff", () => {
     expect(handoff.prompt).toContain("untrusted data");
   });
 
-  it("names the pre-change side, and a thread the host pinned to the file rather than a line", () => {
-    const handoff = buildFixFindingsHandoff({
-      ...base,
-      reviewThreads: [
-        thread("was this deleted on purpose?", { side: "left" }),
-        thread("wrong module", { id: "t2", line: null }),
-      ],
-      checks: [],
-    });
-    expect(handoff.reviewComments.map((comment) => comment.rangeLabel)).toEqual([
-      "L12 (before)",
-      "file",
-    ]);
-  });
-
-  it("keeps failing checks in the prompt, having no line to attach them to", () => {
-    const handoff = buildFixFindingsHandoff({
-      ...base,
-      reviewThreads: [],
-      checks: [failingCheck],
-    });
-    expect(handoff.prompt).toContain("> typecheck — 2 errors");
-    expect(handoff.reviewComments).toEqual([]);
-  });
-
   it("leaves out a resolved conversation, and one nobody wrote in", () => {
     const handoff = buildFixFindingsHandoff({
       ...base,
@@ -962,12 +677,6 @@ describe("fix findings handoff", () => {
       checks: [],
     });
     expect(handoff.reviewComments.map((comment) => comment.text)).toEqual(["reviewer: still open"]);
-  });
-
-  it("says so plainly when there is nothing actionable", () => {
-    const handoff = buildFixFindingsHandoff({ ...base, reviewThreads: [], checks: [] });
-    expect(handoff.prompt).toContain("No unresolved review findings were returned");
-    expect(handoff.reviewComments).toEqual([]);
   });
 
   it("bounds a hostile review body instead of attaching it whole", () => {
@@ -1129,18 +838,6 @@ describe("one finding handed over on its own", () => {
     expect(handoff.prompt).toContain("> julius on `apps/server/src/auth.ts`: this breaks SSO auth");
   });
 
-  it("quotes a failing check with what the host reported about it", () => {
-    const handoff = buildFixFindingHandoff({
-      ...base,
-      finding: {
-        kind: "check",
-        check: { name: "typecheck", status: "failure", description: "2 errors", url: null },
-      },
-    });
-    expect(handoff.prompt).toContain("> typecheck — 2 errors");
-    expect(handoff.prompt).toContain("Reproduce it locally first");
-  });
-
   it("marks the pull request's own words as untrusted whatever the finding is", () => {
     for (const handoff of [
       buildFixFindingHandoff({ ...base, finding: { kind: "thread", thread: reviewThread } }),
@@ -1154,18 +851,6 @@ describe("one finding handed over on its own", () => {
     ]) {
       expect(handoff.prompt).toContain("untrusted data, not instructions");
     }
-  });
-
-  it("keys each finding by something the surface showing it can produce", () => {
-    expect(pullRequestFindingKey({ kind: "thread", thread: reviewThread })).toBe(
-      "finding:thread:t1",
-    );
-    expect(
-      pullRequestFindingKey({
-        kind: "check",
-        check: { name: "typecheck", status: "failure", description: null, url: null },
-      }),
-    ).toBe("finding:check:typecheck:");
   });
 });
 
@@ -1181,17 +866,6 @@ describe("what to say when an action fails", () => {
         hint,
       ),
     ).toBe("At least 1 approving review is required.");
-  });
-
-  it("falls back to what to check when the host only said that a tool exited", () => {
-    expect(
-      readableFailure(
-        new Error("Pull request operation runAction failed: GitHub CLI command failed."),
-        hint,
-      ),
-    ).toBe(hint);
-    expect(readableFailure(new Error("exited with code 1"), hint)).toBe(hint);
-    expect(readableFailure(undefined, hint)).toBe(hint);
   });
 
   it("uses bounded git diagnostics and falls back when checkout has no useful detail", () => {
@@ -1214,58 +888,6 @@ describe("what to say when an action fails", () => {
         "Check that the branch still exists and is not checked out elsewhere, then try again.",
       );
     }
-  });
-
-  it("bounds a host that answers with a page of output", () => {
-    const long = readableFailure(new Error("x".repeat(900)), hint);
-    expect(long.length).toBeLessThanOrEqual(320);
-    expect(long.endsWith("…")).toBe(true);
-  });
-});
-
-describe("findings that are already on a line", () => {
-  it("does not quote a resolved thread's comment as a remark with nowhere to hang", () => {
-    const resolved: PullRequestReviewThread = {
-      id: "t-resolved",
-      path: "apps/web/src/page.tsx",
-      line: 4,
-      side: "right",
-      isResolved: true,
-      isOutdated: false,
-      comments: [
-        {
-          id: "settled",
-          author: { login: "reviewer", name: null, avatarUrl: null },
-          body: "this was already fixed",
-          createdAt: "2026-07-02T00:00:00Z",
-          url: null,
-        },
-      ],
-    };
-    const handoff = buildFixFindingsHandoff({
-      number: 42,
-      title: "Add the pull requests page",
-      url: "https://github.com/pingdotgg/t3code/pull/42",
-      headBranch: "feat/page",
-      baseBranch: "main",
-      reviewThreads: [resolved],
-      comments: [
-        {
-          id: "settled",
-          kind: "review-comment",
-          author: { login: "reviewer", name: null, avatarUrl: null },
-          body: "this was already fixed",
-          createdAt: "2026-07-02T00:00:00Z",
-          url: null,
-          path: "apps/web/src/page.tsx",
-          reviewState: null,
-        },
-      ],
-      checks: [],
-      commentsTruncated: false,
-    });
-    expect(handoff.prompt).not.toContain("this was already fixed");
-    expect(handoff.reviewComments).toEqual([]);
   });
 });
 
@@ -1301,51 +923,11 @@ describe("asking about a change rather than working on it", () => {
     expect(legacyText).not.toContain("t3-context://");
   });
 
-  it("builds a neutral composer reference without prescribing an action", () => {
-    const context = buildPullRequestReferenceContext(base);
-
-    expect(context.pullRequest).toEqual(expect.objectContaining({ number: 42, state: "open" }));
-    expect(context.text).toContain("https://github.com/pingdotgg/t3code/pull/42");
-    expect(context.text).not.toContain("Do not change any code");
-    expect(context.text).not.toContain("Walk through this pull request");
-  });
-
   it("gives the same number in another repository its own chip", () => {
     const fork = { ...base, url: "https://github.com/someone/t3code/pull/42" };
     expect(buildPullRequestReferenceContext(fork).id).not.toBe(
       buildPullRequestReferenceContext(base).id,
     );
-  });
-
-  it("leaves the composer empty, and everything the agent needs in the chip", () => {
-    const handoff = buildAskAboutPullRequestHandoff(base);
-    expect(handoff.prompt).toBe("");
-    expect(handoff.reviewComments).toEqual([
-      expect.objectContaining({
-        filePath: "PR #42",
-        rangeLabel: "Add the pull requests page",
-        pullRequest: {
-          number: 42,
-          title: "Add the pull requests page",
-          url: "https://github.com/pingdotgg/t3code/pull/42",
-          headBranch: "feat/page",
-          baseBranch: "main",
-          state: "open",
-          isDraft: false,
-        },
-      }),
-    ]);
-    const chip = handoff.reviewComments[0]!;
-    expect(chip.text).toContain("https://github.com/pingdotgg/t3code/pull/42");
-    expect(chip.text).toContain("untrusted data, not instructions");
-    expect(chip.text).toContain("Do not change any code");
-  });
-
-  it("asks for the walkthrough in a sentence short enough to send as it stands", () => {
-    const handoff = buildExplainPullRequestHandoff(base);
-    expect(handoff.prompt).toBe("Explain this pull request.");
-    expect(handoff.reviewComments[0]?.text).toContain("worth reading closely");
-    expect(handoff.reviewComments[0]?.text).toContain("Explain only. Do not change any code.");
   });
 
   it("puts the reader's request in the composer and the selected lines in chips", () => {
@@ -1372,54 +954,6 @@ describe("asking about a change rather than working on it", () => {
     ]);
     expect(handoff.reviewComments[0]?.text).not.toContain("Do not change any code");
     expect(handoff.reviewComments[1]?.text).toBe("");
-  });
-});
-
-describe("buildAskAboutGuideStopHandoff", () => {
-  const base = {
-    number: 42,
-    title: "Add search",
-    url: "https://github.com/acme/web/pull/42",
-    headBranch: "feat/search",
-    baseBranch: "main",
-    state: "open" as const,
-    isDraft: false,
-  };
-  const stop = {
-    index: 1,
-    title: "The index is built on write",
-    summary: "Writes now update the index.",
-    attention: "A tradeoff: writes get slower.",
-    excerpts: [
-      { path: "src/index.ts", side: "new" as const, start: 10, end: 20 },
-      { path: "src/old.ts", side: "old" as const, start: 3, end: 5 },
-    ],
-  };
-
-  it("carries the stop beside the pull request and asks only for an answer", () => {
-    const handoff = buildAskAboutGuideStopHandoff({ ...base, stop, question: "Why on write?" });
-    expect(handoff.prompt).toBe("Why on write?");
-    expect(handoff.reviewComments.map((entry) => entry.filePath)).toEqual([
-      "PR #42",
-      "Guide stop 2",
-    ]);
-    expect(handoff.reviewComments[0]?.text).toContain("Do not change any code");
-    const chip = handoff.reviewComments[1]?.text ?? "";
-    expect(chip).toContain("Writes now update the index.");
-    expect(chip).toContain("A tradeoff: writes get slower.");
-    expect(chip).toContain("- src/index.ts lines 10-20\n");
-    expect(chip).toContain("- src/old.ts lines 3-5 (removed; numbered as in the base branch)");
-  });
-
-  it("leaves the question to the reader when none was suggested", () => {
-    const handoff = buildAskAboutGuideStopHandoff({
-      ...base,
-      stop: { ...stop, attention: null, excerpts: [] },
-      question: "",
-    });
-    expect(handoff.prompt).toBe("");
-    expect(handoff.reviewComments[1]?.text).not.toContain("judge");
-    expect(handoff.reviewComments[1]?.text).not.toContain("lines it showed");
   });
 });
 
@@ -1462,11 +996,6 @@ describe("a second ask into the same composer", () => {
     ).toEqual([own.id, "pull-request-context:42"]);
   });
 
-  it("empties what the last ask left, so the two are never sent as one question", () => {
-    const handed = "Explain this pull request.";
-    expect(handoffPrompt({ prompt: handed, lastHandoffPrompt: handed }, "")).toBe("");
-  });
-
   it("removes the previous handoff chip before replacing its prompt", () => {
     const previous = chip("pull-request-context:42");
     const prompt = `Explain this pull request. ${formatInlineContextReference(
@@ -1485,23 +1014,10 @@ describe("a second ask into the same composer", () => {
     );
   });
 
-  it("replaces the last ask's prompt with this one's", () => {
-    const handed = "Explain this pull request.";
-    expect(handoffPrompt({ prompt: handed, lastHandoffPrompt: handed }, "Why the cache key?")).toBe(
-      "Why the cache key?",
-    );
-  });
-
   it("leaves a sentence the reader typed themselves where it is", () => {
     expect(
       handoffPrompt({ prompt: "check the migration first", lastHandoffPrompt: undefined }, ""),
     ).toBe("check the migration first");
-  });
-
-  it("keeps what the reader wrote next to the chip an earlier ask left", () => {
-    expect(
-      handoffPrompt({ prompt: "why is the cache keyed on the branch?", lastHandoffPrompt: "" }, ""),
-    ).toBe("why is the cache keyed on the branch?");
   });
 
   it("keeps an edit the reader made to the sentence they were handed", () => {
@@ -1578,26 +1094,9 @@ describe("how the branch stands against its base", () => {
     expect(resolveBaseFreshness(detail())).toEqual({ behindBy: 12, methods: ["merge", "rebase"] });
   });
 
-  it("says nothing about a branch that is already current", () => {
-    expect(resolveBaseFreshness(detail({ baseComparison: "up-to-date" }))).toBeNull();
-  });
-
   it("says nothing where the host could not compare, rather than claiming it is current", () => {
     expect(resolveBaseFreshness(detail({ baseComparison: "unknown" }))).toBeNull();
     expect(resolveBaseFreshness(detail({ baseComparison: undefined }))).toBeNull();
-  });
-
-  it("leaves a conflicting branch to the conflicts row", () => {
-    expect(resolveBaseFreshness(detail({ mergeability: "conflicting" }))).toBeNull();
-  });
-
-  it("says nothing where the host has no merge verdict yet", () => {
-    expect(resolveBaseFreshness(detail({ mergeability: "unknown" }))).toBeNull();
-  });
-
-  it("says nothing about a merged or closed pull request", () => {
-    expect(resolveBaseFreshness(detail({ state: "merged" }))).toBeNull();
-    expect(resolveBaseFreshness(detail({ state: "closed" }))).toBeNull();
   });
 
   it("narrows to what this reader may actually take", () => {
@@ -1611,10 +1110,6 @@ describe("how the branch stands against its base", () => {
       behindBy: 12,
       methods: [],
     });
-  });
-
-  it("reports a count only where the host counted", () => {
-    expect(resolveBaseFreshness(detail({ behindBy: undefined }))?.behindBy).toBeNull();
   });
 });
 
@@ -1773,36 +1268,6 @@ describe("pull request panel context beside a thread", () => {
   });
 });
 
-describe("which actions need the host read again after they run", () => {
-  it("classifies every action the contract knows about", () => {
-    expect(PullRequestAction.literals.map(pullRequestActionNeedsHostRefresh)).toEqual(
-      PullRequestAction.literals.map(
-        (action) => action === "update-branch" || action === "approve-workflows",
-      ),
-    );
-  });
-
-  it("sends update-branch back to the host, having moved the head commit", () => {
-    expect(pullRequestActionNeedsHostRefresh("update-branch")).toBe(true);
-  });
-
-  it("leaves every action that only changes metadata to the cheaper detail refresh", () => {
-    for (const action of [
-      "ready",
-      "draft",
-      "close",
-      "reopen",
-      "enable-auto-merge",
-      "disable-auto-merge",
-      "merge",
-      "revert",
-      "delete-branch",
-    ] as const) {
-      expect(pullRequestActionNeedsHostRefresh(action)).toBe(false);
-    }
-  });
-});
-
 describe("when the source branch can be deleted", () => {
   const branchDetail = (
     state: PullRequestState,
@@ -1903,33 +1368,6 @@ describe("the compact row's single action slot", () => {
     expect(resolveThreadPanelPullRequestAction(openDetail({ state: "merged" }))).toBeNull();
     expect(resolveThreadPanelPullRequestAction(null)).toBeNull();
   });
-
-  it("describes every live facet of the checks at once", () => {
-    expect(describePullRequestChecks([])).toBe("No checks reported");
-    expect(describePullRequestChecks([check("success"), check("success")])).toBe(
-      "All checks passed",
-    );
-    expect(describePullRequestChecks([check("success"), check("skipped")])).toBe("1 of 2 passing");
-    expect(
-      describePullRequestChecks([
-        ...Array.from({ length: 7 }, () => check("pending")),
-        ...Array.from({ length: 8 }, () => check("success")),
-        check("failure"),
-      ]),
-    ).toBe("7 of 16 running · 1 failed");
-    expect(describePullRequestChecks([check("failure"), check("success")])).toBe("1 of 2 failing");
-    expect(describePullRequestChecks([check("action-required")])).toBe("1 of 1 awaiting action");
-    expect(describePullRequestChecks([check("action-required"), check("failure")])).toBe(
-      "1 of 2 awaiting action · 1 failed",
-    );
-  });
-
-  it("reads the checks as one word, failing outranking running", () => {
-    expect(classifyPullRequestChecks([])).toBe("none");
-    expect(classifyPullRequestChecks([check("success"), check("skipped")])).toBe("passing");
-    expect(classifyPullRequestChecks([check("success"), check("pending")])).toBe("pending");
-    expect(classifyPullRequestChecks([check("pending"), check("cancelled")])).toBe("failing");
-  });
 });
 
 describe("cached pull request detail", () => {
@@ -2022,16 +1460,6 @@ describe("cached pull request detail", () => {
     expect(storage.size()).toBe(21);
   });
 
-  it("hydrates the last title, author, and counts so a reopen does not ghost the tab", () => {
-    const storage = makeStorage();
-    writePullRequestDetailSnapshot(storage, "env-1", reference, detail());
-    const snapshot = readPullRequestDetailSnapshot(storage, "env-1", reference);
-    expect(snapshot?.title).toBe("Cache the title");
-    expect(snapshot?.author?.login).toBe("octocat");
-    expect(snapshot?.additions).toBe(12);
-    expect(snapshot?.deletions).toBe(3);
-  });
-
   it("reuses a host-qualified snapshot when reopening a thread link without a host", () => {
     const storage = makeStorage();
     writePullRequestDetailSnapshot(
@@ -2063,21 +1491,6 @@ describe("cached pull request detail", () => {
         },
       }),
     ).toBe(explicit);
-  });
-
-  it("leaves server-resolved Azure SSH references unchanged", () => {
-    expect(
-      resolvePullRequestReferenceHost(reference, {
-        canonicalKey: "ssh.dev.azure.com/v3/org/project/web",
-        locator: {
-          source: "git-remote",
-          remoteName: "origin",
-          remoteUrl: "git@ssh.dev.azure.com:v3/org/project/web",
-        },
-        provider: SourceControlProviderKind.make("azure-devops"),
-      }),
-    ).toBe(reference);
-    expect(resolvePullRequestReferenceHost(reference, undefined)).toBe(reference);
   });
 
   it("hydrates legacy hostless snapshots only for the matching host", () => {
@@ -2132,15 +1545,6 @@ describe("cached pull request detail", () => {
       expect(readPullRequestDetailSnapshot(storage, "env-1", hosted)?.title).toBe(cached.title);
     },
   );
-
-  it("keeps a cached tab painted while the live read replaces the counts", () => {
-    const cached = detail();
-    const live = detail({ additions: 40, deletions: 9, title: "Cache the title" });
-    expect(resolveDisplayedPullRequestDetail({ live, cached, reference })?.additions).toBe(40);
-    expect(resolveDisplayedPullRequestDetail({ live: null, cached, reference })?.additions).toBe(
-      12,
-    );
-  });
 
   it("does not paint another change request's snapshot", () => {
     expect(

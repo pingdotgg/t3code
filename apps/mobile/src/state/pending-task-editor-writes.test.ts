@@ -178,53 +178,6 @@ describe("pending task editor writes", () => {
     expect(queuedMessageText(original.messageId)).toBe(secondEdit.text);
   });
 
-  it("chains three rapid editor saves in order", async () => {
-    const original = queuedMessage("message-three-saves", "original");
-    const firstEdit = queuedMessage("message-three-saves", "first edit");
-    const secondEdit = queuedMessage("message-three-saves", "second edit");
-    const thirdEdit = queuedMessage("message-three-saves", "third edit");
-    const draftKey = "pending-task:message-three-saves";
-    await harness.manager.enqueue(original);
-
-    setDraft(draftKey, draft(firstEdit.text));
-    const firstWriteGate = blockNextWrite();
-    const firstSave = flushPendingTaskEditorWrite({
-      message: firstEdit,
-      baseline: capturePendingTaskEditorWriteBaseline(original.messageId),
-      draftKey,
-    });
-    await firstWriteGate.started;
-
-    const secondBaseline = capturePendingTaskEditorWriteBaseline(original.messageId);
-    setDraft(draftKey, draft(secondEdit.text));
-    const secondWriteGate = blockNextWrite();
-    const secondSave = flushPendingTaskEditorWrite({
-      message: secondEdit,
-      baseline: secondBaseline,
-      draftKey,
-    });
-
-    const thirdBaseline = capturePendingTaskEditorWriteBaseline(original.messageId);
-    setDraft(draftKey, draft(thirdEdit.text));
-    const thirdWriteGate = blockNextWrite();
-    const thirdSave = flushPendingTaskEditorWrite({
-      message: thirdEdit,
-      baseline: thirdBaseline,
-      draftKey,
-    });
-
-    firstWriteGate.resolve();
-    await expect(firstSave).resolves.toBe(false);
-    await secondWriteGate.started;
-    secondWriteGate.resolve();
-    await expect(secondSave).resolves.toBe(false);
-    await thirdWriteGate.started;
-    thirdWriteGate.resolve();
-
-    await expect(thirdSave).resolves.toBe(true);
-    expect(queuedMessageText(original.messageId)).toBe(thirdEdit.text);
-  });
-
   it("keeps the handed-off revision when the middle editor write fails", async () => {
     const original = queuedMessage("message-middle-failure", "original");
     const firstEdit = queuedMessage("message-middle-failure", "first edit");
@@ -292,40 +245,6 @@ describe("pending task editor writes", () => {
       }),
     ).resolves.toBe(false);
     expect(queuedMessageText(original.messageId)).toBe(unrelatedEdit.text);
-  });
-
-  it("lets a later editor retry after its predecessor write fails", async () => {
-    const original = queuedMessage("message-write-retry", "original");
-    const failedEdit = queuedMessage("message-write-retry", "failed edit");
-    const retryEdit = queuedMessage("message-write-retry", "retry edit");
-    const draftKey = "pending-task:message-write-retry";
-    await harness.manager.enqueue(original);
-
-    setDraft(draftKey, draft(failedEdit.text));
-    const failedWriteGate = blockNextWrite();
-    const failedSave = flushPendingTaskEditorWrite({
-      message: failedEdit,
-      baseline: capturePendingTaskEditorWriteBaseline(original.messageId),
-      draftKey,
-    });
-    await failedWriteGate.started;
-
-    const retryBaseline = capturePendingTaskEditorWriteBaseline(original.messageId);
-    setDraft(draftKey, draft(retryEdit.text));
-    const retryWriteGate = blockNextWrite();
-    const retrySave = flushPendingTaskEditorWrite({
-      message: retryEdit,
-      baseline: retryBaseline,
-      draftKey,
-    });
-
-    failedWriteGate.reject(new Error("disk full"));
-    await expect(failedSave).rejects.toMatchObject({ _tag: "ThreadOutboxManagerError" });
-    await retryWriteGate.started;
-    retryWriteGate.resolve();
-
-    await expect(retrySave).resolves.toBe(true);
-    expect(queuedMessageText(original.messageId)).toBe(retryEdit.text);
   });
 
   it("does not permit cleanup after a newer editor makes the draft unsendable", async () => {

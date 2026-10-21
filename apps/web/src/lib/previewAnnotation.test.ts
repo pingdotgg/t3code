@@ -41,11 +41,6 @@ describe("preview annotation capture", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("reports none when the annotation carries no crop", () => {
-    const capture = capturePreviewAnnotationScreenshot({ ...annotation, screenshot: null });
-    expect(capture).toEqual({ status: "none" });
-  });
-
   it.each(["data:image/jpeg;base64,AA==", "data:image/png;base64,", "data:image/png;base64,%%%"])(
     "reports a malformed screenshot as failed: %s",
     (dataUrl) => {

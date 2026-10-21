@@ -842,7 +842,7 @@ export const isCommandAvailable = Effect.fn("shell.isCommandAvailable")(function
   return (yield* resolveCommandPath(command, options)) !== null;
 });
 
-export function resolveKnownWindowsCliDirs(env: NodeJS.ProcessEnv): ReadonlyArray<string> {
+function resolveKnownWindowsCliDirs(env: NodeJS.ProcessEnv): ReadonlyArray<string> {
   const appData = env.APPDATA?.trim();
   const localAppData = env.LOCALAPPDATA?.trim();
   const userProfile = env.USERPROFILE?.trim();

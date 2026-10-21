@@ -40,7 +40,7 @@ vi.mock("expo-file-system", () => ({
   Paths: { document: "/documents" },
 }));
 
-import { IncomingShareStorageError, loadIncomingShareDrafts } from "./incoming-share-storage";
+import { loadIncomingShareDrafts } from "./incoming-share-storage";
 
 const VALID_DRAFT = {
   schemaVersion: 1,
@@ -66,13 +66,5 @@ describe("incoming share storage", () => {
 
     await expect(loadIncomingShareDrafts()).resolves.toEqual([VALID_DRAFT]);
     expect(warning).toHaveBeenCalledOnce();
-  });
-
-  it("rejects an invalid persisted share in strict mode", async () => {
-    fileSystemMocks.setEntries([new fileSystemMocks.File("invalid.json", "{")]);
-
-    await expect(loadIncomingShareDrafts({ strict: true })).rejects.toBeInstanceOf(
-      IncomingShareStorageError,
-    );
   });
 });

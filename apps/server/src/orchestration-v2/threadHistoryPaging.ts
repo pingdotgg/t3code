@@ -25,7 +25,7 @@ export const THREAD_HISTORY_MAX_RAW_TURNS = 150;
 
 export const THREAD_HISTORY_SNAPSHOT_ROW_LIMIT = THREAD_HISTORY_PAGE_POLICY.maxItems + 2;
 
-export const THREAD_HISTORY_CURSOR_MAX_LENGTH = 4_096;
+const THREAD_HISTORY_CURSOR_MAX_LENGTH = 4_096;
 
 export type ThreadHistoryPagePolicy = {
   readonly maxUserTurns?: number | undefined;

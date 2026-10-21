@@ -1,7 +1,7 @@
 import { useLayoutEffect, useState } from "react";
 import { observeResize } from "../../lib/observeResize";
 
-export function measureComposerMultilinePrompt(body: HTMLElement): boolean | null {
+function measureComposerMultilinePrompt(body: HTMLElement): boolean | null {
   const editor = body.querySelector<HTMLElement>('[data-testid="composer-editor"]');
   if (!editor || editor.clientWidth === 0) return null;
 

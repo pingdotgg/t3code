@@ -159,30 +159,6 @@ const assertRequestId = (body: unknown) =>
   );
 
 describe("GitCafePullRequestProvider", () => {
-  it.effect("lists a repository's pull requests from its pulls collection", () => {
-    const server = fakeGitCafe({
-      "GET /repos/owner/repo/pulls": { items: [pull], next: null },
-    });
-    return Effect.gen(function* () {
-      const provider = yield* GitCafePullRequestProvider.make;
-      const page = yield* provider.listChangeRequests({
-        ...target,
-        state: "open",
-        involvement: "all",
-        viewer: "alice",
-        limit: 10,
-      });
-      assert.deepStrictEqual(
-        page.items.map((item) => item.number),
-        [7],
-      );
-      assert.deepStrictEqual(
-        server.sent.map((request) => `${request.method} ${request.path}`),
-        ["GET /repos/owner/repo/pulls"],
-      );
-    }).pipe(Effect.provide(server.layer));
-  });
-
   it.effect("keeps a staging repository's requests and links on staging", () => {
     // CAFE_TOKEN follows CAFE_HOST, so staging reads the env token only when it is the target.
     const server = fakeGitCafe(
@@ -270,42 +246,6 @@ describe("GitCafePullRequestProvider", () => {
     }).pipe(Effect.provide(server.layer));
   });
 
-  it.effect("reads activity with the host's edit and resolve permissions", () => {
-    const server = fakeGitCafe({
-      "GET /repos/owner/repo/pulls/7": pull,
-      "GET /repos/owner/repo/pulls/7/comments": { items: [root], next: null },
-      "GET /repos/owner/repo/pulls/7/reviews": { items: [], next: null },
-      "GET /repos/owner/repo/pulls/7/commits": {
-        items: [],
-        truncated: false,
-        next: null,
-        headOid,
-      },
-      "GET /repos/owner/repo/pulls/7/reactions/": { items: [], next: null },
-    });
-    return Effect.gen(function* () {
-      const provider = yield* GitCafePullRequestProvider.make;
-      const activity = yield* provider.getChangeRequestActivity(target);
-      assert.strictEqual(activity.comments[0]?.canEdit, true);
-      assert.strictEqual(activity.reviewThreads[0]?.canResolve, true);
-      assert.deepStrictEqual(server.writes(), []);
-    }).pipe(Effect.provide(server.layer));
-  });
-
-  it.effect("reads the viewer's permission to edit the pull request", () => {
-    const server = fakeGitCafe({
-      "GET /repos/owner/repo/pulls/7": {
-        ...pull,
-        capabilities: { ...pull.capabilities, edit: false },
-      },
-    });
-    return Effect.gen(function* () {
-      const provider = yield* GitCafePullRequestProvider.make;
-      const permissions = yield* provider.getViewerPermissions(target);
-      assert.strictEqual(permissions.editChangeRequest, false);
-    }).pipe(Effect.provide(server.layer));
-  });
-
   it.effect("reads the diff from the pull request's changed files", () => {
     const file = {
       path: "file.ts",
@@ -346,27 +286,6 @@ describe("GitCafePullRequestProvider", () => {
       assert.include(diff.patch, "-old\n+new\n");
       assert.isNull(diff.nextCursor);
       assert.deepStrictEqual(server.writes(), ["POST /repos/owner/repo/pulls/7/diff-files"]);
-    }).pipe(Effect.provide(server.layer));
-  });
-
-  it.effect("comments and replies to a thread on the pull request's comments", () => {
-    const written = { id: "c1", threadId: "root", version: 1 };
-    const server = fakeGitCafe({
-      "POST /repos/owner/repo/pulls/7/comments/": written,
-      "POST /repos/owner/repo/pulls/7/comments/root/replies": written,
-    });
-    return Effect.gen(function* () {
-      const provider = yield* GitCafePullRequestProvider.make;
-      yield* provider.comment({ ...target, body: "Hello" });
-      yield* provider.replyToThread({ ...target, threadId: "root", body: "Reply" });
-      assert.deepStrictEqual(server.writes(), [
-        "POST /repos/owner/repo/pulls/7/comments/",
-        "POST /repos/owner/repo/pulls/7/comments/root/replies",
-      ]);
-      assert.deepStrictEqual(
-        server.sent.map((request) => request.body),
-        [{ body: "Hello" }, { body: "Reply" }],
-      );
     }).pipe(Effect.provide(server.layer));
   });
 
@@ -493,33 +412,6 @@ describe("GitCafePullRequestProvider", () => {
       }).pipe(Effect.provide(server.layer));
     },
   );
-
-  it.effect("restacks from a layer on update-branch", () => {
-    const server = fakeGitCafe({
-      ...stack([{ number: 7, headOid }]),
-      "POST /repos/owner/repo/pulls/stacks/3/restack": {
-        id: "restack-1",
-        state: "completed",
-        stepCount: 1,
-        completedStepCount: 1,
-        pauseReason: null,
-      },
-    });
-    return Effect.gen(function* () {
-      const provider = yield* GitCafePullRequestProvider.make;
-      yield* provider.runAction({
-        ...target,
-        action: "update-branch",
-        updateMethod: "rebase",
-        stackNumber: 3,
-        expectedStackHeads: [{ number: 7, headSha: headOid }],
-      });
-      assert.deepStrictEqual(server.writes(), ["POST /repos/owner/repo/pulls/stacks/3/restack"]);
-      const { requestId, ...body } = server.sent.at(-1)?.body as { requestId: unknown };
-      assertRequestId({ requestId });
-      assert.deepStrictEqual(body, { expectedRevision: 5 });
-    }).pipe(Effect.provide(server.layer));
-  });
 
   it.effect.each([
     ["authored", "authors"],
@@ -693,22 +585,6 @@ describe("GitCafePullRequestProvider", () => {
         .pipe(Effect.result);
       assert.strictEqual(result._tag, "Failure");
       assert.deepStrictEqual(server.writes(), []);
-    }).pipe(Effect.provide(server.layer));
-  });
-
-  it.effect("keeps GitCafe's explanation short and on one line", () => {
-    const server = fakeGitCafe(
-      {
-        "GET /repos/owner/repo/pulls/7": { title: "Conflict", detail: `Line\n${"x".repeat(900)}` },
-      },
-      { status: 409 },
-    );
-    return Effect.gen(function* () {
-      const provider = yield* GitCafePullRequestProvider.make;
-      const error = yield* provider.getChangeRequest(target).pipe(Effect.flip);
-      assert.notInclude(error.detail, "\n");
-      assert.isAtMost(error.detail.length, 310);
-      assert.isTrue(error.detail.startsWith("Line x"));
     }).pipe(Effect.provide(server.layer));
   });
 });

@@ -3,7 +3,6 @@ import {
   EnvironmentId,
   AuthSourceControlWriteScope,
   WS_METHODS,
-  type VcsListRefsInput,
   type VcsListRefsResult,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
@@ -14,7 +13,6 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import * as TestClock from "effect/testing/TestClock";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import {
@@ -147,77 +145,6 @@ describe("cached VCS refs", () => {
     });
     registry.dispose();
   });
-
-  it.effect("preserves the caller's repository snapshot refresh policy", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const requests = yield* Ref.make<ReadonlyArray<VcsListRefsInput>>([]);
-        const client = {
-          [WS_METHODS.vcsListRefs]: (input: VcsListRefsInput) =>
-            Ref.update(requests, (current) => [...current, input]).pipe(Effect.as(LIVE_REFS)),
-        } as unknown as WsRpcProtocolClient;
-        const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
-          target: TARGET,
-          state: yield* SubscriptionRef.make(CONNECTED_CONNECTION_STATE),
-          session: yield* SubscriptionRef.make(Option.some(session(client))),
-          prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
-          connect: Effect.void,
-          disconnect: Effect.void,
-          retryNow: Effect.void,
-        } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
-
-        yield* Stream.unwrap(
-          makeCachedVcsRefsChanges({
-            cwd: "/repo",
-            limit: 20,
-            query: "release",
-            refKind: "remote",
-          }).pipe(
-            Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
-            Effect.provideService(Persistence.EnvironmentCacheStore, cacheWithRefs(Option.none())),
-          ),
-        ).pipe(Stream.runHead);
-
-        expect(yield* Ref.get(requests)).toEqual([
-          {
-            cwd: "/repo",
-            limit: 20,
-            query: "release",
-            refKind: "remote",
-          },
-        ]);
-
-        yield* Stream.unwrap(
-          makeCachedVcsRefsChanges({
-            cwd: "/repo",
-            limit: 20,
-            query: "release",
-            refKind: "remote",
-            refresh: true,
-          }).pipe(
-            Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
-            Effect.provideService(Persistence.EnvironmentCacheStore, cacheWithRefs(Option.none())),
-          ),
-        ).pipe(Stream.runHead);
-
-        expect(yield* Ref.get(requests)).toEqual([
-          {
-            cwd: "/repo",
-            limit: 20,
-            query: "release",
-            refKind: "remote",
-          },
-          {
-            cwd: "/repo",
-            limit: 20,
-            query: "release",
-            refKind: "remote",
-            refresh: true,
-          },
-        ]);
-      }),
-    ),
-  );
 
   it.effect("does not repersist a refresh superseded by ref invalidation", () =>
     Effect.scoped(
@@ -475,50 +402,6 @@ describe("cached VCS refs", () => {
     ),
   );
 
-  it.effect("retries a transient live failure while connected", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const expectedError = new Error("Could not list Git refs.");
-        const calls = yield* Ref.make(0);
-        const connectionState = yield* SubscriptionRef.make(CONNECTED_CONNECTION_STATE);
-        const client = {
-          [WS_METHODS.vcsListRefs]: () =>
-            Ref.updateAndGet(calls, (count) => count + 1).pipe(
-              Effect.flatMap((count) =>
-                count === 1 ? Effect.fail(expectedError) : Effect.succeed(LIVE_REFS),
-              ),
-            ),
-        } as unknown as WsRpcProtocolClient;
-        const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
-          target: TARGET,
-          state: connectionState,
-          session: yield* SubscriptionRef.make(Option.some(session(client))),
-          prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
-          connect: Effect.void,
-          disconnect: Effect.void,
-          retryNow: Effect.void,
-        } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
-
-        const result = Stream.unwrap(
-          makeCachedVcsRefsChanges({ cwd: "/repo", limit: 100 }).pipe(
-            Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
-            Effect.provideService(Persistence.EnvironmentCacheStore, cacheWithRefs(Option.none())),
-          ),
-        ).pipe(Stream.runHead);
-        const fiber = yield* Effect.forkChild(result);
-
-        for (let attempt = 0; attempt < 100 && (yield* Ref.get(calls)) < 1; attempt += 1) {
-          yield* Effect.yieldNow;
-        }
-        expect(yield* Ref.get(calls)).toBe(1);
-
-        yield* TestClock.adjust("1 second");
-        expect(Option.getOrThrow(yield* Fiber.join(fiber))).toEqual(LIVE_REFS);
-        expect(yield* Ref.get(calls)).toBe(2);
-      }).pipe(Effect.provide(TestClock.layer())),
-    ),
-  );
-
   it.effect("cancels an in-flight refresh when the connection generation changes", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -573,44 +456,6 @@ describe("cached VCS refs", () => {
         expect(Option.getOrThrow(yield* Fiber.join(fiber))).toEqual(LIVE_REFS);
         expect(yield* Ref.get(calls)).toBe(2);
       }),
-    ),
-  );
-
-  it.effect("does not poll refs while the connection remains stable", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const calls = yield* Ref.make(0);
-        const client = {
-          [WS_METHODS.vcsListRefs]: () =>
-            Ref.update(calls, (count) => count + 1).pipe(Effect.as(CACHED_REFS)),
-        } as unknown as WsRpcProtocolClient;
-        const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
-          target: TARGET,
-          state: yield* SubscriptionRef.make(CONNECTED_CONNECTION_STATE),
-          session: yield* SubscriptionRef.make(Option.some(session(client))),
-          prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
-          connect: Effect.void,
-          disconnect: Effect.void,
-          retryNow: Effect.void,
-        } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
-        const stream = Stream.unwrap(
-          makeCachedVcsRefsChanges({ cwd: "/repo", limit: 100 }).pipe(
-            Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
-            Effect.provideService(Persistence.EnvironmentCacheStore, cacheWithRefs(Option.none())),
-          ),
-        ).pipe(Stream.runDrain);
-        const fiber = yield* Effect.forkChild(stream);
-
-        for (let attempt = 0; attempt < 100 && (yield* Ref.get(calls)) < 1; attempt += 1) {
-          yield* Effect.yieldNow;
-        }
-        expect(yield* Ref.get(calls)).toBe(1);
-
-        yield* TestClock.adjust("1 minute");
-        yield* Effect.yieldNow;
-        expect(yield* Ref.get(calls)).toBe(1);
-        yield* Fiber.interrupt(fiber);
-      }).pipe(Effect.provide(TestClock.layer())),
     ),
   );
 

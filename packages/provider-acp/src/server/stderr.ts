@@ -1,4 +1,4 @@
-export const ACP_STDERR_TAIL_MAX_CHARS = 4_096;
+const ACP_STDERR_TAIL_MAX_CHARS = 4_096;
 
 const PAIRING_URL_PATTERN = /https?:\/\/[^\s]*\/pair#[^\s]*/gi;
 const SIGN_IN_URL_PATTERN = /https?:\/\/accounts\.google\.com[^\s]*/gi;

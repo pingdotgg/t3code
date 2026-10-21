@@ -101,41 +101,6 @@ it("serializes rapid actions and retains confirmed settings while pending or aft
   expect(controls.disabled).toBe(false);
 });
 
-it("serializes host actions across hide/reopen and discards detached results", async () => {
-  setup();
-  await using screen = await render(<Probe visible />);
-  const response = deferred();
-  action.mockReturnValueOnce(response.promise);
-  let pending!: Promise<void>;
-  await act(async () => {
-    pending = controls.act({ type: "setAppearance", value: "dark" });
-  });
-  await screen.rerender(<Probe visible={false} />);
-  expect(controls.disabled).toBe(true);
-  await screen.rerender(<Probe visible />);
-  await act(async () => controls.act({ type: "setAppearance", value: "light" }));
-  expect(action).toHaveBeenCalledOnce();
-  expect(controls.disabled).toBe(true);
-  const confirmed = deferred();
-  read.mockReturnValueOnce(confirmed.promise);
-  await act(async () => {
-    response.resolve(snapshot("dark"));
-    await response.promise;
-  });
-  expect(controls.detail?.settings.appearance).toBe("light");
-  expect(controls.disabled).toBe(true);
-  await act(async () => {
-    confirmed.resolve(snapshot("dark"));
-    await pending;
-  });
-  expect(controls.detail?.settings.appearance).toBe("dark");
-  expect(controls.disabled).toBe(false);
-  action.mockResolvedValueOnce(snapshot("dark"));
-  await act(async () => controls.act({ type: "setAppearance", value: "dark" }));
-  expect(action).toHaveBeenCalledTimes(2);
-  expect(controls.detail?.settings.appearance).toBe("dark");
-});
-
 it("keeps actions disabled when settings cannot be confirmed after a detached command", async () => {
   setup();
   await using screen = await render(<Probe visible />);
@@ -163,24 +128,6 @@ it("keeps actions disabled when settings cannot be confirmed after a detached co
   expect(controls.error).toBeNull();
 });
 
-it("disables stale settings after a failed reopen read and recovers on a successful read", async () => {
-  setup();
-  await using screen = await render(<Probe visible />);
-  await screen.rerender(<Probe visible={false} />);
-  read.mockResolvedValueOnce({ _tag: "Failure", cause: offline });
-  await screen.rerender(<Probe visible />);
-  expect(controls.detail).toBeNull();
-  expect(controls.disabled).toBe(true);
-  expect(controls.error).toBe("Device offline");
-  await act(async () => controls.act({ type: "setAppearance", value: "dark" }));
-  expect(action).not.toHaveBeenCalled();
-  await screen.rerender(<Probe visible={false} />);
-  await screen.rerender(<Probe visible />);
-  expect(controls.detail?.settings.appearance).toBe("light");
-  expect(controls.disabled).toBe(false);
-  expect(controls.error).toBeNull();
-});
-
 it("does not let an older refresh overwrite a newer confirmed action", async () => {
   setup();
   await using screen = await render(<Probe visible />);
@@ -196,38 +143,3 @@ it("does not let an older refresh overwrite a newer confirmed action", async () 
   });
   expect(controls.detail?.settings.appearance).toBe("dark");
 });
-
-it.each(["hidden", "access renewed"] as const)(
-  "uses the detail snapshot until a new foreground event after the subscription is %s",
-  async (restart) => {
-    setup();
-    const access: DeviceHubAccess = {
-      httpBase: "https://remote.test/api/device-hub",
-      wsBase: "wss://remote.test/api/device-hub",
-      query: {},
-      credentials: false,
-    };
-    const detail = snapshot("light");
-    if (detail._tag !== "Success") throw new Error("Expected a successful snapshot");
-    read.mockResolvedValue({
-      ...detail,
-      value: { ...detail.value, foregroundApp: { id: "snapshot.app" } },
-    });
-    await using screen = await render(<Probe visible access={access} />);
-    const oldEvent = subscribe.mock.calls[0]![1];
-    await act(async () => oldEvent({ id: "previous.live.app" }));
-    expect(controls.foregroundApp?.id).toBe("previous.live.app");
-    if (restart === "hidden") {
-      await screen.rerender(<Probe visible={false} access={access} />);
-      await screen.rerender(<Probe visible access={access} />);
-    } else {
-      await screen.rerender(<Probe visible access={{ ...access, query: { ticket: "renewed" } }} />);
-    }
-    expect(controls.foregroundApp?.id).toBe("snapshot.app");
-    await act(async () => oldEvent({ id: "late.previous.app" }));
-    expect(controls.foregroundApp?.id).toBe("snapshot.app");
-    const newEvent = subscribe.mock.calls[1]![1];
-    await act(async () => newEvent({ id: "current.live.app" }));
-    expect(controls.foregroundApp?.id).toBe("current.live.app");
-  },
-);

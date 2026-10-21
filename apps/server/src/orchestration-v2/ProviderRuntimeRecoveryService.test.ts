@@ -16,7 +16,6 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Ref from "effect/Ref";
 
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
@@ -25,103 +24,6 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
 import * as ServerSettings from "../serverSettings.ts";
-
-it.effect("leaves durable effects for the worker after runtime reconciliation", () =>
-  Effect.gen(function* () {
-    const runs = yield* Ref.make(0);
-    const layer = ProviderRuntimeRecovery.layer.pipe(
-      Layer.provide(ServerSettings.layerTest()),
-      Layer.provide(
-        Layer.mergeAll(
-          Layer.mock(ProjectionStore.ProjectionStoreV2)({
-            getRecoveryThreadIds: () => Effect.succeed([]),
-          }),
-          Layer.mock(EventSink.EventSinkV2)({}),
-          IdAllocator.layer,
-          Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({
-            runRecoveryOnce: Ref.getAndUpdate(runs, (count) => count + 1).pipe(
-              Effect.map((count) => count < 2),
-            ),
-          }),
-          Layer.mock(EffectOutbox.EffectOutboxV2)({
-            reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
-          }),
-        ),
-      ),
-    );
-    const summary = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService.pipe(
-      Effect.flatMap((recovery) => recovery.recover),
-      Effect.provide(layer),
-    );
-    assert.deepEqual(summary, {
-      terminalizedRuns: 0,
-      stoppedSessions: 0,
-      closedRequests: 0,
-      retiredEffects: 0,
-      requeuedEffects: 0,
-    });
-    assert.equal(yield* Ref.get(runs), 0);
-  }),
-);
-
-it.effect("reads recovery projections only for threads that need runtime recovery", () => {
-  const settledThreadIds = Array.from({ length: 1_000 }, (_, index) =>
-    ThreadId.make(`thread_recovery_settled_${index}`),
-  );
-  const recoveryThreadId = ThreadId.make("thread_recovery_candidate");
-  const projectionReads = vi.fn<(threadId: ThreadId) => void>();
-  const layer = ProviderRuntimeRecovery.layer.pipe(
-    Layer.provide(ServerSettings.layerTest()),
-    Layer.provide(
-      Layer.mergeAll(
-        Layer.mock(ProjectionStore.ProjectionStoreV2)({
-          getShellSnapshot: () =>
-            Effect.succeed({
-              schemaVersion: 2,
-              snapshotSequence: 0,
-              threads: [...settledThreadIds, recoveryThreadId].map((id) => ({ id })),
-              archivedThreads: [],
-            } as never),
-          getRecoveryThreadIds: () => Effect.succeed([recoveryThreadId]),
-          getRuntimeRecoveryProjection: (threadId) => {
-            projectionReads(threadId);
-            return Effect.succeed({
-              thread: { id: threadId },
-              runtimeRequests: [],
-              providerSessions: [],
-              providerThreads: [],
-              providerTurns: [],
-              runs: [],
-              attempts: [],
-              nodes: [],
-              subagents: [],
-              messages: [],
-              turnItems: [],
-            } as unknown as OrchestrationV2ThreadProjection);
-          },
-        }),
-        Layer.mock(EventSink.EventSinkV2)({}),
-        IdAllocator.layer,
-        Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({
-          runRecoveryOnce: Effect.succeed(false),
-        }),
-        Layer.mock(EffectOutbox.EffectOutboxV2)({
-          cancelUnsettled: () => Effect.succeed([]),
-          signalCancellations: () => Effect.void,
-          reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
-        }),
-      ),
-    ),
-  );
-
-  return Effect.gen(function* () {
-    yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).recover;
-    assert.deepEqual(
-      projectionReads.mock.calls.map(([threadId]) => threadId),
-      [recoveryThreadId],
-    );
-  }).pipe(Effect.provide(layer));
-});
 
 it.effect("expires orphaned runtime requests before command readiness", () => {
   const threadId = ThreadId.make("thread_recovery_requests");

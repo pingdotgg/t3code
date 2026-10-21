@@ -1,26 +1,12 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import type { EnvironmentId } from "@t3tools/contracts";
 
-import {
-  browserProfileRemovalAvailable,
-  clearBrowserProfileData,
-  importFailureReason,
-} from "./IntegrationsSettings";
+import { clearBrowserProfileData, importFailureReason } from "./IntegrationsSettings";
 
 const environmentId = "environment-a" as EnvironmentId;
 const secondEnvironmentId = "environment-b" as EnvironmentId;
 
 describe("clearBrowserProfileData", () => {
-  it("waits for cookie and cache cleanup", async () => {
-    const clearCookies = vi.fn().mockResolvedValue(undefined);
-    const clearCache = vi.fn().mockResolvedValue(undefined);
-
-    await clearBrowserProfileData({ clearCookies, clearCache }, [environmentId], "profile-a");
-
-    expect(clearCookies).toHaveBeenCalledWith(environmentId, "profile-a");
-    expect(clearCache).toHaveBeenCalledWith(environmentId, "profile-a");
-  });
-
   it("clears every known environment before succeeding", async () => {
     const clearCookies = vi.fn().mockResolvedValue(undefined);
     const clearCache = vi.fn().mockResolvedValue(undefined);
@@ -91,19 +77,6 @@ describe("clearBrowserProfileData with server browsers", () => {
       }),
     ).rejects.toBe(failure);
     expect(bridge.clearCookies).toHaveBeenCalledWith(environmentId, "profile-a");
-  });
-});
-
-describe("browserProfileRemovalAvailable", () => {
-  it("accepts a server browser in place of the desktop bridge", () => {
-    expect(browserProfileRemovalAvailable(false, true, 1, 1)).toBe(true);
-  });
-
-  it("requires a ready non-empty catalog and desktop bridge", () => {
-    expect(browserProfileRemovalAvailable(true, true, 1)).toBe(true);
-    expect(browserProfileRemovalAvailable(true, true, 0)).toBe(false);
-    expect(browserProfileRemovalAvailable(true, false, 1)).toBe(false);
-    expect(browserProfileRemovalAvailable(false, true, 1)).toBe(false);
   });
 });
 

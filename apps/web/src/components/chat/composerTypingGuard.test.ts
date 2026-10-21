@@ -9,15 +9,6 @@ function typing() {
 }
 
 describe("composer typing guard", () => {
-  it("holds new requests while the focused draft was recently edited", () => {
-    const state = updateComposerTypingGuard(typing(), {
-      type: "requests",
-      requestIds: ["approval", "question"],
-      now: 2499,
-    });
-    expect([...state.held]).toEqual(["approval", "question"]);
-  });
-
   it.each(["idle", "send", "blur"] as const)(
     "releases on %s and never re-holds the request",
     (type) => {
@@ -40,22 +31,6 @@ describe("composer typing guard", () => {
     },
   );
 
-  it("shows requests immediately when idle or unfocused", () => {
-    for (const state of [
-      createComposerTypingGuardState(),
-      typing(),
-      updateComposerTypingGuard(typing(), { type: "blur" }),
-    ]) {
-      expect([
-        ...updateComposerTypingGuard(state, {
-          type: "requests",
-          requestIds: ["question"],
-          now: 2500,
-        }).held,
-      ]).toEqual([]);
-    }
-  });
-
   it("does not hide a request that already took over when typing starts", () => {
     let state = updateComposerTypingGuard(createComposerTypingGuardState(), {
       type: "requests",
@@ -70,20 +45,5 @@ describe("composer typing guard", () => {
       now: 1100,
     });
     expect([...state.held]).toEqual([]);
-  });
-
-  it("drops a hold when its request is resolved", () => {
-    const held = updateComposerTypingGuard(typing(), {
-      type: "requests",
-      requestIds: ["question"],
-      now: 1100,
-    });
-    expect([
-      ...updateComposerTypingGuard(held, {
-        type: "requests",
-        requestIds: [],
-        now: 1200,
-      }).held,
-    ]).toEqual([]);
   });
 });

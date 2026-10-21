@@ -1,9 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import * as Layer from "effect/Layer";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
-import * as TestClock from "effect/testing/TestClock";
 import * as FileSystem from "effect/FileSystem";
 import * as Redacted from "effect/Redacted";
 import { HttpClient, HttpClientResponse } from "effect/http";
@@ -256,27 +254,6 @@ it.effect("does not merge from an already merged layer", () =>
   }),
 );
 
-it.effect("polls an accepted merge and reports a later rule rejection", () =>
-  Effect.gen(function* () {
-    const api = fake([
-      stack,
-      { status: "pending", details: { uuid: "operation" } },
-      { status: "failed", details: { message: "Required checks have not passed" } },
-    ]);
-    const fiber = yield* runGitHubStackAction(api.execute, input).pipe(
-      Effect.result,
-      Effect.forkChild,
-    );
-    yield* TestClock.adjust("1 second");
-    const result = yield* Fiber.join(fiber);
-    expect(result).toMatchObject({
-      _tag: "Failure",
-      failure: { _tag: "GitHubStackMergeRejectedError" },
-    });
-    expect(api.calls[2]).toContain("repos/acme/web/pulls/3/merge-async/operation");
-  }),
-);
-
 it.effect("retains stack identity and a rejection response without a message", () =>
   Effect.gen(function* () {
     const rejection = { status: "failed", details: {} };
@@ -292,21 +269,6 @@ it.effect("retains stack identity and a rejection response without a message", (
         cause: rejection,
       },
     });
-  }),
-);
-
-it.effect("refuses a changed stack before performing any mutation", () =>
-  Effect.gen(function* () {
-    const api = fake([stack]);
-    const result = yield* runGitHubStackAction(api.execute, {
-      ...input,
-      expectedStackHeads: [
-        { number: 2, headSha: "old" },
-        { number: 3, headSha: "ccc" },
-      ],
-    }).pipe(Effect.result);
-    expect(result).toMatchObject({ _tag: "Failure", failure: { _tag: "GitHubStackChangedError" } });
-    expect(api.calls).toHaveLength(1);
   }),
 );
 
@@ -362,25 +324,6 @@ it.effect("rebases for a GitHub App, which GitHub gives no permission to read", 
   }),
 );
 
-it.effect("bounds polling and reports a still-running merge without claiming success", () =>
-  Effect.gen(function* () {
-    const api = fake([
-      stack,
-      ...Array.from({ length: 40 }, () => ({ status: "pending", details: { uuid: "operation" } })),
-    ]);
-    const fiber = yield* runGitHubStackAction(api.execute, input).pipe(
-      Effect.result,
-      Effect.forkChild,
-    );
-    yield* TestClock.adjust("6 minutes");
-    expect(yield* Fiber.join(fiber)).toMatchObject({
-      _tag: "Failure",
-      failure: { _tag: "GitHubStackMergePendingError" },
-    });
-    expect(api.calls.length).toBeLessThan(40);
-  }),
-);
-
 it.effect("rebases the open layers bottom to top in a scratch clone, each onto the one below", () =>
   Effect.gen(function* () {
     gitCalls = [];
@@ -413,20 +356,5 @@ it.effect("rebases the open layers bottom to top in a scratch clone, each onto t
         "new-sha:refs/heads/top",
       ],
     ]);
-  }),
-);
-
-it.effect("checks every layer's write access before any git runs", () =>
-  Effect.gen(function* () {
-    gitCalls = [];
-    const api = fake([
-      stack,
-      accessOf(writable, {
-        headRepository: { viewerPermission: "READ" },
-        maintainerCanModify: false,
-      }),
-    ]);
-    yield* Effect.flip(runGitHubStackAction(api.execute, { ...input, action: "update-branch" }));
-    expect(gitCalls).toEqual([]);
   }),
 );

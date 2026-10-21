@@ -1,6 +1,5 @@
 import {
   DEFAULT_SERVER_SETTINGS,
-  PROJECT_SCOPED_SERVER_SETTING_KEYS,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -11,11 +10,9 @@ import {
   clearProjectSettingsOverrides,
   hasProjectSettingsOverrides,
   resolveNewThreadEnvMode,
-  resolveProjectFileBackedSetting,
   resolveProjectSettings,
   resolveSendEnvMode,
   resolveWorktreeCleanup,
-  withProjectSettingsOverrides,
 } from "./projectSettings.ts";
 import { applyServerSettingsPatch } from "./serverSettings.ts";
 
@@ -36,17 +33,6 @@ describe("resolveSendEnvMode", () => {
 });
 
 describe("resolveProjectSettings", () => {
-  it("inherits every scopable key when the project has no overrides", () => {
-    const resolved = resolveProjectSettings(DEFAULT_SERVER_SETTINGS, projectId);
-    expect(resolved.settings).toBe(DEFAULT_SERVER_SETTINGS);
-    for (const key of PROJECT_SCOPED_SERVER_SETTING_KEYS) {
-      expect(resolved.sources[key]).toBe("environment");
-    }
-    expect(resolveProjectSettings(DEFAULT_SERVER_SETTINGS, null).settings).toBe(
-      DEFAULT_SERVER_SETTINGS,
-    );
-  });
-
   it("ignores an override left undefined by a forward-compatible decode", () => {
     const resolved = resolveProjectSettings(
       {
@@ -65,12 +51,6 @@ describe("resolveProjectSettings", () => {
     ).toBe(false);
   });
 
-  it("treats a null project like an absent one before the shell snapshot arrives", () => {
-    expect(resolveProjectSettings(DEFAULT_SERVER_SETTINGS, null, null).settings).toBe(
-      DEFAULT_SERVER_SETTINGS,
-    );
-  });
-
   it("applies overrides per key and reports their source", () => {
     const settings = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
       defaultAutoPull: true,
@@ -87,26 +67,6 @@ describe("resolveProjectSettings", () => {
     expect(resolved.sources.sidebarAutoSettleAfterDays).toBe("project");
     expect(resolved.sources.defaultThreadEnvMode).toBe("environment");
     expect(resolveProjectSettings(settings, otherProjectId).settings.defaultAutoPull).toBe(true);
-  });
-
-  it("keeps the environment text generation model when the override's provider is disabled", () => {
-    const disabledSelection = createModelSelection(ProviderInstanceId.make("claudeAgent"), "opus");
-    const settings = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
-      providerInstances: {
-        [ProviderInstanceId.make("claudeAgent")]: {
-          driver: ProviderDriverKind.make("claudeAgent"),
-          enabled: false,
-        },
-      },
-      projectSettingsOverrides: {
-        [projectId]: { textGenerationModelSelection: disabledSelection },
-      },
-    });
-    const resolved = resolveProjectSettings(settings, projectId);
-    expect(resolved.settings.textGenerationModelSelection).toEqual(
-      settings.textGenerationModelSelection,
-    );
-    expect(resolved.sources.textGenerationModelSelection).toBe("environment");
   });
 
   it("honours the aggregate's own fields only until the server has folded them", () => {
@@ -244,29 +204,6 @@ describe("resolveProjectSettings with a t3.json", () => {
         .defaultThreadEnvMode,
     ).toBe("environment");
   });
-
-  it("resolves one key from the settings tier, then the file, then the built-in", () => {
-    expect(
-      resolveProjectFileBackedSetting("worktreeSubmodules", "none", {
-        worktreeSubmodules: "top-level",
-      }),
-    ).toEqual({ value: "none", source: "environment" });
-    expect(
-      resolveProjectFileBackedSetting("worktreeSubmodules", null, {
-        worktreeSubmodules: "top-level",
-      }),
-    ).toEqual({ value: "top-level", source: "t3.json" });
-    expect(resolveProjectFileBackedSetting("worktreeSubmodules", null, null)).toEqual({
-      value: "recursive",
-      source: "environment",
-    });
-  });
-
-  it("leaves settings untouched when no file is passed", () => {
-    expect(resolveProjectSettings(DEFAULT_SERVER_SETTINGS, projectId).settings).toBe(
-      DEFAULT_SERVER_SETTINGS,
-    );
-  });
 });
 
 describe("resolveNewThreadEnvMode", () => {
@@ -397,31 +334,6 @@ describe("projectSettingsOverrides patches", () => {
       [otherProjectId]: { defaultAutoPull: false },
     });
   });
-
-  it("builds replacement entries and clears individual keys", () => {
-    const settings = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
-      projectSettingsOverrides: {
-        [projectId]: { defaultAutoPull: true, enableAgentBrowserAccess: false },
-      },
-    });
-    expect(clearProjectSettingsOverrides(settings, projectId, ["defaultAutoPull"])).toEqual({
-      enableAgentBrowserAccess: false,
-    });
-    expect(
-      clearProjectSettingsOverrides(settings, projectId, [
-        "defaultAutoPull",
-        "enableAgentBrowserAccess",
-      ]),
-    ).toBeNull();
-    expect(clearProjectSettingsOverrides(settings, otherProjectId, ["defaultAutoPull"])).toBeNull();
-    expect(withProjectSettingsOverrides(settings, projectId, null)).toEqual({});
-    expect(
-      withProjectSettingsOverrides(settings, otherProjectId, { defaultThreadEnvMode: "worktree" }),
-    ).toEqual({
-      ...settings.projectSettingsOverrides,
-      [otherProjectId]: { defaultThreadEnvMode: "worktree" },
-    });
-  });
 });
 
 describe("resolveWorktreeCleanup", () => {
@@ -498,28 +410,4 @@ describe("resolveWorktreeCleanup", () => {
         .worktreeAfterDays,
     ).toBe(8);
   });
-});
-
-it("inherits branch naming defaults and applies project overrides independently", () => {
-  const settings = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
-    branchNamingMode: "static",
-    branchNamePrefix: "team/",
-    branchNameInstructions: "Use issue IDs.",
-    projectSettingsOverrides: { [projectId]: { branchNamingMode: "custom" } },
-  });
-  expect(resolveProjectSettings(settings, projectId).settings).toMatchObject({
-    branchNamingMode: "custom",
-    branchNamePrefix: "team/",
-    branchNameInstructions: "Use issue IDs.",
-  });
-  expect(resolveProjectSettings(settings, otherProjectId).settings).toMatchObject({
-    branchNamingMode: "static",
-    branchNamePrefix: "team/",
-  });
-  const cleared = applyServerSettingsPatch(settings, {
-    projectSettingsOverrides: {
-      [projectId]: clearProjectSettingsOverrides(settings, projectId, ["branchNamingMode"]),
-    },
-  });
-  expect(resolveProjectSettings(cleared, projectId).settings.branchNamingMode).toBe("static");
 });

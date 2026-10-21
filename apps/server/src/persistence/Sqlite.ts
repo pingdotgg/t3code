@@ -9,7 +9,7 @@ import { runMigrations } from "./Migrations.ts";
 import { initializeV2Database } from "./initializeV2Database.ts";
 import * as ServerConfig from "../config.ts";
 
-export const WAL_SIZE_LIMIT_BYTES = 32 * 1024 * 1024;
+const WAL_SIZE_LIMIT_BYTES = 32 * 1024 * 1024;
 
 const layerSetup = Layer.effectDiscard(
   Effect.gen(function* () {

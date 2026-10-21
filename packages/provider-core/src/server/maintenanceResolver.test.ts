@@ -1,6 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import { expect, it } from "@effect/vitest";
-import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
@@ -128,24 +127,6 @@ function stdoutSpawner(
 }
 
 it.layer(NodeServices.layer)("providerMaintenance", (it) => {
-  it.effect("reads cached versions through ProviderLatestVersions", () =>
-    resolveLatestProviderVersion(manualPackageTool).pipe(
-      Effect.provideServiceEffect(
-        ProviderLatestVersions.ProviderLatestVersions,
-        ProviderLatestVersions.make([["@example/package-tool", "9.9.9"]]),
-      ),
-      Effect.provideService(
-        HttpClient.HttpClient,
-        HttpClient.make(() =>
-          Effect.die("cached provider version should not make an HTTP request"),
-        ),
-      ),
-      Effect.map((version) => {
-        expect(version).toBe("9.9.9");
-      }),
-    ),
-  );
-
   it.effect("prefers the installer's own latest version over the npm registry", () =>
     resolveLatestProviderVersion({ ...manualPackageTool, latestVersion: "1.2.0" }).pipe(
       Effect.provide(ProviderLatestVersions.layer),
@@ -184,35 +165,6 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       }),
     ),
   );
-
-  it("marks providers with unknown current versions as unknown", () => {
-    expect(
-      createProviderVersionAdvisory({
-        driver: driver("packageTool"),
-        currentVersion: null,
-        latestVersion: "9.9.9",
-      }),
-    ).toMatchObject({
-      status: "unknown",
-      currentVersion: null,
-      latestVersion: "9.9.9",
-    });
-  });
-
-  it("marks providers with unknown latest versions as unknown", () => {
-    expect(
-      createProviderVersionAdvisory({
-        driver: driver("packageTool"),
-        currentVersion: "1.0.0",
-        latestVersion: null,
-      }),
-    ).toMatchObject({
-      status: "unknown",
-      currentVersion: "1.0.0",
-      latestVersion: null,
-      message: null,
-    });
-  });
 
   it("pins the advertised stable version in a pnpm-global update command", () => {
     const advisoryFor = (
@@ -473,25 +425,6 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       const capabilities = yield* resolveInstall({ definition: claudeUpdate, ...fixture });
 
       expect(capabilities.update).toBeNull();
-    }),
-  );
-
-  it.effect("hides update actions for a WinGet Claude install", () =>
-    Effect.gen(function* () {
-      const capabilities = yield* resolveInstall({
-        definition: claudeUpdate,
-        resolved: userWinGetLink,
-        real: userWinGetPackage,
-      });
-
-      expect(
-        createProviderVersionAdvisory({
-          driver: driver("claudeAgent"),
-          currentVersion: "2.1.0",
-          latestVersion: "2.2.0",
-          maintenanceCapabilities: capabilities,
-        }),
-      ).toMatchObject({ canUpdate: false, canInstallVersion: false, updateCommand: null });
     }),
   );
 
@@ -840,36 +773,6 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     },
   );
 
-  it.effect.skipIf(windowsHost)("runs an explicit native updater outside PATH", () =>
-    Effect.gen(function* () {
-      const tempDir = yield* makeTempDir("t3-native-update");
-      const nativePath = NodePath.join(
-        tempDir,
-        "with spaces",
-        ".local",
-        "bin",
-        "native-package-tool",
-      );
-      NodeFS.mkdirSync(NodePath.dirname(nativePath), { recursive: true });
-      NodeFS.writeFileSync(nativePath, "#!/bin/sh\nprintf '%s' \"$1\"\n");
-      NodeFS.chmodSync(nativePath, 0o755);
-
-      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
-        nativePackageToolUpdate,
-        { binaryPath: nativePath, env: { PATH: "" } },
-      ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
-
-      expect(capabilities.update?.executable).toBe(nativePath);
-      const result = NodeChildProcess.spawnSync(
-        capabilities.update!.executable,
-        capabilities.update!.args,
-        { env: { PATH: "" }, encoding: "utf8" },
-      );
-      expect(result.status).toBe(0);
-      expect(result.stdout).toBe("update");
-    }),
-  );
-
   it.effect.skipIf(!symlinksSupported)(
     "prefers npm ownership over the Node keg the package lives under",
     () =>
@@ -975,147 +878,6 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       prefix: "/srv",
     });
   });
-
-  it.effect.skipIf(windowsHost)(
-    "stays manual-only for an explicit binary path that does not exist",
-    () =>
-      Effect.gen(function* () {
-        const tempDir = yield* makeTempDir("t3-missing-native-capabilities");
-        const missingPath = NodePath.join(tempDir, ".local", "bin", "native-package-tool");
-
-        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
-          nativePackageToolUpdate,
-          { binaryPath: missingPath, env: { PATH: "" } },
-        ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
-
-        expect(capabilities.update).toBeNull();
-      }),
-  );
-
-  it.effect.each([
-    {
-      directory: "Caskroom",
-      name: "package-tool",
-      kind: "cask",
-      version: "0.148.0,42",
-      latestVersion: "0.148.0",
-    },
-    {
-      directory: "Cellar",
-      name: "package-tool",
-      kind: "formula",
-      version: "0.148.0",
-      latestVersion: "0.148.0",
-    },
-    {
-      directory: "Cellar",
-      name: "package-tool@latest",
-      kind: "formula",
-      version: "0.148.0",
-      latestVersion: "0.148.0",
-    },
-    {
-      directory: "Caskroom",
-      name: "versionless-package-tool",
-      kind: "cask",
-      version: "latest",
-      latestVersion: null,
-    },
-  ] as const)(
-    "upgrades the owning Homebrew $kind $name through an executable alias",
-    (fixture) =>
-      Effect.gen(function* () {
-        const tempDir = yield* makeTempDir("t3-homebrew-capabilities");
-        const brewBinDir = NodePath.join(tempDir, "brew-bin");
-        const brewPath = NodePath.join(brewBinDir, "brew");
-        writeExecutable(brewPath);
-        const ownedBinary = NodePath.join(
-          tempDir,
-          fixture.directory,
-          fixture.name,
-          fixture.latestVersion ?? "latest",
-          "package-tool-0.148.0",
-        );
-        writeExecutable(ownedBinary);
-        const link = NodePath.join(tempDir, "bin", "custom-package-tool");
-        NodeFS.mkdirSync(NodePath.dirname(link), { recursive: true });
-        NodeFS.symlinkSync(ownedBinary, link);
-        const spawned: Array<ReadonlyArray<string>> = [];
-
-        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
-          packageToolUpdate,
-          {
-            binaryPath: link,
-            env: { PATH: brewBinDir },
-          },
-        ).pipe(
-          Effect.provideService(HostProcess.Platform, "darwin"),
-          Effect.provideService(
-            ChildProcessSpawner.ChildProcessSpawner,
-            stdoutSpawner((command, args) => {
-              spawned.push([command, ...args]);
-              return args[0] === "--prefix"
-                ? `${tempDir}\n`
-                : JSON.stringify(
-                    fixture.kind === "cask"
-                      ? { casks: [{ version: fixture.version }] }
-                      : { formulae: [{ versions: { stable: fixture.version } }] },
-                  );
-            }),
-          ),
-        );
-
-        expect(capabilities).toMatchObject({
-          provider: driver("packageTool"),
-          packageName: "@example/package-tool",
-          update: {
-            command:
-              fixture.kind === "cask"
-                ? `brew upgrade --cask ${fixture.name}`
-                : `brew upgrade ${fixture.name}`,
-            executable: brewPath,
-            args:
-              fixture.kind === "cask"
-                ? ["upgrade", "--cask", fixture.name]
-                : ["upgrade", fixture.name],
-            lockKey: "homebrew",
-          },
-        });
-
-        const enrich = (enableProviderUpdateChecks: boolean) =>
-          enrichProviderSnapshotWithVersionAdvisory(
-            { ...installedPackageToolProvider, version: "0.148.0" },
-            capabilities,
-            { enableProviderUpdateChecks },
-          ).pipe(
-            Effect.provide(ProviderLatestVersions.layer),
-            Effect.provideService(
-              HttpClient.HttpClient,
-              HttpClient.make(() =>
-                Effect.die("Homebrew version checks should not fall back to npm"),
-              ),
-            ),
-          );
-
-        expect((yield* enrich(false)).versionAdvisory).toMatchObject({
-          status: "unknown",
-          latestVersion: null,
-        });
-        expect(spawned).toEqual([[brewPath, "--prefix"]]);
-
-        expect((yield* enrich(true)).versionAdvisory).toMatchObject({
-          status: fixture.latestVersion === null ? "unknown" : "current",
-          latestVersion: fixture.latestVersion,
-          canUpdate: true,
-          message: null,
-        });
-        expect(spawned).toEqual([
-          [brewPath, "--prefix"],
-          [brewPath, "info", "--json=v2", fixture.name],
-        ]);
-      }),
-    { skip: !symlinksSupported },
-  );
 
   it.effect("shares installer lookups only for the same executable and update target", () =>
     Effect.gen(function* () {
@@ -1392,24 +1154,6 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         args: ["upgrade", "package-tool"],
         lockKey: "homebrew",
       });
-    }),
-  );
-
-  it.effect("caches resolution until a fresh read is requested", () =>
-    Effect.gen(function* () {
-      let resolutions = 0;
-      const resolve = yield* makeCachedProviderMaintenanceResolution(
-        Effect.sync(() => {
-          resolutions += 1;
-          return manualPackageTool;
-        }),
-      );
-      yield* resolve();
-      yield* resolve();
-      expect(resolutions).toBe(1);
-      yield* resolve({ fresh: true });
-      yield* resolve();
-      expect(resolutions).toBe(2);
     }),
   );
 

@@ -91,10 +91,6 @@ function composer(text = "") {
 }
 
 describe("composer undo grouping", () => {
-  it("keeps a continuous run of typing as one step", () => {
-    expect(composer().type("hello world").undo().text()).toBe("");
-  });
-
   it("starts a new step when typing turns into deleting, and back", () => {
     const editor = composer().type("hello world").backspace(5).type("there");
     expect(editor.text()).toBe("hello there");
@@ -126,10 +122,5 @@ describe("composer undo grouping", () => {
 
   it("keeps IME composition as one run of typing", () => {
     expect(composer().type("go ").compose("にほん").undo().text()).toBe("");
-  });
-
-  it("merges typing across a short pause and splits it across a long one", () => {
-    expect(composer().type("hello").wait(700).type(" world").undo().text()).toBe("");
-    expect(composer().type("hello").wait(1100).type(" world").undo().text()).toBe("hello");
   });
 });

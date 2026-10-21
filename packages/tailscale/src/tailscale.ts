@@ -14,7 +14,7 @@ export const DEFAULT_TAILSCALE_SERVE_PORT = 443;
  * A CLI that never answers takes longer than this to fail, because the kill
  * that follows the timeout also takes time (`taskkill` on Windows).
  */
-export const TAILSCALE_STATUS_TIMEOUT = Duration.millis(3_500);
+const TAILSCALE_STATUS_TIMEOUT = Duration.millis(3_500);
 const TAILSCALE_SERVE_TIMEOUT = Duration.seconds(10);
 const TAILSCALE_PROBE_TIMEOUT = Duration.millis(2_500);
 

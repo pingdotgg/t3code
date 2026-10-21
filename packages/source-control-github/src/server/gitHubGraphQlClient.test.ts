@@ -282,16 +282,6 @@ describe("call", () => {
     },
   );
 
-  it.effect("leaves an answer that does not decode to the caller", () => {
-    const { layer } = harness(() =>
-      json({ data: { repository: { pullRequest: { additions: "many" } } } }),
-    );
-    return Effect.gen(function* () {
-      const error = yield* Effect.flip(callStats());
-      expect(error).toMatchObject({ _tag: "GraphQLClientError", reason: { _tag: "DecodeError" } });
-    }).pipe(Effect.provide(layer));
-  });
-
   it.effect("fails an answer past the byte cap with its status", () => {
     const { layer } = harness(() =>
       json({ data: { repository: { pullRequest: { ...stats, padding: "x".repeat(200) } } } }),

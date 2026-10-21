@@ -8,7 +8,6 @@ import {
   REASONING_SELECT_DESCRIPTOR_IDS,
   ULTRATHINK_PROMPT_PREFIX,
 } from "@t3tools/client-runtime/model-traits";
-export { buildTraitsTriggerDisplay } from "@t3tools/client-runtime/model-traits";
 import {
   type ModelSelection,
   type ProviderDriverKind,
@@ -65,7 +64,7 @@ function savedOptionLabel(id: string): string {
   );
 }
 
-export function buildUnavailableModelOptionDescriptors(
+function buildUnavailableModelOptionDescriptors(
   selections: ProviderOptions | null | undefined,
 ): ReadonlyArray<ProviderOptionDescriptor> {
   return (selections ?? []).map((selection) =>

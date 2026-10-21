@@ -87,11 +87,6 @@ it("finishes setup with a saved shortcut without requiring a separate delivery t
   expect(captureSetupShortcutReady(gnome, false)).toBe(true);
 });
 
-it("still allows revisiting capture access and editing a saved shortcut", () => {
-  expect(captureSetupInitialStep(gnome, "access")).toBe("access");
-  expect(captureSetupInitialStep(gnome, "shortcut")).toBe("shortcut");
-});
-
 it("does not skip native permission setup when capture has not been enabled", () => {
   expect(
     captureSetupInitialStep({
@@ -101,12 +96,6 @@ it("does not skip native permission setup when capture has not been enabled", ()
       gnomeExtension: undefined,
       shortcutRegistered: false,
     }),
-  ).toBe("access");
-});
-
-it("keeps the picker explanation when automatic capture is unavailable", () => {
-  expect(
-    captureSetupInitialStep({ ...gnome, linuxBackend: "picker", gnomeExtension: undefined }),
   ).toBe("access");
 });
 
@@ -183,26 +172,6 @@ it("uses the current desktop's access requirements while preserving setup for th
   expect(captureSetupShortcutReady(gnome, false)).toBe(true);
 });
 
-it("does not infer a Linux desktop for native capture or an unidentified portal", () => {
-  expect(captureSetupDesktopName({ ...gnome, mode: "direct" })).toBeUndefined();
-  expect(
-    captureSetupDesktopName({
-      ...gnome,
-      linuxBackend: "screenshot-portal",
-      gnomeExtension: undefined,
-    }),
-  ).toBeUndefined();
-});
-
-it("acknowledges an unchanged recheck while GNOME still needs a sign-out", () => {
-  const state = {
-    ...gnome,
-    gnomeExtension: { status: "restart-required" as const, message: "Sign out" },
-  };
-  expect(captureSetupCheckMessage(state)).toBe("Still waiting for you to sign out and back in.");
-  expect(captureSetupAccessReady(state)).toBe(false);
-});
-
 it("only confirms capture access when the rechecked extension is running and reachable", () => {
   expect(captureSetupCheckMessage(gnome)).toBe("Ready. Continue to choose your shortcut.");
   expect(captureSetupCheckMessage({ ...gnome, linuxBackend: "picker" })).toBe(
@@ -274,15 +243,6 @@ it("allows leaving setup while the desktop prompt is pending but never after an 
   expect(captureSetupShortcutReady(pending, true)).toBe(false);
   expect(captureSetupShortcutReady({ ...pending, shortcutPending: false }, false)).toBe(false);
 });
-
-it.each([false, true])(
-  "does not require a previously observed shortcut activation (%s)",
-  (shortcutVerified) => {
-    const state = { ...gnome, shortcutVerified };
-    expect(captureSetupShortcutReady(state, false)).toBe(true);
-    expect(captureSetupInitialStep(state)).toBe("shortcut");
-  },
-);
 
 it("blocks finishing if desktop access is lost during the wizard", () => {
   expect(

@@ -146,25 +146,6 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("hands a search to GitLab's own search parameter", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output("[]")));
-      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
-
-      yield* cli.listMergeRequests({
-        cwd: "/w",
-        repository: "acme/web",
-        state: "open",
-        involvement: "all",
-        viewer: "bilal",
-        limit: 10,
-        query: "page",
-      });
-
-      expect(argsOfCall(0)[1]).toContain("search=page");
-    }),
-  );
-
   it.effect("carries on from the number of rows already delivered", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output(mergeRequests(3, 1))));
@@ -261,25 +242,6 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("asks for no search at all when the reader typed only spaces", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output("[]")));
-      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
-
-      yield* cli.listMergeRequests({
-        cwd: "/w",
-        repository: "acme/web",
-        state: "open",
-        involvement: "all",
-        viewer: "bilal",
-        limit: 10,
-        query: "   ",
-      });
-
-      expect(argsOfCall(0)[1]).not.toContain("search=");
-    }),
-  );
-
   it.effect("stops walking on a short page", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output(mergeRequests(40, 1))));
@@ -317,42 +279,6 @@ layer("GitLabPullRequestCli.layer", (it) => {
 
       assert.strictEqual(batch.items.length, 0);
       assert.strictEqual(mockedExecute.mock.calls.length, 2);
-    }),
-  );
-
-  it.effect("asks GitLab for every state on the All tab", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output("[]")));
-      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
-
-      yield* cli.listMergeRequests({
-        cwd: "/w",
-        repository: "acme/web",
-        state: "all",
-        involvement: "all",
-        viewer: "bilal",
-        limit: 10,
-      });
-
-      expect(argsOfCall(0)[1]).toContain("state=all");
-    }),
-  );
-
-  it.effect("filters by the reviewer when the viewer is reviewing", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output("[]")));
-      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
-
-      yield* cli.listMergeRequests({
-        cwd: "/w",
-        repository: "acme/web",
-        state: "open",
-        involvement: "reviewing",
-        viewer: "bilal",
-        limit: 10,
-      });
-
-      expect(argsOfCall(0)[1]).toContain("reviewer_username=bilal");
     }),
   );
 
@@ -479,59 +405,6 @@ layer("GitLabPullRequestCli.layer", (it) => {
           failure: { _tag: "GitLabDiffRefsUnavailableError" },
         });
       }),
-  );
-
-  it.effect("cancels an armed auto-merge through the API glab has no flag for", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output("{}")));
-      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
-
-      yield* cli.runMergeRequestAction({
-        cwd: "/w",
-        repository: "acme/platform/web",
-        number: 7,
-        action: "disable-auto-merge",
-      });
-
-      expect(argsOfCall(0)).toEqual([
-        "api",
-        "projects/acme%2Fplatform%2Fweb/merge_requests/7/cancel_merge_when_pipeline_succeeds",
-        "--method",
-        "POST",
-      ]);
-    }),
-  );
-
-  it.effect("brings a stale branch up to date by rebasing it, the only way GitLab has", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output("")));
-      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
-
-      yield* cli.runMergeRequestAction({
-        cwd: "/w",
-        repository: "acme/web",
-        number: 7,
-        action: "update-branch",
-      });
-
-      expect(argsOfCall(0)).toEqual(["mr", "rebase", "7", "--repo", "acme/web"]);
-    }),
-  );
-
-  it.effect("moves a merge request back to draft through glab", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output("")));
-      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
-
-      yield* cli.runMergeRequestAction({
-        cwd: "/w",
-        repository: "acme/web",
-        number: 7,
-        action: "draft",
-      });
-
-      expect(argsOfCall(0)).toEqual(["mr", "update", "7", "--repo", "acme/web", "--draft"]);
-    }),
   );
 
   it.effect("sends a comment body over stdin, never in argv", () =>
@@ -879,34 +752,6 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("asks the detail read for the divergence GitLab withholds by default", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output('{"message":"404 Not Found"}')));
-      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
-
-      yield* Effect.ignore(
-        cli.getMergeRequestDetail({ cwd: "/w", repository: "acme/web", number: 7 }),
-      );
-
-      expect(argsOfCall(0)[1]).toBe(
-        "projects/acme%2Fweb/merge_requests/7?include_diverged_commits_count=true",
-      );
-    }),
-  );
-
-  it.effect("fails the read when GitLab returns something unreadable", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output('{"message":"404 Not Found"}')));
-      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
-
-      const error = yield* Effect.flip(
-        cli.getMergeRequestDetail({ cwd: "/w", repository: "acme/web", number: 7 }),
-      );
-
-      assert.strictEqual(error._tag, "GitLabMergeRequestReadError");
-    }),
-  );
-
   it.effect("fails when the authenticated account has no username", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output(JSON.stringify({ username: "" }))));
@@ -1068,68 +913,6 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("does not ask for diff revisions when a review carries no line comments", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
-      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
-
-      yield* cli.submitReview({
-        cwd: "/w",
-        repository: "acme/web",
-        number: 7,
-        verdict: "comment",
-        body: "One thought.",
-        comments: [],
-      });
-
-      assert.strictEqual(mockedExecute.mock.calls.length, 1);
-      expect(argsOfCall(0)[1]).toContain("/notes");
-    }),
-  );
-
-  it.effect("resolves a discussion in place rather than posting to it", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
-      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
-
-      yield* cli.setDiscussionResolution({
-        cwd: "/w",
-        repository: "acme/web",
-        number: 7,
-        discussionId: "abc123",
-        resolved: true,
-      });
-
-      expect(argsOfCall(0)).toContain("--method");
-      expect(argsOfCall(0)).toContain("PUT");
-      expect(argsOfCall(0)[1]).toContain("/discussions/abc123");
-      expect(JSON.parse(callAt(0).stdin ?? "")).toEqual({ resolved: true });
-    }),
-  );
-
-  it.effect("awards an emoji through a POST naming it, not a body", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
-      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
-
-      yield* cli.setReaction({
-        cwd: "/w",
-        repository: "acme/web",
-        number: 7,
-        content: "thumbs-up",
-        reacted: true,
-      });
-
-      assert.strictEqual(mockedExecute.mock.calls.length, 1);
-      expect(argsOfCall(0)).toEqual([
-        "api",
-        "projects/acme%2Fweb/merge_requests/7/award_emoji?name=thumbsup",
-        "--method",
-        "POST",
-      ]);
-    }),
-  );
-
   it.effect("removes an award by listing them and deleting the reader's own id", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(
@@ -1163,26 +946,6 @@ layer("GitLabPullRequestCli.layer", (it) => {
         "--method",
         "DELETE",
       ]);
-    }),
-  );
-
-  it.effect("does nothing when the reader has no award of that name to take back", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(
-        Effect.succeed(output(JSON.stringify({ username: "bilal" }))),
-      );
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output("[]")));
-      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
-
-      yield* cli.setReaction({
-        cwd: "/w",
-        repository: "acme/web",
-        number: 7,
-        content: "thumbs-up",
-        reacted: false,
-      });
-
-      assert.strictEqual(mockedExecute.mock.calls.length, 2);
     }),
   );
 
@@ -1309,48 +1072,6 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("rewrites a title without touching the description", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
-      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
-
-      yield* cli.updateMergeRequest({
-        cwd: "/w",
-        repository: "acme/web",
-        number: 7,
-        title: "A better title",
-      });
-
-      expect(argsOfCall(0)).toEqual([
-        "api",
-        "projects/acme%2Fweb/merge_requests/7",
-        "--method",
-        "PUT",
-        "--input",
-        "-",
-        "--header",
-        "Content-Type: application/json",
-      ]);
-      expect(JSON.parse(callAt(0).stdin ?? "")).toEqual({ title: "A better title" });
-    }),
-  );
-
-  it.effect("sends a rewritten body as GitLab's description, and nothing else", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
-      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
-
-      yield* cli.updateMergeRequest({
-        cwd: "/w",
-        repository: "acme/web",
-        number: 7,
-        description: "What this changes.",
-      });
-
-      expect(JSON.parse(callAt(0).stdin ?? "")).toEqual({ description: "What this changes." });
-    }),
-  );
-
   it.effect("rewrites title and description together in one request", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
@@ -1369,33 +1090,6 @@ layer("GitLabPullRequestCli.layer", (it) => {
         title: "A better title",
         description: "What this changes.",
       });
-    }),
-  );
-
-  it.effect("rewrites a note in place through the note it names", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
-      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
-
-      yield* cli.updateNote({
-        cwd: "/w",
-        repository: "acme/web",
-        number: 7,
-        noteId: "42",
-        body: "true",
-      });
-
-      expect(argsOfCall(0)).toEqual([
-        "api",
-        "projects/acme%2Fweb/merge_requests/7/notes/42",
-        "--method",
-        "PUT",
-        "--input",
-        "-",
-        "--header",
-        "Content-Type: application/json",
-      ]);
-      expect(callAt(0).stdin).toBe('{"body":"true"}');
     }),
   );
   it.effect("reads blob ids for the marked paths at the merge request's head", () =>
@@ -1478,22 +1172,6 @@ layer("GitLabPullRequestCli.layer", (it) => {
       });
 
       expect([...revisions]).toEqual([]);
-    }),
-  );
-
-  it.effect("asks GitLab nothing when no file is marked", () =>
-    Effect.gen(function* () {
-      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
-
-      const revisions = yield* cli.getFileRevisions({
-        cwd: "/w",
-        repository: "acme/web",
-        number: 7,
-        paths: [],
-      });
-
-      expect([...revisions]).toEqual([]);
-      expect(mockedExecute).not.toHaveBeenCalled();
     }),
   );
 

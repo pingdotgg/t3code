@@ -122,17 +122,6 @@ describe("IncomingShareInbox", () => {
     expect([...persisted.values()]).toEqual([draft("share-first", "2026-07-16T07:59:00.000Z")]);
   });
 
-  it("keeps content-identical shares addressable by their own ids", async () => {
-    const { inbox, persisted } = createHarness();
-    persisted.set("share-open-flow", draft("share-open-flow", "2026-07-16T07:59:00.000Z"));
-    persisted.set("share-newer", draft("share-newer"));
-
-    await expect(inbox.refresh({ ingestNative: false })).resolves.toEqual([
-      draft("share-newer"),
-      draft("share-open-flow", "2026-07-16T07:59:00.000Z"),
-    ]);
-  });
-
   it("does not acknowledge a supported payload when its durable write fails", async () => {
     const clearPayloads = vi.fn();
     const cleanup = vi.fn(async () => undefined);

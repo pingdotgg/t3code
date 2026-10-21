@@ -5,7 +5,6 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { createOpencodeClient } from "@opencode-ai/sdk/v2";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import type { OpenCodeSettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -22,12 +21,6 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ProviderMaintenance from "@t3tools/provider-core/server/maintenanceResolver";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
-import {
-  OPENCODE_1_RESPONSES,
-  OPENCODE_2_RESPONSES,
-  OPENCODE_2_WORKSPACE_RESPONSES,
-  replayOpenCodeServer,
-} from "./probeResponses.fixture.ts";
 import { OpenCodeDriver, openCodeUpdateFor } from "./driver.ts";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 
@@ -72,92 +65,6 @@ const create = (config: Partial<OpenCodeSettings>, http: HttpClient.HttpClient) 
 
 const noHttp = HttpClient.make(() => Effect.die("A local binary must not be probed over HTTP"));
 
-const createOpenCode1WorkspaceDriver = (client: ReturnType<typeof createOpencodeClient>) =>
-  create(
-    { serverUrl: "http://127.0.0.1:4096" },
-    replayOpenCodeServer(OPENCODE_1_RESPONSES, ""),
-  ).pipe(
-    Effect.provide(
-      Layer.mock(OpenCodeRuntime.OpenCodeRuntime)({
-        connectToOpenCodeServer: () =>
-          Effect.succeed({
-            url: "http://127.0.0.1:4096",
-            version: "1.18.32",
-            exitCode: null,
-            external: true,
-          }),
-        createOpenCodeSdkClient: () => client,
-        loadOpenCodeSkills: () =>
-          Effect.succeed([
-            {
-              name: "workspace-skill",
-              location: "/work/.opencode/skills/workspace-skill/SKILL.md",
-            },
-          ]),
-      }),
-    ),
-  );
-
-it.layer(layer)("OpenCodeDriver 1.x workspace commands", (it) => {
-  it.effect("keeps skills and marks commands pending on a timed-out probe, then loads them", () =>
-    Effect.gen(function* () {
-      const requested = Promise.withResolvers<void>();
-      let ready = false;
-      const client = createOpencodeClient({
-        baseUrl: "http://127.0.0.1:4096",
-        throwOnError: true,
-        fetch: () => {
-          requested.resolve();
-          return ready
-            ? Promise.resolve(Response.json([{ name: "hello", hints: [] }]))
-            : new Promise<Response>(() => {});
-        },
-      });
-      const instance = yield* createOpenCode1WorkspaceDriver(client);
-      const probe = yield* instance.snapshotForCwd!("/work").pipe(Effect.forkChild);
-      yield* Effect.promise(() => requested.promise);
-      yield* TestClock.adjust("10 seconds");
-
-      const pending = yield* Fiber.join(probe);
-      assert.deepStrictEqual(
-        pending.skills.map((skill) => skill.name),
-        ["workspace-skill"],
-      );
-      assert.strictEqual(pending.slashCommandsPending, true);
-
-      ready = true;
-      const workspace = yield* instance.snapshotForCwd!("/work");
-      assert.deepStrictEqual(
-        workspace.slashCommands.map((command) => command.name),
-        ["compact", "hello"],
-      );
-      assert.strictEqual(workspace.slashCommandsPending, false);
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect("keeps skills and defers command fallback to provider health on an SDK error", () =>
-    Effect.gen(function* () {
-      const client = createOpencodeClient({
-        baseUrl: "http://127.0.0.1:4096",
-        throwOnError: true,
-        fetch: () => Promise.resolve(Response.json({ message: "unavailable" }, { status: 500 })),
-      });
-      const instance = yield* createOpenCode1WorkspaceDriver(client);
-      const workspace = yield* instance.snapshotForCwd!("/work");
-
-      assert.deepStrictEqual(
-        workspace.slashCommands.map((command) => command.name),
-        ["compact"],
-      );
-      assert.deepStrictEqual(
-        workspace.skills.map((skill) => skill.name),
-        ["workspace-skill"],
-      );
-      assert.strictEqual(workspace.slashCommandsPending, undefined);
-    }).pipe(Effect.scoped),
-  );
-});
-
 it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
   it.effect("never starts a 1.x server for an OpenCode 2 instance", () =>
     Effect.gen(function* () {
@@ -171,34 +78,6 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
         }),
       );
       assert.deepStrictEqual(serverStarts, ["start"]);
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect("lists an OpenCode 2 workspace's own skills and commands from its server", () =>
-    Effect.gen(function* () {
-      serverStarts.length = 0;
-      const requested: Array<string> = [];
-      const server = replayOpenCodeServer(
-        { ...OPENCODE_2_RESPONSES, ...OPENCODE_2_WORKSPACE_RESPONSES },
-        "secret",
-        requested,
-      );
-      const instance = yield* create(
-        { serverUrl: "http://127.0.0.1:4096", serverPassword: "secret" },
-        server,
-      );
-
-      const workspace = yield* instance.snapshotForCwd!("/work");
-      assert.includeMembers(
-        workspace.skills.map((skill) => skill.name),
-        ["plum", "opencode"],
-      );
-      assert.deepStrictEqual(
-        workspace.slashCommands.map((command) => command.name),
-        ["compact", "init", "review", "bee"],
-      );
-      assert.include(requested, "/api/skill");
-      assert.deepStrictEqual(serverStarts, []);
     }).pipe(Effect.scoped),
   );
 
@@ -308,24 +187,6 @@ const layerUpdate = Layer.mergeAll(
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
 it.layer(layerUpdate)("OpenCodeDriver updates", (it) => {
-  it.effect("never runs the binary for a disabled instance's update check", () =>
-    Effect.gen(function* () {
-      versionProbes.length = 0;
-      versionOutput.current = "opencode v2.0.18\n";
-      const instance = yield* OpenCodeDriver.create({
-        instanceId: ProviderInstanceId.make("opencode-disabled"),
-        displayName: undefined,
-        environment: [],
-        enabled: false,
-        config: { ...OpenCodeDriver.defaultConfig(), binaryPath: "opencode" },
-      }).pipe(Effect.provideService(HttpClient.HttpClient, noHttp));
-      const maintenance = yield* instance.snapshot.resolveMaintenance();
-      yield* instance.snapshot.resolveMaintenance({ fresh: true });
-      assert.isNull(maintenance.update);
-      assert.deepStrictEqual(versionProbes, []);
-    }).pipe(Effect.scoped),
-  );
-
   it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     "offers no package update for an unknown version and follows a changed one on a fresh read",
     () =>

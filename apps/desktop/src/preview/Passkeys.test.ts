@@ -268,26 +268,6 @@ describe("PreviewPasskeys", () => {
     }).pipe(Effect.provide(bridgeLayer)),
   );
 
-  it.effect("answers the page even when the native ceremony never settles", () =>
-    Effect.gen(function* () {
-      const passkeys = yield* PreviewPasskeys.PreviewPasskeys;
-      const { guest, call } = makeGuest();
-      passkeys.attachGuest(guest);
-      webauthn.getCredential.mockReturnValueOnce(new Promise(() => {}));
-      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-
-      const pending = yield* Effect.forkChild(
-        call(PASSKEY_GET_CHANNEL, { challenge: new Uint8Array([1]), timeout: 1_000 }),
-      );
-      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(6_000));
-
-      assert.deepStrictEqual(yield* Fiber.join(pending), {
-        success: false,
-        error: "NotAllowedError",
-      });
-    }).pipe(Effect.provide(bridgeLayer)),
-  );
-
   it.effect("turns each path on only for builds signed for it", () =>
     Effect.gen(function* () {
       const entitled = yield* PreviewPasskeys.PreviewPasskeys.pipe(

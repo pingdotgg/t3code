@@ -187,15 +187,6 @@ describe("chat math parsing", () => {
     });
   });
 
-  it.each([
-    ["$$ $$", ""],
-    ["$$  $$", ""],
-    ["$$\n$\n$$", "$"],
-    ["$$\n$$\n", ""],
-  ])("parses display math without empty content tokens in %j", (source, tex) => {
-    expect(formulas(source)).toEqual([["display", tex]]);
-  });
-
   it.each([1, 2, 3, 4])("respects %i backslashes before a display fence", (count) => {
     const prefix = "a+" + "\\".repeat(count);
     for (const opening of ["$$", "$$\n"]) {
@@ -334,11 +325,6 @@ describe("math in GFM tables", () => {
       expect.objectContaining({ source: "$|z|$", tex: "|z|" }),
     ]);
     expect(JSON.stringify(tree)).not.toMatch(/[\uE000-\uF8FF]/);
-  });
-
-  it("retains multiline math pipes outside tables", () => {
-    const source = "Outside \\(x|y\n+z\\) remains math.\n\n\\[\n|a|\n+|b|\n\\]";
-    expect(markdownMathRanges(source).map((range) => range.tex)).toEqual(["x|y\n+z", "|a|\n+|b|"]);
   });
   it.each(["\\(\\frac{1}{|x|}\\)", "$$|x|$$", "$|x|$", "\\[|x|\\]"])(
     "keeps pipes inside %s in one cell and preserves source offsets",

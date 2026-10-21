@@ -225,7 +225,7 @@ export type AcpRegistryPlatformTarget =
   | "windows-aarch64"
   | "windows-x86_64";
 
-export function resolveAcpRegistryPlatformTarget(
+function resolveAcpRegistryPlatformTarget(
   platform: NodeJS.Platform,
   architecture: NodeJS.Architecture,
 ): AcpRegistryPlatformTarget | undefined {

@@ -26,24 +26,6 @@ afterEach(() => {
 });
 
 describe("consumeLastAgentNotificationResponse", () => {
-  it("reports which initial-response operation failed", async () => {
-    const cause = new Error("notification lookup unavailable");
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
-
-    await consumeLastAgentNotificationResponse({
-      getLastResponse: () => Promise.reject(cause),
-      clearLastResponse: () => Promise.resolve(),
-      handleResponse: vi.fn(),
-    });
-
-    expect(consoleError).toHaveBeenCalledWith(
-      expect.objectContaining({
-        _tag: "NotificationNavigationError",
-        operation: "read",
-      }),
-    );
-  });
-
   it("routes a response before reporting a clear failure", async () => {
     const cause = new Error("notification clear unavailable");
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);

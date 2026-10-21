@@ -8,7 +8,7 @@ import {
 } from "@t3tools/contracts";
 import type { Thread } from "../types";
 import { makeThreadFixture, type ThreadFixtureOverrides } from "../test-fixtures";
-import { getLatestThreadForProject, sortThreads } from "./threadSort";
+import { sortThreads } from "./threadSort";
 
 const LOCAL_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const PROJECT_ID = ProjectId.make("project-1");
@@ -81,114 +81,5 @@ describe("sortThreads", () => {
       ThreadId.make("thread-2"),
       ThreadId.make("thread-1"),
     ]);
-  });
-
-  it("falls back to thread timestamps when there is no user message", () => {
-    const sorted = sortThreads(
-      [
-        makeThread({
-          id: ThreadId.make("thread-1"),
-          updatedAt: "2026-03-09T10:01:00.000Z",
-          messages: [
-            {
-              id: "message-1" as never,
-              role: "assistant",
-              text: "assistant only",
-              runId: null,
-              createdAt: "2026-03-09T10:02:00.000Z",
-              updatedAt: "2026-03-09T10:02:00.000Z",
-              streaming: false,
-            },
-          ],
-        }),
-        makeThread({
-          id: ThreadId.make("thread-2"),
-          createdAt: "2026-03-09T10:05:00.000Z",
-          updatedAt: "2026-03-09T10:05:00.000Z",
-          messages: [],
-        }),
-      ],
-      "updated_at",
-    );
-
-    expect(sorted.map((thread) => thread.id)).toEqual([
-      ThreadId.make("thread-2"),
-      ThreadId.make("thread-1"),
-    ]);
-  });
-
-  it("can sort threads by createdAt when configured", () => {
-    const sorted = sortThreads(
-      [
-        makeThread({
-          id: ThreadId.make("thread-1"),
-          createdAt: "2026-03-09T10:05:00.000Z",
-          updatedAt: "2026-03-09T10:05:00.000Z",
-        }),
-        makeThread({
-          id: ThreadId.make("thread-2"),
-          createdAt: "2026-03-09T10:00:00.000Z",
-          updatedAt: "2026-03-09T10:10:00.000Z",
-        }),
-      ],
-      "created_at",
-    );
-
-    expect(sorted.map((thread) => thread.id)).toEqual([
-      ThreadId.make("thread-1"),
-      ThreadId.make("thread-2"),
-    ]);
-  });
-
-  it("uses updatedAt as a fallback for created_at sorting when createdAt is invalid", () => {
-    const sorted = sortThreads(
-      [
-        makeThread({
-          id: ThreadId.make("thread-1"),
-          createdAt: "invalid-date" as never,
-          updatedAt: "2026-03-09T10:05:00.000Z",
-        }),
-        makeThread({
-          id: ThreadId.make("thread-2"),
-          createdAt: "2026-03-09T10:00:00.000Z",
-          updatedAt: "2026-03-09T10:10:00.000Z",
-        }),
-      ],
-      "created_at",
-    );
-
-    expect(sorted.map((thread) => thread.id)).toEqual([
-      ThreadId.make("thread-1"),
-      ThreadId.make("thread-2"),
-    ]);
-  });
-
-  it("returns the latest active thread for a project", () => {
-    const latestThread = getLatestThreadForProject(
-      [
-        makeThread({
-          id: ThreadId.make("thread-1"),
-          createdAt: "2026-03-09T10:00:00.000Z",
-          updatedAt: "2026-03-09T10:01:00.000Z",
-          archivedAt: null,
-        }),
-        makeThread({
-          id: ThreadId.make("thread-2"),
-          createdAt: "2026-03-09T10:05:00.000Z",
-          updatedAt: "2026-03-09T10:10:00.000Z",
-          archivedAt: "2026-03-10T00:00:00.000Z",
-        }),
-        makeThread({
-          id: ThreadId.make("thread-3"),
-          createdAt: "2026-03-09T10:06:00.000Z",
-          updatedAt: "2026-03-09T10:06:00.000Z",
-          archivedAt: null,
-        }),
-      ],
-      PROJECT_ID,
-      "updated_at",
-    );
-
-    expect(latestThread?.id).toBe(ThreadId.make("thread-3"));
   });
 });

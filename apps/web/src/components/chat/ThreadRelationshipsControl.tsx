@@ -80,7 +80,7 @@ import {
 const THREAD_LINEAGE_INITIAL_COUNT = 6;
 const THREAD_LINEAGE_PAGE_COUNT = 12;
 
-export function resolveThreadLineageWindow<Row>(
+function resolveThreadLineageWindow<Row>(
   rows: ReadonlyArray<Row>,
   visibleCount: number,
 ): { readonly visibleRows: ReadonlyArray<Row>; readonly hiddenCount: number } {

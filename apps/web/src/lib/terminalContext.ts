@@ -39,7 +39,7 @@ export function normalizeTerminalContextText(text: string): string {
   return text.replace(/\r\n/g, "\n").replace(/^\n+|\n+$/g, "");
 }
 
-export function hasTerminalContextText(context: { text: string }): boolean {
+function hasTerminalContextText(context: { text: string }): boolean {
   return normalizeTerminalContextText(context.text).length > 0;
 }
 

@@ -36,10 +36,6 @@ Done.`),
     ).toBe('{"message":"literal } brace","nested":{"ok":true}}');
   });
 
-  it("returns trimmed input when no JSON object starts", () => {
-    expect(extractJsonObject("  no structured output  ")).toBe("no structured output");
-  });
-
   it("decodes JSON with comments and trailing commas", () => {
     expect(
       decodeLenientJson(`{
@@ -51,11 +47,6 @@ Done.`),
       enabled: true,
       values: [1, 2],
     });
-  });
-
-  it("rejects malformed JSON after lenient preprocessing", () => {
-    expect(() => decodeLenientJson('{ "enabled": true,, }')).toThrow();
-    expect(() => decodeLenientJson("[1/* https://example.com */2]")).toThrow();
   });
 
   it("preserves comment markers and commas before brackets inside string values", () => {

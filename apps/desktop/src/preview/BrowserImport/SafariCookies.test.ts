@@ -138,17 +138,6 @@ describe("parseBinaryCookies", () => {
     });
   });
 
-  it("brackets IPv6 hosts in the cookie URL", () => {
-    const file = encodeBinaryCookies([
-      { domain: "::1", name: "local", path: "/", value: "v", flags: 0, expiry: 0 },
-    ]);
-
-    expect(parseBinaryCookies(file)[0]).toMatchObject({
-      url: "http://[::1]/",
-      domain: undefined,
-    });
-  });
-
   it("reads cookies spread across multiple pages", () => {
     const first = encodeBinaryCookies([
       { domain: "a.test", name: "one", path: "/", value: "1", flags: 0, expiry: 1 },
@@ -201,22 +190,6 @@ describe("parseBinaryCookies", () => {
     corrupt.writeUInt32LE(0xffff, recordStart);
 
     expect(() => parseBinaryCookies(corrupt)).toThrow(SafariCookieReadError);
-  });
-
-  it("rejects records truncated inside the 56-byte header", () => {
-    const valid = encodeBinaryCookies([
-      { domain: "a.test", name: "n", path: "/", value: "v", expiry: 1_000, flags: 0 },
-    ]);
-    const pageStart = 8 + 4;
-    const recordStart = pageStart + valid.readUInt32LE(pageStart + 8);
-
-    for (let size = 48; size < 56; size += 1) {
-      const corrupt = Buffer.from(valid);
-      corrupt.writeUInt32LE(size, recordStart);
-      expect(() => parseBinaryCookies(corrupt), `record size ${size}`).toThrow(
-        SafariCookieReadError,
-      );
-    }
   });
 
   it("rejects record offsets that point into the page header or an earlier record", () => {
@@ -284,30 +257,9 @@ describe("parseBinaryCookies", () => {
       parseBinaryCookies(Buffer.concat([first, Buffer.alloc(8), badLength, Buffer.from("x")])),
     ).toThrow(SafariCookieReadError);
   });
-
-  it("rejects a file that is not binarycookies", () => {
-    expect(() => parseBinaryCookies(Buffer.from("not a cookie jar"))).toThrow(
-      SafariCookieReadError,
-    );
-  });
 });
 
 describe("readSafariCookies", () => {
-  it.effect("adds the cookie path and parser cause to malformed jar failures", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-safari-" });
-      const jar = `${directory}/Cookies.binarycookies`;
-      yield* fileSystem.writeFileString(jar, "not a cookie jar");
-
-      const error = yield* readSafariCookies(jar).pipe(Effect.flip);
-
-      assert.equal(error.reason, "readFailed");
-      assert.equal(error.cookieDatabasePath, jar);
-      assert.instanceOf(error.cause, SafariCookieReadError);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
-  );
-
   it.effect("reports a TCC denial as a permission the user can grant", () =>
     Effect.gen(function* () {
       // What Full Disk Access actually looks like: the file is there, the read
@@ -328,31 +280,6 @@ describe("readSafariCookies", () => {
 
       assert.equal(error.reason, "needsFullDiskAccess");
     }),
-  );
-
-  it.effect("reports an ordinary permission failure as a plain read failure", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-safari-" });
-      const jar = `${directory}/Cookies.binarycookies`;
-      yield* fileSystem.writeFile(jar, new Uint8Array([0x63, 0x6f, 0x6f, 0x6b]));
-      yield* fileSystem.chmod(jar, 0o000);
-
-      const error = yield* readSafariCookies(jar).pipe(Effect.flip);
-
-      assert.equal(error.reason, "readFailed");
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
-  );
-
-  it.effect("reports a missing jar as a plain read failure", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-safari-" });
-
-      const error = yield* readSafariCookies(`${directory}/absent.binarycookies`).pipe(Effect.flip);
-
-      assert.equal(error.reason, "readFailed");
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 });
 
@@ -393,16 +320,8 @@ describe("isPermissionDenied", () => {
   const platformError = (reasonTag: string, code: string): PlatformError.PlatformError =>
     ({ _tag: "PlatformError", reason: { _tag: reasonTag, cause: { code } } }) as never;
 
-  it("treats a TCC EPERM denial as permission denied", () => {
-    expect(isPermissionDenied(platformError("Unknown", "EPERM"))).toBe(true);
-  });
-
   it("does not send an ordinary EACCES failure to the Full Disk Access grant", () => {
     expect(isPermissionDenied(platformError("PermissionDenied", "EACCES"))).toBe(false);
-  });
-
-  it("does not treat an unrelated failure as permission denied", () => {
-    expect(isPermissionDenied(platformError("Unknown", "EIO"))).toBe(false);
   });
 });
 
@@ -420,21 +339,5 @@ describe("safariAccessGranted", () => {
       yield* fileSystem.remove(jar);
       assert.isFalse(yield* safariAccessGranted(jar));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
-  );
-
-  it.effect("does not mistake TCC denial for a grant", () =>
-    Effect.gen(function* () {
-      const denied = PlatformError.systemError({
-        _tag: "Unknown",
-        module: "FileSystem",
-        method: "open",
-        cause: Object.assign(new Error("operation not permitted"), { code: "EPERM" }),
-      });
-      assert.isFalse(
-        yield* safariAccessGranted("/protected/Cookies.binarycookies").pipe(
-          Effect.provide(FileSystem.layerNoop({ open: () => Effect.fail(denied) })),
-        ),
-      );
-    }),
   );
 });

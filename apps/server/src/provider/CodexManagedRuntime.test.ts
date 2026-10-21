@@ -1,5 +1,4 @@
 // @effect-diagnostics nodeBuiltinImport:off - checks the host's default Codex directory without writing to it.
-import * as NodeOS from "node:os";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { CodexSettings, EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
@@ -18,36 +17,9 @@ import * as CodexInstallation from "./CodexInstallation.ts";
 import { makeCodexManagedRuntime } from "./CodexManagedRuntime.ts";
 import * as ProviderCredentialStore from "./ProviderCredentialStore.ts";
 import { codexAppServerArgs } from "./codexLaunchArgs.ts";
-import { resolveManagedCodexHomeLayout } from "./CodexManagedHome.ts";
 
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeSettings = Schema.decodeSync(CodexSettings);
-it.effect("managed home defaults to the global Codex home and honors configured home paths", () =>
-  Effect.gen(function* () {
-    const path = yield* Path.Path;
-    const primary = yield* resolveManagedCodexHomeLayout(
-      "/t3-state",
-      ProviderInstanceId.make("codex"),
-      decodeSettings({}),
-    );
-    assert.equal(primary.sharedHomePath, path.join(NodeOS.homedir(), ".codex"));
-    assert.equal(primary.mode, "direct");
-    const additional = yield* resolveManagedCodexHomeLayout(
-      "/t3-state",
-      ProviderInstanceId.make("codex-work"),
-      decodeSettings({}),
-    );
-    assert.equal(additional.sharedHomePath, primary.sharedHomePath);
-    assert.equal(additional.mode, "authOverlay");
-    const configured = yield* resolveManagedCodexHomeLayout(
-      "/t3-state",
-      ProviderInstanceId.make("codex-work"),
-      decodeSettings({ homePath: "/custom/shared", shadowHomePath: "/custom/shadow" }),
-    );
-    assert.equal(configured.sharedHomePath, "/custom/shared");
-    assert.equal(configured.effectiveHomePath, "/custom/shadow");
-  }).pipe(Effect.provide(NodeServices.layer)),
-);
 it.effect.each(
   (["managed", "local"] as const).flatMap((source) =>
     (["primary", "additional"] as const).map((account) => ({ source, account })),

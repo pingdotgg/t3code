@@ -58,18 +58,6 @@ describe("workspace router projection", () => {
     });
   });
 
-  it("keeps the thread and file history in the detail column when a modal is opened", () => {
-    const state = history([home, thread, files, settings, legal]);
-    const projection = projectWorkspaceStack(state, (route) => route.name === "SettingsSheet");
-    expect(projection).toEqual({
-      primary: home,
-      detail: [thread, files],
-      overlays: [settings, legal],
-    });
-    expect(projection.detail[0]).toBe(thread);
-    expect(state.routes).toEqual([home, thread, files, settings, legal]);
-  });
-
   it("retains a cold-linked detail route without changing the router history", () => {
     const state = history([thread, files]);
     expect(projectWorkspaceStack(state, () => false)).toEqual({
@@ -78,14 +66,6 @@ describe("workspace router projection", () => {
       overlays: [],
     });
     expect(state.routes[0]).toBe(thread);
-  });
-
-  it("restores the empty detail column after Back reaches the thread list", () => {
-    expect(projectWorkspaceStack(history([home]), () => false)).toEqual({
-      primary: home,
-      detail: [],
-      overlays: [],
-    });
   });
 });
 

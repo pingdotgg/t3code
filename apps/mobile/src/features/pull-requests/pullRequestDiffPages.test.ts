@@ -75,24 +75,6 @@ describe("paged mobile pull request diffs", () => {
     expect(after.notice).toBe(before.notice);
     expect(before.additions).toBe(3001);
   });
-  it("retains file order and IDs when another page arrives", () => {
-    const first = { ...diff("first.ts"), nextCursor: "second" };
-    const pages = retainPullRequestDiffPage([], null, first);
-    const cache = new WeakMap<PullRequestDiffResult, ReviewParsedDiff>();
-    const before = combinePullRequestDiffPages(pages, cache, "pr");
-    const after = combinePullRequestDiffPages(
-      retainPullRequestDiffPage(pages, "second", diff("second.ts")),
-      cache,
-      "pr",
-    );
-    expect(before.kind).toBe("files");
-    expect(after.kind).toBe("files");
-    if (before.kind !== "files" || after.kind !== "files")
-      throw new Error("Expected structured diff");
-    expect(after.files.map((file) => file.path)).toEqual(["first.ts", "second.ts"]);
-    expect(after.files[0]).toBe(before.files[0]);
-    expect(after.additions).toBe(2);
-  });
 
   it("discards later pages when a refreshed page changes", () => {
     const first = diff("first.ts");

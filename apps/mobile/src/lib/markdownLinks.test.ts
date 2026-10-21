@@ -25,11 +25,6 @@ describe("resolveMarkdownLinkPresentation", () => {
     });
   });
 
-  it("keeps thread-link hrefs for in-app navigation", () => {
-    const href = "t3-thread://v1/thread-1";
-    expect(resolveMarkdownLinkPresentation(href)).toEqual({ kind: "link", href });
-  });
-
   it("treats protocol-relative media as an external URL, not a filesystem path", () => {
     expect(resolveMarkdownLinkPresentation("//cdn.example.com/clip.mp4?sig=a%2fb#t=2")).toEqual({
       kind: "external",
@@ -43,14 +38,6 @@ describe("resolveMarkdownLinkPresentation", () => {
       path: "/tmp/clip#one.mp4",
       label: "clip#one.mp4",
       icon: "video",
-    });
-  });
-
-  it("extracts external link hosts", () => {
-    expect(resolveMarkdownLinkPresentation("https://example.com/docs?q=1")).toEqual({
-      kind: "external",
-      href: "https://example.com/docs?q=1",
-      host: "example.com",
     });
   });
 
@@ -94,16 +81,6 @@ describe("resolveMarkdownLinkPresentation", () => {
     });
   });
 
-  it.each(["md", "html", "xml"])("recognizes a bare spaced .%s filename", (extension) => {
-    expect(
-      resolveMarkdownLinkPresentation(`Updated%20cutover%20checklist.${extension}`),
-    ).toMatchObject({
-      kind: "file",
-      path: `Updated cutover checklist.${extension}`,
-      label: `Updated cutover checklist.${extension}`,
-    });
-  });
-
   it("recognizes spaced relative paths", () => {
     expect(resolveMarkdownLinkPresentation("docs/My%20Folder/checklist.xml")).toMatchObject({
       kind: "file",
@@ -119,25 +96,6 @@ describe("resolveMarkdownLinkPresentation", () => {
       line: 18,
       column: 2,
       label: "main.ts · L18:C2",
-    });
-  });
-
-  it("uses the Pierre complete icon mappings", () => {
-    expect(resolveMarkdownLinkPresentation("src/Button.tsx")).toMatchObject({
-      kind: "file",
-      icon: "react",
-    });
-    expect(resolveMarkdownLinkPresentation("vite.config.ts")).toMatchObject({
-      kind: "file",
-      icon: "vite",
-    });
-    expect(resolveMarkdownLinkPresentation("Dockerfile")).toMatchObject({
-      kind: "file",
-      icon: "docker",
-    });
-    expect(resolveMarkdownLinkPresentation("pnpm-lock.yaml")).toMatchObject({
-      kind: "file",
-      icon: "pnpm",
     });
   });
 

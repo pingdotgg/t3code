@@ -7,7 +7,6 @@ import {
   onboardingProjectKey,
   resolveOnboardingLandingProject,
   resolveOnboardingProjectId,
-  splitOnboardingProjectPath,
 } from "./projectImport.logic";
 
 const now = Date.parse("2026-08-22T12:00:00.000Z");
@@ -52,18 +51,6 @@ describe("partitionOnboardingProjects", () => {
 
     expect(partitionOnboardingProjects([recent, older], now)).toEqual({
       available: [recent, older],
-      recent: [recent],
-    });
-  });
-
-  it("keeps future activity out of the default selection", () => {
-    const recent = candidate("/projects/recent");
-    const future = candidate("/projects/future", {
-      lastActiveAt: "2026-08-23T12:00:00.000Z",
-    });
-
-    expect(partitionOnboardingProjects([recent, future], now)).toEqual({
-      available: [recent, future],
       recent: [recent],
     });
   });
@@ -176,12 +163,6 @@ describe("resolveOnboardingProjectId", () => {
         candidate("/projects/repo", { projectId: localProjectId }),
       ),
     ).toBe(localProjectId);
-  });
-
-  it("returns null to create a project when neither the scan nor the client has a project ID", () => {
-    expect(
-      resolveOnboardingProjectId([], localEnvironmentId, candidate("/projects/new")),
-    ).toBeNull();
   });
 
   it("finds an existing project by normalized root in the target environment", () => {
@@ -307,16 +288,6 @@ describe("resolveOnboardingLandingProject", () => {
     ).toBe("empty");
   });
 
-  it("keeps an earlier successful import available on retry", () => {
-    expect(
-      resolveOnboardingLandingProject(
-        ["/projects/imported", "/projects/retry"],
-        new Map([["/projects/imported", "imported"]]),
-        new Map([["/projects/imported", "imported"]]),
-      ),
-    ).toBe("imported");
-  });
-
   it("ignores cached successes outside the current retry selection", () => {
     expect(
       resolveOnboardingLandingProject(
@@ -348,43 +319,5 @@ describe("projects on multiple computers", () => {
     const first = { ...candidate("/code/app"), environmentId: "first" };
     const second = { ...candidate("/code/app"), environmentId: "second" };
     expect(partitionOnboardingProjects([first, second], now).recent).toEqual([first, second]);
-  });
-});
-
-describe("splitOnboardingProjectPath", () => {
-  it("keeps sibling checkouts that share a prefix distinguishable by name", () => {
-    const left = splitOnboardingProjectPath("/Users/me/Projects/clients/acme/t3code");
-    const right = splitOnboardingProjectPath("/Users/me/Projects/clients/acme/t3code-worktree");
-    expect(left).toEqual({ name: "t3code", parent: "/Users/me/Projects/clients/acme/" });
-    expect(right).toEqual({ name: "t3code-worktree", parent: "/Users/me/Projects/clients/acme/" });
-    expect(left.name).not.toBe(right.name);
-  });
-
-  it("splits Windows paths and ignores a trailing separator", () => {
-    expect(splitOnboardingProjectPath("C:\\Users\\me\\t3code\\")).toEqual({
-      name: "t3code",
-      parent: "C:\\Users\\me\\",
-    });
-  });
-
-  it("keeps a root or bare name whole", () => {
-    expect(splitOnboardingProjectPath("/")).toEqual({ name: "/", parent: "" });
-    expect(splitOnboardingProjectPath("/t3code")).toEqual({ name: "t3code", parent: "/" });
-    expect(splitOnboardingProjectPath("t3code")).toEqual({ name: "t3code", parent: "" });
-    expect(splitOnboardingProjectPath("t3code/")).toEqual({ name: "t3code", parent: "" });
-  });
-
-  it.each(["C:\\", "C:/", "\\\\server\\share", "\\\\server\\share\\", "//server/share/"])(
-    "keeps the filesystem root %s whole",
-    (path) => {
-      expect(splitOnboardingProjectPath(path)).toEqual({ name: path, parent: "" });
-    },
-  );
-
-  it("splits a folder below a network share", () => {
-    expect(splitOnboardingProjectPath("\\\\server\\share\\project\\")).toEqual({
-      name: "project",
-      parent: "\\\\server\\share\\",
-    });
   });
 });

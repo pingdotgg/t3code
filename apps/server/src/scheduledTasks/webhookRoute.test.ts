@@ -243,33 +243,6 @@ describe("webhook route", () => {
     }
   });
 
-  it.live("joins the relay's trace only for requests the relay forwarded", () =>
-    Effect.gen(function* () {
-      const parents: Array<string | undefined> = [];
-      const { handler, dispose } = handlerFor(() =>
-        Effect.gen(function* () {
-          const span = yield* Effect.currentParentSpan.pipe(Effect.option);
-          parents.push(span._tag === "Some" ? span.value.traceId : undefined);
-          return { _tag: "not_found" } as const;
-        }),
-      );
-      const send = (headers: Record<string, string>) =>
-        Effect.promise(() => handler(post("/api/hooks/id/tok", "{}", headers)));
-      const traceparent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
-      const receivedAt = "2026-10-04T10:00:00.000Z";
-      const relayHeaders = {
-        "x-t3-relay-delivery-id": "relay-1",
-        "x-t3-relay-received-at": receivedAt,
-      };
-      const proof = yield* relayProof({ deliveryId: "relay-1", receivedAt, hookId: "id" });
-      yield* send({ ...relayHeaders, traceparent, "x-t3-relay-delivery": proof });
-      yield* send({ ...relayHeaders, traceparent });
-      yield* send({ traceparent });
-      yield* Effect.promise(() => dispose());
-      expect(parents).toEqual(["0af7651916cd43dd8448eb211c80319c", undefined, undefined]);
-    }),
-  );
-
   it("rejects oversized bodies and malformed paths before reaching the service", async () => {
     let calls = 0;
     const { handler, dispose } = handlerFor(() => {

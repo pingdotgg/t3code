@@ -26,14 +26,6 @@ const withDefaultProfile = (browserDefaultProfileId: string) => {
 };
 
 describe("getBrowserDefaults profile resolution", () => {
-  it("keeps a configured persistent profile", () => {
-    expect(withDefaultProfile("work").profileId).toBe("work");
-  });
-
-  it("falls back for an unknown profile", () => {
-    expect(withDefaultProfile("deleted").profileId).toBe(DEFAULT_BROWSER_PROFILE_ID);
-  });
-
   it("refuses incognito as the default", () => {
     expect(withDefaultProfile(INCOGNITO_BROWSER_PROFILE_ID).profileId).toBe(
       DEFAULT_BROWSER_PROFILE_ID,

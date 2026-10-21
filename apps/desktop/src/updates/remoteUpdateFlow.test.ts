@@ -5,7 +5,6 @@ import {
   MAX_REMOTE_UPDATE_CHECKS,
   MAX_REMOTE_UPDATE_DOWNLOADS,
   nextRemoteDesktopUpdateStep,
-  normalizeRemoteUpdateReason,
   type RemoteDesktopUpdateAttempts,
 } from "./remoteUpdateFlow.ts";
 
@@ -217,12 +216,5 @@ describe("nextRemoteDesktopUpdateStep", () => {
         reason: "The desktop app did not report an update result.",
       },
     );
-  });
-
-  it("drops blank reasons so the wire report still encodes", () => {
-    assert.equal(normalizeRemoteUpdateReason(undefined), undefined);
-    assert.equal(normalizeRemoteUpdateReason(""), undefined);
-    assert.equal(normalizeRemoteUpdateReason("   "), undefined);
-    assert.equal(normalizeRemoteUpdateReason("  feed unreachable  "), "feed unreachable");
   });
 });

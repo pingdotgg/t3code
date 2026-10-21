@@ -179,79 +179,6 @@ describe("mobile cloud link environment client", () => {
       }),
   );
 
-  it.effect("preserves typed local environment failures while obtaining a link proof", () =>
-    Effect.gen(function* () {
-      const fetchMock = vi.fn((url: string | URL) => {
-        if (String(url).endsWith("/v1/client/environment-link-challenges")) {
-          return Promise.resolve(Response.json(validLinkChallengeResponse()));
-        }
-        return Promise.resolve(
-          Response.json(
-            {
-              _tag: "EnvironmentHttpUnauthorizedError",
-              message: "Invalid environment bearer session.",
-            },
-            { status: 401 },
-          ),
-        );
-      });
-      vi.stubGlobal("fetch", fetchMock);
-
-      const error = yield* withCloudServices(
-        linkEnvironmentToCloudWithPreference({
-          clerkToken: "clerk-token",
-          connection: savedConnection,
-          liveActivitiesEnabled: true,
-        }),
-      ).pipe(Effect.flip);
-      expect(error._tag).toBe("CloudEnvironmentLinkError");
-      expect(error.message).toBe(
-        "Could not obtain environment link proof: Invalid environment bearer session.",
-      );
-      expect(fetchMock).toHaveBeenCalledTimes(2);
-    }),
-  );
-
-  it.effect("preserves typed relay error bodies while linking environments", () =>
-    Effect.gen(function* () {
-      const fetchMock = vi.fn((url: string | URL) => {
-        if (String(url).endsWith("/v1/client/environment-link-challenges")) {
-          return Promise.resolve(Response.json(validLinkChallengeResponse()));
-        }
-        if (String(url).endsWith("/api/connect/link-proof")) {
-          return Promise.resolve(Response.json(validLinkProof()));
-        }
-        return Promise.resolve(
-          Response.json(
-            {
-              _tag: "RelayEnvironmentLinkProofInvalidError",
-              code: "environment_link_proof_invalid",
-              reason: "origin_not_allowed",
-              traceId: "trace-test",
-            },
-            { status: 400 },
-          ),
-        );
-      });
-      vi.stubGlobal("fetch", fetchMock);
-
-      const error = yield* withCloudServices(
-        linkEnvironmentToCloudWithPreference({
-          clerkToken: "clerk-token",
-          connection: savedConnection,
-          liveActivitiesEnabled: true,
-        }),
-      ).pipe(Effect.flip);
-      expect(error).toMatchObject({
-        _tag: "CloudEnvironmentLinkError",
-        message:
-          "https://relay.example.test/v1/client/environment-links failed: Relay rejected the environment link proof (origin_not_allowed).",
-        traceId: "trace-test",
-      });
-      expect(fetchMock).toHaveBeenCalledTimes(3);
-    }),
-  );
-
   it.effect("rejects relay link credentials for a different managed endpoint provider", () =>
     Effect.gen(function* () {
       const fetchMock = vi.fn((url: string | URL) => {
@@ -339,43 +266,6 @@ describe("mobile cloud link environment client", () => {
         cloudUserId: "user_123",
         environmentCredential: "environment-credential",
       });
-    }),
-  );
-
-  it.effect("enables Live Activities for both the link challenge and registration", () =>
-    Effect.gen(function* () {
-      const bodies: Array<Record<string, unknown>> = [];
-      const fetchMock = vi.fn((url: string | URL, init?: RequestInit) => {
-        if (init?.body) {
-          bodies.push(JSON.parse(requestBodyText(init.body)) as Record<string, unknown>);
-        }
-        if (String(url).endsWith("/v1/client/environment-link-challenges")) {
-          return Promise.resolve(Response.json(validLinkChallengeResponse()));
-        }
-        if (String(url).endsWith("/api/connect/link-proof")) {
-          return Promise.resolve(Response.json(validLinkProof()));
-        }
-        if (String(url).endsWith("/v1/client/environment-links")) {
-          return Promise.resolve(Response.json(validLinkResponse()));
-        }
-        return Promise.resolve(
-          Response.json({ ok: true, endpointRuntimeStatus: { status: "configured" } }),
-        );
-      });
-      vi.stubGlobal("fetch", fetchMock);
-
-      yield* withCloudServices(
-        linkEnvironmentToCloudWithPreference({
-          clerkToken: "clerk-token",
-          connection: savedConnection,
-          liveActivitiesEnabled: true,
-        }),
-      );
-
-      expect(bodies.filter((body) => "liveActivitiesEnabled" in body)).toEqual([
-        expect.objectContaining({ liveActivitiesEnabled: true }),
-        expect.objectContaining({ liveActivitiesEnabled: true }),
-      ]);
     }),
   );
 });

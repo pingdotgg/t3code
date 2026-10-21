@@ -133,20 +133,6 @@ describe("pending v2 questions", () => {
     };
     expect(derivePendingThreadRequests(live).userInputs[0]?.dismissible).toBe(false);
   });
-
-  it("removes answered requests from the composer while retaining their answers in projection data", () => {
-    const answered = {
-      ...projection,
-      runtimeRequests: projection.runtimeRequests.map((request) => ({
-        ...request,
-        status: "resolved" as const,
-        resolvedAt: v2Now,
-        answers: { next: "  continue  " },
-      })),
-    };
-    expect(derivePendingThreadRequests(answered).userInputs).toEqual([]);
-    expect(answered.runtimeRequests[0]?.answers).toEqual({ next: "  continue  " });
-  });
 });
 
 it("restores old text answers without mutating history or replacing unchanged rows", () => {

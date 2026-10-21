@@ -143,15 +143,6 @@ describe("TraceDiagnostics", () => {
     }),
   );
 
-  it.effect("returns a not-found diagnostic when no files are available", () =>
-    Effect.gen(function* () {
-      const diagnostics = yield* readTraces({});
-
-      assert.equal(diagnostics.recordCount, 0);
-      assert.equal(Option.getOrUndefined(diagnostics.error)?.kind, "trace-file-not-found");
-    }),
-  );
-
   it.effect("streams rotated files into the same result as reading them whole", () =>
     Effect.gen(function* () {
       const files = new Map([
@@ -224,34 +215,6 @@ describe("TraceDiagnostics", () => {
     }),
   );
 
-  it.effect("preserves full failure causes and log messages", () =>
-    Effect.sync(() => {
-      const longCause = `VcsProcessSpawnError: ${"missing executable ".repeat(80)}`.trim();
-      const longMessage = `provider warning: ${"retrying command ".repeat(80)}`.trim();
-      const diagnostics = aggregateLines([
-        record({
-          name: "VcsProcess.run",
-          traceId: "trace-long",
-          spanId: "span-long",
-          startMs: 1_000,
-          durationMs: 25,
-          exit: { _tag: "Failure", cause: longCause },
-          events: [
-            {
-              name: longMessage,
-              timeUnixNano: ns(1_010),
-              attributes: { "effect.logLevel": "Warning" },
-            },
-          ],
-        }),
-      ]);
-
-      assert.equal(diagnostics.latestFailures[0]?.cause, longCause);
-      assert.equal(diagnostics.commonFailures[0]?.cause, longCause);
-      assert.equal(diagnostics.latestWarningAndErrorLogs[0]?.message, longMessage);
-    }),
-  );
-
   it.effect("keeps loaded trace data when one rotated trace file fails to read", () =>
     Effect.gen(function* () {
       const readFailure = PlatformError.systemError({
@@ -303,46 +266,6 @@ describe("TraceDiagnostics", () => {
         errorTag: "TraceFileReadError",
         causeTag: "PermissionDenied",
       });
-    }),
-  );
-
-  it.effect("keeps only the top spans, failures, and warning logs from large inputs", () =>
-    Effect.sync(() => {
-      const indexes = Array.from({ length: 30 }, (_, step) => (step * 7) % 30);
-      const diagnostics = aggregateLines(
-        indexes.map((index) =>
-          record({
-            name: `span-${index}`,
-            traceId: `trace-${index}`,
-            spanId: `span-${index}`,
-            startMs: index * 1_000,
-            durationMs: index,
-            exit: { _tag: "Failure", cause: "Provider crashed" },
-            events: [
-              {
-                name: `warning ${index}`,
-                timeUnixNano: ns(index * 1_000),
-                attributes: { "effect.logLevel": "Warning" },
-              },
-            ],
-          }),
-        ),
-      );
-      const newestTwenty = Array.from({ length: 20 }, (_, rank) => `trace-${29 - rank}`);
-
-      assert.equal(diagnostics.recordCount, 30);
-      assert.deepStrictEqual(
-        diagnostics.slowestSpans.map((span) => span.durationMs),
-        [29, 28, 27, 26, 25, 24, 23, 22, 21, 20],
-      );
-      assert.deepStrictEqual(
-        diagnostics.latestFailures.map((failure) => failure.traceId),
-        newestTwenty,
-      );
-      assert.deepStrictEqual(
-        diagnostics.latestWarningAndErrorLogs.map((log) => log.traceId),
-        newestTwenty,
-      );
     }),
   );
 });

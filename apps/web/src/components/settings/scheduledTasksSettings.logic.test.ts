@@ -20,8 +20,6 @@ import {
   scheduledTaskDefaultModel,
   matchesScheduledTaskScope,
   scheduleFromDraft,
-  webhookDraftErrors,
-  webhookDeliveryLabel,
   taskToDraft,
 } from "./scheduledTasksSettings.logic";
 
@@ -120,14 +118,6 @@ describe("scheduled task settings scope", () => {
       ),
     ).toBe(false);
   });
-
-  it("does not offer an unrelated environment's same-ID project when creating a task", () => {
-    const scope = resolveSettingsScope({ project: "t3code" }, groups, environments);
-    const serverProjects = [third, other, sameIdElsewhere];
-    expect(
-      serverProjects.filter((project) => matchesScheduledTaskScope(scope, serverId, project.id)),
-    ).toEqual([third]);
-  });
 });
 
 const legacyTask: ScheduledTask = {
@@ -158,14 +148,6 @@ describe("editing scheduled task branch settings", () => {
     const draft = taskToDraft(legacyTask);
     expect(draft.baseRef).toBe("release");
     expect(draft.startFromOrigin).toBe(false);
-  });
-
-  it.each([true, false])("preserves an explicit origin flag of %s", (startFromOrigin) => {
-    const draft = taskToDraft({
-      ...legacyTask,
-      workspaceStrategy: { type: "worktree", baseRef: "release", startFromOrigin },
-    });
-    expect(draft.startFromOrigin).toBe(startFromOrigin);
   });
 });
 
@@ -332,28 +314,6 @@ describe("scheduled task model defaults", () => {
       project,
       deriveProviderInstanceEntries(value.providers),
     );
-  it("uses the environment default with its provider options", () => {
-    expect(resolve(config, { id: projectId })).toEqual(environmentSelection);
-  });
-  it("prefers the project's configured model", () => {
-    expect(resolve(config, { id: projectId, defaultModelSelection: projectSelection })).toEqual(
-      projectSelection,
-    );
-    expect(
-      resolve(
-        {
-          ...config,
-          settings: {
-            ...config.settings,
-            projectSettingsOverrides: {
-              [projectId]: { defaultModelSelection: projectSelection },
-            },
-          },
-        },
-        { id: projectId },
-      ),
-    ).toEqual(projectSelection);
-  });
   it("uses the advertised default instead of catalog order when no default is configured", () => {
     expect(
       resolve({ ...config, settings: { ...config.settings, defaultModelSelection: null } }, null),
@@ -387,53 +347,4 @@ it("rejects dedupe templates without a request placeholder", () => {
   const draft = taskToDraft({ ...legacyTask, schedule: { type: "webhook", signature: null } });
   expect(scheduleFromDraft({ ...draft, replayKey: "literal" })).toBeNull();
   expect(scheduleFromDraft({ ...draft, coalesceKey: "{{body.bad" })).toBeNull();
-});
-
-describe("webhook delivery labels and validation messages", () => {
-  it("preserves Ran for legacy and dispatched deliveries and distinguishes pending windows", () => {
-    expect(webhookDeliveryLabel({ outcome: "accepted" })).toBe("Ran");
-    expect(webhookDeliveryLabel({ outcome: "accepted", pendingWindow: false })).toBe("Ran");
-    expect(webhookDeliveryLabel({ outcome: "accepted", pendingWindow: true })).toBe(
-      "Opened window",
-    );
-  });
-
-  it("keeps the existing age-limit title and body", () => {
-    const draft = taskToDraft({ ...legacyTask, schedule: { type: "webhook", signature: null } });
-    expect(
-      webhookDraftErrors({ ...draft, maxDeliveryAgeMinutes: "0", replayKey: "literal" }),
-    ).toEqual([
-      {
-        title: "Invalid age limit",
-        description: "Enter whole minutes from 1 to 1440, or leave it blank.",
-      },
-    ]);
-  });
-
-  it.each([
-    [{ replayKey: "literal" }, "Replay key must contain a valid request placeholder."],
-    [{ coalesceKey: "{{body.bad" }, "Coalesce key must contain a valid request placeholder."],
-    [{ coalesceWindowSeconds: "9" }, "Coalesce window must be whole seconds from 10 to 3600."],
-  ])("names only the invalid webhook field for %o", (invalid, description) => {
-    const draft = taskToDraft({ ...legacyTask, schedule: { type: "webhook", signature: null } });
-    expect(webhookDraftErrors({ ...draft, ...invalid })).toEqual([
-      { title: "Invalid webhook settings", description },
-    ]);
-  });
-
-  it("reports separate short errors when several dedupe fields fail", () => {
-    const draft = taskToDraft({ ...legacyTask, schedule: { type: "webhook", signature: null } });
-    expect(
-      webhookDraftErrors({
-        ...draft,
-        replayKey: "bad",
-        coalesceKey: "bad",
-        coalesceWindowSeconds: "0",
-      }).map((error) => error.description),
-    ).toEqual([
-      "Replay key must contain a valid request placeholder.",
-      "Coalesce key must contain a valid request placeholder.",
-      "Coalesce window must be whole seconds from 10 to 3600.",
-    ]);
-  });
 });

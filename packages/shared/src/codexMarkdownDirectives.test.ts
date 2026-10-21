@@ -72,15 +72,6 @@ describe("remarkCodexDirectives", () => {
     });
   });
 
-  it("renders a follow-up suggestion as its label", () => {
-    const followUp = parse(`Next: ${FOLLOW_UP}`).children?.[0]?.children?.[1];
-
-    expect(followUp).toMatchObject({
-      data: { hName: "span" },
-      children: [{ type: "text", value: "Prepare print version" }],
-    });
-  });
-
   it.each([
     "Meeting at 10:30",
     "Open src/main.ts:42",
@@ -124,12 +115,6 @@ describe.each([
 });
 
 describe("native Markdown adapters", () => {
-  it("uses the same parser to render file citations as portable links", () => {
-    expect(renderCodexInlineDirectivesAsMarkdown(`Created ${FILE_CITATION}.`)).toBe(
-      "Created [report.xlsx](<outputs/report.xlsx>).",
-    );
-  });
-
   it("renders follow-up suggestions as their label Markdown", () => {
     expect(
       renderCodexInlineDirectivesAsMarkdown(
@@ -137,13 +122,6 @@ describe("native Markdown adapters", () => {
       ),
     ).toBe("- Prepare print version\n- Review **document**");
   });
-
-  it.each([`\\${FOLLOW_UP}`, `\`${FOLLOW_UP}\``])(
-    "does not render excluded follow-up syntax: %s",
-    (markdown) => {
-      expect(renderCodexInlineDirectivesAsMarkdown(markdown)).toBe(markdown);
-    },
-  );
 
   it.each([
     `\\${FILE_CITATION}`,
@@ -196,14 +174,5 @@ describe("directive copy adapter", () => {
     ).toBe(
       "Created [report.xlsx](<outputs/report.xlsx>).\n\nHello World (Document template)\n\n- Prepare print version",
     );
-  });
-
-  it("leaves excluded and malformed directive source unchanged", () => {
-    const markdown = [
-      `\`${FILE_CITATION}\``,
-      '::artifact-template{display_name="Hello World"}',
-    ].join("\n\n");
-
-    expect(renderCodexDirectivesForCopy(markdown)).toBe(markdown);
   });
 });

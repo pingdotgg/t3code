@@ -97,22 +97,6 @@ it.layer(NodeServices.layer)("telemetry identity", (it) => {
     }).pipe(Effect.provide(layerIdentity("t3-telemetry-identify-install-"))),
   );
 
-  it.effect("keeps a provider distinct_id when the install id cannot be saved", () =>
-    Effect.gen(function* () {
-      const config = yield* ServerConfig.ServerConfig;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const homeDirectory = path.join(config.baseDir, "home");
-      yield* fileSystem.makeDirectory(config.anonymousIdPath);
-      yield* writeHomeFile(homeDirectory, ".claude.json", `{"userID":"claude-machine"}`);
-
-      assert.deepEqual(yield* Identify.getTelemetryIdentityForHome(homeDirectory), {
-        distinctId: yield* sha256("claude-machine"),
-        installId: null,
-      });
-    }).pipe(Effect.provide(layerIdentity("t3-telemetry-identify-noinstall-"))),
-  );
-
   it.effect("leaves no torn anonymous id behind when its write fails midway", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;

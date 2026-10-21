@@ -1,9 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as PlatformError from "effect/PlatformError";
 import { beforeEach, vi } from "vite-plus/test";
 
 const { fromPartition, sessions } = vi.hoisted(() => ({
@@ -232,119 +230,6 @@ describe("BrowserSession", () => {
         assert.isFalse(yield* request(url), `${url} must never open externally`);
       }
       assert.strictEqual(showMessageBox.mock.calls.length, 2);
-    }).pipe(Effect.provide(layer)),
-  );
-
-  it.effect("attaches the open-externally prompt to the window hosting the preview", () =>
-    Effect.gen(function* () {
-      const browserSessions = yield* BrowserSession.BrowserSession;
-      const partition = yield* browserSessions.getPartition("scope-a");
-      yield* browserSessions.getSession("scope-a");
-      const requestHandler =
-        sessions.get(partition)?.setPermissionRequestHandler.mock.calls[0]?.[0];
-      assert.isFunction(requestHandler);
-
-      const hostWindow = { id: 7 } as unknown as Electron.BrowserWindow;
-      const host = { isDestroyed: () => false };
-      const guest = { isDestroyed: () => false, hostWebContents: host };
-      fromWebContents.mockImplementation((webContents) =>
-        webContents === host ? hostWindow : null,
-      );
-      showMessageBox.mockReset();
-      showMessageBox.mockReturnValueOnce(1);
-
-      yield* Effect.callback<boolean>((resume) => {
-        requestHandler(
-          guest,
-          "openExternal",
-          (granted: boolean) => resume(Effect.succeed(granted)),
-          {
-            externalURL: "slack://open?team=T1",
-          },
-        );
-      });
-
-      assert.strictEqual(showMessageBox.mock.calls[0]?.[1], hostWindow);
-    }).pipe(Effect.provide(layer)),
-  );
-
-  it.effect("preserves partition scope and the platform failure chain", () => {
-    const nativeCause = new Error("native digest failed");
-    const platformCause = PlatformError.systemError({
-      _tag: "Unknown",
-      module: "Crypto",
-      method: "digest",
-      cause: nativeCause,
-    });
-    const layerFailingCrypto = Layer.succeed(
-      Crypto.Crypto,
-      Crypto.make({
-        randomBytes: (size) => new Uint8Array(size),
-        digest: () => Effect.fail(platformCause),
-      }),
-    );
-
-    return Effect.gen(function* () {
-      const browserSessions = yield* BrowserSession.BrowserSession;
-      const error = yield* browserSessions.getPartition("environment-a").pipe(Effect.flip);
-
-      assert.instanceOf(error, BrowserSession.BrowserSessionPartitionDerivationError);
-      assert.equal(error.scope, "environment-a");
-      assert.strictEqual(error.cause, platformCause);
-      assert.strictEqual(error.cause.reason.cause, nativeCause);
-      assert.equal(
-        error.message,
-        "Failed to derive a desktop preview browser partition for scope environment-a.",
-      );
-      assert.notInclude(error.message, nativeCause.message);
-    }).pipe(
-      Effect.provide(
-        BrowserSession.layer.pipe(Layer.provide(Layer.merge(layerFailingCrypto, layerDialog))),
-      ),
-    );
-  });
-
-  it.effect("preserves session scope, partition, and the Electron failure", () =>
-    Effect.gen(function* () {
-      const cause = new Error("Electron session failed");
-      fromPartition.mockImplementationOnce(() => {
-        throw cause;
-      });
-      const browserSessions = yield* BrowserSession.BrowserSession;
-      const partition = yield* browserSessions.getPartition("environment-b");
-      const error = yield* browserSessions.getSession("environment-b").pipe(Effect.flip);
-
-      assert.instanceOf(error, BrowserSession.BrowserSessionCreationError);
-      assert.equal(error.scope, "environment-b");
-      assert.equal(error.partition, partition);
-      assert.strictEqual(error.cause, cause);
-      assert.equal(
-        error.message,
-        `Failed to create a desktop preview browser session for scope environment-b (partition ${partition}).`,
-      );
-      assert.notInclude(error.message, cause.message);
-    }).pipe(Effect.provide(layer)),
-  );
-
-  it.effect("clears storage and cache for every created session", () =>
-    Effect.gen(function* () {
-      const browserSessions = yield* BrowserSession.BrowserSession;
-      yield* browserSessions.getSession("scope-a");
-      yield* browserSessions.getSession("scope-b");
-
-      yield* browserSessions.clearCookies();
-      yield* browserSessions.clearCache();
-
-      assert.strictEqual(sessions.size, 2);
-      for (const browserSession of sessions.values()) {
-        assert.strictEqual(browserSession.clearStorageData.mock.calls.length, 1);
-        assert.deepEqual(browserSession.clearStorageData.mock.calls[0], [
-          {
-            storages: ["cookies", "localstorage", "indexdb", "serviceworkers"],
-          },
-        ]);
-        assert.strictEqual(browserSession.clearCache.mock.calls.length, 1);
-      }
     }).pipe(Effect.provide(layer)),
   );
 

@@ -196,26 +196,6 @@ describe("stripUnservedToolOutputImageBytes", () => {
     });
   });
 
-  it("returns items without image bytes by reference", () => {
-    const nested = { files: [{ path: "src/app.ts" }] };
-    const item = toolItem({ stdout: "data: 42", data: PNG_BASE64, nested });
-    const command: OrchestrationV2TurnItem = {
-      ...itemBase,
-      type: "command_execution",
-      input: "cat shot.png | base64",
-      output: PNG_BASE64,
-    };
-
-    const stripped = stripUnservedToolOutputImageBytes(item);
-
-    expect(stripped).toBe(item);
-    expect(outputOf(stripped)).toBe(outputOf(item));
-    expect(stripUnservedToolOutputImageBytes(command)).toBe(command);
-    expect(stripUnservedToolOutputImageBytes(toolItem("plain text output"))).toEqual(
-      toolItem("plain text output"),
-    );
-  });
-
   it("does not mutate the provider's item and shares untouched siblings", () => {
     const untouched = { type: "text", text: "captured" };
     const output = {

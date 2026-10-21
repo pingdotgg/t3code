@@ -119,7 +119,7 @@ function modelsFromDiscovery(
   return providerModelsFromSettings(builtInModels, customModels, capabilities);
 }
 
-export function acpRegistrySnapshotReadiness(
+function acpRegistrySnapshotReadiness(
   inspection:
     | AcpRegistrySupport.AcpRegistryInspection
     | { readonly status: "failed"; readonly message: string },

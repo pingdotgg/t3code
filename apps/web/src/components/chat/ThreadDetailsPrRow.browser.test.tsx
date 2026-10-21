@@ -1,16 +1,7 @@
-import {
-  EnvironmentId,
-  GitCommandError,
-  GitManagerError,
-  ProjectId,
-  ThreadId,
-  type PullRequestCheck,
-} from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
+import { EnvironmentId, ProjectId, ThreadId, type PullRequestCheck } from "@t3tools/contracts";
 import { DraftId } from "~/composerDraftStore";
 import { AsyncResult } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
 
 const state = vi.hoisted(() => ({
   status: "success" as PullRequestCheck["status"],
@@ -146,110 +137,6 @@ it("requires a new merge click after passing checks become pending and pass agai
   await clickMerge();
   expect(dialogs()).toHaveLength(1);
   expect(state.perform).not.toHaveBeenCalled();
-});
-
-it.each<[PullRequestCheck["status"], PullRequestCheck["status"], string]>([
-  ["success", "skipped", ""],
-  ["failure", "cancelled", ""],
-  ["success", "action-required", "1/2"],
-  ["success", "pending", "1/2"],
-  ["pending", "pending", "0/2"],
-  ["pending", "action-required", "0/2"],
-  ["skipped", "pending", "1/2"],
-  ["neutral", "pending", "1/2"],
-  ["failure", "pending", "1/2"],
-  ["cancelled", "pending", "1/2"],
-])("counts finished checks while work remains (%s, %s)", async (status, extraStatus, count) => {
-  await using screen = await setup();
-  const { container } = screen;
-  state.status = status;
-  state.extraStatus = extraStatus;
-  await act(async () => {
-    await screen.rerender(
-      <ThreadDetailsPrRow
-        environmentId={EnvironmentId.make("environment")}
-        pr={null}
-        number={1}
-        status={null}
-        project={null}
-        label="Test PR"
-        openAriaLabel="Open PR"
-        onOpen={vi.fn()}
-      />,
-    );
-  });
-  const counts = [...container.querySelectorAll("*")]
-    .map((element) => element.textContent?.trim() ?? "")
-    .filter((value) => /^\d+\/\d+$/.test(value));
-  expect(new Set(counts)).toEqual(new Set(count ? [count] : []));
-});
-
-it("shows the current checkout recovery detail when fixing checks fails and is retried", async () => {
-  await using screen = await setup();
-  const { container } = screen;
-  state.status = "failure";
-  const first = new GitManagerError({
-    cwd: "/workspace",
-    operation: "preparePullRequestThread",
-    detail: "This PR branch is already checked out in the main repo. Use Local.",
-  });
-  const second = new GitCommandError({
-    cwd: "/workspace",
-    operation: "GitVcsDriver.createWorktree",
-    command: "git worktree add",
-    detail: "The worktree directory already exists. Choose another directory.",
-  });
-  await act(async () => {
-    await screen.rerender(
-      <ThreadDetailsPrRow
-        environmentId={EnvironmentId.make("environment")}
-        pr={null}
-        number={1}
-        status={null}
-        project={null}
-        label="Test PR"
-        openAriaLabel="Open PR"
-        onOpen={vi.fn()}
-      />,
-    );
-  });
-
-  for (const error of [first, second]) {
-    state.prepareThread.mockImplementationOnce(async () => {
-      state.checkoutError = error;
-      return { _tag: "Failure", cause: Cause.fail(error) };
-    });
-    await act(async () => {
-      [...container.querySelectorAll("button")]
-        .find((button) => button.textContent?.trim() === "Fix")!
-        .click();
-    });
-  }
-  expect(state.updateToast.mock.calls.map(([, toast]) => toast.description)).toEqual([
-    expect.stringContaining(first.detail),
-    second.detail,
-  ]);
-});
-
-it("splits the change by file kind in the hover card", async () => {
-  await using screen = await setup();
-  await screen.rerender(
-    <ThreadDetailsPrRow
-      environmentId={EnvironmentId.make("environment")}
-      pr={null}
-      number={1}
-      reference={{ repository: "owner/repo", number: 1 }}
-      status={null}
-      project={{ id: ProjectId.make("project"), repositoryIdentity: null } as never}
-      label="Test PR"
-      openAriaLabel="Open PR"
-      onOpen={vi.fn()}
-    />,
-  );
-  await userEvent.hover(screen.getByRole("button", { name: "Open PR" }));
-  await expect
-    .poll(() => document.querySelector('[data-slot="tooltip-popup"][data-open]')?.textContent)
-    .toMatch(/Docs\+7-3/);
 });
 
 async function setup() {

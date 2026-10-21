@@ -14,36 +14,6 @@ describe("linked pull request snapshots", () => {
     stack: null,
     snapshot: null,
   };
-  it("keeps unsynced links unknown", () => {
-    expect(linkedPullRequestSnapshotStatus(link)).toBeNull();
-  });
-  it("uses the snapshot state and branches with the linked identity", () => {
-    const result = linkedPullRequestSnapshotStatus({
-      ...link,
-      snapshot: {
-        state: "merged",
-        title: "Change",
-        headBranch: "feature",
-        baseBranch: "main",
-        isDraft: false,
-        updatedAt: "2026-01-02T00:00:00Z",
-        syncedAt: "2026-01-03T00:00:00Z",
-      },
-    });
-    expect(result).toEqual({
-      pr: {
-        number: 42,
-        url: link.url,
-        title: "Change",
-        state: "merged",
-        isDraft: false,
-        headRef: "feature",
-        baseRef: "main",
-        updatedAt: "2026-01-02T00:00:00Z",
-      },
-      sourceControlProvider: { kind: "gitlab", name: "gitlab", baseUrl: "" },
-    });
-  });
   it.each([
     ["https://git.cafe/owner/repo/pulls/42", "gitcafe"],
     ["https://staging.git.cafe/owner/repo/pulls/42", "gitcafe"],

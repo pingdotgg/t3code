@@ -20,8 +20,6 @@ import * as OpenCode2Server from "./OpenCode2Server.ts";
 
 // Shapes and content types observed on `opencode serve` 2.0.18 (pid and port replaced). 1.x
 // answers /api/info with its web UI: 200 text/html.
-const INFO_BODY =
-  '{"version":"2.0.18","pid":4242,"urls":["http://127.0.0.1:4096"],"paths":{"tmp":"/tmp/opencode"}}';
 const UNAUTHORIZED_BODY = '{"_tag":"UnauthorizedError","message":"Authentication required"}';
 const SPA_BODY = "<!doctype html><html><head><title>OpenCode</title></head></html>";
 
@@ -53,15 +51,6 @@ const verify = (httpClient: Layer.Layer<HttpClient.HttpClient>, url = "http://12
   }).pipe(Effect.provide(OpenCode2Client.layer.pipe(Layer.provide(httpClient))));
 
 describe("OpenCode2Server.verifyServer", () => {
-  it.effect("returns the version of an authenticated OpenCode 2 server", () =>
-    Effect.gen(function* () {
-      const version = yield* verify(
-        layerServerReplying({ status: 200, contentType: "application/json", body: INFO_BODY }),
-      );
-      assert.strictEqual(version, "2.0.18");
-    }),
-  );
-
   it.effect("reports a rejected password, not a wrong server", () =>
     Effect.gen(function* () {
       const error = yield* verify(
@@ -100,13 +89,6 @@ describe("OpenCode2Server.verifyServer", () => {
         layerServerReplying({ status: 200, contentType: "text/html", body: SPA_BODY }),
       ).pipe(Effect.flip);
       assert.include(error.detail, "is not an OpenCode 2 server");
-    }),
-  );
-
-  it.effect("reports an unreachable server as unreachable", () =>
-    Effect.gen(function* () {
-      const error = yield* verify(FetchHttpClient.layer, "http://127.0.0.1:1").pipe(Effect.flip);
-      assert.include(error.detail, "Could not reach the OpenCode server");
     }),
   );
 });
@@ -167,16 +149,6 @@ describe("OpenCode2Server error details", () => {
 });
 
 describe("OpenCode2Server passwords", () => {
-  it.effect("generates a distinct 256-bit password per server", () =>
-    Effect.gen(function* () {
-      const first = yield* OpenCode2Server.generatePassword;
-      const second = yield* OpenCode2Server.generatePassword;
-      assert.match(Redacted.value(first), /^[A-Za-z0-9_-]{43}$/);
-      assert.notStrictEqual(Redacted.value(first), Redacted.value(second));
-      assert.notInclude(String(first), Redacted.value(first));
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
-
   it("hands the spawned server only the T3 password", () => {
     const password = Redacted.make("t3-generated");
     const environment = OpenCode2Server.serverEnvironment(

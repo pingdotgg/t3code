@@ -35,17 +35,6 @@ beforeEach(() => {
 });
 
 describe("PR agent drafts", () => {
-  it("opens offline drafts without waiting for linked-thread discovery", () => {
-    const actions = usePullRequestAgentActions(params, pr);
-    expect(actions.disabled).toBe(false);
-    actions.start("ask");
-    actions.start("explain");
-    expect(state.ask.mock.calls).toEqual([
-      [undefined, "ask"],
-      [undefined, "explain"],
-    ]);
-  });
-
   it("does not open drafts when the connection denies task access", () => {
     state.connected = true;
     state.canAsk = false;

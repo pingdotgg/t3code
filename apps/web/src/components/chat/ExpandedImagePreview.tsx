@@ -38,10 +38,6 @@ export interface ExpandedImagePreview {
   index: number;
 }
 
-export function wrapExpandedImageIndex(index: number, imageCount: number): number {
-  return imageCount > 0 ? ((index % imageCount) + imageCount) % imageCount : 0;
-}
-
 export async function resolveMarkdownMediaPreview(input: {
   source: string;
   resolvedFilePath?: string | undefined;

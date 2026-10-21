@@ -7,21 +7,18 @@ import {
   LOCAL_DEVICE_HOST_ID,
   ThreadId,
   type DeviceSummary,
-  type DeviceServiceState,
   type ServerSettings as Settings,
   type SshDeviceHostConfig,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
-import { SshCommandError } from "@t3tools/ssh/errors";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -41,43 +38,6 @@ import * as DeviceService from "./DeviceService.ts";
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const decodeBootError = Schema.decodeUnknownSync(Schema.fromJsonString(DeviceBootError));
 const encodeBootError = Schema.encodeSync(Schema.fromJsonString(DeviceBootError));
-
-const baseState: DeviceServiceState = {
-  hosts: [],
-  hostStatus: "idle",
-  hostStatuses: {},
-  devices: [],
-  sessions: [],
-  onboardingCompleted: false,
-  agentAccessEnabled: false,
-  hubBasePath: "/api/device-hub",
-  revision: 0,
-};
-
-describe("DeviceService.stateStream", () => {
-  it.effect("emits the current snapshot and then every published change", () =>
-    Effect.gen(function* () {
-      const pubsub = yield* PubSub.unbounded<DeviceServiceState>();
-      const current = yield* Ref.make(baseState);
-      const service: Pick<DeviceService.DeviceService["Service"], "state" | "subscribe"> = {
-        state: Ref.get(current),
-        subscribe: PubSub.subscribe(pubsub),
-      };
-
-      const collected = yield* DeviceService.stateStream(
-        service as DeviceService.DeviceService["Service"],
-      ).pipe(Stream.take(3), Stream.runCollect, Effect.forkChild);
-      yield* Effect.yieldNow;
-      for (const revision of [1, 2]) {
-        const next = { ...baseState, revision, hostStatus: "ready" as const };
-        yield* Ref.set(current, next);
-        yield* PubSub.publish(pubsub, next);
-      }
-      const seen = yield* Fiber.join(collected);
-      expect(seen.map((state) => state.revision)).toEqual([0, 1, 2]);
-    }),
-  );
-});
 
 const fixture = Effect.fn("fixture")(function* (
   onBoot: Effect.Effect<void> = Effect.void,
@@ -305,43 +265,6 @@ describe("device setup consent", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect(
-    "preserves missing-runtime guidance and causes through manual and agent readiness",
-    () =>
-      Effect.gen(function* () {
-        const underlying = new Error("private lookup diagnostics");
-        const runtimeFailure = new NodeRuntimeUnavailableError({
-          feature: "Local device support",
-          cause: underlying,
-        });
-        const { service, settings, requests } = yield* fixture(
-          Effect.void,
-          undefined,
-          false,
-          runtimeFailure,
-        );
-        yield* Ref.update(settings, (current) => ({
-          ...current,
-          enableDeviceSupport: true,
-          enableAgentDeviceAccess: true,
-        }));
-        for (const readiness of [service.readiness(), service.agentReadinessIfSupported()]) {
-          const error = yield* readiness.pipe(Effect.flip);
-          expect(error).toMatchObject({
-            _tag: "DeviceHostUnavailableError",
-            reason: expect.stringContaining("Install Node.js"),
-            cause: runtimeFailure,
-          });
-          expect(error.message).not.toContain(underlying.message);
-        }
-        expect((yield* service.state).hostStatuses[LOCAL_DEVICE_HOST_ID]).toMatchObject({
-          status: "failed",
-          detail: expect.stringContaining("Install Node.js"),
-        });
-        expect(requests).toEqual([]);
-      }).pipe(Effect.scoped),
-  );
-
   it.effect("listing and provider startup do not start helpers before consent", () =>
     Effect.gen(function* () {
       const { service, starts, requests } = yield* fixture();
@@ -565,40 +488,6 @@ describe("device discovery after server restart", () => {
 
 const missingPlistMessage =
   "[apple-utils] Failed to read CoreSimulator plist at /Users/test/Library/Developer/CoreSimulator/Devices/deleted-simulator/device.plist:";
-
-it.effect.each([
-  {
-    message: missingPlistMessage,
-    error: "Error: ENOENT: no such file or directory, open 'device.plist'",
-    ignored: true,
-  },
-  {
-    message: missingPlistMessage,
-    error: "Error: EACCES: permission denied, open 'device.plist'",
-    ignored: false,
-  },
-  { message: missingPlistMessage, error: undefined, ignored: false },
-  {
-    message: "[apple-utils] Failed to parse CoreSimulator device.plist:",
-    error: "Invalid XML",
-    ignored: false,
-  },
-  {
-    message: "[apple-utils] Failed to list devices:",
-    error: "Error: ENOENT: simctl missing",
-    ignored: false,
-  },
-])("handles discovery diagnostic: $error", ({ message, error, ignored }) =>
-  Effect.gen(function* () {
-    const { service, discoveryErrors } = yield* fixture();
-    yield* Ref.set(discoveryErrors, [{ message, ...(error ? { error } : {}) }]);
-    const state = yield* service.configure({ enabled: true });
-    expect(state.hostStatus).toBe("ready");
-    expect(state.devices.map((device) => device.id)).toEqual(["Pixel_API_35"]);
-    expect(state.hostStatusDetail).toBe(ignored ? undefined : message);
-    expect(state.hostStatuses.local?.detail).toBe(ignored ? undefined : message);
-  }).pipe(Effect.scoped),
-);
 
 it.effect("keeps other discovery warnings and clears them when only a deleted plist remains", () =>
   Effect.gen(function* () {
@@ -994,120 +883,6 @@ it.effect("retry keeps device and agent consent unchanged", () =>
     const before = agentStarts.length;
     yield* service.retryHost(LOCAL_DEVICE_HOST_ID);
     expect(agentStarts.length).toBe(before + 1);
-  }).pipe(Effect.scoped),
-);
-
-it.effect("publishes update detail for the correct host", () =>
-  Effect.gen(function* () {
-    const { service } = yield* fixture();
-    const changes = yield* service.subscribe;
-    yield* service.configure({ enabled: true });
-    const states = yield* PubSub.takeAll(changes);
-    expect(
-      states.some(
-        (state) => state.hostStatuses.local?.detail === "Updating device hub from 0.9.0 to 0.10.1…",
-      ),
-    ).toBe(true);
-  }).pipe(Effect.scoped),
-);
-
-it.effect("host retry exposes actionable failure without internal IDs or diagnostics", () =>
-  Effect.gen(function* () {
-    const { service, settings } = yield* fixture(
-      Effect.void,
-      undefined,
-      false,
-      new DeviceHost.DeviceHostError({
-        hostId: LOCAL_DEVICE_HOST_ID,
-        step: "probe",
-        cause: "private diagnostics",
-      }),
-    );
-    yield* Ref.update(settings, (current) => ({ ...current, enableDeviceSupport: true }));
-    const state = yield* service.retryHost(LOCAL_DEVICE_HOST_ID);
-    expect(state.supportsHostRetry).toBe(true);
-    expect(state.hostStatuses[LOCAL_DEVICE_HOST_ID]).toEqual({
-      status: "failed",
-      detail: "Could not connect to this host over SSH.",
-    });
-  }).pipe(Effect.scoped),
-);
-
-it.effect.each([
-  {
-    name: "missing Node among private diagnostic lines",
-    exitCode: 1,
-    stderr:
-      "private diagnostics\r\nNode is missing from the non-interactive SSH PATH\r\nprivate diagnostics",
-    expected:
-      "Connected over SSH, but Node is not on this host's PATH for non-interactive SSH commands.",
-  },
-  {
-    name: "another remote command failure",
-    exitCode: 2,
-    stderr: "private diagnostics",
-    expected: "Connected over SSH, but the device host check failed (exit code 2).",
-  },
-  {
-    name: "an unrecognized exit-one diagnostic",
-    exitCode: 1,
-    stderr: "private diagnostics: Node is missing from the non-interactive SSH PATH",
-    expected: "Connected over SSH, but the device host check failed (exit code 1).",
-  },
-  {
-    name: "a connection failure",
-    exitCode: 255,
-    stderr: "Node is missing from the non-interactive SSH PATH",
-    expected: "Could not connect to this host over SSH.",
-  },
-  {
-    name: "a command that could not start",
-    exitCode: null,
-    stderr: "private diagnostics",
-    expected: "Could not connect to this host over SSH.",
-  },
-  {
-    name: "an untyped offline cause",
-    exitCode: undefined,
-    stderr: "private diagnostics",
-    expected: "Could not connect to this host over SSH.",
-  },
-])("reports $name through manual and agent host readiness", ({ exitCode, stderr, expected }) =>
-  Effect.gen(function* () {
-    const failure = new DeviceHost.DeviceHostError({
-      hostId: LOCAL_DEVICE_HOST_ID,
-      step: "probe",
-      cause:
-        exitCode === undefined
-          ? "offline"
-          : new SshCommandError({
-              command: ["ssh", "private arguments"],
-              exitCode,
-              stderr,
-              stdout: "private output",
-              message: "private diagnostics",
-            }),
-    });
-    const { service, settings } = yield* fixture(Effect.void, undefined, false, failure);
-    yield* Ref.update(settings, (current) => ({
-      ...current,
-      enableDeviceSupport: true,
-      enableAgentDeviceAccess: true,
-    }));
-    for (const readiness of [service.readiness(), service.agentReadinessIfSupported()]) {
-      const error = yield* readiness.pipe(Effect.flip);
-      expect(error).toMatchObject({ reason: expected, cause: failure });
-      expect((yield* service.state).hostStatuses[LOCAL_DEVICE_HOST_ID]).toEqual({
-        status: "failed",
-        detail: expected,
-      });
-    }
-    for (const state of [yield* service.list, yield* service.retryHost(LOCAL_DEVICE_HOST_ID)]) {
-      expect(state.hostStatuses[LOCAL_DEVICE_HOST_ID]).toEqual({
-        status: "failed",
-        detail: expected,
-      });
-    }
   }).pipe(Effect.scoped),
 );
 

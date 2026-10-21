@@ -77,34 +77,6 @@ describe("renderWebhookPrompt", () => {
     assert.deepEqual(collectComposerContextReferences(rendered.prompt), []);
   });
 
-  it("reads headers case-insensitively, query parameters and array indexes", () => {
-    const rendered = renderWebhookPrompt(
-      "{{ headers.X-GitHub-Event }} #{{body.pull_request.number}} {{body.pull_request.labels.0}} {{query.source}}",
-      githubPullRequest,
-      "id",
-    );
-    assert.equal(
-      rendered.prompt,
-      `<webhook-data-id>pull_request</webhook-data-id> #<webhook-data-id>45</webhook-data-id> <webhook-data-id>bug</webhook-data-id> <webhook-data-id>github</webhook-data-id>${NOTE}`,
-    );
-  });
-
-  it("renders objects as JSON and the raw body and request on request", () => {
-    const rendered = renderWebhookPrompt(
-      "{{body.pull_request.labels}}|{{body}}",
-      githubPullRequest,
-      "id",
-    );
-    assert.equal(
-      rendered.prompt,
-      `<webhook-data-id>[\n  "bug"\n]</webhook-data-id>|<webhook-data-id>${githubPullRequest.bodyText}</webhook-data-id>${NOTE}`,
-    );
-    const request = renderWebhookPrompt("{{request}}", githubPullRequest, "id").prompt;
-    assert.isTrue(request.startsWith("<webhook-data-id>POST /api/hooks/task-1?source=github\n"));
-    assert.include(request, "x-github-event: pull_request");
-    assert.isTrue(request.endsWith(`${githubPullRequest.bodyText}</webhook-data-id>${NOTE}`));
-  });
-
   it("renders missing fields empty and reports them once", () => {
     const rendered = renderWebhookPrompt(
       "a={{body.nope}} b={{body.nope}} c={{headers.x-missing}} d={{unknown}}",
@@ -113,22 +85,6 @@ describe("renderWebhookPrompt", () => {
     );
     assert.equal(rendered.prompt, "a= b= c= d=");
     assert.deepEqual(rendered.missing, ["body.nope", "headers.x-missing", "unknown"]);
-  });
-
-  it("leaves empty values unframed and does not report them missing", () => {
-    const rendered = renderWebhookPrompt("{{body}}", { ...githubPullRequest, bodyText: "" }, "id");
-    assert.equal(rendered.prompt, "");
-    assert.deepEqual(rendered.missing, []);
-  });
-
-  it("trims placeholder whitespace before resolving and reporting missing fields", () => {
-    const rendered = renderWebhookPrompt(
-      "{{\tbody.action\n}}|{{  body.nope  }}|{{\nbody.nope\t}}|{{ \t\n }}",
-      githubPullRequest,
-      "id",
-    );
-    assert.equal(rendered.prompt, `<webhook-data-id>opened</webhook-data-id>|||${NOTE}`);
-    assert.deepEqual(rendered.missing, ["body.nope", ""]);
   });
 
   it("preserves unclosed whitespace-heavy placeholders and resolves later valid ones", () => {

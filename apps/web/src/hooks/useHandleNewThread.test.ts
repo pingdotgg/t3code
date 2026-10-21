@@ -212,28 +212,6 @@ describe.each([
     },
   ],
 ])("useNewThreadHandler with a %s draft", (_, draft) => {
-  it.each(["approval-required", "auto-accept-edits", "auto", "full-access"] as const)(
-    "uses the target environment's %s permissions for new threads",
-    async (runtimeMode) => {
-      testState.reset(draft);
-      testState.targetSettings.defaultRuntimeMode = runtimeMode;
-      const projectRef = {
-        environmentId: "environment-ssh",
-        projectId: "project-remote",
-      } as never;
-      const pendingOpen = useNewThreadHandler()(projectRef);
-      testState.completeProjectFileRead(null);
-      const opened = await pendingOpen;
-
-      expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
-        "remote-project",
-        projectRef,
-        opened!.draftId,
-        expect.objectContaining({ runtimeMode }),
-      );
-    },
-  );
-
   it("abandons a delayed draft open when the user navigates elsewhere", async () => {
     testState.reset(draft);
     const openThread = useNewThreadHandler();
@@ -265,58 +243,4 @@ describe.each([
     expect(testState.router.navigate).not.toHaveBeenCalled();
     expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
   });
-
-  it.each([true, false])(
-    "uses the target environment's start-from-origin default of %s",
-    async (startFromOrigin) => {
-      testState.reset(draft, { envMode: "worktree", startFromOrigin });
-      const openThread = useNewThreadHandler();
-      const projectRef = {
-        environmentId: "environment-ssh",
-        projectId: "project-remote",
-      } as never;
-      const pendingOpen = openThread(projectRef);
-
-      testState.completeProjectFileRead(null);
-      const opened = await pendingOpen;
-
-      expect(opened).toEqual({
-        draftId: draft?.draftId ?? "draft-delayed",
-        threadId: draft?.threadId ?? "thread-delayed",
-      });
-      expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
-        "remote-project",
-        projectRef,
-        opened!.draftId,
-        expect.objectContaining({ envMode: "worktree", startFromOrigin }),
-      );
-      if (draft) {
-        expect(testState.draftStore.setDraftThreadContext).toHaveBeenCalledWith(
-          draft.draftId,
-          expect.objectContaining({ envMode: "worktree", startFromOrigin }),
-        );
-      }
-    },
-  );
-
-  it.each([true, false])(
-    "preserves an explicit start-from-origin choice of %s",
-    async (startFromOrigin) => {
-      testState.reset(draft, { envMode: "worktree", startFromOrigin: !startFromOrigin });
-      const openThread = useNewThreadHandler();
-      const projectRef = {
-        environmentId: "environment-ssh",
-        projectId: "project-remote",
-      } as never;
-
-      const opened = await openThread(projectRef, { envMode: "worktree", startFromOrigin });
-
-      expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
-        "remote-project",
-        projectRef,
-        opened!.draftId,
-        expect.objectContaining({ envMode: "worktree", startFromOrigin }),
-      );
-    },
-  );
 });

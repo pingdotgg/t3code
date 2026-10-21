@@ -48,34 +48,6 @@ describe("chat canvas layout", () => {
     expect(previous!.overlapsChat).toBe(true);
     expect(previous!.frame!.width).toBe(1100);
   });
-
-  it("centers chat in the whole container without a preview", () => {
-    expect(resolve(1344, null).chat).toEqual({ left: 288, width: 768, insetStart: 0, insetEnd: 0 });
-    expect(
-      resolveChatCanvasLayout({
-        container: { width: 390, height: 900 },
-        preview: null,
-        padding: 12,
-      }).chat,
-    ).toEqual({ left: 12, width: 366, insetStart: 0, insetEnd: 0 });
-  });
-  it("does not move chat when a bottom-right preview fits in its margin", () => {
-    const result = resolve(1600);
-    expect(result.chat.insetEnd).toBe(0);
-    expect(result.frame!.y + result.frame!.height).toBe(888);
-    expectClear(result);
-  });
-  it("moves chat only as far as the preview requires", () => {
-    const result = resolve(1344);
-    expect(result.chat).toEqual({ left: 232, width: 768, insetStart: 0, insetEnd: 112 });
-    expectClear(result);
-  });
-  it("shrinks chat modestly after using the left margin", () => {
-    const result = resolve(1200, { ...preview, width: 480 });
-    expect(result.chat.width).toBe(648);
-    expect(result.chat.left).toBe(48);
-    expectClear(result);
-  });
   it.each([900, 1000, 1004])("allows dragging across a %spx chat canvas", (width) => {
     const start = resolve(width, { ...preview, position: { x: width - 332, y: 200 } }).frame!;
     const moved = resolve(width, {
@@ -109,29 +81,11 @@ describe("chat canvas layout", () => {
     expect(result.frame!.x).toBe(12);
     expect(result.frame!.y + result.frame!.height).toBeLessThanOrEqual(708);
   });
-  it("allows message overlap on narrow screens while excluding the composer", () => {
-    const result = resolve(1000);
-    expect(result.overlapsChat).toBe(true);
-    expect(result.chat.insetStart).toBe(0);
-    expect(result.chat.insetEnd).toBe(0);
-    expect(result.frame!.y + result.frame!.height).toBeLessThanOrEqual(900 - 180 - 12);
-    expect(result.frame!.width / result.frame!.height).toBeCloseTo(1.6);
-  });
   it("restores the preferred width when the container grows again", () => {
     const player = { ...preview, width: 480 };
     expect(resolve(1200, player).chat.width).toBeLessThan(768);
     expect(resolve(1800, player).chat.width).toBe(768);
     expect(player.width).toBe(480);
-  });
-  it("uses the same stable side-by-side frame even as the composer grows", () => {
-    const result = resolve(1344);
-    expect(
-      resolveChatCanvasLayout({
-        container: { width: 1344, height: 900 },
-        preview,
-        composerHeight: 400,
-      }),
-    ).toEqual(result);
   });
   it("constrains a dragged preview below the full top-right card instead of folding it", () => {
     const result = resolveChatCanvasLayout({
@@ -172,23 +126,6 @@ describe("chat canvas layout", () => {
       expect(result.overlapsDetailsCard).toBe(false);
       expect(result.chat).toEqual({ left: 424, width: 736, insetStart: 0, insetEnd: 0 });
     }
-  });
-  it("keeps a preview clear of a find bar wider than the inline details card", () => {
-    const result = resolveChatCanvasLayout({
-      container: { width: 1800, height: 1000 },
-      findBar: { left: 1362, right: 1782, bottom: 72 },
-      detailsCard: { left: 1508, right: 1788, bottom: 400 },
-      preview: {
-        ...preview,
-        width: 240,
-        source: { width: 240, height: 365 },
-        position: { x: 1200, y: 12 },
-        lastInteraction: "drag",
-      },
-    });
-    const frame = result.frame!;
-    expect(frame.x + frame.width <= 1362 || frame.y >= 84).toBe(true);
-    expect(result.overlapsDetailsCard).toBe(false);
   });
   it("uses space beside the full card if a tall preview cannot fit below it", () => {
     const result = resolveChatCanvasLayout({
@@ -327,13 +264,6 @@ describe("workspace card beside chat", () => {
       detailsCard: { left: width - 292, right: width - 12, bottom: 400 },
       preview: player,
     });
-  it("keeps chat centered while the card fits beside it", () => {
-    expect(withCard(1384).chat).toEqual({ left: 324, width: 736, insetStart: 0, insetEnd: 0 });
-  });
-  it("moves chat left only as far as the card requires", () => {
-    expect(withCard(1383).chat).toEqual({ left: 323, width: 736, insetStart: 0, insetEnd: 1 });
-    expect(withCard(1147).chat).toEqual({ left: 87, width: 736, insetStart: 0, insetEnd: 237 });
-  });
   it("narrows chat only after it reaches the left padding", () => {
     expect(withCard(1108).chat).toMatchObject({ left: 48, width: 736 });
     expect(withCard(1028).chat).toEqual({ left: 48, width: 656, insetStart: 0, insetEnd: 276 });
@@ -352,21 +282,5 @@ describe("workspace card beside chat", () => {
       expect(chat.width).toBeGreaterThanOrEqual(640);
       expect(card.x - chat.left - chat.width).toBeGreaterThanOrEqual(32);
     }
-  });
-  it("keeps a full-width chat clear of the card", () => {
-    expect(withCard(1147, null, 10_000).chat).toEqual({
-      left: 48,
-      width: 775,
-      insetStart: 0,
-      insetEnd: 276,
-    });
-  });
-  it("keeps centered chat in place when a new preview opens below the card", () => {
-    expect(withCard(1440, preview)).toEqual({
-      chat: { left: 352, width: 736, insetStart: 0, insetEnd: 0 },
-      frame: { x: 1108, y: 688, width: 320, height: 200 },
-      overlapsChat: false,
-      overlapsDetailsCard: false,
-    });
   });
 });

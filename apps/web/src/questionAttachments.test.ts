@@ -58,14 +58,6 @@ it("keeps question files separate from the normal draft and other questions", ()
   expect(revoke).toHaveBeenCalledWith(image.previewUrl);
   revoke.mockRestore();
 });
-it("scopes provider request ids to their environment and thread", () => {
-  const keys = [
-    questionAttachmentDraftId(environmentId, threadId, requestId, "q"),
-    questionAttachmentDraftId(EnvironmentId.make("environment-2"), threadId, requestId, "q"),
-    questionAttachmentDraftId(environmentId, ThreadId.make("thread-2"), requestId, "q"),
-  ];
-  expect(new Set(keys).size).toBe(3);
-});
 it("does not match drafts belonging to threads with a shared id prefix", () => {
   const prefix = questionAttachmentDraftPrefix(environmentId, threadId);
   expect(

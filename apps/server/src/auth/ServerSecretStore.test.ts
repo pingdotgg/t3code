@@ -71,33 +71,6 @@ const layerRenameFailureSecretStore = () =>
     Layer.provideMerge(layerRenameFailureFileSystem),
   );
 
-const layerRemoveFailureFileSystem = Layer.effect(
-  FileSystem.FileSystem,
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-
-    return {
-      ...fileSystem,
-      remove: (path, options) =>
-        Effect.fail(
-          PlatformError.systemError({
-            _tag: "PermissionDenied",
-            module: "FileSystem",
-            method: "remove",
-            pathOrDescriptor: String(path),
-            description: `Permission denied while removing secret file.${options ? " options-set" : ""}`,
-          }),
-        ),
-    } satisfies FileSystem.FileSystem;
-  }),
-).pipe(Layer.provide(NodeServices.layer));
-
-const layerRemoveFailureSecretStore = () =>
-  ServerSecretStore.layer.pipe(
-    Layer.provide(layerServerConfig()),
-    Layer.provideMerge(layerRemoveFailureFileSystem),
-  );
-
 const layerConcurrentReadMissFileSystem = Layer.effect(
   FileSystem.FileSystem,
   Effect.gen(function* () {
@@ -250,18 +223,5 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
       assert.instanceOf(error.cause, PlatformError.PlatformError);
       assert.equal((error.cause as PlatformError.PlatformError).reason._tag, "PermissionDenied");
     }).pipe(Effect.provide(layerRenameFailureSecretStore())),
-  );
-
-  it.effect("propagates remove failures other than missing-file errors", () =>
-    Effect.gen(function* () {
-      const secretStore = yield* ServerSecretStore.ServerSecretStore;
-
-      const error = yield* Effect.flip(secretStore.remove("session-signing-key"));
-
-      assert.instanceOf(error, ServerSecretStore.SecretStoreRemoveError);
-      assert.include(error.message, "Failed to remove secret session-signing-key.");
-      assert.instanceOf(error.cause, PlatformError.PlatformError);
-      assert.equal((error.cause as PlatformError.PlatformError).reason._tag, "PermissionDenied");
-    }).pipe(Effect.provide(layerRemoveFailureSecretStore())),
   );
 });

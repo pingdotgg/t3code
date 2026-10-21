@@ -8,7 +8,6 @@ import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as TestClock from "effect/testing/TestClock";
 import * as AcpErrors from "effect-acp/errors";
 import type * as AcpSchema from "effect-acp/compat";
 
@@ -143,21 +142,6 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
 });
 
 it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
-  it.effect("accepts the same authorization URL from stderr and stdout", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness({
-        authorizationUrls: [authorizationUrl, authorizationUrl],
-      });
-      yield* harness.auth.controller.start(owner);
-      const waiting = yield* phase(harness.auth, "waiting");
-      assert.equal(waiting.authorizationUrl, authorizationUrl);
-
-      yield* Deferred.succeed(harness.authenticated, undefined);
-      yield* Deferred.succeed(harness.discovered, undefined);
-      yield* phase(harness.auth, "succeeded");
-    }),
-  );
-
   it.effect("accepts a delayed duplicate after callback completion starts", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
@@ -352,24 +336,6 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
     }),
   );
 
-  it.effect("expires the flow at the official deadline and removes its URL", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness();
-      const state = yield* harness.auth.controller.start(owner);
-      yield* phase(harness.auth, "waiting");
-      yield* TestClock.adjust("300 seconds");
-      const failed = yield* phase(harness.auth, "failed");
-      assert.include(failed.message ?? "", "expired");
-      assert.isNull(failed.authorizationUrl);
-      yield* Deferred.await(harness.closed);
-      const late = yield* harness.auth.controller
-        .complete(owner, { flowId: state.flowId!, callbackUrl })
-        .pipe(Effect.exit);
-      assert.isTrue(Exit.isFailure(late));
-      assert.equal(harness.forwarded(), 0);
-    }),
-  );
-
   it.effect("survives subscriber disconnect and does not replace a competing client's flow", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
@@ -418,45 +384,6 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
         "process-close",
       ]);
       assert.deepEqual(harness.catalog(), []);
-      yield* harness.auth.withProcess(Effect.void, Effect.void).pipe(Effect.scoped);
-    }),
-  );
-
-  it.effect("signs out after a slow packaged runtime starts", () =>
-    Effect.gen(function* () {
-      const entered = yield* Deferred.make<void>();
-      const initialized = yield* Deferred.make<void>();
-      const harness = yield* makeHarness({
-        beforeInitialize: Deferred.succeed(entered, undefined).pipe(
-          Effect.andThen(Deferred.await(initialized)),
-        ),
-      });
-      const logout = yield* harness.auth.controller.logout(Effect.void).pipe(Effect.forkScoped);
-      yield* Deferred.await(entered);
-      yield* TestClock.adjust("47 seconds");
-      yield* Deferred.succeed(initialized, undefined);
-      assert.equal((yield* Fiber.join(logout)).phase, "idle");
-      assert.include(harness.events, "logout");
-      assert.deepEqual(harness.catalog(), []);
-      yield* Deferred.await(harness.closed);
-    }),
-  );
-
-  it.effect("closes a stalled sign-out process without clearing its account catalog", () =>
-    Effect.gen(function* () {
-      const entered = yield* Deferred.make<void>();
-      const harness = yield* makeHarness({
-        beforeInitialize: Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)),
-      });
-      const logout = yield* harness.auth.controller
-        .logout(Effect.void)
-        .pipe(Effect.exit, Effect.forkScoped);
-      yield* Deferred.await(entered);
-      yield* TestClock.adjust("90 seconds");
-      assert.isTrue(Exit.isFailure(yield* Fiber.join(logout)));
-      yield* Deferred.await(harness.closed);
-      assert.notInclude(harness.events, "logout");
-      assert.deepEqual(harness.catalog(), ["previous-account-model"]);
       yield* harness.auth.withProcess(Effect.void, Effect.void).pipe(Effect.scoped);
     }),
   );

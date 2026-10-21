@@ -24,7 +24,7 @@ const options: ReadonlyArray<{ value: GitHubRoutingPermission; label: string }> 
 
 const summaryLabels = { "read-write": "read and act", read: "read PRs" } as const;
 
-export function summarizeGitHubRouting(
+function summarizeGitHubRouting(
   entries: ReadonlyArray<{ readonly label: string; readonly permission: GitHubRoutingPermission }>,
 ): string | null {
   const groups = (["read-write", "read"] as const).flatMap((permission) => {

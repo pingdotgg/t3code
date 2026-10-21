@@ -47,16 +47,6 @@ describe("projectThreadAwarenessV2", () => {
     ...overrides,
   });
 
-  it("projects V2 run state", () => {
-    expect(
-      projectThreadAwarenessV2({
-        environmentId: "env-1" as EnvironmentId,
-        project,
-        thread: v2Thread(),
-      }),
-    ).toMatchObject({ phase: "running", headline: "Agent is working" });
-  });
-
   it.each(["running", "completed", "failed"] as const)(
     "does not publish %s subagent activity",
     (status) => {

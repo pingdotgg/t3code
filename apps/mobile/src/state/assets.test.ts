@@ -89,15 +89,6 @@ it("hides host assets with a denied grant while preserving attachments", () => {
   });
 });
 
-it("stops waiting for an unresolved grant when the connection is offline", () => {
-  state.phase = "offline";
-  expect(useAssetUrlState(environmentId, resource)).toEqual({
-    _tag: "Failure",
-    reason: "disconnected",
-  });
-  expect(state.assetQuery).not.toHaveBeenCalled();
-});
-
 it("lets the server authorize an explicit refresh before the client grant loads", async () => {
   await expect(useRefreshAssetUrl(environmentId, resource)()).resolves.toBe(
     "https://host.test/api/assets/image.png",

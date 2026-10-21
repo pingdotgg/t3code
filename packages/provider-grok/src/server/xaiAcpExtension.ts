@@ -543,12 +543,12 @@ export const registerXAiSubagentFinished = (
     { discard: true },
   );
 
-export function isGenericAcpToolTitle(title: string | undefined): boolean {
+function isGenericAcpToolTitle(title: string | undefined): boolean {
   const key = (title ?? "").trim().toLowerCase();
   return key.length === 0 || key === "tool" || key === "tool call" || key === "terminal";
 }
 
-export function resolveXAiAcpToolTitle(toolCall: AcpToolCallState): string | undefined {
+function resolveXAiAcpToolTitle(toolCall: AcpToolCallState): string | undefined {
   if (!isGenericAcpToolTitle(toolCall.title)) {
     return nonEmptyString(toolCall.title);
   }

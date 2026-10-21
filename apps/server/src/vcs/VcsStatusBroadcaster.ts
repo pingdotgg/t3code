@@ -184,7 +184,7 @@ export const layerAutoPullPolicy = Layer.effect(
   }),
 );
 
-export function remoteRefreshFailureDelay(
+function remoteRefreshFailureDelay(
   consecutiveFailures: number,
   configuredInterval: Duration.Duration,
 ) {

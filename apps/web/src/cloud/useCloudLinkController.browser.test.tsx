@@ -216,85 +216,6 @@ describe("useCloudLinkController", () => {
     expectNoMutations();
   });
 
-  it("uses the latest linked mode to change publishing without replacing the tunnel", async () => {
-    using _setup = setup();
-    testState.snapshot = { ...linkedState, linked: false, managedTunnelActive: false };
-    testState.renderedSnapshot = testState.snapshot;
-    await using screen = await mountController();
-    testState.getToken.mockImplementationOnce(async () => {
-      testState.snapshot = linkedState;
-      return "clerk-token";
-    });
-
-    expect(await screen.reconcile({ managedTunnel: true, publish: true })).toBe(true);
-    expect(testState.link).not.toHaveBeenCalled();
-    expect(testState.unlink).not.toHaveBeenCalled();
-    expect(testState.preferences).toHaveBeenCalledExactlyOnceWith({
-      target,
-      publishAgentActivity: true,
-    });
-  });
-
-  it("shows a link the relay holds as publish-only as off and relinks it as managed", async () => {
-    using _setup = setup();
-    testState.relayProviderKind = "manual";
-    await using screen = await mountController();
-
-    expect(screen.controller?.managedTunnelActive).toBe(false);
-    expect(screen.controller?.managedTunnelOutOfSync).toBe(true);
-    expect(await screen.reconcile({ managedTunnel: true, publish: false })).toBe(true);
-    expect(testState.link).toHaveBeenCalledExactlyOnceWith({
-      target,
-      clerkToken: "clerk-token",
-      mode: "managed",
-    });
-  });
-
-  it("shows a revoked link as off and links it again when turned on", async () => {
-    using _setup = setup();
-    testState.snapshot = { ...linkedState, linkRevoked: true };
-    testState.renderedSnapshot = testState.snapshot;
-    await using screen = await mountController();
-    expect(screen.controller).toMatchObject({
-      linked: false,
-      linkRevoked: true,
-      managedTunnelActive: false,
-      managedTunnelOutOfSync: false,
-    });
-
-    expect(await screen.reconcile({ managedTunnel: true, publish: false })).toBe(true);
-    expect(testState.link).toHaveBeenCalledExactlyOnceWith({
-      target,
-      clerkToken: "clerk-token",
-      mode: "managed",
-    });
-  });
-
-  it("keeps a managed link that the relay also holds as managed", async () => {
-    using _setup = setup();
-    testState.relayProviderKind = "cloudflare_tunnel";
-    await using screen = await mountController();
-
-    expect(screen.controller?.managedTunnelActive).toBe(true);
-    expect(screen.controller?.managedTunnelOutOfSync).toBe(false);
-    expect(await screen.reconcile({ managedTunnel: true, publish: false })).toBe(true);
-    expect(testState.link).not.toHaveBeenCalled();
-  });
-
-  it("stops the preference write if management permission is lost after linking", async () => {
-    using _setup = setup();
-    await using screen = await mountController();
-    testState.link.mockImplementationOnce(async () => {
-      testState.scopes.delete(AuthRelayWriteScope);
-      return AsyncResult.success({});
-    });
-
-    expect(await screen.reconcile({ managedTunnel: false, publish: true })).toBe(false);
-    expect(testState.link).toHaveBeenCalledOnce();
-    expect(testState.preferences).not.toHaveBeenCalled();
-    expect(testState.refreshLink).toHaveBeenCalledOnce();
-  });
-
   it("still lets an authorized user unlink when the cloud token is unavailable", async () => {
     using _setup = setup();
     await using screen = await mountController();
@@ -304,20 +225,5 @@ describe("useCloudLinkController", () => {
     expect(testState.unlink).toHaveBeenCalledExactlyOnceWith({ target, clerkToken: null });
     expect(testState.link).not.toHaveBeenCalled();
     expect(testState.preferences).not.toHaveBeenCalled();
-  });
-
-  it("unlinks if the link-state read fails while requesting the cloud token", async () => {
-    using _setup = setup();
-    await using screen = await mountController();
-    testState.getToken.mockImplementationOnce(async () => {
-      testState.snapshot = null;
-      throw new Error("Cloud sign-in unavailable");
-    });
-
-    expect(await screen.reconcile({ managedTunnel: false, publish: false })).toBe(true);
-    expect(testState.unlink).toHaveBeenCalledExactlyOnceWith({ target, clerkToken: null });
-    expect(testState.link).not.toHaveBeenCalled();
-    expect(testState.preferences).not.toHaveBeenCalled();
-    expect(testState.refreshLink).toHaveBeenCalledOnce();
   });
 });

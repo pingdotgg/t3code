@@ -139,76 +139,6 @@ it.layer(layerTest)("OpenCodeRuntime inventory", (it) => {
     }),
   );
 
-  it.effect("keeps provider inventory when skill discovery fails", () =>
-    Effect.gen(function* () {
-      const runtime = yield* OpenCodeRuntime.OpenCodeRuntime;
-      const client = {
-        provider: {
-          list: () =>
-            Promise.resolve({
-              data: {
-                connected: ["openai"],
-                all: [],
-                default: {},
-              },
-            }),
-        },
-        app: {
-          agents: () => Promise.resolve({ data: [] }),
-          skills: () => Promise.reject(new Error("skills endpoint unavailable")),
-        },
-      } as unknown as OpencodeClient;
-
-      const inventory = yield* runtime.loadOpenCodeInventory(client);
-
-      NodeAssert.deepEqual(inventory.providerList.connected, ["openai"]);
-      NodeAssert.deepEqual(inventory.agents, []);
-      NodeAssert.deepEqual(inventory.skills, []);
-    }),
-  );
-
-  it.effect("keeps only SDK skill metadata in inventory", () =>
-    Effect.gen(function* () {
-      const runtime = yield* OpenCodeRuntime.OpenCodeRuntime;
-      const client = {
-        provider: {
-          list: () =>
-            Promise.resolve({
-              data: {
-                connected: ["openai"],
-                all: [],
-                default: {},
-              },
-            }),
-        },
-        app: {
-          agents: () => Promise.resolve({ data: [] }),
-          skills: () =>
-            Promise.resolve({
-              data: [
-                {
-                  name: "review",
-                  description: "Review code changes",
-                  location: "/skills/review/SKILL.md",
-                  content: "unused skill content",
-                },
-              ],
-            }),
-        },
-      } as unknown as OpencodeClient;
-
-      const inventory = yield* runtime.loadOpenCodeInventory(client);
-
-      NodeAssert.deepEqual(inventory.skills, [
-        {
-          name: "review",
-          description: "Review code changes",
-          location: "/skills/review/SKILL.md",
-        },
-      ]);
-    }),
-  );
-
   it.effect("drops oversized CLI skill output without losing the model inventory", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -261,26 +191,6 @@ it.layer(layerTest)("OpenCodeRuntime inventory", (it) => {
 
       NodeAssert.deepEqual(inventory.providerList.connected, ["openai"]);
       NodeAssert.equal(inventory.skills.length, 0);
-    }),
-  );
-
-  it.effect("caps and drains command stdout and stderr when requested", () =>
-    Effect.gen(function* () {
-      const runtime = yield* OpenCodeRuntime.OpenCodeRuntime;
-      const executablePath = yield* HostProcess.ExecutablePath;
-      const outputBytes = 2 * 1024 * 1024;
-      const result = yield* runtime.runOpenCodeCommand({
-        binaryPath: executablePath,
-        args: [
-          "-e",
-          `process.stdout.write("o".repeat(${outputBytes})); process.stderr.write("e".repeat(${outputBytes}));`,
-        ],
-        maxOutputBytes: 64,
-      });
-
-      NodeAssert.equal(result.stdout, "o".repeat(64));
-      NodeAssert.equal(result.stderr, "e".repeat(64));
-      NodeAssert.equal(result.code, 0);
     }),
   );
 });

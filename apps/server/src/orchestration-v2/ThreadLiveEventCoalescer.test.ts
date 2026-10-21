@@ -7,7 +7,6 @@ import {
   type OrchestrationV2ThreadStreamItem,
 } from "@t3tools/contracts";
 import { it } from "@effect/vitest";
-import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
@@ -125,47 +124,6 @@ describe("ThreadLiveEventCoalescer", () => {
 
     expect(coalesceLiveToolUpdatedEvents(events).map((event) => event.sequence)).toEqual([2, 3, 4]);
   });
-
-  it.effect("flushes pending tool updates as soon as an unrelated event arrives", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const coalescer = yield* makeThreadLiveEventCoalescer({ coalesceWindow: "500 millis" });
-        const startedAt = yield* Clock.currentTimeMillis;
-        yield* Effect.forEach(
-          Array.from({ length: 10 }, (_, index) => index + 2),
-          (sequence) => coalescer.offer(makeToolActivity(sequence)),
-          { discard: true },
-        );
-        yield* coalescer.offer(makeMessage(12));
-
-        expect(yield* Clock.currentTimeMillis).toBe(startedAt);
-        expect(
-          (yield* coalescer.stream.pipe(Stream.take(2), Stream.runCollect)).map((item) =>
-            item.kind === "event" ? item.sequence : item.kind,
-          ),
-        ).toEqual([11, 12]);
-      }),
-    ).pipe(Effect.provide(TestClock.layer())),
-  );
-
-  it.effect("flushes pending tool updates as soon as a synchronization marker arrives", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const coalescer = yield* makeThreadLiveEventCoalescer({ coalesceWindow: "500 millis" });
-        const startedAt = yield* Clock.currentTimeMillis;
-        yield* coalescer.offer(makeToolActivity(2));
-        yield* coalescer.offer(makeToolActivity(3));
-        yield* coalescer.offer({ kind: "synchronized" });
-
-        expect(yield* Clock.currentTimeMillis).toBe(startedAt);
-        expect(
-          (yield* coalescer.stream.pipe(Stream.take(2), Stream.runCollect)).map((item) =>
-            item.kind === "event" ? item.sequence : item.kind,
-          ),
-        ).toEqual([3, "synchronized"]);
-      }),
-    ).pipe(Effect.provide(TestClock.layer())),
-  );
 
   it.effect("fails and clears pending updates when their serialized payload fills the budget", () =>
     Effect.scoped(

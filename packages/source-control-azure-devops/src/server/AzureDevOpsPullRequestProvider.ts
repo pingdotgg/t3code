@@ -83,7 +83,7 @@ const AZURE_DEVOPS_VIEWER_PERMISSIONS: PullRequestViewerPermissions = {
   requestReviewers: CAPABILITIES.reviewers.request,
 };
 
-export function azureDevOpsProviderFailure(
+function azureDevOpsProviderFailure(
   error: AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCliError,
 ): PullRequestProviderFailure {
   if (error._tag === "AzureDevOpsCliUnavailableError") return { reason: "missing-tool" };

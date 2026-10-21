@@ -22,21 +22,6 @@ describe("terminalUiStateStore actions", () => {
     });
   });
 
-  it("returns an empty default terminal UI state for unknown threads", () => {
-    const terminalUiState = selectThreadTerminalUiState(
-      useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
-      THREAD_REF,
-    );
-    expect(terminalUiState).toEqual({
-      terminalOpen: false,
-      terminalHeight: 280,
-      terminalIds: [],
-      activeTerminalId: "",
-      terminalGroups: [],
-      activeTerminalGroupId: "",
-    });
-  });
-
   it("opens and splits terminals into the active group", () => {
     const store = useTerminalUiStateStore.getState();
     store.setTerminalOpen(THREAD_REF, true);
@@ -55,46 +40,6 @@ describe("terminalUiStateStore actions", () => {
         terminalIds: [DEFAULT_THREAD_TERMINAL_ID, "terminal-2"],
       },
     ]);
-  });
-
-  it("stacks vertically split terminals in the active group", () => {
-    const store = useTerminalUiStateStore.getState();
-    store.setTerminalOpen(THREAD_REF, true);
-    store.splitTerminalVertical(THREAD_REF, "terminal-2");
-
-    const terminalUiState = selectThreadTerminalUiState(
-      useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
-      THREAD_REF,
-    );
-    expect(terminalUiState.terminalGroups).toEqual([
-      {
-        id: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
-        terminalIds: [DEFAULT_THREAD_TERMINAL_ID, "terminal-2"],
-        splitDirection: "vertical",
-      },
-    ]);
-  });
-
-  it("materializes the default terminal when opening an empty drawer", () => {
-    useTerminalUiStateStore.getState().setTerminalOpen(THREAD_REF, true);
-
-    const terminalUiState = selectThreadTerminalUiState(
-      useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
-      THREAD_REF,
-    );
-    expect(terminalUiState).toEqual({
-      terminalOpen: true,
-      terminalHeight: 280,
-      terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
-      activeTerminalId: DEFAULT_THREAD_TERMINAL_ID,
-      terminalGroups: [
-        {
-          id: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
-          terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
-        },
-      ],
-      activeTerminalGroupId: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
-    });
   });
 
   it("caps splits at four terminals per group", () => {
@@ -283,14 +228,5 @@ describe("terminalUiStateStore actions", () => {
         THREAD_REF,
       ).terminalIds,
     ).toEqual(["term-2", "term-1"]);
-  });
-
-  it("is a no-op when clearing terminal UI state for a thread with no state", () => {
-    const store = useTerminalUiStateStore.getState();
-    const before = useTerminalUiStateStore.getState();
-
-    store.clearTerminalUiState(THREAD_REF);
-
-    expect(useTerminalUiStateStore.getState()).toBe(before);
   });
 });

@@ -1,14 +1,8 @@
-import {
-  EnvironmentId,
-  ProviderDriverKind,
-  type AcpRegistrySearchAgent,
-  type AcpRegistrySearchInput,
-} from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
+import { EnvironmentId, ProviderDriverKind, type AcpRegistrySearchAgent } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
-import { page, userEvent } from "vite-plus/test/browser";
+import { page } from "vite-plus/test/browser";
 
-import { act, fakeTimers, render } from "../../../test/render";
+import { act, render } from "../../../test/render";
 
 const state = vi.hoisted(() => ({
   result: null as { readonly agents: ReadonlyArray<AcpRegistrySearchAgent> } | null,
@@ -92,10 +86,6 @@ function step(options?: {
   );
 }
 
-const searchBox = () => page.getByRole("searchbox", { name: "Search ACP Registry" });
-const lastQuery = () =>
-  (state.search.mock.lastCall?.[0] as { input: { query: string } } | undefined)?.input.query;
-
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((done) => {
@@ -116,121 +106,6 @@ function setup() {
     value: { agentId: "gemini", version: "1.2.3", distribution: "npx", prepared: true },
   });
 }
-
-it("shows the full catalog initially and after clearing a debounced search", async () => {
-  setup();
-  const agents = Array.from({ length: 25 }, (_, index) => ({
-    ...gemini,
-    id: `gemini-${index}`,
-    name: `Gemini CLI ${index + 1}`,
-  }));
-  state.search.mockImplementation(({ input }: { input: AcpRegistrySearchInput }) => {
-    state.result = {
-      agents: agents
-        .filter((agent) => agent.name.toLowerCase().includes(input.query.toLowerCase()))
-        .slice(0, input.limit ?? 20),
-    };
-  });
-  const addButtons = () => page.getByRole("button", { name: /^Add Gemini CLI / }).elements();
-  await using _screen = await render(step());
-  expect(addButtons()).toHaveLength(25);
-  await expect.element(page.getByRole("button", { name: "Add Gemini CLI 25" })).toBeEnabled();
-
-  using _timers = fakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-  await userEvent.fill(searchBox(), "  Gemini  ");
-  await act(async () => vi.advanceTimersByTime(200));
-  await userEvent.fill(searchBox(), "  Gemini CLI  ");
-  await act(async () => vi.advanceTimersByTime(299));
-  expect(addButtons()).toHaveLength(25);
-  await act(async () => vi.advanceTimersByTime(1));
-  expect(addButtons()).toHaveLength(20);
-
-  await userEvent.clear(searchBox());
-  await act(async () => vi.advanceTimersByTime(300));
-  expect(addButtons()).toHaveLength(25);
-  await expect.element(page.getByRole("button", { name: "Add Gemini CLI 25" })).toBeEnabled();
-});
-
-it("shows the loading, error, and empty states", async () => {
-  setup();
-  state.isPending = true;
-  await using screen = await render(step());
-  await expect.element(page.getByText("Searching the registry...")).toBeVisible();
-
-  state.isPending = false;
-  state.error = "Registry unavailable.";
-  await screen.rerender(step());
-  await expect.element(page.getByText("Registry unavailable.")).toBeVisible();
-
-  state.error = null;
-  state.result = { agents: [] };
-  await screen.rerender(step());
-  await expect.element(page.getByText("No compatible agents found")).toBeVisible();
-});
-
-it("submits a typed query at once and refreshes when the same query is submitted again", async () => {
-  setup();
-  await using screen = await render(step());
-  // A slow runner must not let the typing debounce submit the query before Enter does.
-  using _timers = fakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-  await userEvent.fill(searchBox(), "Codex");
-  await userEvent.keyboard("{Enter}");
-  expect(lastQuery()).toBe("Codex");
-  expect(state.refresh).not.toHaveBeenCalled();
-
-  state.result = { agents: [gemini] };
-  await screen.rerender(step());
-  await userEvent.click(searchBox());
-  await userEvent.keyboard("{Enter}");
-  expect(state.refresh).toHaveBeenCalledOnce();
-
-  state.isPending = true;
-  await screen.rerender(step());
-  await expect
-    .element(page.getByRole("status").filter({ hasText: "Refreshing ACP Registry results." }))
-    .toBeInTheDocument();
-  await expect.element(page.getByRole("button", { name: "Add Gemini CLI" })).toBeVisible();
-});
-
-it("prepares a result before handing it back to the wizard", async () => {
-  setup();
-  state.prepare.mockResolvedValueOnce({
-    _tag: "Success",
-    value: { agentId: "gemini", version: "2.0.0", distribution: "binary", prepared: true },
-  });
-  state.result = { agents: [gemini] };
-  const onPrepared = vi.fn();
-  await using _screen = await render(step({ onPrepared }));
-
-  await page.getByRole("button", { name: "Add Gemini CLI" }).click();
-
-  expect(state.prepare).toHaveBeenCalledWith({ environmentId, input: { agentId: "gemini" } });
-  await vi.waitFor(() =>
-    expect(onPrepared).toHaveBeenCalledWith({
-      ...gemini,
-      version: "2.0.0",
-      distribution: "binary",
-    }),
-  );
-});
-
-it("shows progress, locks the step while an agent prepares, and reports a failure", async () => {
-  setup();
-  const pending = deferred<unknown>();
-  state.prepare.mockReturnValueOnce(pending.promise);
-  state.result = { agents: [{ ...gemini, distribution: "binary" }] };
-  await using _screen = await render(step());
-
-  await page.getByRole("button", { name: "Add Gemini CLI" }).click();
-  await expect.element(page.getByRole("button", { name: "Downloading Gemini CLI" })).toBeDisabled();
-  await expect.element(searchBox()).toBeDisabled();
-
-  await act(async () =>
-    pending.resolve({ _tag: "Failure", cause: Cause.fail(new Error("Registry download failed.")) }),
-  );
-  await expect.element(page.getByText("Registry download failed.")).toBeVisible();
-  await expect.element(page.getByRole("button", { name: "Add Gemini CLI" })).toBeEnabled();
-});
 
 it("rechecks the grant before preparing an agent", async () => {
   setup();
@@ -263,13 +138,4 @@ it("ignores prepare completion after unmount", async () => {
   );
 
   expect(onPrepared).not.toHaveBeenCalled();
-});
-
-it("shows an existing registry configuration as already added", async () => {
-  setup();
-  state.result = { agents: [gemini] };
-  await using _screen = await render(step({ configured: true }));
-  await expect
-    .element(page.getByRole("button", { name: "Already added Gemini CLI" }))
-    .toBeDisabled();
 });

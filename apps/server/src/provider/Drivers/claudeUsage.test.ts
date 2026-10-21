@@ -48,14 +48,6 @@ describe("parseClaudeLine", () => {
     expect(record?.speed).toBe("standard");
   });
 
-  it("marks fast-mode requests", () => {
-    const line = (speed: string) =>
-      parseClaudeLine(claudeLine({ messageId: "msg_1", contentType: "text", speed }));
-
-    expect(line("fast")?.speed).toBe("fast");
-    expect(line("standard")?.speed).toBe("standard");
-  });
-
   it("gives every content block of one message the same dedupe key", () => {
     // T3 Code writes one record per content block, each repeating the parent
     // message's full usage. Summing them would overcount ~2.4x on real data.

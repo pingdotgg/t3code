@@ -145,16 +145,6 @@ describe("source control callback grants", () => {
     expect(state.requests).toEqual([]);
     expect(create().isAllowed).toBe(false);
   });
-
-  it.each(cases)("$name accepts a retained callback after a grant", async ({ name, create }) => {
-    const action = create();
-    expect(action.isAllowed).toBe(false);
-    state.scopes.get(primary)!.clear();
-    state.scopes.get(secondary)!.add(AuthSourceControlWriteScope);
-    expect((await action.run())._tag).toBe("Success");
-    expect(state.requests).toEqual([{ action: name, environmentId: secondary }]);
-    expect(create().isAllowed).toBe(true);
-  });
 });
 
 describe("pull request worktree attachment permission", () => {

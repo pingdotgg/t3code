@@ -8,7 +8,6 @@ import {
   matchesLinkedPullRequestUrl,
   parseChangeRequestUrl,
   pullRequestCandidateUrlFromReferenceAutolink,
-  shouldOpenPullRequestExternally,
 } from "./openPullRequestLink";
 import { ProjectId, type RepositoryIdentity } from "@t3tools/contracts";
 import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
@@ -212,23 +211,6 @@ describe("matchesLinkedPullRequestUrl", () => {
         "https://github.example.com/pingdotgg/t3code/pull/42",
       ),
     ).toBe(false);
-  });
-});
-
-describe("shouldOpenPullRequestExternally", () => {
-  it("uses the browser for command-click and control-click", () => {
-    expect(shouldOpenPullRequestExternally({ metaKey: true, ctrlKey: false })).toBe(true);
-    expect(shouldOpenPullRequestExternally({ metaKey: false, ctrlKey: true })).toBe(true);
-  });
-
-  it("uses the browser for middle-click", () => {
-    expect(shouldOpenPullRequestExternally({ metaKey: false, ctrlKey: false, button: 1 })).toBe(
-      true,
-    );
-  });
-
-  it("keeps an unmodified click in the pull request view", () => {
-    expect(shouldOpenPullRequestExternally({ metaKey: false, ctrlKey: false })).toBe(false);
   });
 });
 

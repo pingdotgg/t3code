@@ -158,7 +158,7 @@ type CodexFileChangeKinds = Readonly<
   Record<string, CodexSchema.V2ItemStartedNotification__PatchChangeKind>
 >;
 
-export function codexFileChangeApprovalPrompt(input: {
+function codexFileChangeApprovalPrompt(input: {
   readonly reason?: string | null;
   readonly grantRoot?: string | null;
   readonly fileChanges?: CodexFileChangeKinds;
@@ -420,14 +420,14 @@ function codexItemStatus(status: "inProgress" | "completed" | "failed" | "declin
  * The composers let a skill be typed with any currency sigil (`€review`), but
  * Codex only parses `$name` as a skill mention.
  */
-export function codexSkillMentionText(text: string): string {
+function codexSkillMentionText(text: string): string {
   return text.replace(SKILL_MENTION_PATTERN, "$1$$$2");
 }
 
 const BACKGROUND_COMMAND_DETAIL_COMMAND_MAX_LENGTH = 200;
 const BACKGROUND_COMMAND_DETAIL_OUTPUT_TAIL_MAX_LENGTH = 1_000;
 
-export function codexBackgroundCommandDetail(item: {
+function codexBackgroundCommandDetail(item: {
   readonly command: string;
   readonly exitCode?: number | null | undefined;
   readonly aggregatedOutput?: string | null | undefined;
@@ -492,37 +492,35 @@ function codexDynamicToolOutput(
   return item.success === false ? { success: false } : undefined;
 }
 
-export const projectCodexDynamicToolItem = Effect.fn("CodexAdapterV2.projectDynamicToolItem")(
-  function* (
-    item: CodexDynamicToolItem,
-  ): Effect.fn.Return<CodexDynamicToolProjection, never, Crypto.Crypto> {
-    const output =
-      item.type === "mcpToolCall" ? codexMcpToolOutput(item) : codexDynamicToolOutput(item);
-    const toolName =
-      item.type === "mcpToolCall"
-        ? `${item.server}.${item.tool}`
-        : [trimText(item.namespace), item.tool].filter(Boolean).join(".");
-    const presentation: McpToolPresentation =
-      item.type === "mcpToolCall" ? yield* mcpToolPresentation(item) : {};
-    const title =
-      dynamicToolTitle(toolName, item.arguments, presentation.title) ?? presentation.title;
-    const toolSurface = presentation.toolSurface ?? dynamicToolSurface(toolName, item.arguments);
-    const toolSource =
-      toolSurface === "computer" && presentation.toolSource?.kind !== "computer"
-        ? COMPUTER_USE_TOOL_SOURCE
-        : presentation.toolSource;
-    const projection: CodexDynamicToolProjection = {
-      ...presentation,
-      ...(toolSurface ? { toolSurface } : {}),
-      ...(toolSource ? { toolSource } : {}),
-      toolName,
-      ...(title ? { title } : {}),
-      input: item.arguments,
-      status: codexItemStatus(item.status).turnItem,
-    };
-    return output === undefined ? projection : { ...projection, output };
-  },
-);
+const projectCodexDynamicToolItem = Effect.fn("CodexAdapterV2.projectDynamicToolItem")(function* (
+  item: CodexDynamicToolItem,
+): Effect.fn.Return<CodexDynamicToolProjection, never, Crypto.Crypto> {
+  const output =
+    item.type === "mcpToolCall" ? codexMcpToolOutput(item) : codexDynamicToolOutput(item);
+  const toolName =
+    item.type === "mcpToolCall"
+      ? `${item.server}.${item.tool}`
+      : [trimText(item.namespace), item.tool].filter(Boolean).join(".");
+  const presentation: McpToolPresentation =
+    item.type === "mcpToolCall" ? yield* mcpToolPresentation(item) : {};
+  const title =
+    dynamicToolTitle(toolName, item.arguments, presentation.title) ?? presentation.title;
+  const toolSurface = presentation.toolSurface ?? dynamicToolSurface(toolName, item.arguments);
+  const toolSource =
+    toolSurface === "computer" && presentation.toolSource?.kind !== "computer"
+      ? COMPUTER_USE_TOOL_SOURCE
+      : presentation.toolSource;
+  const projection: CodexDynamicToolProjection = {
+    ...presentation,
+    ...(toolSurface ? { toolSurface } : {}),
+    ...(toolSource ? { toolSource } : {}),
+    toolName,
+    ...(title ? { title } : {}),
+    input: item.arguments,
+    status: codexItemStatus(item.status).turnItem,
+  };
+  return output === undefined ? projection : { ...projection, output };
+});
 
 function codexNativeItemRef(nativeItemId: string) {
   return {
@@ -900,7 +898,7 @@ export type CodexGoalCommand =
   | { readonly type: "resume" }
   | { readonly type: "set"; readonly objective: string };
 
-export function parseCodexGoalCommand(text: string): CodexGoalCommand | null {
+function parseCodexGoalCommand(text: string): CodexGoalCommand | null {
   const match = /^\/goal(?:\s+([\s\S]*))?$/u.exec(text.trim());
   if (match === null) return null;
   const argument = (match[1] ?? "").trim();

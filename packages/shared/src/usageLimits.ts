@@ -50,9 +50,7 @@ function cursorUsageWindowRank(id: string): number {
   return rank < 0 ? CURSOR_USAGE_WINDOWS.length : rank;
 }
 
-export function providersWithLimits(
-  providers: readonly ServerProvider[],
-): readonly ServerProvider[] {
+function providersWithLimits(providers: readonly ServerProvider[]): readonly ServerProvider[] {
   return providers.filter(
     (provider) =>
       provider.enabled &&

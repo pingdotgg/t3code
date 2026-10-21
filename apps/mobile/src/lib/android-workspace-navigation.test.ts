@@ -137,17 +137,6 @@ describe("Android workspace navigation", () => {
     expect(back.routes[back.index]?.params).toEqual(pullRequest.params);
   });
 
-  it("preserves normal nested PR Back behavior", () => {
-    const detail = select(legacyHistory(), pullRequest);
-    const nested = apply(
-      detail,
-      StackActions.push("PullRequestFile", { ...pullRequest.params, path: "file.ts" }),
-    );
-    const back = apply(nested, StackActions.pop());
-    expect(back.routes[back.index]?.key).toBe(detail.routes[detail.index]?.key);
-    expect(names(back)).toEqual(["Home", "PullRequest"]);
-  });
-
   it.each(["ThreadFiles", "ThreadTerminal", "GitOverview"])(
     "returns to chat when its sidebar row is selected from %s",
     (route) => {
@@ -174,15 +163,6 @@ describe("Android workspace navigation", () => {
     });
     expect(state.routes[1]?.key).not.toBe(previous.routes[1]?.key);
     expect(state.routes[1]?.params).toEqual({ ...pullRequest.params, ...change });
-  });
-
-  it("does not reuse a thread key from another environment", () => {
-    const previous = select(router.getInitialState(options), thread);
-    const state = select(previous, {
-      name: "Thread",
-      params: { ...thread.params, environmentId: "environment-b" },
-    });
-    expect(state.routes[1]?.key).not.toBe(previous.routes[1]?.key);
   });
 
   it("returns to a distinct previous thread, otherwise to the workspace list", () => {

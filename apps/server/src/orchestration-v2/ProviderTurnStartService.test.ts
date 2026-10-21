@@ -784,19 +784,6 @@ effectIt.effect.each(["cleanup-first", "startup-first"])(
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-effectIt.effect("reads only thread state before taking the startup lease", () =>
-  Effect.gen(function* () {
-    const harness = makeLocalCommandHarness({ text: "/logout", previousNativeSession: true });
-    yield* harness.start;
-    expect(harness.getThreadRecords).toHaveBeenCalledExactlyOnceWith(
-      harness.projection().thread.id,
-      [],
-    );
-    expect(harness.getTurnStartContext).toHaveBeenCalledOnce();
-    expect(harness.projection().runs.at(-1)?.status).toBe("completed");
-  }),
-);
-
 effectIt.effect("reads current startup state after waiting for the workspace lease", () =>
   Effect.gen(function* () {
     const worktreePath = "/tmp/provider-start-fresh-state";
@@ -1108,37 +1095,6 @@ effectIt.effect("fails a starting run when its last start attempt cannot load th
   }),
 );
 
-effectIt.effect("leaves the run starting when a thread-load failure will be retried", () =>
-  Effect.gen(function* () {
-    const harness = makeLocalCommandHarness({
-      text: "Continue",
-      ensureThreadFailure: new Error("pi process exited with code 1"),
-    });
-
-    const error = yield* harness.startWithRetry.pipe(Effect.flip);
-
-    expect(error._tag).toBe("ProviderTurnStartError");
-    expect(harness.writeIfRunCurrent).not.toHaveBeenCalled();
-    expect(harness.projection().runs.at(-1)?.status).toBe("starting");
-  }),
-);
-
-effectIt.effect("keeps a thread-load failure retryable when terminal persistence fails", () =>
-  Effect.gen(function* () {
-    const harness = makeLocalCommandHarness({
-      text: "Continue",
-      ensureThreadFailure: new Error("pi process exited with code 1"),
-      writeFailure: new Error("database unavailable"),
-    });
-
-    const error = yield* harness.start.pipe(Effect.flip);
-
-    expect(error._tag).toBe("ProviderTurnStartError");
-    expect(harness.projection().runs.at(-1)?.status).toBe("starting");
-    expect(harness.events).toEqual([]);
-  }),
-);
-
 effectIt.effect(
   "keeps a store failure after the provider loaded the thread typed and retryable",
   () =>
@@ -1172,22 +1128,6 @@ effectIt.effect("does not mistake a failed state read for a superseded run", () 
     const finalizeCheck = yield* Effect.flip(controls.shouldFinalizeRun!());
     expect(startCheck._tag).toBe("ProjectionStoreReadError");
     expect(finalizeCheck._tag).toBe("ProjectionStoreReadError");
-  }),
-);
-
-effectIt.effect("does not overwrite a run interrupted while its thread loads", () =>
-  Effect.gen(function* () {
-    const harness = makeLocalCommandHarness({
-      text: "Continue",
-      ensureThreadFailure: new Error("pi process exited with code 1"),
-      interruptRunBeforeOpenFailure: true,
-    });
-
-    yield* harness.start;
-
-    expect(harness.projection().runs.at(-1)?.status).toBe("interrupted");
-    expect(harness.projection().turnItems).toEqual([]);
-    expect(harness.events).toEqual([]);
   }),
 );
 

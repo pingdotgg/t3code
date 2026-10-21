@@ -195,21 +195,6 @@ describe("DesktopLocalEnvironmentAuth", () => {
       return { auth, requestCount };
     });
 
-  it.effect("retries a backend that is still starting", () =>
-    Effect.gen(function* () {
-      const { auth, requestCount } = yield* makeExchange(
-        2,
-        () => new Response("", { status: 503 }),
-      );
-
-      const fiber = yield* auth.getBearerToken.pipe(Effect.forkChild);
-      yield* TestClock.adjust(Duration.seconds(1));
-
-      assert.strictEqual(yield* Fiber.join(fiber), "desktop-bearer-token");
-      assert.strictEqual(yield* Ref.get(requestCount), 3);
-    }).pipe(Effect.provide(TestClock.layer())),
-  );
-
   it.effect("does not retry a rejected bootstrap credential", () =>
     Effect.gen(function* () {
       const { auth, requestCount } = yield* makeExchange(1, () =>

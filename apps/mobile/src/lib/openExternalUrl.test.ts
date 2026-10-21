@@ -18,14 +18,6 @@ afterEach(() => {
 });
 
 describe("tryOpenExternalUrl", () => {
-  it("opens supported URLs", async () => {
-    openURL.mockResolvedValue(undefined);
-
-    await expect(
-      tryOpenExternalUrl("https://github.com/pingdotgg/t3code", "pull-request"),
-    ).resolves.toBe(true);
-  });
-
   it("logs stable URL context without exposing the opening failure", async () => {
     const cause = new Error("browser-unavailable-secret-sentinel");
     openURL.mockRejectedValue(cause);

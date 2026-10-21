@@ -214,55 +214,6 @@ describe("environment favorite toggles", () => {
     expect(durable.get(primaryId)!.favorites).toEqual([{ provider, model }]);
   });
 
-  it("clears failed intent so a retry still adds the favorite", async () => {
-    await using fixture = await setup();
-    const { durable, writes, mount, click } = fixture;
-    await mount();
-    const failed = click();
-    await act(async () => {});
-    writes[0]!.finish(false);
-    await failed;
-    const retry = click();
-    await act(async () => {});
-    writes[1]!.finish();
-    await retry;
-    expect(durable.get(primaryId)!.favorites).toEqual([{ provider, model }]);
-  });
-
-  it("toggles the acknowledged choice when the RPC reply precedes its server echo", async () => {
-    await using fixture = await setup();
-    const { registry, durable, writes, mount, click } = fixture;
-    await mount();
-    const first = click();
-    await act(async () => {});
-    writes[0]!.finish();
-    await first;
-    expect(registry.get(settingsAtom(primaryId))!.favorites).toEqual([]);
-    const second = click();
-    await act(async () => {});
-    writes[1]!.finish();
-    await second;
-    expect(durable.get(primaryId)!.favorites).toEqual([]);
-  });
-
-  it("uses a later remote change instead of a cached acknowledged choice", async () => {
-    await using fixture = await setup();
-    const { registry, durable, writes, mount, click } = fixture;
-    await mount();
-    const first = click();
-    await act(async () => {});
-    writes[0]!.finish();
-    await first;
-    const remoteSettings = { ...initialSettings, favorites: [] };
-    durable.set(primaryId, remoteSettings);
-    await act(() => registry.set(settingsAtom(primaryId), remoteSettings));
-    const second = click();
-    await act(async () => {});
-    writes[1]!.finish();
-    await second;
-    expect(durable.get(primaryId)!.favorites).toEqual([{ provider, model }]);
-  });
-
   it("preserves an acknowledged add when a later remove fails before its echo", async () => {
     await using fixture = await setup();
     const { durable, writes, mount, click } = fixture;

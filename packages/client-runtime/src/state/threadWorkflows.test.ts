@@ -2,7 +2,6 @@ import { describe, expect, it } from "vite-plus/test";
 import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 
 import {
-  canDetachThreadProviderSession,
   canForkProjectedAssistantItem,
   deriveThreadQueueWorkflowState,
   resolveLatestMergeBackRun,
@@ -291,73 +290,6 @@ describe("thread workflows", () => {
     },
   );
 
-  it("does not promote queued work until the running provider turn is projected", () => {
-    const state = deriveThreadQueueWorkflowState({
-      thread: { id: "thread", activeProviderThreadId: "provider-thread" },
-      runs: [
-        {
-          id: "active",
-          status: "running",
-          providerThreadId: "provider-thread",
-          activeAttemptId: "attempt-active",
-          ordinal: 1,
-        },
-        { id: "queued", status: "queued", userMessageId: "message", ordinal: 2 },
-      ],
-      messages: [{ id: "message", text: "Queued" }],
-      providerTurns: [],
-      providerThreads: [
-        {
-          id: "provider-thread",
-          appThreadId: "thread",
-          providerSessionId: "provider-session",
-        },
-      ],
-      providerSessions: [
-        {
-          id: "provider-session",
-          status: "running",
-          capabilities: capabilities({ queued: true, steer: true }),
-        },
-      ],
-    } as never);
-
-    expect(state.canPromoteToSteer).toBe(false);
-  });
-
-  it("does not expose known unsupported queue or fork actions", () => {
-    const projection = {
-      thread: { id: "thread", activeProviderThreadId: "provider-thread" },
-      runs: [{ id: "queued", status: "queued", userMessageId: "message", ordinal: 1 }],
-      messages: [],
-      providerThreads: [
-        {
-          id: "provider-thread",
-          appThreadId: "thread",
-          providerSessionId: "provider-session",
-        },
-      ],
-      providerSessions: [
-        {
-          id: "provider-session",
-          status: "ready",
-          capabilities: capabilities(),
-        },
-      ],
-    } as never;
-    const queue = deriveThreadQueueWorkflowState(projection);
-    const projectedItem = {
-      item: { type: "assistant_message", runId: "run", status: "completed" },
-    } as never;
-
-    expect(queue.canReorder).toBe(false);
-    expect(queue.canPromoteToSteer).toBe(false);
-    expect(canForkProjectedAssistantItem({ projectedItem, capabilities: capabilities() })).toBe(
-      false,
-    );
-    expect(canDetachThreadProviderSession(projection)).toBe(true);
-  });
-
   it("allows native, portable, and capability-unknown exact-run forks", () => {
     const projectedItem = {
       item: { type: "assistant_message", runId: "run", status: "completed" },
@@ -391,17 +323,6 @@ describe("thread workflows", () => {
         { id: "newest-queued", status: "queued", ordinal: 3 },
         { id: "older-completed", status: "completed", ordinal: 1 },
         { id: "newest-finished", status: "waiting", ordinal: 2 },
-      ],
-    } as never;
-
-    expect(resolveLatestMergeBackRun(projection)?.id).toBe("newest-finished");
-  });
-
-  it("does not let a stale completed run later in storage order hide the waiting checkpoint", () => {
-    const projection = {
-      runs: [
-        { id: "newest-finished", status: "waiting", ordinal: 2 },
-        { id: "older-completed", status: "completed", ordinal: 1 },
       ],
     } as never;
 

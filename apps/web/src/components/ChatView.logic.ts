@@ -71,7 +71,7 @@ import {
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
 
-export const ENVIRONMENT_RECONNECT_WARNING_GRACE_MS = 2_000;
+const ENVIRONMENT_RECONNECT_WARNING_GRACE_MS = 2_000;
 
 export function agentControlledBrowserCloseConfirmation(
   surfaces: readonly RightPanelSurface[],
@@ -222,15 +222,6 @@ export function codexArtifactTemplatePromptToAppend(
 }
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
-
-export function resolveEffectiveInteractionMode(input: {
-  planModeEnabled: boolean;
-  composerInteractionMode: ProviderInteractionMode | null;
-  threadInteractionMode: ProviderInteractionMode | null | undefined;
-}): ProviderInteractionMode {
-  if (!input.planModeEnabled) return "default";
-  return input.composerInteractionMode ?? input.threadInteractionMode ?? "default";
-}
 
 export function shouldDockDraftHeroForSubmission(input: {
   isDraftHeroState: boolean;
@@ -530,25 +521,6 @@ export function buildLocalDraftThread(
     settledAt: null,
     deletedAt: null,
   });
-}
-
-export function shouldWriteThreadErrorToCurrentServerThread(input: {
-  serverThread:
-    | {
-        environmentId: EnvironmentId;
-        id: ThreadId;
-      }
-    | null
-    | undefined;
-  routeThreadRef: ScopedThreadRef;
-  targetThreadId: ThreadId;
-}): boolean {
-  return Boolean(
-    input.serverThread &&
-    input.targetThreadId === input.routeThreadRef.threadId &&
-    input.serverThread.environmentId === input.routeThreadRef.environmentId &&
-    input.serverThread.id === input.targetThreadId,
-  );
 }
 
 export function resolveComposerProviderSelection(input: {

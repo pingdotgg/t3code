@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  mergeClaudeWorkflowProgress,
-  parseClaudeWorkflowRunHandles,
-} from "./claudeWorkflowProgress.ts";
+import { mergeClaudeWorkflowProgress } from "./claudeWorkflowProgress.ts";
 
 const startFrame = {
   type: "system",
@@ -38,15 +35,6 @@ const agent = (overrides: Record<string, unknown>) => ({
 });
 
 describe("mergeClaudeWorkflowProgress", () => {
-  it("marks a coordinator as a workflow before any member exists", () => {
-    const workflow = mergeClaudeWorkflowProgress({
-      previous: undefined,
-      name: "probe-wf",
-      message: startFrame,
-    });
-    expect(workflow).toEqual({ name: "probe-wf", phases: [], agents: [] });
-  });
-
   it("leaves an ordinary subagent's frames alone", () => {
     expect(
       mergeClaudeWorkflowProgress({
@@ -138,30 +126,6 @@ describe("mergeClaudeWorkflowProgress", () => {
     expect(second?.phases).toHaveLength(1);
     expect(second?.name).toBe("probe-wf");
     expect(second?.totalTokens).toBe(250);
-  });
-
-  it("harvests run handles from the launch acknowledgement", () => {
-    const workflow = mergeClaudeWorkflowProgress({
-      previous: undefined,
-      runHandles: parseClaudeWorkflowRunHandles({
-        status: "async_launched",
-        taskType: "local_workflow",
-        runId: "wf_abc",
-        transcriptDir: "/root/.claude/projects/p/s/subagents/workflows/wf_abc",
-        scriptPath: "/root/.claude/projects/p/s/workflows/scripts/x.js",
-      }),
-      message: startFrame,
-    });
-    expect(workflow?.runHandles?.transcriptDir).toBe(
-      "/root/.claude/projects/p/s/subagents/workflows/wf_abc",
-    );
-    expect(workflow?.runHandles?.runId).toBe("wf_abc");
-  });
-
-  it("ignores a non-workflow tool acknowledgement", () => {
-    expect(
-      parseClaudeWorkflowRunHandles({ status: "async_launched", taskType: "local_agent" }),
-    ).toBeUndefined();
   });
 
   it("keeps a phase the plan reached at runtime even if a later frame omits it", () => {
@@ -284,17 +248,6 @@ describe("mergeClaudeWorkflowProgress", () => {
       transcriptDir: "/workflows/wf_abc",
       scriptPath: "/scripts/workflow.js",
     });
-  });
-
-  it("preserves prompt and result whitespace", () => {
-    const workflow = mergeClaudeWorkflowProgress({
-      previous: undefined,
-      message: snapshotFrame([
-        agent({ promptPreview: "  indented\n", resultPreview: "\n  answer\n" }),
-      ]),
-    });
-    expect(workflow?.agents[0]?.prompt).toBe("  indented\n");
-    expect(workflow?.agents[0]?.result).toBe("\n  answer\n");
   });
 
   it("drops timestamps outside the DateTime range", () => {

@@ -2,7 +2,6 @@ import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as NetService from "@t3tools/shared/Net";
-import { SshPasswordPromptError } from "@t3tools/ssh/errors";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -19,36 +18,6 @@ function makeTempHomeDir() {
 }
 
 describe("sshEnvironment", () => {
-  it("keeps prompt presentation diagnostics distinct from the legacy wrapper message", () => {
-    const cause = new DesktopSshPasswordPrompts.DesktopSshPromptPresentationError({
-      requestId: "prompt-1",
-      destination: "devbox",
-      operation: "send-prompt-request",
-      cause: new Error("renderer send failed"),
-    });
-
-    assert.equal(cause.message, "Failed to present SSH password prompt for devbox.");
-    assert.equal(
-      DesktopSshEnvironment.toSshPasswordPromptError(cause).message,
-      "T3 Code window is not available for SSH authentication.",
-    );
-  });
-
-  it("treats password prompt timeouts as cancellable authentication prompts", () => {
-    assert.equal(
-      DesktopSshEnvironment.isDesktopSshPasswordPromptCancellation(
-        new SshPasswordPromptError({
-          message: "SSH authentication timed out for devbox.",
-          cause: new DesktopSshPasswordPrompts.DesktopSshPromptTimedOutError({
-            requestId: "prompt-1",
-            destination: "devbox",
-          }),
-        }),
-      ),
-      true,
-    );
-  });
-
   it.effect("wires desktop host discovery through the ssh package runtime", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

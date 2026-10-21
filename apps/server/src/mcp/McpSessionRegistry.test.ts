@@ -139,27 +139,6 @@ it.effect("expires credentials once their session stops showing signs of life", 
   }),
 );
 
-it.effect("keeps a credential alive across turns that never touch an MCP tool", () =>
-  Effect.gen(function* () {
-    let timestamp = 1_000;
-    const registry = yield* makeRegistry(() => timestamp);
-    const threadId = ThreadId.make("thread-3");
-    const issued = yield* registry.issue({
-      threadId,
-      providerInstanceId: ProviderInstanceId.make("claude"),
-      capabilities: new Set(["preview"]),
-    });
-    const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
-
-    for (let turn = 0; turn < 10; turn += 1) {
-      timestamp += 99;
-      yield* registry.touch(threadId);
-    }
-
-    expect((yield* registry.resolve(token))?.thread.threadId).toBe(threadId);
-  }),
-);
-
 it.effect("does not keep credentials of other threads alive", () =>
   Effect.gen(function* () {
     let timestamp = 1_000;

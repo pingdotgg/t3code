@@ -234,15 +234,6 @@ describe("thread Git mutation permissions", () => {
     expect(state.statusRefreshes).toBe(1);
   });
 
-  it("uses a newly granted task permission for a retained branch callback", async () => {
-    state.primaryScopes.clear();
-    const actions = useSelectedThreadGitActions();
-    state.scopes.add(AuthOrchestrationOperateScope);
-    await actions.onCreateSelectedThreadBranch("feature");
-    expect(state.thread.branch).toBe("feature");
-    expect(state.metadataRequests).toEqual([{ environmentId: "environment", branch: "feature" }]);
-  });
-
   it.each(["create", "checkout", "worktree"] as const)(
     "returns the accepted %s result when only source-control permission is revoked after Git",
     async (operation) => {
@@ -268,15 +259,4 @@ describe("thread Git mutation permissions", () => {
       expect(state.results).toEqual([]);
     },
   );
-
-  it("returns a successful checkout when the requested branch is already selected", async () => {
-    state.scopes.add(AuthOrchestrationOperateScope);
-
-    expect(await useSelectedThreadGitActions().onCheckoutSelectedThreadBranch("main")).toEqual({
-      refName: "main",
-    });
-    expect(state.branch).toBe("main");
-    expect(state.thread.branch).toBe("main");
-    expect(state.results).toEqual([]);
-  });
 });

@@ -291,7 +291,7 @@ overrides:
   # OpenCode 2's protocol and schema packages hard-pin an exact Effect version as a
   # dependency, and their schemas fail to decode under a second Effect copy.
   # The `effect` override above already collapses them; these name the edge so it
-  # stays pinned on its own. OpenCode2Client.live.test.ts re-proves it on bumps.
+  # stays pinned on its own.
   "@opencode/protocol>effect": "catalog:"
   "@opencode/schema>effect": "catalog:"
   node-abi: 4.33.0

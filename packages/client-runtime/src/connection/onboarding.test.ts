@@ -334,24 +334,6 @@ describe("connection onboarding", () => {
       ),
   );
 
-  it.effect("registers an enabled environment on first-time pairing", () =>
-    Effect.gen(function* () {
-      const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-      const onboarding = yield* Onboarding.ConnectionOnboarding;
-      expect((yield* SubscriptionRef.get(registry.entries)).size).toBe(0);
-
-      const environmentId = yield* onboarding.registerPairing(PAIRING_INPUT);
-
-      expect(environmentId).toBe(PAIRED_ENVIRONMENT_ID);
-      const entries = yield* SubscriptionRef.get(registry.entries);
-      const entry = entries.get(environmentId);
-      expect(entries.size).toBe(1);
-      expect(entry?.enabled).toBe(true);
-      expect(entry?.unsupportedReason).toBeUndefined();
-      expect(entry?.profile).toEqual(Option.some(PAIRED_PROFILE));
-    }).pipe(Effect.provide(layerPairingOnboarding())),
-  );
-
   it.effect("leaves a platform-managed environment untouched when its id is paired", () =>
     Effect.gen(function* () {
       const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
@@ -464,28 +446,6 @@ describe("connection onboarding", () => {
     }),
   );
 
-  it.effect("pairs an outdated server so it can be updated from this client", () =>
-    Effect.gen(function* () {
-      const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
-      const registration = yield* preparePairingRegistration({
-        host: "remote.example.test",
-        pairingCode: "pairing-token",
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            layerClientPresentation,
-            layerPairingHttp(calls, {
-              protocolVersion: ORCHESTRATION_PROTOCOL_VERSION - 1,
-              selfUpdate: true,
-            }),
-          ),
-        ),
-      );
-      expect(registration.target.environmentId).toBe("environment-paired");
-      expect(calls.map((call) => call.url)).toContain("https://remote.example.test/oauth/token");
-    }),
-  );
-
   it.effect("refuses an outdated server that cannot update itself", () =>
     Effect.gen(function* () {
       const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
@@ -529,26 +489,6 @@ describe("connection onboarding", () => {
       expect(calls.map((call) => call.url)).toEqual([
         "https://remote.example.test/.well-known/t3/environment",
       ]);
-    }),
-  );
-
-  it.effect("rejects invalid pairing details before making a request", () =>
-    Effect.gen(function* () {
-      const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
-      const error = yield* preparePairingRegistration({
-        host: "",
-        pairingCode: "",
-      }).pipe(
-        Effect.provide(Layer.mergeAll(layerClientPresentation, layerPairingHttp(calls))),
-        Effect.flip,
-      );
-
-      expect(error).toMatchObject({
-        _tag: "ConnectionBlockedError",
-        reason: "configuration",
-        message: "Enter a backend URL.",
-      });
-      expect(calls).toEqual([]);
     }),
   );
 

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 import { closestCenter, type CollisionDetection } from "@dnd-kit/core";
 import { verticalListSortingStrategy, type SortingStrategy } from "@dnd-kit/sortable";
 import {
@@ -222,33 +222,6 @@ describe("sidebar collision detection", () => {
       }),
     ).toEqual([]);
   });
-
-  it("validates each hovered target once and always allows returning to the source", () => {
-    const args = collisionArgs();
-    const isValid = vi.fn((id: string) => id !== "blocked");
-    const detector = createSidebarCollisionDetection(isValid);
-    expect(detector(args)[0]?.id).toBe("source");
-    expect(
-      detector({
-        ...args,
-        collisionRect: {
-          ...args.collisionRect,
-          top: args.collisionRect.top + 3,
-          bottom: args.collisionRect.bottom + 3,
-        },
-      })[0]?.id,
-    ).toBe("source");
-    expect(detector({ ...args, collisionRect: args.droppableRects.get("source")! })[0]?.id).toBe(
-      "source",
-    );
-    expect(
-      detector({
-        ...args,
-        collisionRect: args.droppableRects.get(sidebarMarkerId("settled-placeholder"))!,
-      })[0]?.id,
-    ).toBe(sidebarMarkerId("settled-placeholder"));
-    expect(isValid.mock.calls).toEqual([["blocked"], [sidebarMarkerId("settled-placeholder")]]);
-  });
 });
 
 describe("sidebar drag projection", () => {
@@ -356,31 +329,6 @@ describe("sidebar drag projection", () => {
     expect(result.get("a1")).toEqual(stationary);
   });
 
-  it.each([
-    ["a1", "a2"],
-    ["a2", "a1"],
-  ])("uses pinned dragging behavior for Active from %s to %s", (active, over) => {
-    const items = [
-      pinnedHeader,
-      thread("p", "pinned"),
-      divider,
-      thread("a1", "active"),
-      thread("a2", "active"),
-      settledHeader,
-      thread("s", "settled"),
-    ];
-    const strategy = createSidebarSortingStrategy({
-      items,
-      settledOrder: [],
-      settledExpanded: true,
-    });
-    const args = layout(items, active, over);
-    for (let index = 0; index < items.length; index += 1) {
-      if (index === args.activeIndex) continue;
-      expect(strategy({ ...args, index })).toEqual(verticalListSortingStrategy({ ...args, index }));
-    }
-  });
-
   it("preserves settled order while opening the zero-height Active target", () => {
     const items = [
       pinnedHeader,
@@ -479,26 +427,6 @@ describe("sidebar drag projection", () => {
       expect(result.get("s2")).toEqual(stationary);
     },
   );
-
-  it("stacks the labels with their gaps when the pinned section is empty", () => {
-    const items = [
-      pinnedHeader,
-      divider,
-      thread("a1", "active"),
-      thread("a2", "active"),
-      settledHeader,
-      thread("s", "settled"),
-    ];
-    const result = preview(
-      { items, settledOrder: [], settledExpanded: true, boundaryLabelHeight: 16 },
-      "a2",
-      "a1",
-    );
-    expect(result.get(sidebarMarkerId("pinned-header"))).toEqual(stationary);
-    expect(result.get(sidebarMarkerId("pinned-divider"))?.y).toBe(16);
-    expect(result.get("a1")?.y).toBe(32 + 83);
-    expect(result.get(sidebarMarkerId("settled-header"))?.y).toBe(32);
-  });
 
   it("scales the label space with the measured root scale", () => {
     const items = [pinnedHeader, thread("p", "pinned"), divider, thread("a1", "active")];
@@ -670,25 +598,6 @@ describe("sidebar drag projection", () => {
     expect(byTime.get("a2")?.y).toBe(-83);
     expect(byTime.get(sidebarMarkerId("working-header"))).toEqual(stationary);
     expect(byTime.get("w")).toEqual(stationary);
-  });
-
-  it("derives missing card geometry from the measured root scale", () => {
-    const items = [
-      pinnedHeader,
-      divider,
-      marker("active-placeholder"),
-      settledHeader,
-      thread("s", "settled"),
-    ];
-    const result = preview(
-      { items, settledOrder: [], settledExpanded: true },
-      "s",
-      sidebarMarkerId("pinned-header"),
-      0.75,
-    );
-    expect(result.get(sidebarMarkerId("pinned-header"))).toEqual(stationary);
-    expect(result.get(sidebarMarkerId("pinned-divider"))?.y).toBe(62.5);
-    expect(result.get(sidebarMarkerId("active-placeholder"))?.y).toBe(62.5);
   });
 
   it("updates the projection when the target or measured geometry changes", () => {

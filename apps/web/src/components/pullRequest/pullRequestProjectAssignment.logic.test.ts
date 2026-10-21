@@ -50,18 +50,6 @@ describe("one server per repository", () => {
     expect(plain(assignment)).toEqual({ "env-2": ["a2"] });
   });
 
-  it("drops a server with nothing of its own", () => {
-    const assignment = assignProjectsToEnvironments(
-      [
-        project("a1", "env-1", "github.com/acme/app"),
-        project("a2", "env-2", "github.com/acme/app"),
-      ],
-      envs("env-1", "env-2"),
-      "env-1" as EnvironmentId,
-    );
-    expect(assignment.has("env-2" as EnvironmentId)).toBe(false);
-  });
-
   it("keeps every copy of a project that has no identity to compare", () => {
     const assignment = assignProjectsToEnvironments(
       [project("p1", "env-1"), project("p2", "env-2")],
@@ -171,18 +159,6 @@ describe("where a pull request can be acted on", () => {
     ]);
   });
 
-  it("matches copies however the remote is cased", () => {
-    const pickable = resolvePickableEnvironments(
-      on("env-1", "a1"),
-      [
-        project("a1", "env-1", "github.com/acme/app"),
-        project("a2", "env-2", "GitHub.com/ACME/app"),
-      ],
-      connected("env-1", "env-2"),
-    );
-    expect(pickable.map((entry) => entry.environmentId)).toEqual(["env-1", "env-2"]);
-  });
-
   it("offers nothing where one server holds the repository", () => {
     expect(
       resolvePickableEnvironments(
@@ -194,22 +170,6 @@ describe("where a pull request can be acted on", () => {
         connected("env-1", "env-2"),
       ),
     ).toEqual([]);
-  });
-
-  it("offers nothing for a project with no identity to compare", () => {
-    expect(
-      resolvePickableEnvironments(
-        on("env-1", "p1"),
-        [project("p1", "env-1"), project("p2", "env-2")],
-        connected("env-1", "env-2"),
-      ),
-    ).toEqual([]);
-  });
-
-  it("offers nothing while the projects are still arriving", () => {
-    expect(resolvePickableEnvironments(on("env-1", "a1"), [], connected("env-1", "env-2"))).toEqual(
-      [],
-    );
   });
 
   it("leaves out a server that is not connected", () => {

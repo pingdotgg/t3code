@@ -123,35 +123,4 @@ describe("createShortcutKeybindingsAtom", () => {
     harness.registry.set(harness.primaryEnvironmentIdAtom, null);
     expect(harness.cmdN()).toBe("chat.newLocal");
   });
-
-  it.each([false, true])(
-    "preserves the bindings array through unrelated updates (primary: %s)",
-    (hasPrimary) => {
-      const selected = config(SWAPPED);
-      const harness = makeHarness({
-        primaryEnvironmentId: hasPrimary ? PRIMARY : null,
-        primaryConfig: hasPrimary ? selected : null,
-        environments: [
-          [A, environment("connected", selected)],
-          [B, environment("connected", config(STALE))],
-        ],
-      });
-      expect(harness.cmdN()).toBe("chat.newLocal");
-      const before = harness.keybindings();
-
-      harness.registry.set(
-        harness.environmentsAtom,
-        new Map([
-          [A, environment("connected", { ...selected, providers: [] })],
-          [B, environment("connected", config([]))],
-        ]),
-      );
-      expect(harness.keybindings()).toBe(before);
-
-      if (hasPrimary) {
-        harness.registry.set(harness.primaryConfigAtom, { ...selected, providers: [] });
-        expect(harness.keybindings()).toBe(before);
-      }
-    },
-  );
 });

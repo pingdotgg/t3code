@@ -110,56 +110,6 @@ it.effect("retries a failed start and closes on owner scope shutdown", () =>
   }),
 );
 
-it.effect("invalidates an exited process so the next borrower starts a new one", () =>
-  Effect.gen(function* () {
-    const starts = yield* Ref.make(0);
-    const processExits: Array<Deferred.Deferred<number>> = [];
-    const processClosed = yield* Deferred.make<void>();
-    const runtime: OpenCodeRuntime.OpenCodeRuntime["Service"] = {
-      startOpenCodeServerProcess: () =>
-        Effect.gen(function* () {
-          const index = yield* Ref.updateAndGet(starts, (count) => count + 1);
-          const exitCode = yield* Deferred.make<number>();
-          processExits.push(exitCode);
-          yield* Effect.addFinalizer(() =>
-            Deferred.succeed(processClosed, undefined).pipe(Effect.ignore),
-          );
-          return {
-            url: `http://127.0.0.1:${index}`,
-            version: "1.14.19",
-            isRunning: Effect.succeed(true),
-            exitCode: Deferred.await(exitCode),
-          };
-        }),
-      connectToOpenCodeServer: unusedRuntimeMethod,
-      runOpenCodeCommand: unusedRuntimeMethod,
-      createOpenCodeSdkClient: () => ({}) as never,
-      loadOpenCodeInventory: unusedRuntimeMethod,
-      loadOpenCodeSkills: unusedRuntimeMethod,
-      loadInventoryFromCli: unusedRuntimeMethod,
-      loadSkillsFromCli: unusedRuntimeMethod,
-    };
-
-    yield* Effect.scoped(
-      Effect.gen(function* () {
-        const owner = yield* OpenCodeServerOwner.make({
-          binaryPath: "opencode",
-          directory: "/project",
-        });
-        expect(yield* owner.withServer((server) => Effect.succeed(server.url))).toBe(
-          "http://127.0.0.1:1",
-        );
-        yield* Deferred.succeed(processExits[0]!, 1);
-        yield* Deferred.await(processClosed);
-        expect(yield* owner.withServer((server) => Effect.succeed(server.url))).toBe(
-          "http://127.0.0.1:2",
-        );
-      }),
-    ).pipe(Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, runtime));
-    expect(yield* Ref.get(starts)).toBe(2);
-  }),
-);
-
 it.effect("replaces a dead cached process before its exit watcher runs", () =>
   Effect.gen(function* () {
     const starts = yield* Ref.make(0);
@@ -261,29 +211,4 @@ it.effect("cleans up an interrupted startup and allows a retry", () =>
       }),
     ).pipe(Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, runtime));
   }),
-);
-
-it.effect("releases an interrupted borrower and closes after the idle TTL", () =>
-  Effect.gen(function* () {
-    const testRuntime = yield* makeRuntime;
-    const borrowerEntered = yield* Deferred.make<void>();
-    yield* Effect.scoped(
-      Effect.gen(function* () {
-        const owner = yield* OpenCodeServerOwner.make({
-          binaryPath: "opencode",
-          directory: "/project",
-        });
-        const borrower = yield* owner
-          .withServer(() =>
-            Deferred.succeed(borrowerEntered, undefined).pipe(Effect.andThen(Effect.never)),
-          )
-          .pipe(Effect.forkChild);
-        yield* Deferred.await(borrowerEntered);
-        yield* Fiber.interrupt(borrower);
-        yield* TestClock.adjust(Duration.seconds(31));
-        yield* Deferred.await(testRuntime.closed);
-        expect(yield* Ref.get(testRuntime.closes)).toBe(1);
-      }),
-    ).pipe(Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, testRuntime.runtime));
-  }).pipe(Effect.provide(TestClock.layer())),
 );

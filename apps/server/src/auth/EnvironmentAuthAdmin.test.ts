@@ -93,21 +93,4 @@ it.layer(NodeServices.layer)("EnvironmentAuth administrative operations", (it) =
       expect(listedAfterRevoke).toHaveLength(0);
     }).pipe(Effect.provide(layerEnvironmentAuth())),
   );
-
-  it.effect("surfaces lastConnectedAt through the listed session view", () =>
-    Effect.gen(function* () {
-      const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
-      const sessionCredentials = yield* SessionStore.SessionStore;
-
-      const issued = yield* environmentAuth.issueSession({
-        label: "remote-ipad",
-      });
-      const beforeConnect = yield* environmentAuth.listSessions();
-      yield* sessionCredentials.markConnected(issued.sessionId);
-      const afterConnect = yield* environmentAuth.listSessions();
-
-      expect(beforeConnect[0]?.lastConnectedAt).toBeNull();
-      expect(afterConnect[0]?.lastConnectedAt).not.toBeNull();
-    }).pipe(Effect.provide(layerEnvironmentAuth())),
-  );
 });

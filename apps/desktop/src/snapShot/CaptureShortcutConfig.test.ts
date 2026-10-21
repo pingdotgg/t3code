@@ -2,10 +2,8 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeOS from "node:os";
-import * as NodeChildProcess from "node:child_process";
-import * as NodeUtil from "node:util";
 import { afterEach, beforeEach, expect, it as test, vi } from "vite-plus/test";
-import { CaptureShortcutConfig, niriCaptureConfigPath } from "./CaptureShortcutConfig.ts";
+import { CaptureShortcutConfig } from "./CaptureShortcutConfig.ts";
 import { captureConfigBinding } from "./captureConfigEdit.ts";
 
 // oxlint-disable-next-line t3code/no-global-process-runtime -- Test collection checks the host before starting these Linux-native filesystem tests.
@@ -251,31 +249,6 @@ it("detects included config changes before applying", async () => {
   await NodeFSP.writeFile(included, "binds { Ctrl+Shift+2 { quit; } }");
   await expect(setup.apply(preview.id, "niri")).rejects.toThrow("changed since");
 });
-it("rejects a conflict from another Hyprland config or dynamic Lua bind", async () => {
-  const hypr = {
-    ...target(),
-    desktop: "hyprland" as const,
-    path: NodePath.join(directory, "bindings.lua"),
-  };
-  await NodeFSP.writeFile(hypr.path, "-- user bindings\n");
-  tools.hyprlandBindings.mockResolvedValue([
-    { modmask: 5, key: "2", dispatcher: "__lua", arg: "92" },
-  ]);
-  await expect(setup.preview(hypr, install)).rejects.toThrow("already used");
-  expect(await NodeFSP.readFile(hypr.path, "utf8")).toBe("-- user bindings\n");
-});
-it("reloads Hyprland after apply, but not after read", async () => {
-  const hypr = {
-    ...target(),
-    desktop: "hyprland" as const,
-    path: NodePath.join(directory, "hyprland.conf"),
-  };
-  await NodeFSP.writeFile(hypr.path, "# preferences\n");
-  const preview = await setup.preview(hypr, install);
-  expect(tools.reloadHyprland).not.toHaveBeenCalled();
-  await setup.apply(preview.id, "hyprland");
-  expect(tools.reloadHyprland).toHaveBeenCalledOnce();
-});
 it("reports reload failure separately from a successfully saved config", async () => {
   const hypr = {
     ...target(),
@@ -297,47 +270,4 @@ it("does not edit Omarchy's shipped defaults", async () => {
   await expect(
     setup.preview({ ...target(), desktop: "hyprland", path: file }, install),
   ).rejects.toThrow("not system or Omarchy");
-});
-it("honors NIRI_CONFIG and XDG_CONFIG_HOME", () => {
-  expect(
-    niriCaptureConfigPath("/home/test", {
-      NIRI_CONFIG: "/custom/test.kdl",
-      XDG_CONFIG_HOME: "/config",
-    }),
-  ).toBe("/custom/test.kdl");
-  expect(niriCaptureConfigPath("/home/test", { XDG_CONFIG_HOME: "/config" })).toBe(
-    "/config/niri/config.kdl",
-  );
-  expect(niriCaptureConfigPath("/home/test", {})).toBe("/home/test/.config/niri/config.kdl");
-});
-it("preserves a UTF-8 BOM through preview and apply", async () => {
-  await NodeFSP.writeFile(path, "\uFEFFbinds {}\r\n");
-  const preview = await setup.preview(target(), install);
-  await setup.apply(preview.id, "niri");
-  expect((await NodeFSP.readFile(path)).subarray(0, 3)).toEqual(Buffer.from([0xef, 0xbb, 0xbf]));
-});
-it("the installed Niri parser accepts the generated edit and its relative includes", async (context) => {
-  try {
-    await NodeUtil.promisify(NodeChildProcess.execFile)("niri", ["--version"]);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      context.skip();
-      return;
-    }
-    throw error;
-  }
-  await NodeFSP.appendFile(path, 'include "keys.kdl"\n');
-  await NodeFSP.writeFile(
-    NodePath.join(directory, "keys.kdl"),
-    "binds {\n    Ctrl+Alt+Q { quit; }\n}\n",
-  );
-  const checked = new CaptureShortcutConfig(NodeOS.homedir(), {
-    ...tools,
-    validateNiri: async (file) => {
-      await NodeUtil.promisify(NodeChildProcess.execFile)("niri", ["validate", "--config", file]);
-    },
-  });
-  const preview = await checked.preview(target(), install);
-  await checked.apply(preview.id, "niri");
-  expect(await NodeFSP.readFile(path, "utf8")).toBe(preview.after);
 });

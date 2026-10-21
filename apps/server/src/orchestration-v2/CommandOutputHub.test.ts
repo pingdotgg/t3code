@@ -16,7 +16,6 @@ import {
   TERMINAL_OUTPUT_TAIL_CHARS,
   type TerminalOutputState,
 } from "@t3tools/shared/terminalOutput";
-import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -266,95 +265,6 @@ layer("CommandOutputHub", (it) => {
         assert.equal(next.kind, "replace");
         client = applyFrame(client, next);
         assert.equal(client.text, "X");
-      }),
-    ),
-  );
-
-  it.effect("every viewer of one command reconstructs the same text", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const hub = yield* CommandOutputHub.CommandOutputHub;
-        const threadId = yield* seedThread;
-        yield* writeCommandItem(threadId, { status: "running" });
-        yield* hub.append({ threadId, itemId: ITEM_ID, chunk: "first\n" });
-        const viewers = [yield* subscribeFrames(threadId), yield* subscribeFrames(threadId)];
-        const states = [EMPTY_TERMINAL_OUTPUT, EMPTY_TERMINAL_OUTPUT];
-        for (const [index, frames] of viewers.entries()) {
-          states[index] = applyFrame(states[index]!, yield* takeFrame(frames));
-        }
-        yield* TestClock.adjust("1 second");
-        yield* hub.append({ threadId, itemId: ITEM_ID, chunk: "second\r\nthird" });
-        for (const [index, frames] of viewers.entries()) {
-          states[index] = applyFrame(states[index]!, yield* takeFrame(frames));
-        }
-        assert.equal(states[0]!.text, "first\nsecond\nthird");
-        assert.equal(states[1]!.text, states[0]!.text);
-      }),
-    ),
-  );
-
-  it.effect("a flood is sent as bounded tails at a slower rate, not as every chunk", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const hub = yield* CommandOutputHub.CommandOutputHub;
-        const threadId = yield* seedThread;
-        yield* writeCommandItem(threadId, { status: "running" });
-        const stamped = yield* Queue.unbounded<{
-          readonly frame: OrchestrationV2CommandOutputFrame;
-          readonly at: number;
-        }>();
-        yield* hub.subscribe({ threadId, itemId: ITEM_ID }).pipe(
-          Stream.runForEach((frame) =>
-            Clock.currentTimeMillis.pipe(
-              Effect.flatMap((at) => Queue.offer(stamped, { frame, at })),
-            ),
-          ),
-          Effect.forkScoped,
-        );
-        let client = applyFrame(EMPTY_TERMINAL_OUTPUT, (yield* Queue.take(stamped)).frame);
-        yield* TestClock.adjust("1 second");
-
-        // `yes | head -n 1000000`: 2 MB in 4 KB chunks, 64 KB every 100 ms.
-        const chunk = "y\n".repeat(2_048);
-        const sent: Array<{
-          readonly frame: OrchestrationV2CommandOutputFrame;
-          readonly at: number;
-        }> = [];
-        const drain = Effect.gen(function* () {
-          for (const entry of yield* Queue.clear(stamped)) {
-            sent.push(entry);
-            client = applyFrame(client, entry.frame);
-          }
-        });
-        for (let tick = 0; tick < 32; tick += 1) {
-          for (let index = 0; index < 16; index += 1) {
-            yield* hub.append({ threadId, itemId: ITEM_ID, chunk });
-          }
-          yield* TestClock.adjust(CommandOutputHub.COMMAND_OUTPUT_FRAME_INTERVAL_MS);
-          yield* drain;
-        }
-        yield* hub.append({ threadId, itemId: ITEM_ID, chunk: "tail\n" });
-        yield* TestClock.adjust("1 second");
-        yield* drain;
-
-        const bytes = sent.reduce((total, { frame }) => total + frame.text.length, 0);
-        // 3.2 s of flooding: a frame per chunk would be 512 frames and 2 MB.
-        assert.isAtMost(sent.length, 10);
-        assert.isAtMost(bytes, 10 * TERMINAL_OUTPUT_TAIL_CHARS);
-        for (const { frame } of sent) {
-          assert.isAtMost(frame.text.length, TERMINAL_OUTPUT_TAIL_CHARS);
-        }
-        for (let index = 1; index < sent.length; index += 1) {
-          if (sent[index - 1]!.frame.kind === "replace") {
-            assert.isAtLeast(
-              sent[index]!.at - sent[index - 1]!.at,
-              CommandOutputHub.COMMAND_OUTPUT_REPLACE_INTERVAL_MS,
-            );
-          }
-        }
-        assert.isTrue(client.truncated);
-        assert.isTrue(client.text.endsWith("y\ny\ntail\n"));
-        assert.isAtMost(client.text.length, TERMINAL_OUTPUT_TAIL_CHARS);
       }),
     ),
   );

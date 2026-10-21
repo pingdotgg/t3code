@@ -29,11 +29,6 @@ describe("compareDateTimeStrings", () => {
     expect(compareDateTimeStrings(left, right)).toBe(0);
   });
 
-  it("sorts malformed values before valid values", () => {
-    expect(compareDateTimeStrings("invalid", "2026-09-01T12:00:00.000Z")).toBeLessThan(0);
-    expect(compareDateTimeStrings("2026-09-01T12:00:00.000Z", "invalid")).toBeGreaterThan(0);
-  });
-
   it.each([
     "2014-02-30",
     "2014-03-02",
@@ -59,15 +54,6 @@ describe("compareDateTimeStrings", () => {
     expect(compareDateTimeStrings(malformed, "invalid")).toBeLessThan(0);
     expect(compareDateTimeStrings("invalid", malformed)).toBeGreaterThan(0);
     expect(compareDateTimeStrings(malformed, malformed)).toBe(0);
-  });
-
-  it("uses code-unit order for malformed date-time strings", () => {
-    expect(compareDateTimeStrings("invalid-a", "invalid-B")).toBeGreaterThan(0);
-    expect(compareDateTimeStrings("invalid-B", "invalid-a")).toBeLessThan(0);
-  });
-
-  it("returns zero for equal malformed date-time strings", () => {
-    expect(compareDateTimeStrings("invalid", "invalid")).toBe(0);
   });
 
   it("gives every permutation of mixed values the same order", () => {

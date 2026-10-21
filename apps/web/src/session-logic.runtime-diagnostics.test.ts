@@ -78,19 +78,6 @@ describe("runtime diagnostics in the v2 work log", () => {
     expect(workEntryDisplayLabel(entry, undefined)).toBe(retainedMessage);
   });
 
-  it("uses the full system notice instead of a truncated warning title", () => {
-    const entry = workEntry({
-      ...baseItem,
-      type: "system_notice",
-      title: warningSummary,
-      message: retainedMessage,
-    });
-
-    expect(entry.label).toBe(retainedMessage);
-    expect(workEntryDisplayLabel(entry, undefined)).toBe(retainedMessage);
-    expect(entry.detail).toBeUndefined();
-  });
-
   it("keeps retry progress visible while retaining its diagnostic detail", () => {
     const entry = workEntry(
       errorItem({

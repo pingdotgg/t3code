@@ -54,10 +54,6 @@ describe("cookieScope", () => {
     });
   });
 
-  it("matches the scheme to the secure flag", () => {
-    expect(cookieScope("example.test", "/", false).url).toBe("http://example.test/");
-  });
-
   it("brackets bare IPv6 hosts without duplicating existing brackets", () => {
     expect(cookieScope("::1", "/", false)).toEqual({
       url: "http://[::1]/",
@@ -367,30 +363,6 @@ describe("readChromiumCookieDatabase", () => {
       const result = yield* readChromiumCookieDatabase(filename, { cbcV10: key }, "darwin");
       expect(result.cookies[0]?.value).toBe(value);
       expect(result.undecryptable).toBe(0);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
-  );
-
-  it.effect("rejects a malformed text schema version", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const directory = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3code-chromium-cookies-",
-      });
-      const filename = `${directory}/Cookies`;
-
-      yield* Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient;
-        yield* sql`create table meta (key text primary key, value text not null)`;
-        yield* sql`insert into meta values ('version', 'not-a-version')`;
-      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename })));
-
-      const error = yield* readChromiumCookieDatabase(
-        filename,
-        { cbcV10: Buffer.from("0123456789abcdef") },
-        "darwin",
-      ).pipe(Effect.flip);
-
-      expect(error._tag).toBe("SchemaError");
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 

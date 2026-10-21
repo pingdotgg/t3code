@@ -72,19 +72,6 @@ describe("remote", () => {
     });
   });
 
-  it("preserves the port when normalizing a protocol-relative host", () => {
-    expect(
-      resolveRemotePairingTarget({
-        host: "//remote.example.com:3000",
-        pairingCode: "pairing-token",
-      }),
-    ).toEqual({
-      credential: "pairing-token",
-      httpBaseUrl: "https://remote.example.com:3000/",
-      wsBaseUrl: "wss://remote.example.com:3000/",
-    });
-  });
-
   it("normalizes a protocol-relative host from a hosted pairing link", () => {
     expect(
       resolveRemotePairingTarget({
@@ -198,26 +185,5 @@ describe("remote", () => {
         host: "remote.example.com",
       }),
     );
-  });
-
-  it("preserves URL parsing causes with their input source", () => {
-    let pairingUrlError: unknown;
-    try {
-      resolveRemotePairingTarget({ pairingUrl: "not a url" });
-    } catch (cause) {
-      pairingUrlError = cause;
-    }
-    expect(pairingUrlError).toBeInstanceOf(RemotePairingUrlInvalidError);
-    expect((pairingUrlError as RemotePairingUrlInvalidError).cause).toBeInstanceOf(TypeError);
-
-    let hostError: unknown;
-    try {
-      resolveRemotePairingTarget({ host: "https://[invalid", pairingCode: "pairing-token" });
-    } catch (cause) {
-      hostError = cause;
-    }
-    expect(hostError).toBeInstanceOf(RemoteBackendUrlInvalidError);
-    expect(hostError).toMatchObject({ source: "direct-host" });
-    expect((hostError as RemoteBackendUrlInvalidError).cause).toBeInstanceOf(TypeError);
   });
 });

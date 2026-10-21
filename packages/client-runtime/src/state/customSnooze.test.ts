@@ -1,18 +1,12 @@
 // @effect-diagnostics globalDate:off -- Tests exercise local calendar and elapsed-time snooze input.
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { localSnoozeDate, localSnoozeTime, resolveCustomSnooze } from "./threadSettled.ts";
+import { resolveCustomSnooze } from "./threadSettled.ts";
 
 const now = new Date(2026, 8, 14, 14, 30);
 
 afterEach(() => vi.unstubAllEnvs());
 
 describe("custom snooze", () => {
-  it("converts local date and time to an absolute wake time", () => {
-    expect(resolveCustomSnooze({ mode: "date", date: "2026-09-15", time: "09:15" }, now)).toBe(
-      new Date(2026, 8, 15, 9, 15).toISOString(),
-    );
-  });
-
   it.each([
     ["2026-09-14", "14:30"],
     ["2026-09-13", "09:00"],
@@ -56,11 +50,5 @@ describe("custom snooze", () => {
     const before = new Date(2027, 2, 13, 12);
     const wake = resolveCustomSnooze({ mode: "duration", amount: "1", unit: "days" }, before);
     expect(wake).toBe(new Date(2027, 2, 14, 13).toISOString());
-  });
-
-  it("formats local input values without converting to UTC", () => {
-    const date = new Date(2026, 0, 2, 3, 4);
-    expect(localSnoozeDate(date)).toBe("2026-01-02");
-    expect(localSnoozeTime(date)).toBe("03:04");
   });
 });

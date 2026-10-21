@@ -491,14 +491,14 @@ const loadSecondaryConnectionRegistration = Effect.fn(
 const PLATFORM_POLL_INTERVAL = "3 seconds";
 const SECONDARY_BEARER_REFRESH_SKEW_MS = 5_000;
 
-export function secondaryBearerExpiresAtEpochMs(
+function secondaryBearerExpiresAtEpochMs(
   issuedAtEpochMs: number,
   expiresInSeconds: number,
 ): number {
   return issuedAtEpochMs + Math.max(0, expiresInSeconds * 1_000);
 }
 
-export function secondaryBearerRefreshAtEpochMs(
+function secondaryBearerRefreshAtEpochMs(
   issuedAtEpochMs: number,
   expiresInSeconds: number,
 ): number {

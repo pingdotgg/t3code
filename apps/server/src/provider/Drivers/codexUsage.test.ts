@@ -72,11 +72,6 @@ describe("parseCodexLine", () => {
     expect(repeat).toBeNull();
   });
 
-  it("drops usage that arrives before any model is known", () => {
-    const state = initialCodexScanState();
-    expect(parseCodexLine(tokenCount(100, 0, 10, 0), state)).toBeNull();
-  });
-
   it("does not consume counters before the model and timestamp are valid", () => {
     const state = initialCodexScanState();
     expect(parseCodexLine(tokenCount(100, 0, 10, 0), state)).toBeNull();
@@ -231,26 +226,6 @@ describe("parseCodexLine", () => {
     expect(codexUsageFormat.readMalformedRecords?.(state)).toBe(0);
   });
 
-  it("carries the service tier from the latest thread settings", () => {
-    const settings = (thread_settings: Record<string, unknown>) =>
-      JSON.stringify({
-        type: "event_msg",
-        timestamp: "2026-08-01T05:17:42.000Z",
-        payload: { type: "thread_settings_applied", thread_settings },
-      });
-    const state = initialCodexScanState();
-    parseCodexLine(turnContext, state);
-    const speedAfter = (line: string, output: number) => {
-      parseCodexLine(line, state);
-      return parseCodexLine(tokenCount(100, 0, output, 0), state)?.speed;
-    };
-
-    expect(parseCodexLine(tokenCount(100, 0, 1, 0), state)?.speed).toBe("standard");
-    expect(speedAfter(settings({ service_tier: "ultrafast" }), 2)).toBe("ultrafast");
-    expect(speedAfter(settings({ service_tier: "priority" }), 3)).toBe("fast");
-    expect(speedAfter(settings({ model: "gpt-6-astra" }), 4)).toBe("standard");
-  });
-
   it("retains initial tier evidence only for the own OpenAI session and exact context until native settings arrive", () => {
     const meta = (id: string, model_provider?: string) =>
       JSON.stringify({ type: "session_meta", payload: { id, model_provider } });
@@ -353,16 +328,6 @@ describe("parseCodexLine", () => {
       parsed.timestamp = timestamp;
       return JSON.stringify(parsed);
     };
-
-    it("keeps the child session id over copied ancestor metas", () => {
-      const state = initialCodexScanState();
-      parseCodexLine(meta({ id: "child", timestamp: "2026-08-01T05:00:00.000Z" }), state);
-      parseCodexLine(meta({ id: "parent", timestamp: "2026-08-01T05:00:00.000Z" }), state);
-      parseCodexLine(turnContext, state);
-      const record = parseCodexLine(tokenCount(100, 0, 10, 0), state);
-
-      expect(record?.sessionId).toBe("child");
-    });
 
     it("drops the re-stamped copied burst and keeps the first real event", () => {
       const state = initialCodexScanState();

@@ -14,7 +14,7 @@ function scalarText(value: unknown): string | undefined {
 }
 
 /** Placeholders render null as missing, so filters treat it the same way. */
-export function matchesWebhookFilter(filter: ScheduledTaskWebhookFilter, value: unknown): boolean {
+function matchesWebhookFilter(filter: ScheduledTaskWebhookFilter, value: unknown): boolean {
   if (filter.op === "exists") return value !== undefined && value !== null;
   const text = scalarText(value);
   if (text === undefined) return false;

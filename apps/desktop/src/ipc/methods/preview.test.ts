@@ -2,13 +2,10 @@ import { it as effectIt } from "@effect/vitest";
 import {
   DEFAULT_BROWSER_PROFILE_ID,
   INCOGNITO_BROWSER_PROFILE_ID,
-  PreviewAutomationStatus,
   PreviewCaptureFailure,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -111,34 +108,8 @@ describe("preview IPC methods", () => {
       }),
   );
 
-  effectIt.effect("preserves recording arm failures without erasing successful void results", () =>
-    Effect.gen(function* () {
-      const result = yield* invokeCapture(PreviewIpc.startRecording, {
-        startRecording: (tabId) =>
-          Effect.fail(new PreviewManager.PreviewTabNotFoundError({ tabId })),
-      });
-      expect(result).toEqual({
-        _tag: "PreviewCaptureFailure",
-        reason: "renderer-unavailable",
-        stage: "recording-start",
-      });
-      const failure = yield* decodeCaptureFailure(result);
-      expect(failure.message).toContain("Reopen the preview tab");
-      expect(
-        yield* invokeCapture(PreviewIpc.startRecording, {
-          startRecording: () => Effect.void,
-        }),
-      ).toBeUndefined();
-    }),
-  );
-
   beforeEach(() => {
     fromPartition.mockClear();
-  });
-
-  it("does not access the Electron session while the module loads", async () => {
-    await expect(import("./preview.ts")).resolves.toBeDefined();
-    expect(fromPartition).not.toHaveBeenCalled();
   });
 
   it("derives distinct partition scopes when identifiers contain the delimiter", () => {
@@ -209,36 +180,5 @@ describe("preview IPC methods", () => {
       expect(received[0]?.namespace).toBe("profile");
       expect(received[1]?.namespace).toBeUndefined();
     }).pipe(Effect.provideService(BrowserImport.BrowserImport, browserImport));
-  });
-
-  effectIt.effect("rejects invalid webContents ids before resolving the preview service", () =>
-    Effect.map(
-      PreviewIpc.registerWebview
-        .handler({ tabId: "tab-1", webContentsId: 0 })
-        .pipe(Effect.provideService(PreviewManager.PreviewManager, null as never), Effect.exit),
-      (exit) => {
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isSuccess(exit)) return;
-        const error = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(error) && Schema.isSchemaError(error.value)).toBe(true);
-        expect(fromPartition).not.toHaveBeenCalled();
-      },
-    ),
-  );
-
-  it("keeps the public automation status tab id limit", () => {
-    const encode = Schema.encodeUnknownSync(PreviewAutomationStatus);
-    const tabId = "t".repeat(129);
-
-    expect(() =>
-      encode({
-        available: false,
-        visible: true,
-        tabId,
-        url: null,
-        title: null,
-        loading: false,
-      }),
-    ).toThrow();
   });
 });

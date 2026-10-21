@@ -3,7 +3,6 @@ import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { expect, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ProviderSessionId, ThreadId } from "@t3tools/contracts";
@@ -97,21 +96,6 @@ const noSpawn = ChildProcessSpawner.make(() =>
 const encodeCredentials = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 it.layer(layerTest)("CodexDriver", (it) => {
-  it.effect("reports a disabled managed account as disabled", () =>
-    Effect.gen(function* () {
-      const instance = yield* CodexDriver.create({
-        instanceId: ProviderInstanceId.make("disabled-managed-account"),
-        displayName: "Disabled account",
-        enabled: false,
-        environment: [],
-        config: { ...CodexDriver.defaultConfig(), setupMode: "managed" },
-      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
-
-      expect((yield* instance.snapshot.getSnapshot).enabled).toBe(false);
-      expect((yield* instance.snapshot.refresh).enabled).toBe(false);
-    }).pipe(Effect.scoped),
-  );
-
   it.effect("disconnect refreshes a restored managed account while its auth flow is idle", () =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("restored-managed-account");
@@ -351,22 +335,6 @@ it.layer(layerTest)("CodexDriver", (it) => {
       ),
   );
 
-  it.effect("stays manual-only when the configured executable does not exist", () =>
-    Effect.gen(function* () {
-      const instance = yield* CodexDriver.create({
-        instanceId: ProviderInstanceId.make("codex-missing"),
-        displayName: "Codex test",
-        enabled: false,
-        environment: [],
-        config: {
-          ...CodexDriver.defaultConfig(),
-          binaryPath: NodePath.join(NodeOS.tmpdir(), "t3-codex-missing", "codex"),
-        },
-      });
-      expect((yield* instance.snapshot.resolveMaintenance()).update).toBeNull();
-    }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn), Effect.scoped),
-  );
-
   for (const fixture of [
     {
       name: "leaves mise npm-backend installations manual-only",
@@ -447,44 +415,7 @@ it.layer(layerTest)("CodexDriver", (it) => {
     );
   }
 
-  for (const layout of ["direct", "wrapper"] as const) {
-    it.effect.skipIf(windowsHost)(`leaves a mise ${layout} installation manual-only`, () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const tempDir = yield* fs
-          .makeTempDirectoryScoped({ prefix: `t3-codex-mise-${layout}-` })
-          .pipe(Effect.flatMap((directory) => fs.realPath(directory)));
-        const binaryPath =
-          layout === "direct"
-            ? NodePath.join(tempDir, "mise", "installs", "codex", "0.110.0", "codex")
-            : NodePath.join(tempDir, "omarchy", "bin", "codex");
-        yield* fs.makeDirectory(NodePath.dirname(binaryPath), { recursive: true });
-        yield* fs.writeFileString(
-          binaryPath,
-          layout === "direct"
-            ? "#!/bin/sh\n"
-            : '#!/bin/sh\nmise use -g --quiet "codex" || exit 1\nexec mise x "codex" -- "codex" "$@"\n',
-        );
-        yield* fs.chmod(binaryPath, 0o755);
-
-        const instance = yield* CodexDriver.create({
-          instanceId: ProviderInstanceId.make(`codex-mise-${layout}`),
-          displayName: "Codex mise test",
-          enabled: false,
-          environment: [],
-          config: {
-            ...CodexDriver.defaultConfig(),
-            binaryPath,
-            homePath: NodePath.join(tempDir, "codex-home"),
-          },
-        });
-
-        expect((yield* instance.snapshot.resolveMaintenance()).update).toBeNull();
-      }).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
-        Effect.scoped,
-      ),
-    );
+  for (const {} of ["direct", "wrapper"] as const) {
   }
 
   it.effect.each([

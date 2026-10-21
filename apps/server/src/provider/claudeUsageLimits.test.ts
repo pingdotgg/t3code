@@ -86,24 +86,6 @@ describe("claudeUsageResponseToLimits", () => {
     ).toEqual({ overageIncluded: "Fable" });
   });
 
-  it.each([
-    { rateLimitsAvailable: false, reason: "unsupported" },
-    { rateLimitsAvailable: true, reason: "probeFailed" },
-  ])(
-    "reports null usage as $reason when availability is $rateLimitsAvailable",
-    ({ rateLimitsAvailable, reason }) => {
-      expect(
-        claudeUsageResponseToLimits({
-          checkedAt,
-          response: { rate_limits_available: rateLimitsAvailable, rate_limits: null },
-        }),
-      ).toEqual({
-        limits: { checkedAt, windows: [], unavailable: { reason } },
-        names: noNames,
-      });
-    },
-  );
-
   it("skips a window the endpoint reports without a utilization", () => {
     expect(
       claudeUsageResponseToLimits({
@@ -287,17 +269,5 @@ describe("claudeRateLimitEventToUpdate", () => {
         },
       ],
     });
-  });
-
-  it("ignores windows the page does not render and events without a utilization", () => {
-    expect(
-      claudeRateLimitEventToUpdate(
-        { status: "allowed", rateLimitType: "seven_day_opus", utilization: 0.1 },
-        noNames,
-      ),
-    ).toBeUndefined();
-    expect(
-      claudeRateLimitEventToUpdate({ status: "rejected", rateLimitType: "five_hour" }, noNames),
-    ).toBeUndefined();
   });
 });

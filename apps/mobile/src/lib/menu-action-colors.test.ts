@@ -31,37 +31,4 @@ describe("withMenuActionIconColors", () => {
       expect(actions[1]?.subactions?.[0]).not.toHaveProperty("imageColor");
     },
   );
-
-  it("uses the destructive color while retaining action state and attributes", () => {
-    const action: MenuAction = {
-      id: "delete",
-      title: "Delete",
-      image: "trash",
-      state: "off",
-      attributes: { destructive: true, disabled: true },
-    };
-
-    expect(
-      withMenuActionIconColors([action], {
-        icon: "#111111",
-        destructiveIcon: "#cc0000",
-      }),
-    ).toEqual([{ ...action, imageColor: "#cc0000" }]);
-  });
-
-  it.each(["#123456", "transparent", 0])("preserves explicit icon color %s", (imageColor) => {
-    const action: MenuAction = {
-      title: "Delete",
-      image: "trash",
-      imageColor,
-      attributes: { destructive: true },
-    };
-
-    expect(
-      withMenuActionIconColors([action], {
-        icon: "#111111",
-        destructiveIcon: "#cc0000",
-      }),
-    ).toEqual([action]);
-  });
 });

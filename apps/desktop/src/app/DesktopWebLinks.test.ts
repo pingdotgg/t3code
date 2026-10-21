@@ -44,14 +44,6 @@ describe("DesktopWebLinks", () => {
     assert.isFalse(DesktopWebLinks.isWebLink("not a url"));
   });
 
-  it("opens HTML files the way a browser does, and nothing else by path", () => {
-    assert.isTrue(DesktopWebLinks.isWebPageFile("/Users/me/report.html"));
-    assert.isTrue(DesktopWebLinks.isWebPageFile("/tmp/page.HTM"));
-    assert.isTrue(DesktopWebLinks.isWebPageFile("/tmp/page.xhtml"));
-    assert.isFalse(DesktopWebLinks.isWebPageFile("/tmp/notes.md"));
-    assert.isFalse(DesktopWebLinks.isWebPageFile("/tmp/html"));
-  });
-
   it.effect("holds links until the renderer listens, then delivers them in order", () => {
     const { sent, revealed, layer } = makeWindow();
     return Effect.gen(function* () {

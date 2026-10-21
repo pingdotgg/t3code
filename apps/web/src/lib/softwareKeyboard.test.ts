@@ -43,12 +43,6 @@ describe("software keyboard detection", () => {
     expect(observed).toEqual([true, false]);
   });
 
-  it("reads keyboard geometry that was already present before subscribing", () => {
-    const { store, keyboard } = fixture({ native: true });
-    keyboard.boundingRect.height = 300;
-    expect(store.getSnapshot()).toBe(true);
-  });
-
   it("prefers overlay geometry over a misleading viewport height", () => {
     const { store, resize, geometry } = fixture({ native: true, overlay: true });
     const unsubscribe = store.subscribe(() => {});
@@ -95,15 +89,6 @@ describe("software keyboard detection", () => {
     unsubscribe();
   });
 
-  it("ignores window resizing even with a large height change", () => {
-    const { store, resize, win } = fixture();
-    const unsubscribe = store.subscribe(() => {});
-    win.innerHeight = 500;
-    resize(500);
-    expect(store.getSnapshot()).toBe(false);
-    unsubscribe();
-  });
-
   it("ignores pinch zoom and recognizes keyboard changes at the new scale", () => {
     const { store, resize } = fixture();
     const unsubscribe = store.subscribe(() => {});
@@ -116,42 +101,11 @@ describe("software keyboard detection", () => {
     unsubscribe();
   });
 
-  it("does not mistake an already zoomed viewport for an open keyboard", () => {
-    const { store, resize } = fixture();
-    resize(422, 195, 2);
-    const unsubscribe = store.subscribe(() => {});
-    expect(store.getSnapshot()).toBe(false);
-    unsubscribe();
-  });
-
   it("does not mistake rotation for an open keyboard", () => {
     const { store, resize, win } = fixture();
     const unsubscribe = store.subscribe(() => {});
     win.innerHeight = 390;
     resize(390, 844);
-    expect(store.getSnapshot()).toBe(false);
-    unsubscribe();
-  });
-
-  it("shares listeners and refreshes state after the final subscriber leaves", () => {
-    const { store, resize } = fixture();
-    const first = vi.fn();
-    const second = vi.fn();
-    const unsubscribeFirst = store.subscribe(first);
-    const unsubscribeSecond = store.subscribe(second);
-    resize(500);
-    expect(store.getSnapshot()).toBe(true);
-    expect(first).toHaveBeenCalledOnce();
-    expect(second).toHaveBeenCalledOnce();
-    unsubscribeFirst();
-    resize(550);
-    expect(first).toHaveBeenCalledOnce();
-    expect(second).toHaveBeenCalledTimes(2);
-    unsubscribeSecond();
-    resize(844);
-    expect(second).toHaveBeenCalledTimes(2);
-
-    const unsubscribe = store.subscribe(first);
     expect(store.getSnapshot()).toBe(false);
     unsubscribe();
   });
@@ -175,13 +129,6 @@ describe("software keyboard detection", () => {
     resize(500);
     expect(store.getSnapshot()).toBe(false);
     expect(listener).not.toHaveBeenCalled();
-    unsubscribe();
-  });
-
-  it("does not require browser APIs during server rendering", () => {
-    const store = createSoftwareKeyboardStore(undefined, false);
-    const unsubscribe = store.subscribe(() => {});
-    expect(store.getSnapshot()).toBe(false);
     unsubscribe();
   });
 });

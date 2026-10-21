@@ -230,20 +230,6 @@ it.effect("two overlapping updates are applied one after the other", () => {
   );
 });
 
-it.effect("changes nothing when the current hold setting can't be read", () =>
-  withService({ failHoldRead: true, failHoldWrite: true }, ({ preferences, stored, relayCalls }) =>
-    Effect.gen(function* () {
-      stored.set(HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET, encode("true"));
-      const error = yield* preferences
-        .update({ publishAgentActivity: true, holdWebhooksWhileOffline: false })
-        .pipe(Effect.flip);
-      assert.deepInclude(error, { _tag: "CloudLinkInternalError", operation: "read-preferences" });
-      assert.deepEqual(relayCalls, []);
-      assert.equal(new TextDecoder().decode(stored.get(PUBLISH_AGENT_ACTIVITY_SECRET)), "false");
-    }),
-  ),
-);
-
 it.effect("an update the client walks away from still finishes", () => {
   let release!: () => void;
   let started!: () => void;

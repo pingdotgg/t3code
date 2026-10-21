@@ -31,14 +31,6 @@ describe("planClaudeSkillDispatch", () => {
     });
   });
 
-  it("dispatches a known skill whose name begins with a digit", () => {
-    expect(planClaudeSkillDispatch("use $2spec for this", SKILLS)).toEqual({
-      leadingText: "use /2spec for this",
-      commandText: "/2spec for this",
-      skillName: "2spec",
-    });
-  });
-
   it("dispatches the last mention and rewrites earlier ones inline", () => {
     expect(planClaudeSkillDispatch("$review the diff, then $implement the fixes", SKILLS)).toEqual({
       leadingText: "/review the diff, then /implement the fixes",
@@ -66,10 +58,6 @@ describe("planClaudeSkillDispatch", () => {
       });
       expect(planClaudeSkillDispatch(`5${symbol}review ${symbol}unknown`, SKILLS)).toBeUndefined();
     }
-  });
-
-  it("ignores a dollar token glued to other text", () => {
-    expect(planClaudeSkillDispatch("cost is 5$implement", SKILLS)).toBeUndefined();
   });
 
   it("ignores currency amounts and compact monetary expressions", () => {

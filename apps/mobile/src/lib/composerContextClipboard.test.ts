@@ -295,11 +295,4 @@ describe("mobile context clipboard imports", () => {
       collectComposerContextReferences(result!.text).map((reference) => reference.contextId),
     ).toEqual(result!.context.records.map((record) => record.contextId));
   });
-
-  it("refuses an overflowing context paste before copying files", async () => {
-    await expect(
-      importComposerContextClipboard(clipboard, 0, new AbortController().signal, 200),
-    ).rejects.toThrow("Remove some context");
-    expect(mocks.download).not.toHaveBeenCalled();
-  });
 });

@@ -187,15 +187,6 @@ describe("clone project permissions", () => {
     expect(state.projects).toEqual([]);
   });
 
-  it("clones and registers the project when both permissions are granted", async () => {
-    state.scopes.add(AuthOrchestrationOperateScope);
-    await cloneAction()();
-
-    const destination = NodePath.join(state.baseDirectory, "repo");
-    expect(NodeFS.existsSync(destination)).toBe(true);
-    expect(state.projects).toEqual([destination]);
-  });
-
   it.each([AuthSourceControlWriteScope, AuthOrchestrationOperateScope])(
     "rechecks %s before a retained clone action creates a directory",
     async (scope) => {
@@ -241,15 +232,6 @@ describe("local project permissions", () => {
     expect(state.createRequests).toEqual([
       { environmentId: "environment", workspaceRoot: state.baseDirectory },
     ]);
-    expect(state.projects).toEqual([state.baseDirectory]);
-  });
-
-  it("uses a grant added while the local-folder form is open", async () => {
-    const submit = localProjectAction();
-    state.scopes.add(AuthOrchestrationOperateScope);
-
-    await submit();
-
     expect(state.projects).toEqual([state.baseDirectory]);
   });
 

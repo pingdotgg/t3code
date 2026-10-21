@@ -289,11 +289,11 @@ function captureMode(platform: NodeJS.Platform): DesktopSnapShotState["mode"] {
   return platform === "darwin" || platform === "win32" ? "direct" : "unavailable";
 }
 
-export function shouldAnimateSnapShot(settings: SnapShotSystemAnimationSettings): boolean {
+function shouldAnimateSnapShot(settings: SnapShotSystemAnimationSettings): boolean {
   return settings.shouldRenderRichAnimation && !settings.prefersReducedMotion;
 }
 
-export function snapShotThumbnailSize(active: ActiveWindow | undefined): Electron.Size {
+function snapShotThumbnailSize(active: ActiveWindow | undefined): Electron.Size {
   if (!active) return { width: 2_560, height: 1_600 };
   return {
     width: Math.min(Math.max(active.bounds.width, 1), MAX_CAPTURE_WIDTH),
@@ -301,7 +301,7 @@ export function snapShotThumbnailSize(active: ActiveWindow | undefined): Electro
   };
 }
 
-export function snapShotIconDataUrl(
+function snapShotIconDataUrl(
   ...icons: ReadonlyArray<Electron.NativeImage | null | undefined>
 ): string | undefined {
   const icon = icons.find((candidate): candidate is Electron.NativeImage =>
@@ -324,7 +324,7 @@ async function appFileIcon(
   return Electron.app.getFileIcon(path, { size: "normal" }).catch(() => undefined);
 }
 
-export async function iconDataUrl(
+async function iconDataUrl(
   source: { readonly appIcon?: Electron.NativeImage | null },
   active: ActiveWindow | undefined,
   platform: NodeJS.Platform,
@@ -665,7 +665,7 @@ export class SnapShotFlash {
   }
 }
 
-export function snapShotFlashBounds(
+function snapShotFlashBounds(
   active: ActiveWindow | undefined,
   platform: NodeJS.Platform,
 ): Electron.Rectangle {

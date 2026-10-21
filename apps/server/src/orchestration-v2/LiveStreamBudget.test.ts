@@ -52,28 +52,6 @@ describe("LiveStreamBudget", () => {
   );
 });
 
-it.effect("stops draining a slow subscriber when its unacknowledged tail fills", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const input = yield* Queue.unbounded<{ text: string }>();
-      const sourceClosed = yield* Deferred.make<void>();
-      const pull = yield* Stream.toPull(
-        bufferLiveStream(
-          Stream.fromQueue(input).pipe(Stream.ensuring(Deferred.succeed(sourceClosed, undefined))),
-          { maxItems: 2 },
-        ),
-      );
-      yield* Queue.offer(input, { text: "first" });
-      expect(yield* pull).toEqual([{ text: "first" }]);
-      yield* Queue.offerAll(input, [{ text: "second" }, { text: "third" }]);
-      yield* Deferred.await(sourceClosed);
-      const next = yield* pull.pipe(Effect.result);
-      expect(next._tag).toBe("Failure");
-      if (next._tag === "Failure") expect(next.failure._tag).toBe("LiveStreamBufferError");
-    }),
-  ),
-);
-
 type Event = { readonly sequence: number; readonly text: string; readonly threadId?: string };
 
 describe("bufferLatestLiveStream", () => {

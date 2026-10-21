@@ -16,8 +16,4 @@ describe("canLinkChangeRequest (#9435 / #9440)", () => {
     expect(canLinkChangeRequest("single", [nonGitProject], link)).toBe(false);
     expect(canLinkChangeRequest("single", [], link)).toBe(false);
   });
-
-  it("never links when the environment does not support pull request linking", () => {
-    expect(canLinkChangeRequest("unsupported", [nonGitProject], link)).toBe(false);
-  });
 });

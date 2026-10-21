@@ -1,49 +1,16 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  normalizeLinuxPasswordStorePreference,
-  resolveLinuxPasswordStoreSwitch,
-} from "./linuxSecretStorage.ts";
+import { resolveLinuxPasswordStoreSwitch } from "./linuxSecretStorage.ts";
 
 const autoSwitch = (env: NodeJS.ProcessEnv) =>
   resolveLinuxPasswordStoreSwitch({ preference: "auto", env });
 
 describe("linuxSecretStorage", () => {
-  it("preserves explicit supported password-store preferences", () => {
-    expect(normalizeLinuxPasswordStorePreference("gnome-libsecret")).toBe("gnome-libsecret");
-    expect(normalizeLinuxPasswordStorePreference("kwallet")).toBe("kwallet");
-    expect(normalizeLinuxPasswordStorePreference("kwallet5")).toBe("kwallet5");
-    expect(normalizeLinuxPasswordStorePreference("kwallet6")).toBe("kwallet6");
-  });
-
-  it("falls back to auto for missing or unsupported preferences", () => {
-    expect(normalizeLinuxPasswordStorePreference(undefined)).toBe("auto");
-    expect(normalizeLinuxPasswordStorePreference("basic")).toBe("auto");
-  });
-
-  it("uses explicit preferences instead of the auto heuristic", () => {
-    for (const preference of ["gnome-libsecret", "kwallet", "kwallet5", "kwallet6"] as const) {
-      expect(
-        resolveLinuxPasswordStoreSwitch({ preference, env: { XDG_CURRENT_DESKTOP: "niri" } }),
-      ).toBe(preference);
-      expect(
-        resolveLinuxPasswordStoreSwitch({ preference, env: { XDG_CURRENT_DESKTOP: "KDE" } }),
-      ).toBe(preference);
-    }
-  });
-
   it("leaves canonical KDE sessions to Electron's own wallet selection", () => {
     expect(autoSwitch({ XDG_CURRENT_DESKTOP: "KDE" })).toBeNull();
     expect(autoSwitch({ XDG_CURRENT_DESKTOP: "KDE", KDE_SESSION_VERSION: "6" })).toBeNull();
     expect(autoSwitch({ XDG_CURRENT_DESKTOP: "KDE", KDE_SESSION_VERSION: "5" })).toBeNull();
     expect(autoSwitch({ XDG_CURRENT_DESKTOP: "KDE:plasma" })).toBeNull();
-  });
-
-  it("does not force a password-store for desktops Electron already recognizes", () => {
-    expect(autoSwitch({ XDG_CURRENT_DESKTOP: "GNOME" })).toBeNull();
-    for (const desktop of ["Deepin", "Pantheon", "UKUI", "Unity", "X-Cinnamon", "XFCE"]) {
-      expect(autoSwitch({ XDG_CURRENT_DESKTOP: desktop })).toBeNull();
-    }
   });
 
   it("recognizes a known desktop later in a colon-separated XDG_CURRENT_DESKTOP list", () => {

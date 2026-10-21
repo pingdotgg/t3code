@@ -18,11 +18,7 @@ import {
   type RemoteEnvironmentRequestError,
 } from "../rpc/http.ts";
 
-export {
-  RemoteEnvironmentAuthInvalidJsonError,
-  RemoteEnvironmentAuthTimeoutError,
-  RemoteEnvironmentAuthUndeclaredStatusError,
-} from "../rpc/http.ts";
+export { RemoteEnvironmentAuthUndeclaredStatusError } from "../rpc/http.ts";
 export type RemoteEnvironmentAuthError = RemoteEnvironmentRequestError;
 
 const DEFAULT_REMOTE_REQUEST_TIMEOUT_MS = 10_000;

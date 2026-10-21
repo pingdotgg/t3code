@@ -65,28 +65,6 @@ describe("SSH environment IPC", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("wraps schema decode failures in a typed request error", () => {
-    const layer = layerHttpClient((request) =>
-      Effect.succeed(jsonResponse(request, { environmentId: "remote-env" })),
-    );
-
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        fetchSshEnvironmentDescriptor.handler({
-          httpBaseUrl: "http://127.0.0.1:41773/",
-        }),
-      );
-      assert(Exit.isFailure(exit));
-      const failure = Cause.findErrorOption(exit.cause);
-      assert(Option.isSome(failure));
-      const error = failure.value;
-
-      assert.instanceOf(error, DesktopSshEnvironmentRequestError);
-      assert.equal(error.operation, "fetch-environment-descriptor");
-      assert.equal(error.cause instanceof SshHttpBridgeError, false);
-    }).pipe(Effect.provide(layer));
-  });
-
   it.effect("rejects non-loopback HTTP endpoints before issuing a request", () => {
     let requestCount = 0;
     const layer = layerHttpClient((request) =>

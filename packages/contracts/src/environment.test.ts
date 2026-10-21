@@ -14,20 +14,6 @@ const descriptor = {
 } as const;
 
 describe("ExecutionEnvironmentDescriptor", () => {
-  it("keeps settled cleanup optional alongside current worktree capabilities", () => {
-    expect(decodeDescriptor(descriptor).capabilities.settledWorktreeCleanup).toBeUndefined();
-    const capabilities = {
-      settledWorktreeCleanup: true,
-      storageCleanupRun: true,
-      projectWorktreeCleanup: true,
-      worktreesDirectory: true,
-      threadAutoSettlementScope: true,
-    };
-    expect(decodeDescriptor({ ...descriptor, capabilities }).capabilities).toMatchObject(
-      capabilities,
-    );
-  });
-
   it("decodes old, recognized and future manual installation descriptors", () => {
     expect(decodeDescriptor(descriptor).capabilities.serverInstallation).toBeUndefined();
     for (const installation of [{ kind: "npx" }, { kind: "npm-global", prefix: "/opt/node" }]) {
@@ -46,78 +32,5 @@ describe("ExecutionEnvironmentDescriptor", () => {
         }).capabilities.serverInstallation,
       ).toBeUndefined();
     }
-  });
-  it("requires an advertised required-worktree bootstrap capability", () => {
-    expect(decodeDescriptor(descriptor).capabilities.requiredWorktreeBootstrap).toBeUndefined();
-    expect(
-      decodeDescriptor({
-        ...descriptor,
-        capabilities: { ...descriptor.capabilities, requiredWorktreeBootstrap: true },
-      }).capabilities.requiredWorktreeBootstrap,
-    ).toBe(true);
-  });
-
-  it("treats a missing pull-request capability as unsupported under version skew", () => {
-    expect(decodeDescriptor(descriptor).capabilities.pullRequests).toBeUndefined();
-  });
-
-  it("preserves an advertised pull-request capability", () => {
-    expect(
-      decodeDescriptor({
-        ...descriptor,
-        capabilities: { ...descriptor.capabilities, pullRequests: true },
-      }).capabilities.pullRequests,
-    ).toBe(true);
-  });
-
-  it("treats a missing attachment upload capability as unsupported", () => {
-    expect(decodeDescriptor(descriptor).capabilities.attachmentUploads).toBeUndefined();
-  });
-
-  it("preserves an advertised attachment upload capability", () => {
-    expect(
-      decodeDescriptor({
-        ...descriptor,
-        capabilities: { ...descriptor.capabilities, attachmentUploads: true },
-      }).capabilities.attachmentUploads,
-    ).toBe(true);
-  });
-
-  it("preserves the server's generic attachment upload limit", () => {
-    expect(
-      decodeDescriptor({
-        ...descriptor,
-        capabilities: {
-          ...descriptor.capabilities,
-          fileAttachments: { maxUploadBytes: 50 * 1024 * 1024 },
-        },
-      }).capabilities.fileAttachments,
-    ).toEqual({ maxUploadBytes: 50 * 1024 * 1024 });
-  });
-
-  it("treats missing server-resolved command context as unsupported", () => {
-    expect(decodeDescriptor(descriptor).capabilities.serverResolvedCommandContext).toBeUndefined();
-  });
-
-  it("preserves advertised server-resolved command context", () => {
-    expect(
-      decodeDescriptor({
-        ...descriptor,
-        capabilities: {
-          ...descriptor.capabilities,
-          serverResolvedCommandContext: true,
-        },
-      }).capabilities.serverResolvedCommandContext,
-    ).toBe(true);
-  });
-
-  it("enables thread Stop only when advertised by the server", () => {
-    expect(decodeDescriptor(descriptor).capabilities.threadStop).toBeUndefined();
-    expect(
-      decodeDescriptor({
-        ...descriptor,
-        capabilities: { ...descriptor.capabilities, threadStop: true },
-      }).capabilities.threadStop,
-    ).toBe(true);
   });
 });

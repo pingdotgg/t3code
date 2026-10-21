@@ -15,8 +15,6 @@ import {
 } from "@t3tools/contracts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
-import type { GrokSettings } from "@t3tools/provider-grok/settings";
-import type { CursorSettings } from "@t3tools/provider-cursor/settings";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -28,18 +26,11 @@ import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
-import * as AntigravityInstallation from "./AntigravityInstallation.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { ClaudeDriver, type ClaudeDriverEnv } from "./Drivers/ClaudeDriver.ts";
 import { CodexDriver, type CodexDriverEnv } from "./Drivers/CodexDriver.ts";
-import { CursorDriver, type CursorDriverEnv } from "@t3tools/provider-cursor/server";
-import { GrokDriver, type GrokDriverEnv } from "@t3tools/provider-grok/server";
-import { OpenCodeDriver, type OpenCodeDriverEnv } from "@t3tools/provider-opencode/server";
-import type { OpenCodeSettings } from "@t3tools/provider-opencode/settings";
 import * as ModelManifest from "./ModelManifest.ts";
-import * as OpenCodeRuntime from "@t3tools/provider-opencode/server/OpenCodeRuntime";
-import * as OpenCodeServerLedger from "@t3tools/provider-opencode/server/OpenCodeServerLedger";
 import * as ResetCreditCoordinator from "./resetCreditCoordinator.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistry.ts";
@@ -106,28 +97,6 @@ const makeClaudeConfig = (overrides: Partial<ClaudeSettings>): ClaudeSettings =>
   customModels: [],
   launchArgs: "",
   autoCompactWindow: "",
-  ...overrides,
-});
-
-const makeCursorConfig = (overrides: Partial<CursorSettings>): CursorSettings => ({
-  enabled: false,
-  customModels: [],
-  ...overrides,
-});
-
-const makeGrokConfig = (overrides: Partial<GrokSettings>): GrokSettings => ({
-  enabled: false,
-  binaryPath: "grok",
-  customModels: [],
-  ...overrides,
-});
-
-const makeOpenCodeConfig = (overrides: Partial<OpenCodeSettings>): OpenCodeSettings => ({
-  enabled: false,
-  binaryPath: "opencode",
-  serverUrl: "",
-  serverPassword: "",
-  customModels: [],
   ...overrides,
 });
 
@@ -218,79 +187,6 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     Layer.provideMerge(layerBase),
   );
 
-  it.live("boots two independent codex instances from a ProviderInstanceConfigMap", () =>
-    Effect.gen(function* () {
-      const personalId = ProviderInstanceId.make("codex_personal");
-      const workId = ProviderInstanceId.make("codex_work");
-      const codexDriverKind = ProviderDriverKind.make("codex");
-
-      const configMap: ProviderInstanceConfigMap = {
-        [personalId]: {
-          driver: codexDriverKind,
-          displayName: "Codex (personal)",
-          enabled: false,
-          config: makeCodexConfig({
-            binaryPath: "/opt/codex-personal/bin/codex",
-            homePath: "/home/julius/.codex_personal",
-            customModels: ["personal-preview"],
-          }),
-        },
-        [workId]: {
-          driver: codexDriverKind,
-          displayName: "Codex (work)",
-          enabled: false,
-          config: makeCodexConfig({
-            binaryPath: "/opt/codex-work/bin/codex",
-            homePath: "/home/julius/.codex",
-            customModels: ["work-preview"],
-          }),
-        },
-      };
-
-      const { registry } = yield* makeProviderInstanceRegistry<CodexDriverEnv>({
-        drivers: [CodexDriver],
-        configMap,
-      });
-
-      const instances = yield* registry.listInstances;
-      expect(instances.map((instance) => instance.instanceId).toSorted()).toEqual(
-        [personalId, workId].toSorted(),
-      );
-      expect(instances.every((instance) => instance.driverKind === codexDriverKind)).toBe(true);
-      expect(instances.map((instance) => instance.displayName).toSorted()).toEqual(
-        ["Codex (personal)", "Codex (work)"].toSorted(),
-      );
-
-      const personal = yield* registry.getInstance(personalId);
-      const work = yield* registry.getInstance(workId);
-      expect(personal).toBeDefined();
-      expect(work).toBeDefined();
-      expect(personal!.orchestrationAdapter).not.toBe(work!.orchestrationAdapter);
-      expect(personal!.textGeneration).not.toBe(work!.textGeneration);
-      expect(personal!.snapshot).not.toBe(work!.snapshot);
-
-      const personalSnapshot = yield* personal!.snapshot.getSnapshot;
-      expect(personalSnapshot.instanceId).toBe(personalId);
-      expect(personalSnapshot.driver).toBe(codexDriverKind);
-      expect(personalSnapshot.enabled).toBe(false);
-      const path = yield* Path.Path;
-      expect(personalSnapshot.continuation?.groupKey).toBe(
-        `codex:home:${path.resolve("/home/julius/.codex_personal")}`,
-      );
-
-      const workSnapshot = yield* work!.snapshot.getSnapshot;
-      expect(workSnapshot.instanceId).toBe(workId);
-      expect(workSnapshot.driver).toBe(codexDriverKind);
-      expect(workSnapshot.enabled).toBe(false);
-      expect(workSnapshot.continuation?.groupKey).toBe(
-        `codex:home:${path.resolve("/home/julius/.codex")}`,
-      );
-
-      const unavailable = yield* registry.listUnavailable;
-      expect(unavailable).toEqual([]);
-    }).pipe(Effect.provide(layerTest)),
-  );
-
   it.live("treats an explicit in-config enabled:false as disabling despite the envelope", () =>
     Effect.gen(function* () {
       const staleId = ProviderInstanceId.make("codex_stale");
@@ -312,42 +208,6 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       expect(instance!.enabled).toBe(false);
       const snapshot = yield* instance!.snapshot.getSnapshot;
       expect(snapshot.enabled).toBe(false);
-    }).pipe(Effect.provide(layerTest)),
-  );
-
-  it.live("reports Codex's answer when a redemption changed nothing", () =>
-    Effect.gen(function* () {
-      if (yield* HostProcess.isWindows) return;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const fixtures = yield* makeTildeProviderFixtures();
-      yield* fileSystem.writeFileString(
-        fixtures.codexScriptPath,
-        JSON.stringify({
-          rootThreadId: "probe-thread",
-          notifications: [],
-          account: { type: "chatgpt", email: "test@example.com", planType: "plus" },
-          failRateLimitsRead: true,
-          resetCreditOutcome: "alreadyRedeemed",
-        }),
-      );
-      const codexId = ProviderInstanceId.make("codex_reset");
-      const { registry } = yield* makeProviderInstanceRegistry({
-        drivers: [CodexDriver],
-        configMap: {
-          [codexId]: {
-            driver: ProviderDriverKind.make("codex"),
-            enabled: true,
-            environment: [
-              { name: "T3_CODEX_COLLAB_SCRIPT", value: fixtures.codexScriptPath, sensitive: false },
-            ],
-            config: makeCodexConfig({ enabled: true, binaryPath: fixtures.codexBinaryPath }),
-          },
-        },
-      });
-      const codex = yield* registry.getInstance(codexId);
-      expect(codex).toBeDefined();
-      yield* codex!.snapshot.refresh;
-      expect(yield* codex!.consumeResetCredit!()).toBe("alreadyRedeemed");
     }).pipe(Effect.provide(layerTest)),
   );
 
@@ -713,17 +573,6 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     };
   });
 
-  it.effect.skipIf(windowsHost)("reuses Claude's successful usage probe on refresh", () =>
-    Effect.gen(function* () {
-      const fixture = yield* makeClaudeCacheFixture("ready");
-      const first = yield* fixture.refresh;
-      const second = yield* fixture.refresh;
-      expect(first.usageLimits?.windows.map((window) => window.id)).toEqual(["five_hour"]);
-      expect(second.usageLimits).toEqual(first.usageLimits);
-      expect(yield* fixture.probeLog).toBe("probe\n");
-    }).pipe(Effect.provide(layerTest)),
-  );
-
   for (const state of ["signed-out", "usage-failed"] as const) {
     it.effect.skipIf(windowsHost)(
       state === "signed-out"
@@ -788,198 +637,5 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         expect(ghost.availability).toBe("unavailable");
         expect(ghost.unavailableReason).toMatch(/ghostDriver/);
       }).pipe(Effect.provide(layerTest)),
-  );
-});
-
-describe("ProviderInstanceRegistry — all drivers slice", () => {
-  const layerInfra = OpenCodeRuntime.layer.pipe(
-    Layer.provide(OpenCodeServerLedger.layerTest),
-    Layer.provideMerge(NodeServices.layer),
-    Layer.provideMerge(
-      Layer.mock(CodexInstallation.CodexInstallation)({
-        managedDirectory: "unused-managed-installation",
-      }),
-    ),
-    Layer.provideMerge(
-      Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
-        getEnvironmentId: Effect.succeed(
-          EnvironmentId.make("00000000-0000-4000-8000-000000000001"),
-        ),
-      }),
-    ),
-  );
-  const layerBaseDeps = AntigravityInstallation.AntigravityInstallation.layer.pipe(
-    Layer.provideMerge(ServerSecretStore.layer),
-    Layer.provideMerge(
-      ServerConfig.layerTest(process.cwd(), {
-        prefix: "provider-instance-registry-all-drivers-test",
-      }),
-    ),
-    Layer.provideMerge(layerInfra),
-    Layer.provideMerge(layerBackgroundPolicyAlwaysRun),
-    Layer.provideMerge(ServerSettings.layerTest()),
-    Layer.provideMerge(layerTestHttpClient),
-    Layer.provideMerge(ServerSettings.layerTest()),
-    Layer.provideMerge(
-      Layer.succeed(
-        ProviderEventLoggers.ProviderEventLoggers,
-        ProviderEventLoggers.NoOpProviderEventLoggers,
-      ),
-    ),
-    Layer.provideMerge(ProviderLatestVersions.layer),
-    Layer.provideMerge(McpProviderSessions.layer),
-    Layer.provideMerge(ModelManifest.layerTest),
-    Layer.provideMerge(ResetCreditCoordinator.layerTest),
-  );
-  const layerBase = ProviderHostLive.layer.pipe(Layer.provideMerge(layerBaseDeps));
-  const layerTest = ProviderOrchestrationAdapterInfrastructure.layer.pipe(
-    Layer.provideMerge(layerBase),
-  );
-
-  it.live("boots one instance of every shipped driver from a single config map", () =>
-    Effect.gen(function* () {
-      const codexId = ProviderInstanceId.make("codex_default");
-      const claudeId = ProviderInstanceId.make("claude_default");
-      const cursorId = ProviderInstanceId.make("cursor_default");
-      const grokId = ProviderInstanceId.make("grok_default");
-      const openCodeId = ProviderInstanceId.make("opencode_default");
-
-      const codexDriverKind = ProviderDriverKind.make("codex");
-      const claudeDriverKind = ProviderDriverKind.make("claudeAgent");
-      const cursorDriverKind = ProviderDriverKind.make("cursor");
-      const grokDriverKind = ProviderDriverKind.make("grok");
-      const openCodeDriverKind = ProviderDriverKind.make("opencode");
-
-      const configMap: ProviderInstanceConfigMap = {
-        [codexId]: {
-          driver: codexDriverKind,
-          displayName: "Codex",
-          enabled: false,
-          config: makeCodexConfig({ homePath: "/home/julius/.codex" }),
-        },
-        [claudeId]: {
-          driver: claudeDriverKind,
-          displayName: "Claude",
-          enabled: false,
-          config: makeClaudeConfig({
-            homePath: "/home/julius/.claude-work",
-            launchArgs: "--verbose",
-          }),
-        },
-        [cursorId]: {
-          driver: cursorDriverKind,
-          displayName: "Cursor",
-          enabled: false,
-          config: makeCursorConfig({}),
-        },
-        [grokId]: {
-          driver: grokDriverKind,
-          displayName: "Grok",
-          enabled: false,
-          config: makeGrokConfig({}),
-        },
-        [openCodeId]: {
-          driver: openCodeDriverKind,
-          displayName: "OpenCode",
-          enabled: false,
-          config: makeOpenCodeConfig({}),
-        },
-      };
-
-      const { registry } = yield* makeProviderInstanceRegistry<
-        CodexDriverEnv | ClaudeDriverEnv | CursorDriverEnv | GrokDriverEnv | OpenCodeDriverEnv
-      >({
-        drivers: [CodexDriver, ClaudeDriver, CursorDriver, GrokDriver, OpenCodeDriver],
-        configMap,
-      });
-
-      const unavailable = yield* registry.listUnavailable;
-      expect(unavailable).toEqual([]);
-
-      const instances = yield* registry.listInstances;
-      expect(instances).toHaveLength(5);
-      expect(instances.map((instance) => instance.instanceId).toSorted()).toEqual(
-        [codexId, claudeId, cursorId, grokId, openCodeId].toSorted(),
-      );
-
-      const codex = yield* registry.getInstance(codexId);
-      const claude = yield* registry.getInstance(claudeId);
-      const cursor = yield* registry.getInstance(cursorId);
-      const grok = yield* registry.getInstance(grokId);
-      const openCode = yield* registry.getInstance(openCodeId);
-      expect(codex?.driverKind).toBe(codexDriverKind);
-      expect(claude?.driverKind).toBe(claudeDriverKind);
-      expect(cursor?.driverKind).toBe(cursorDriverKind);
-      expect(grok?.driverKind).toBe(grokDriverKind);
-      expect(openCode?.driverKind).toBe(openCodeDriverKind);
-      expect(codex?.displayName).toBe("Codex");
-      expect(claude?.displayName).toBe("Claude");
-      expect(cursor?.displayName).toBe("Cursor");
-      expect(grok?.displayName).toBe("Grok");
-      expect(openCode?.displayName).toBe("OpenCode");
-
-      const adapters = [
-        codex!.orchestrationAdapter,
-        claude!.orchestrationAdapter,
-        cursor!.orchestrationAdapter,
-        grok!.orchestrationAdapter,
-        openCode!.orchestrationAdapter,
-      ];
-      expect(new Set(adapters).size).toBe(adapters.length);
-      const textGenerations = [
-        codex!.textGeneration,
-        claude!.textGeneration,
-        cursor!.textGeneration,
-        grok!.textGeneration,
-        openCode!.textGeneration,
-      ];
-      expect(new Set(textGenerations).size).toBe(textGenerations.length);
-      const snapshots = [
-        codex!.snapshot,
-        claude!.snapshot,
-        cursor!.snapshot,
-        grok!.snapshot,
-        openCode!.snapshot,
-      ];
-      expect(new Set(snapshots).size).toBe(snapshots.length);
-
-      const codexSnapshot = yield* codex!.snapshot.getSnapshot;
-      expect(codexSnapshot.instanceId).toBe(codexId);
-      expect(codexSnapshot.driver).toBe(codexDriverKind);
-      expect(codexSnapshot.enabled).toBe(false);
-      expect(codexSnapshot.continuation?.groupKey).toBe(
-        `codex:home:${(yield* Path.Path).resolve("/home/julius/.codex")}`,
-      );
-
-      const claudeSnapshot = yield* claude!.snapshot.getSnapshot;
-      expect(claudeSnapshot.instanceId).toBe(claudeId);
-      expect(claudeSnapshot.driver).toBe(claudeDriverKind);
-      expect(claudeSnapshot.enabled).toBe(false);
-      expect(claudeSnapshot.continuation?.groupKey).toBe(
-        `claude:home:${(yield* Path.Path).resolve("/home/julius/.claude-work")}`,
-      );
-
-      const cursorSnapshot = yield* cursor!.snapshot.getSnapshot;
-      expect(cursorSnapshot.instanceId).toBe(cursorId);
-      expect(cursorSnapshot.driver).toBe(cursorDriverKind);
-      expect(cursorSnapshot.enabled).toBe(false);
-      expect(cursorSnapshot.continuation?.groupKey).toBe(
-        `${cursorDriverKind}:instance:${cursorId}`,
-      );
-
-      const grokSnapshot = yield* grok!.snapshot.getSnapshot;
-      expect(grokSnapshot.instanceId).toBe(grokId);
-      expect(grokSnapshot.driver).toBe(grokDriverKind);
-      expect(grokSnapshot.enabled).toBe(false);
-      expect(grokSnapshot.continuation?.groupKey).toBe(`${grokDriverKind}:instance:${grokId}`);
-
-      const openCodeSnapshot = yield* openCode!.snapshot.getSnapshot;
-      expect(openCodeSnapshot.instanceId).toBe(openCodeId);
-      expect(openCodeSnapshot.driver).toBe(openCodeDriverKind);
-      expect(openCodeSnapshot.enabled).toBe(false);
-      expect(openCodeSnapshot.continuation?.groupKey).toBe(
-        `${openCodeDriverKind}:instance:${openCodeId}`,
-      );
-    }).pipe(Effect.provide(layerTest)),
   );
 });

@@ -312,7 +312,7 @@ const closeRun = (
   );
 };
 
-export const waitForHttpReady = (
+const waitForHttpReady = (
   options: BackendProcessContext & { readonly timeout: Duration.Duration },
 ): Effect.Effect<void, BackendReadinessTimeoutError, HttpClient.HttpClient> => {
   const readinessUrl = new URL(BACKEND_READINESS_PATH, options.httpBaseUrl);

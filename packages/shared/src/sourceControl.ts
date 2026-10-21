@@ -99,7 +99,7 @@ const GENERIC_CHANGE_REQUEST_PRESENTATION: ChangeRequestPresentation = {
   urlExample: "#42",
 };
 
-export function resolveChangeRequestPresentation(
+function resolveChangeRequestPresentation(
   provider: SourceControlProviderInfo | null | undefined,
 ): ChangeRequestPresentation {
   switch (provider?.kind) {

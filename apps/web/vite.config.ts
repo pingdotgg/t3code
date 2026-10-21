@@ -94,8 +94,9 @@ const browserTestApiPort = 61_000 + ((Hash.string(import.meta.dirname) >>> 0) % 
 
 const browserTestProject = {
   extends: true,
-  // Pre-bundled so the first test importing userEvent does not trigger a mid-run reload.
-  optimizeDeps: { include: ["vite-plus/test/browser"] },
+  // Pre-bundled so a late first import does not trigger a mid-run reload. The
+  // dependency scan misses autocomplete because tests reach it only through lazy imports.
+  optimizeDeps: { include: ["vite-plus/test/browser", "@base-ui/react/autocomplete"] },
   test: {
     name: "browser",
     include: ["src/**/*.browser.test.{ts,tsx}"],

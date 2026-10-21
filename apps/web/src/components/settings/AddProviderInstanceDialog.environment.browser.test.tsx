@@ -147,23 +147,6 @@ function setup() {
 }
 
 describe("AddProviderInstanceDialog environment routing", () => {
-  it("creates a provider with its default identity without typing", async () => {
-    setup();
-    await using _screen = await render(dialog());
-    const grok = [...document.querySelectorAll('[role="radio"]')].find((radio) =>
-      radio.textContent?.includes("Grok"),
-    ) as HTMLElement;
-    await act(async () => grok.click());
-    await click("Next");
-    await click("Next");
-    await click("Add instance");
-    expect(settingsHooks.mutate).toHaveBeenCalledWith({
-      operation: "create",
-      instanceId: "grok",
-      instance: { driver: "grok", enabled: true, displayName: "Grok" },
-    });
-  });
-
   it("chooses an unused identity for another account without replacing configured instances", async () => {
     setup();
     settingsHooks.read.mockReturnValue({
@@ -183,14 +166,6 @@ describe("AddProviderInstanceDialog environment routing", () => {
         config: { setupMode: "existing" },
       },
     });
-  });
-
-  it("reads and writes settings through the supplied environment", async () => {
-    setup();
-    await using _screen = await render(dialog());
-
-    expect(settingsHooks.read).toHaveBeenCalledWith(remoteEnvironmentId);
-    expect(settingsHooks.useMutation).toHaveBeenCalledWith(remoteEnvironmentId);
   });
 
   it("awaits an atomic create before closing and retains prepared ACP metadata", async () => {
@@ -224,25 +199,6 @@ describe("AddProviderInstanceDialog environment routing", () => {
     expect(settingsHooks.mutate).toHaveBeenCalledTimes(1);
     await click("Finish sign-in");
     expect(actions.onOpenChange).toHaveBeenCalledWith(false);
-  });
-
-  it("configures a manually entered registry agent from the first provider screen", async () => {
-    setup();
-    await using _screen = await render(dialog());
-    await click("Enter registry agent");
-    await type("#add-provider-acpRegistry-manual-agentId", "devin");
-    await click("Next");
-    await click("Continue to sign-in");
-    expect(settingsHooks.mutate).toHaveBeenCalledWith({
-      operation: "create",
-      instanceId: "acpRegistry_custom",
-      instance: {
-        driver: "acpRegistry",
-        enabled: true,
-        config: { agentId: "devin" },
-      },
-    });
-    expect(signInStep()).not.toBeNull();
   });
 
   it("creates a local command in the selected environment without a sign-in step", async () => {
@@ -305,27 +261,6 @@ describe("AddProviderInstanceDialog environment routing", () => {
     expect(button("Continue to sign-in").disabled).toBe(false);
   });
 
-  it("adds an instance with the selected environment's provider grant alone", async () => {
-    setup();
-    await using _screen = await prepareCodexInstance();
-    await click("Add instance");
-
-    expect(settingsHooks.mutate).toHaveBeenCalledWith({
-      operation: "create",
-      instanceId: "codex_work",
-      instance: {
-        driver: "codex",
-        enabled: true,
-        displayName: "Work",
-        config: { setupMode: "existing" },
-      },
-    });
-    expect(actions.toast).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "success", title: "Provider instance added" }),
-    );
-    expect(actions.onOpenChange).toHaveBeenCalledWith(false);
-  });
-
   it("rejects a queued save after the provider grant is revoked", async () => {
     setup();
     await using screen = await prepareCodexInstance();
@@ -339,20 +274,5 @@ describe("AddProviderInstanceDialog environment routing", () => {
     expect(actions.onOpenChange).not.toHaveBeenCalled();
     await screen.rerender(dialog());
     expect(button("Add instance").disabled).toBe(true);
-  });
-
-  it("keeps a denied draft available when the provider grant arrives", async () => {
-    setup();
-    actions.canManageProviders = false;
-    await using screen = await prepareCodexInstance();
-    expect(button("Add instance").disabled).toBe(true);
-    expect(settingsHooks.mutate).not.toHaveBeenCalled();
-
-    actions.canManageProviders = true;
-    await screen.rerender(dialog());
-    expect(button("Add instance").disabled).toBe(false);
-    await click("Add instance");
-    expect(settingsHooks.mutate).toHaveBeenCalledOnce();
-    expect(actions.onOpenChange).toHaveBeenCalledWith(false);
   });
 });

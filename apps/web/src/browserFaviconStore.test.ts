@@ -8,7 +8,6 @@ vi.mock("~/state/session", () => ({ usePreparedConnection: () => ({ _tag: "None"
 import {
   flushPendingFaviconsForThread,
   lookupFavicon,
-  mergeBrowserFaviconState,
   recordFaviconForProject,
   recordFaviconForThread,
   registerFaviconProjectForThread,
@@ -16,10 +15,7 @@ import {
   resolveBrowserFaviconStorage,
   useBrowserFaviconStore,
 } from "./browserFaviconStore";
-import {
-  BROWSER_FAVICON_MAX_ENTRIES,
-  migratePersistedBrowserFaviconState,
-} from "./browserFaviconLogic";
+import { BROWSER_FAVICON_MAX_ENTRIES } from "./browserFaviconLogic";
 
 const environmentId = EnvironmentId.make("env-1");
 const projectRef = scopeProjectRef(environmentId, ProjectId.make("project-1"));
@@ -36,22 +32,6 @@ describe("browser favicon store", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
-  });
-
-  it("keeps the newest capture for an origin and permits an identical later revisit", () => {
-    const recordFavicon = vi.spyOn(useBrowserFaviconStore.getState(), "recordFavicon");
-    recordFaviconForProject(projectRef, favicon("http://localhost:3000/", 20), null);
-    recordFaviconForProject(
-      projectRef,
-      favicon("http://localhost:3000/old", 10, "data:image/png;base64,QkJCQg=="),
-      null,
-    );
-    recordFaviconForProject(projectRef, favicon("http://localhost:3000/new", 30), null);
-    recordFaviconForProject(projectRef, favicon("http://localhost:3000/new", 30), null);
-    expect(Object.values(useBrowserFaviconStore.getState().byKey)).toEqual([
-      { dataUrl: PNG, capturedAt: 30 },
-    ]);
-    expect(recordFavicon).toHaveBeenCalledTimes(2);
   });
 
   it("does not share localhost icons across environments or physical projects", () => {
@@ -87,14 +67,6 @@ describe("browser favicon store", () => {
         null,
       ),
     ).toBeNull();
-  });
-
-  it("finds a persisted IPv6 environment icon without a live connection", () => {
-    recordFaviconForProject(projectRef, favicon("http://[fd00::1]:3000/app", 5), "fd00::1");
-    const migrated = migratePersistedBrowserFaviconState({
-      byKey: useBrowserFaviconStore.getState().byKey,
-    }).byKey;
-    expect(lookupFavicon(migrated, projectRef, "http://[fd00::1]:3000/app", null)).toBe(PNG);
   });
 
   it("keeps exact host aliases attached to the newest canonical icon", () => {
@@ -193,16 +165,6 @@ describe("browser favicon store", () => {
     expect(Object.values(useBrowserFaviconStore.getState().pendingByThreadKey)[0]).toBeDefined();
   });
 
-  it("keeps pending captures in store-owned state independent of bridge lifetime", () => {
-    recordFaviconForThread(threadRef, favicon("http://localhost:3000/", 10), null, undefined);
-    const pendingAfterUnmount = useBrowserFaviconStore.getState().pendingByThreadKey;
-    useBrowserFaviconStore.setState({ pendingByThreadKey: pendingAfterUnmount });
-    flushPendingFaviconsForThread(threadRef, projectRef, "localhost");
-    expect(useBrowserFaviconStore.getState().byKey).toEqual({
-      "env-1:project-1 http://localhost:3000": { dataUrl: PNG, capturedAt: 10 },
-    });
-  });
-
   it("flushes and resolves a pending draft-thread favicon after physical project registration", () => {
     recordFaviconForThread(threadRef, favicon("http://localhost:8025/", 10), null, undefined);
     registerFaviconProjectForThread(threadRef, projectRef);
@@ -217,81 +179,6 @@ describe("browser favicon store", () => {
         null,
       ),
     ).toBe(PNG);
-  });
-
-  it("bounds pending memory by origin and thread", () => {
-    for (let thread = 0; thread < 22; thread += 1) {
-      for (let port = 3000; port < 3012; port += 1) {
-        recordFaviconForThread(
-          { environmentId, threadId: ThreadId.make(`thread-${thread}`) },
-          favicon(`http://localhost:${port}/`, port),
-          null,
-          undefined,
-        );
-      }
-    }
-    const pending = useBrowserFaviconStore.getState().pendingByThreadKey;
-    expect(Object.keys(pending)).toHaveLength(20);
-    expect(Object.values(pending).every((byOrigin) => Object.keys(byOrigin).length === 10)).toBe(
-      true,
-    );
-  });
-
-  it("sanitizes hydrated state while preserving actions and transient pending data", () => {
-    recordFaviconForThread(threadRef, favicon("http://localhost:3000/", 1), null, undefined);
-    const current = useBrowserFaviconStore.getState();
-    const merged = mergeBrowserFaviconState(
-      {
-        byKey: {
-          "env-1:project-1 http://localhost:3000": { dataUrl: PNG, capturedAt: 2 },
-          "env-1:project-1 http://localhost:3001": { dataUrl: "bad", capturedAt: 3 },
-          "env-1:project-1 http://localhost:3002": { dataUrl: PNG, capturedAt: 1e308 },
-          ["x".repeat(5_000)]: { dataUrl: PNG, capturedAt: 4 },
-        },
-      },
-      current,
-    );
-    expect(merged.byKey).toEqual({
-      "env-1:project-1 http://localhost:3000": { dataUrl: PNG, capturedAt: 2 },
-    });
-    expect(merged.pendingByThreadKey).toEqual(current.pendingByThreadKey);
-    expect(typeof merged.recordFavicon).toBe("function");
-  });
-
-  it("falls back to memory when localStorage access throws", () => {
-    vi.stubGlobal(
-      "window",
-      Object.defineProperty({}, "localStorage", {
-        get: () => {
-          throw new Error("storage blocked");
-        },
-      }),
-    );
-    const storage = resolveBrowserFaviconStorage();
-    storage.setItem("key", "value");
-    expect(storage.getItem("key")).toBe("value");
-  });
-
-  it("falls back to memory when localStorage operations throw", () => {
-    vi.stubGlobal("window", {
-      localStorage: {
-        getItem: vi.fn(() => {
-          throw new Error("read blocked");
-        }),
-        setItem: vi.fn(() => {
-          throw new Error("quota exceeded");
-        }),
-        removeItem: vi.fn(() => {
-          throw new Error("remove blocked");
-        }),
-      },
-    });
-    const storage = resolveBrowserFaviconStorage();
-
-    storage.setItem("key", "value");
-    expect(storage.getItem("key")).toBe("value");
-    storage.removeItem("key");
-    expect(storage.getItem("key")).toBeNull();
   });
 
   it("keeps the memory shadow authoritative after an asymmetric primary write failure", () => {

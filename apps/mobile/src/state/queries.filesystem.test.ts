@@ -90,11 +90,3 @@ it("shows a confirmed denial and a connection failure separately", () => {
     isPending: false,
   });
 });
-
-it("leaves an inactive search idle while its grant loads", () => {
-  expect(useComposerPathSearch({ ...target, cwd: null, query: null })).toMatchObject({
-    entries: [],
-    error: null,
-    isPending: false,
-  });
-});

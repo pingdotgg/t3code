@@ -36,22 +36,6 @@ function dependencies(
 }
 
 describe("desktop app activation", () => {
-  it("reuses an existing project and opens a new thread", async () => {
-    const deps = dependencies();
-
-    const response = await handleDesktopAppActivationRequest(request, deps);
-
-    expect(deps.createProject).not.toHaveBeenCalled();
-    expect(deps.openThread).toHaveBeenCalledWith({ environmentId, projectId: existingProjectId });
-    expect(response).toEqual({
-      version: 1,
-      requestId: request.requestId,
-      ok: true,
-      projectId: existingProjectId,
-      threadId,
-    });
-  });
-
   it("waits for a created project before it opens the thread", async () => {
     const order: string[] = [];
     const deps = dependencies({

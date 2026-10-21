@@ -654,10 +654,7 @@ interface TerminalProcessTableSnapshot {
   readonly commandById: ReadonlyMap<number, string>;
 }
 
-export function subprocessSnapshotPollDelayMs(
-  pollIntervalMs: number,
-  failureCount: number,
-): number {
+function subprocessSnapshotPollDelayMs(pollIntervalMs: number, failureCount: number): number {
   return Math.min(pollIntervalMs * 2 ** failureCount, MAX_SUBPROCESS_POLL_INTERVAL_MS);
 }
 

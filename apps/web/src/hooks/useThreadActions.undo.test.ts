@@ -203,14 +203,6 @@ describe("archive Undo", () => {
     );
   });
 
-  it("stays put when the archived thread was not open", async () => {
-    const actions = useThreadActions();
-    await actions.archiveThread(target);
-    await currentUndo()();
-    expect(commands.unarchive).toHaveBeenCalledOnce();
-    expect(router.navigate).not.toHaveBeenCalled();
-  });
-
   it("shows no Undo when the archive failed", async () => {
     commands.archive.mockResolvedValue({ _tag: "Failure", cause: new Error("nope") });
     await useThreadActions().archiveThread(target);

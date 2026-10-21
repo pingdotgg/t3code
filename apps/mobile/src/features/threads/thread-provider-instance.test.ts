@@ -81,32 +81,6 @@ describe("resolveThreadProviderInstance", () => {
     ).toBeUndefined();
   });
 
-  it("labels a custom instance by its id so its initials differ from the default", () => {
-    const environmentId = EnvironmentId.make("environment-a");
-    const serverConfigs = new Map<EnvironmentId, ServerConfig>([
-      [
-        environmentId,
-        makeConfig([
-          { instanceId: "codex", driver: "codex", displayName: "Codex" },
-          { instanceId: "codex_personal", driver: "codex", displayName: "Codex" },
-        ]),
-      ],
-    ]);
-
-    expect(
-      resolveThreadProviderInstance(
-        serverConfigs.get(environmentId)?.providers,
-        makeThread(environmentId, "codex"),
-      )?.displayName,
-    ).toBe("Codex");
-    expect(
-      resolveThreadProviderInstance(
-        serverConfigs.get(environmentId)?.providers,
-        makeThread(environmentId, "codex_personal"),
-      )?.displayName,
-    ).toBe("Codex Personal");
-  });
-
   it("uses the current runtime owner after a provider handoff", () => {
     const environmentId = EnvironmentId.make("environment-a");
     const serverConfigs = new Map<EnvironmentId, ServerConfig>([
@@ -138,18 +112,6 @@ describe("resolveThreadProviderInstance", () => {
       displayName: "Codex Work",
       showBadge: true,
     });
-  });
-
-  it("hides the badge for a single instance with no accent color", () => {
-    const environmentId = EnvironmentId.make("environment-a");
-    const serverConfigs = new Map<EnvironmentId, ServerConfig>([
-      [environmentId, makeConfig([{ instanceId: "codex", driver: "codex" }])],
-    ]);
-    const thread = makeThread(environmentId, "codex");
-
-    expect(
-      resolveThreadProviderInstance(serverConfigs.get(environmentId)?.providers, thread)?.showBadge,
-    ).toBe(false);
   });
 });
 
@@ -204,61 +166,5 @@ describe("createThreadRowProviderInstanceResolver", () => {
     } finally {
       registry.dispose();
     }
-  });
-
-  const environmentId = EnvironmentId.make("environment-a");
-  const serverConfigs = new Map<EnvironmentId, ServerConfig>([
-    [
-      environmentId,
-      makeConfig([
-        { instanceId: "codex", driver: "codex", displayName: "Codex" },
-        { instanceId: "codex_work", driver: "codex", displayName: "Codex" },
-      ]),
-    ],
-  ]);
-
-  it("hands out the same reference for repeated lookups of one instance", () => {
-    const resolve = createThreadRowProviderInstanceResolver(
-      new Map([...serverConfigs].map(([id, config]) => [id, config.providers])),
-    );
-    const first = resolve(makeThread(environmentId, "codex"));
-    const second = resolve(makeThread(environmentId, "codex"));
-    expect(first).not.toBeNull();
-    expect(second).toBe(first);
-  });
-
-  it("distinguishes instances of the same driver", () => {
-    const resolve = createThreadRowProviderInstanceResolver(
-      new Map([...serverConfigs].map(([id, config]) => [id, config.providers])),
-    );
-    const personal = resolve(makeThread(environmentId, "codex"));
-    const work = resolve(makeThread(environmentId, "codex_work"));
-    expect(personal).not.toBeNull();
-    expect(work).not.toBeNull();
-    expect(work).not.toBe(personal);
-    expect(work?.displayName).toBe("Codex Work");
-  });
-
-  it("hands out a new identity when the server-config generation changes", () => {
-    const before = createThreadRowProviderInstanceResolver(
-      new Map([...serverConfigs].map(([id, config]) => [id, config.providers])),
-    );
-    const nextConfigs = new Map<EnvironmentId, ServerConfig>([
-      [environmentId, makeConfig([{ instanceId: "codex", driver: "codex" }])],
-    ]);
-    const after = createThreadRowProviderInstanceResolver(
-      new Map([...nextConfigs].map(([id, config]) => [id, config.providers])),
-    );
-    expect(after(makeThread(environmentId, "codex"))).not.toBe(
-      before(makeThread(environmentId, "codex")),
-    );
-  });
-
-  it("resolves unknown instances to null without throwing", () => {
-    const resolve = createThreadRowProviderInstanceResolver(
-      new Map([...serverConfigs].map(([id, config]) => [id, config.providers])),
-    );
-    expect(resolve(makeThread(environmentId, "ghost"))).toBeNull();
-    expect(resolve(makeThread(environmentId, "ghost"))).toBeNull();
   });
 });

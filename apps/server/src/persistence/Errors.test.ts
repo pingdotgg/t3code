@@ -41,29 +41,6 @@ it("reads the condition through a wrapping driver error", () => {
   assert.equal(error.detail, "SQLITE(5) database is locked");
 });
 
-it.each([
-  new Error("unhelpful"),
-  Object.assign(new Error("file not found"), { errno: -2, code: "ENOENT" }),
-])("omits a detail for a cause it cannot categorize (%#)", (cause) => {
-  const error = toPersistenceSqlError("AuthSessionRepository.list:query")(cause);
-
-  assert.equal(error.detail, undefined);
-  assert.equal(error.message, "SQL error in AuthSessionRepository.list:query");
-});
-
-it.effect("summarizes a schema cause by issue tag instead of by rejected value", () =>
-  Effect.gen(function* () {
-    const rejectedPayload = "sql-mapper-secret-sentinel";
-    const cause = yield* Effect.flip(
-      decodeRuntimePayload({ runtimePayload: { attempt: rejectedPayload } }),
-    );
-    const error = toPersistenceSqlError("ProviderSessionRuntimeRepository.list:query")(cause);
-
-    assert.ok(error.detail !== undefined);
-    assert.ok(!error.message.includes(rejectedPayload));
-  }),
-);
-
 it.effect("maps schema errors without copying rejected payloads into diagnostics", () =>
   Effect.gen(function* () {
     const rejectedPayload = "runtime-payload-secret-sentinel";

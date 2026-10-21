@@ -1,7 +1,7 @@
 // @effect-diagnostics globalTimers:off - Display timing for React hooks, outside an Effect runtime.
 
-export const STATUS_SHOW_DELAY_MS = 400;
-export const STATUS_MIN_VISIBLE_MS = 400;
+const STATUS_SHOW_DELAY_MS = 400;
+const STATUS_MIN_VISIBLE_MS = 400;
 
 export interface ShownStatus<A> {
   readonly key: string;

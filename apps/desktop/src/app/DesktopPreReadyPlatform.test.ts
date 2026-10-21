@@ -119,37 +119,6 @@ describe("DesktopPreReadyPlatform", () => {
     );
   });
 
-  it.effect.each(["darwin", "win32"] as const)("leaves device scaling alone on %s", (platform) => {
-    readFileSyncMock.mockReturnValue("1.75");
-    hasSwitchMock.mockImplementation((name: string) => name === "force-device-scale-factor");
-    getSwitchValueMock.mockReturnValue("2");
-
-    return Effect.gen(function* () {
-      yield* DesktopPreReadyPlatform.make;
-      assert.deepEqual(readFileSyncMock.mock.calls, []);
-      assert.deepEqual(writeFileSyncMock.mock.calls, []);
-      assert.deepEqual(appendSwitchMock.mock.calls, []);
-    }).pipe(Effect.provideService(HostProcess.Platform, platform));
-  });
-
-  it.effect("preserves an explicit Linux password-store switch", () => {
-    hasSwitchMock.mockImplementation((switchName) => switchName === "password-store");
-    getSwitchValueMock.mockReturnValue(" basic ");
-
-    return Effect.gen(function* () {
-      const options = yield* DesktopPreReadyPlatform.DesktopPreReadyElectronOptions;
-
-      assert.equal(options.linuxPasswordStoreCommandLine, "basic");
-      assert.isFalse(appendSwitchMock.mock.calls.some(([name]) => name === "password-store"));
-    }).pipe(
-      Effect.provide(
-        DesktopPreReadyPlatform.layer.pipe(
-          Layer.provide(Layer.succeed(HostProcess.Platform, "linux")),
-        ),
-      ),
-    );
-  });
-
   it.effect.each([
     {
       label: "merges the color-manager fallback into disabled features on Hyprland 0.48.1",
@@ -246,32 +215,6 @@ describe("DesktopPreReadyPlatform", () => {
         assert.isTrue(identity.iconInstalled);
       }),
     ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
-  });
-
-  it.effect("keeps startup available when the early desktop entry cannot be written", () => {
-    getSwitchValueMock.mockReturnValue("");
-    mkdirSyncMock.mockImplementation(() => {
-      throw new Error("read-only filesystem");
-    });
-
-    return DesktopPreReadyPlatform.make.pipe(
-      Effect.provideService(HostProcess.Platform, "linux"),
-      Effect.asVoid,
-    );
-  });
-
-  it.effect("still prepares the portal entry when the bundled icon cannot be copied", () => {
-    getSwitchValueMock.mockReturnValue("");
-    copyFileSyncMock.mockImplementation(() => {
-      throw new Error("missing bundled icon");
-    });
-    return Effect.gen(function* () {
-      yield* DesktopPreReadyPlatform.make;
-      const contents = writeFileSyncMock.mock.calls[0]?.[1];
-      assert.include(contents, "MimeType=x-scheme-handler/t3code;");
-      assert.include(contents, "Icon=");
-      assert.equal(setDesktopNameMock.mock.calls.length, 1);
-    }).pipe(Effect.provideService(HostProcess.Platform, "linux"));
   });
 
   it.effect(

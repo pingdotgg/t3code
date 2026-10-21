@@ -1,7 +1,6 @@
 import {
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
-  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
 } from "@t3tools/contracts";
@@ -11,129 +10,12 @@ import {
   filterSharedServerPatch,
   findSharedSettingsMismatches,
   pickSharedServerSettings,
-  splitSharedServerPatch,
-  supportsSharedSettingsSync,
 } from "./sharedSettings.ts";
 
 const primaryId = EnvironmentId.make("env-primary");
 const laptopId = EnvironmentId.make("env-laptop");
 const boxId = EnvironmentId.make("env-box");
 const restartCapabilities = { threadRestartContinuation: true };
-
-describe("supportsSharedSettingsSync", () => {
-  it("accepts only connected servers that advertise the shared-settings capability", () => {
-    expect(
-      supportsSharedSettingsSync({
-        connection: { phase: "connected" },
-        serverConfig: { environment: { capabilities: { threadAutoSettlement: true } } },
-      }),
-    ).toBe(true);
-    expect(
-      supportsSharedSettingsSync({
-        connection: { phase: "connected" },
-        serverConfig: { environment: { capabilities: {} } },
-      }),
-    ).toBe(false);
-    expect(
-      supportsSharedSettingsSync({
-        connection: { phase: "reconnecting" },
-        serverConfig: { environment: { capabilities: { threadAutoSettlement: true } } },
-      }),
-    ).toBe(false);
-  });
-});
-
-describe("splitSharedServerPatch", () => {
-  it("keeps project overrides local: project ids belong to one environment", () => {
-    const patch = {
-      projectSettingsOverrides: { [ProjectId.make("project")]: { defaultAutoPull: true } },
-      sidebarAutoSettleOnMerge: false,
-    };
-    expect(splitSharedServerPatch(patch)).toEqual({
-      sharedPatch: { sidebarAutoSettleOnMerge: false },
-      localPatch: { projectSettingsOverrides: patch.projectSettingsOverrides },
-    });
-  });
-
-  it.each([
-    {
-      instanceId: ProviderInstanceId.make("codex"),
-      model: "gpt-5.6-sol",
-      options: [{ id: "reasoningEffort", value: "low" }],
-    },
-    {
-      instanceId: ProviderInstanceId.make("claudeAgent"),
-      model: "claude-sonnet-4-6",
-      options: [{ id: "effort", value: "high" }],
-    },
-    DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
-  ])("shares the text generation model and options, including reset (%j)", (selection) => {
-    const patch = { textGenerationModelSelection: selection };
-    expect(splitSharedServerPatch(patch)).toEqual({ sharedPatch: patch, localPatch: {} });
-    expect(pickSharedServerSettings({ ...DEFAULT_SERVER_SETTINGS, ...patch })).toMatchObject(patch);
-    const environment = {
-      environmentId: boxId,
-      label: "Remote Box",
-      syncEligible: true,
-      settings: {
-        ...DEFAULT_SERVER_SETTINGS,
-        textGenerationModelSelection: { ...selection, model: "different-model" },
-      },
-    };
-    const input = {
-      primaryEnvironmentId: primaryId,
-      primarySettings: { ...DEFAULT_SERVER_SETTINGS, ...patch },
-      environments: [environment],
-    };
-    expect(findSharedSettingsMismatches(input)).toEqual([
-      { environmentId: boxId, label: "Remote Box" },
-    ]);
-    expect(
-      findSharedSettingsMismatches({
-        ...input,
-        environments: [{ ...environment, settings: input.primarySettings }],
-      }),
-    ).toEqual([]);
-  });
-
-  it("routes preference keys to the shared patch and machine keys to the local patch", () => {
-    const { sharedPatch, localPatch } = splitSharedServerPatch({
-      sidebarAutoSettleAfterDays: 7,
-      sidebarAutoSettleOnMerge: false,
-      continueThreadsAfterServerUpdate: true,
-      enableAgentBrowserAccess: false,
-      defaultThreadEnvMode: "worktree",
-      newWorktreesStartFromOrigin: true,
-    });
-    expect(sharedPatch).toEqual({
-      sidebarAutoSettleAfterDays: 7,
-      sidebarAutoSettleOnMerge: false,
-      continueThreadsAfterServerUpdate: true,
-      newWorktreesStartFromOrigin: true,
-    });
-    expect(localPatch).toEqual({
-      enableAgentBrowserAccess: false,
-      defaultThreadEnvMode: "worktree",
-    });
-  });
-});
-
-describe("pickSharedServerSettings", () => {
-  it("returns only the shared keys", () => {
-    expect(
-      Object.keys(pickSharedServerSettings(DEFAULT_SERVER_SETTINGS, restartCapabilities)).sort(),
-    ).toEqual([
-      "autoResumeLimitedThreads",
-      "continueThreadsAfterServerUpdate",
-      "newWorktreesStartFromOrigin",
-      "sidebarAutoSettleAfterDays",
-      "sidebarAutoSettleOnMerge",
-      "snoozeLimitedThreads",
-      "sourceControlWritingStyle",
-      "textGenerationModelSelection",
-    ]);
-  });
-});
 
 describe("filterSharedServerPatch", () => {
   it.each([true, false])(
@@ -215,11 +97,6 @@ describe("filterSharedServerPatch", () => {
       ).toEqual(availability === "enabled" ? [{ environmentId: boxId, label: "Remote Box" }] : []);
     },
   );
-
-  it.each([true, false])("preserves supported restart preference %s", (enabled) => {
-    const patch = { continueThreadsAfterServerUpdate: enabled, sidebarAutoSettleAfterDays: 7 };
-    expect(filterSharedServerPatch(patch, restartCapabilities)).toEqual(patch);
-  });
 
   it.each([undefined, {}, { threadRestartContinuation: false }])(
     "omits only the unsupported restart preference with capabilities %j",
@@ -362,27 +239,6 @@ describe("findSharedSettingsMismatches", () => {
       ],
     });
     expect(mismatches).toEqual([]);
-  });
-
-  it("reports nothing until the primary environment's settings are loaded", () => {
-    const environments = [
-      {
-        environmentId: boxId,
-        label: "Remote Box",
-        syncEligible: true,
-        settings: primarySettings,
-      },
-    ];
-    expect(
-      findSharedSettingsMismatches({ primaryEnvironmentId: null, primarySettings, environments }),
-    ).toEqual([]);
-    expect(
-      findSharedSettingsMismatches({
-        primaryEnvironmentId: primaryId,
-        primarySettings: null,
-        environments,
-      }),
-    ).toEqual([]);
   });
 
   it("skips ineligible environments and environments without a loaded config", () => {

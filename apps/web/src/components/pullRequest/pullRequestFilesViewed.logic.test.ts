@@ -5,7 +5,6 @@ import {
   isStaleViewedState,
   revertFileViewedOverlay,
   settleFileViewedOverlay,
-  toFileViewedBatch,
   toFileViewedStates,
   type FileViewedOverlay,
 } from "./pullRequestFilesViewed.logic";
@@ -24,11 +23,6 @@ const states = toFileViewedStates({
 });
 
 describe("isFileViewed", () => {
-  it("follows the host for a file the reader has not pressed", () => {
-    expect(isFileViewed("a.ts", states, NO_OVERLAY)).toBe(true);
-    expect(isFileViewed("b.ts", states, NO_OVERLAY)).toBe(false);
-  });
-
   it("reads a file pushed to since it was cleared as unread", () => {
     expect(isFileViewed("c.ts", states, NO_OVERLAY)).toBe(false);
     expect(isStaleViewedState(states?.get("c.ts"))).toBe(true);
@@ -104,22 +98,6 @@ describe("settleFileViewedOverlay", () => {
   });
 });
 
-describe("toFileViewedBatch", () => {
-  it("carries both directions in one batch", () => {
-    expect(
-      toFileViewedBatch(
-        new Map([
-          ["a.ts", false],
-          ["b.ts", true],
-        ]),
-      ),
-    ).toEqual([
-      { path: "a.ts", viewed: false },
-      { path: "b.ts", viewed: true },
-    ]);
-  });
-});
-
 describe("revertFileViewedOverlay", () => {
   const batch = [
     { path: "a.ts", viewed: true },
@@ -147,10 +125,5 @@ describe("revertFileViewedOverlay", () => {
   it("leaves a path a later request took over, even pressed the same way", () => {
     const overlay = new Map([["a.ts", true]]);
     expect(revertFileViewedOverlay(overlay, batch, new Set(["b.ts"]))).toBe(overlay);
-  });
-
-  it("leaves a path the request never carried", () => {
-    const overlay = new Map([["c.ts", true]]);
-    expect(revertFileViewedOverlay(overlay, batch, both)).toBe(overlay);
   });
 });

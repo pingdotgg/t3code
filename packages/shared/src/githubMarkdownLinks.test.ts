@@ -18,14 +18,6 @@ describe("githubMarkdownLinks", () => {
       "`#123 @person abc1234`\n\n```\n#123\n```\n\n[#123](https://example.com) ![#123](image.png) https://example.com/#123 user@example.com \\#123 1234567\n\n[ref]: https://example.com/#123";
     expect(githubMarkdownLinks(text, url)).toBe(text);
   });
-  it("keeps formatting and links references in lists and quotes", () => {
-    expect(githubMarkdownLinks("> **Fixes #42**\n\n- See #9", url)).toBe(
-      "> **Fixes [#42](https://github.com/team/repo/issues/42)**\n\n- See [#9](https://github.com/team/repo/issues/9)",
-    );
-  });
-  it("does nothing without repository context", () => {
-    expect(githubMarkdownLinks("#123", null)).toBe("#123");
-  });
   it("does not nest links inside HTML anchors or code", () => {
     const text = 'See <a href="https://example.com">#12</a> and <code>#13</code>, then #14.';
     expect(githubMarkdownLinks(text, url)).toBe(

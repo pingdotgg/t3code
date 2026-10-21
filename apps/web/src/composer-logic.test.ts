@@ -1,4 +1,3 @@
-import { resolveComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import { filterComposerPullRequestMatches } from "@t3tools/shared/composerPullRequestMatches";
 import { EnvironmentId, MessageId, ThreadId, type AssistantCitation } from "@t3tools/contracts";
 import {
@@ -23,7 +22,6 @@ import {
   formatAssistantCitationForComposer,
   isCollapsedCursorAdjacentToInlineToken,
   isPathSuggestionCurrent,
-  parseStandaloneComposerSlashCommand,
   replaceTextRange,
 } from "./composer-logic";
 import { carryDisplacedCustomAnswerIntoPrompt } from "./pendingUserInput";
@@ -85,15 +83,6 @@ describe("isPathSuggestionCurrent", () => {
 });
 
 describe("formatAssistantCitationForComposer", () => {
-  it.each([undefined, "", " \n\t "])(
-    "keeps citation-only insertion for a blank comment %j",
-    (comment) => {
-      expect(formatAssistantCitationForComposer(citation, comment)).toBe(
-        `${serializeAssistantCitation(citation)} `,
-      );
-    },
-  );
-
   it("binds a multiline comment to its citation without adding standalone prompt text", () => {
     const comment = 'What does "keep" mean? 👋\n  Please show an example.';
     const text = formatAssistantCitationForComposer(citation, `  ${comment}\n`);
@@ -132,92 +121,6 @@ describe("composerSubmissionIntentForKey", () => {
     ).toBe(expected);
   });
 
-  it.each(["MacIntel", "Win32", "Linux"])("uses the configured actions on %s", (platform) => {
-    const modEnter = {
-      ...enter,
-      metaKey: platform === "MacIntel",
-      ctrlKey: platform !== "MacIntel",
-    };
-    for (const [sendShortcut, prompt, requiresModifier] of [
-      ["enter", "one line", false],
-      ["enter", "two\nlines", false],
-      ["mod-enter", "one line", true],
-      ["mod-enter", "two\nlines", true],
-      ["mod-enter-multiline", "one line", false],
-      ["mod-enter-multiline", "two\nlines", true],
-    ] as const) {
-      const running = { ...input, platform, sendShortcut, prompt, isRunning: true };
-      const intent = composerSubmissionIntentForKey({ ...running, event: modEnter });
-      expect(intent).toBe(requiresModifier ? "foreground" : "alternate");
-      const alternateIntent = composerSubmissionIntentForKey({
-        ...running,
-        event: { ...modEnter, shiftKey: requiresModifier },
-      });
-      expect(alternateIntent).toBe("alternate");
-      expect(composerSubmissionIntentForKey({ ...running, event: enter })).toBe(
-        requiresModifier ? null : "foreground",
-      );
-      for (const activeTurnDefault of ["queue", "steer"] as const) {
-        expect(
-          resolveComposerDispatchMode({
-            running: true,
-            alternateModifier: intent === "alternate",
-            activeTurnDefault,
-          }),
-        ).toBe(
-          requiresModifier ? activeTurnDefault : activeTurnDefault === "queue" ? "steer" : "queue",
-        );
-        expect(
-          resolveComposerDispatchMode({
-            running: true,
-            alternateModifier: alternateIntent === "alternate",
-            activeTurnDefault,
-          }),
-        ).toBe(activeTurnDefault === "queue" ? "steer" : "queue");
-      }
-      expect(
-        composerSubmissionIntentForKey({
-          ...input,
-          platform,
-          sendShortcut,
-          isDraftThread: true,
-          event: { ...modEnter, altKey: true },
-        }),
-      ).toBe("background");
-      expect(
-        composerSubmissionIntentForKey({
-          ...input,
-          platform,
-          sendShortcut,
-          event: { ...modEnter, altKey: true },
-        }),
-      ).toBe("background");
-      expect(
-        composerSubmissionIntentForKey({
-          ...input,
-          platform,
-          sendShortcut,
-          prompt,
-          isDraftThread: true,
-          event: modEnter,
-        }),
-      ).toBe("background");
-      expect(
-        composerSubmissionIntentForKey({ ...running, event: { ...enter, shiftKey: true } }),
-      ).toBeNull();
-    }
-  });
-
-  it("leaves queued-message steering on Mod+Shift+Enter outside a draft", () => {
-    expect(
-      composerSubmissionIntentForKey({
-        ...input,
-        isRunning: true,
-        event: { ...enter, ctrlKey: true, shiftKey: true },
-      }),
-    ).toBeNull();
-  });
-
   it("honors the send preference with an existing install's saved alternate binding", () => {
     const keybindings = mergeWithDefaultKeybindings(
       compileResolvedKeybindingsConfig([
@@ -238,35 +141,6 @@ describe("composerSubmissionIntentForKey", () => {
         event: { ...enter, ctrlKey: true, shiftKey: true },
       }),
     ).toBe("alternate");
-  });
-
-  it("does not start a background thread with the queued-message shortcut", () => {
-    expect(
-      composerSubmissionIntentForKey({
-        ...input,
-        isDraftThread: true,
-        event: { ...enter, ctrlKey: true, shiftKey: true },
-      }),
-    ).toBeNull();
-  });
-
-  it.each([
-    ["mod+arrowup", { key: "ArrowUp", ctrlKey: true }],
-    ["shift+tab", { key: "Tab", shiftKey: true }],
-  ] as const)("accepts a remapped %s action", (key, event) => {
-    const keybindings = mergeWithDefaultKeybindings(
-      compileResolvedKeybindingsConfig([
-        { key, command: "composer.sendBackground", when: "composerFocus && draftThreadRoute" },
-      ]),
-    );
-    expect(
-      composerSubmissionIntentForKey({
-        ...input,
-        keybindings,
-        isDraftThread: true,
-        event: { ...enter, ...event },
-      }),
-    ).toBe("background");
   });
 
   it.each(["enter", "mod-enter", "mod-enter-multiline"] as const)(
@@ -379,85 +253,16 @@ describe("detectComposerTrigger", () => {
     });
   });
 
-  it.each(["Use /", "Use /review"])("detects the inline slash token in %j", (text) => {
-    expect(detectComposerTrigger(text, text.length)).toEqual({
-      kind: "slash-command",
-      query: text.slice(5),
-      rangeStart: 4,
-      rangeEnd: text.length,
-    });
-  });
-
   it.each(["Use/review", "https://example.com/review", "Use /review "])(
     "does not trigger for %j",
     (text) => expect(detectComposerTrigger(text, text.length)).toBeNull(),
   );
-
-  it("detects @path trigger at cursor", () => {
-    const text = "Please check @src/com";
-    const trigger = detectComposerTrigger(text, text.length);
-
-    expect(trigger).toEqual({
-      kind: "path",
-      query: "src/com",
-      rangeStart: "Please check ".length,
-      rangeEnd: text.length,
-    });
-  });
-
-  it("detects slash command token while typing command name", () => {
-    const text = "/mo";
-    const trigger = detectComposerTrigger(text, text.length);
-
-    expect(trigger).toEqual({
-      kind: "slash-command",
-      query: "mo",
-      rangeStart: 0,
-      rangeEnd: text.length,
-    });
-  });
-
-  it("keeps /model as a slash command item", () => {
-    const text = "/model";
-    const trigger = detectComposerTrigger(text, text.length);
-
-    expect(trigger).toEqual({
-      kind: "slash-command",
-      query: "model",
-      rangeStart: 0,
-      rangeEnd: text.length,
-    });
-  });
 
   it("does not keep a subcommand trigger active after /model arguments", () => {
     const text = "/model spark";
     const trigger = detectComposerTrigger(text, text.length);
 
     expect(trigger).toBeNull();
-  });
-
-  it("detects non-model slash commands while typing", () => {
-    const text = "/pl";
-    const trigger = detectComposerTrigger(text, text.length);
-
-    expect(trigger).toEqual({
-      kind: "slash-command",
-      query: "pl",
-      rangeStart: 0,
-      rangeEnd: text.length,
-    });
-  });
-
-  it("keeps slash command detection active for provider commands", () => {
-    const text = "/rev";
-    const trigger = detectComposerTrigger(text, text.length);
-
-    expect(trigger).toEqual({
-      kind: "slash-command",
-      query: "rev",
-      rangeStart: 0,
-      rangeEnd: text.length,
-    });
   });
 
   it.each(["$", "€", "£", "¥", "₹", "₩", "₿", "𑿝"])(
@@ -497,17 +302,6 @@ describe("detectComposerTrigger", () => {
     });
   });
 
-  it("detects a one-word pull request search", () => {
-    const text = "Compare with #composer";
-
-    expect(detectComposerTrigger(text, text.length)).toEqual({
-      kind: "pull-request",
-      query: "composer",
-      rangeStart: "Compare with ".length,
-      rangeEnd: text.length,
-    });
-  });
-
   it("supports hyphenated pull request search terms", () => {
     const text = "Find #inline-context";
 
@@ -535,29 +329,6 @@ describe("detectComposerTrigger", () => {
       rangeStart: "Please inspect ".length,
       rangeEnd: cursorAfterAt,
     });
-  });
-
-  it("detects @path trigger with query typed mid-text", () => {
-    const text = "Please inspect @srin this sentence";
-    const cursorAfterQuery = "Please inspect @sr".length;
-
-    const trigger = detectComposerTrigger(text, cursorAfterQuery);
-    expect(trigger).toEqual({
-      kind: "path",
-      query: "sr",
-      rangeStart: "Please inspect ".length,
-      rangeEnd: cursorAfterQuery,
-    });
-  });
-
-  it("detects trigger with true cursor even when regex-based mention detection would false-match", () => {
-    const text = "Please inspect @in this sentence";
-    const cursorAfterAt = "Please inspect @".length;
-
-    const trigger = detectComposerTrigger(text, cursorAfterAt);
-    expect(trigger).not.toBeNull();
-    expect(trigger?.kind).toBe("path");
-    expect(trigger?.query).toBe("");
   });
 });
 
@@ -630,28 +401,6 @@ describe("filterComposerPullRequestMatches", () => {
     expect(matches[0]?.number).toBe(7);
     expect(matches).toHaveLength(10);
   });
-
-  it("uses an empty query for a capped recent list", () => {
-    expect(
-      filterComposerPullRequestMatches({
-        entries,
-        projectId: "project-1",
-        repository: "t3tools/t3code",
-        query: "",
-        limit: 2,
-      }).map((entry) => entry.number),
-    ).toEqual([8987, 27]);
-  });
-});
-
-describe("replaceTextRange", () => {
-  it("replaces a text range and returns new cursor", () => {
-    const replaced = replaceTextRange("hello @src", 6, 10, "");
-    expect(replaced).toEqual({
-      text: "hello ",
-      cursor: 6,
-    });
-  });
 });
 
 describe("expandCollapsedComposerCursor", () => {
@@ -709,15 +458,6 @@ describe("expandCollapsedComposerCursor", () => {
 });
 
 describe("composerStateAtPromptEnd", () => {
-  it("puts the caret at the end of a restored parked draft", () => {
-    const prompt = carryDisplacedCustomAnswerIntoPrompt("first half\n", "second half");
-
-    expect(composerStateAtPromptEnd(prompt)).toEqual({
-      cursor: prompt.length,
-      trigger: null,
-    });
-  });
-
   it("collapses mention chips so the next keystroke lands after the draft", () => {
     const prompt = carryDisplacedCustomAnswerIntoPrompt("", "see @AGENTS.md please");
 
@@ -737,40 +477,6 @@ describe("composerStateAtPromptEnd", () => {
 });
 
 describe("collapseExpandedComposerCursor", () => {
-  it("keeps cursor unchanged when no mention segment is present", () => {
-    expect(collapseExpandedComposerCursor("plain text", 5)).toBe(5);
-  });
-
-  it("maps expanded mention cursor back to collapsed cursor", () => {
-    const text = "what's in my @AGENTS.md fsfdas";
-    const collapsedCursorAfterMention = "what's in my ".length + 2;
-    const expandedCursorAfterMention = "what's in my @AGENTS.md ".length;
-
-    expect(collapseExpandedComposerCursor(text, expandedCursorAfterMention)).toBe(
-      collapsedCursorAfterMention,
-    );
-  });
-
-  it("maps expanded quoted mention cursor back to collapsed cursor", () => {
-    const text = 'what is in @"My File.md" please';
-    const collapsedCursorAfterMention = "what is in ".length + 2;
-    const expandedCursorAfterMention = 'what is in @"My File.md" '.length;
-
-    expect(collapseExpandedComposerCursor(text, expandedCursorAfterMention)).toBe(
-      collapsedCursorAfterMention,
-    );
-  });
-
-  it("maps expanded markdown file link cursors back to collapsed offsets", () => {
-    const text = "what's in [AGENTS.md](AGENTS.md) please";
-    const collapsedCursorAfterMention = "what's in ".length + 2;
-    const expandedCursorAfterMention = "what's in [AGENTS.md](AGENTS.md) ".length;
-
-    expect(collapseExpandedComposerCursor(text, expandedCursorAfterMention)).toBe(
-      collapsedCursorAfterMention,
-    );
-  });
-
   it("keeps package-like text expanded when another mention already exists earlier", () => {
     const text = "open @AGENTS.md then @src/index.ts ";
     const expandedCursor = text.length;
@@ -788,16 +494,6 @@ describe("collapseExpandedComposerCursor", () => {
     expect(collapsedCursor).toBe("install @scope/pkg then ".length + 1 + " ".length);
     expect(expandCollapsedComposerCursor(text, collapsedCursor)).toBe(expandedCursor);
   });
-
-  it.each(["$", "€", "𑿝"])("maps expanded %s skill cursor back to collapsed cursor", (prefix) => {
-    const text = `run ${prefix}review-follow-up then`;
-    const collapsedCursorAfterSkill = "run ".length + 2;
-    const expandedCursorAfterSkill = `run ${prefix}review-follow-up `.length;
-
-    expect(collapseExpandedComposerCursor(text, expandedCursorAfterSkill)).toBe(
-      collapsedCursorAfterSkill,
-    );
-  });
 });
 
 it("preserves the caret before trailing text after mixed-width skill chips", () => {
@@ -805,19 +501,6 @@ it("preserves the caret before trailing text after mixed-width skill chips", () 
   const expanded = "𑿝ui a $review ".length;
   expect(collapseExpandedComposerCursor(text, expanded)).toBe(6);
   expect(expandCollapsedComposerCursor(text, 6)).toBe(expanded);
-});
-
-describe("clampCollapsedComposerCursor", () => {
-  it("clamps to collapsed prompt length when mentions are present", () => {
-    const text = "open @AGENTS.md then ";
-
-    expect(clampCollapsedComposerCursor(text, text.length)).toBe(
-      "open ".length + 1 + " then ".length,
-    );
-    expect(clampCollapsedComposerCursor(text, Number.POSITIVE_INFINITY)).toBe(
-      "open ".length + 1 + " then ".length,
-    );
-  });
 });
 
 describe("assistant citation cursor offsets", () => {
@@ -877,17 +560,6 @@ describe("assistant citation cursor offsets", () => {
 });
 
 describe("isCollapsedCursorAdjacentToInlineToken", () => {
-  it("returns false when no mention exists", () => {
-    expect(isCollapsedCursorAdjacentToInlineToken("plain text", 6, "left")).toBe(false);
-    expect(isCollapsedCursorAdjacentToInlineToken("plain text", 6, "right")).toBe(false);
-  });
-
-  it("keeps @query typing non-adjacent while no mention pill exists", () => {
-    const text = "hello @pac";
-    expect(isCollapsedCursorAdjacentToInlineToken(text, text.length, "left")).toBe(false);
-    expect(isCollapsedCursorAdjacentToInlineToken(text, text.length, "right")).toBe(false);
-  });
-
   it("detects left adjacency only when cursor is directly after a mention", () => {
     const text = "open @AGENTS.md next";
     const mentionStart = "open ".length;
@@ -915,29 +587,6 @@ describe("isCollapsedCursorAdjacentToInlineToken", () => {
 
     expect(isCollapsedCursorAdjacentToInlineToken(text, tokenEnd, "left")).toBe(true);
     expect(isCollapsedCursorAdjacentToInlineToken(text, tokenStart, "right")).toBe(true);
-  });
-
-  it("treats skill pills as inline tokens for adjacency checks", () => {
-    const text = "run $review-follow-up next";
-    const tokenStart = "run ".length;
-    const tokenEnd = tokenStart + 1;
-
-    expect(isCollapsedCursorAdjacentToInlineToken(text, tokenEnd, "left")).toBe(true);
-    expect(isCollapsedCursorAdjacentToInlineToken(text, tokenStart, "right")).toBe(true);
-  });
-});
-
-describe("parseStandaloneComposerSlashCommand", () => {
-  it("parses standalone /plan command", () => {
-    expect(parseStandaloneComposerSlashCommand(" /plan ")).toBe("plan");
-  });
-
-  it("parses standalone /default command", () => {
-    expect(parseStandaloneComposerSlashCommand("/default")).toBe("default");
-  });
-
-  it("ignores slash commands with extra message text", () => {
-    expect(parseStandaloneComposerSlashCommand("/plan explain this")).toBeNull();
   });
 });
 

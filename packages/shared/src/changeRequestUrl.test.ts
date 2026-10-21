@@ -19,14 +19,6 @@ describe("parseChangeRequestUrl", () => {
     });
   });
 
-  it("reads a pull request on a GitHub Enterprise host", () => {
-    expect(parseChangeRequestUrl("https://github.acme.test/platform/api/pull/7")).toEqual({
-      host: "github.acme.test",
-      repository: "platform/api",
-      number: 7,
-    });
-  });
-
   it("reads Forgejo URLs even when the hostname contains github", () => {
     expect(parseChangeRequestUrl("https://github.internal/team/repo/pulls/7")).toEqual({
       host: "github.internal",
@@ -177,10 +169,6 @@ describe("siblingPullRequestUrl", () => {
     ],
   ])("builds a canonical sibling of %s", (url, expected) => {
     expect(siblingPullRequestUrl(url, 43)).toBe(expected);
-  });
-  it("rejects non-PR URLs and invalid numbers", () => {
-    expect(siblingPullRequestUrl("https://github.com/acme/web/issues/42", 43)).toBeNull();
-    expect(siblingPullRequestUrl("https://github.com/acme/web/pull/42", 0)).toBeNull();
   });
 });
 

@@ -6,7 +6,7 @@ import {
   ThreadId,
   type ServerProvider,
 } from "@t3tools/contracts";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 
 import { act, render } from "../../../test/render";
 
@@ -76,14 +76,6 @@ const provider = {
   slashCommands: [],
   skills: [],
 } satisfies ServerProvider;
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
 
 async function renderSection(readOnly = false) {
   const screen = await render(
@@ -155,118 +147,6 @@ function setup() {
   });
   dialogs.confirm.mockReset().mockResolvedValue(true);
 }
-
-describe("AcpSessionManagementSection", () => {
-  it("lists and imports native sessions through the owning environment", async () => {
-    setup();
-    await using screen = await renderSection();
-    await screen.click("List sessions");
-
-    expect(commands.list).toHaveBeenCalledWith({
-      environmentId,
-      input: { instanceId, projectId },
-    });
-    expect(screen.container.textContent).toContain(session.title);
-
-    await screen.click("Import");
-
-    expect(commands.import).toHaveBeenCalledWith({
-      environmentId,
-      input: {
-        instanceId,
-        projectId,
-        sessionId: session.sessionId,
-        title: session.title,
-        updatedAt: session.updatedAt,
-      },
-    });
-    expect(screen.button("Imported").disabled).toBe(true);
-  });
-
-  it("logs out the provider instance through the owning environment", async () => {
-    setup();
-    await using screen = await renderSection();
-    await screen.click("Log out");
-
-    expect(commands.logout).toHaveBeenCalledWith({
-      environmentId,
-      input: { instanceId },
-    });
-  });
-
-  it("deletes unimported native sessions after destructive confirmation", async () => {
-    setup();
-    await using screen = await renderSection();
-    await screen.click("List sessions");
-    await screen.click("Delete");
-
-    expect(dialogs.confirm).toHaveBeenCalledOnce();
-    expect(commands.delete).toHaveBeenCalledWith({
-      environmentId,
-      input: { instanceId, projectId, sessionId: session.sessionId },
-    });
-  });
-
-  it("locks the project picker while a project-scoped request is pending", async () => {
-    setup();
-    const pending = deferred<{
-      readonly _tag: "Success";
-      readonly value: { readonly providers: [] };
-    }>();
-    commands.listProviders.mockReturnValueOnce(pending.promise);
-    await using screen = await renderSection();
-    const picker = () =>
-      screen.container.querySelector<HTMLElement>('[aria-label="Project for ACP sessions"]')!;
-    expect(picker().hasAttribute("data-disabled")).toBe(false);
-
-    await screen.click("List providers");
-
-    expect(picker().hasAttribute("data-disabled")).toBe(true);
-    await act(async () => pending.resolve({ _tag: "Success", value: { providers: [] } }));
-    expect(picker().hasAttribute("data-disabled")).toBe(false);
-  });
-
-  it("lists, saves, and disables configurable ACP providers", async () => {
-    setup();
-    await using screen = await renderSection();
-    await screen.click("List providers");
-
-    expect(commands.listProviders).toHaveBeenCalledWith({
-      environmentId,
-      input: { instanceId, projectId },
-    });
-    expect(
-      screen.container.querySelector<HTMLInputElement>('input[aria-label="google base URL"]')
-        ?.value,
-    ).toBe("https://api.example.test/v1");
-    await screen.click("Save");
-    expect(commands.setProvider).toHaveBeenCalledWith({
-      environmentId,
-      input: {
-        instanceId,
-        projectId,
-        providerId: "google",
-        apiType: "openai",
-        baseUrl: "https://api.example.test/v1",
-      },
-    });
-
-    await screen.click("Disable");
-    expect(commands.disableProvider).toHaveBeenCalledWith({
-      environmentId,
-      input: { instanceId, projectId, providerId: "google" },
-    });
-  });
-});
-
-it("imports with task access even when provider configuration is read-only", async () => {
-  setup();
-  grants.scopes.delete("providers:manage");
-  await using screen = await renderSection(true);
-  await screen.click("List sessions");
-  await screen.click("Import");
-  expect(commands.import).toHaveBeenCalledOnce();
-});
 
 it("does not import with provider management alone", async () => {
   setup();

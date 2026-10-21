@@ -14,7 +14,7 @@ import { discardResponseBody, responsePayloads } from "@t3tools/shared/mcpRespon
  * unevenly implemented.
  */
 
-export class AcpMcpBridgeError extends Error {
+class AcpMcpBridgeError extends Error {
   readonly _tag = "AcpMcpBridgeError";
 }
 
@@ -66,9 +66,7 @@ export interface AcpMcpToolCallOptions {
  * `session/new` but fail to expose those tools to their model. Compliant ACP
  * agents continue to use the stdio bridge above.
  */
-export function callAcpMcpTool(
-  options: AcpMcpToolCallOptions,
-): Effect.Effect<unknown, AcpMcpBridgeError> {
+function callAcpMcpTool(options: AcpMcpToolCallOptions): Effect.Effect<unknown, AcpMcpBridgeError> {
   const fetchImplementation = options.fetchImplementation ?? fetch;
   return Effect.gen(function* () {
     let sessionId: string | null = null;

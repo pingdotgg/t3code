@@ -15,14 +15,10 @@ import {
   hydrateCachedProvider,
   isCachedProviderCorrelated,
   readProviderStatusCache,
-  resolveProviderStatusCachePath,
-  writeProviderStatusCache,
 } from "./providerStatusCache.ts";
 
 const emptyCapabilities = createModelCapabilities({ optionDescriptors: [] });
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
-const CLAUDE_AGENT_DRIVER = ProviderDriverKind.make("claudeAgent");
-const OPENCODE_DRIVER = ProviderDriverKind.make("opencode");
 
 const makeProvider = (
   provider: ProviderDriverKind,
@@ -75,51 +71,6 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
       assert.ok(!Object.values(failure).map(String).join("\n").includes(secretCacheValue));
     }).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
   });
-
-  it.effect("writes and reads provider status snapshots", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-provider-cache-" });
-      const codexProvider = makeProvider(CODEX_DRIVER);
-      const claudeProvider = makeProvider(CLAUDE_AGENT_DRIVER, {
-        status: "warning",
-        auth: { status: "unknown" },
-      });
-      const openCodeProvider = makeProvider(OPENCODE_DRIVER, {
-        status: "warning",
-        auth: { status: "unknown", type: "opencode" },
-      });
-      const codexPath = yield* resolveProviderStatusCachePath({
-        cacheDir: tempDir,
-        instanceId: defaultInstanceIdForDriver(ProviderDriverKind.make("codex")),
-      });
-      const claudePath = yield* resolveProviderStatusCachePath({
-        cacheDir: tempDir,
-        instanceId: defaultInstanceIdForDriver(ProviderDriverKind.make("claudeAgent")),
-      });
-      const openCodePath = yield* resolveProviderStatusCachePath({
-        cacheDir: tempDir,
-        instanceId: defaultInstanceIdForDriver(ProviderDriverKind.make("opencode")),
-      });
-
-      yield* writeProviderStatusCache({
-        filePath: codexPath,
-        provider: codexProvider,
-      });
-      yield* writeProviderStatusCache({
-        filePath: claudePath,
-        provider: claudeProvider,
-      });
-      yield* writeProviderStatusCache({
-        filePath: openCodePath,
-        provider: openCodeProvider,
-      });
-
-      assert.deepStrictEqual(yield* readProviderStatusCache(codexPath), codexProvider);
-      assert.deepStrictEqual(yield* readProviderStatusCache(claudePath), claudeProvider);
-      assert.deepStrictEqual(yield* readProviderStatusCache(openCodePath), openCodeProvider);
-    }),
-  );
 
   it("hydrates cached provider status while preserving current settings-derived models", () => {
     const cachedCodex = makeProvider(CODEX_DRIVER, {

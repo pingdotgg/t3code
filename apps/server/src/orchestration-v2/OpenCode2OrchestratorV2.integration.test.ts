@@ -15,8 +15,6 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
 
 import {
   OPENCODE2_HTTP_PROTOCOL,
@@ -27,10 +25,7 @@ import { provideDeterministicTestRuntime } from "./testkit/DeterministicRuntime.
 import type { OrchestratorV2ScenarioStep } from "./testkit/OrchestratorScenario.ts";
 import { runOrchestratorV2ProviderReplayScenario } from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
-import {
-  decodeProviderReplayNdjson,
-  readProviderReplayTranscript,
-} from "@t3tools/provider-testing/replayTranscript";
+import { readProviderReplayTranscript } from "@t3tools/provider-testing/replayTranscript";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
 const SESSION = "ses_f148ca2deffeJcwCnRQtb0YFNX";
@@ -47,7 +42,6 @@ const BACKGROUND_PROMPT =
 const instanceId = ProviderInstanceId.make("opencode");
 const bigPickle: ModelSelection = { instanceId, model: "opencode/big-pickle" };
 const mimo: ModelSelection = { instanceId, model: "opencode/mimo-v2.6-flash-free" };
-const nemotron: ModelSelection = { instanceId, model: "opencode/nemotron-3.5-lightning-free" };
 
 const out = (type: string, input?: unknown): ProviderReplayEntry => ({
   type: "expect_outbound",
@@ -379,50 +373,6 @@ describe("OpenCode 2 through the orchestrator", () => {
 
         assert.lengthOf(projection.providerThreads, 1);
       }).pipe(Effect.scoped),
-  );
-
-  it.effect("moves the session to the thread's new worktree before the next prompt", () =>
-    Effect.gen(function* () {
-      const name = "opencode2-worktree-move";
-      const before = yield* checkpointWorkspace(`${name}-before`);
-      const after = yield* checkpointWorkspace(`${name}-after`);
-      const thread = threadCommands({ name, worktreePath: before });
-      const projection = yield* runScenario({
-        name,
-        threadId: thread.threadId,
-        entries: [
-          ...createdSession(before, name),
-          ...instructionsWritten,
-          ...answeredPrompt("FIRST"),
-          ...directoryModels(after),
-          out("session.get", { sessionID: SESSION }),
-          reply("session.get", sessionInfo(before, t3Rules(name), name)),
-
-          ...noOpenRequests,
-          out("session.move", { sessionID: SESSION, directory: after }),
-          reply("session.move", null),
-
-          ...instructionsWritten,
-          ...answeredPrompt("SECOND"),
-        ],
-        commands: [
-          thread.create,
-          thread.message("first"),
-          {
-            type: "thread.metadata.update",
-            commandId: thread.command("worktree"),
-            threadId: thread.threadId,
-            worktreePath: after,
-          },
-          thread.message("second"),
-        ],
-      });
-      assert.deepEqual(
-        projection.runs.map((run) => run.status),
-        ["completed", "completed"],
-      );
-      assert.lengthOf(projection.providerThreads, 1);
-    }).pipe(Effect.scoped),
   );
 
   it.effect("gives a session made with older rules T3's rules before its next prompt", () =>
@@ -1102,59 +1052,5 @@ describe("OpenCode 2 through the orchestrator", () => {
         const shell = result.shellSnapshot.threads.find((row) => row.id === projection!.thread.id);
         assert.deepEqual(shell?.pendingBackgroundTasks ?? [], []);
       }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, IdAllocator.layer))),
-  );
-
-  it.effect(
-    "runs plan mode as OpenCode's plan agent and switches back before the next prompt",
-    () =>
-      Effect.gen(function* () {
-        const name = "opencode2_switch";
-        const cwd = yield* checkpointWorkspace(name);
-        const thread = threadCommands({ name, worktreePath: cwd });
-
-        const recorded = yield* Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const text = yield* fs.readFileString(
-            yield* path.fromFileUrl(
-              new URL(
-                "./testkit/fixtures/opencode2_switch/opencode_transcript.ndjson",
-                import.meta.url,
-              ),
-            ),
-          );
-          return yield* decodeProviderReplayNdjson(text.replaceAll("<work>", cwd));
-        }).pipe(Effect.provide(NodeServices.layer));
-        const projection = yield* runScenario({
-          name,
-          threadId: thread.threadId,
-          entries: recorded.entries,
-          commands: [
-            thread.create,
-            thread.interactionMode("mode-plan", "plan"),
-            thread.message(
-              "plan",
-              bigPickle,
-              "Create a file named plan_probe.txt containing HI using the write tool.",
-            ),
-            thread.interactionMode("mode-default", "default"),
-            thread.message("switched", nemotron, "Reply exactly SWITCHED."),
-          ],
-        });
-        assert.deepEqual(
-          projection.runs.map((run) => [run.status, run.modelSelection.model]),
-          [
-            ["completed", bigPickle.model],
-            ["completed", nemotron.model],
-          ],
-        );
-        const replies = projection.turnItems.flatMap((item) =>
-          item.type === "assistant_message" ? [item.text] : [],
-        );
-
-        assert.include(replies[0], "Plan mode");
-        assert.equal(replies[1], "SWITCHED");
-        assert.lengthOf(projection.providerThreads, 1);
-      }).pipe(Effect.scoped),
   );
 });

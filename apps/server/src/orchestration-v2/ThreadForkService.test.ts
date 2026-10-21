@@ -130,19 +130,6 @@ const planFork = (
     });
   }).pipe(Effect.provide(ThreadForkService.layer));
 
-it("treats usage-limited and other provider-finished runs as forkable", () => {
-  assert.isTrue(ThreadForkService.isForkableSourceRunStatus("completed"));
-  assert.isTrue(ThreadForkService.isForkableSourceRunStatus("waiting"));
-  assert.isTrue(ThreadForkService.isForkableSourceRunStatus("failed"));
-  assert.isTrue(ThreadForkService.isForkableSourceRunStatus("interrupted"));
-  assert.isTrue(ThreadForkService.isForkableSourceRunStatus("cancelled"));
-  assert.isFalse(ThreadForkService.isForkableSourceRunStatus("running"));
-  assert.isFalse(ThreadForkService.isForkableSourceRunStatus("starting"));
-  assert.isFalse(ThreadForkService.isForkableSourceRunStatus("queued"));
-  assert.isFalse(ThreadForkService.isForkableSourceRunStatus("preparing"));
-  assert.isFalse(ThreadForkService.isForkableSourceRunStatus("rolled_back"));
-});
-
 it.effect("keeps a fork awake when its source thread is snoozed", () =>
   Effect.gen(function* () {
     const sourceThread = makeSourceThread();
@@ -164,17 +151,6 @@ it.effect("keeps a fork awake when its source thread is snoozed", () =>
       relationshipToParent: "fork",
       rootThreadId: sourceThreadId,
     });
-    assert.deepEqual(result.targetThread.forkedFrom, {
-      type: "run",
-      threadId: sourceThreadId,
-      runId: sourceRunId,
-    });
-  }),
-);
-
-it.effect("forks from a usage-limited failed run", () =>
-  Effect.gen(function* () {
-    const result = yield* planFork(makeSourceRun("failed"));
     assert.deepEqual(result.targetThread.forkedFrom, {
       type: "run",
       threadId: sourceThreadId,

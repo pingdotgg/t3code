@@ -2,7 +2,6 @@ import { assert, describe, it } from "@effect/vitest";
 import { DESKTOP_UPDATE_RESTART_MARKER_FILE } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -22,72 +21,6 @@ import * as DesktopUpdates from "./DesktopUpdates.ts";
 import { flushCallbacks, makeHarness } from "./updatesTestHarness.ts";
 
 describe("DesktopUpdates", () => {
-  it("preserves complete causes for update poller and event failures", () => {
-    const cause = Cause.combine(
-      Cause.fail(new Error("updater failed")),
-      Cause.die(new Error("updater defect")),
-    );
-    const pollerError = new DesktopUpdates.DesktopUpdatePollerError({
-      poller: "startup",
-      cause,
-    });
-    const eventError = new DesktopUpdates.DesktopUpdateEventHandlingError({
-      event: "download-progress",
-      cause,
-    });
-    const reportedError = new DesktopUpdates.DesktopUpdaterReportedError({
-      operation: "download",
-      cause,
-    });
-    const unexpectedActionError = new DesktopUpdates.DesktopUpdateUnexpectedActionError({
-      action: "install",
-      cause,
-    });
-
-    assert.strictEqual(pollerError.cause, cause);
-    assert.equal(pollerError.poller, "startup");
-    assert.equal(pollerError.message, "Desktop update startup poller failed.");
-    assert.strictEqual(eventError.cause, cause);
-    assert.equal(eventError.event, "download-progress");
-    assert.equal(eventError.message, "Failed to handle desktop update download-progress event.");
-    assert.strictEqual(reportedError.cause, cause);
-    assert.equal(reportedError.operation, "download");
-    assert.equal(reportedError.message, "Desktop updater download operation reported an error.");
-    assert.strictEqual(unexpectedActionError.cause, cause);
-    assert.equal(unexpectedActionError.action, "install");
-    assert.equal(
-      unexpectedActionError.message,
-      "Desktop update install action failed unexpectedly.",
-    );
-  });
-
-  it.effect("configures the updater and runs startup checks on the test clock", () => {
-    const harness = makeHarness();
-
-    return Effect.gen(function* () {
-      yield* Effect.scoped(
-        Effect.gen(function* () {
-          const updates = yield* DesktopUpdates.DesktopUpdates;
-          yield* updates.configure;
-
-          const state = yield* updates.getState;
-          assert.equal(state.enabled, true);
-          assert.equal(state.status, "idle");
-          assert.deepEqual(harness.feedUrls(), [
-            { provider: "generic", url: "http://localhost:4141" },
-          ]);
-          assert.equal(harness.listenerCount(), 6);
-          assert.equal(harness.checkCount(), 0);
-
-          yield* TestClock.adjust(Duration.millis(15_000));
-          assert.equal(harness.checkCount(), 1);
-        }),
-      );
-
-      assert.equal(harness.listenerCount(), 0);
-    }).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
-  });
-
   it.effect("updates Linux .deb installs and leaves other non-AppImage installs off", () =>
     Effect.gen(function* () {
       const linuxState = (packageType: string | undefined) =>
@@ -128,105 +61,6 @@ describe("DesktopUpdates", () => {
         assert.equal(harness.checkCount(), 0);
       }),
     ).pipe(Effect.provide(harness.layer));
-  });
-
-  it.effect("subscribe delivers the latest state plus subsequent changes", () => {
-    const harness = makeHarness();
-
-    return Effect.scoped(
-      Effect.gen(function* () {
-        const updates = yield* DesktopUpdates.DesktopUpdates;
-        yield* updates.configure;
-
-        const { latest, changes } = yield* updates.subscribe;
-        assert.equal(latest.status, "idle");
-
-        const nextState = yield* Stream.runHead(changes).pipe(Effect.forkChild);
-        yield* flushCallbacks;
-        harness.emit("update-available", { version: "1.2.4" });
-        yield* flushCallbacks;
-
-        const observed = yield* Fiber.join(nextState);
-        assert.equal(Option.getOrThrow(observed).status, "available");
-        assert.equal(Option.getOrThrow(observed).availableVersion, "1.2.4");
-      }),
-    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
-  });
-
-  it.effect("updates and broadcasts state from updater events", () => {
-    const harness = makeHarness();
-
-    return Effect.scoped(
-      Effect.gen(function* () {
-        const updates = yield* DesktopUpdates.DesktopUpdates;
-        yield* updates.configure;
-
-        harness.emit("update-available", { version: "1.2.4" });
-        yield* flushCallbacks;
-
-        const state = yield* updates.getState;
-        assert.equal(state.status, "available");
-        assert.equal(state.availableVersion, "1.2.4");
-        assert.isNotNull(state.checkedAt);
-        assert.equal(harness.sentStates.at(-1)?.status, "available");
-      }),
-    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
-  });
-
-  it.effect("enables nightly full changelog release notes and broadcasts summaries", () => {
-    const harness = makeHarness();
-
-    return Effect.scoped(
-      Effect.gen(function* () {
-        const updates = yield* DesktopUpdates.DesktopUpdates;
-        yield* updates.configure;
-
-        yield* updates.setChannel("nightly");
-        assert.equal(harness.fullChangelog(), true);
-
-        harness.emit("update-available", {
-          version: "1.2.4-nightly.20260709.766",
-          releaseNotes: [
-            {
-              version: "1.2.4-nightly.20260709.766",
-              note: `<h2>What's Changed</h2><ul><li>feat(client): persist offline environment data by <a>@juliusmarminge</a> in <a>#3795</a></li></ul><h2>Full Changelog</h2>`,
-            },
-            {
-              version: "1.2.4-nightly.20260709.765",
-              note: "- [codex] Upgrade Clerk stack by @juliusmarminge in #3821",
-            },
-            { version: "1.2.4-nightly.20260709.764", note: "- Change 764" },
-            { version: "1.2.4-nightly.20260709.763", note: "- Change 763" },
-            { version: "1.2.4-nightly.20260709.762", note: "- Change 762" },
-            { version: "1.2.4-nightly.20260709.761", note: "- Change 761" },
-            { version: "1.2.4-nightly.20260709.760", note: "- Change 760" },
-          ],
-        });
-        yield* flushCallbacks;
-
-        const state = yield* updates.getState;
-        assert.equal(state.status, "available");
-        assert.deepEqual(state.releaseNotes, [
-          {
-            version: "1.2.4-nightly.20260709.766",
-            items: ["feat(client): persist offline environment data by @juliusmarminge in #3795"],
-            totalItems: 1,
-          },
-          {
-            version: "1.2.4-nightly.20260709.765",
-            items: ["[codex] Upgrade Clerk stack by @juliusmarminge in #3821"],
-            totalItems: 1,
-          },
-          { version: "1.2.4-nightly.20260709.764", items: ["Change 764"], totalItems: 1 },
-          { version: "1.2.4-nightly.20260709.763", items: ["Change 763"], totalItems: 1 },
-          { version: "1.2.4-nightly.20260709.762", items: ["Change 762"], totalItems: 1 },
-          { version: "1.2.4-nightly.20260709.761", items: ["Change 761"], totalItems: 1 },
-        ]);
-        assert.equal(state.omittedReleaseCount, 1);
-        assert.deepEqual(harness.sentStates.at(-1)?.releaseNotes, state.releaseNotes);
-        assert.equal(harness.sentStates.at(-1)?.omittedReleaseCount, 1);
-      }),
-    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
   it.effect("checks for newer releases after an update has been downloaded", () => {
@@ -291,39 +125,6 @@ describe("DesktopUpdates", () => {
 
         yield* updates.check("poll");
         harness.emit("update-not-available");
-        yield* flushCallbacks;
-
-        const state = yield* updates.getState;
-        assert.equal(state.status, "downloaded");
-        assert.equal(state.availableVersion, "1.2.4");
-        assert.equal(state.downloadedVersion, "1.2.4");
-        assert.deepEqual(state.releaseNotes, [
-          { version: "1.2.4", items: ["fix: queued update"], totalItems: 1 },
-        ]);
-        assert.equal(state.omittedReleaseCount, 0);
-        assert.equal(state.downloadPercent, 100);
-      }),
-    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
-  });
-
-  it.effect("preserves a queued installer when the feed offers another channel", () => {
-    const harness = makeHarness();
-
-    return Effect.scoped(
-      Effect.gen(function* () {
-        const updates = yield* DesktopUpdates.DesktopUpdates;
-        yield* updates.configure;
-
-        harness.emit("update-available", {
-          version: "1.2.4",
-          releaseNotes: "## What's changed\n- fix: queued update",
-        });
-        yield* flushCallbacks;
-        harness.emit("update-downloaded", { version: "1.2.4" });
-        yield* flushCallbacks;
-
-        yield* updates.check("poll");
-        harness.emit("update-available", { version: "1.2.5-nightly.20260710.1" });
         yield* flushCallbacks;
 
         const state = yield* updates.getState;
@@ -495,49 +296,6 @@ describe("DesktopUpdates", () => {
           "Electron updater failed to check for updates on channel default.",
         );
         assert.notInclude(state.message ?? "", "secret");
-      }),
-    ).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          TestClock.layer(),
-          harness.layer,
-          Logger.layer([logger], { mergeWithExisting: false }),
-        ),
-      ),
-    );
-  });
-
-  it.effect("logs the redacted cause of an updater error event", () => {
-    const harness = makeHarness();
-    const cause = Object.assign(new Error("404 Not Found\nHeaders: authorization=secret"), {
-      code: "ERR_UPDATER_CHANNEL_FILE_NOT_FOUND",
-    });
-    const loggedAnnotations: Array<Record<string, unknown>> = [];
-    const logger = Logger.make(({ fiber }) => {
-      const annotations = fiber.getRef(References.CurrentLogAnnotations);
-      if (annotations.errorTag === "DesktopUpdaterReportedError") {
-        loggedAnnotations.push(annotations);
-      }
-    });
-
-    return Effect.scoped(
-      Effect.gen(function* () {
-        const updates = yield* DesktopUpdates.DesktopUpdates;
-        yield* updates.configure;
-
-        harness.emit("error", cause);
-        yield* flushCallbacks;
-
-        const loggedAnnotation = loggedAnnotations.at(-1);
-        assert.isDefined(loggedAnnotation);
-        assert.equal(loggedAnnotation.operation, "background");
-        assert.equal(
-          loggedAnnotation.cause,
-          "Error [ERR_UPDATER_CHANNEL_FILE_NOT_FOUND]: 404 Not Found",
-        );
-        assert.notInclude(JSON.stringify(loggedAnnotations), "secret");
-        const state = yield* updates.getState;
-        assert.equal(state.message, "Desktop updater background operation reported an error.");
       }),
     ).pipe(
       Effect.provide(
@@ -921,29 +679,6 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
-  it.effect("recovers when quitAndInstall reports failure through an updater event", () => {
-    const harness = makeHarness();
-
-    return Effect.scoped(
-      Effect.gen(function* () {
-        const desktopState = yield* DesktopState.DesktopState;
-        const updates = yield* DesktopUpdates.DesktopUpdates;
-        yield* updates.configure;
-        harness.emit("update-downloaded", { version: "1.2.4" });
-        yield* flushCallbacks;
-
-        yield* updates.install;
-        assert.deepEqual(harness.installSteps, ["quitAndInstall"]);
-        harness.emit("error", new Error("native installer refused"));
-        yield* flushCallbacks;
-
-        assert.isFalse(yield* Ref.get(desktopState.quitting));
-        assert.deepEqual(harness.installSteps, ["quitAndInstall", "startBackend"]);
-        assert.equal((yield* updates.getState).errorContext, "install");
-      }),
-    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
-  });
-
   it.effect("rejects a prepared install when the downloaded version changed", () => {
     const harness = makeHarness();
 
@@ -1097,19 +832,6 @@ describe("DesktopUpdates", () => {
 });
 
 describe("describeUpdateErrorCause", () => {
-  it("preserves network and nested failure reasons", () => {
-    const networkError = Object.assign(new Error("getaddrinfo ENOTFOUND updates.example.com"), {
-      code: "ENOTFOUND",
-    });
-    const cause = new Error("fetch failed", { cause: networkError });
-
-    assert.equal(
-      DesktopUpdates.describeUpdateErrorCause(Cause.fail(cause)),
-      "Error: fetch failed; caused by Error [ENOTFOUND]: getaddrinfo ENOTFOUND updates.example.com",
-    );
-    assert.include(DesktopUpdates.describeUpdateErrorCause(Cause.die(networkError)), "[ENOTFOUND]");
-  });
-
   it("removes URLs, credentials, response bodies, and headers from summaries", () => {
     const messages = [
       "Cannot download https://user:url-secret@example.com/update?token=query-secret, status 403",

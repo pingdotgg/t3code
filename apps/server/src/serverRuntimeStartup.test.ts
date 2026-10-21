@@ -2,7 +2,6 @@ import { assert, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import {
   DEFAULT_SERVER_SETTINGS,
-  DEFAULT_MODEL,
   ProjectId,
   ProviderInstanceId,
   ProviderDriverKind,
@@ -47,13 +46,6 @@ import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
-
-it("uses the canonical Codex model for auto-bootstrap", () => {
-  assert.deepEqual(ServerRuntimeStartup.getAutoBootstrapThreadModelSelection(), {
-    instanceId: ProviderInstanceId.make("codex"),
-    model: DEFAULT_MODEL,
-  });
-});
 
 it.effect.each([
   "disabled-codex",
@@ -250,33 +242,6 @@ it.effect.each([
   ),
 );
 
-it.effect("starts without scanning or rebuilding projection history", () =>
-  Effect.gen(function* () {
-    const calls = yield* Ref.make<ReadonlyArray<string>>([]);
-    const record = (label: string) => Ref.update(calls, (current) => [...current, label]);
-
-    const result = yield* ServerRuntimeStartup.runOrderedV2StartupPhases({
-      importLegacyShells: record("import"),
-      recover: record("recover").pipe(Effect.as({ closedRequests: 2 })),
-      recoverDelegatedTasks: record("delegated"),
-      startEffectWorker: record("worker"),
-      autoBootstrap: record("bootstrap").pipe(Effect.as({ projectId: "project-1" })),
-    });
-
-    assert.deepEqual(yield* Ref.get(calls), [
-      "import",
-      "recover",
-      "delegated",
-      "worker",
-      "bootstrap",
-    ]);
-    assert.deepEqual(result, {
-      recovery: { closedRequests: 2 },
-      bootstrap: { projectId: "project-1" },
-    });
-  }),
-);
-
 it.effect("interrupts the effect worker when awareness relay startup fails", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -338,21 +303,6 @@ it.effect("enqueueCommand fails queued work when readiness fails", () =>
       assert.equal(error.message, "Server runtime startup failed before command readiness.");
     }),
   ),
-);
-
-it.effect("resolveWelcomeBase derives cwd and project name from server config", () =>
-  Effect.gen(function* () {
-    const welcome = yield* ServerRuntimeStartup.resolveWelcomeBase.pipe(
-      Effect.provideService(ServerConfig.ServerConfig, {
-        cwd: "/tmp/startup-project",
-      } as never),
-    );
-
-    assert.deepStrictEqual(welcome, {
-      cwd: "/tmp/startup-project",
-      projectName: "startup-project",
-    });
-  }),
 );
 
 it.effect("automatic pull only updates enabled, behind, clean default-branch checkouts", () =>

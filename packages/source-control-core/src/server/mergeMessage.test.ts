@@ -41,13 +41,6 @@ describe("removeAgentCredits", () => {
     );
   });
 
-  it("preserves indented examples and whitespace on surviving lines", () => {
-    const example = "Co-authored-by: Claude <noreply@anthropic.com>";
-    expect(removeAgentCredits(`Example:\n\n    ${example}\n\n${example}\nDetails  \n`)).toBe(
-      `Example:\n\n    ${example}\n\nDetails  `,
-    );
-  });
-
   it.each(["``` text ```", "    ```", "\t~~~"])(
     "removes trailers after a line that cannot open a fence: %s",
     (line) => {

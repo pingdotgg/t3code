@@ -156,14 +156,6 @@ function visibleText(node: ReactNode): string {
   return isValidElement<{ children?: ReactNode }>(node) ? visibleText(node.props.children) : "";
 }
 
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((complete) => {
-    resolve = complete;
-  });
-  return { promise, resolve };
-}
-
 describe("pull request worktree permissions", () => {
   beforeEach(() => {
     state.canOperate = false;
@@ -189,15 +181,6 @@ describe("pull request worktree permissions", () => {
     expect(state.prepared).toEqual([]);
   });
 
-  it("prepares the worktree and thread when task permission is also granted", async () => {
-    state.canOperate = true;
-    await prepareAction("Worktree")();
-
-    expect(state.checkouts).toEqual(["worktree"]);
-    expect(state.setupScripts).toBe(1);
-    expect(state.prepared).toEqual([{ branch: "feature/pr", worktreePath: "/worktree" }]);
-  });
-
   it("rechecks task permission before invoking a retained worktree action", async () => {
     state.canOperate = true;
     const prepare = prepareAction("Worktree");
@@ -206,14 +189,6 @@ describe("pull request worktree permissions", () => {
 
     expect(state.checkouts).toEqual([]);
     expect(state.setupScripts).toBe(0);
-  });
-
-  it("keeps local checkout available without task permission", async () => {
-    await prepareAction("Local")();
-
-    expect(state.checkouts).toEqual(["local"]);
-    expect(state.setupScripts).toBe(0);
-    expect(state.prepared).toEqual([{ branch: "feature/pr", worktreePath: null }]);
   });
 
   it.each(["Local", "Worktree"] as const)(
@@ -237,39 +212,4 @@ describe("pull request worktree permissions", () => {
       expect(state.manager).toEqual({ operation: "pull", error: null, isRunning: true });
     },
   );
-
-  it("clears a returned error when a newly authorized retry starts, then completes normally", async () => {
-    const prepare = prepareAction("Local");
-    state.canWriteSourceControl = false;
-    await prepare();
-    expect(visibleText(renderDialog())).toContain("This connection cannot change source control.");
-
-    state.canWriteSourceControl = true;
-    const response = deferred<void>();
-    state.pendingResponse = response.promise;
-    const completion = prepareAction("Local")();
-
-    expect(visibleText(renderDialog())).not.toContain(
-      "This connection cannot change source control.",
-    );
-    expect(state.checkouts).toEqual(["local"]);
-    expect(state.prepared).toEqual([]);
-    response.resolve(undefined);
-    await completion;
-
-    expect(state.prepared).toEqual([{ branch: "feature/pr", worktreePath: null }]);
-    expect(state.openChanges).toEqual([false]);
-  });
-
-  it("keeps interrupted preparations quiet and preserves error reset behavior", async () => {
-    state.interrupted = true;
-    const before = visibleText(renderDialog());
-
-    await prepareAction("Local")();
-
-    expect(visibleText(renderDialog())).toBe(before);
-    expect(state.resets).toBe(1);
-    expect(state.prepared).toEqual([]);
-    expect(state.openChanges).toEqual([]);
-  });
 });

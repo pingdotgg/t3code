@@ -68,7 +68,7 @@ function expandHomePath(input: string, homeDir: string): string {
   return input.replace(/^~(?=$|\/|\\)/u, homeDir);
 }
 
-export const resolveSshConfigIncludePattern = Effect.fnUntraced(function* (
+const resolveSshConfigIncludePattern = Effect.fnUntraced(function* (
   includePattern: string,
   _directory: string,
   homeDir: string,

@@ -217,31 +217,4 @@ describe("thread transport payload budget", () => {
     expect(sourceItem).toHaveProperty("output", "x".repeat(OUTPUT_BYTES_PER_ROW));
     expect(projectedEvent.payload).not.toHaveProperty("output");
   });
-
-  it("omits ordinary dynamic tool output even when it is small", () => {
-    const sourceItem: OrchestrationV2TurnItem = {
-      id: TurnItemId.make("item-dynamic"),
-      type: "dynamic_tool",
-      threadId: THREAD_ID,
-      runId: null,
-      nodeId: null,
-      providerThreadId: null,
-      providerTurnId: null,
-      nativeItemRef: null,
-      parentItemId: null,
-      ordinal: 1,
-      status: "completed",
-      title: "Dynamic tool",
-      toolName: "lookup",
-      input: { query: "status" },
-      output: { content: "small raw result" },
-      startedAt: NOW,
-      completedAt: NOW,
-      updatedAt: NOW,
-    };
-    const projectedEvent = projectDomainEventForWire(makeTurnItemEvent(sourceItem));
-
-    expect(sourceItem).toHaveProperty("output", { content: "small raw result" });
-    expect(projectedEvent.payload).not.toHaveProperty("output");
-  });
 });

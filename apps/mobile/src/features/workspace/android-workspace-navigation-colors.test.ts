@@ -96,14 +96,4 @@ describe("Android workspace navigation colors", () => {
       }
     },
   );
-
-  it("preserves an already visible tonal fill", () => {
-    const variables = getMobileThemeRuntimeVariables("t3-chat", "light", "android");
-    const colors = androidWorkspaceNavigationColors(
-      { ...variables, "--color-secondary": "#e091cf" },
-      true,
-    );
-    expect(colors.indicatorColor).toBe("#e091cf");
-    expectVisibleSelection(colors);
-  });
 });

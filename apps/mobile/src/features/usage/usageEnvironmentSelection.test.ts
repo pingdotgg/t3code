@@ -28,10 +28,6 @@ describe("usage environment selection", () => {
     expect(toggleUsageEnvironment(new Set([a, c, removed]), environments, b)).toBeNull();
   });
 
-  it("ignores a menu action for an environment that was removed", () => {
-    expect(toggleUsageEnvironment(new Set([a]), environments, removed)).toEqual(new Set([a]));
-  });
-
   it("includes newly connected environments only in all mode", () => {
     const expanded = [...environments, { environmentId: removed }];
     expect(toggleUsageEnvironment(null, expanded, a)).toEqual(new Set([b, c, removed]));

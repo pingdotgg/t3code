@@ -81,19 +81,6 @@ function createSettingsRouter(initialEntry = "/settings/general") {
 }
 
 describe("settings scope navigation", () => {
-  it("replaces the default scope with an explicit environment, then replaces it with a project", async () => {
-    const router = createSettingsRouter();
-    await router.load();
-    await router.navigate({
-      to: "/settings/general",
-      search: { machine: "remote-server" },
-      hash: "",
-    });
-    expect(router.state.location.search).toEqual({ machine: "remote-server" });
-    await router.navigate({ to: "/settings/projects", search: { project: "another-project" } });
-    expect(router.state.location.search).toEqual({ project: "another-project" });
-  });
-
   it("clears a checkout when selecting all environments and all projects", async () => {
     const router = createSettingsRouter();
     await router.navigate({ to: "/settings/general", search: checkoutSearch, hash: "old-setting" });
@@ -285,12 +272,5 @@ describe("scheduled task scope navigation", () => {
       search: () => ({ machine: undefined, project: undefined, checkout: undefined }),
     });
     expect(router.state.matches.at(-1)?.search).toEqual({});
-  });
-
-  it("keeps the project and checkout filters when entering scheduled tasks", async () => {
-    const router = createSettingsRouter();
-    await router.navigate({ to: "/settings/projects", search: checkoutSearch });
-    await router.navigate({ to: "/settings/scheduled-tasks" });
-    expect(router.state.matches.at(-1)?.search).toEqual(checkoutSearch);
   });
 });

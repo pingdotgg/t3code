@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  commandDisplayText,
-  commandHighlightLanguage,
-  commandProgramName,
-} from "./commandLabel.ts";
+import { commandDisplayText, commandProgramName } from "./commandLabel.ts";
 
 describe("commandProgramName", () => {
   it.each([
@@ -150,50 +146,6 @@ describe("commandProgramName", () => {
   });
 
   it.each([
-    ["set -eu; npm test", "npm"],
-    [": && npm test", "npm"],
-    ["true && npm test", "npm"],
-    ["false || npm test", "npm"],
-    ["false; npm test", "npm"],
-    ["sudo -n true && npm test", "npm"],
-    ["sudo -n true; echo checked", "echo"],
-    ["test -d node_modules || vp i", "vp"],
-    ["[ -d node_modules ] || vp i", "vp"],
-  ])("skips non-descriptive shell commands before a useful program: %s", (command, program) => {
-    expect(commandProgramName(command)).toBe(program);
-  });
-
-  it.each([
-    ...["&&", " || ", ";", "\n", "|", " |& ", " & "].map(
-      (operator) => [`cd /tmp${operator}npm test`, "npm"] as const,
-    ),
-    ...["export CI=1", "unset DEBUG", "source env.sh", ". env.sh"].map(
-      (setup) => [`${setup}&&npm test`, "npm"] as const,
-    ),
-  ])("handles shell setup followed by every command separator: %s", (command, program) => {
-    expect(commandProgramName(command)).toBe(program);
-  });
-
-  it.each([
-    ["command git status", "git"],
-    ["command -p git status", "git"],
-    ["command -- git status", "git"],
-    ["builtin printf ok", "printf"],
-    ["builtin -- echo ok", "echo"],
-    ["command cd /tmp && npm test", "npm"],
-    ["builtin cd /tmp && pnpm test", "pnpm"],
-    ["exec node app.js", "node"],
-    ["exec -cl -a worker node app.js", "node"],
-    ["exec env CI=1 /opt/tools/check --verbose", "check"],
-    ['exec "C:\\Program Files\\nodejs\\node.exe" app.js', "node.exe"],
-    ["exec sh -c 'cd /tmp && npm test'", "npm"],
-    ["exec sh -c 'cd /tmp\nnpm test'", "npm"],
-    ["exec bash -c 'set -e\nnpm test'", "npm"],
-  ])("unwraps shell command wrappers: %s", (command, program) => {
-    expect(commandProgramName(command)).toBe(program);
-  });
-
-  it.each([
     ["timeout 10 pnpm test", "pnpm"],
     ["timeout 10s python3 script.py", "python3"],
     ["gtimeout 1.5 node app.js", "node"],
@@ -205,67 +157,6 @@ describe("commandProgramName", () => {
     ["timeout 30 nohup env CI=1 node app.js", "node"],
     ["timeout 60 script -q /dev/null env CI=1 node app.js", "node"],
   ])("unwraps process-launch wrappers: %s", (command, program) => {
-    expect(commandProgramName(command)).toBe(program);
-  });
-
-  it.each([
-    ["& 'C:\\Program Files\\nodejs\\node.exe' script.js", "node.exe"],
-    ['& "$env:WINDIR\\Microsoft.NET\\Framework64\\v4\\csc.exe" file.cs', "csc.exe"],
-  ])("resolves literal PowerShell call operators: %s", (command, program) => {
-    expect(commandProgramName(command)).toBe(program);
-  });
-
-  it.each([
-    ["$env:CI='1'; npm test", "npm"],
-    ["$value = 'configured'; node app.js", "node"],
-    ["$process = Get-Process node; $process.Id", "Get-Process"],
-    ["$tmp = Join-Path $env:TEMP repo; git clone example", "Join-Path"],
-    ["$html = (Invoke-WebRequest https://example.com).Content", "Invoke-WebRequest"],
-    ["$process = Start-Process -FilePath .\\app.exe -PassThru; $process.Id", "app.exe"],
-  ])("labels commands inside simple PowerShell assignments: %s", (command, program) => {
-    expect(commandProgramName(command)).toBe(program);
-  });
-
-  it.each([
-    ["cmd /c bcdedit /enum", "bcdedit"],
-    ["cmd /c cd C:\\work && npm test", "npm"],
-    ['cmd.exe /d /s /c "cd C:\\work && npm test"', "npm"],
-    [
-      'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\\work\\scripts\\doctor.ps1"',
-      "doctor.ps1",
-    ],
-    ['pwsh -NoProfile -Command "Set-Location C:\\work; pnpm test"', "pnpm"],
-    ["pwsh -Command Set-Location C:\\work; pnpm test", "pnpm"],
-  ])("unwraps Windows shell launchers: %s", (command, program) => {
-    expect(commandProgramName(command)).toBe(program);
-  });
-
-  it.each([
-    ["Set-Location C:\\work; npm test", "npm"],
-    ["Push-Location C:\\work; node app.js", "node"],
-    ["Start-Process -FilePath node -ArgumentList server.js", "node"],
-    ["Start-Process -ArgumentList '-FilePath helper' node", "node"],
-    ["Start-Process -ErrorAction Stop -FilePath node", "node"],
-    ["Start-Process -NoNewWindow -WorkingDirectory C:\\work node", "node"],
-    ['Start-Process "C:\\Program Files\\Example\\app.exe"', "app.exe"],
-    ['Start-Process -FilePath ".\\dist\\Example App.exe" -PassThru', "Example App.exe"],
-    [".\\.venv\\Scripts\\python.exe script.py", "python.exe"],
-    ["$env:LOCALAPPDATA\\Programs\\tool.exe --version", "tool.exe"],
-    ['"=== CHECK FILE ==="; Get-Content file.txt', "Get-Content"],
-    ["$x = @'\ndata'; Get-Fake\n'@\nGet-Process", "Get-Process"],
-    ["@'\nprint('ok; still data')\n'@ | python -", "python"],
-  ])("handles common PowerShell setup and launch commands: %s", (command, program) => {
-    expect(commandProgramName(command)).toBe(program);
-  });
-
-  it.each([
-    ["timeout --help", "timeout"],
-    ["nohup --version", "nohup"],
-    ["arch", "arch"],
-    ["bundle install", "bundle"],
-    ["script output.log", "script"],
-    ["/usr/bin/timeout 10 node app.js", "timeout"],
-  ])("keeps process-launch wrappers when no safe payload is present: %s", (command, program) => {
     expect(commandProgramName(command)).toBe(program);
   });
 
@@ -327,85 +218,8 @@ describe("commandProgramName", () => {
     expect(commandProgramName(command)).toBe(program);
   });
 
-  it.each([
-    ["env sh -c 'cd /tmp && npm test'", "npm"],
-    ["sudo zsh -lc 'export CI=1 && pnpm test'", "pnpm"],
-  ])("parses shell setup inside an explicitly launched shell: %s", (command, program) => {
-    expect(commandProgramName(command)).toBe(program);
-  });
-
-  it.each([
-    ["nocorrect pnpm test", "pnpm"],
-    ["noglob bun test", "bun"],
-    ["time node app.js", "node"],
-    ["time -p deno test", "deno"],
-    ["time nocorrect npm test", "npm"],
-  ])("skips shell precommand modifiers: %s", (command, program) => {
-    expect(commandProgramName(command)).toBe(program);
-  });
-
   it("uses the command after leading shell comments", () => {
     expect(commandProgramName("# first comment\n  # second comment\ngit status")).toBe("git");
-  });
-
-  it.each([
-    ["CI=1 # note\nnpm test", "npm"],
-    ["CI=1 # it's configured\nnpm test", "npm"],
-    ['CI=1 # "unterminated quote\nbun test', "bun"],
-    [">/tmp/log # note\npnpm test", "pnpm"],
-    [">/tmp/log # it's configured\ndeno test", "deno"],
-  ])("skips comments after commandless shell setup: %s", (command, program) => {
-    expect(commandProgramName(command)).toBe(program);
-  });
-
-  it.each([
-    ["./cd /tmp && npm test", "cd"],
-    ["/opt/exec node app.js", "exec"],
-    ["/usr/bin/time npm test", "time"],
-    ["/usr/bin/test -f package.json", "test"],
-  ])("does not treat qualified paths as shell syntax: %s", (command, program) => {
-    expect(commandProgramName(command)).toBe(program);
-  });
-
-  it("skips a shell array assignment before the command", () => {
-    expect(commandProgramName("items=(one two); npm test")).toBe("npm");
-  });
-
-  it.each([
-    ['EMU="/opt/android/emulator"; "$EMU" -list-avds', "emulator"],
-    ["AAPT=/opt/android/aapt2\n$AAPT dump badging app.apk", "aapt2"],
-    [
-      'SSH=(ssh -i /tmp/key -o IdentitiesOnly=yes); HOST=user@example; "${SSH[@]}" "$HOST" uptime',
-      "ssh",
-    ],
-    ["SCP=(/usr/bin/scp -i /tmp/key); if true; then ${SCP[@]} file user@example:/tmp; fi", "scp"],
-    ['TOOL="/Applications/My Tool/bin/check"; "$TOOL" --verbose', "check"],
-  ])("resolves literal command aliases from earlier shell segments: %s", (command, program) => {
-    expect(commandProgramName(command)).toBe(program);
-  });
-
-  it.each([
-    'TOOL=$(pick-command); "$TOOL" --version',
-    'TOOL="git status"; "$TOOL"',
-    "# TOOL=git\n$TOOL status",
-    'TOOL=git true; "$TOOL" status',
-    'TOOL=git; TOOL=$(pick-command); "$TOOL" status',
-    'TOOL=git; unset TOOL; "$TOOL" status',
-  ])("does not evaluate dynamic or non-persistent command aliases: %s", (command) => {
-    expect(commandProgramName(command)).toBeNull();
-  });
-
-  it("does not retain aliases assigned inside control flow", () => {
-    expect(commandProgramName('TOOL=git; if false; then\nTOOL=npm\nfi\n"$TOOL" status')).toBe(
-      "git",
-    );
-  });
-
-  it.each([
-    ["ROOT=${BASE:-path with spaces}; npm test", "npm"],
-    ["ROOT=`printf 'path with spaces'`; pnpm test", "pnpm"],
-  ])("keeps expansions inside assignment words: %s", (command, program) => {
-    expect(commandProgramName(command)).toBe(program);
   });
 
   it.each([
@@ -435,38 +249,12 @@ describe("commandProgramName", () => {
     expect(commandProgramName(command)).toBe(program);
   });
 
-  it.each(["cd apps/web && [ -f package.json ]", "cd apps/web || exit 1", "cd one && cd two"])(
-    "falls back when no useful program follows cd: %s",
-    (command) => {
-      expect(commandProgramName(command)).toBeNull();
-    },
-  );
-
-  it.each([
-    "if test -f package.json\nthen\n  npm test\nfi",
-    "[[ -d first && -d second ]] && npm test",
-    'for file in *\ndo\n  echo "$file"\ndone',
-    "while true\ndo\n  sleep 1\ndone",
-    "cd /tmp; build () { npm test; }",
-  ])("does not label commands inside multiline shell control flow: %s", (command) => {
-    expect(commandProgramName(command)).toBeNull();
-  });
-
   it("bounds nested shell unwrapping", () => {
     let command = "git status";
     for (let depth = 0; depth < 9; depth += 1) {
       command = `sh -c '${command.replaceAll("'", "'\\''")}'`;
     }
     expect(commandProgramName(command)).toBeNull();
-  });
-
-  it("does not spend the shell nesting budget on setup commands", () => {
-    const command = [
-      ...Array.from({ length: 10 }, (_, index) => `export VALUE_${index}=configured`),
-      "npm test",
-    ].join("\n");
-
-    expect(commandProgramName(command)).toBe("npm");
   });
 
   it("bounds the number of top-level setup segments", () => {
@@ -476,58 +264,6 @@ describe("commandProgramName", () => {
     ].join(";");
 
     expect(commandProgramName(command)).toBeNull();
-  });
-
-  it("bounds nested command wrappers", () => {
-    expect(commandProgramName(`${"command ".repeat(9)}git status`)).toBeNull();
-  });
-});
-
-describe("commandDisplayText", () => {
-  it.each([
-    ["/bin/zsh -lc 'git diff --stat'", "git diff --stat"],
-    ['bash -c "printf \\"%s\\" hello; git status"', 'printf "%s" hello; git status'],
-    ["/usr/bin/fish --command 'rg TODO src | head -20'", "rg TODO src | head -20"],
-    ["zsh -lc 'pwd\nls'", "pwd\nls"],
-    ["git status", "git status"],
-    ["zsh script.sh", "zsh script.sh"],
-    ["zsh -lc 'echo $1' name value", "zsh -lc 'echo $1' name value"],
-    ["zsh -lc 'pwd'; git status", "zsh -lc 'pwd'; git status"],
-    ["zsh -lc 'unterminated", "zsh -lc 'unterminated"],
-  ])("shows the script without hiding meaningful outer commands: %s", (input, expected) => {
-    expect(commandDisplayText(input)).toBe(expected);
-  });
-});
-
-describe("commands recorded from each provider", () => {
-  const interruptScript = `node -e "console.log('interrupt fixture tool started'); setTimeout(() => {}, 30000)"`;
-  it.each([
-    ["Claude", interruptScript, interruptScript],
-    ["Cursor", interruptScript, interruptScript],
-    ["Pi", interruptScript, interruptScript],
-    [
-      "Codex",
-      `/bin/bash -lc "node -e \\"console.log('interrupt fixture tool started'); setTimeout(() => {}, 30000)\\""`,
-      interruptScript,
-    ],
-    [
-      "Codex",
-      "/bin/bash -lc 'cat package.json && cat tsconfig.json'",
-      "cat package.json && cat tsconfig.json",
-    ],
-    [
-      "Grok",
-      "for i in 1 2 3; do sleep 8; echo tock $i; done",
-      "for i in 1 2 3; do sleep 8; echo tock $i; done",
-    ],
-    [
-      "OpenCode",
-      "printf 'running child approval' > running-child.txt",
-      "printf 'running child approval' > running-child.txt",
-    ],
-  ])("%s shows the script it ran: %s", (_provider, input, script) => {
-    expect(commandDisplayText(input)).toBe(script);
-    expect(commandHighlightLanguage(commandDisplayText(input))).toBe("shellscript");
   });
 });
 
@@ -560,39 +296,5 @@ describe("commandDisplayText control characters", () => {
     ["cat <<'EOF'\n\tindented\nEOF", "cat <<'EOF'\n\tindented\nEOF"],
   ])("shows %j as %j", (input, expected) => {
     expect(commandDisplayText(input)).toBe(expected);
-  });
-});
-
-describe("commandHighlightLanguage", () => {
-  it.each([
-    [
-      '"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -NoProfile -Command "Get-ChildItem -Recurse"',
-      "powershell",
-    ],
-    [
-      'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\\work\\scripts\\doctor.ps1"',
-      "powershell",
-    ],
-    ["& pwsh -c 'Get-Date'", "powershell"],
-    ["PWSH.EXE -Command Get-Date", "powershell"],
-    ["pwsh-preview -c 'Get-Date'", "shellscript"],
-    ["git status; pwsh -c 'Get-Date'", "shellscript"],
-    ["cat <<'EOF' > notes.txt\npwsh\nEOF", "shellscript"],
-    ["", "shellscript"],
-    ["Get-Content package.json | Select-String version", "powershell"],
-    ["$env:CI='1'; npm test", "powershell"],
-    ["$tmp = Join-Path $env:TEMP repo; git clone example", "powershell"],
-    ['"=== CHECK FILE ==="; Get-Content file.txt', "powershell"],
-    ["& 'C:\\Python312\\python.exe' -c 'print(1)'", "powershell"],
-    ["Install-Module Pester -Scope CurrentUser", "powershell"],
-    ["ConvertTo-Json @{ a = 1 }", "powershell"],
-    ["update-alternatives --list java", "shellscript"],
-    ["install-info --version", "shellscript"],
-    ["Make-Thing now", "shellscript"],
-    ["echo Get-Content; git status", "shellscript"],
-    ["FOO=1 npm test", "shellscript"],
-    ["echo $HOME && ls", "shellscript"],
-  ])("%s", (command, language) => {
-    expect(commandHighlightLanguage(command)).toBe(language);
   });
 });

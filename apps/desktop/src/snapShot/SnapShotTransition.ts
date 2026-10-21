@@ -26,7 +26,7 @@ export type SnapShotAnimationDestination = {
   readonly details?: SnapShotAnimationDetails | undefined;
 };
 
-export function snapShotAnimationDurationMs(
+function snapShotAnimationDurationMs(
   source: Electron.Rectangle,
   target: Electron.Rectangle,
 ): number {
@@ -64,7 +64,7 @@ type SnapShotTransitionOptions = {
     | undefined;
 };
 
-export function snapShotAnimationOverlayBounds(
+function snapShotAnimationOverlayBounds(
   displays: ReadonlyArray<Pick<Electron.Display, "bounds">>,
 ): Electron.Rectangle {
   const firstDisplay = displays[0];

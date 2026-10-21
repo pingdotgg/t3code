@@ -225,7 +225,7 @@ class NodePtyProcess implements PtyAdapter.PtyProcess {
   }
 }
 
-export const make = Effect.fn("NodePtyAdapter.make")(function* () {
+const make = Effect.fn("NodePtyAdapter.make")(function* () {
   const loadNodePtyModule = yield* NodePtyModuleLoaderRef;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;

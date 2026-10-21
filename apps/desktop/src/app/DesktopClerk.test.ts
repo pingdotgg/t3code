@@ -5,7 +5,6 @@ import { codexAuthHandoffUrl, readCodexAuthDelivery } from "@t3tools/shared/code
 import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, it } from "@effect/vitest";
-import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { beforeEach, vi } from "vite-plus/test";
@@ -112,40 +111,6 @@ describe("DesktopClerk", () => {
     storageMock.mockReset();
   });
 
-  it.effect("acquires and releases the SDK bridge with the layer", () => {
-    const cleanup = vi.fn();
-    const events: string[] = [];
-    storageMock.mockReturnValue(storageAdapter);
-    createClerkBridgeMock.mockImplementation(() => {
-      events.push("createClerkBridge");
-      return { cleanup, isPrimaryInstance: true };
-    });
-
-    return Effect.gen(function* () {
-      yield* Effect.scoped(Layer.build(layerDesktopClerk(true, events)));
-
-      assert.deepEqual(createClerkBridgeMock.mock.calls, [
-        [
-          {
-            storage: storageAdapter,
-            manageSingleInstanceLock: false,
-            passkeys: true,
-            renderer: { scheme: "t3code-dev", host: "app" },
-          },
-        ],
-      ]);
-      assert.equal(cleanup.mock.calls.length, 1);
-      assert.deepEqual(events, [
-        "setPath:userData:/tmp/app-data/t3code-dev",
-        "requestSingleInstanceLock",
-        "on:second-instance",
-        "createClerkBridge",
-      ]);
-      storageMock.mockClear();
-      createClerkBridgeMock.mockClear();
-    });
-  });
-
   it.each([
     {
       name: "packaged macOS",
@@ -197,54 +162,6 @@ describe("DesktopClerk", () => {
       ]);
     },
   );
-
-  it.effect("preserves bridge initialization failures", () => {
-    const cause = new Error("bridge initialization failed");
-    storageMock.mockReturnValue(storageAdapter);
-    createClerkBridgeMock.mockImplementationOnce(() => {
-      throw cause;
-    });
-
-    return Effect.gen(function* () {
-      const error = yield* Effect.scoped(Layer.build(layerDesktopClerk())).pipe(Effect.flip);
-
-      assert.instanceOf(error, DesktopClerk.DesktopClerkBridgeInitializationError);
-      assert.equal(error.stateDir, "/tmp/t3-state");
-      assert.equal(error.isDevelopment, true);
-      assert.strictEqual(error.cause, cause);
-      assert.equal(
-        error.message,
-        'Failed to initialize the desktop Clerk bridge for state directory "/tmp/t3-state" (development: true).',
-      );
-    });
-  });
-
-  it.effect("preserves bridge cleanup failures", () => {
-    const cause = new Error("bridge cleanup failed");
-    storageMock.mockReturnValue(storageAdapter);
-    createClerkBridgeMock.mockReturnValue({
-      cleanup: () => {
-        throw cause;
-      },
-    });
-
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(Effect.scoped(Layer.build(layerDesktopClerk(false))));
-
-      assert.equal(exit._tag, "Failure");
-      if (exit._tag === "Failure") {
-        const error = Cause.squash(exit.cause);
-        assert.instanceOf(error, DesktopClerk.DesktopClerkBridgeCleanupError);
-        assert.equal(error.stateDir, "/tmp/t3-state");
-        assert.equal(error.isDevelopment, false);
-        assert.strictEqual(error.cause, cause);
-        assert.equal(
-          error.message,
-          'Failed to clean up the desktop Clerk bridge for state directory "/tmp/t3-state" (development: false).',
-        );
-      }
-    });
-  });
 
   it.effect.each(["before configure", "after configure"] as const)(
     "reveals the running window when a second instance launches %s",

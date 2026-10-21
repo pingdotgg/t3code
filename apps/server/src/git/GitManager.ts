@@ -193,7 +193,7 @@ const isSourceControlProviderError = Schema.is(SourceControlProviderError);
  * into sustained pressure. Backing off per branch keeps the retry rate below
  * the healthy rate once a branch has failed more than a couple of times.
  */
-export function prLookupFailureTtl(consecutiveFailures: number): Duration.Duration {
+function prLookupFailureTtl(consecutiveFailures: number): Duration.Duration {
   const exponent = Math.max(0, consecutiveFailures - 1);
   const backoffMs = Duration.toMillis(PR_LOOKUP_FAILURE_BASE_TTL) * Math.pow(2, exponent);
   return Duration.min(Duration.millis(backoffMs), PR_LOOKUP_FAILURE_MAX_TTL);

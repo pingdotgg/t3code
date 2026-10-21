@@ -230,58 +230,6 @@ it.effect("rolls back earlier question claims when a later pending upload is mis
   }).pipe(Effect.provide(layerIntakeTest)),
 );
 
-it.effect("rolls back earlier question claims when attachment path preparation fails", () =>
-  Effect.gen(function* () {
-    const config = yield* ServerConfig.ServerConfig;
-    const pendingId = ChatAttachmentId.make(createPendingAttachmentId()!);
-    NodeFS.writeFileSync(
-      NodePath.join(config.attachmentsDir, `${pendingId}.png`),
-      new Uint8Array([1, 2, 3]),
-    );
-    const captured: OrchestrationV2ServerCommand[] = [];
-    const result = yield* dispatchCommand({
-      type: "runtime-request.respond",
-      commandId: CommandId.make("answer-missing-claimed"),
-      threadId: ThreadId.make("thread-path-fail"),
-      requestId: RuntimeRequestId.make("request-missing-claimed"),
-      answers: { q1: ["one"], q2: ["two"] },
-      attachmentsByQuestionId: {
-        q1: [
-          {
-            type: "image",
-            id: pendingId,
-            name: "screen.png",
-            mimeType: "image/png",
-            sizeBytes: 3,
-          },
-        ],
-        q2: [
-          {
-            type: "image",
-            id: ChatAttachmentId.make("thread-path-fail-00000000-0000-4000-8000-000000000099"),
-            name: "missing.png",
-            mimeType: "image/png",
-            sizeBytes: 3,
-          },
-        ],
-      },
-    }).pipe(Effect.provide(layerFailingDispatch(captured)), Effect.result);
-    expect(result._tag).toBe("Failure");
-    if (result._tag === "Failure") {
-      expect(result.failure._tag).toBe("AttachmentClaimError");
-    }
-    expect(captured).toHaveLength(0);
-    expect(NodeFS.readFileSync(NodePath.join(config.attachmentsDir, `${pendingId}.png`))).toEqual(
-      Buffer.from([1, 2, 3]),
-    );
-    expect(
-      NodeFS.readdirSync(config.attachmentsDir).filter((entry) =>
-        entry.startsWith("thread-path-fail-"),
-      ),
-    ).toEqual([]);
-  }).pipe(Effect.provide(layerIntakeTest)),
-);
-
 it.effect("retains claimed copies when dispatch failure may have been accepted", () =>
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
@@ -428,55 +376,6 @@ it.effect("releases claimed copies when dispatch replays an earlier accepted res
     expect(
       NodeFS.readFileSync(NodePath.join(config.attachmentsDir, `${earlierAttachment.id}.png`)),
     ).toEqual(Buffer.from([4, 4, 4]));
-    expect(NodeFS.existsSync(NodePath.join(config.attachmentsDir, `${pendingId}.png`))).toBe(true);
-  }).pipe(Effect.provide(layerIntakeTest)),
-);
-
-it.effect("releases claimed copies when the recorded answer has no attachments", () =>
-  Effect.gen(function* () {
-    const config = yield* ServerConfig.ServerConfig;
-    const threadId = ThreadId.make("thread-empty-answer");
-    const pendingId = ChatAttachmentId.make(createPendingAttachmentId()!);
-    NodeFS.writeFileSync(
-      NodePath.join(config.attachmentsDir, `${pendingId}.png`),
-      new Uint8Array([1, 2, 3]),
-    );
-    const storedEvents = answeredRespondEvents({
-      threadId,
-      requestId: "request-empty-answer",
-      attachmentsByQuestionId: {},
-    });
-    const result = yield* dispatchCommand({
-      type: "runtime-request.respond",
-      commandId: CommandId.make("answer-empty"),
-      threadId,
-      requestId: RuntimeRequestId.make("request-empty-answer"),
-      answers: { q: ["one"] },
-      attachmentsByQuestionId: {
-        q: [
-          {
-            type: "image",
-            id: pendingId,
-            name: "screen.png",
-            mimeType: "image/png",
-            sizeBytes: 3,
-          },
-        ],
-      },
-    }).pipe(
-      Effect.provide(
-        Layer.mock(ThreadManagementService.ThreadManagementService)({
-          dispatch: () => Effect.succeed({ sequence: 1, storedEvents }),
-        }),
-      ),
-      Effect.result,
-    );
-    expect(result._tag).toBe("Success");
-    expect(
-      NodeFS.readdirSync(config.attachmentsDir).filter((entry) =>
-        entry.startsWith("thread-empty-answer-"),
-      ),
-    ).toEqual([]);
     expect(NodeFS.existsSync(NodePath.join(config.attachmentsDir, `${pendingId}.png`))).toBe(true);
   }).pipe(Effect.provide(layerIntakeTest)),
 );

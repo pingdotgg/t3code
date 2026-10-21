@@ -600,7 +600,7 @@ const bySessionPriority = (left: AuthClientSession, right: AuthClientSession) =>
   return right.issuedAt.epochMilliseconds - left.issuedAt.epochMilliseconds;
 };
 
-export function toBootstrapExchangeError(
+function toBootstrapExchangeError(
   cause: PairingGrantStore.BootstrapCredentialError,
 ): ServerAuthInvalidCredentialError | ServerAuthInternalError {
   if (PairingGrantStore.isBootstrapCredentialInternalError(cause)) {

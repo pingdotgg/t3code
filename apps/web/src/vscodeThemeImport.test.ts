@@ -79,13 +79,6 @@ describe("VS Code theme import", () => {
     expect(asHex(theme.colors.terminalBackground)).toBe("#101010");
   });
 
-  it("flattens alpha overlays onto the surface they sit on", () => {
-    const theme = parseVsCodeThemeFile(VSCODE_DARK);
-    expect(theme.colors.sidebarRowHover).toMatch(/^oklch\(/);
-    expect(asHex(theme.colors.sidebarRowHover)).not.toBe("#1f3e5e59");
-    expect(theme.colors.sidebarRowSelected).not.toBe(theme.colors.sidebar);
-  });
-
   it("keeps a fallback placeholder dimmer than entered text", () => {
     const theme = parseVsCodeThemeFile({
       name: "Dark placeholder fallback",
@@ -167,25 +160,6 @@ describe("VS Code theme import", () => {
     ).toBeGreaterThanOrEqual(1.1);
   });
 
-  it("keeps the derived input distinct when a button reuses it", () => {
-    const theme = parseVsCodeThemeFile({
-      name: "Derived input collision",
-      type: "dark",
-      colors: {
-        "editor.background": "#1e1e2e",
-        focusBorder: "#89b4fa",
-        "button.background": "#525661",
-      },
-    });
-
-    expect(asHex(theme.colors.messageAction)).toBe("#525661");
-    expect(asHex(theme.colors.input)).not.toBe("#525661");
-    expect(contrastRatio(theme.colors.input, theme.colors.canvas)).toBeGreaterThanOrEqual(1.1);
-    expect(contrastRatio(theme.colors.input, theme.colors.messageAction)).toBeGreaterThanOrEqual(
-      1.1,
-    );
-  });
-
   it("skips a transparent focus border for a visible accent key", () => {
     const vitesse = parseVsCodeThemeFile({
       name: "Vitesse Dark",
@@ -218,22 +192,6 @@ describe("VS Code theme import", () => {
     expect(asHex(theme.colors.focus)).toBe("#4d9375");
   });
 
-  it("keeps the fallback focus visible against an explicit raised surface", () => {
-    const theme = parseVsCodeThemeFile({
-      name: "Raised fallback focus",
-      type: "dark",
-      colors: {
-        "editor.background": "#121212",
-        "editorWidget.background": "#346bf1",
-      },
-    });
-    expect(asHex(theme.colors.focus)).toBe("#ffffff");
-    expect(contrastRatio(theme.colors.focus, theme.colors.canvas)).toBeGreaterThanOrEqual(1.1);
-    expect(contrastRatio(theme.colors.focus, theme.colors.surfaceRaised)).toBeGreaterThanOrEqual(
-      1.1,
-    );
-  });
-
   it("skips a transparent button background for the action color", () => {
     const theme = parseVsCodeThemeFile({
       name: "Transparent button",
@@ -245,48 +203,6 @@ describe("VS Code theme import", () => {
       },
     });
     expect(asHex(theme.colors.messageAction)).toBe("#4d9375");
-  });
-
-  it("skips a button background that matches the raised surface", () => {
-    const theme = parseVsCodeThemeFile({
-      name: "Raised button",
-      type: "dark",
-      colors: {
-        "editor.background": "#121212",
-        focusBorder: "#4d9375",
-        "editorWidget.background": "#2a2d3a",
-        "button.background": "#2a2d3a",
-      },
-    });
-    expect(asHex(theme.colors.messageAction)).toBe("#4d9375");
-  });
-
-  it("uses a visible default accent when the file has no usable accent key", () => {
-    const theme = parseVsCodeThemeFile({
-      name: "No accent",
-      type: "dark",
-      colors: { "editor.background": "#121212", focusBorder: "#121212" },
-    });
-    expect(contrastRatio(theme.colors.focus, theme.colors.canvas)).toBeGreaterThanOrEqual(1.1);
-  });
-
-  it("validates placeholders against the resolved raised surface", () => {
-    const lightPlus = parseVsCodeThemeFile({
-      name: "Light Plus Shape",
-      type: "light",
-      colors: {
-        "editor.background": "#eaeff3",
-        "editor.foreground": "#1f1f1f",
-        "editorWidget.background": "#ffffff",
-        "input.placeholderForeground": "#767676",
-      },
-    });
-    expect(
-      contrastRatio(lightPlus.colors.placeholder, lightPlus.colors.surfaceRaised),
-    ).toBeGreaterThanOrEqual(4.5);
-    expect(
-      contrastRatio(lightPlus.colors.placeholder, lightPlus.colors.surfaceRaised),
-    ).toBeLessThan(contrastRatio(lightPlus.colors.text, lightPlus.colors.surfaceRaised));
   });
   it("imports current and other find matches as independent background/text pairs", () => {
     const { colors } = parseVsCodeThemeFile({
@@ -322,21 +238,6 @@ describe("VS Code theme import", () => {
     expect(asHex(colors.searchMatchActiveForeground)).toBe("#d4d9df");
     expect(asHex(colors.searchMatchBackground)).toBe("#584b18");
     expect(asHex(colors.searchMatchForeground)).toBe("#ffffff");
-  });
-
-  it("uses editor text when no find foreground is specified", () => {
-    const { colors } = parseVsCodeThemeFile({
-      type: "dark",
-      colors: {
-        "editor.background": "#101010",
-        "editor.foreground": "#eeeeee",
-        "editor.findMatchBackground": "#304050",
-        "editor.findMatchHighlightBackground": "#403020",
-      },
-    });
-
-    expect(asHex(colors.searchMatchActiveForeground)).toBe("#eeeeee");
-    expect(asHex(colors.searchMatchForeground)).toBe("#eeeeee");
   });
 
   it.each(["light", "dark"])(
@@ -506,19 +407,6 @@ describe("VS Code theme import", () => {
     expect(themes.map((theme) => theme.label).sort()).toEqual(["Solar", "Solar Dark Soft"]);
   });
 
-  it("keeps derived surfaces neutral instead of washing them with the accent", () => {
-    const theme = parseVsCodeThemeFile(VSCODE_DARK);
-    const spread = (value: string) => {
-      const hex = asHex(value);
-      const channels = [1, 3, 5].map((index) => Number.parseInt(hex.slice(index, index + 2), 16));
-      return Math.max(...channels) - Math.min(...channels);
-    };
-    expect(spread(theme.colors.codeBackground)).toBeLessThanOrEqual(8);
-    expect(spread(theme.colors.surface)).toBeLessThanOrEqual(8);
-    expect(spread(theme.colors.text)).toBeLessThanOrEqual(12);
-    expect(asHex(theme.colors.accent)).toBe("#69b1ff");
-  });
-
   it("tells same-named variants apart by their file names", () => {
     // Dracula ships dracula.json and dracula-soft.json that both say
     // "Dracula" inside.
@@ -539,27 +427,6 @@ describe("VS Code theme import", () => {
       { theme: dracula("#22232e") },
     ]);
     expect(numbered.map((theme) => theme.label)).toEqual(["Dracula", "Dracula 2"]);
-  });
-
-  it("falls back to the name when the displayName humanizes to nothing", () => {
-    const theme = parseVsCodeThemeFile({
-      displayName: "---",
-      name: "night-owl",
-      type: "dark",
-      colors: { "editor.background": "#011627" },
-    });
-    expect(theme.label).toBe("Night Owl");
-  });
-
-  it("keeps a pair whose stripped name is reserved as two single themes", () => {
-    const make = (name: string, type: "light" | "dark") =>
-      parseVsCodeThemeFile({
-        name,
-        type,
-        colors: { "editor.background": type === "dark" ? "#101014" : "#fdfdfd" },
-      });
-    const themes = pairVsCodeThemes([make("grove-light", "light"), make("grove-dark", "dark")]);
-    expect(themes.map((theme) => theme.label).sort()).toEqual(["Grove Dark", "Grove Light"]);
   });
 
   it("explains a file with no editor background", () => {

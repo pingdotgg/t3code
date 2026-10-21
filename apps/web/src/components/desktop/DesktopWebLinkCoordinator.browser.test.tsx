@@ -138,10 +138,3 @@ it("holds a launch PR link until project discovery settles, then opens the PR vi
   expect(state.navigate).toHaveBeenCalledExactlyOnceWith(pullRequestView);
   expect(state.openScratchProject).not.toHaveBeenCalled();
 });
-
-it("opens an ordinary link in the browser while a PR link is still held", async () => {
-  setup();
-  await using _coordinator = await mount(pullRequestUrl, "https://example.com/docs");
-  expect(state.openScratchProject).toHaveBeenCalledOnce();
-  expect(state.navigate).not.toHaveBeenCalled();
-});

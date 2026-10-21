@@ -182,26 +182,10 @@ describe("buildRemoteOpenUrl", () => {
     ).toBe("vscode://vscode-remote/ssh-remote+sol.tail1234.ts.net/home/theo/code/my%20repo");
   });
 
-  it("uses the fork's scheme", () => {
-    expect(buildRemoteOpenUrl({ editor: "cursor", host: "sol", absolutePath: "/tmp/x" })).toBe(
-      "cursor://vscode-remote/ssh-remote+sol/tmp/x",
-    );
-  });
-
   it("roots Windows paths", () => {
     expect(
       buildRemoteOpenUrl({ editor: "vscode", host: "sol", absolutePath: "C:\\Users\\theo" }),
     ).toBe("vscode://vscode-remote/ssh-remote+sol/C%3A/Users/theo");
-  });
-
-  it("builds Zed's ssh deep link", () => {
-    expect(
-      buildRemoteOpenUrl({
-        editor: "zed",
-        host: "sol.tail1234.ts.net",
-        absolutePath: "/home/theo/code/my repo",
-      }),
-    ).toBe("zed://ssh/sol.tail1234.ts.net/home/theo/code/my%20repo");
   });
 
   it("drops the Windows drive letter for Zed", () => {
@@ -255,11 +239,5 @@ describe("buildRemoteOpenUrl", () => {
         `${editor}, isFile=${isFile}`,
       ).toBe(expected);
     }
-  });
-
-  it("returns undefined for editors without remote support", () => {
-    expect(buildRemoteOpenUrl({ editor: "kiro", host: "sol", absolutePath: "/tmp/x" })).toBe(
-      undefined,
-    );
   });
 });

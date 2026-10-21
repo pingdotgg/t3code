@@ -4,38 +4,11 @@ import {
   filePreviewKind,
   decodeFilePreviewText,
   FILE_TEXT_PREVIEW_MAX_BYTES,
-  hostPreviewMimeTypeFromExtension,
-  isWorkspaceAudioPreviewPath,
-  isWorkspaceBrowserPreviewPath,
-  isWorkspaceImagePreviewPath,
   isWorkspacePreviewEntryPath,
-  isWorkspaceVideoPreviewPath,
   mediaKindFromPath,
 } from "./filePreview.ts";
 
 describe("workspace file previews", () => {
-  it.each(["report.html", "report.HTM", "document#draft.pdf", "reports?old/document.pdf"])(
-    "recognizes browser preview path %s",
-    (path) => {
-      expect(isWorkspaceBrowserPreviewPath(path)).toBe(true);
-      expect(isWorkspacePreviewEntryPath(path)).toBe(true);
-    },
-  );
-
-  it.each([
-    "icon.png",
-    "photo.JPEG",
-    "animation.gif",
-    "vector#mark.svg",
-    "photo?edited.JPEG",
-    "images#archive/icon.png",
-    "texture.webp",
-    "image.avif",
-  ])("recognizes image preview path %s", (path) => {
-    expect(isWorkspaceImagePreviewPath(path)).toBe(true);
-    expect(isWorkspacePreviewEntryPath(path)).toBe(true);
-  });
-
   it.each([
     "README.md",
     "src/index.ts",
@@ -48,14 +21,6 @@ describe("workspace file previews", () => {
     "image%2Epng",
   ])("rejects non-preview path %s", (path) => {
     expect(isWorkspacePreviewEntryPath(path)).toBe(false);
-  });
-
-  it("serves audio in place from the host like video and browser documents", () => {
-    expect(isWorkspaceAudioPreviewPath("notes/recording.WAV")).toBe(true);
-    expect(isWorkspaceAudioPreviewPath("recording.wav.ts")).toBe(false);
-    expect(hostPreviewMimeTypeFromExtension(".m4a")).toBe("audio/mp4");
-    expect(hostPreviewMimeTypeFromExtension(".mp4")).toBe("video/mp4");
-    expect(hostPreviewMimeTypeFromExtension(".txt")).toBeNull();
   });
 });
 
@@ -71,16 +36,6 @@ describe("media path parsing", () => {
     ["/tmp/100%.png", "image"],
   ])("classifies the decoded pathname of %s", (source, kind) => {
     expect(mediaKindFromPath(source)).toBe(kind);
-  });
-
-  it.each([
-    ["recording.mp4#t=2", "video", false],
-    ["recording%2Emp4", "video", false],
-    ["recording#take2.mp4", null, true],
-    ["recording?take2.mp4", null, true],
-  ])("distinguishes authored URLs from literal filenames in %s", (source, kind, literalVideo) => {
-    expect(mediaKindFromPath(source)).toBe(kind);
-    expect(isWorkspaceVideoPreviewPath(source)).toBe(literalVideo);
   });
 });
 

@@ -116,7 +116,7 @@ export function dismissFailedSnapShot(
   }
 }
 
-export function resolveSnapShotTargetOnce(
+function resolveSnapShotTargetOnce(
   resolutionRef: { current: Promise<CaptureTarget | null> | null },
   resolveTarget: () => Promise<CaptureTarget | null>,
 ): Promise<CaptureTarget | null> {

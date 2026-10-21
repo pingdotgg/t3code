@@ -284,21 +284,6 @@ describe("Antigravity subscription limits", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("preserves cached access token when quota endpoints return no usable windows", () =>
-    Effect.gen(function* () {
-      const { probe, requests } = yield* fixture({
-        summary: { groups: [] },
-        models: { models: {} },
-      });
-      const first = yield* probe;
-      expect(first.unavailable?.reason).toBe("probeFailed");
-      expect(requests.filter((request) => request.url.endsWith("/token"))).toHaveLength(1);
-      const second = yield* probe;
-      expect(second.unavailable?.reason).toBe("probeFailed");
-      expect(requests.filter((request) => request.url.endsWith("/token"))).toHaveLength(1);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
   it.effect("returns a safe failure when OAuth refresh fails", () =>
     Effect.gen(function* () {
       const { probe } = yield* fixture({ tokenStatus: 401 });

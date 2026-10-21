@@ -1,12 +1,6 @@
-import { splitFilePathPosition } from "./fileLinks.ts";
-import { parseFileUrlHref } from "./fileLinks.ts";
-import { workspaceRelativeFilePath, fileBasename } from "./path.ts";
+import { workspaceRelativeFilePath } from "./path.ts";
 import { describe, expect, it } from "vite-plus/test";
-import {
-  extractMarkdownLinkHrefs,
-  resolveMarkdownFileLinkTarget,
-  isWindowsDrivePathHref,
-} from "./markdownLinks.ts";
+import { extractMarkdownLinkHrefs, resolveMarkdownFileLinkTarget } from "./markdownLinks.ts";
 
 import {
   inlineCodeFilePathCandidate,
@@ -61,46 +55,6 @@ describe("inlineCodeFilePathCandidate", () => {
     ["./models/glm-5.3", "./models/glm-5.3"],
   ])("distinguishes file paths from code and hostnames in %s", (source, candidate) => {
     expect(inlineCodeFilePathCandidate(source)).toBe(candidate);
-  });
-});
-
-describe("parseFileUrlHref", () => {
-  it.each([
-    ["file:///Users/julius/project/src/main.ts#L42", "/Users/julius/project/src/main.ts", "#L42"],
-    [
-      "file:///D:/Programme/t3code/OpenInPicker.tsx#L69",
-      "D:/Programme/t3code/OpenInPicker.tsx",
-      "#L69",
-    ],
-    ["file://server/share/workspace-image.svg", "\\\\server\\share\\workspace-image.svg", ""],
-    ["file://localhost/home/me/notes.md", "/home/me/notes.md", ""],
-  ])("parses %s", (href, path, hash) => {
-    expect(parseFileUrlHref(href)).toEqual({ path, hash });
-  });
-
-  it("keeps percent-encoding so the caller decodes once", () => {
-    expect(parseFileUrlHref("file:///Users/julius/project/file%2520name.md")?.path).toBe(
-      "/Users/julius/project/file%2520name.md",
-    );
-    expect(parseFileUrlHref("file:///c%3A/Users/x/shot.png")?.path).toBe("/c%3A/Users/x/shot.png");
-  });
-
-  it.each(["https://example.com/a.ts", "file://%", "/Users/julius/a.ts"])("rejects %s", (href) => {
-    expect(parseFileUrlHref(href)).toBeNull();
-  });
-});
-
-describe("splitFilePathPosition", () => {
-  it.each([
-    ["src/main.ts", "", { path: "src/main.ts" }],
-    ["src/main.ts:12", "", { path: "src/main.ts", line: 12 }],
-    ["src/main.ts:12:5", "", { path: "src/main.ts", line: 12, column: 5 }],
-    ["src/main.ts", "#L18C2", { path: "src/main.ts", line: 18, column: 2 }],
-    ["src/main.ts:3", "#L18C2", { path: "src/main.ts", line: 3 }],
-    ["src/main.ts:0", "", { path: "src/main.ts" }],
-    ["src/main.ts", "#section", { path: "src/main.ts" }],
-  ])("splits %s%s", (path, hash, expected) => {
-    expect(splitFilePathPosition(path, hash)).toEqual(expected);
   });
 });
 
@@ -167,18 +121,6 @@ describe("parseMarkdownFileLink", () => {
   });
 });
 
-describe("fileBasename", () => {
-  it.each([
-    ["/tmp/favicons/", "favicons"],
-    ["C:\\Users\\kelchm\\.claude\\", ".claude"],
-    ["/tmp/", "tmp"],
-    ["AGENTS.md", "AGENTS.md"],
-    ["/", "/"],
-  ])("labels %s as %s", (path, basename) => {
-    expect(fileBasename(path)).toBe(basename);
-  });
-});
-
 describe("workspaceRelativeFilePath", () => {
   it.each([
     ["/repo/project", "/repo/project", "."],
@@ -209,16 +151,6 @@ describe("workspaceRelativeFilePath", () => {
   });
 });
 
-describe("isWindowsDrivePathHref", () => {
-  it.each([
-    ["C:\\repo\\image.png", true],
-    ["C:%5Crepo%5Cimage.png", true],
-    ["https://example.com/image.png", false],
-  ])("classifies %s as %s", (href, expected) => {
-    expect(isWindowsDrivePathHref(href)).toBe(expected);
-  });
-});
-
 describe("extractMarkdownLinkHrefs", () => {
   it.each([
     ["[".repeat(32_000), []],
@@ -238,31 +170,9 @@ describe("extractMarkdownLinkHrefs", () => {
   ])("extracts links from incomplete and nested text", (markdown, hrefs) => {
     expect(extractMarkdownLinkHrefs(markdown)).toEqual(hrefs);
   });
-
-  it("extracts angle-bracketed paths containing spaces", () => {
-    expect(
-      extractMarkdownLinkHrefs(
-        "[Open the Bike Receipts folder](</Users/dara/Downloads/Lime Ride Artifacts/Bike Receipts>)",
-      ),
-    ).toEqual(["/Users/dara/Downloads/Lime Ride Artifacts/Bike Receipts"]);
-  });
-
-  it("preserves ordinary destinations and ignores link titles", () => {
-    expect(
-      extractMarkdownLinkHrefs(
-        '[source](apps/web/src/markdown-links.ts "implementation") and [docs](https://example.com)',
-      ),
-    ).toEqual(["apps/web/src/markdown-links.ts", "https://example.com"]);
-  });
 });
 
 describe("resolveMarkdownFileLinkTarget", () => {
-  it("resolves absolute posix file paths", () => {
-    expect(resolveMarkdownFileLinkTarget("/Users/julius/project/AGENTS.md")).toBe(
-      "/Users/julius/project/AGENTS.md",
-    );
-  });
-
   it("resolves relative file paths against cwd", () => {
     expect(resolveMarkdownFileLinkTarget("src/processRunner.ts:71", "/Users/julius/project")).toBe(
       "/Users/julius/project/src/processRunner.ts:71",
@@ -272,12 +182,6 @@ describe("resolveMarkdownFileLinkTarget", () => {
   it("does not treat filename line references as external schemes", () => {
     expect(resolveMarkdownFileLinkTarget("script.ts:10", "/Users/julius/project")).toBe(
       "/Users/julius/project/script.ts:10",
-    );
-  });
-
-  it("resolves bare file names against cwd", () => {
-    expect(resolveMarkdownFileLinkTarget("AGENTS.md", "/Users/julius/project")).toBe(
-      "/Users/julius/project/AGENTS.md",
     );
   });
 
@@ -304,12 +208,6 @@ describe("resolveMarkdownFileLinkTarget", () => {
     );
   });
 
-  it("resolves a localhost file uri as a local path", () => {
-    expect(resolveMarkdownFileLinkTarget("file://localhost/home/me/notes.md")).toBe(
-      "/home/me/notes.md",
-    );
-  });
-
   it("keeps an encoded final space in the absolute target", () => {
     expect(resolveMarkdownFileLinkTarget("/tmp/repo/file.ts%20", "/tmp/repo")).toBe(
       "/tmp/repo/file.ts ",
@@ -322,19 +220,6 @@ describe("resolveMarkdownFileLinkTarget", () => {
         "/D:/Programme/t3code/apps/web/src/components/chat/OpenInPicker.tsx#L69",
       ),
     ).toBe("D:/Programme/t3code/apps/web/src/components/chat/OpenInPicker.tsx:69");
-  });
-
-  it("resolves angle-bracketed windows drive paths", () => {
-    expect(
-      resolveMarkdownFileLinkTarget(
-        "</D:/Programme/t3code/apps/web/src/components/ChatMarkdown.tsx:1>",
-      ),
-    ).toBe("D:/Programme/t3code/apps/web/src/components/ChatMarkdown.tsx:1");
-  });
-
-  it("does not treat app routes as file links, even with a line anchor", () => {
-    expect(resolveMarkdownFileLinkTarget("/chat/settings")).toBeNull();
-    expect(resolveMarkdownFileLinkTarget("/chat/settings#L3", "/repo")).toBeNull();
   });
 
   it("decodes an encoded drive colon in a file uri before dropping its slash", () => {

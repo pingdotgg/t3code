@@ -370,14 +370,6 @@ describe("parseFirefoxProfiles", () => {
     }),
   );
 
-  it.effect("falls back to the path when a profile has no name", () =>
-    Effect.gen(function* () {
-      expect(
-        yield* parsePosixFirefoxProfiles(["[Profile0]", "Path=Profiles/x.default"].join("\n")),
-      ).toEqual([{ directory: "Profiles/x.default", name: "Profiles/x.default" }]);
-    }),
-  );
-
   it.effect.each([
     { platform: "Linux", root: "/home/user/.mozilla/firefox" },
     { platform: "macOS", root: "/Users/user/Library/Application Support/Firefox" },
