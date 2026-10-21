@@ -16,6 +16,7 @@ import {
   ProjectId,
   type MessageId,
   type ModelSelection,
+  type OrchestrationMessageContext,
   type OrchestrationV2ProjectedTurnItem,
   type PreviewAnnotationPayload,
   type ProviderInteractionMode,
@@ -53,6 +54,7 @@ import {
   type TurnDiffSummary,
 } from "../types";
 import {
+  type ComposerFileAttachment,
   type ComposerImageAttachment,
   type DraftId,
   type DraftThreadState,
@@ -61,8 +63,22 @@ import * as Schema from "effect/Schema";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentThreadShells, environmentThreadDetails } from "../state/threads";
 import { waitForAtomValue } from "../state/waitForAtomValue";
-import { filterTerminalContextsWithText, type TerminalContextDraft } from "../lib/terminalContext";
-import { stripInlineContextReferences } from "~/lib/composerContextReferences";
+import {
+  filterTerminalContextsWithText,
+  formatTerminalContextLabel,
+  type TerminalContextDraft,
+} from "../lib/terminalContext";
+import {
+  removeInlineContextReference,
+  stripInlineContextReferences,
+} from "~/lib/composerContextReferences";
+import {
+  previewAnnotationContextLabel,
+  reviewCommentContextLabel,
+  terminalContextReference,
+} from "../lib/composerContextRecords";
+import { serializeLegacyContextMessage } from "@t3tools/shared/composerContextLegacySend";
+import type { ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import type { DraftThreadEnvMode } from "../composerDraftStore";
 import { collapseExpandedComposerCursor, type ComposerSubmissionIntent } from "../composer-logic";
 import type { ReviewCommentContext } from "../reviewCommentContext";
@@ -1441,4 +1457,156 @@ export function makeModelDisabledReason(
     });
     return reason ? `${reason.description} Start a new thread to use this model.` : null;
   };
+}
+
+/** What the composer held when the user pressed send, after a direct annotation merged in. */
+export interface ComposerSendContents {
+  readonly prompt: string;
+  readonly images: ReadonlyArray<ComposerImageAttachment>;
+  readonly files: ReadonlyArray<ComposerFileAttachment>;
+  readonly terminalContexts: ReadonlyArray<TerminalContextDraft>;
+  readonly sendableTerminalContexts: ReadonlyArray<TerminalContextDraft>;
+  readonly previewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
+  readonly reviewComments: ReadonlyArray<ReviewCommentContext>;
+  readonly threadContexts: ReadonlyArray<ThreadContextRecord>;
+}
+
+/**
+ * Copies the composer contents a send dispatches, so a failed send can put the
+ * same draft back. Terminal contexts that lost their text are dropped from both
+ * the contexts and the prompt's inline references.
+ */
+export function snapshotComposerSend(contents: ComposerSendContents) {
+  const images = [...contents.images];
+  const files = [...contents.files];
+  const terminalContexts = [...contents.sendableTerminalContexts];
+  return {
+    images,
+    files,
+    attachments: [...images, ...files],
+    terminalContexts,
+    previewAnnotations: [...contents.previewAnnotations],
+    reviewComments: [...contents.reviewComments],
+    threadContexts: [...contents.threadContexts],
+    messageText: contents.terminalContexts
+      .filter((context) => !terminalContexts.includes(context))
+      .reduce(
+        (text, context) =>
+          removeInlineContextReference(text, terminalContextReference(context).contextId).prompt,
+        contents.prompt,
+      )
+      .trim(),
+  };
+}
+
+export type ComposerSendSnapshot = ReturnType<typeof snapshotComposerSend>;
+
+/** How a composer send dispatches: where it runs and whether it waits behind other work. */
+export function planComposerTurn(input: {
+  readonly messageText: string;
+  readonly sendQueuesBehindSetup: boolean;
+  readonly isServerThread: boolean;
+  readonly activeMessageCount: number;
+  readonly sendEnvMode: DraftThreadEnvMode;
+  readonly worktreePath: string | null;
+  readonly activeThreadBranch: string | null;
+  readonly resumeCompactionTokens: number | null;
+  readonly keepFullHistory: boolean;
+  readonly phase: SessionPhase;
+  readonly dispatchMode: ComposerDispatchMode;
+}) {
+  const isFirstMessage =
+    !input.sendQueuesBehindSetup && (!input.isServerThread || input.activeMessageCount === 0);
+  const shouldCreateWorktree =
+    isFirstMessage && input.sendEnvMode === "worktree" && !input.worktreePath;
+  // A stale Claude session compacts before this message so the turn does not re-read the
+  // old history. The message queues behind the /compact run, since steering into it is
+  // rejected.
+  const compactBeforeSend =
+    input.resumeCompactionTokens !== null &&
+    !input.keepFullHistory &&
+    input.messageText.toLowerCase() !== "/compact";
+  return {
+    // In worktree mode, require an explicit base branch so we don't silently
+    // fall back to local execution when branch selection is missing.
+    missingWorktreeBaseBranch: shouldCreateWorktree && !input.activeThreadBranch,
+    baseBranchForWorktree: shouldCreateWorktree ? input.activeThreadBranch : null,
+    compactBeforeSend,
+    turnDispatchMode:
+      compactBeforeSend || input.sendQueuesBehindSetup ? ("queue" as const) : input.dispatchMode,
+    shouldQueueBehindActiveRun:
+      compactBeforeSend ||
+      input.sendQueuesBehindSetup ||
+      (input.phase === "running" && input.dispatchMode === "queue"),
+  };
+}
+
+/**
+ * The attachment ids a message's context records bind to: the upload id the
+ * server returned, or the local id on the data-URL path.
+ */
+export function boundAttachmentIds(
+  turnAttachments: ReadonlyArray<{ readonly id?: string | undefined }>,
+  attachments: ReadonlyArray<{ readonly id: string }>,
+): string[] {
+  return turnAttachments.map((attachment, index) =>
+    "id" in attachment && attachment.id !== undefined ? attachment.id : attachments[index]!.id,
+  );
+}
+
+/**
+ * The message text and context a turn sends. Servers from before inline
+ * context drop the records and forward the links as literal text, so their
+ * turns carry the payload the legacy way.
+ */
+export function withMessageContext(input: {
+  readonly text: string;
+  readonly context: OrchestrationMessageContext | undefined;
+  readonly supportsInlineMessageContext: boolean;
+}): { readonly text: string; readonly context?: OrchestrationMessageContext } {
+  const { text, context } = input;
+  if (context === undefined) return { text };
+  if (!input.supportsInlineMessageContext) {
+    return { text: serializeLegacyContextMessage({ text, records: context.records }) };
+  }
+  return { text, context };
+}
+
+/** The attachments the optimistic user row shows before the server echoes the message. */
+export function optimisticMessageAttachments(
+  attachments: ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment>,
+) {
+  return attachments.map((attachment) =>
+    attachment.type === "image"
+      ? {
+          type: "image" as const,
+          id: attachment.id,
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+          sizeBytes: attachment.sizeBytes,
+          previewUrl: attachment.previewUrl,
+          ...(attachment.source ? { source: attachment.source } : {}),
+        }
+      : {
+          type: "file" as const,
+          id: attachment.id,
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+          sizeBytes: attachment.sizeBytes,
+          downloadable: false,
+          ...(attachment.source ? { source: attachment.source } : {}),
+        },
+  );
+}
+
+/** Fallback title sources for a message with no text of its own. */
+export function sendTitleFallbackLabels(snapshot: ComposerSendSnapshot) {
+  const terminalContext = snapshot.terminalContexts[0];
+  const reviewComment = snapshot.reviewComments[0];
+  const previewAnnotation = snapshot.previewAnnotations[0];
+  return [
+    terminalContext ? formatTerminalContextLabel(terminalContext) : undefined,
+    reviewComment ? `Review: ${reviewCommentContextLabel(reviewComment)}` : undefined,
+    previewAnnotation ? previewAnnotationContextLabel(previewAnnotation) : undefined,
+  ];
 }

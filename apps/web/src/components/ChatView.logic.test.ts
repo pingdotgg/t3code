@@ -1,7 +1,16 @@
-import { findRecordedWorktreeSetup, mergeDirectPreviewAnnotation } from "./ChatView.logic";
+import {
+  boundAttachmentIds,
+  findRecordedWorktreeSetup,
+  mergeDirectPreviewAnnotation,
+  planComposerTurn,
+  snapshotComposerSend,
+  withMessageContext,
+} from "./ChatView.logic";
 import { recallCheckoutIsRepo, rememberCheckoutIsRepo } from "./ChatView.logic";
 import { ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import { deriveProviderInstanceEntries } from "../providerInstances";
+import { ensureInlineContextReferences } from "../lib/composerContextReferences";
+import { terminalContextReference } from "../lib/composerContextRecords";
 import {
   CommandId,
   EnvironmentId,
@@ -1022,5 +1031,130 @@ describe("mergeDirectPreviewAnnotation", () => {
     });
     expect(result.images).toEqual([]);
     expect(result.previewAnnotations[0]?.screenshot).toBeNull();
+  });
+});
+
+describe("snapshotComposerSend", () => {
+  const expired = {
+    id: "ctx-expired",
+    threadId,
+    terminalId: "default",
+    terminalLabel: "Terminal 1",
+    lineStart: 4,
+    lineEnd: 4,
+    text: "",
+    createdAt: now,
+  };
+  const live = { ...expired, id: "ctx-live", text: "pnpm test", lineStart: 9, lineEnd: 9 };
+
+  it("drops expired terminal contexts from the contexts and from the prompt", () => {
+    const snapshot = snapshotComposerSend({
+      prompt: ensureInlineContextReferences("run", [
+        terminalContextReference(expired),
+        terminalContextReference(live),
+      ]),
+      images: [],
+      files: [],
+      terminalContexts: [expired, live],
+      sendableTerminalContexts: [live],
+      previewAnnotations: [],
+      reviewComments: [],
+      threadContexts: [],
+    });
+
+    expect(snapshot.terminalContexts).toEqual([live]);
+    expect(snapshot.messageText).toBe(
+      ensureInlineContextReferences("run", [terminalContextReference(live)]).trim(),
+    );
+  });
+});
+
+describe("planComposerTurn", () => {
+  const base = {
+    messageText: "hello",
+    sendQueuesBehindSetup: false,
+    isServerThread: false,
+    activeMessageCount: 0,
+    sendEnvMode: "worktree" as const,
+    worktreePath: null,
+    activeThreadBranch: "main",
+    resumeCompactionTokens: null,
+    keepFullHistory: false,
+    phase: "ready" as const,
+    dispatchMode: "auto" as const,
+  };
+
+  it("prepares a worktree from the selected branch on a new thread", () => {
+    expect(planComposerTurn(base)).toMatchObject({
+      missingWorktreeBaseBranch: false,
+      baseBranchForWorktree: "main",
+      shouldQueueBehindActiveRun: false,
+    });
+  });
+
+  it("refuses a new worktree without a base branch", () => {
+    expect(planComposerTurn({ ...base, activeThreadBranch: null })).toMatchObject({
+      missingWorktreeBaseBranch: true,
+      baseBranchForWorktree: null,
+    });
+  });
+
+  it("queues behind a compaction of a stale session, except for /compact itself", () => {
+    expect(planComposerTurn({ ...base, resumeCompactionTokens: 120_000 })).toMatchObject({
+      compactBeforeSend: true,
+      turnDispatchMode: "queue",
+      shouldQueueBehindActiveRun: true,
+    });
+    expect(
+      planComposerTurn({ ...base, resumeCompactionTokens: 120_000, messageText: "/COMPACT" }),
+    ).toMatchObject({ compactBeforeSend: false, turnDispatchMode: "auto" });
+  });
+
+  it("queues behind a running turn only when asked to", () => {
+    const running = {
+      ...base,
+      isServerThread: true,
+      activeMessageCount: 3,
+      phase: "running" as const,
+    };
+    expect(planComposerTurn({ ...running, dispatchMode: "queue" }).shouldQueueBehindActiveRun).toBe(
+      true,
+    );
+    expect(planComposerTurn({ ...running, dispatchMode: "steer" })).toMatchObject({
+      shouldQueueBehindActiveRun: false,
+      baseBranchForWorktree: null,
+    });
+  });
+});
+
+describe("withMessageContext", () => {
+  const context = { records: [] } as unknown as NonNullable<
+    Parameters<typeof withMessageContext>[0]["context"]
+  >;
+
+  it("sends the context inline when the server supports it", () => {
+    expect(withMessageContext({ text: "hi", context, supportsInlineMessageContext: true })).toEqual(
+      { text: "hi", context },
+    );
+  });
+
+  it("folds the context into the text for older servers", () => {
+    const result = withMessageContext({ text: "hi", context, supportsInlineMessageContext: false });
+    expect(result.context).toBeUndefined();
+    expect(result.text).toContain("hi");
+  });
+
+  it("sends the text alone without context", () => {
+    expect(
+      withMessageContext({ text: "hi", context: undefined, supportsInlineMessageContext: false }),
+    ).toEqual({ text: "hi" });
+  });
+});
+
+describe("boundAttachmentIds", () => {
+  it("prefers the uploaded id and falls back to the local one", () => {
+    expect(
+      boundAttachmentIds([{ id: "upload-1" }, {}], [{ id: "local-1" }, { id: "local-2" }]),
+    ).toEqual(["upload-1", "local-2"]);
   });
 });

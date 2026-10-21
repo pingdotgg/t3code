@@ -2,6 +2,7 @@ import {
   CommandId,
   type EnvironmentId,
   type ModelSelection,
+  type ProviderInteractionMode,
   type ScopedThreadRef,
   type ThreadId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
@@ -27,7 +28,19 @@ import {
   useComposerDraftStore,
   DraftId,
 } from "../../composerDraftStore";
-import { prepareRevertedMessageAttachments, waitForRevertedMessage } from "../ChatView.logic";
+import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
+import { createModelSelection } from "@t3tools/shared/model";
+import type { ProviderInstanceEntry } from "../../providerInstances";
+import { getComposerPromptInjectionState, getComposerProviderState } from "./composerProviderState";
+import {
+  formatOutgoingPrompt,
+  getAntigravitySendBlockReason,
+  resolveComposerInteractionMode,
+  cloneComposerImageForRetry,
+  type ComposerSendSnapshot,
+  prepareRevertedMessageAttachments,
+  waitForRevertedMessage,
+} from "../ChatView.logic";
 import { readPreparedConnection } from "../../state/session";
 import { recallableComposerPrompt } from "./composerPromptHistory";
 
@@ -234,4 +247,82 @@ export async function rewindToMessage(input: {
   } catch (error) {
     return { error: error instanceof Error ? error.message : "Failed to revert thread state." };
   }
+}
+
+/**
+ * Writes a failed send's composer contents back into its draft. Returns the
+ * restored images, which are fresh copies so their preview URLs outlive the
+ * optimistic row that held the originals.
+ */
+export function restoreComposerDraft(
+  draftTarget: ScopedThreadRef | DraftId,
+  snapshot: ComposerSendSnapshot,
+): ComposerImageAttachment[] {
+  const store = useComposerDraftStore.getState();
+  const images = snapshot.images.map(cloneComposerImageForRetry);
+  store.setPrompt(draftTarget, snapshot.messageText);
+  store.addImages(draftTarget, images);
+  store.addFiles(draftTarget, snapshot.files);
+  store.setTerminalContexts(draftTarget, snapshot.terminalContexts);
+  store.setPreviewAnnotations(draftTarget, snapshot.previewAnnotations);
+  store.setReviewComments(draftTarget, snapshot.reviewComments);
+  store.setThreadContexts(draftTarget, snapshot.threadContexts);
+  return images;
+}
+
+export interface MultipleModelTarget {
+  readonly selection: ModelSelection;
+  readonly text: string;
+  readonly interactionMode: ProviderInteractionMode;
+}
+
+/**
+ * The thread each selected model starts for a multiple-model send, in
+ * selection order, or why that model cannot take the message.
+ */
+export function resolveMultipleModelTargets(input: {
+  readonly selections: ReadonlyArray<ModelSelection>;
+  readonly providerInstanceEntries: ReadonlyArray<ProviderInstanceEntry>;
+  readonly messageText: string;
+  readonly planModeEnabled: boolean;
+  readonly interactionMode: ProviderInteractionMode;
+}): Array<MultipleModelTarget | { readonly error: string }> {
+  const { messageText, planModeEnabled } = input;
+  return input.selections.map((selection) => {
+    const provider = input.providerInstanceEntries.find(
+      (entry) => entry.instanceId === selection.instanceId,
+    );
+    if (!provider?.enabled || !provider.isAvailable || provider.status !== "ready") {
+      return { error: `Provider for ${selection.model} is unavailable.` };
+    }
+    const providerBlockReason = getAntigravitySendBlockReason(provider.snapshot, selection.model);
+    if (providerBlockReason) return { error: providerBlockReason };
+    const providerState = getComposerProviderState({
+      provider: provider.driverKind,
+      model: selection.model,
+      models: provider.models,
+      modelOptions: selection.options,
+      promptInjectionState: getComposerPromptInjectionState(messageText),
+      planModeEnabled,
+    });
+    return {
+      selection: createModelSelection(
+        selection.instanceId,
+        selection.model,
+        providerState.modelOptionsForDispatch,
+      ),
+      text: formatOutgoingPrompt({
+        provider: provider.driverKind,
+        model: selection.model,
+        models: provider.models,
+        effort: providerState.promptEffort,
+        text: messageText || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+      }),
+      interactionMode: resolveComposerInteractionMode({
+        planModeEnabled,
+        provider: provider.snapshot,
+        interactionMode: input.interactionMode,
+      }).interactionMode,
+    };
+  });
 }
