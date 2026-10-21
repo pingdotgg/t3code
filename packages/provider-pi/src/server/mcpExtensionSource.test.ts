@@ -238,6 +238,32 @@ describe("Pi MCP tool exposure", () => {
   );
 });
 
+describe("Pi MCP tool schemas", () => {
+  it.each([{ type: "object" }, {}])(
+    "declares empty properties on object schemas that omit them: %j",
+    async (inputSchema) => {
+      const bridge = await loadMcpBridge({ inputSchema });
+      assert.isAbove(bridge.tools.length, 0);
+      for (const tool of bridge.tools) {
+        assert.deepEqual(tool.parameters, { type: "object", properties: {} });
+      }
+    },
+  );
+
+  it("keeps declared properties and other schema keywords", async () => {
+    const inputSchema = {
+      type: "object",
+      properties: { depth: { type: "number" } },
+      required: ["depth"],
+      additionalProperties: false,
+    };
+    const bridge = await loadMcpBridge({ inputSchema });
+    for (const tool of bridge.tools) {
+      assert.deepEqual(tool.parameters, inputSchema);
+    }
+  });
+});
+
 describe("Pi tool discovery permissions", () => {
   it.each(["approval-required", "auto-accept-edits", "auto"])(
     "allows annotated T3 reads in %s while gating mutations and replacements",
