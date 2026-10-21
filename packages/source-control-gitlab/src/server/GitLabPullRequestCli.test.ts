@@ -430,8 +430,37 @@ layer("GitLabPullRequestCli.layer", (it) => {
       assert.strictEqual(mockedExecute.mock.calls.length, 1);
       assert.isNotNull(diff.nextCursor);
       assert.isFalse(diff.truncated);
-      expect(argsOfCall(0)[1]).toContain("merge_requests/7/diffs?per_page=100&page=1");
+      expect(argsOfCall(0)[1]).toContain("merge_requests/7/diffs?per_page=30&page=1");
     }),
+  );
+
+  it.effect(
+    "pages a merge request diff 30 files at a time, which GitLab 15.7 to 17.10 accept",
+    () =>
+      Effect.gen(function* () {
+        mockedExecute
+          .mockReturnValueOnce(Effect.succeed(output(diffPage(0, 30))))
+          .mockReturnValueOnce(Effect.succeed(output(diffPage(30, 30))))
+          .mockReturnValueOnce(Effect.succeed(output(diffPage(60, 5))));
+        const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+        const target = { cwd: "/w", repository: "acme/web", number: 7 };
+
+        let patch = "";
+        let cursor: string | undefined;
+        do {
+          const slice = yield* cli.getMergeRequestDiff({ ...target, cursor });
+          patch += slice.patch;
+          cursor = slice.nextCursor ?? undefined;
+        } while (cursor !== undefined);
+
+        expect(mockedExecute.mock.calls.map(([call]) => call.args[1])).toEqual([
+          "projects/acme%2Fweb/merge_requests/7/diffs?per_page=30&page=1",
+          "projects/acme%2Fweb/merge_requests/7/diffs?per_page=30&page=2",
+          "projects/acme%2Fweb/merge_requests/7/diffs?per_page=30&page=3",
+        ]);
+        assert.strictEqual(patch.match(/^diff --git /gm)?.length, 65);
+        expect(patch).toContain("diff --git a/src/64.ts b/src/64.ts");
+      }),
   );
 
   it.effect("refuses a cursor it never handed out rather than reading it into a query", () =>
