@@ -65,13 +65,12 @@ import { INVOLVEMENT_TABS, SORT_OPTIONS, STATE_TABS } from "./pullRequestListOpt
 import { PullRequestsColumn } from "./PullRequestsColumn";
 import { PullRequestListGroups } from "./PullRequestListGroups";
 import {
-  pullRequestGroups,
-  pullRequestListEntryId,
   usePullRequestDisplayGroups,
   usePullRequestQueryFilters,
   usePullRequestScope,
   type PullRequestsSearch,
 } from "./usePullRequestListView";
+import { pullRequestGroups, pullRequestListEntryId } from "./pullRequestListGroups.logic";
 import { PullRequestListEmptyState } from "./PullRequestListEmptyState";
 import { PullRequestListGhost } from "./PullRequestGhosts";
 import { type PullRequestRowTarget } from "./PullRequestRow";
