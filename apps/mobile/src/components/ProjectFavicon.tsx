@@ -1,3 +1,4 @@
+import { deriveProjectIdentity } from "@t3tools/client-runtime/project-identity";
 import { SymbolView } from "./ui/AppSymbol";
 import { AppText } from "./ui/AppText";
 import { Image } from "expo-image";
@@ -31,7 +32,6 @@ const EMPTY_FAVICON_URL = Atom.make<string | null>(null);
 
 export const ProjectFavicon = memo(function ProjectFavicon(props: {
   readonly environmentId: EnvironmentId;
-  readonly open?: boolean;
   readonly size?: number;
   readonly projectTitle: string;
   readonly workspaceRoot?: string | null;
@@ -82,7 +82,6 @@ export const ProjectFavicon = memo(function ProjectFavicon(props: {
       key={cacheKey}
       cacheKey={cacheKey}
       faviconUrl={renderableFaviconUrl}
-      open={props.open}
       projectTitle={props.projectTitle}
       size={size}
     />
@@ -139,10 +138,30 @@ function ProjectIconGlyphView(props: { readonly glyph: ProjectIconGlyph; readonl
   );
 }
 
+/** Stands in for a missing or still-loading favicon, like web's automatic project icon. */
+function ProjectFaviconFallback(props: { readonly projectTitle: string; readonly size: number }) {
+  if (props.projectTitle.trim().length === 0) {
+    return (
+      <SymbolView
+        name={{ ios: "folder.fill", android: "folder" }}
+        size={props.size}
+        tintColorClassName={"accent-icon-subtle"}
+        type="monochrome"
+      />
+    );
+  }
+  const identity = deriveProjectIdentity(props.projectTitle);
+  return (
+    <ProjectIconGlyphView
+      glyph={{ kind: "monogram", text: identity.monogram, color: identity.color }}
+      size={props.size}
+    />
+  );
+}
+
 function ProjectFaviconImage(props: {
   readonly cacheKey: string | null;
   readonly faviconUrl: string | null;
-  readonly open?: boolean;
   readonly projectTitle: string;
   readonly size: number;
 }) {
@@ -178,12 +197,7 @@ function ProjectFaviconImage(props: {
       }}
     >
       {!showImage ? (
-        <SymbolView
-          name={{ ios: "folder.fill", android: props.open ? "folder_open" : "folder" }}
-          size={props.size}
-          tintColorClassName={"accent-icon-subtle"}
-          type="monochrome"
-        />
+        <ProjectFaviconFallback projectTitle={props.projectTitle} size={props.size} />
       ) : null}
 
       {requestIsActive ? (

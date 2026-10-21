@@ -12,7 +12,6 @@ import {
   type EnvironmentThreadSearchMatch,
 } from "@t3tools/client-runtime/state/thread-search";
 import { LegendList } from "@legendapp/list/react-native";
-import type { MenuAction } from "@react-native-menu/menu";
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { LayoutChangeEvent, TextInputInstance } from "react-native";
@@ -26,6 +25,8 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { CompactBrandTitle } from "../../components/CompactBrandTitle";
 import { Menu } from "../../components/ui/Menu";
 import { SymbolView } from "../../components/ui/AppSymbol";
+import type { AndroidMenuAction } from "../../components/ui/MenuPopup";
+import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
@@ -132,7 +133,7 @@ function ThreadNavigationSidebarPane(
   const drawerColor = materialTheme["--color-drawer"];
 
   const insets = useSafeAreaInsets();
-  const { fabClearance } = useAndroidControlSizing();
+  const { fabClearance, iconSize } = useAndroidControlSizing();
   const projects = useProjects();
   const threads = useNavigationThreadShells();
   const { environments: workspaceEnvironments, state: catalogState } = useWorkspaceState();
@@ -216,6 +217,7 @@ function ThreadNavigationSidebarPane(
   const projectFilterOptions = projectScopes.map((scope) => ({
     key: scope.key,
     label: scope.title,
+    representative: scope.representative,
   }));
   const projectTitleByProjectKey = useMemo(
     () =>
@@ -438,11 +440,23 @@ function ThreadNavigationSidebarPane(
                 id: `project:${project.key}`,
                 title: project.label,
                 state: selectedProjectKey === project.key ? ("on" as const) : ("off" as const),
+                // iOS hands these actions to the native menu, which can't draw a view.
+                leading:
+                  Platform.OS === "android" ? (
+                    <ProjectFavicon
+                      environmentId={project.representative.environmentId}
+                      faviconPath={project.representative.faviconPath}
+                      projectIcon={project.representative.projectIcon}
+                      projectTitle={project.representative.title}
+                      size={iconSize}
+                      workspaceRoot={project.representative.workspaceRoot}
+                    />
+                  ) : undefined,
               })),
             ],
           },
-        ] satisfies MenuAction[])),
-  ] satisfies MenuAction[];
+        ] satisfies AndroidMenuAction[])),
+  ] satisfies AndroidMenuAction[];
   const handleListMenuAction = ({
     nativeEvent,
   }: {

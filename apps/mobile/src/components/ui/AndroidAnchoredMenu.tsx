@@ -1,4 +1,4 @@
-import type { MenuAction, MenuComponentProps } from "@react-native-menu/menu";
+import type { MenuComponentProps } from "@react-native-menu/menu";
 import type { ReactNode } from "react";
 import { use, useCallback, useEffect, useRef, useState } from "react";
 import type { StyleProp, ViewInstance, ViewStyle } from "react-native";
@@ -10,7 +10,7 @@ import { deriveMenuHorizontalPlacement } from "../../lib/menu-placement";
 import { WindowHingeContext } from "../../native/window-hinge-context";
 import { OverlayPortal } from "./OverlayPortal";
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
-import { MenuPopup } from "./MenuPopup";
+import { MenuPopup, type AndroidMenuAction } from "./MenuPopup";
 
 const SCREEN_MARGIN = 12;
 const ANCHOR_GAP = 6;
@@ -34,7 +34,7 @@ type OverlayFrame = {
 };
 
 export type AndroidAnchoredMenuProps = {
-  readonly actions: readonly MenuAction[];
+  readonly actions: readonly AndroidMenuAction[];
   readonly title?: string;
   readonly onPressAction?: MenuComponentProps["onPressAction"];
   readonly className?: string;
@@ -45,7 +45,7 @@ export type AndroidAnchoredMenuProps = {
 export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
   const { scale, menuWidth: desiredMenuWidth } = useAndroidControlSizing();
   const [anchor, setAnchor] = useState<AnchorSnapshot | null>(null);
-  const [path, setPath] = useState<readonly MenuAction[]>([]);
+  const [path, setPath] = useState<readonly AndroidMenuAction[]>([]);
   const [rootHeight, setRootHeight] = useState<number | null>(null);
   const [overlay, setOverlay] = useState<OverlayFrame | null>(null);
   const windowHinge = use(WindowHingeContext);
@@ -130,7 +130,7 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
   const placeable = local !== null && rootHeight !== null;
 
   const onPressItem = useCallback(
-    (action: MenuAction) => {
+    (action: AndroidMenuAction) => {
       if ((action.subactions?.length ?? 0) > 0) {
         setPath((current) => [...current, action]);
         return;

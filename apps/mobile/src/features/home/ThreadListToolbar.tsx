@@ -8,7 +8,7 @@ import {
   View,
   type LayoutChangeEvent,
 } from "react-native";
-import type { MenuAction } from "@react-native-menu/menu";
+import type { AndroidMenuAction } from "../../components/ui/MenuPopup";
 
 import { AndroidHeaderIconButton } from "../../components/ui/AndroidScreenHeader";
 import { AndroidAnchoredMenu } from "../../components/ui/AndroidAnchoredMenu";
@@ -23,7 +23,7 @@ import { useToolbarLayout } from "../../components/ui/useToolbarLayout";
 export function ThreadListToolbar(props: {
   readonly searchQuery: string;
   readonly onSearchQueryChange: (query: string) => void;
-  readonly filterActions: MenuAction[];
+  readonly filterActions: AndroidMenuAction[];
   readonly filterCustomized: boolean;
   readonly onFilterAction: NonNullable<ComponentProps<typeof Menu>["onPressAction"]>;
   readonly onOpenEnvironments: () => void;

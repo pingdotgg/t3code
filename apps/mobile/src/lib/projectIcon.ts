@@ -1,3 +1,4 @@
+import { projectMonogram } from "@t3tools/client-runtime/project-identity";
 import type { ProjectIconColor, ProjectIconOverride } from "@t3tools/contracts";
 
 export type ProjectIconGlyph =
@@ -12,24 +13,11 @@ export function countGlyphs(text: string): number {
   return Array.from(text.replace(/\p{M}/gu, "")).length;
 }
 
-export function projectMonogram(projectName: string): string {
-  const words =
-    projectName
-      .normalize("NFKC")
-      .trim()
-      .match(/[\p{L}\p{N}]+/gu) ?? [];
-  const firstWord = words[0];
-  if (!firstWord) return "PR";
-
-  const glyphs = Array.from(firstWord);
-  const first = glyphs[0] ?? "P";
-  const second =
-    glyphs.slice(1).find((glyph) => /\p{N}/u.test(glyph)) ??
-    (words.length > 1 ? Array.from(words.at(-1) ?? "")[0] : glyphs.at(-1)) ??
-    first;
-  return Array.from(`${first}${second}`.toUpperCase()).slice(0, 2).join("");
-}
-
+/**
+ * Picks what mobile draws for an assigned project icon. Mobile does not bundle
+ * the Lucide set, so a Lucide override keeps its color and draws the
+ * project's monogram instead.
+ */
 export function resolveProjectIconGlyph(
   projectIcon: ProjectIconOverride | null | undefined,
   projectTitle: string,
@@ -46,28 +34,29 @@ export function resolveProjectIconGlyph(
   }
 }
 
+// `tint` is the same Tailwind -500 color as hex, for native menus that take images.
 const PROJECT_ICON_COLOR_CLASSES: Record<
   ProjectIconColor,
-  { readonly text: string; readonly background: string }
+  { readonly text: string; readonly background: string; readonly tint: string }
 > = {
-  gray: { text: "text-gray-500", background: "bg-gray-500/15" },
-  red: { text: "text-red-500", background: "bg-red-500/15" },
-  orange: { text: "text-orange-500", background: "bg-orange-500/15" },
-  amber: { text: "text-amber-500", background: "bg-amber-500/15" },
-  yellow: { text: "text-yellow-500", background: "bg-yellow-500/15" },
-  lime: { text: "text-lime-500", background: "bg-lime-500/15" },
-  green: { text: "text-green-500", background: "bg-green-500/15" },
-  emerald: { text: "text-emerald-500", background: "bg-emerald-500/15" },
-  teal: { text: "text-teal-500", background: "bg-teal-500/15" },
-  cyan: { text: "text-cyan-500", background: "bg-cyan-500/15" },
-  sky: { text: "text-sky-500", background: "bg-sky-500/15" },
-  blue: { text: "text-blue-500", background: "bg-blue-500/15" },
-  indigo: { text: "text-indigo-500", background: "bg-indigo-500/15" },
-  violet: { text: "text-violet-500", background: "bg-violet-500/15" },
-  purple: { text: "text-purple-500", background: "bg-purple-500/15" },
-  fuchsia: { text: "text-fuchsia-500", background: "bg-fuchsia-500/15" },
-  pink: { text: "text-pink-500", background: "bg-pink-500/15" },
-  rose: { text: "text-rose-500", background: "bg-rose-500/15" },
+  gray: { text: "text-gray-500", background: "bg-gray-500/15", tint: "#6a7282" },
+  red: { text: "text-red-500", background: "bg-red-500/15", tint: "#fb2c36" },
+  orange: { text: "text-orange-500", background: "bg-orange-500/15", tint: "#ff6900" },
+  amber: { text: "text-amber-500", background: "bg-amber-500/15", tint: "#fe9a00" },
+  yellow: { text: "text-yellow-500", background: "bg-yellow-500/15", tint: "#f0b100" },
+  lime: { text: "text-lime-500", background: "bg-lime-500/15", tint: "#7ccf00" },
+  green: { text: "text-green-500", background: "bg-green-500/15", tint: "#00c950" },
+  emerald: { text: "text-emerald-500", background: "bg-emerald-500/15", tint: "#00bc7d" },
+  teal: { text: "text-teal-500", background: "bg-teal-500/15", tint: "#00bba7" },
+  cyan: { text: "text-cyan-500", background: "bg-cyan-500/15", tint: "#00b8db" },
+  sky: { text: "text-sky-500", background: "bg-sky-500/15", tint: "#00a6f4" },
+  blue: { text: "text-blue-500", background: "bg-blue-500/15", tint: "#2b7fff" },
+  indigo: { text: "text-indigo-500", background: "bg-indigo-500/15", tint: "#615fff" },
+  violet: { text: "text-violet-500", background: "bg-violet-500/15", tint: "#8e51ff" },
+  purple: { text: "text-purple-500", background: "bg-purple-500/15", tint: "#ad46ff" },
+  fuchsia: { text: "text-fuchsia-500", background: "bg-fuchsia-500/15", tint: "#e12afb" },
+  pink: { text: "text-pink-500", background: "bg-pink-500/15", tint: "#f6339a" },
+  rose: { text: "text-rose-500", background: "bg-rose-500/15", tint: "#ff2056" },
 };
 
 export function projectIconColorClassNames(color: ProjectIconColor) {

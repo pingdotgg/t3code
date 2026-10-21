@@ -103,6 +103,16 @@ public final class T3NativeControlsModule: Module {
     AsyncFunction("shareFileFromSource") { (url: URL, title: String, identifier: String, promise: Promise) in
       try self.shareFile(url: url, title: title, sourceIdentifier: identifier, promise: promise)
     }.runOnQueue(.main)
+
+    Function("renderProjectIconImage") { (text: String, fontSize: Double, size: Double, tint: UIColor?, backgroundAlpha: Double) -> String? in
+      T3ProjectIconImage.render(
+        text: text,
+        fontSize: fontSize,
+        size: size,
+        tint: tint,
+        backgroundAlpha: backgroundAlpha
+      )
+    }
   }
 
   // UIKit presenters are main-actor isolated rather than run on the JS thread

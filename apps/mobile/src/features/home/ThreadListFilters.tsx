@@ -2,6 +2,7 @@ import { Pressable, ScrollView } from "react-native";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { ListFilterMenu } from "../workspace/ListFilterMenu";
 import type { HomeHeaderProps } from "./HomeHeader.types";
+import { useProjectFilterMenuIcons } from "./useProjectFilterMenuIcons";
 
 export function ThreadListFilters(
   props: Pick<
@@ -20,6 +21,7 @@ export function ThreadListFilters(
   const selectedProject = props.projects.find(
     (project) => project.key === props.selectedProjectKey,
   );
+  const projects = useProjectFilterMenuIcons(props.projects);
   return (
     <ScrollView
       horizontal
@@ -65,9 +67,10 @@ export function ThreadListFilters(
             title: "All projects",
             state: props.selectedProjectKey === null ? "on" : "off",
           },
-          ...props.projects.map((project) => ({
+          ...projects.map((project) => ({
             id: JSON.stringify(project.key),
             title: project.label,
+            ...(project.image ? { image: project.image } : {}),
             state: project.key === props.selectedProjectKey ? ("on" as const) : ("off" as const),
           })),
         ]}
