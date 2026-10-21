@@ -369,6 +369,39 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     }),
   );
 
+  it.effect(
+    "keeps an unrecognized install manual-only when the native updater requires its path",
+    () =>
+      Effect.gen(function* () {
+        const systemPath =
+          "/usr/local/lib/codex/releases/rust-v0.162.1-x86_64-unknown-linux-musl/bin/codex";
+        const capabilities = yield* resolvePackageManagedProviderMaintenance(
+          {
+            provider: driver("codex"),
+            npmPackageName: "@openai/codex",
+            nativeUpdate: {
+              args: ["update"],
+              isCommandPath: isNativeTestCommandPath("/packages/standalone/"),
+              requiresCommandPath: true,
+            },
+          },
+          {
+            binaryPath: "codex",
+            resolvedCommandPath: "/usr/local/bin/codex",
+            realCommandPath: systemPath,
+            env: {},
+            platform: "linux",
+          },
+        ).pipe(
+          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+        );
+
+        expect(capabilities.update).toBeNull();
+        expect(capabilities.installPath).toBe(systemPath);
+      }),
+  );
+
   const claudeUpdate = {
     provider: driver("claudeAgent"),
     npmPackageName: "@anthropic-ai/claude-code",
