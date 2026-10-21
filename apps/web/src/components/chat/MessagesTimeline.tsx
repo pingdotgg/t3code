@@ -1,6 +1,5 @@
 import { ThreadFindTimelineContext } from "./ThreadFindProvider";
 import { shallow } from "zustand/vanilla/shallow";
-import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
 import { MarkdownFindContext } from "./markdownFindContext";
 import { useChatCanvas } from "./ChatCanvasContext";
 import { WorkLogBlock } from "./WorkLog";
@@ -16,15 +15,8 @@ import {
   type RunId,
   ThreadId,
 } from "@t3tools/contracts";
-import { parseScopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { useAtomValue } from "@effect/atom-react";
-import { environmentThreadDetails } from "../../state/threads";
-import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
+import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/scroll-anchor";
-import {
-  subagentGroupSummary,
-  summarizeSubagentStatuses,
-} from "@t3tools/client-runtime/state/subagent-display";
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
 import { observeResize } from "~/lib/observeResize";
 import { useStableCallback } from "~/hooks/useStableCallback";
@@ -49,34 +41,13 @@ import {
   type LegendListRef,
   type MaintainScrollAtEndOptions,
 } from "@legendapp/list/react";
-import { type TimelineEntry, providerErrorPresentation } from "../../session-logic";
+import { type TimelineEntry } from "../../session-logic";
 import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplates";
-import { type ChatMessage, type ChatFileAttachment, type TurnDiffSummary } from "../../types";
-import ChatMarkdown from "../ChatMarkdown";
-import {
-  ArrowRightIcon,
-  BotIcon,
-  CheckIcon,
-  ChevronDownIcon,
-  CircleAlertIcon,
-  GitForkIcon,
-  type LucideIcon,
-  MinusIcon,
-  Minimize2Icon,
-  WrenchIcon,
-  XIcon,
-  ZapIcon,
-} from "lucide-react";
+import { type ChatFileAttachment, type TurnDiffSummary } from "../../types";
+import { ArrowRightIcon, BotIcon, Minimize2Icon } from "lucide-react";
 import { ChevronDown, ChevronRight } from "lucide";
-import { Button } from "../ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
 import { ExpandedImagePreview } from "./ExpandedImagePreview";
-import { ProposedPlanCard } from "./ProposedPlanCard";
-import { HtmlRenderFrame } from "./HtmlRenderFrame";
-import { McpAppFrame } from "./McpAppFrame";
-import { ChangedFilesCard } from "./ChangedFilesTree";
-import { useFileContextMenuHandler } from "../../fileContextMenu";
-import { useProject, useThreadShell } from "../../state/entities";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
   readTimelinePosition,
@@ -84,16 +55,14 @@ import {
   rememberTimelinePosition,
   timelineContentOverflowsViewport,
 } from "./timelineScrollAnchoring";
-import { MessageCopyButton } from "./MessageCopyButton";
 import { AssistantSelectionToolbar } from "./AssistantSelectionToolbar";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
-import { AssistantCitationSource, type AssistantCitationRequest } from "./AssistantCitationSource";
+import { type AssistantCitationRequest } from "./AssistantCitationSource";
 import { useAssistantCitationTarget, type CitationHistoryPage } from "./useAssistantCitationTarget";
 import {
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRowsWithState,
   type MessagesTimelineRowsProjection,
-  resolveAssistantMessageCopyState,
   resolveTimelineIsAtEnd,
   resolveTimelineMinimapHasPersistentGutter,
   resolveTimelineMinimapCurrentIndex,
@@ -110,29 +79,16 @@ import { type ThreadFindMatch } from "./threadFind";
 import { useThreadFindNavigation } from "./useThreadFindNavigation";
 import { readThreadFindPosition } from "./threadFindPosition";
 import type { ThreadFindPositionReader } from "./threadFind";
-import { Tooltip, TooltipPopup, TooltipTrigger, TooltipScrollDismissArea } from "../ui/tooltip";
+import { TooltipScrollDismissArea } from "../ui/tooltip";
 import { WorktreeSetupCard } from "./WorktreeSetupCard";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import { useClientSettings } from "~/hooks/useSettings";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { cn } from "~/lib/utils";
-import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
-import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
-import { V2ItemInspector } from "./V2ItemInspector";
-import { useV2ItemSupport } from "../../state/v2ItemSupport";
-import { Collapsible, CollapsibleTrigger, CollapsiblePanel } from "../ui/collapsible";
-import {
-  isV2LifecycleItem,
-  EnvironmentSubagentAvatar,
-  SubagentElapsed,
-  V2LifecycleRow,
-  type HandoffTimelineRun,
-} from "./V2LifecycleRow";
-import { SecretRequestCard } from "./SecretRequestCard";
+import { type HandoffTimelineRun } from "./V2LifecycleRow";
 import { TimelineSystemDivider } from "./TimelineSystemDivider";
 
-import * as DateTime from "effect/DateTime";
 import { forwardWheelToTimeline } from "./timelineMinimapWheel";
 import { TimelineMinimap } from "./TimelineMinimap";
 import {
@@ -143,12 +99,7 @@ import {
   type WorkGroupViewState,
   type TimelineRow,
 } from "./timelineRowContext";
-import {
-  MESSAGE_HEADING_LEVEL,
-  MessageAuthorHeading,
-  TimelineRowTimestamp,
-  ActivityShimmerOverlay,
-} from "./TimelineRowParts";
+import { TimelineRowTimestamp, ActivityShimmerOverlay } from "./TimelineRowParts";
 import {
   WorkGroupSection,
   WorkingTimelineRow,
@@ -157,6 +108,14 @@ import {
   WorkGroupToggleTimelineRow,
 } from "./TimelineWorkGroupRows";
 import { UserMessageRow } from "./TimelineUserMessageRow";
+import {
+  AssistantTimelineRow,
+  AssistantMetaTimelineRow,
+  ProposedPlanTimelineRow,
+  HtmlRenderTimelineRow,
+  McpAppTimelineRow,
+} from "./TimelineAssistantRows";
+import { V2EventTimelineRow } from "./TimelineV2EventRow";
 
 function timelineListStateFor(identity: string): {
   readonly identity: string;
@@ -1595,757 +1554,6 @@ function AttemptFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "at
       <span className="text-xs font-medium text-foreground/80">{row.label}</span>
       <span className="text-2xs text-muted-foreground">Cut off by a steer</span>
     </button>
-  );
-}
-
-function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
-  const ctx = use(TimelineRowCtx);
-  const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
-
-  return (
-    <>
-      <div className="relative min-w-0 px-1 py-0.5">
-        <MessageAuthorHeading>T3 Code</MessageAuthorHeading>
-        <div data-thread-find-text="true">
-          <AssistantCitationSource
-            messageId={row.message.id}
-            {...(ctx.threadRef ? { threadRef: ctx.threadRef } : {})}
-            itemKey={row.id}
-            request={ctx.citationRequest}
-            listRef={ctx.listRef}
-          >
-            <ChatMarkdown
-              text={messageText}
-              cwd={ctx.markdownCwd}
-              threadRef={ctx.threadRef ?? undefined}
-              isStreaming={Boolean(row.message.streaming)}
-              lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
-              skills={ctx.skills}
-              headingLevelOffset={MESSAGE_HEADING_LEVEL}
-              onUseArtifactTemplate={ctx.onUseArtifactTemplate}
-              onRunShellCommand={ctx.onRunShellCommand}
-              onImageExpand={ctx.onImageExpand}
-            />
-          </AssistantCitationSource>
-        </div>
-        <AssistantChangedFilesSection
-          turnSummary={row.assistantTurnDiffSummary}
-          routeThreadKey={ctx.routeThreadKey}
-          resolvedTheme={ctx.resolvedTheme}
-          onOpenTurnDiff={ctx.onOpenTurnDiff}
-        />
-        {row.showAssistantMeta ? (
-          <AssistantMessageMeta
-            className="mt-1.5"
-            projectedItem={row.projectedItem}
-            message={row.message}
-            showCopyButton={row.showAssistantCopyButton}
-            copyStreaming={row.assistantCopyStreaming}
-          />
-        ) : null}
-      </div>
-    </>
-  );
-}
-
-function AssistantForkButton({
-  projectedItem,
-}: {
-  readonly projectedItem: NonNullable<Extract<TimelineRow, { kind: "message" }>["projectedItem"]>;
-}) {
-  const ctx = use(TimelineRowCtx);
-  const [busy, setBusy] = useState(false);
-  const support = useV2ItemSupport({
-    environmentId: ctx.activeThreadEnvironmentId,
-    sourceThreadId: projectedItem.sourceThreadId,
-    sourceItemId: projectedItem.sourceItemId,
-  });
-  const canFork = canForkProjectedAssistantItem({
-    projectedItem,
-    capabilities: support.providerSession?.capabilities,
-  });
-
-  if (!canFork || projectedItem.item.runId === null) return null;
-  const runId = projectedItem.item.runId;
-
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            type="button"
-            size="xs"
-            variant="ghost"
-            disabled={busy}
-            onClick={() => {
-              setBusy(true);
-              void ctx
-                .onForkFromRun({ sourceThreadId: projectedItem.sourceThreadId, runId })
-                .finally(() => setBusy(false));
-            }}
-            aria-label="Fork from this response"
-          />
-        }
-      >
-        <GitForkIcon className={cn("size-3", busy && "animate-pulse")} />
-      </TooltipTrigger>
-      <TooltipPopup side="top">Fork from this response</TooltipPopup>
-    </Tooltip>
-  );
-}
-
-function AssistantMetaTimelineRow({
-  row,
-}: {
-  row: Extract<TimelineRow, { kind: "assistant-meta" }>;
-}) {
-  return (
-    <div className="px-1">
-      <AssistantMessageMeta
-        className="mt-0.5"
-        projectedItem={row.projectedItem}
-        message={row.message}
-        showCopyButton={row.showAssistantCopyButton}
-        copyStreaming={row.assistantCopyStreaming}
-        alwaysVisible
-      />
-    </div>
-  );
-}
-
-function AssistantMessageMeta({
-  className,
-  projectedItem,
-  message,
-  showCopyButton,
-  copyStreaming,
-  alwaysVisible = false,
-}: {
-  className?: string;
-  projectedItem?: Extract<TimelineRow, { kind: "message" }>["projectedItem"];
-  message: ChatMessage;
-  showCopyButton: boolean;
-  copyStreaming: boolean;
-  alwaysVisible?: boolean;
-}) {
-  const ctx = use(TimelineRowCtx);
-
-  return (
-    <div
-      className={cn(
-        "flex items-center gap-2 text-xs tabular-nums transition-opacity duration-200",
-        alwaysVisible
-          ? "opacity-100"
-          : "opacity-0 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover/assistant:opacity-100",
-        className,
-      )}
-    >
-      {projectedItem && projectedItem.item.status !== "completed" ? (
-        <span className="rounded-full border border-border/70 px-1.5 py-0.5 font-mono text-3xs text-muted-foreground">
-          {projectedItem.item.status}
-        </span>
-      ) : null}
-      <AssistantCopyButton
-        message={message}
-        showCopyButton={showCopyButton}
-        streaming={copyStreaming}
-      />
-      {projectedItem?.item.type === "assistant_message" ? (
-        <AssistantForkButton projectedItem={projectedItem} />
-      ) : null}
-      {!message.streaming && (
-        <Tooltip>
-          <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
-            {formatDayAwareTimestamp(message.updatedAt, ctx.timestampFormat)}
-          </TooltipTrigger>
-          <TooltipPopup>
-            {formatChatTimestampTooltip(message.updatedAt, ctx.timestampFormat)}
-          </TooltipPopup>
-        </Tooltip>
-      )}
-    </div>
-  );
-}
-
-function AssistantCopyButton({
-  message,
-  showCopyButton,
-  streaming,
-}: {
-  message: ChatMessage;
-  showCopyButton: boolean;
-  streaming: boolean;
-}) {
-  const assistantCopyState = resolveAssistantMessageCopyState({
-    text: message.text ?? null,
-    showCopyButton,
-    streaming,
-  });
-
-  if (!assistantCopyState.visible) {
-    return null;
-  }
-
-  return <MessageCopyButton text={assistantCopyState.text ?? ""} variant="ghost" />;
-}
-
-function ProposedPlanTimelineRow({
-  row,
-}: {
-  row: Extract<TimelineRow, { kind: "proposed-plan" }>;
-}) {
-  const ctx = use(TimelineRowCtx);
-
-  return (
-    <div className="min-w-0 px-1 py-0.5">
-      <ProposedPlanCard
-        planMarkdown={row.proposedPlan.planMarkdown}
-        environmentId={ctx.activeThreadEnvironmentId}
-        threadRef={ctx.threadRef ?? undefined}
-        cwd={ctx.markdownCwd}
-        workspaceRoot={ctx.workspaceRoot}
-        findActive={ctx.findActive}
-      />
-    </div>
-  );
-}
-
-function HtmlRenderTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "html-render" }> }) {
-  const ctx = use(TimelineRowCtx);
-  const { onAppFullscreenChange } = ctx;
-  const onFullscreenChange = (fullscreen: boolean) => onAppFullscreenChange(row.id, fullscreen);
-
-  return (
-    <div className="min-w-0 px-1">
-      <HtmlRenderFrame
-        key={row.htmlRender.attachmentId}
-        environmentId={ctx.activeThreadEnvironmentId}
-        htmlRender={row.htmlRender}
-        threadRef={ctx.threadRef ?? undefined}
-        onFullscreenChange={onFullscreenChange}
-      />
-    </div>
-  );
-}
-
-function McpAppTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mcp-app" }> }) {
-  const ctx = use(TimelineRowCtx);
-  const { awaitingUser } = use(TimelineRowActivityCtx);
-
-  return (
-    <div className="min-w-0 px-1">
-      <McpAppFrame
-        key={row.mcpApp.attachmentId}
-        environmentId={ctx.activeThreadEnvironmentId}
-        threadId={row.sourceThreadId}
-        conversationThreadId={ctx.threadRef?.threadId ?? row.sourceThreadId}
-        itemId={row.itemId}
-        revision={row.revision}
-        app={row.mcpApp}
-        onSendMessage={ctx.onSendAppMessage}
-        awaitingUser={awaitingUser}
-        onFullscreenChange={(fullscreen) => ctx.onAppFullscreenChange(row.id, fullscreen)}
-      />
-    </div>
-  );
-}
-
-type V2EventTone = "muted" | "warning" | "danger" | "success";
-
-function v2EventPresentation(item: OrchestrationV2TurnItem): {
-  readonly label: string;
-  readonly detail: string | null;
-  readonly tone: V2EventTone;
-  readonly icon: LucideIcon;
-} {
-  switch (item.type) {
-    case "error": {
-      const presentation = providerErrorPresentation(item);
-      return {
-        ...presentation,
-        tone:
-          item.status === "completed"
-            ? "success"
-            : item.status === "running" || item.failure.class === "usage_limit"
-              ? "warning"
-              : "danger",
-        icon: CircleAlertIcon,
-      };
-    }
-    case "run_interrupt_request":
-      return {
-        label: "Interrupt requested",
-        detail: item.message,
-        tone: "warning",
-        icon: CircleAlertIcon,
-      };
-    case "run_interrupt_result":
-      return {
-        label: "Run interrupted",
-        detail: item.message,
-        tone: "danger",
-        icon: XIcon,
-      };
-    case "handoff":
-      return {
-        label: "Context handoff",
-        detail:
-          item.summary ??
-          `${item.fromProviderInstanceIds.join(", ")} → ${item.toProviderInstanceId}`,
-        tone: item.status === "failed" ? "danger" : "muted",
-        icon: ZapIcon,
-      };
-    case "fork":
-      return {
-        label: "Conversation fork",
-        detail: `Continues in ${item.targetThreadId}`,
-        tone: "muted",
-        icon: GitForkIcon,
-      };
-    case "compaction": {
-      const tokenSummary =
-        item.beforeTokenCount === undefined && item.afterTokenCount === undefined
-          ? null
-          : `${item.beforeTokenCount ?? "?"} → ${item.afterTokenCount ?? "?"} tokens`;
-      return {
-        label: "Context compacted",
-        detail: item.summary ?? tokenSummary,
-        tone: item.status === "failed" ? "danger" : "muted",
-        icon: MinusIcon,
-      };
-    }
-    case "todo_list": {
-      const steps = item.steps.map((step) => `${step.status}: ${step.text}`).join("\n");
-      return {
-        label: "Plan updated",
-        detail: [item.explanation, steps].filter(Boolean).join("\n\n") || null,
-        tone: item.status === "failed" ? "danger" : "success",
-        icon: CheckIcon,
-      };
-    }
-    default:
-      return {
-        label: item.title?.trim() || item.type.replaceAll("_", " "),
-        detail: null,
-        tone: item.status === "failed" ? "danger" : "muted",
-        icon: WrenchIcon,
-      };
-  }
-}
-
-function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event" }> }) {
-  const ctx = use(TimelineRowCtx);
-  const { item, visibility, sourceThreadId } = row.projectedItem;
-  if (item.type === "subagent" && (row.subagents?.length ?? 1) > 1) {
-    return <V2SubagentGroup key={row.id} row={row} />;
-  }
-  if (item.type === "secret_request") {
-    return (
-      <SecretRequestCard
-        environmentId={ctx.activeThreadEnvironmentId}
-        item={item}
-        visibility={visibility}
-      />
-    );
-  }
-  if (isV2LifecycleItem(item)) {
-    return (
-      <V2LifecycleRow
-        environmentId={ctx.activeThreadEnvironmentId}
-        item={item}
-        resourceSummary={row.resourceSummary}
-        createdAt={row.createdAt}
-        timestampFormat={ctx.timestampFormat}
-        runs={ctx.runs}
-        onOpenThread={ctx.onOpenThread}
-      />
-    );
-  }
-  const presentation = v2EventPresentation(item);
-  const Icon = presentation.icon;
-  if (item.type === "error") {
-    return (
-      <details
-        className={cn(
-          "group rounded-md border",
-          presentation.tone === "warning" && "border-warning/25 bg-warning/5",
-          presentation.tone === "danger" && "border-destructive/25 bg-destructive/5",
-          presentation.tone === "success" && "border-success/20 bg-success/5",
-        )}
-        data-v2-item-type={item.type}
-        data-v2-item-visibility={visibility}
-        data-v2-event-disclosure="true"
-      >
-        <summary className="flex min-w-0 cursor-pointer list-none items-center gap-2 px-2.5 py-1.5 text-xs [&::-webkit-details-marker]:hidden">
-          <Icon
-            className={cn(
-              "size-3.5 shrink-0",
-              presentation.tone === "warning" && "text-warning",
-              presentation.tone === "danger" && "text-destructive",
-              presentation.tone === "success" && "text-success",
-            )}
-          />
-          <span className="shrink-0 font-medium text-foreground/90">{presentation.label}</span>
-          {item.status !== "completed" ? (
-            <span
-              className={cn(
-                "shrink-0 rounded-full border px-1.5 py-0.5 font-mono text-3xs",
-                item.status === "failed"
-                  ? "border-destructive/40 text-destructive"
-                  : "border-border/70 text-muted-foreground",
-              )}
-            >
-              {item.status}
-            </span>
-          ) : null}
-          {presentation.detail ? (
-            <span className="min-w-0 flex-1 truncate text-muted-foreground/65">
-              {presentation.detail}
-            </span>
-          ) : null}
-          {visibility !== "local" ? (
-            <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-3xs text-muted-foreground">
-              {visibility === "inherited" ? "Inherited" : "Synthetic"}
-            </span>
-          ) : null}
-          <ChevronDownIcon className="size-3 shrink-0 text-muted-foreground/60 transition-transform group-open:rotate-180" />
-        </summary>
-        <div className="border-t border-border/45 px-3 py-2 ps-8">
-          {presentation.detail ? (
-            <div className="text-xs leading-relaxed text-muted-foreground">
-              <ChatMarkdown
-                text={presentation.detail}
-                cwd={ctx.markdownCwd}
-                threadRef={ctx.threadRef ?? undefined}
-                skills={ctx.skills}
-                lineBreaks
-              />
-            </div>
-          ) : null}
-          {visibility === "inherited" ? (
-            <p className="mt-1 font-mono text-3xs text-muted-foreground/65">
-              From {sourceThreadId}
-            </p>
-          ) : null}
-          <div className={presentation.detail ? "mt-2" : undefined}>
-            <V2ItemInspector
-              projectedItem={row.projectedItem}
-              environmentId={ctx.activeThreadEnvironmentId}
-              cwd={ctx.markdownCwd}
-              workspaceRoot={ctx.workspaceRoot}
-              onOpenThread={ctx.onOpenThread}
-              onOpenTurnDiff={ctx.onOpenTurnDiff}
-              onRollbackCheckpoint={ctx.onRollbackCheckpoint}
-              onImageExpand={ctx.onImageExpand}
-            />
-          </div>
-        </div>
-      </details>
-    );
-  }
-  return (
-    <section
-      className={cn(
-        "rounded-lg border px-3 py-2",
-        presentation.tone === "warning" && "border-warning/25 bg-warning/5",
-        presentation.tone === "danger" && "border-destructive/25 bg-destructive/5",
-        presentation.tone === "success" && "border-success/20 bg-success/5",
-        presentation.tone === "muted" && "border-border/60 bg-card/30",
-      )}
-      data-v2-item-type={item.type}
-      data-v2-item-visibility={visibility}
-    >
-      <div className="flex items-start gap-2.5">
-        <Icon
-          className={cn(
-            "mt-0.5 size-3.5 shrink-0",
-            presentation.tone === "warning" && "text-warning",
-            presentation.tone === "danger" && "text-destructive",
-            presentation.tone === "success" && "text-success",
-            presentation.tone === "muted" && "text-muted-foreground",
-          )}
-        />
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span className="text-xs font-medium text-foreground/90">{presentation.label}</span>
-            {item.status !== "completed" ? (
-              <span
-                className={cn(
-                  "rounded-full border px-1.5 py-0.5 font-mono text-3xs",
-                  item.status === "failed"
-                    ? "border-destructive/40 text-destructive"
-                    : "border-border/70 text-muted-foreground",
-                )}
-              >
-                {item.status}
-              </span>
-            ) : null}
-            {visibility !== "local" ? (
-              <span className="rounded-full bg-muted px-1.5 py-0.5 text-3xs text-muted-foreground">
-                {visibility === "inherited" ? "Inherited" : "Synthetic"}
-              </span>
-            ) : null}
-          </div>
-          {presentation.detail ? (
-            <div className="mt-1 text-xs leading-relaxed text-muted-foreground">
-              <ChatMarkdown
-                text={presentation.detail}
-                cwd={ctx.markdownCwd}
-                threadRef={ctx.threadRef ?? undefined}
-                skills={ctx.skills}
-                lineBreaks
-              />
-            </div>
-          ) : null}
-          {visibility === "inherited" ? (
-            <p className="mt-1 font-mono text-3xs text-muted-foreground/65">
-              From {sourceThreadId}
-            </p>
-          ) : null}
-          <div className="mt-2">
-            <V2ItemInspector
-              projectedItem={row.projectedItem}
-              environmentId={ctx.activeThreadEnvironmentId}
-              cwd={ctx.markdownCwd}
-              workspaceRoot={ctx.workspaceRoot}
-              onOpenThread={ctx.onOpenThread}
-              onOpenTurnDiff={ctx.onOpenTurnDiff}
-              onRollbackCheckpoint={ctx.onRollbackCheckpoint}
-              onImageExpand={ctx.onImageExpand}
-            />
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function subagentGroupTiming(
-  agents: ReadonlyArray<{
-    status: OrchestrationV2TurnItem["status"];
-    startedAt: DateTime.Utc | null;
-    completedAt: DateTime.Utc | null;
-  }>,
-) {
-  let startMs: number | null = null;
-  let endMs: number | null = null;
-  let endUnknown = false;
-  for (const agent of agents) {
-    if (agent.startedAt) {
-      const ms = DateTime.toEpochMillis(agent.startedAt);
-      startMs = startMs === null ? ms : Math.min(startMs, ms);
-    }
-    if (agent.completedAt) {
-      const ms = DateTime.toEpochMillis(agent.completedAt);
-      endMs = endMs === null ? ms : Math.max(endMs, ms);
-    } else {
-      endUnknown = true;
-    }
-  }
-  const live = agents.some(
-    ({ status }) => status === "pending" || status === "running" || status === "waiting",
-  );
-  return {
-    status: live ? ("running" as const) : ("completed" as const),
-    startedAt: startMs === null ? null : new Date(startMs).toISOString(),
-    completedAt: live || endUnknown || endMs === null ? null : new Date(endMs).toISOString(),
-  };
-}
-
-const V2SubagentGroup = memo(function V2SubagentGroup({
-  row,
-}: {
-  row: Extract<TimelineRow, { kind: "event" }>;
-}) {
-  const ctx = use(TimelineRowCtx);
-  const groupId = `subagent-group:${row.id}`;
-  const [expanded, setExpanded] = useState(() =>
-    ctx.workGroupViewState.expandedEntries.has(groupId),
-  );
-  const members = (row.subagents ?? [row.projectedItem]).flatMap(({ item }) =>
-    item.type === "subagent" ? [item] : [],
-  );
-  const liveAgents = useAtomValue(
-    environmentThreadDetails.threadAtom(
-      scopeThreadRef(ctx.activeThreadEnvironmentId, row.projectedItem.item.threadId),
-    ),
-    (thread) => thread?.projection.subagents,
-  );
-  const agents = members.map((item) => {
-    const live = liveAgents?.find((agent) => agent.id === item.subagentId);
-    return {
-      item,
-      status: live?.status ?? item.status,
-      startedAt: live?.startedAt ?? item.startedAt,
-      completedAt: live?.completedAt ?? item.completedAt,
-    };
-  });
-  const summary = subagentGroupSummary(agents);
-  const label = `${members.length} ${members.length === 1 ? "subagent" : "subagents"}`;
-  const statusSummary = summarizeSubagentStatuses(agents.map(({ status }) => status));
-  const toggleExpanded = (open: boolean) => {
-    ctx.onToggleWorkEntry(row.id, expanded);
-    if (open) ctx.workGroupViewState.expandedEntries.add(groupId);
-    else ctx.workGroupViewState.expandedEntries.delete(groupId);
-    setExpanded(open);
-  };
-  return (
-    <WorkLogBlock continues={row.continuesWorkLog}>
-      <Collapsible open={expanded} onOpenChange={toggleExpanded} data-subagent-group>
-        <CollapsibleTrigger
-          aria-label={label}
-          aria-description={statusSummary}
-          className={cn(
-            "flex w-full min-w-0 items-center gap-3 py-2 text-left transition-opacity hover:opacity-100",
-            expanded || summary.active
-              ? "text-foreground opacity-100"
-              : "text-muted-foreground opacity-55",
-          )}
-        >
-          <span className="flex shrink-0 items-center -space-x-1.5" aria-hidden>
-            {agents.slice(0, 3).map(({ item, status }) => (
-              <EnvironmentSubagentAvatar
-                key={item.id}
-                environmentId={ctx.activeThreadEnvironmentId}
-                providerInstanceId={item.providerInstanceId}
-                driver={item.driver}
-                status={agents.length === 1 ? status : undefined}
-              />
-            ))}
-            {agents.length > 3 ? (
-              <span className="relative inline-flex size-6 items-center justify-center rounded-full bg-muted text-3xs font-medium text-muted-foreground ring-2 ring-background">
-                +{agents.length - 3}
-              </span>
-            ) : null}
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="block text-xs font-semibold">{label}</span>
-            <span
-              className={cn(
-                "block truncate text-3xs text-muted-foreground",
-                summary.active ? "text-info" : summary.failed && "text-destructive",
-              )}
-            >
-              {statusSummary}
-            </span>
-          </span>
-          <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-            <SubagentElapsed agent={subagentGroupTiming(agents)} />
-          </span>
-          <ChevronDownIcon
-            aria-hidden
-            className={cn(
-              "size-3.5 shrink-0 text-muted-foreground transition-transform",
-              expanded && "rotate-180",
-            )}
-          />
-        </CollapsibleTrigger>
-        {/* Virtualized rows must settle before disclosure scroll anchoring resumes. */}
-        <CollapsiblePanel animate={false}>
-          {expanded ? (
-            <div className="mt-1 mb-1 rounded-lg border border-border/60 bg-card/30 p-1">
-              {members.map((item) => (
-                <V2LifecycleRow
-                  environmentId={ctx.activeThreadEnvironmentId}
-                  key={item.id}
-                  item={item}
-                  createdAt={row.createdAt}
-                  timestampFormat={ctx.timestampFormat}
-                  runs={ctx.runs}
-                  onOpenThread={ctx.onOpenThread}
-                />
-              ))}
-            </div>
-          ) : null}
-        </CollapsiblePanel>
-      </Collapsible>
-    </WorkLogBlock>
-  );
-});
-
-/** Subscribes directly to the UI state store for expand/collapse state,
- *  so toggling re-renders only this component — not the entire list. */
-const AssistantChangedFilesSection = memo(function AssistantChangedFilesSection({
-  turnSummary,
-  routeThreadKey,
-  resolvedTheme,
-  onOpenTurnDiff,
-}: {
-  turnSummary: TurnDiffSummary | undefined;
-  routeThreadKey: string;
-  resolvedTheme: "light" | "dark";
-  displayThreadKey?: string;
-  onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
-}) {
-  if (!turnSummary) return null;
-  const checkpointFiles = turnSummary.files;
-  if (checkpointFiles.length === 0) return null;
-
-  return (
-    <AssistantChangedFilesSectionInner
-      turnSummary={turnSummary}
-      checkpointFiles={checkpointFiles}
-      routeThreadKey={routeThreadKey}
-      resolvedTheme={resolvedTheme}
-      onOpenTurnDiff={onOpenTurnDiff}
-    />
-  );
-});
-
-function AssistantChangedFilesSectionInner({
-  turnSummary,
-  checkpointFiles,
-  routeThreadKey,
-  resolvedTheme,
-  onOpenTurnDiff,
-}: {
-  turnSummary: TurnDiffSummary;
-  checkpointFiles: TurnDiffSummary["files"];
-  routeThreadKey: string;
-  resolvedTheme: "light" | "dark";
-  displayThreadKey?: string;
-  onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
-}) {
-  const ctx = use(TimelineRowCtx);
-  const persistedExpanded = useUiStateStore(
-    (store) => store.threadChangedFilesExpandedById[routeThreadKey]?.[turnSummary.runId],
-  );
-  const setExpanded = useUiStateStore((store) => store.setThreadChangedFilesExpanded);
-  const allDirectoriesExpanded = persistedExpanded ?? false;
-
-  const thread = useThreadShell(ctx.threadRef);
-  const activeProject = useProject(
-    thread && thread.projectId
-      ? { environmentId: thread.environmentId, projectId: thread.projectId }
-      : null,
-  );
-  const onFileContextMenu = useFileContextMenuHandler(ctx.activeThreadEnvironmentId);
-
-  return (
-    <ChangedFilesCard
-      runId={turnSummary.runId}
-      files={checkpointFiles}
-      allDirectoriesExpanded={allDirectoriesExpanded}
-      resolvedTheme={resolvedTheme}
-      onToggleAllDirectories={() =>
-        setExpanded(routeThreadKey, turnSummary.runId, !allDirectoriesExpanded)
-      }
-      onOpenTurnDiff={onOpenTurnDiff}
-      onFileContextMenu={(filePath, event) =>
-        onFileContextMenu(
-          {
-            environmentId: ctx.activeThreadEnvironmentId,
-            filePath,
-            workspaceRoot: ctx.workspaceRoot,
-            repositoryRoot:
-              thread?.worktreePath == null
-                ? activeProject?.repositoryIdentity?.rootPath
-                : undefined,
-          },
-          event,
-        )
-      }
-    />
   );
 }
 
