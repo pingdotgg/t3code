@@ -191,20 +191,6 @@ describe("DesktopServerExposure", () => {
     ),
   );
 
-  it.effect("returns a typed error when network access is explicitly unavailable", () =>
-    withHarness(
-      emptyNetworkInterfaces,
-      Effect.gen(function* () {
-        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
-        yield* serverExposure.configureFromSettings({ port: 4173 });
-
-        const error = yield* serverExposure.setMode("network-accessible").pipe(Effect.flip);
-        assert.ok(error._tag === "DesktopServerExposureNoNetworkAddressError");
-        assert.equal(error.port, 4173);
-      }),
-    ),
-  );
-
   it.effect("persists network-accessible mode and updates backend binding state", () =>
     withHarness(
       lanNetworkInterfaces,

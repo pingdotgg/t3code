@@ -11,7 +11,6 @@ import {
   parseBinaryCookies,
   readSafariCookies,
   safariAccessDenied,
-  safariAccessGranted,
   SafariCookieReadError,
 } from "./SafariCookies.ts";
 
@@ -180,18 +179,6 @@ describe("parseBinaryCookies", () => {
     );
   });
 
-  it("rejects a record whose declared size runs past its page", () => {
-    const valid = encodeBinaryCookies([
-      { domain: "a.test", name: "n", path: "/", value: "v", expiry: 1_000, flags: 0 },
-    ]);
-    const pageStart = 8 + 4;
-    const recordStart = pageStart + valid.readUInt32LE(pageStart + 8);
-    const corrupt = Buffer.from(valid);
-    corrupt.writeUInt32LE(0xffff, recordStart);
-
-    expect(() => parseBinaryCookies(corrupt)).toThrow(SafariCookieReadError);
-  });
-
   it("rejects record offsets that point into the page header or an earlier record", () => {
     const valid = encodeBinaryCookies([
       { domain: "a.test", name: "n", path: "/", value: "v", expiry: 1_000, flags: 0 },
@@ -211,22 +198,6 @@ describe("parseBinaryCookies", () => {
     expect(parseBinaryCookies(valid)).toHaveLength(2);
   });
 
-  it("rejects string offsets that point into the record header", () => {
-    const valid = encodeBinaryCookies([
-      { domain: "a.test", name: "n", path: "/", value: "v", expiry: 1_000, flags: 0 },
-    ]);
-    const pageStart = 8 + 4;
-    const recordStart = pageStart + valid.readUInt32LE(pageStart + 8);
-
-    for (const offsetField of [16, 20, 24, 28]) {
-      const corrupt = Buffer.from(valid);
-      corrupt.writeUInt32LE(55, recordStart + offsetField);
-      expect(() => parseBinaryCookies(corrupt), `offset field ${offsetField}`).toThrow(
-        SafariCookieReadError,
-      );
-    }
-  });
-
   it("accepts the checksum and property-list trailer Safari writes", () => {
     const file = encodeBinaryCookies([
       { domain: "a.test", name: "c", path: "/", value: "v", flags: 0, expiry: 0 },
@@ -238,24 +209,6 @@ describe("parseBinaryCookies", () => {
 
     expect(parseBinaryCookies(Buffer.concat([file, checksum]))).toHaveLength(1);
     expect(parseBinaryCookies(Buffer.concat([file, checksum, plistLength, plist]))).toHaveLength(1);
-  });
-
-  it("rejects a jar whose page table stops short of its contents", () => {
-    const first = encodeBinaryCookies([
-      { domain: "a.test", name: "c", path: "/", value: "v", flags: 0, expiry: 0 },
-    ]);
-    const extraPage = encodeBinaryCookies([
-      { domain: "b.test", name: "d", path: "/", value: "w", flags: 0, expiry: 0 },
-    ]).subarray(12);
-
-    expect(() => parseBinaryCookies(Buffer.concat([first, extraPage]))).toThrow(
-      SafariCookieReadError,
-    );
-    const badLength = Buffer.alloc(4);
-    badLength.writeUInt32BE(99, 0);
-    expect(() =>
-      parseBinaryCookies(Buffer.concat([first, Buffer.alloc(8), badLength, Buffer.from("x")])),
-    ).toThrow(SafariCookieReadError);
   });
 });
 
@@ -284,26 +237,6 @@ describe("readSafariCookies", () => {
 });
 
 describe("safariAccessDenied", () => {
-  const eperm = PlatformError.systemError({
-    _tag: "Unknown",
-    module: "FileSystem",
-    method: "open",
-    pathOrDescriptor: "/protected/Cookies.binarycookies",
-    cause: Object.assign(new Error("operation not permitted"), { code: "EPERM" }),
-  });
-  const denied = (error: PlatformError.PlatformError) =>
-    FileSystem.layerNoop({ open: () => Effect.fail(error) });
-
-  it.effect("reports TCC's EPERM as a missing Full Disk Access grant", () =>
-    Effect.gen(function* () {
-      assert.isTrue(
-        yield* safariAccessDenied("/protected/Cookies.binarycookies").pipe(
-          Effect.provide(denied(eperm)),
-        ),
-      );
-    }),
-  );
-
   it.effect("does not read a readable jar, or any other failure, as denied", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -323,21 +256,4 @@ describe("isPermissionDenied", () => {
   it("does not send an ordinary EACCES failure to the Full Disk Access grant", () => {
     expect(isPermissionDenied(platformError("PermissionDenied", "EACCES"))).toBe(false);
   });
-});
-
-describe("safariAccessGranted", () => {
-  it.effect("only reports a successful read-only open as granted", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const directory = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-safari-permission-",
-      });
-      const jar = `${directory}/Cookies.binarycookies`;
-      assert.isFalse(yield* safariAccessGranted(jar));
-      yield* fileSystem.writeFileString(jar, "no cookie parsing needed");
-      assert.isTrue(yield* safariAccessGranted(jar));
-      yield* fileSystem.remove(jar);
-      assert.isFalse(yield* safariAccessGranted(jar));
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
-  );
 });

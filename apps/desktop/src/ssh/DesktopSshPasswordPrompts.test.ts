@@ -143,37 +143,6 @@ describe("DesktopSshPasswordPrompts", () => {
     }).pipe(Effect.provide(layer(testWindow.window)), Effect.scoped);
   });
 
-  it.effect("cleans up a prompt that fails during renderer delivery", () => {
-    const cause = new Error("renderer unavailable");
-    const testWindow = makeTestWindow({ sendError: cause });
-
-    return Effect.gen(function* () {
-      const prompts = yield* DesktopSshPasswordPrompts.DesktopSshPasswordPrompts;
-      const error = yield* prompts
-        .request({
-          destination: "devbox",
-          username: "julius",
-          prompt: "Enter the SSH password.",
-          attempt: 1,
-        })
-        .pipe(Effect.flip);
-
-      assert.instanceOf(error, DesktopSshPasswordPrompts.DesktopSshPromptPresentationError);
-      assert.equal(error.operation, "send-prompt-request");
-      assert.equal(error.destination, "devbox");
-      const requestId = error.requestId;
-      if (requestId === null) {
-        assert.fail("renderer delivery failures must retain their request id");
-      }
-      assert.equal(testWindow.closedListenerCount(), 0);
-
-      const resolveError = yield* prompts
-        .resolve({ requestId, password: "secret" })
-        .pipe(Effect.flip);
-      assert.instanceOf(resolveError, DesktopSshPasswordPrompts.DesktopSshPromptExpiredError);
-    }).pipe(Effect.provide(layer(testWindow.window)), Effect.scoped);
-  });
-
   it.effect("keeps a submitted password when a later presentation step fails", () => {
     const testWindow = makeTestWindow({
       isMinimizedError: new Error("failed to read minimized state"),

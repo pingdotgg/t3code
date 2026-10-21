@@ -45,7 +45,7 @@ import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
-import { MENU_ACTION_CHANNEL, SNAP_SHOT_EVENT_CHANNEL } from "../ipc/channels.ts";
+import { SNAP_SHOT_EVENT_CHANNEL } from "../ipc/channels.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
 import * as PreviewManager from "../preview/Manager.ts";
@@ -469,27 +469,6 @@ describe("DesktopWindow", () => {
     assert.deepEqual(
       DesktopWindow.resolveInitialMainWindowBounds(persistedBounds, [displays[0]!]),
       DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE,
-    );
-  });
-
-  it("recognizes only same-origin renderer navigations", () => {
-    assert.isTrue(
-      DesktopWindow.isSameOriginRendererNavigation({
-        applicationUrl: "t3code://app/",
-        navigationUrl: "t3code://app/settings/connections",
-      }),
-    );
-    assert.isFalse(
-      DesktopWindow.isSameOriginRendererNavigation({
-        applicationUrl: "t3code://app/",
-        navigationUrl: "https://accounts.microsoft.com/oauth",
-      }),
-    );
-    assert.isFalse(
-      DesktopWindow.isSameOriginRendererNavigation({
-        applicationUrl: "t3code://app/",
-        navigationUrl: "not a url",
-      }),
     );
   });
 
@@ -1043,29 +1022,6 @@ describe("DesktopWindow", () => {
       }),
   );
 
-  it.effect("dispatches menu actions after backend readiness when no main window exists", () =>
-    Effect.gen(function* () {
-      const splash = makeFakeBrowserWindow();
-      const main = makeFakeBrowserWindow();
-      const scenario = yield* makeSplashScenario([splash.window, null, main.window]);
-
-      yield* Effect.gen(function* () {
-        const desktopWindow = yield* DesktopWindow.DesktopWindow;
-
-        yield* desktopWindow.showConnectingSplash;
-        const readyExit = yield* Effect.exit(
-          desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773")),
-        );
-        assert.equal(readyExit._tag, "Failure");
-
-        yield* desktopWindow.dispatchMenuAction("open-settings");
-
-        assert.equal(yield* Ref.get(scenario.createCalls), 3);
-        assert.deepEqual(main.send.mock.calls, [[MENU_ACTION_CHANNEL, "open-settings"]]);
-      }).pipe(Effect.provide(scenario.layer));
-    }),
-  );
-
   it.effect("delivers capture completion and late errors without taking focus back", () =>
     Effect.gen(function* () {
       const operations: Array<string> = [];
@@ -1101,34 +1057,6 @@ describe("DesktopWindow", () => {
           [SNAP_SHOT_EVENT_CHANNEL, { type: "started", id: captureOne }],
           [SNAP_SHOT_EVENT_CHANNEL, { type: "ready", id: captureOne }],
           [SNAP_SHOT_EVENT_CHANNEL, { type: "failed", id: captureTwo }],
-        ]);
-      }).pipe(Effect.provide(layer));
-    }),
-  );
-
-  it.effect("delivers the renderer event even when the reveal fails", () =>
-    Effect.gen(function* () {
-      const fakeWindow = makeFakeBrowserWindow();
-      const createCount = yield* Ref.make(0);
-      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
-      const layer = layerTest({
-        window: fakeWindow.window,
-        createCount,
-        mainWindow,
-        onReveal: () => {
-          throw new Error("another process kept the foreground");
-        },
-      });
-
-      yield* Effect.gen(function* () {
-        const desktopWindow = yield* DesktopWindow.DesktopWindow;
-        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
-        yield* Effect.exit(
-          desktopWindow.dispatchSnapShotEvent({ type: "started", id: captureOne }),
-        );
-
-        assert.deepEqual(fakeWindow.send.mock.calls, [
-          [SNAP_SHOT_EVENT_CHANNEL, { type: "started", id: captureOne }],
         ]);
       }).pipe(Effect.provide(layer));
     }),

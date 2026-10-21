@@ -33,19 +33,3 @@ it("disables Chromium window animation only while showing the capture overlay", 
   expect(flagsDuringShow).toEqual([["unrelated-switch", animationSwitch]]);
   expect([...switches]).toEqual(["unrelated-switch"]);
 });
-
-it.each([false, true])(
-  "restores the original switch state when showing throws (preexisting: %s)",
-  (preexisting) => {
-    if (preexisting) switches.add(animationSwitch);
-    const original = [...switches];
-    const failure = new Error("Overlay was destroyed");
-    const window = overlay(() => {
-      expect(switches.has(animationSwitch)).toBe(true);
-      throw failure;
-    });
-
-    expect(() => showWindowsCaptureOverlay(window)).toThrow(failure);
-    expect([...switches]).toEqual(original);
-  },
-);

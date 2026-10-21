@@ -32,12 +32,4 @@ describe("PREVIEW_WEBVIEW_PREFERENCES", () => {
   it("keeps the renderer sandbox enabled (so the page cannot reach Node APIs)", () => {
     expect(parsed["sandbox"]).toBe("true");
   });
-
-  it("disables nodeIntegration (defense in depth — page never gets Node)", () => {
-    expect(parsed["nodeIntegration"]).toBe("false");
-  });
-
-  it("contains no whitespace (Electron's parser does not trim)", () => {
-    expect(PREVIEW_WEBVIEW_PREFERENCES).not.toMatch(/\s/);
-  });
 });

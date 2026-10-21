@@ -103,6 +103,7 @@ describe("normalizeDesktopUpdateReleaseNotes", () => {
     expect(result.omittedReleaseCount).toBe(0);
   });
 
+  // regression: #11753 prerelease entries leaked into a channel's update changelog
   it("keeps only stable releases on the latest channel", () => {
     const result = normalizeDesktopUpdateReleaseNotes(
       [

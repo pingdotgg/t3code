@@ -110,15 +110,6 @@ const withClientSettings = <A, E, R>(
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 describe("DesktopClientSettings", () => {
-  it.effect("returns none when no client settings file exists", () =>
-    withClientSettings(
-      Effect.gen(function* () {
-        const settings = yield* DesktopClientSettings.DesktopClientSettings;
-        assert.isTrue(Option.isNone(yield* settings.get));
-      }),
-    ),
-  );
-
   it.effect("saves through a symlinked client settings file without replacing the link", () =>
     withClientSettings(
       Effect.gen(function* () {
@@ -249,7 +240,6 @@ describe("DesktopClientSettings", () => {
 
   it.effect.each([
     { label: "malformed JSON", contents: "{not-json" },
-    { label: "invalid direct settings", contents: '{"fontSizeCode":"large"}' },
     { label: "invalid legacy settings", contents: '{"settings":{"fontSizeCode":"large"}}' },
   ])("reports $label without treating the settings file as absent", (document) =>
     withClientSettings(

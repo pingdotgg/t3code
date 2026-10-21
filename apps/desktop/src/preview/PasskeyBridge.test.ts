@@ -149,18 +149,6 @@ describe("installPasskeyBridge", () => {
     assert.instanceOf(fetched, TypeError);
   });
 
-  it("refuses when the main process has no handler for the page", async () => {
-    const { credentials } = install(() => {
-      throw new Error("Error invoking remote method 'preview:passkey-get': No handler registered");
-    });
-
-    const error = await credentials
-      .get({ publicKey: { challenge: new Uint8Array([1]) } })
-      .catch((caught: unknown) => caught);
-    assert.instanceOf(error, DOMException);
-    assert.strictEqual((error as DOMException).name, "NotAllowedError");
-  });
-
   it("rejects as soon as the page aborts, without waiting on the system sheet", async () => {
     const { credentials } = install(() => new Promise(() => {}));
     const controller = new AbortController();

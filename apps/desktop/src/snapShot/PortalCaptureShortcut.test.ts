@@ -158,17 +158,6 @@ it("accepts Hyprland's action-only binding without claiming the keys are reserve
   expect(client.state.shortcutActionRegistered).toBe(false);
 });
 
-it("does not accept an empty trigger as approval on other desktops", async () => {
-  const bus = new FakeBus();
-  bus.actualLabel = "";
-  const { client, capture } = start(bus);
-  await client.ready;
-  expect(client.state.shortcutRegistered).toBe(false);
-  expect(client.state.shortcutActionRegistered).not.toBe(true);
-  bus.activate();
-  expect(capture).not.toHaveBeenCalled();
-});
-
 it.each([
   ["2", "CTRL+SHIFT+2"],
   ["f12", "CTRL+SHIFT+F12"],

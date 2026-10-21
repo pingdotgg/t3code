@@ -64,6 +64,7 @@ describe("CDP key events as Electron input", () => {
     ]);
   });
 
+  // regression: #18556 agent typing in a preview tab landed in the app instead of the guest
   it("names arrows and function keys as Electron accelerators", () => {
     expect(toKeyboardInputEvents({ type: "keyUp", key: "ArrowLeft", modifiers: 3 })).toEqual([
       { type: "keyUp", keyCode: "Left", modifiers: ["alt", "control"] },

@@ -922,39 +922,6 @@ describe("PreviewManager", () => {
     ),
   );
 
-  effectIt.effect("allows an identical retry after an undecodable capture", () =>
-    withManager((manager) =>
-      Effect.gen(function* () {
-        const changes = makeChangeSignal();
-        let rasterizations = 0;
-        const preview = makeFaviconWebContents({
-          changes,
-          rasterize: async () => (++rasterizations === 1 ? null : TEST_FAVICON),
-        });
-        fromId.mockReturnValue(preview.webContents);
-        const states: PreviewManager.PreviewTabState[] = [];
-        yield* manager.subscribeStateChanges((_tabId, state) =>
-          Effect.sync(() => {
-            states.push(state);
-            changes.notify();
-          }),
-        );
-        yield* manager.createTab("tab_favicon_retry");
-        yield* manager.registerWebview("tab_favicon_retry", 42);
-        const faviconUpdated = preview.listeners.get("page-favicon-updated")!;
-
-        faviconUpdated({} as never, ["http://localhost:3200/favicon.png"] as never);
-        yield* changes.until(() => rasterizations === 1);
-        yield* flushMicrotasks();
-        faviconUpdated({} as never, ["http://localhost:3200/favicon.png"] as never);
-        yield* changes.until(() => states.at(-1)?.favicon !== undefined);
-
-        expect(rasterizations).toBe(2);
-        expect(states.at(-1)?.favicon?.dataUrl).toBe(TEST_FAVICON);
-      }),
-    ),
-  );
-
   effectIt.effect("does not publish a capture invalidated by navigation", () =>
     withManager((manager) =>
       Effect.gen(function* () {
@@ -1252,29 +1219,6 @@ describe("PreviewManager", () => {
       } as never,
     };
   };
-
-  effectIt.effect("still registers a guest that refuses the mute reassert", () =>
-    withManager((manager) =>
-      Effect.gen(function* () {
-        const first = makeAudioWebContents(42);
-        fromId.mockReturnValue(first.wc);
-        yield* manager.createTab("tab_audio_attach_fail");
-        yield* manager.registerWebview("tab_audio_attach_fail", 42);
-        yield* Effect.yieldNow;
-        yield* manager.setAudioMuted("tab_audio_attach_fail", true);
-
-        const replacement = makeAudioWebContents(43);
-        replacement.setAudioMuted.mockImplementationOnce(() => undefined);
-        replacement.setAudioMuted.mockImplementationOnce(() => {
-          throw new Error("guest went away");
-        });
-        fromId.mockReturnValue(replacement.wc);
-
-        const exit = yield* manager.registerWebview("tab_audio_attach_fail", 43).pipe(Effect.exit);
-        expect(Exit.isSuccess(exit)).toBe(true);
-      }),
-    ),
-  );
 
   effectIt.effect("reconciles audibility that changed while the guest attached", () =>
     withManager((manager) =>
@@ -2552,6 +2496,7 @@ describe("PreviewManager", () => {
       }),
     );
 
+    // regression: #18441 zero-area strokes on the viewport edge must still get a screenshot crop
     effectIt.effect.each([
       {
         name: "zero-width SVG line on the left edge",

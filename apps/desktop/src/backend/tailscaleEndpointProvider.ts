@@ -15,8 +15,6 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import type { NetworkInterfaces } from "./DesktopNetworkInterfaces.ts";
 
-export { parseTailscaleMagicDnsName } from "@t3tools/tailscale";
-
 const TAILSCALE_ENDPOINT_PROVIDER: AdvertisedEndpointProvider = {
   id: "tailscale",
   label: "Tailscale",

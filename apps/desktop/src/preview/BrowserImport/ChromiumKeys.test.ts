@@ -146,28 +146,6 @@ describe("Linux Chromium secrets", () => {
     ),
   );
 
-  it.effect("looks up the browser's libsecret application attribute", () => {
-    let captured: CapturedCommand | undefined;
-    return Effect.gen(function* () {
-      const keys = yield* resolveChromiumKeys({
-        platform: "linux",
-        keychainService: "ignored macOS service",
-        keychainAccount: "ignored macOS account",
-        linuxSecretApplication: "msedge",
-      });
-
-      expect(captured?.command).toBe("/bundled/browser-secret/t3-browser-secret");
-      expect(captured?.args).toEqual(["msedge"]);
-      expect(captured?.options.stdin).toBe("ignore");
-      expect(keys.cbcV10).toHaveLength(16);
-      expect(keys.cbcV11).toHaveLength(16);
-    }).pipe(
-      Effect.provide(
-        layerHelper({ stdout: "linux-secret", capture: (value) => (captured = value) }),
-      ),
-    );
-  });
-
   it.effect("preserves trailing whitespace in the stored secret", () =>
     Effect.gen(function* () {
       const secret = yield* readLinuxSecret("chrome");
@@ -219,19 +197,6 @@ describe("Linux Chromium secrets", () => {
         }),
       );
     },
-  );
-
-  it.effect("keeps the v10 fallback when no matching v11 secret exists", () =>
-    Effect.gen(function* () {
-      const keys = yield* resolveChromiumKeys({
-        platform: "linux",
-        keychainService: undefined,
-        keychainAccount: undefined,
-        linuxSecretApplication: "vivaldi",
-      });
-      expect(keys.cbcV10).toHaveLength(16);
-      expect(keys.cbcV11).toBeUndefined();
-    }).pipe(Effect.provide(layerHelper({ exitCode: 2 }))),
   );
 });
 

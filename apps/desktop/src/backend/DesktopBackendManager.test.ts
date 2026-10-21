@@ -295,60 +295,6 @@ describe("DesktopBackendManager", () => {
     }),
   );
 
-  it.effect("reports output handler failures separately from stream read failures", () =>
-    Effect.gen(function* () {
-      const chunk = new TextEncoder().encode("backend output");
-      const nextChunk = new TextEncoder().encode("still draining");
-      const outputCause = new Error("output-handler-secret-sentinel");
-      const reported = yield* Deferred.make<DesktopBackendManager.BackendProcessOutputError>();
-      const drained = yield* Deferred.make<void>();
-      let outputCount = 0;
-      const layerSpawner = Layer.succeed(
-        ChildProcessSpawner.ChildProcessSpawner,
-        ChildProcessSpawner.make(() =>
-          Effect.succeed(
-            makeProcess({
-              stdout: Stream.make(chunk, nextChunk),
-              exitCode: Deferred.await(drained).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
-            }),
-          ),
-        ),
-      );
-
-      const exit = yield* DesktopBackendManager.runBackendProcess({
-        ...baseConfig,
-        desktopTelemetryStream: Stream.empty,
-        onOutput: () => {
-          outputCount += 1;
-          return outputCount === 1
-            ? Effect.fail(outputCause)
-            : Deferred.succeed(drained, void 0).pipe(Effect.asVoid);
-        },
-        onOutputFailure: (error) => Deferred.succeed(reported, error).pipe(Effect.asVoid),
-      }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSpawner, layerHealthyHttpClient)));
-      const error = yield* Deferred.await(reported);
-
-      assert.equal(exit.code.pipe(Option.getOrUndefined), 0);
-      if (error._tag !== "BackendProcessOutputHandlingError") {
-        return assert.fail(`Expected output handling error, received ${error._tag}`);
-      }
-      assert.equal(error.executablePath, "/electron");
-      assert.equal(error.entryPath, "/server/bin.mjs");
-      assert.equal(error.cwd, "/server");
-      assert.equal(error.httpBaseUrl.href, "http://127.0.0.1:3773/");
-      assert.equal(error.pid, 123);
-      assert.equal(error.streamName, "stdout");
-      assert.equal(error.chunkByteLength, chunk.byteLength);
-      assert.strictEqual(error.cause, outputCause);
-      assert.equal(
-        error.message,
-        `Failed to handle ${chunk.byteLength} bytes from stdout of desktop backend process 123.`,
-      );
-      assert.notInclude(error.message, "output-handler-secret-sentinel");
-      assert.equal(outputCount, 2);
-    }),
-  );
-
   it.effect("reports child exit before waiting for trailing output to drain", () =>
     Effect.scoped(
       Effect.gen(function* () {

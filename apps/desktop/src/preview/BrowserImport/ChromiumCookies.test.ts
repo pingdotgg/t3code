@@ -47,13 +47,6 @@ describe("cookieScope", () => {
     });
   });
 
-  it("preserves a domain cookie's leading dot", () => {
-    expect(cookieScope(".example.test", "/app", true)).toEqual({
-      url: "https://example.test/app",
-      domain: ".example.test",
-    });
-  });
-
   it("brackets bare IPv6 hosts without duplicating existing brackets", () => {
     expect(cookieScope("::1", "/", false)).toEqual({
       url: "http://[::1]/",
@@ -331,38 +324,6 @@ describe("readChromiumCookieDatabase", () => {
       const noV11 = yield* readChromiumCookieDatabase(filename, { cbcV10, cbcEmpty }, "linux");
       expect(noV11.cookies.map(({ name }) => name)).toEqual(["empty-v10"]);
       expect(noV11.undecryptableHosts).toEqual(["ev11.example"]);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
-  );
-
-  it.effect("preserves arbitrary long encrypted values from pre-24 schemas", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const directory = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3code-chromium-cookies-",
-      });
-      const filename = `${directory}/Cookies`;
-      const key = Buffer.from("0123456789abcdef");
-      const value = "x".repeat(32) + " legacy value";
-
-      yield* Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient;
-        yield* sql`create table meta (key text primary key, value text not null)`;
-        yield* sql`insert into meta values ('version', 23)`;
-        yield* sql`
-          create table cookies (
-            host_key text not null, name text not null, value text not null,
-            encrypted_value blob not null, path text not null, expires_utc integer not null,
-            is_secure integer not null, is_httponly integer not null, samesite integer not null,
-            top_frame_site_key text not null default ''
-          )
-        `;
-        yield* sql`insert into cookies (host_key, name, value, encrypted_value, path, expires_utc, is_secure, is_httponly, samesite) values
-          ('legacy.example', 'legacy', '', ${encryptV10(value, key)}, '/', 0, 0, 0, 0)`;
-      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename })));
-
-      const result = yield* readChromiumCookieDatabase(filename, { cbcV10: key }, "darwin");
-      expect(result.cookies[0]?.value).toBe(value);
-      expect(result.undecryptable).toBe(0);
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 

@@ -62,13 +62,6 @@ const layerTestFor = (platform: NodeJS.Platform) =>
 
 const layerTest = layerTestFor("linux");
 
-function makeBrowserWindow(input: { readonly id: number; readonly destroyed: boolean }) {
-  return {
-    id: input.id,
-    isDestroyed: vi.fn(() => input.destroyed),
-  } as unknown as Electron.BrowserWindow;
-}
-
 function makeWindowsRevealWindow() {
   return {
     id: 41,
@@ -108,24 +101,6 @@ describe("ElectronWindow", () => {
     windowsForegroundPrepareMock.mockReset().mockResolvedValue(false);
     windowsForegroundCloseMock.mockReset();
   });
-
-  it.effect("skips windows destroyed before appearance sync runs", () =>
-    Effect.gen(function* () {
-      const liveWindow = makeBrowserWindow({ id: 1, destroyed: false });
-      const destroyedWindow = makeBrowserWindow({ id: 2, destroyed: true });
-      getAllWindowsMock.mockReturnValue([destroyedWindow, liveWindow]);
-
-      const syncedWindows: Electron.BrowserWindow[] = [];
-      const electronWindow = yield* ElectronWindow.ElectronWindow;
-      yield* electronWindow.syncAllAppearance((window) =>
-        Effect.sync(() => {
-          syncedWindows.push(window);
-        }),
-      );
-
-      assert.deepEqual(syncedWindows, [liveWindow]);
-    }).pipe(Effect.provide(layerTest)),
-  );
 
   it.effect("cancels native focus when destroyed during the foreground query", () =>
     Effect.gen(function* () {

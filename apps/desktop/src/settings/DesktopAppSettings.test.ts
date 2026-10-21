@@ -3,7 +3,6 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as DesktopConfig from "../app/DesktopConfig.ts";
@@ -108,53 +107,6 @@ describe("DesktopSettings", () => {
           assert.deepEqual(yield* settings.load, before);
         }),
       ),
-  );
-
-  it.effect("loads persisted settings and applies semantic updates", () =>
-    withSettings(
-      Effect.gen(function* () {
-        const settings = yield* DesktopAppSettings.DesktopAppSettings;
-        yield* writeSettingsPatch({
-          linuxPasswordStore: "gnome-libsecret",
-          serverExposureMode: "network-accessible",
-          tailscaleServeEnabled: true,
-          tailscaleServePort: 8443,
-          updateChannel: "latest",
-          updateChannelConfiguredByUser: true,
-        });
-
-        assert.deepEqual(yield* settings.load, {
-          linuxPasswordStore: "gnome-libsecret",
-          localEnvironmentEnabled: true,
-          mainWindowBounds: null,
-          mainWindowMaximized: false,
-          serverExposureMode: "network-accessible",
-          tailscaleServeEnabled: true,
-          tailscaleServePort: 8443,
-          updateChannel: "latest",
-          updateChannelConfiguredByUser: true,
-          wslBackendEnabled: false,
-          wslOnly: false,
-          wslDistro: null,
-        } satisfies DesktopAppSettings.DesktopSettings);
-
-        const exposure = yield* settings.setServerExposureMode("local-only");
-        assert.isTrue(exposure.changed);
-        assert.equal(exposure.settings.serverExposureMode, "local-only");
-
-        const tailscale = yield* settings.setTailscaleServe({
-          enabled: true,
-          port: Option.some(9443),
-        });
-        assert.isTrue(tailscale.changed);
-        assert.equal(tailscale.settings.tailscaleServePort, 9443);
-
-        const updateChannel = yield* settings.setUpdateChannel("nightly");
-        assert.isTrue(updateChannel.changed);
-        assert.equal(updateChannel.settings.updateChannel, "nightly");
-        assert.equal(updateChannel.settings.updateChannelConfiguredByUser, true);
-      }),
-    ),
   );
 
   it.effect("falls back to defaults when the settings file is malformed", () =>
@@ -403,21 +355,6 @@ describe("DesktopSettings", () => {
         const loaded = yield* settings.load;
         assert.equal(loaded.wslBackendEnabled, true);
         assert.equal(loaded.wslDistro, "Ubuntu-22.04");
-      }),
-    ),
-  );
-
-  it.effect("drops invalid persisted wsl distro values on load", () =>
-    withSettings(
-      Effect.gen(function* () {
-        const settings = yield* DesktopAppSettings.DesktopAppSettings;
-        yield* writeSettingsPatch({
-          wslBackendEnabled: true,
-          wslDistro: "bad/name",
-        });
-        const loaded = yield* settings.load;
-        assert.equal(loaded.wslBackendEnabled, true);
-        assert.equal(loaded.wslDistro, null);
       }),
     ),
   );

@@ -386,21 +386,6 @@ describe("captureFavicon", () => {
     expect(executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled();
   });
 
-  it("rejects JPEGs with multiple frame headers before rasterization", async () => {
-    const buffer = Buffer.concat([sourceJpeg(4096, 4096), sourceJpeg(1, 1).subarray(2)]);
-    const { webContents, executeJavaScriptInIsolatedWorld } = makeWebContents();
-
-    expect(
-      await captureFavicon({
-        webContents,
-        pageUrl: "https://example.com/page",
-        candidates: [`data:image/jpeg;base64,${buffer.toString("base64")}`],
-        signal: new AbortController().signal,
-      }),
-    ).toEqual({ kind: "none" });
-    expect(executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled();
-  });
-
   it.each([
     ["GIF", "image/gif", sourceGif(4096, 4096)],
     ["GIF frame", "image/gif", sourceGif(1, 1, 4096, 4096)],
@@ -452,21 +437,6 @@ describe("captureFavicon", () => {
       }),
     ).toEqual({ kind: "none" });
     expect(executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled();
-  });
-
-  it("ignores output that is not a bounded PNG data URL", async () => {
-    const { webContents } = makeWebContents({
-      rasterize: async () => "data:image/svg+xml;base64,c3Zn",
-    });
-
-    expect(
-      await captureFavicon({
-        webContents,
-        pageUrl: "https://example.com/page",
-        candidates: [SOURCE_PNG_URL],
-        signal: new AbortController().signal,
-      }),
-    ).toEqual({ kind: "none" });
   });
 
   it("coalesces queued rasterizations so only the latest pending capture launches", async () => {

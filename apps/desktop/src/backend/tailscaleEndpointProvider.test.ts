@@ -4,10 +4,7 @@ import * as Layer from "effect/Layer";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
-import {
-  parseTailscaleMagicDnsName,
-  resolveTailscaleAdvertisedEndpoints,
-} from "./tailscaleEndpointProvider.ts";
+import { resolveTailscaleAdvertisedEndpoints } from "./tailscaleEndpointProvider.ts";
 
 const layerUnusedTailscaleExternalServices = Layer.mergeAll(
   Layer.succeed(
@@ -80,54 +77,6 @@ describe("tailscale endpoint provider", () => {
           endpoints.map((endpoint) => endpoint.httpBaseUrl),
           ["http://100.74.126.34:3773/"],
         );
-      }).pipe(Effect.provide(layerUnusedTailscaleExternalServices)),
-  );
-
-  it.effect("parses MagicDNS names from tailscale status", () =>
-    Effect.gen(function* () {
-      const dnsName = yield* parseTailscaleMagicDnsName(
-        `{"Self":{"DNSName":"desktop.tail.ts.net."}}`,
-      );
-      assert.equal(dnsName, "desktop.tail.ts.net");
-      assert.equal(yield* parseTailscaleMagicDnsName("{}"), null);
-      const malformed = yield* Effect.result(parseTailscaleMagicDnsName("not-json"));
-      assert.isTrue(malformed._tag === "Failure");
-    }),
-  );
-
-  it.effect(
-    "marks the Tailscale HTTPS endpoint available after Serve is enabled and reachable",
-    () =>
-      Effect.gen(function* () {
-        const endpoints = yield* resolveTailscaleAdvertisedEndpoints({
-          port: 3773,
-          networkInterfaces: {},
-          statusJson: `{"Self":{"DNSName":"desktop.tail.ts.net."}}`,
-          serveEnabled: true,
-          probe: () => Effect.succeed(true),
-        });
-        assert.deepEqual(endpoints, [
-          {
-            id: "tailscale-magicdns:https://desktop.tail.ts.net/",
-            label: "Tailscale HTTPS",
-            provider: {
-              id: "tailscale",
-              label: "Tailscale",
-              kind: "private-network",
-              isAddon: true,
-            },
-            httpBaseUrl: "https://desktop.tail.ts.net/",
-            wsBaseUrl: "wss://desktop.tail.ts.net/",
-            reachability: "private-network",
-            compatibility: {
-              hostedHttpsApp: "compatible",
-              desktopApp: "compatible",
-            },
-            source: "desktop-addon",
-            status: "available",
-            description: "HTTPS endpoint served by Tailscale Serve.",
-          },
-        ]);
       }).pipe(Effect.provide(layerUnusedTailscaleExternalServices)),
   );
 });

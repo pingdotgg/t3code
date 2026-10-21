@@ -185,7 +185,7 @@ function buildConnectingSplashDataUrl(shouldUseDarkColors: boolean): string {
   return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 }
 
-export function isSameOriginRendererNavigation(input: {
+function isSameOriginRendererNavigation(input: {
   readonly applicationUrl: string;
   readonly navigationUrl: string;
 }): boolean {
