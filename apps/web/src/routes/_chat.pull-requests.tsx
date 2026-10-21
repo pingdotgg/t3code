@@ -3,7 +3,6 @@ import {
   parsePullRequestQuery,
 } from "@t3tools/client-runtime/pull-request-query";
 import { Spinner } from "~/components/ui/spinner";
-import { useShortcutModifierState } from "~/shortcutModifierState";
 import type { PullRequestSpeedActionResult } from "~/components/pullRequest/PullRequestSpeedActions";
 import { usePullRequestCloseBatch } from "~/components/pullRequest/usePullRequestActions";
 import { SidebarPointerSensor } from "~/components/Sidebar.pointer";
@@ -24,15 +23,7 @@ import type {
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import {
-  ArrowDownUpIcon,
-  EyeIcon,
-  LayersIcon,
-  PenLineIcon,
-  UsersIcon,
-  Plug2Icon,
-  type LucideIcon,
-} from "lucide-react";
+import { ArrowDownUpIcon, LayersIcon, Plug2Icon } from "lucide-react";
 import { useEffect, useEffectEvent, useRef, useState, type ComponentProps } from "react";
 
 import {
@@ -58,7 +49,6 @@ import {
   resolveSelectedEnvironmentId,
   withDiffStat,
   writePullRequestListSnapshot,
-  scorePullRequestMatch,
   pullRequestStatsRefreshBatches,
   pullRequestStatsRequestBatches,
   retainVisiblePullRequestStatsBatches,
@@ -104,12 +94,10 @@ import {
   STATE_TABS,
 } from "../components/pullRequest/pullRequestListOptions";
 import { PullRequestsColumn } from "../components/pullRequest/PullRequestsColumn";
+import { PullRequestListGroups } from "../components/pullRequest/PullRequestListGroups";
 import { PullRequestListEmptyState } from "../components/pullRequest/PullRequestListEmptyState";
 import { PullRequestListGhost } from "../components/pullRequest/PullRequestGhosts";
-import {
-  PullRequestRow,
-  type PullRequestRowTarget,
-} from "../components/pullRequest/PullRequestRow";
+import { type PullRequestRowTarget } from "../components/pullRequest/PullRequestRow";
 import { PullRequestsUnavailableState } from "../components/pullRequest/PullRequestsUnavailableState";
 import { RightPanelTabs, type PullRequestTabStatusSeed } from "../components/RightPanelTabs";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
@@ -151,7 +139,6 @@ import {
 } from "../state/pullRequests";
 import { useAtomCommand } from "../state/use-atom-command";
 import { cn } from "~/lib/utils";
-import { Separator } from "~/components/ui/separator";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";
 
@@ -178,30 +165,7 @@ export interface PullRequestsSearch extends PullRequestListPreferences {
   readonly selectedEnvironmentId?: EnvironmentId;
 }
 
-const GROUP_ICONS: Record<string, LucideIcon> = {
-  authored: PenLineIcon,
-  reviewRequested: EyeIcon,
-  others: UsersIcon,
-};
-
-function PullRequestGroupHeader({
-  group,
-}: {
-  group: { key: string; label: string; entries: ReadonlyArray<unknown> };
-}) {
-  const Icon = GROUP_ICONS[group.key] ?? LayersIcon;
-  return (
-    <div className="flex items-center gap-2 px-3 pb-1 text-xs font-medium text-muted-foreground/70">
-      <Icon aria-hidden className="size-3.5 shrink-0" />
-      <h2 className="shrink-0">{group.label}</h2>
-      <span className="shrink-0 tabular-nums text-muted-foreground/50">{group.entries.length}</span>
-      <Separator className="min-w-2 flex-1" />
-    </div>
-  );
-}
-
 const SEARCH_DEBOUNCE_MS = 250;
-const MATCHED_ELSEWHERE_SCORE = 10;
 /**
  * One whole page from the host and no more: every provider asks for one row beyond the page as
  * its "is there more" probe, and GitHub serves a hundred per request — so asking for ninety-nine
@@ -292,9 +256,6 @@ export const Route = createFileRoute("/_chat/pull-requests")({
 
 function PullRequestsRouteView() {
   useEscapeToGoBack();
-  const modifiers = useShortcutModifierState(true);
-  const speedMode =
-    modifiers.shiftKey && !modifiers.metaKey && !modifiers.ctrlKey && !modifiers.altKey;
   const search = Route.useSearch();
   const sort = search.sort ?? "ready";
   const statsPolicy: PullRequestStatsPolicy =
@@ -1302,47 +1263,20 @@ function PullRequestsRouteView() {
           onLoadMore={loadMore}
         />
       ) : (
-        <div className={cn("space-y-3", closeSweepKeys.size > 0 && "**:pointer-events-none")}>
-          {displayGroups.map((group) => (
-            <div key={group.key} className="space-y-0.5">
-              {group.label ? <PullRequestGroupHeader group={group} /> : null}
-              {group.entries.map((entry) => {
-                const entryKey = pullRequestEntryKey(entry);
-                return (
-                  <PullRequestRow
-                    key={entryKey}
-                    statsKey={entryKey}
-                    statsRef={registerStatsRow}
-                    entry={entry}
-                    showProjectTitle
-                    showProvider={showProvider}
-                    {...(capableEnvironments.length > 1 &&
-                    environmentLabels.get(entry.environmentId) !== undefined
-                      ? { environmentLabel: environmentLabels.get(entry.environmentId)! }
-                      : {})}
-                    matchedElsewhere={
-                      typedParsed.text.length > 0 &&
-                      scorePullRequestMatch(entry, typedParsed.text) <= MATCHED_ELSEWHERE_SCORE
-                    }
-                    selected={
-                      selected?.environmentId === entry.environmentId &&
-                      selected.repository === entry.repository &&
-                      selected.host?.toLowerCase() === entry.host.toLowerCase() &&
-                      selected.number === entry.number
-                    }
-                    onSelect={selectEntry}
-                    speedMode={speedMode}
-                    hostActions={hostActionsOf(entry)}
-                    onActed={onSpeedAction}
-                    closing={closingKeys.has(entryKey)}
-                    sweeping={closeSweepKeys.has(entryKey)}
-                    onCloseSweepStart={startCloseSweep}
-                  />
-                );
-              })}
-            </div>
-          ))}
-        </div>
+        <PullRequestListGroups
+          groups={displayGroups}
+          environmentLabels={capableEnvironments.length > 1 ? environmentLabels : null}
+          query={typedParsed.text}
+          selected={selected}
+          showProvider={showProvider}
+          statsRef={registerStatsRow}
+          onSelect={selectEntry}
+          hostActionsOf={hostActionsOf}
+          onActed={onSpeedAction}
+          closingKeys={closingKeys}
+          sweepingKeys={closeSweepKeys}
+          onCloseSweepStart={startCloseSweep}
+        />
       )}
 
       {listQuery.error && shownCount > 0 ? (
