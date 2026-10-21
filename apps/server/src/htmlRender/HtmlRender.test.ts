@@ -1,11 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off - plain local servers stand in for LAN services.
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { describe, expect, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Base64 from "effect/encoding/Base64";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -19,6 +20,7 @@ import * as NodeURL from "node:url";
 import { resolveAttachmentPathById } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as HtmlRender from "./HtmlRender.ts";
+import { HtmlRenderBrowserError } from "./headlessChrome.ts";
 import * as PreviewBrowser from "../preview/PreviewBrowser.ts";
 
 const TEST_BROWSER_ENV = "T3CODE_TEST_HEADLESS_SHELL";
@@ -285,6 +287,33 @@ describe("HtmlRender", () => {
         ),
       );
     }),
+  );
+
+  // Windows reports ENOENT asynchronously for this path instead of throwing ENOTDIR.
+  describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "when the browser spawn throws synchronously",
+    () => {
+      it.live("reports a typed preview error", () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const file = yield* fileSystem.makeTempFileScoped({ prefix: "t3-browser-spawn-" });
+          const outcome = yield* HtmlRender.HtmlRender.use((htmlRender) =>
+            htmlRender.preview({ html: "<p>x</p>" }).pipe(Effect.flip),
+          ).pipe(
+            Effect.provide(layerHtmlRender(path.join(file, "chrome-headless-shell"))),
+            Effect.exit,
+          );
+          assert(Exit.isSuccess(outcome), "Expected a typed preview error.");
+          const error = outcome.value;
+          expect(error).toBeInstanceOf(HtmlRenderBrowserError);
+          expect(error.message).toBe(
+            "Headless Chrome could not render the page: the browser could not be started.",
+          );
+          expect(error).toMatchObject({ cause: { code: "ENOTDIR" } });
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      );
+    },
   );
 
   it.live("keeps every local file but the page itself out of the browser", (ctx) =>

@@ -229,6 +229,13 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
         (cause) =>
           new HtmlRenderBrowserError({ reason: "the browser could not be started", cause }),
       ),
+      // Node throws some spawn errors synchronously, such as `spawn UNKNOWN`
+      // when policy blocks the executable; `mapError` cannot catch those.
+      Effect.catchDefect((cause) =>
+        Effect.fail(
+          new HtmlRenderBrowserError({ reason: "the browser could not be started", cause }),
+        ),
+      ),
     );
 
   let stderrTail = "";
