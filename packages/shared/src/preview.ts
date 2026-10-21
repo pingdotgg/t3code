@@ -202,8 +202,6 @@ export function normalizePreviewUrl(rawUrl: string): string {
       cause,
     });
   }
-  // The server preview browser reports page URLs unredacted; a data: URL would put its
-  // content in tool results and logs.
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new PreviewUrlNormalizationError({
       inputLength: rawUrl.length,
