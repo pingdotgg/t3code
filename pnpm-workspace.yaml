@@ -332,6 +332,7 @@ patchedDependencies:
   micromark-extension-gfm-table@2.1.1: patches/micromark-extension-gfm-table@2.1.1.patch
   alchemy@2.0.0-beta.80: patches/alchemy@2.0.0-beta.80.patch
   expo-audio@58.0.9: patches/expo-audio@58.0.9.patch
+  expo-video@58.0.11: patches/expo-video@58.0.11.patch
   expo-network@58.0.3: patches/expo-network@58.0.3.patch
   "@clerk/electron@0.1.1": patches/@clerk__electron@0.1.1.patch
   "@clerk/expo-native-components@0.2.0": patches/@clerk__expo-native-components@0.2.0.patch

@@ -12,7 +12,11 @@ import { FONT_FAMILIES } from "../lib/fontFamilies";
 import { contextChipIconSource } from "../lib/contextChipIconSource";
 import { markdownFileIconSource } from "../lib/markdownFileIcons";
 import { markdownLinkIconSource } from "../lib/markdownLinkIcons";
-import { resolveMarkdownLinkIcon, resolveMarkdownLinkPresentation } from "../lib/markdownLinks";
+import {
+  resolveMarkdownFileIcon,
+  resolveMarkdownLinkIcon,
+  resolveMarkdownLinkPresentation,
+} from "../lib/markdownLinks";
 import type {
   MarkdownLinkCustomization,
   SelectableMarkdownTextProps,
@@ -72,17 +76,25 @@ function presentation(
 export function useEnrichedLinkVariants(
   assets: ReadonlyArray<MarkdownDocumentAsset>,
   props: SelectableMarkdownTextProps,
+  fileHrefs: ReadonlySet<string>,
 ) {
-  const { linkCustomization, skills, textStyle } = props;
+  const { linkCustomization, skills, textStyle, fileEmbedLabel } = props;
   const links = useMemo(() => {
     const byUrl = new Map<string, MarkdownLinkCustomization>();
     for (const asset of assets) {
       if (asset.kind !== "link" || byUrl.has(asset.url)) continue;
-      const value = presentation(asset.url, { linkCustomization, skills, textStyle });
+      const label = fileHrefs.has(asset.url) ? fileEmbedLabel?.(asset.url, false) : null;
+      const value = label
+        ? {
+            label,
+            color: textStyle.fileTextColor,
+            icon: markdownFileIconSource(resolveMarkdownFileIcon(label)),
+          }
+        : presentation(asset.url, { linkCustomization, skills, textStyle });
       if (value) byUrl.set(asset.url, value);
     }
     return byUrl;
-  }, [assets, linkCustomization, skills, textStyle]);
+  }, [assets, linkCustomization, skills, textStyle, fileHrefs, fileEmbedLabel]);
   const chipForegrounds = useMemo(
     () =>
       new Map(

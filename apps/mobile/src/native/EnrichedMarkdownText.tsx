@@ -5,6 +5,7 @@ import {
   formatComposerContextReference,
 } from "@t3tools/shared/composerContextReferences";
 import {
+  markdownWithFileEmbeds,
   markdownWithHtml,
   markdownWithInlineFileLinks,
   markdownWithTableBreaks,
@@ -152,18 +153,18 @@ function enrichedStyle(
 }
 
 export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
-  const { renderImage, resolveImageSource } = props;
+  const { renderImage, resolveImageSource, fileEmbedLabel } = props;
   const { themeAppearance, mathRenderingEnabled } = useAppearancePreferences();
-  const markdown = useMemo(
-    () =>
-      markdownWithTableBreaks(
-        markdownWithInlineFileLinks(
-          markdownWithHtml(props.markdown),
-          ENRICHED_INLINE_FILE_LINK_REGEX,
-        ),
-      ),
-    [props.markdown],
-  );
+  const { markdown, fileHrefs } = useMemo(() => {
+    const content = markdownWithInlineFileLinks(
+      markdownWithHtml(props.markdown),
+      ENRICHED_INLINE_FILE_LINK_REGEX,
+    );
+    const files = fileEmbedLabel
+      ? markdownWithFileEmbeds(content, fileEmbedLabel)
+      : { markdown: content, fileHrefs: new Set<string>() };
+    return { ...files, markdown: markdownWithTableBreaks(files.markdown) };
+  }, [props.markdown, fileEmbedLabel]);
   const [documentAssets, setDocumentAssets] = useState<DocumentAssetsEvent["assets"]>([]);
   const onDocumentAssets = useCallback(({ assets }: DocumentAssetsEvent) => {
     setDocumentAssets((previous) =>
@@ -184,7 +185,11 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
         : assets,
     );
   }, []);
-  const { linkVariants, linkPillContent } = useEnrichedLinkVariants(documentAssets, props);
+  const { linkVariants, linkPillContent } = useEnrichedLinkVariants(
+    documentAssets,
+    props,
+    fileHrefs,
+  );
   const linkRecognition = useMemo(
     () => ({
       text: enrichedSkillLinkRegex(props.skills) ?? undefined,
@@ -195,10 +200,15 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
     url: string;
     menu: NonNullable<ReturnType<NonNullable<typeof props.fileContextMenu>>>;
   } | null>(null);
-  const { fileContextMenu, onLinkPress, onFileContextMenuAction } = props;
+  const { fileContextMenu, onFileContextMenuAction } = props;
+  const onLinkPress = useCallback(
+    (url: string) =>
+      (fileHrefs.has(url) ? (props.onImagePress ?? props.onLinkPress) : props.onLinkPress)?.(url),
+    [fileHrefs, props.onImagePress, props.onLinkPress],
+  );
   const performMenuAction = useCallback(
     (url: string, actionId: string) => {
-      if (actionId === "enriched-open-link") onLinkPress?.(url);
+      if (actionId === "enriched-open-link") onLinkPress(url);
       else if (actionId === "enriched-copy-link") copyTextWithHaptic(url);
       else if (actionId === "enriched-share-link") void Share.share({ message: url });
       else onFileContextMenuAction?.(url, actionId);
@@ -207,7 +217,7 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
   );
   const linkContextMenuItems = useMemo(
     () =>
-      Platform.OS === "ios" && (fileContextMenu || onLinkPress)
+      Platform.OS === "ios" && (fileContextMenu || props.onLinkPress || props.onImagePress)
         ? Object.fromEntries(
             [
               ...new Set(
@@ -233,7 +243,7 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
             }),
           )
         : undefined,
-    [documentAssets, fileContextMenu, onLinkPress, performMenuAction],
+    [documentAssets, fileContextMenu, props.onLinkPress, props.onImagePress, performMenuAction],
   );
   const selectionClipboard = useMemo(() => {
     const fragment = decodeComposerContextFragment(props.contextClipboardFragment);
@@ -333,7 +343,9 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
           enableTaskListItemToggle={false}
           enableCodeBlockWrapToggle
           spoilerOverlay="solid"
-          onLinkPress={props.onLinkPress ? ({ url }) => props.onLinkPress?.(url) : undefined}
+          onLinkPress={
+            props.onLinkPress || props.onImagePress ? ({ url }) => onLinkPress(url) : undefined
+          }
           onLinkLongPress={onLinkLongPress}
           linkContextMenuItems={linkContextMenuItems}
           linkPillContent={linkPillContent}

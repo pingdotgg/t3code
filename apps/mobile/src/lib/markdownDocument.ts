@@ -236,3 +236,56 @@ export function markdownWithTableBreaks(markdown: string): string {
 export function parseMarkdownDocument(markdown: string): Root {
   return parser.parse(markdownWithHtml(markdown));
 }
+
+/** Native media slots only cover standalone images; nested file embeds must become links. */
+export function markdownWithFileEmbeds(
+  markdown: string,
+  label: (href: string, standalone: boolean) => string | null,
+): { markdown: string; fileHrefs: ReadonlySet<string> } {
+  const fileHrefs = new Set<string>();
+  if (!markdown.includes("![")) return { markdown, fileHrefs };
+  const root = parser.parse(markdown);
+  const topLevelBlocks = new Set<MarkdownNode>(root.children);
+  const definitions = new Map<string, string>();
+  const collect = (node: MarkdownNode) => {
+    if (node.type === "definition") {
+      const identifier = node.identifier.toUpperCase();
+      if (!definitions.has(identifier)) definitions.set(identifier, node.url);
+    }
+    if ("children" in node) node.children.forEach(collect);
+  };
+  collect(root);
+  const edits: Array<{ start: number; end: number; content: string }> = [];
+  const visit = (node: MarkdownNode, standalone = false, insideLink = false) => {
+    if (node.type === "image" || node.type === "imageReference") {
+      const href =
+        node.type === "image" ? node.url : definitions.get(node.identifier.toUpperCase());
+      const name = href === undefined ? null : label(href, standalone);
+      const start = node.position?.start.offset;
+      const end = node.position?.end.offset;
+      if (href !== undefined && name !== null && start !== undefined && end !== undefined) {
+        const text = name.replace(/[\\[\]`*_~|&<>]/g, "\\$&");
+        const url = href.replace(/[\\&]/g, "\\$&").replace(/</g, "%3C").replace(/>/g, "%3E");
+        edits.push({ start, end, content: insideLink ? text : `[${text}](<${url}>)` });
+        fileHrefs.add(href);
+      }
+    }
+    if ("children" in node)
+      node.children.forEach((child) =>
+        visit(
+          child,
+          node.type === "paragraph" && node.children.length === 1 && topLevelBlocks.has(node),
+          insideLink || node.type === "link" || node.type === "linkReference",
+        ),
+      );
+  };
+  visit(root);
+  const parts: string[] = [];
+  let offset = 0;
+  for (const edit of edits) {
+    parts.push(markdown.slice(offset, edit.start), edit.content);
+    offset = edit.end;
+  }
+  parts.push(markdown.slice(offset));
+  return { markdown: parts.join(""), fileHrefs };
+}
