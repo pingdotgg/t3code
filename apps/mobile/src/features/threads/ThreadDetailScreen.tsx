@@ -357,7 +357,25 @@ function ThreadVisitWatermark(props: {
   const lastDispatchedVisitRef = useRef<string | null>(null);
   const lastVisitDispatchRef = useRef({ threadKey: selectedThreadKey, at: 0 });
   const selectedThreadId = thread.id;
-  const selectedThreadUpdatedAt = thread.updatedAt;
+  const snoozedUntil = thread.snoozedUntil;
+  // Keep the clock in state so React Compiler invalidates the wake calculation.
+  const [wakeNow, setWakeNow] = useState(() => new Date().toISOString());
+  useEffect(() => {
+    if (!showContent || snoozedUntil == null) return;
+    const delay = Date.parse(snoozedUntil) - Date.now();
+    if (!Number.isFinite(delay)) return;
+    const timer = setTimeout(() => setWakeNow(new Date().toISOString()), Math.max(0, delay) + 50);
+    return () => clearTimeout(timer);
+  }, [showContent, snoozedUntil]);
+  const selectedThreadWokeAt = threadWokeAt(thread, {
+    now: wakeNow,
+  });
+  // A scheduled wake can happen without a newer server update.
+  const selectedThreadUpdatedAt =
+    selectedThreadWokeAt !== null && Date.parse(selectedThreadWokeAt) > Date.parse(thread.updatedAt)
+      ? selectedThreadWokeAt
+      : thread.updatedAt;
+  const wakeIsLatestUpdate = selectedThreadUpdatedAt === selectedThreadWokeAt;
   const selectedThreadLastVisitedAt = thread.lastVisitedAt;
   const selectedThreadCompletedAt = thread.latestRun?.completedAt;
   useEffect(() => {
@@ -384,7 +402,14 @@ function ThreadVisitWatermark(props: {
       (Number.isNaN(lastVisitedAtMs) || completedAtMs > lastVisitedAtMs);
     const previous = lastVisitDispatchRef.current;
     const elapsed = Date.now() - previous.at;
-    if (previous.threadKey !== selectedThreadKey || hasUnseenCompletion || elapsed >= 10_000) {
+    // Like a completion, a wake the user is looking at must not wait out the throttle:
+    // leaving within it would cancel the dispatch and keep Woke in the list.
+    if (
+      previous.threadKey !== selectedThreadKey ||
+      hasUnseenCompletion ||
+      wakeIsLatestUpdate ||
+      elapsed >= 10_000
+    ) {
       dispatch();
       return;
     }
@@ -399,6 +424,7 @@ function ThreadVisitWatermark(props: {
     selectedThreadUpdatedAt,
     showContent,
     visitThread,
+    wakeIsLatestUpdate,
   ]);
   return null;
 }

@@ -35,6 +35,7 @@ import {
   getThreadListV2OrderedSection,
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2Status,
+  resolveThreadListV2WokeAt,
   resolveThreadListV2SwipeActions,
   sortThreadsForListV2,
   threadListV2ListItemsAreEqual,
@@ -1423,6 +1424,100 @@ describe("threadListV2ListItemsAreEqual", () => {
     expect(firstA.type === "v2-thread" && firstA.showTrailingDivider).toBe(true);
     expect(secondA.type === "v2-thread" && secondA.showTrailingDivider).toBe(false);
     expect(threadListV2ListItemsAreEqual(firstA, secondA)).toBe(false);
+  });
+});
+
+describe("thread list Woke marker", () => {
+  const wokeAt = isoAt(BASE_MS - MINUTE_MS);
+  const thread = makeThread({
+    id: ThreadId.make("woke"),
+    title: "Woke",
+    latestUserMessageAt: isoAt(BASE_MS - 90 * MINUTE_MS),
+    snoozedAt: isoAt(BASE_MS - 60 * MINUTE_MS),
+    snoozedUntil: wokeAt,
+    lastVisitedAt: null,
+  });
+
+  it("keeps a timer wake through a plain visit until acknowledgement reaches its timestamp", () => {
+    expect(resolveThreadListV2WokeAt(thread, { now: NOW })).toBe(wokeAt);
+    expect(
+      resolveThreadListV2WokeAt(
+        { ...thread, lastVisitedAt: isoAt(BASE_MS - 30 * MINUTE_MS) },
+        { now: NOW },
+      ),
+    ).toBe(wokeAt);
+    expect(
+      resolveThreadListV2WokeAt({ ...thread, lastVisitedAt: wokeAt }, { now: NOW }),
+    ).toBeNull();
+    expect(resolveThreadListV2WokeAt({ ...thread, lastVisitedAt: "invalid" }, { now: NOW })).toBe(
+      wokeAt,
+    );
+  });
+
+  it("stays hidden while snoozed, after settling, and on servers without visited tracking", () => {
+    expect(resolveThreadListV2WokeAt(thread, { now: isoAt(BASE_MS - 2 * MINUTE_MS) })).toBeNull();
+    expect(
+      resolveThreadListV2WokeAt({ ...thread, settledOverride: "settled" }, { now: NOW }),
+    ).toBeNull();
+    expect(
+      resolveThreadListV2WokeAt({ ...thread, lastVisitedAt: undefined }, { now: NOW }),
+    ).toBeNull();
+    expect(resolveThreadListV2WokeAt({ ...thread, snoozedUntil: null }, { now: NOW })).toBeNull();
+  });
+
+  it("keeps an early failure wake acknowledged after the scheduled time passes", () => {
+    const completedAt = isoAt(BASE_MS - 2 * MINUTE_MS);
+    const failed = makeThread({
+      ...thread,
+      snoozedUntil: isoAt(BASE_MS + MINUTE_MS),
+      runtime: {
+        status: "failed",
+        activeRunId: null,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        providerName: "Codex",
+        lastError: "Run failed",
+        updatedAt: completedAt,
+      },
+      latestRun: {
+        runId: RunId.make("woke-run"),
+        status: "failed",
+        requestedAt: isoAt(BASE_MS - 3 * MINUTE_MS),
+        startedAt: isoAt(BASE_MS - 3 * MINUTE_MS),
+        completedAt,
+        assistantMessageId: null,
+      },
+    });
+    expect(resolveThreadListV2WokeAt(failed, { now: NOW })).toBe(completedAt);
+    expect(
+      resolveThreadListV2WokeAt(
+        { ...failed, lastVisitedAt: completedAt },
+        { now: isoAt(BASE_MS + 2 * MINUTE_MS) },
+      ),
+    ).toBeNull();
+  });
+
+  it("updates a recycled row at the wake boundary even without a new shell or minute tick", () => {
+    const waking = { ...thread, snoozedUntil: isoAt(BASE_MS + 30_000) };
+    const layout = (now: string) =>
+      buildThreadListV2Items({
+        threads: [waking],
+        environmentId: null,
+        searchQuery: "",
+        now,
+        snoozeEnvironmentIds: new Set<EnvironmentId>(),
+      });
+    const list = (now: string) =>
+      buildThreadListV2ListItems({
+        items: layout(now).items,
+        pendingTasks: [],
+        snoozeLabelNow: isoAt(BASE_MS),
+      });
+    const before = list(NOW)[0]!;
+    const after = list(isoAt(BASE_MS + 37_500))[0]!;
+    expect(before.type === "v2-thread" && before.item.wokeAt).toBeNull();
+    expect(after.type === "v2-thread" && after.item.wokeAt).toBe(waking.snoozedUntil);
+    expect(after.type === "v2-thread" && after.timeLabel).toBe("");
+    expect(threadListV2ListItemsAreEqual(before, after)).toBe(false);
   });
 });
 
