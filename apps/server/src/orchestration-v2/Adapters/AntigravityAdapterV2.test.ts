@@ -96,6 +96,23 @@ describe("AntigravityAdapterV2 flavor", () => {
       ),
     );
   });
+
+  it("keeps the question card to the agent's own options so a typed answer cannot be sent", () => {
+    const question = flavor.extractPermissionQuestion?.(
+      permissionRequest("interaction_2", [
+        { optionId: "opt-main", name: "main", kind: "allow_once" },
+        { optionId: "opt-dev", name: "dev", kind: "allow_once" },
+      ]),
+    );
+    assert.strictEqual(question?.question.allowCustomAnswer, false);
+    assert.deepEqual(
+      question?.question.options.map((option) => option.value),
+      ["opt-main", "opt-dev"],
+    );
+    assert.deepEqual(question?.respond({ interaction_2: "opt-dev" }), {
+      outcome: { outcome: "selected", optionId: "opt-dev" },
+    });
+  });
 });
 
 const layerSession = Layer.mergeAll(
