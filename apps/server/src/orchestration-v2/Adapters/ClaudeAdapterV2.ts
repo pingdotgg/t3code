@@ -130,6 +130,7 @@ import {
   type CompiledClaudeModelSelection,
 } from "../../claudeModelOptions.ts";
 import * as ServerConfig from "../../config.ts";
+import * as PortScanner from "../../preview/PortScanner.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
@@ -315,7 +316,10 @@ const BACKGROUND_MOVE_TIMEOUT_MS = 5_000;
  * reads (#3089). Those stay in the CLI's group, so the rest of the group gets SIGKILL once the
  * CLI exits for any reason.
  */
-function spawnClaudeProcessGroup(options: ClaudeSpawnOptions): ClaudeSpawnedProcess {
+function spawnClaudeProcessGroup(
+  options: ClaudeSpawnOptions,
+  trackAgent: () => () => void,
+): ClaudeSpawnedProcess {
   const child = NodeChildProcess.spawn(options.command, options.args, {
     cwd: options.cwd,
     env: options.env,
@@ -323,7 +327,9 @@ function spawnClaudeProcessGroup(options: ClaudeSpawnOptions): ClaudeSpawnedProc
     stdio: ["pipe", "pipe", "ignore"],
     detached: true,
   });
+  const releaseAgent = child.pid === undefined ? undefined : trackAgent();
   child.once("exit", () => {
+    releaseAgent?.();
     try {
       signalProcessGroup(child.pid ?? 0, "SIGKILL");
     } catch {}
@@ -862,6 +868,7 @@ export const layerQueryRunner: Layer.Layer<
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
   | Path.Path
+  | PortScanner.PortDiscovery
   | ProviderEventLoggers.ProviderEventLoggers
 > = Layer.effect(
   ClaudeAgentSdkQueryRunner,
@@ -872,6 +879,8 @@ export const layerQueryRunner: Layer.Layer<
     const { native: nativeEventLogger } = yield* ProviderEventLoggers.ProviderEventLoggers;
     const agentScope = yield* AgentScope;
     const platform = yield* HostProcess.Platform;
+    const hostEnvironment = yield* HostProcess.Environment;
+    const portDiscovery = yield* PortScanner.PortDiscovery;
 
     return ClaudeAgentSdkQueryRunner.of({
       allocateSessionId: crypto
@@ -898,7 +907,16 @@ export const layerQueryRunner: Layer.Layer<
         // which every local user can read. They go over the CLI's stdin control
         // channel instead, so header credentials stay out of its argv and out
         // of the environment every command the agent runs inherits.
-        const { mcpServers, ...queryOptions } = input.options;
+        const { mcpServers, ...sdkOptions } = input.options;
+        // Every job the agent starts inherits its thread, so port discovery can list the
+        // thread's servers even after the CLI exits.
+        const queryOptions = {
+          ...sdkOptions,
+          env: {
+            ...(sdkOptions.env ?? hostEnvironment),
+            [PortScanner.AGENT_THREAD_ENV]: input.threadId,
+          },
+        };
         // The SDK spawns a native binary as `path ...executableArgs ...sdkArgs`,
         // which lets the agent scope wrapper go in front of the CLI. The SDK
         // runs a script entry through node instead, so those launch unwrapped.
@@ -925,7 +943,10 @@ export const layerQueryRunner: Layer.Layer<
         // Windows has no process groups, so there the SDK spawns the CLI itself.
         const spawnClaudeCodeProcess =
           options.spawnClaudeCodeProcess ??
-          (platform === "win32" ? undefined : spawnClaudeProcessGroup);
+          (platform === "win32"
+            ? undefined
+            : (spawnOptions: ClaudeSpawnOptions) =>
+                spawnClaudeProcessGroup(spawnOptions, portDiscovery.trackAgent));
         const queryRuntime = yield* Effect.uninterruptibleMask((restore) =>
           Effect.try({
             try: () =>

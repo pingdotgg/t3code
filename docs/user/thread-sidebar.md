@@ -227,6 +227,24 @@ Expand a tool call in the conversation to see its full command and output.
 Summaries shorten shell wrappers and can still describe the latest call after it
 finishes; the call's own result shows its status.
 
+On web and desktop, the thread details card lists the web servers that the
+thread's terminals or its Claude agent started, with their ports. A server the
+agent started stays listed after the agent finishes or the thread settles. On
+Linux with systemd user scopes, T3 Code stops servers left by agents when it
+starts an agent or terminal after a restart.
+Select a server to open it in the browser panel. **Stop** ends the server's job
+and keeps the agent, the terminal, and T3 Code running. Stop needs terminal
+access to the environment. On Windows, the card lists only servers started in a
+terminal, and Stop is not available.
+
+A server the agent starts through a tool that passes on only some environment
+variables, such as Turborepo in its default strict mode, is not listed. To list
+it, add `T3CODE_THREAD_ID` to `globalPassThroughEnv` in `turbo.json`.
+
+Long-lived launchers such as tmux can keep the thread id they inherited from
+an earlier agent. Servers they start later can appear under that earlier
+thread, so check the port before stopping one.
+
 ## Snooze until later
 
 Choose **Snooze → Custom…** from a thread's menu to pick a date and time in your

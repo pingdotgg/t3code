@@ -12,6 +12,7 @@ import {
   AuthPreviewOperateScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
+  AuthTerminalOperateScope,
   ThreadId,
   EnvironmentId,
   ScheduledTaskId,
@@ -85,6 +86,37 @@ describe("command permissions", () => {
         expect((yield* close.authorize(registry, other).pipe(Effect.flip))._tag).toBe(
           "EnvironmentAuthorizationError",
         );
+      }),
+    ),
+  );
+
+  it.effect("requires the destination terminal grant to stop a local server", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const stop = createCommandPermissions(runtime, WS_METHODS.previewStopLocalServer);
+        registry.set(
+          sessions(env),
+          AsyncResult.success({
+            ...grant(true),
+            scopes: [AuthOrchestrationOperateScope, AuthPreviewOperateScope],
+            permissions: [AuthOrchestrationOperateScope, AuthPreviewOperateScope],
+          }),
+        );
+        expect(registry.get(stop.permissionAtom(env))).toBe(false);
+        expect((yield* stop.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+        registry.set(
+          sessions(env),
+          AsyncResult.success({
+            ...grant(false),
+            scopes: [AuthTerminalOperateScope],
+            permissions: [AuthTerminalOperateScope],
+          }),
+        );
+        expect(registry.get(stop.permissionAtom(env))).toBe(true);
+        yield* stop.authorize(registry, env);
       }),
     ),
   );
