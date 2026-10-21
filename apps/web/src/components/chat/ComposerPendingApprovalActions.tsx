@@ -81,7 +81,7 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
           >
             <EllipsisIcon />
           </MenuTrigger>
-          <MenuPopup {...composerFloatingLayerProps} side="top" align="end">
+          <MenuPopup {...composerFloatingLayerProps} side="top" align="end" width="content">
             {moreOptions.map((option) => {
               const item = (
                 <MenuItem
@@ -92,8 +92,6 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
                     if (!disabled && !isResponding)
                       void onRespondToApproval(requestId, option.decision);
                   }}
-                  variant="ghost"
-                  className="mb-1 last:mb-0"
                 >
                   {option.warning ? <TriangleAlertIcon className="size-3 text-warning" /> : null}
                   <span className="min-w-0 whitespace-normal wrap-break-word">{option.label}</span>
