@@ -145,4 +145,4 @@ describe("React Compiler coverage", () => {
   it("lists only files that exist", () => {
     expect(Object.keys(KNOWN_BAILOUTS).filter((file) => !sourceFiles.includes(file))).toEqual([]);
   });
-}, 300_000);
+});
