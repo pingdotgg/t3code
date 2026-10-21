@@ -1881,7 +1881,7 @@ describe("UsageService", () => {
       }).pipe(Effect.scoped),
   );
 
-  it.live.each([4, 5, 6])(
+  it.live.each([4, 5, 6, 7])(
     "upgrades a v%s cache: reparses live Codex usage, keeps deleted rollouts and the old file",
     (version) =>
       Effect.gen(function* () {
@@ -1971,7 +1971,7 @@ describe("UsageService", () => {
             60 + 20 * (version === 4 ? 1 : 2),
           );
           yield* upgraded.awaitPersisted;
-          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v7.json");
+          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v8.json");
           assert.strictEqual(
             yield* Effect.promise(() => NodeFSP.readFile(legacyPath, "utf8")),
             legacy,

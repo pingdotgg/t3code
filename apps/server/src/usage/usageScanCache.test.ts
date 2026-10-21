@@ -162,7 +162,7 @@ describe("scan cache round trip", () => {
     expect(restored).toEqual(original);
   });
 
-  it.each([5, 6])(
+  it.each([5, 6, 7])(
     "retains v%s history and compatible positions but invalidates obsolete state",
     (version) => {
       const original = cacheWith([["/gone.jsonl", 100, [record({ speed: "fast" })]]]);
@@ -172,7 +172,7 @@ describe("scan cache round trip", () => {
         records: [record({ provider: "codex", speed: "fast", dedupeKey: null })],
         position: position({
           state: {
-            ...(version === 6 ? initialCodexScanState() : {}),
+            ...(version >= 6 ? initialCodexScanState() : {}),
             model: "gpt-6-astra",
             speed: "fast",
             sessionId: "session-a",
@@ -220,7 +220,7 @@ describe("scan cache round trip", () => {
         position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
       });
       expect(restored.get("/gone-pi.jsonl")).toEqual(
-        version === 6
+        version >= 6
           ? original.get("/gone-pi.jsonl")
           : {
               ...original.get("/gone-pi.jsonl"),
