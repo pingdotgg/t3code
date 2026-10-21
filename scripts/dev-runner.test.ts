@@ -550,6 +550,8 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
             Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
             Effect.provideService(HostProcess.Platform, "linux"),
             Effect.provideService(HostProcess.WorkingDirectory, input.cwd),
+            // No ~/.t3 here, so these runs never seed from this machine's install.
+            Effect.provideService(HostProcess.HomeDirectory, input.cwd),
             Effect.provideService(
               HostProcess.Environment,
               input.ambientHome === undefined ? {} : { T3CODE_HOME: input.ambientHome },
@@ -595,6 +597,53 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
             ambientHome: "/home/user/.t3",
           });
           assert.equal(home, path.join(path.resolve(root), ".t3"));
+        }).pipe(Effect.scoped),
+      );
+
+      it.effect("seeds a worktree database from ~/.t3 only when it has none", () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const root = yield* makeWorktree;
+          const home = path.join(root, "home");
+          NodeFS.mkdirSync(path.join(home, ".t3", "userdata"), { recursive: true });
+          NodeFS.writeFileSync(path.join(home, ".t3", "userdata", "statev2.sqlite"), "");
+
+          const spawnedArgs = (seed: boolean | undefined) =>
+            Effect.gen(function* () {
+              const spawned: Array<ReadonlyArray<string>> = [];
+              const spawnerLayer = Layer.succeed(
+                ChildProcessSpawner.ChildProcessSpawner,
+                ChildProcessSpawner.make((command) => {
+                  spawned.push(
+                    (command as unknown as { readonly args: ReadonlyArray<string> }).args,
+                  );
+                  return Effect.succeed(mockProcess(0));
+                }),
+              );
+              yield* runDevRunnerWithInput({ ...devServerInput, t3Home: undefined, seed }).pipe(
+                Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
+                Effect.provideService(HostProcess.Platform, "linux"),
+                Effect.provideService(HostProcess.WorkingDirectory, root),
+                Effect.provideService(HostProcess.HomeDirectory, home),
+                Effect.provideService(HostProcess.Environment, {}),
+              );
+              return spawned.filter((args) =>
+                args.some((arg) => arg.endsWith("migrate-dev-db.ts")),
+              );
+            });
+
+          assert.deepStrictEqual(yield* spawnedArgs(false), []);
+          const [seedArgs] = yield* spawnedArgs(undefined);
+          assert.includeMembers([...(seedArgs ?? [])], ["--base-dir", path.join(root, ".t3")]);
+
+          // Either database means the worktree already has data.
+          for (const name of ["state.sqlite", "statev2.sqlite"]) {
+            const file = path.join(root, ".t3", "userdata", name);
+            NodeFS.mkdirSync(path.dirname(file), { recursive: true });
+            NodeFS.writeFileSync(file, "");
+            assert.deepStrictEqual(yield* spawnedArgs(undefined), []);
+            NodeFS.rmSync(file);
+          }
         }).pipe(Effect.scoped),
       );
 
