@@ -1,7 +1,4 @@
-import {
-  applyPullRequestDraftFilterChange,
-  parsePullRequestQuery,
-} from "@t3tools/client-runtime/pull-request-query";
+import { applyPullRequestDraftFilterChange } from "@t3tools/client-runtime/pull-request-query";
 import { Spinner } from "~/components/ui/spinner";
 import type { PullRequestSpeedActionResult } from "~/components/pullRequest/PullRequestSpeedActions";
 import { usePullRequestCloseBatch } from "~/components/pullRequest/usePullRequestActions";
@@ -15,7 +12,6 @@ import type {
   PullRequestAction,
   PullRequestInvolvement,
   PullRequestListCursors,
-  PullRequestListFilters,
   PullRequestListInput,
   PullRequestListResult,
   PullRequestListState,
@@ -27,27 +23,12 @@ import { ArrowDownUpIcon, LayersIcon, Plug2Icon } from "lucide-react";
 import { useEffect, useEffectEvent, useRef, useState, type ComponentProps } from "react";
 
 import {
-  filterPullRequestsByInvolvement,
-  findProjectForRepository,
-  findScopedProject,
   collectPullRequestListFacets,
-  groupPullRequestsByInvolvement,
-  matchesPullRequestFilters,
-  matchesPullRequestQuery,
   narrowPullRequestsToFilters,
   mergePullRequestDiffStats,
-  partitionPullRequestsWithPriority,
-  pullRequestDiffStatKey,
   pullRequestEntryKey,
-  pullRequestEntryViewer,
   rankPullRequestMatches,
-  sortPullRequestGroups,
-  pullRequestEnvironmentSetKey,
   readPullRequestListSnapshot,
-  resolveProjectScope,
-  resolveQueryEnvironmentIds,
-  resolveSelectedEnvironmentId,
-  withDiffStat,
   writePullRequestListSnapshot,
   pullRequestStatsRefreshBatches,
   pullRequestStatsRequestBatches,
@@ -55,28 +36,22 @@ import {
   type EnvironmentPullRequestEntry,
   type MergedPullRequestList,
   type PullRequestDiffStats,
-  type PullRequestGroup,
   type PullRequestStatsBatch,
   type PullRequestStatsPolicy,
   type PullRequestStatsScope,
   type PullRequestPartitionsSnapshot,
-  applyPullRequestOverrides,
   type PullRequestListOverride,
   pullRequestOverrideAfterAction,
   reusePullRequestEntries,
   settlePullRequestOverrides,
-  pullRequestHostActions,
   largestPullRequestReadCount,
 } from "../components/pullRequest/pullRequestList.logic";
 import {
   pullRequestListPreferences,
   type PullRequestListPreferencePatch,
-  type PullRequestListPreferences,
   type PullRequestListSort,
   writePullRequestListPreferences,
 } from "../components/pullRequest/pullRequestListPreferences";
-import { assignProjectsToEnvironments } from "../components/pullRequest/pullRequestProjectAssignment.logic";
-import { pullRequestFilterProjects } from "../components/pullRequest/pullRequestProjectFilter.logic";
 import { environmentMachineIcon } from "../components/EnvironmentMachineIcon";
 import { PullRequestDetailPanel } from "../components/pullRequest/PullRequestDetailPanel";
 import {
@@ -84,7 +59,6 @@ import {
   PullRequestSearchInput,
   pullRequestHostLabel,
   pullRequestProjectKey,
-  type PullRequestExpectedHost,
   type PullRequestFilterOption,
 } from "../components/pullRequest/PullRequestListFilters";
 import { PullRequestCompactFilterMenu } from "../components/pullRequest/PullRequestCompactFilterMenu";
@@ -95,11 +69,19 @@ import {
 } from "../components/pullRequest/pullRequestListOptions";
 import { PullRequestsColumn } from "../components/pullRequest/PullRequestsColumn";
 import { PullRequestListGroups } from "../components/pullRequest/PullRequestListGroups";
+import {
+  pullRequestGroups,
+  pullRequestListEntryId,
+  usePullRequestDisplayGroups,
+  usePullRequestQueryFilters,
+  usePullRequestScope,
+  type PullRequestsSearch,
+} from "../components/pullRequest/usePullRequestListView";
 import { PullRequestListEmptyState } from "../components/pullRequest/PullRequestListEmptyState";
 import { PullRequestListGhost } from "../components/pullRequest/PullRequestGhosts";
 import { type PullRequestRowTarget } from "../components/pullRequest/PullRequestRow";
 import { PullRequestsUnavailableState } from "../components/pullRequest/PullRequestsUnavailableState";
-import { RightPanelTabs, type PullRequestTabStatusSeed } from "../components/RightPanelTabs";
+import { RightPanelTabs } from "../components/RightPanelTabs";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { isElectron } from "../env";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
@@ -119,17 +101,13 @@ import { useEscapeToGoBack } from "../hooks/useNavigateBack";
 import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations";
 import {
   PULL_REQUESTS_PANEL_REF,
-  pullRequestSurfaceId,
   selectActiveRightPanelSurface,
   selectSelectedRightPanelSurface,
   selectThreadRightPanelState,
   useRightPanelStore,
   type PullRequestSurface,
 } from "../rightPanelStore";
-import { useDebouncedValue } from "../state/queries";
-import { useAllEnvironmentShellsBootstrapped, useProjects } from "../state/entities";
 import { useSidebarProjectGroups } from "../hooks/useSidebarProjectGroups";
-import { useEnvironments } from "../state/environments";
 import {
   pullRequestEnvironment,
   usePullRequestList,
@@ -154,18 +132,6 @@ function getShortcutContext() {
   };
 }
 
-export interface PullRequestsSearch extends PullRequestListPreferences {
-  readonly environmentId?: EnvironmentId;
-  readonly projectId?: ProjectId;
-  readonly host?: string;
-  readonly repository?: string;
-  readonly number?: number;
-  readonly selectedProjectId?: ProjectId;
-  readonly selectedHost?: string;
-  readonly selectedEnvironmentId?: EnvironmentId;
-}
-
-const SEARCH_DEBOUNCE_MS = 250;
 /**
  * One whole page from the host and no more: every provider asks for one row beyond the page as
  * its "is there more" probe, and GitHub serves a hundred per request — so asking for ninety-nine
@@ -181,9 +147,6 @@ const EMPTY_PREVIEW_DESKTOP_STATE = {};
 const EMPTY_TERMINAL_LABELS = new Map<string, string>();
 const EMPTY_PENDING_SURFACES = new Set<string>();
 const MAX_SEARCH_LABEL_CANDIDATES = 100;
-
-const pullRequestListEntryId = (target: Parameters<typeof pullRequestSurfaceId>[0]) =>
-  pullRequestSurfaceId({ ...target, repository: target.repository.toLowerCase() });
 
 function pullRequestSearchLabels(raw: unknown): Partial<Pick<PullRequestsSearch, "labels">> {
   const values = (Array.isArray(raw) ? raw : typeof raw === "string" ? [raw] : []).slice(
@@ -1653,376 +1616,6 @@ function PullRequestsRouteView() {
       </div>
     </SidebarInset>
   );
-}
-
-/** Which servers and projects the page reads, from the URL and what this client knows. */
-function usePullRequestScope(search: PullRequestsSearch) {
-  const { environments } = useEnvironments();
-  const allProjects = useProjects();
-  const projectsKnown = useAllEnvironmentShellsBootstrapped();
-  const capableEnvironments = environments
-    .filter(
-      (environment) => environment.serverConfig?.environment.capabilities.pullRequests === true,
-    )
-    .toSorted((left, right) => left.environmentId.localeCompare(right.environmentId));
-  const scopedEnvironmentId =
-    capableEnvironments.find((environment) => environment.environmentId === search.environmentId)
-      ?.environmentId ?? null;
-  const knownEnvironmentIds = new Set(environments.map((environment) => environment.environmentId));
-  const environmentIds = capableEnvironments
-    .filter(
-      (environment) =>
-        scopedEnvironmentId === null || environment.environmentId === scopedEnvironmentId,
-    )
-    .map((environment) => environment.environmentId);
-  const environmentKey = pullRequestEnvironmentSetKey(environmentIds);
-  const capabilityKnown = environments.some((environment) => environment.serverConfig !== null);
-  const pullRequestsSupported = environmentIds.length > 0;
-  const projects = allProjects.filter(
-    (project) => !project.isScratch && environmentIds.includes(project.environmentId),
-  );
-  const environmentLabels = new Map(
-    environments.map((environment) => [environment.environmentId, environment.label] as const),
-  );
-  const scopedProjectId = resolveProjectScope(search.projectId, projects, projectsKnown);
-  const scopedProject = findScopedProject(projects, scopedEnvironmentId, scopedProjectId);
-  const scopedProjects = pullRequestFilterProjects(projects, environmentLabels, scopedProject);
-
-  const selectedHost = search.selectedHost ?? search.host;
-  // A named server still connecting is kept named rather than falling back: falling back while it
-  // is merely not ready yet would resolve the project against whatever other server has answered,
-  // which can be the wrong one where two servers share a project id.
-  const selectedEnvironmentId = resolveSelectedEnvironmentId(
-    search.selectedEnvironmentId,
-    knownEnvironmentIds,
-    scopedEnvironmentId,
-  );
-  const projectForRepository =
-    search.repository === undefined
-      ? undefined
-      : findProjectForRepository(projects, {
-          repository: search.repository,
-          host: selectedHost,
-          selectedEnvironmentId,
-          scopedProjectId,
-          scopedEnvironmentId,
-        });
-  const linkedProjectId = resolveProjectScope(search.selectedProjectId, projects, projectsKnown);
-  const selectedProject =
-    linkedProjectId === undefined && search.repository !== undefined
-      ? projectForRepository
-      : findScopedProject(projects, selectedEnvironmentId, linkedProjectId ?? scopedProjectId);
-  const queryEnvironmentIds = resolveQueryEnvironmentIds(
-    environmentIds,
-    projects,
-    scopedProject,
-    scopedProjectId,
-    projectsKnown,
-  );
-  const environmentQueries = ((): ReadonlyArray<{
-    readonly environmentId: EnvironmentId;
-    readonly projectIds?: ReadonlyArray<ProjectId>;
-  }> => {
-    const plain = queryEnvironmentIds.map((environmentId) => ({ environmentId }));
-    if (!projectsKnown || scopedProjectId !== undefined) return plain;
-    const assignment = assignProjectsToEnvironments(
-      projects,
-      queryEnvironmentIds,
-      queryEnvironmentIds[0],
-    );
-    const totals = new Map<EnvironmentId, number>();
-    for (const project of projects) {
-      totals.set(project.environmentId, (totals.get(project.environmentId) ?? 0) + 1);
-    }
-    return queryEnvironmentIds.flatMap((environmentId) => {
-      const projectIds = assignment.get(environmentId);
-      if (projectIds === undefined) return [];
-      if (projectIds.length === (totals.get(environmentId) ?? 0)) return [{ environmentId }];
-      return [{ environmentId, projectIds }];
-    });
-  })();
-  const assignmentKey = environmentQueries
-    .map(({ environmentId, projectIds }) => `${environmentId}#${projectIds?.join("+") ?? "*"}`)
-    .join("|");
-  const linkedSelection =
-    search.repository && search.number && selectedProject
-      ? {
-          environmentId: selectedProject.environmentId,
-          repository: search.repository,
-          number: search.number,
-          projectId: selectedProject.id,
-          ...(selectedHost ? { host: selectedHost } : {}),
-        }
-      : null;
-  const expectedHosts = (() => {
-    const byHost = new Map<string, PullRequestExpectedHost>();
-    for (const project of projects) {
-      const kind = project.repositoryIdentity?.provider as SourceControlProviderKind | undefined;
-      if (kind === undefined) continue;
-      const host = pullRequestHostOf(project.repositoryIdentity, kind);
-      if (!byHost.has(host)) byHost.set(host, { host, kind });
-    }
-    return [...byHost.values()];
-  })();
-
-  return {
-    capableEnvironments,
-    scopedEnvironmentId,
-    environmentKey,
-    capabilityKnown,
-    pullRequestsSupported,
-    projects,
-    environmentLabels,
-    scopedProjectId,
-    scopedProject,
-    scopedProjects,
-    selectedProject,
-    queryEnvironmentIds,
-    environmentQueries,
-    assignmentKey,
-    linkedSelection,
-    expectedHosts,
-    projectsKnown,
-  };
-}
-
-function usePullRequestQueryFilters(search: PullRequestsSearch, typedQuery: string) {
-  const sentQuery = useDebouncedValue(typedQuery, SEARCH_DEBOUNCE_MS);
-  const typedParsed = parsePullRequestQuery(typedQuery);
-  const sentParsed = parsePullRequestQuery(sentQuery);
-
-  const menuFilters = {
-    ...(search.draft ? { draft: search.draft } : {}),
-    ...(search.review ? { review: search.review } : {}),
-    ...(search.checks ? { checks: search.checks } : {}),
-    ...(search.author ? { author: search.author } : {}),
-    ...(search.labels ? { labels: search.labels.map((label) => [label]) } : {}),
-  };
-  const menuFiltered = Object.keys(menuFilters).length > 0;
-  const filters = { ...menuFilters, ...sentParsed.filters };
-  const hasFilters = Object.keys(filters).length > 0;
-  const localFilters = { ...menuFilters, ...typedParsed.filters };
-  const hasLocalFilters = Object.keys(localFilters).length > 0;
-  return {
-    sentQuery,
-    querySettled: typedQuery === sentQuery,
-    typedParsed,
-    sentParsed,
-    menuFilters,
-    menuFiltered,
-    filters,
-    hasFilters,
-    localFilters,
-    hasLocalFilters,
-  };
-}
-
-/** The held rows narrowed to what the reader asked for, in the groups the list shows. */
-function pullRequestGroups({
-  known,
-  providers,
-  viewers,
-  involvement,
-  localFilters,
-  hasLocalFilters,
-  text,
-  answeredLocally,
-  baselineEmpty,
-  held,
-  authored,
-  reviewing,
-  partitionsWanted,
-}: {
-  known: ReadonlyArray<EnvironmentPullRequestEntry>;
-  providers: PullRequestListResult["providers"];
-  viewers: PullRequestListResult["viewers"];
-  involvement: PullRequestInvolvement;
-  localFilters: PullRequestListFilters;
-  hasLocalFilters: boolean;
-  text: string;
-  answeredLocally: boolean;
-  baselineEmpty: boolean;
-  held: PullRequestPartitionsSnapshot | undefined;
-  authored: ReadonlyArray<EnvironmentPullRequestEntry> | undefined;
-  reviewing: ReadonlyArray<EnvironmentPullRequestEntry> | undefined;
-  partitionsWanted: boolean;
-}) {
-  const searchingHosts = new Set(
-    providers.flatMap((provider) => (provider.searchesOnHost ? [provider.host] : [])),
-  );
-
-  const entries = (() => {
-    const involvementEntries = filterPullRequestsByInvolvement(known, viewers, involvement);
-    // The hosts search more than the row shows — a body, a review, a commit message — so once
-    // their answer is in, narrowing it again here would throw away matches the reader asked for.
-    // The local pass stands in for the answer that has not arrived yet, and for the hosts that
-    // answered without searching at all: Azure DevOps has no text filter, so its rows arrive
-    // whole and would otherwise sit under a search that never touched them.
-    const narrowedEntries = hasLocalFilters
-      ? involvementEntries.filter((entry) =>
-          matchesPullRequestFilters(entry, localFilters, pullRequestEntryViewer(entry, viewers)),
-        )
-      : involvementEntries;
-    if (text.length === 0) {
-      return narrowedEntries.toSorted((left, right) =>
-        right.updatedAt.localeCompare(left.updatedAt),
-      );
-    }
-    return narrowedEntries.filter(
-      (entry) =>
-        (answeredLocally && searchingHosts.has(entry.host)) || matchesPullRequestQuery(entry, text),
-    );
-  })();
-
-  const listedPullRequestTabStatuses: Record<string, PullRequestTabStatusSeed> = Object.fromEntries(
-    entries.map((entry) => [
-      pullRequestSurfaceId(entry),
-      {
-        state: entry.state,
-        isDraft: entry.isDraft,
-      },
-    ]),
-  );
-
-  const groups = (() => {
-    if (involvement !== "all") return [{ key: "others" as const, label: "", entries }];
-    if (baselineEmpty) {
-      return groupPullRequestsByInvolvement(entries, viewers);
-    }
-    const narrow = (rows: ReadonlyArray<EnvironmentPullRequestEntry> | undefined) =>
-      rows === undefined || !hasLocalFilters
-        ? rows
-        : rows.filter((entry) =>
-            matchesPullRequestFilters(entry, localFilters, pullRequestEntryViewer(entry, viewers)),
-          );
-    const narrowedAuthored = narrow(partitionsWanted ? (authored ?? held?.authored) : undefined);
-    const narrowedReviewing = narrow(partitionsWanted ? (reviewing ?? held?.reviewing) : undefined);
-    if (narrowedAuthored === undefined || narrowedReviewing === undefined) {
-      return groupPullRequestsByInvolvement(entries, viewers);
-    }
-    return partitionPullRequestsWithPriority(entries, narrowedAuthored, narrowedReviewing);
-  })();
-
-  const entriesByStatsKey: ReadonlyMap<string, EnvironmentPullRequestEntry> = new Map(
-    groups.flatMap((group) =>
-      group.entries.map((entry) => [pullRequestEntryKey(entry), entry] as const),
-    ),
-  );
-  const heldPullRequestsBySurface = new Map(
-    groups.flatMap((group) =>
-      group.entries.map((entry) => [pullRequestListEntryId(entry), entry] as const),
-    ),
-  );
-  return {
-    entries,
-    listedPullRequestTabStatuses,
-    groups,
-    entriesByStatsKey,
-    heldPullRequestsBySurface,
-  };
-}
-
-/**
- * The hosts the list has answered for (kept while a host filter narrows the answer), and the
- * groups as shown with measured sizes, optimistic actions, and the reader's sort.
- */
-function usePullRequestDisplayGroups({
-  answered,
-  host,
-  groups,
-  statsByRow,
-  overrides,
-  state,
-  localFilters,
-  hasLocalFilters,
-  viewers,
-  sort,
-  text,
-  involvement,
-}: {
-  answered: MergedPullRequestList | null;
-  host: string | undefined;
-  groups: ReadonlyArray<PullRequestGroup<EnvironmentPullRequestEntry>>;
-  statsByRow: PullRequestDiffStats;
-  overrides: ReadonlyMap<string, PullRequestListOverride>;
-  state: PullRequestListState;
-  localFilters: PullRequestListFilters;
-  hasLocalFilters: boolean;
-  viewers: PullRequestListResult["viewers"];
-  sort: PullRequestListSort;
-  text: string;
-  involvement: PullRequestInvolvement;
-}) {
-  const [hostsState, setHostsState] = useState<{
-    readonly source: MergedPullRequestList | null;
-    readonly host: string | undefined;
-    readonly hosts: PullRequestListResult["providers"];
-  }>({ source: null, host: undefined, hosts: [] });
-  if (answered !== null && (hostsState.source !== answered || hostsState.host !== host)) {
-    setHostsState({
-      source: answered,
-      host,
-      hosts:
-        host === undefined || hostsState.hosts.length === 0 ? answered.providers : hostsState.hosts,
-    });
-  }
-  const hosts = hostsState.hosts;
-  const displayGroups = (() => {
-    const enriched = groups.map((group) => {
-      const overridden = applyPullRequestOverrides(
-        group.entries.map((entry) => withDiffStat(entry, statsByRow)),
-        overrides,
-        pullRequestEntryKey,
-        state,
-      );
-      return {
-        ...group,
-        entries:
-          hasLocalFilters && overrides.size > 0
-            ? overridden.filter(
-                (entry) =>
-                  !overrides.has(pullRequestEntryKey(entry)) ||
-                  matchesPullRequestFilters(
-                    entry,
-                    localFilters,
-                    pullRequestEntryViewer(entry, viewers),
-                  ),
-              )
-            : overridden,
-      };
-    });
-    return sortPullRequestGroups(
-      enriched,
-      sort,
-      text,
-      (entry) =>
-        entry.additions + entry.deletions > 0 || statsByRow.has(pullRequestDiffStatKey(entry)),
-      involvement,
-    );
-  })();
-  const shownCount = displayGroups.reduce((count, group) => count + group.entries.length, 0);
-  const hostActionsOf = pullRequestHostActions(hosts);
-  const closeSweepRows = new Map(
-    displayGroups.flatMap((group) =>
-      group.entries.map(
-        (entry) => [pullRequestEntryKey(entry), { entry, groupKey: group.key }] as const,
-      ),
-    ),
-  );
-  const listedPullRequestsBySurface = new Map(
-    displayGroups.flatMap((group) =>
-      group.entries.map((entry) => [pullRequestListEntryId(entry), entry] as const),
-    ),
-  );
-
-  return {
-    hosts,
-    displayGroups,
-    shownCount,
-    hostActionsOf,
-    closeSweepRows,
-    listedPullRequestsBySurface,
-  };
 }
 
 function PullRequestFiltersMenuInSidebarOrder(
