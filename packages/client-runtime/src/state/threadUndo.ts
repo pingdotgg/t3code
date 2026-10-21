@@ -75,12 +75,15 @@ export async function executeThreadUndo<Result>(
   execute: (step: ThreadUndoStep) => Promise<Result>,
   succeeded: (result: Result) => boolean,
 ): Promise<Result> {
-  let result = await execute(plan[0]);
+  // A snooze can expire before Undo runs, and the server rejects an expired restore.
+  const expired = (step: ThreadUndoStep) =>
+    // @effect-diagnostics-next-line globalDate:off
+    step.action === "snooze" && Date.parse(step.snoozedUntil) <= Date.now();
+  // A reschedule whose previous wake time passed would have woken the thread by now.
+  let result = await execute(expired(plan[0]) ? { action: "unsnooze" } : plan[0]);
   for (const step of plan.slice(1)) {
     if (!succeeded(result)) return result;
-    // A snooze can expire before Undo runs, and the server rejects an expired restore.
-    // @effect-diagnostics-next-line globalDate:off
-    if (step.action === "snooze" && Date.parse(step.snoozedUntil) <= Date.now()) continue;
+    if (expired(step)) continue;
     result = await execute(step);
   }
   return result;
