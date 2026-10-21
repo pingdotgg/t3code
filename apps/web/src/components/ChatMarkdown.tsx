@@ -1,5 +1,4 @@
 import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
-import { MarkdownFindContext, findRevealRef } from "./chat/markdownFindContext";
 import {
   buildFileLinkParentSuffixByPath,
   fileLinkLabel,
@@ -26,7 +25,6 @@ import {
   encodeComposerContextClipboardHtml,
 } from "@t3tools/shared/composerContextClipboard";
 import {
-  ChevronRightIcon,
   FileSpreadsheetIcon,
   FileTextIcon,
   GlobeIcon,
@@ -42,7 +40,6 @@ import {
   TriangleAlertIcon,
   type LucideIcon,
 } from "lucide-react";
-import { Check, Copy, Maximize2, Minimize2 } from "lucide";
 import {
   AssetWorkspaceAssetNotFoundError,
   AuthPreviewOperateScope,
@@ -85,7 +82,6 @@ import React, {
   type ClipboardEvent as ReactClipboardEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
-  isValidElement,
   use,
   memo,
   useEffect,
@@ -136,11 +132,7 @@ import {
 } from "./chat/externalLinkContextMenu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { Button } from "./ui/button";
-import { MorphIcon } from "~/components/MorphIcon";
 import { ContextChip } from "./ContextChip";
-import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "./ui/collapsible";
-import { ScrollArea } from "./ui/scroll-area";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { recordVisitForThread } from "../browserHistoryStore";
 import {
@@ -153,12 +145,8 @@ import { resolveDiffThemeName } from "../lib/diffRendering";
 import { GitHubIcon } from "./Icons";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
 import { useRenderedAppearance } from "../hooks/useTheme";
-import { getClientSettings, useClientSettings } from "../hooks/useSettings";
-import {
-  chatMarkdownClipboardPayload,
-  serializeTableElementToCsv,
-  serializeTableElementToMarkdown,
-} from "../markdown-clipboard";
+import { useClientSettings } from "../hooks/useSettings";
+import { chatMarkdownClipboardPayload } from "../markdown-clipboard";
 import {
   resolveInlineCodeFileLinkMeta,
   resolveMarkdownFileLinkMeta,
@@ -212,7 +200,6 @@ import {
   resolvePullRequestPreviewTarget,
   useOpenChangeRequestLink,
 } from "~/lib/openPullRequestLink";
-import { observeResize } from "~/lib/observeResize";
 import { useOpenLink } from "../browser/useOpenLink";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { isPreviewAvailableFor } from "../browser/previewRuntime";
@@ -227,6 +214,8 @@ import { resolveLinkTarget } from "../browser/browserLinkTarget";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
 import { MarkdownCodeBlock, SuspenseShikiCodeBlock } from "./chat/MarkdownCodeBlock";
 import { MarkdownMermaidCodeBlock } from "./chat/MarkdownMermaidCodeBlock";
+import { MarkdownTable } from "./chat/MarkdownTable";
+import { MarkdownDetails } from "./chat/MarkdownDetails";
 import {
   extractCodeBlock,
   extractFenceLanguage,
@@ -449,211 +438,6 @@ const GITHUB_ALERT_PRESENTATIONS: Record<
     titleClassName: "text-red-600 dark:text-red-400",
   },
 };
-
-/**
- * Whether any cell is clipped in the unwrapped layout. Only then does the wrap
- * toggle change anything, so short tables hide it. Measures with the container
- * briefly unwrapped and restores it before the browser paints.
- */
-function tableHasClippedCells(container: HTMLElement, table: HTMLTableElement): boolean {
-  const viewport = table.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
-  const scrollLeft = viewport?.scrollLeft ?? 0;
-  const previous = container.dataset.expanded;
-  container.dataset.expanded = "false";
-  try {
-    for (const row of table.rows) {
-      for (const cell of row.cells) {
-        if (cell.scrollWidth > cell.clientWidth) return true;
-      }
-    }
-    return false;
-  } finally {
-    if (previous === undefined) delete container.dataset.expanded;
-    else container.dataset.expanded = previous;
-    // The unwrapped layout can be narrower and clamp a sideways scroll.
-    if (viewport && scrollLeft > 0) viewport.scrollLeft = scrollLeft;
-  }
-}
-
-function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const tableRef = useRef<HTMLTableElement | null>(null);
-  const [expanded, setExpanded] = useState(() => getClientSettings().wordWrap);
-  const [hasClippedCells, setHasClippedCells] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const expandLabel = expanded ? "Collapse table cells" : "Expand table cells";
-  const copyLabel = copied ? "Copied" : "Copy table";
-
-  const measureClippedCells = () => {
-    const container = containerRef.current;
-    const table = tableRef.current;
-    if (!container || !table) return;
-    setHasClippedCells(tableHasClippedCells(container, table));
-  };
-
-  // A streamed cell can grow until it clips while the table keeps its size,
-  // so remeasure after every render, not only on resize.
-  useLayoutEffect(measureClippedCells);
-
-  // Column width changes can clip a cell without rendering this table.
-  useLayoutEffect(() => {
-    const table = tableRef.current;
-    if (!table) return;
-    return observeResize(table, measureClippedCells);
-  }, [measureClippedCells]);
-
-  const handleCopy = (format: "markdown" | "csv") => {
-    const table = containerRef.current?.querySelector("table");
-    if (!table || typeof navigator === "undefined" || navigator.clipboard == null) {
-      return;
-    }
-    const text =
-      format === "markdown"
-        ? serializeTableElementToMarkdown(table)
-        : serializeTableElementToCsv(table);
-    void navigator.clipboard
-      .writeText(text)
-      .then(() => {
-        if (copiedTimerRef.current != null) {
-          clearTimeout(copiedTimerRef.current);
-        }
-        setCopied(true);
-        copiedTimerRef.current = setTimeout(() => {
-          setCopied(false);
-          copiedTimerRef.current = null;
-        }, 1200);
-      })
-      .catch((cause) => {
-        reportMarkdownActionFailure({ operation: "copy-table", format }, cause);
-      });
-  };
-
-  useEffect(
-    () => () => {
-      if (copiedTimerRef.current != null) {
-        clearTimeout(copiedTimerRef.current);
-        copiedTimerRef.current = null;
-      }
-    },
-    [],
-  );
-
-  return (
-    <div
-      ref={containerRef}
-      className="chat-markdown-table-container"
-      data-expanded={expanded ? "true" : "false"}
-    >
-      <ScrollArea radius="none" chainVerticalScroll scrollFade className="w-full max-w-full">
-        <table ref={tableRef} {...props}>
-          {children}
-        </table>
-      </ScrollArea>
-      <div className="mt-0.5 flex items-center justify-between select-none">
-        {hasClippedCells ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  variant={expanded ? "secondary" : "ghost-muted"}
-                  size="icon-xs"
-                  aria-pressed={expanded}
-                  onClick={() => setExpanded((value) => !value)}
-                  aria-label={expandLabel}
-                />
-              }
-            >
-              <MorphIcon className="size-3" icon={expanded ? Minimize2 : Maximize2} />
-            </TooltipTrigger>
-            <TooltipPopup side="top">{expandLabel}</TooltipPopup>
-          </Tooltip>
-        ) : (
-          <span />
-        )}
-        <Menu>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <MenuTrigger
-                  render={
-                    <Button
-                      type="button"
-                      variant="ghost-muted"
-                      size="icon-xs"
-                      aria-label={copyLabel}
-                    />
-                  }
-                />
-              }
-            >
-              <MorphIcon className="size-3" icon={copied ? Check : Copy} />
-            </TooltipTrigger>
-            <TooltipPopup side="top">{copyLabel}</TooltipPopup>
-          </Tooltip>
-          <MenuPopup align="end">
-            <MenuItem onClick={() => handleCopy("markdown")}>Copy as Markdown</MenuItem>
-            <MenuItem onClick={() => handleCopy("csv")}>Copy as CSV</MenuItem>
-          </MenuPopup>
-        </Menu>
-      </div>
-    </div>
-  );
-}
-
-function MarkdownDetails({
-  children,
-  open = false,
-}: Pick<React.ComponentProps<"details">, "children" | "open">) {
-  const [isOpen, setIsOpen] = useState(open);
-  const searching = use(MarkdownFindContext);
-  const expanded = isOpen;
-  const revealForFind = () => setIsOpen(true);
-  // Base UI only listens for `beforematch` on a panel mounted at its first
-  // render; a closed panel mounts later, when find starts, so listen here.
-  const revealRef = findRevealRef(revealForFind);
-  const childNodes = Children.toArray(children);
-  const summaryIndex = childNodes.findIndex(
-    (child) => isValidElement(child) && child.type === "summary",
-  );
-  const summaryNode = summaryIndex >= 0 ? childNodes[summaryIndex] : null;
-  const summary =
-    isValidElement<{ children?: ReactNode }>(summaryNode) && summaryNode.props.children
-      ? summaryNode.props.children
-      : "Details";
-  const content = childNodes.filter((_, index) => index !== summaryIndex);
-
-  return (
-    <div className="my-2 border-y border-border/60">
-      <Collapsible
-        open={expanded}
-        onOpenChange={setIsOpen}
-        data-markdown-details=""
-        data-markdown-details-open={expanded ? "true" : "false"}
-      >
-        <CollapsibleTrigger
-          className="flex w-full items-center gap-2 py-2 text-left text-sm font-medium text-foreground data-panel-open:[&_svg]:rotate-90"
-          data-markdown-details-summary=""
-        >
-          <ChevronRightIcon
-            className="size-4 shrink-0 text-muted-foreground transition-transform"
-            aria-hidden
-          />
-          <span>{summary}</span>
-        </CollapsibleTrigger>
-        <CollapsiblePanel ref={revealRef} hiddenUntilFound={searching}>
-          <div
-            className="pb-3 ps-6 text-foreground/[calc(80%+var(--appearance-contrast-boost)/5)]"
-            data-markdown-details-content=""
-          >
-            {content}
-          </div>
-        </CollapsiblePanel>
-      </Collapsible>
-    </div>
-  );
-}
 
 interface MarkdownFileLinkProps {
   environmentId: EnvironmentId | null;
