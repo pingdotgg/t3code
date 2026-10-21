@@ -212,6 +212,10 @@ export default defineConfig({
         rules: { "t3code/require-disposable-render": "error" },
       },
       {
+        files: ["apps/web/src/**/*.browser.test.{ts,tsx}"],
+        rules: { "t3code/no-frame-waits-in-browser-tests": "error" },
+      },
+      {
         files: ["apps/**/src/**", "packages/**/src/**"],
         excludeFiles: DOM_TEST_ENVIRONMENT_ALLOWLIST,
         rules: { "t3code/no-dom-test-environment": "error" },
