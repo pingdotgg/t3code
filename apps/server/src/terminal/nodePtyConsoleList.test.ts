@@ -61,6 +61,7 @@ describe("node-pty console process list helper", () => {
     expect(list).toEqual([SHELL_PID]);
   });
 
+  // regression: #18519 Windows terminal kill waited on timeouts
   it("falls back to the shell PID when the helper fails to spawn", async () => {
     const list = await getConsoleProcessList((helper) => {
       helper.emit("error", Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" }));

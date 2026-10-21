@@ -10,6 +10,7 @@ const skillMap = (names: Iterable<string>) =>
 const SKILLS = skillMap(["2spec", "implement", "review", "re-release-version"]);
 
 describe("planClaudeSkillDispatch", () => {
+  // regression: #9128 skills picked from the composer did not run
   it("leaves a prompt without a known skill untouched", () => {
     expect(planClaudeSkillDispatch("fix the build", SKILLS)).toBeUndefined();
     expect(planClaudeSkillDispatch("echo $HOME then $unknown", SKILLS)).toBeUndefined();

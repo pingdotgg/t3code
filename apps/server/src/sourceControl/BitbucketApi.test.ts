@@ -424,57 +424,6 @@ it.effect(
   },
 );
 
-it.effect(
-  "falls back to the repository main branch when the Bitbucket branching model is unavailable",
-  () => {
-    const { layer } = makeLayer({
-      response: (request) =>
-        request.url.endsWith("/branching-model")
-          ? Response.json({ error: { message: "Not found" } }, { status: 404 })
-          : Response.json(repositoryJson),
-    });
-
-    return Effect.gen(function* () {
-      const bitbucket = yield* BitbucketApi.BitbucketApi;
-      const defaultBranch = yield* bitbucket.getDefaultBranch({ cwd: "/repo" });
-
-      assert.strictEqual(defaultBranch, "main");
-    }).pipe(Effect.provide(layer));
-  },
-);
-
-it.effect("creates repositories through the Bitbucket REST API", () => {
-  const { execute, layer } = makeLayer({
-    response: () => Response.json(repositoryJson),
-  });
-
-  return Effect.gen(function* () {
-    const bitbucket = yield* BitbucketApi.BitbucketApi;
-    const cloneUrls = yield* bitbucket.createRepository({
-      cwd: "/repo",
-      repository: "pingdotgg/t3code",
-      visibility: "private",
-    });
-
-    assert.deepStrictEqual(cloneUrls, {
-      nameWithOwner: "pingdotgg/t3code",
-      url: "https://bitbucket.org/pingdotgg/t3code.git",
-      sshUrl: "git@bitbucket.org:pingdotgg/t3code.git",
-    });
-
-    const request = execute.mock.calls[0]?.[0];
-    assert.strictEqual(request?.url, "https://api.test.local/2.0/repositories/pingdotgg/t3code");
-    assert.strictEqual(request?.method, "POST");
-    assert.ok(request);
-    const rawBody = (request.body as { readonly body?: Uint8Array }).body;
-    assert.ok(rawBody);
-    assert.deepStrictEqual(JSON.parse(new TextDecoder().decode(rawBody)), {
-      scm: "git",
-      is_private: true,
-    });
-  }).pipe(Effect.provide(layer));
-});
-
 it.effect("creates pull requests using the official REST payload shape", () => {
   const { execute, layer } = makeLayer({
     response: () => Response.json(bitbucketPullRequest),

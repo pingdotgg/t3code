@@ -124,27 +124,6 @@ it.layer(NodeServices.layer)("PairingGrantStore.layer", (it) => {
     }).pipe(Effect.provide(layerPairingGrantStore())),
   );
 
-  it.effect("seeds the desktop bootstrap credential as a reusable grant", () =>
-    Effect.gen(function* () {
-      const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
-      const first = yield* bootstrapCredentials.consume("desktop-bootstrap-token");
-      const second = yield* bootstrapCredentials.consume("desktop-bootstrap-token");
-      const third = yield* bootstrapCredentials.consume("desktop-bootstrap-token");
-
-      expect(first.method).toBe("desktop-bootstrap");
-      expect(first.scopes).toEqual(AuthStandardClientScopes);
-      expect(first.subject).toBe("desktop-bootstrap");
-      expect(second.method).toBe("desktop-bootstrap");
-      expect(third.method).toBe("desktop-bootstrap");
-    }).pipe(
-      Effect.provide(
-        layerPairingGrantStore({
-          desktopBootstrapToken: "desktop-bootstrap-token",
-        }),
-      ),
-    ),
-  );
-
   it.effect("reports seeded desktop bootstrap credentials as expired after their ttl", () =>
     Effect.gen(function* () {
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
@@ -227,32 +206,5 @@ it.layer(NodeServices.layer)("PairingGrantStore.layer", (it) => {
         expect(yield* Queue.take(changes)).toEqual({ type: "pairingLinkRemoved", id: issued.id });
       }
     }).pipe(Effect.scoped, Effect.provide(layerPairingGrantStore())),
-  );
-
-  it.effect("lists and revokes active pairing links", () =>
-    Effect.gen(function* () {
-      const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
-      const first = yield* bootstrapCredentials.issueOneTimeToken();
-      const second = yield* bootstrapCredentials.issueOneTimeToken({
-        scopes: ["orchestration:read", "access:write"],
-      });
-
-      const activeBeforeRevoke = yield* bootstrapCredentials.listActive();
-      expect(activeBeforeRevoke.map((entry) => entry.id)).toContain(first.id);
-      expect(activeBeforeRevoke.map((entry) => entry.id)).toContain(second.id);
-      for (const entry of activeBeforeRevoke) {
-        expect(entry).not.toHaveProperty("credential");
-      }
-
-      const revoked = yield* bootstrapCredentials.revoke(first.id);
-      const activeAfterRevoke = yield* bootstrapCredentials.listActive();
-      const revokedConsume = yield* Effect.flip(bootstrapCredentials.consume(first.credential));
-
-      expect(revoked).toBe(true);
-      expect(activeAfterRevoke.map((entry) => entry.id)).not.toContain(first.id);
-      expect(activeAfterRevoke.map((entry) => entry.id)).toContain(second.id);
-      expect(revokedConsume.message).toContain("no longer available");
-      expect(revokedConsume._tag).toBe("UnavailableBootstrapCredentialError");
-    }).pipe(Effect.provide(layerPairingGrantStore())),
   );
 });

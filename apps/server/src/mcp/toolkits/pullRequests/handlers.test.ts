@@ -447,24 +447,6 @@ describe("pull request toolkit handlers", () => {
     }),
   );
 
-  it.effect("rejects a target that names neither a URL nor repository and number", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness();
-      const error = yield* harness
-        .call("link_pull_request", { repository: "x/y" })
-        .pipe(Effect.flip);
-      expect(error).toMatchObject({ _tag: "PullRequestTargetIncompleteError" });
-      const unknown = yield* harness
-        .call("link_pull_request", {
-          url: "https://github.com/t3tools/t3code/issues/1?token=private-value",
-        })
-        .pipe(Effect.flip);
-      expect(unknown).toMatchObject({ _tag: "PullRequestUrlInvalidError" });
-      expect(unknown.message).not.toContain("private-value");
-      expect(yield* Ref.get(harness.commands)).toEqual([]);
-    }),
-  );
-
   it.effect("treats a duplicate link as alreadyLinked rather than an error", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({

@@ -441,7 +441,7 @@ const unlinkRelayEnvironment = Effect.fn("cloud.cli.unlink_relay_environment")(f
  * A missing CLI login or a failed relay DELETE leaves that record registered, so
  * those outcomes warn to deregister it from the T3 Connect account page.
  */
-export const reportCloudDisconnectResults = Effect.fn("cloud.cli.report_disconnect_results")(
+const reportCloudDisconnectResults = Effect.fn("cloud.cli.report_disconnect_results")(
   function* (input: {
     readonly clearAuthorization: boolean;
     readonly liveResult: LiveCloudActionResult;

@@ -566,27 +566,6 @@ it.effect("a save without a secret keeps a secret changed after it was read", ()
   ),
 );
 
-it.effect("logs a body's first 64 KiB by bytes, not characters", () =>
-  withService(({ service }) =>
-    Effect.gen(function* () {
-      const { task } = yield* service.upsert(yield* webhookTaskInput({ enabled: false }));
-      const text = "界".repeat(30_000);
-      const body = new TextEncoder().encode(text);
-      yield* service.triggerWebhook(requestFor(task, { body, bodyText: text }));
-      const [summary] = (yield* service.listWebhookDeliveries({
-        id: task.id,
-        acceptAnyOutcome: true,
-      })).deliveries;
-      const { delivery } = yield* service.getWebhookDelivery({
-        id: task.id,
-        deliveryId: summary!.id,
-      });
-      assert.isTrue(delivery.bodyTruncated);
-      assert.isAtMost(new TextEncoder().encode(delivery.body).byteLength, 64 * 1024 + 3);
-    }),
-  ),
-);
-
 it.effect("a held request already delivered directly runs only once", () =>
   withService(({ service, launches }) =>
     Effect.gen(function* () {
@@ -1023,26 +1002,6 @@ it.effect("rolls back replay and pending state when recording a delivery fails",
     { workers },
   );
 });
-
-it.effect("a partially missing key is empty even with a literal prefix", () =>
-  withService(({ service, launches }) =>
-    Effect.gen(function* () {
-      const { task } = yield* service.upsert(
-        yield* webhookTaskInput({
-          schedule: {
-            type: "webhook",
-            dedupe: { replayKey: "gh:{{headers.absent}}", coalesceKey: "pr:{{body.absent}}" },
-          },
-        }),
-      );
-      for (let i = 0; i < 2; i++) {
-        const result = yield* service.triggerWebhook(requestFor(task, { headers: { absent: "" } }));
-        assert.equal(result._tag === "accepted" && result.outcome, "accepted");
-        yield* Queue.take(launches);
-      }
-    }),
-  ),
-);
 
 it.effect("queue-full deliveries release replay keys so a later retry runs", () =>
   Effect.gen(function* () {

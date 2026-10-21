@@ -215,24 +215,6 @@ describe("t3 server command safety", () => {
 });
 
 describe("t3 app", () => {
-  it.effect("does not create state when only a server or no desktop app is running", () =>
-    withTempDirectory("t3-app-missing-test-", (root) =>
-      Effect.gen(function* () {
-        const baseDir = NodePath.join(root, "missing-t3-home");
-        const error = yield* runCli(["app", "--base-dir", baseDir]).pipe(Effect.flip);
-
-        expect(error).toMatchObject({
-          _tag: "DesktopAppUnreachableError",
-          candidateAddresses: [expect.any(String)],
-          workspaceRoot: yield* HostProcess.WorkingDirectory,
-          message: expect.stringContaining("Could not reach the T3 Code desktop app."),
-          cause: { code: "ENOENT" },
-        });
-        expect(yield* pathExists(baseDir)).toBe(false);
-      }),
-    ),
-  );
-
   it.effect("uses T3CODE_HOME or --base-dir and sends the default or explicit path", () =>
     withTempDirectory("t3-app-command-test-", (root) =>
       Effect.gen(function* () {

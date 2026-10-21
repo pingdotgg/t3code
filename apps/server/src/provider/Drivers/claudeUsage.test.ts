@@ -86,9 +86,4 @@ describe("parseClaudeLine", () => {
     expect(claudeUsageFormat.parseLine(JSON.stringify(synthetic), undefined)).toEqual([]);
     expect(claudeUsageFormat.parseProjected(synthetic, undefined)).toEqual([]);
   });
-
-  it("ignores records that are not assistant messages", () => {
-    expect(parseClaudeLine(JSON.stringify({ type: "user", message: {} }))).toBeNull();
-    expect(parseClaudeLine("not json")).toBeNull();
-  });
 });

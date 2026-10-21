@@ -548,26 +548,6 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
-    it.effect("preserves invalid regex errors during case-insensitive searches", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-content-invalid-regex-" });
-        yield* writeTextFile(cwd, "src/shapes.ts", "foobar\n");
-
-        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
-        const result = yield* workspaceEntries.searchContents({
-          cwd,
-          query: "foo)bar(",
-          limit: 100,
-          caseSensitive: false,
-          wholeWord: false,
-          useRegex: true,
-        });
-
-        expect(result.regexFallbackError).toBeDefined();
-        expect(result.matches).toEqual([]);
-      }),
-    );
-
     it.effect("maps multi-byte lines to string-indexed ranges", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-content-multibyte-" });

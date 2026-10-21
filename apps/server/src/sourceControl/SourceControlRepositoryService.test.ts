@@ -431,6 +431,7 @@ it.effect("explains a rejected SSH push after creating the repository", () =>
   }).pipe(Effect.provide(layer({ git: failingPush("authentication_failed") }))),
 );
 
+// regression: #19219 publishing did not explain why the first push failed
 it.effect("says the repository exists when an unclassified publish push fails", () =>
   Effect.gen(function* () {
     const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;

@@ -65,6 +65,7 @@ describe("ResourceMonitorBinary", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  // regression: #16838 a directory resolved as the resource monitor binary
   it.effect("rejects a directory override", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

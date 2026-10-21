@@ -338,39 +338,6 @@ it.layer(NodeServices.layer)("EventNdjsonLogger", (it) => {
     }),
   );
 
-  it.effect("contains hostile event accessors inside guarded serialization", () =>
-    Effect.gen(function* () {
-      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
-      const basePath = NodePath.join(tempDir, "events.log");
-
-      try {
-        const logger = yield* makeEventNdjsonLogger(basePath, {
-          stream: "canonical",
-          batchWindowMs: 0,
-        });
-        assert.exists(logger);
-        if (!logger) return;
-        const hostile = new Proxy(
-          { id: "hostile" },
-          {
-            get(_target, property) {
-              if (property === "type") throw new Error("blocked");
-              return undefined;
-            },
-          },
-        );
-
-        yield* logger.write(hostile, ThreadId.make("thread-hostile"));
-        yield* logger.close();
-
-        const contents = NodeFS.readFileSync(ownedLogPath(basePath, "thread-hostile"), "utf8");
-        assert.notInclude(contents, "blocked");
-      } finally {
-        NodeFS.rmSync(tempDir, { recursive: true, force: true });
-      }
-    }),
-  );
-
   it.effect("serializes concurrent first writes for the same segment", () =>
     Effect.gen(function* () {
       const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));

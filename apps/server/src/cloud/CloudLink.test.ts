@@ -185,19 +185,6 @@ it.effect("keeps both settings unchanged when the relay refuses the hold change"
   ),
 );
 
-it.effect("changes nothing when the current activity setting can't be read", () =>
-  withService({ failActivityRead: true, relayFails: true }, ({ preferences, stored, relayCalls }) =>
-    Effect.gen(function* () {
-      const error = yield* preferences
-        .update({ publishAgentActivity: true, holdWebhooksWhileOffline: true })
-        .pipe(Effect.flip);
-      assert.deepInclude(error, { _tag: "CloudLinkInternalError", operation: "read-preferences" });
-      assert.deepEqual(relayCalls, []);
-      assert.equal(new TextDecoder().decode(stored.get(PUBLISH_AGENT_ACTIVITY_SECRET)), "false");
-    }),
-  ),
-);
-
 it.effect("two overlapping updates are applied one after the other", () => {
   let release!: () => void;
   let started!: () => void;

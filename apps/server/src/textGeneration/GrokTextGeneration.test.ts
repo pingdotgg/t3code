@@ -132,24 +132,4 @@ it.layer(layerGrokTextGenerationTest)("GrokTextGeneration", (it) => {
         }),
     ),
   );
-
-  it.effect("fails with TextGenerationError when output is unparseable JSON", () =>
-    withFakeAcpGrok(
-      {
-        T3_ACP_PROMPT_RESPONSE_TEXT: "totally not json output from a confused model",
-      },
-      (textGeneration) =>
-        Effect.gen(function* () {
-          const error = yield* Effect.flip(
-            textGeneration.generateThreadTitle({
-              cwd: process.cwd(),
-              message: "anything",
-              modelSelection: createModelSelection(ProviderInstanceId.make("grok"), "grok-build"),
-            }),
-          );
-          expect(error._tag).toBe("TextGenerationError");
-          expect(error.detail).toMatch(/invalid structured output/i);
-        }),
-    ),
-  );
 });

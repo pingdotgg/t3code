@@ -77,6 +77,7 @@ describe("session cookie isolation", () => {
     expect(first).not.toBe(second);
   });
 
+  // regression: #8085 isolate remote web session cookies
   it("isolates remote web servers by server state", () => {
     const first = resolveSessionCookieName({
       mode: "web",

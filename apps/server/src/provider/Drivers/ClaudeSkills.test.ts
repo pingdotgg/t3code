@@ -807,6 +807,7 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
+  // regression: #9128 skills picked from the composer did not run
   it.effect("switches a skill off by its directory name", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

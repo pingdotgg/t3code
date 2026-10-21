@@ -285,6 +285,7 @@ it.layer(NodeServices.layer)("server self update", (it) => {
     }),
   );
 
+  // regression: #5181 make remote updates rollback-safe
   it.effect("rejects invalid versions and desktop-managed servers before staging", () =>
     Effect.gen(function* () {
       const web = yield* makeHarness();

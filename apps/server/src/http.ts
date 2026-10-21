@@ -283,7 +283,7 @@ function isLoopbackHostname(hostname: string): boolean {
   return LOOPBACK_HOSTNAMES.has(normalizedHostname);
 }
 
-export function resolveDevRedirectUrl(devUrl: URL, requestUrl: URL): string {
+function resolveDevRedirectUrl(devUrl: URL, requestUrl: URL): string {
   const redirectUrl = new URL(devUrl.toString());
   redirectUrl.pathname = requestUrl.pathname;
   redirectUrl.search = requestUrl.search;

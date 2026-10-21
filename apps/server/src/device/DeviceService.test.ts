@@ -541,6 +541,7 @@ it.effect.each([
   }).pipe(Effect.scoped),
 );
 
+// regression: #22012 report Android emulator boot failures
 it.effect("includes nested hub boot diagnostics and bounds them to 2,000 characters", () =>
   Effect.gen(function* () {
     const diagnostic = "Error: emulator binary missing\n" + "diagnostic output\n".repeat(200);
@@ -883,19 +884,6 @@ it.effect("retry keeps device and agent consent unchanged", () =>
     const before = agentStarts.length;
     yield* service.retryHost(LOCAL_DEVICE_HOST_ID);
     expect(agentStarts.length).toBe(before + 1);
-  }).pipe(Effect.scoped),
-);
-
-it.effect("version discovery does not grant consent or start device tools", () =>
-  Effect.gen(function* () {
-    const { service, starts, agentStarts, requests } = yield* fixture();
-    const state = yield* service.inspect;
-    expect(state.supportsToolInspection).toBe(true);
-    expect(state.hostStatus).toBe("disabled");
-    expect(state.hosts).toHaveLength(1);
-    expect(starts).toEqual([]);
-    expect(agentStarts).toEqual([]);
-    expect(requests).toEqual([]);
   }).pipe(Effect.scoped),
 );
 

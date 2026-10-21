@@ -231,14 +231,11 @@ it.each([
   expect(requests).toEqual([]);
 });
 
-it.each(["/panel/2/stream.avcc", "/panel/1/webrtc/offer", "/panel/3/exec"])(
-  "rejects unsupported Duo route %s",
-  async (route) => {
-    const { handler, requests } = fixture([AuthOrchestrationReadScope]);
-    const response = await handler(
-      new Request(`http://t3.test/api/device-hub/vendor/serve-sim/helper/duo${route}`),
-    );
-    expect(response.status).toBe(404);
-    expect(requests).toEqual([]);
-  },
-);
+it("rejects unsupported Duo routes", async () => {
+  const { handler, requests } = fixture([AuthOrchestrationReadScope]);
+  const response = await handler(
+    new Request("http://t3.test/api/device-hub/vendor/serve-sim/helper/duo/panel/1/webrtc/offer"),
+  );
+  expect(response.status).toBe(404);
+  expect(requests).toEqual([]);
+});

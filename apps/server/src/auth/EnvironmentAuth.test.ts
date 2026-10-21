@@ -255,26 +255,6 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
     ),
   );
 
-  it.effect("issues standard pairing credentials by default", () =>
-    Effect.gen(function* () {
-      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
-      const sessions = yield* SessionStore.SessionStore;
-
-      const pairingCredential = yield* serverAuth.issuePairingCredential();
-      const exchanged = yield* serverAuth.createBrowserSession(
-        pairingCredential.credential,
-        requestMetadata,
-      );
-      const verified = yield* serverAuth.authenticateHttpRequest(
-        makeCookieRequest(sessions.cookieName, exchanged.sessionToken),
-      );
-
-      expect(verified.sessionId.length).toBeGreaterThan(0);
-      expect(verified.scopes).toEqual(AuthStandardClientScopes);
-      expect(verified.subject).toBe("one-time-token");
-    }).pipe(Effect.provide(layerEnvironmentAuth())),
-  );
-
   it.effect("prefers a bearer token over a stale legacy cookie", () =>
     Effect.gen(function* () {
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;

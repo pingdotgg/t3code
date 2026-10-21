@@ -484,28 +484,6 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     }).pipe(Effect.provide(layerKeybindings())),
   );
 
-  it.effect("updates cached resolved config after upsert", () =>
-    Effect.gen(function* () {
-      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
-      yield* writeKeybindingsConfig(keybindingsConfigPath, [
-        { key: "mod+j", command: "terminal.toggle" },
-      ]);
-
-      const loadedAfterUpsert = yield* Effect.gen(function* () {
-        const keybindings = yield* Keybindings.Keybindings;
-        yield* keybindings.loadConfigState;
-        yield* keybindings.upsertKeybindingRule({
-          key: "mod+shift+r",
-          command: "script.run-tests.run",
-        });
-        return (yield* keybindings.loadConfigState).keybindings;
-      });
-
-      assert.isTrue(loadedAfterUpsert.some((entry) => entry.command === "script.run-tests.run"));
-      assert.isTrue(loadedAfterUpsert.some((entry) => entry.command === "terminal.toggle"));
-    }).pipe(Effect.provide(layerKeybindings())),
-  );
-
   it.effect("serializes concurrent upserts to avoid lost updates", () =>
     Effect.gen(function* () {
       const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;

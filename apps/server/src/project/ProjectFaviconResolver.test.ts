@@ -207,6 +207,7 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
       }),
     );
 
+    // regression: #5538 favicon resolution pinned the event loop
     it.effect("skips icon metadata without an href and keeps scanning", () =>
       Effect.gen(function* () {
         const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;

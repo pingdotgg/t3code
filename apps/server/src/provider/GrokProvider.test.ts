@@ -425,6 +425,7 @@ describe("Grok usage limits", () => {
     }
   });
 
+  // regression: #17061 show zero-use Grok billing periods
   it("rejects impossible calendar dates at either period boundary", () => {
     for (const [start, end] of [
       ["2026-02-30T00:00:00.000Z", "2026-03-09T00:00:00.000Z"],

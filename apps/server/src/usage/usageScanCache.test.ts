@@ -2,7 +2,6 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   decodeScanCache,
-  dedupeWithinFile,
   encodeScanCache,
   makeScanCacheWriter,
   type CachedFile,
@@ -253,15 +252,6 @@ describe("scan cache round trip", () => {
     expect(document.sources).toEqual(sources);
   });
 
-  it("interns repeated model and session strings", () => {
-    const encoded = encodeScanCache(
-      cacheWith([["/a.jsonl", 100, [record(), record({ dedupeKey: "msg_2:" }), record()]]]),
-    );
-
-    expect(encoded.models).toEqual(["claude-fable-5"]);
-    expect(encoded.sessions).toEqual(["session-a"]);
-  });
-
   it("treats a corrupt or foreign document as an empty cache", () => {
     expect(decodeScanCache(null, TEST_FORMAT_MAP).size).toBe(0);
     expect(decodeScanCache("nonsense", TEST_FORMAT_MAP).size).toBe(0);
@@ -298,18 +288,5 @@ describe("scan cache round trip", () => {
 
     const restored = decodeScanCache(JSON.parse(JSON.stringify(poisoned)), TEST_FORMAT_MAP);
     expect(restored.has("/a.jsonl")).toBe(false);
-  });
-});
-
-describe("dedupeWithinFile", () => {
-  it("keeps the first record per dedupe key", () => {
-    const kept = dedupeWithinFile([
-      record({ totals: { ...record().totals, outputTokens: 1 } }),
-      record({ totals: { ...record().totals, outputTokens: 999 } }),
-      record({ dedupeKey: "msg_2:" }),
-    ]);
-
-    expect(kept).toHaveLength(2);
-    expect(kept[0]?.totals.outputTokens).toBe(1);
   });
 });

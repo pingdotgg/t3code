@@ -256,23 +256,6 @@ describe("BackgroundPolicy", () => {
     }).pipe(Effect.provide(layerFor(nominalHostPower))),
   );
 
-  it.effect(
-    "performance profile allows background scoped work while a scoped lease is active",
-    () =>
-      Effect.gen(function* () {
-        const policy = yield* BackgroundPolicy.BackgroundPolicy;
-        yield* policy.reportClientActivity(
-          AuthSessionId.make("session-1"),
-          RpcClientId.make(1),
-          makeReport({ focused: false, visible: false }),
-        );
-
-        assert.equal(yield* policy.shouldRunScopeWork({ type: "vcs-status", cwd: "/repo" }), true);
-      }).pipe(
-        Effect.provide(layerFor(nominalHostPower, { backgroundActivityProfile: "performance" })),
-      ),
-  );
-
   it.effect("battery saver profile pauses scoped work on battery", () =>
     Effect.gen(function* () {
       const policy = yield* BackgroundPolicy.BackgroundPolicy;

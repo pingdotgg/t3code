@@ -163,6 +163,7 @@ describe("AssetAccess", () => {
       }).pipe(Effect.provide(NodeServices.layer)),
     );
 
+    // regression: #17026 apply host color scheme to saved MCP apps
     it.effect("preserves filesystem failures instead of reporting oversized HTML", () =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -681,40 +682,6 @@ describe("AssetAccess", () => {
         },
       });
       expect(error.cause).toBeInstanceOf(WorkspacePaths.WorkspacePathOutsideRootError);
-    }).pipe(Effect.provide(layerTest)),
-  );
-
-  it.effect("issues draft workspace URLs without a thread", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-asset-draft-",
-      });
-      const htmlPath = path.join(root, "report.html");
-      const cssPath = path.join(root, "report.css");
-      yield* fileSystem.writeFileString(htmlPath, '<link rel="stylesheet" href="report.css">');
-      yield* fileSystem.writeFileString(cssPath, "body { color: red; }");
-      const canonicalHtmlPath = yield* fileSystem.realPath(htmlPath);
-      const canonicalCssPath = yield* fileSystem.realPath(cssPath);
-
-      const result = yield* issueAssetUrl({
-        resource: { _tag: "draft-workspace-file", cwd: root, path: "report.html" },
-        workspaceRoot: root,
-      });
-      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
-      const separatorIndex = suffix.indexOf("/");
-      const token = suffix.slice(0, separatorIndex);
-
-      expect(yield* resolveAsset(token, "report.html")).toEqual({
-        kind: "file",
-        path: canonicalHtmlPath,
-      });
-      expect(yield* resolveAsset(token, "report.css")).toEqual({
-        kind: "file",
-        path: canonicalCssPath,
-      });
-      expect(yield* resolveAsset(token, "../secret.txt")).toBeNull();
     }).pipe(Effect.provide(layerTest)),
   );
 

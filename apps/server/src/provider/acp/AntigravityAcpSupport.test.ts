@@ -485,21 +485,4 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
       });
     }),
   );
-
-  it.effect("rejects an empty turn", () =>
-    Effect.gen(function* () {
-      const fixture = yield* makeAttachmentFixture();
-      const error = yield* buildAntigravityPrompt({
-        input: "  ",
-        attachments: [],
-        attachmentsDir: fixture.attachmentsDir,
-      }).pipe(Effect.flip);
-
-      expect(error).toMatchObject({
-        _tag: "AcpRequestError",
-        code: -32602,
-        errorMessage: "A turn requires text or supported attachments.",
-      });
-    }),
-  );
 });

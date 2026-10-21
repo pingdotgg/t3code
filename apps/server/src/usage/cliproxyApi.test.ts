@@ -156,6 +156,7 @@ describe("CLIProxyAPI hub failures", () => {
     }),
   );
 
+  // regression: #18168 Limits hub failures name their TLS, HTTP, or timeout cause
   it.effect("ignores a transport code that is not a short Node error code", () =>
     Effect.gen(function* () {
       const api = yield* unreachableHub(

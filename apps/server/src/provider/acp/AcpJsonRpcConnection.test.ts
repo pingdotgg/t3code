@@ -1009,6 +1009,7 @@ describe("AcpSessionRuntime", () => {
     ),
   );
 
+  // regression: #3156 harden ACP resume with replay-idle load readiness
   it.effect("fails session startup when session/load returns an error", () =>
     Effect.gen(function* () {
       const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;

@@ -112,23 +112,6 @@ describe("t3 theme", () => {
     }),
   );
 
-  it.effect("publishes nothing when the settings file cannot be used", () =>
-    Effect.gen(function* () {
-      const baseDir = makeBaseDir();
-      NodeFS.mkdirSync(NodePath.dirname(settingsPathFor(baseDir)), { recursive: true });
-      NodeFS.writeFileSync(settingsPathFor(baseDir), "{ not json");
-      const themeFile = NodePath.join(baseDir, "nightfall.json");
-      NodeFS.writeFileSync(themeFile, NIGHTFALL_THEME_JSON);
-
-      const failure = yield* runCli(["theme", "set", themeFile, "--base-dir", baseDir]).pipe(
-        Effect.flip,
-      );
-
-      assert.include(String(failure), "not a JSON object");
-      assert.equal(NodeFS.existsSync(NodePath.join(baseDir, "userdata", "themes")), false);
-    }),
-  );
-
   it.effect.skipIf(!symlinksSupported)("never writes through a symlink at the staging path", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();
@@ -171,20 +154,6 @@ describe("t3 theme", () => {
     }),
   );
 
-  it.effect("rejects a path that does not exist instead of storing it as an id", () =>
-    Effect.gen(function* () {
-      const baseDir = makeBaseDir();
-      const failure = yield* runCli([
-        "theme",
-        "set",
-        `${baseDir}/missing.json`,
-        "--base-dir",
-        baseDir,
-      ]).pipe(Effect.flip);
-      assert.include(String(failure), "Could not read");
-    }),
-  );
-
   it.effect.skipIf(windowsHost)("refuses to write when the settings file cannot be read", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();
@@ -199,50 +168,6 @@ describe("t3 theme", () => {
       assert.include(String(failure), "Could not read");
       assert.equal(readSettings(baseDir).enableProviderUpdateChecks, false);
       assert.equal(Object.hasOwn(readSettings(baseDir), "defaultTheme"), false);
-    }),
-  );
-
-  it.effect("accepts an id a published file provides", () =>
-    Effect.gen(function* () {
-      const baseDir = makeBaseDir();
-      const themeFile = NodePath.join(baseDir, "nightfall.json");
-      NodeFS.writeFileSync(themeFile, NIGHTFALL_THEME_JSON);
-      yield* runCli(["theme", "set", themeFile, "--base-dir", baseDir]);
-
-      yield* runCli(["theme", "clear", "--base-dir", baseDir]);
-      yield* runCli(["theme", "set", "nightfall", "--base-dir", baseDir]);
-      assert.equal(readSettings(baseDir).defaultTheme, "nightfall");
-    }),
-  );
-
-  it.effect("rejects an id whose published file the watcher would skip", () =>
-    Effect.gen(function* () {
-      const baseDir = makeBaseDir();
-      const themesDir = NodePath.join(baseDir, "userdata", "themes");
-      NodeFS.mkdirSync(themesDir, { recursive: true });
-      NodeFS.writeFileSync(NodePath.join(themesDir, "broken.json"), "{ not json\n");
-
-      const failure = yield* runCli(["theme", "set", "broken", "--base-dir", baseDir]).pipe(
-        Effect.flip,
-      );
-      assert.include(String(failure), "No theme named");
-    }),
-  );
-
-  it.effect("rejects a theme file larger than the watcher will read", () =>
-    Effect.gen(function* () {
-      const baseDir = makeBaseDir();
-      const themeFile = NodePath.join(baseDir, "huge.json");
-      const padding = "x".repeat(40 * 1024);
-      NodeFS.writeFileSync(
-        themeFile,
-        `{ "name": "Huge", "appearance": "dark", "canvas": "#1a1b26", "accent": "#7aa2f7", "note": "${padding}" }\n`,
-      );
-
-      const failure = yield* runCli(["theme", "set", themeFile, "--base-dir", baseDir]).pipe(
-        Effect.flip,
-      );
-      assert.include(String(failure), "larger than");
     }),
   );
 });

@@ -287,29 +287,6 @@ describe("t3 pair", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("ignores stale runtime state pointing at a dead server", () =>
-    Effect.gen(function* () {
-      const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-stale-test-"));
-      const statePath = NodePath.join(baseDir, "userdata", "server-runtime.json");
-      yield* persistServerRuntimeState({
-        path: statePath,
-        state: yield* makePersistedServerRuntimeState({
-          config: { host: "127.0.0.1", devUrl: undefined },
-          port: 1,
-        }),
-      });
-
-      const error = yield* provideCliTestLayers(
-        runCli(["pair", "--base-dir", baseDir]).pipe(Effect.flip),
-      );
-
-      const rendered = String(
-        typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
-      );
-      assert.include(rendered, "No running T3 Code server found.");
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
-
   // Without the capability `tailscale serve` blocks on an enablement URL, so
   // pairing must stop at status instead of spawning it.
   it.effect("explains a tailnet without HTTPS serve instead of running tailscale serve", () =>

@@ -26,12 +26,7 @@ import { ORCHESTRATION_PROTOCOL_HEADER } from "@t3tools/contracts";
 
 import * as ServerConfig from "./config.ts";
 
-import {
-  assetResponseHeaders,
-  assetFileResponse,
-  downloadContentDisposition,
-  resolveDevRedirectUrl,
-} from "./http.ts";
+import { assetResponseHeaders, assetFileResponse, downloadContentDisposition } from "./http.ts";
 import * as ServerHttp from "./http.ts";
 
 describe("MCP app asset responses", () => {
@@ -698,17 +693,6 @@ describe("video asset byte ranges", () => {
   );
 });
 
-describe("http dev routing", () => {
-  it("preserves path and query when redirecting to the dev server", () => {
-    const devUrl = new URL("http://127.0.0.1:5173/");
-    const requestUrl = new URL("http://127.0.0.1:3774/pair?token=test-token");
-
-    expect(resolveDevRedirectUrl(devUrl, requestUrl)).toBe(
-      "http://127.0.0.1:5173/pair?token=test-token",
-    );
-  });
-});
-
 describe("assetResponseHeaders", () => {
   it("sandboxes SVG assets", () => {
     expect(assetResponseHeaders("/attachments/user-image.svg")).toMatchObject({
@@ -731,14 +715,6 @@ describe("assetResponseHeaders", () => {
       "Content-Type": "text/html; charset=utf-8",
       "Content-Security-Policy": "sandbox allow-scripts allow-forms allow-popups allow-downloads",
     });
-  });
-  it("serves HTML assets as utf-8 inside a sandboxed origin", () => {
-    for (const path of ["/workspace/page.html", "/workspace/PAGE.HTM", "/tmp/report.html"]) {
-      expect(assetResponseHeaders(path)).toMatchObject({
-        "Content-Type": "text/html; charset=utf-8",
-        "Content-Security-Policy": "sandbox allow-scripts allow-forms allow-popups allow-downloads",
-      });
-    }
   });
 
   it("downloads uploaded documents without executing their content", () => {

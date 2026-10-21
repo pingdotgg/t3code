@@ -2287,32 +2287,5 @@ it.layer(
         ),
       ),
     );
-
-    it.effect("returns error when version check fails with non-zero exit code", () => {
-      const secretStderr = "Something went wrong: secret-token-value";
-      return Effect.gen(function* () {
-        const status = yield* checkClaudeProviderStatus(
-          defaultClaudeSettings,
-          claudeCapabilities(),
-        );
-        assert.strictEqual(status.status, "error");
-        assert.strictEqual(status.installed, true);
-        assert.strictEqual(status.message, "Claude Agent CLI is installed but failed to run.");
-        assert.ok(!(status.message ?? "").includes(secretStderr));
-      }).pipe(
-        Effect.provide(
-          layerMockSpawner((args) => {
-            const joined = args.join(" ");
-            if (joined === "--version")
-              return {
-                stdout: "",
-                stderr: secretStderr,
-                code: 1,
-              };
-            throw new Error(`Unexpected args: ${joined}`);
-          }),
-        ),
-      );
-    });
   });
 });

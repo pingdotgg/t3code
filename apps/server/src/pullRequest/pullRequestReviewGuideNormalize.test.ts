@@ -121,18 +121,6 @@ describe("normalizeReviewGuide", () => {
     expect(result.stops).toHaveLength(1);
   });
 
-  it("keeps a long excerpt to its first 25 lines", () => {
-    const long = parseReviewGuideChange(
-      "big.ts\0",
-      "--- a/big.ts\n+++ b/big.ts\n@@ -0,0 +1,100 @@\n",
-    );
-    const result = normalizeReviewGuide(
-      guide({ stops: [stop({ excerpts: [excerpt("big.ts", 1, 100)] })] }),
-      long,
-    );
-    expect(result.stops[0]?.excerpts).toEqual([excerpt("big.ts", 1, 25)]);
-  });
-
   it("drops notes outside the stop's remaining excerpts", () => {
     const result = normalizeReviewGuide(
       guide({

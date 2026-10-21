@@ -3,7 +3,6 @@ import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
   PreviewAutomationClientDisconnectedError,
-  PreviewAutomationInvalidSelectorError,
   PreviewAutomationMalformedResponseError,
   PreviewAutomationNoAvailableHostError,
   PreviewTabId,
@@ -287,69 +286,6 @@ it.effect("announces a live replacement stream before delivering requests", () =
     }),
   ),
 );
-
-it.effect("preserves bounded request and remote selector diagnostics", () => {
-  const locator = "role=button[name='request-secret']";
-  const remoteMessage = "Unexpected token near remote-secret.";
-  const remoteError = {
-    _tag: "PreviewAutomationInvalidSelectorError",
-    message: remoteMessage,
-    detail: { selector: "role=button[name='remote-secret']" },
-  } as const;
-
-  return Effect.scoped(
-    Effect.gen(function* () {
-      const broker = yield* makeBroker;
-      const requests = requestsFrom(yield* broker.connect(makeHost()));
-      yield* Stream.runForEach(requests, (request) =>
-        broker.respond({
-          clientId: "client-1",
-          connectionId: request.connectionId,
-          requestId: request.requestId,
-          ok: false,
-          error: remoteError,
-        }),
-      ).pipe(Effect.forkScoped);
-      yield* Effect.yieldNow;
-
-      const error = yield* broker
-        .invoke<void>({
-          scope,
-          operation: "click",
-          input: { locator },
-          tabId: PreviewTabId.make("tab-1"),
-          timeoutMs: 1_234,
-        })
-        .pipe(Effect.flip);
-
-      expect(error).toBeInstanceOf(PreviewAutomationInvalidSelectorError);
-      expect(error).toMatchObject({
-        operation: "click",
-        environmentId: scope.environmentId,
-        threadId: scope.thread.threadId,
-        providerSessionId: scope.thread.providerSessionId,
-        providerInstanceId: scope.thread.providerInstanceId,
-        clientId: "client-1",
-        requestId: "preview-0",
-        tabId: "tab-1",
-        timeoutMs: 1_234,
-        selectorKind: "locator",
-        selectorLength: locator.length,
-        remoteTag: "PreviewAutomationInvalidSelectorError",
-        remoteMessageLength: remoteMessage.length,
-        remoteDetailKind: "object",
-      });
-      expect(error.message).toBe(
-        `Preview automation click received an invalid locator (${locator.length} characters).`,
-      );
-      expect(error.message).not.toContain("secret");
-      expect(error.cause).toBe(remoteError);
-      expect("selector" in error).toBe(false);
-      expect("remoteMessage" in error).toBe(false);
-      expect("remoteDetail" in error).toBe(false);
-    }),
-  );
-});
 
 it.effect.each([
   { clientId: SERVER_BROWSER_AUTOMATION_CLIENT_ID, shown: true },

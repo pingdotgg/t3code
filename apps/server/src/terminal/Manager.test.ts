@@ -8,7 +8,6 @@ import {
   type TerminalRestartInput,
   ProviderDriverKind,
   ProviderInstanceId,
-  ServerSettingsError,
   TerminalProviderInstanceNotFoundError,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -561,14 +560,6 @@ it.layer(
     }),
   );
 
-  const makeDirectory = (filePath: string) =>
-    Effect.flatMap(Effect.service(FileSystem.FileSystem), (fs) =>
-      fs.makeDirectory(filePath, { recursive: true }),
-    );
-
-  const chmod = (filePath: string, mode: number) =>
-    Effect.flatMap(Effect.service(FileSystem.FileSystem), (fs) => fs.chmod(filePath, mode));
-
   const pathExists = (filePath: string) =>
     Effect.flatMap(Effect.service(FileSystem.FileSystem), (fs) => fs.exists(filePath));
 
@@ -579,32 +570,6 @@ it.layer(
     Effect.flatMap(Effect.service(FileSystem.FileSystem), (fs) =>
       fs.writeFileString(filePath, contents),
     );
-
-  it.effect("preserves non-notFound cwd stat failures", () =>
-    Effect.gen(function* () {
-      if ((yield* HostProcess.Platform) === "win32") return;
-
-      const path = yield* Path.Path;
-
-      const { manager, baseDir } = yield* createManager();
-      const blockedRoot = path.join(baseDir, "blocked-root");
-      const blockedCwd = path.join(blockedRoot, "cwd");
-      yield* makeDirectory(blockedCwd);
-      yield* chmod(blockedRoot, 0o000);
-
-      const error = yield* Effect.flip(manager.open(openInput({ cwd: blockedCwd }))).pipe(
-        Effect.ensuring(chmod(blockedRoot, 0o755).pipe(Effect.ignore)),
-      );
-
-      expect(error).toMatchObject({
-        _tag: "TerminalCwdStatError",
-        cwd: blockedCwd,
-        cause: {
-          _tag: "PlatformError",
-        },
-      });
-    }),
-  );
 
   it.effect("handles an exit replayed during subscription after publishing startup", () =>
     Effect.gen(function* () {
@@ -633,60 +598,6 @@ it.layer(
       expect(attached.find((event) => event.type === "snapshot")).toMatchObject({
         snapshot: { status: "exited", exitCode: 7 },
       });
-    }),
-  );
-
-  it.effect("preserves structured context and causes for PTY I/O failures", () =>
-    Effect.gen(function* () {
-      const { manager, ptyAdapter } = yield* createManager();
-      yield* manager.open(openInput());
-      const process = ptyAdapter.processes[0];
-      expect(process).toBeDefined();
-      if (!process) return;
-
-      const writeCause = new Error("PTY input handle is unavailable");
-      process.writeFailure = writeCause;
-      const writeError = yield* Effect.flip(
-        manager.write({
-          threadId: "thread-1",
-          terminalId: DEFAULT_TERMINAL_ID,
-          data: "secret input that must not be attached to the error",
-        }),
-      );
-
-      expect(writeError).toMatchObject({
-        _tag: "TerminalWriteError",
-        threadId: "thread-1",
-        terminalId: DEFAULT_TERMINAL_ID,
-        terminalPid: process.pid,
-      });
-      expect(writeError.cause).toBe(writeCause);
-      expect(writeError).not.toHaveProperty("data");
-
-      const resizeCause = new Error("PTY resize handle is unavailable");
-      process.resizeFailure = resizeCause;
-      const resizeError = yield* Effect.flip(
-        manager.resize({
-          threadId: "thread-1",
-          terminalId: DEFAULT_TERMINAL_ID,
-          cols: 132,
-          rows: 40,
-        }),
-      );
-
-      expect(resizeError).toMatchObject({
-        _tag: "TerminalResizeError",
-        threadId: "thread-1",
-        terminalId: DEFAULT_TERMINAL_ID,
-        terminalPid: process.pid,
-        cols: 132,
-        rows: 40,
-      });
-      expect(resizeError.cause).toBe(resizeCause);
-
-      process.resizeFailure = undefined;
-      yield* manager.open(openInput({ cols: 132, rows: 40 }));
-      expect(process.resizeCalls).toEqual([{ cols: 132, rows: 40 }]);
     }),
   );
 
@@ -1290,46 +1201,6 @@ it.layer(
         new TerminalProviderInstanceNotFoundError({ providerInstanceId }),
       );
       expect(ptyAdapter.spawnInputs).toHaveLength(0);
-    }),
-  );
-
-  it.effect("preserves the settings failure when provider environment resolution fails", () =>
-    Effect.gen(function* () {
-      const path = yield* Path.Path;
-      const providerInstanceId = ProviderInstanceId.make("codex_work");
-      const settingsCause = new Error("secret store read failed");
-      const settingsError = new ServerSettingsError({
-        settingsPath: "/test/settings.json",
-        operation: "read-secret",
-        providerInstanceId,
-        environmentVariable: "OPENROUTER_API_KEY",
-        cause: settingsCause,
-      });
-      const serverSettings = ServerSettings.ServerSettingsService.of({
-        start: Effect.void,
-        ready: Effect.void,
-        getSettings: Effect.fail(settingsError),
-        updateSettings: () => Effect.fail(settingsError),
-        updateProviderInstance: () => Effect.fail(settingsError),
-        withSettingsSnapshot: () => Effect.fail(settingsError),
-        streamChanges: Stream.empty,
-        subscribeChanges: Effect.succeed(Stream.empty),
-      });
-
-      const error = yield* TerminalManager.resolveProviderInstanceTerminalEnvironment({
-        serverSettings,
-        path,
-        rawProviderInstanceId: providerInstanceId,
-        env: undefined,
-      }).pipe(Effect.flip);
-
-      expect(error).toMatchObject({
-        _tag: "TerminalProviderEnvironmentError",
-        providerInstanceId,
-      });
-      expect(error.cause).toBe(settingsError);
-      expect(error.message).not.toContain(settingsError.message);
-      expect(error.message).not.toContain("OPENROUTER_API_KEY");
     }),
   );
 

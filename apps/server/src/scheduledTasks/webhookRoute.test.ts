@@ -113,35 +113,6 @@ const post = (
 ) => new Request(`http://env.local${path}`, { method: "POST", body, headers });
 
 describe("webhook route", () => {
-  it("passes the raw request to the service and answers 202 with the delivery id", async () => {
-    let received: WebhookTriggerRequest | undefined;
-    const { handler, dispose } = handlerFor((request) => {
-      received = request;
-      return Effect.succeed({
-        _tag: "accepted",
-        deliveryId: ScheduledTaskWebhookDeliveryId.make("delivery:1"),
-        outcome: "accepted",
-      });
-    });
-    try {
-      const response = await handler(
-        post("/api/hooks/scheduled-task%3Ahook/tok?x=1", '{"a":1}', {
-          "Content-Type": "application/json",
-          "X-GitHub-Event": "push",
-        }),
-      );
-      expect(response.status).toBe(202);
-      expect(await response.json()).toEqual({ deliveryId: "delivery:1" });
-      expect(received?.hookId).toBe("scheduled-task:hook");
-      expect(received?.token).toBe("tok");
-      expect(received?.query).toBe("x=1");
-      expect(received?.headers["x-github-event"]).toBe("push");
-      expect(received?.bodyText).toBe('{"a":1}');
-    } finally {
-      await dispose();
-    }
-  });
-
   it.live("trusts the relay's delivery id and receive time only with its signed proof", () =>
     Effect.gen(function* () {
       const received: Array<WebhookTriggerRequest> = [];

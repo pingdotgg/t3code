@@ -495,6 +495,7 @@ it.effect("keeps the snapshot text under the agent's output ceiling", () =>
   ).pipe(Effect.provide(layerTest)),
 );
 
+// regression: #10501 keep preview snapshots usable by the agent
 it.effect("bounds the snapshot text even when nothing but logs and the title are large", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -527,6 +528,7 @@ it.effect("bounds the snapshot text even when nothing but logs and the title are
   ).pipe(Effect.provide(layerTest)),
 );
 
+// regression: #13558 preview snapshots overflowed the agent's tool output
 it.effect("bounds page text made of wide characters before dropping locators", () =>
   Effect.scoped(
     Effect.gen(function* () {

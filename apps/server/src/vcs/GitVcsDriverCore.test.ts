@@ -837,6 +837,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    // regression: #8645 name the cause of a failed git command
     it.effect("names the branch conflict behind a failed worktree add", () =>
       Effect.gen(function* () {
         const parent = yield* makeTmpDir();
@@ -868,6 +869,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    // regression: #8645 name the cause of a failed git command
     it.effect("names a missing repository behind a failed command", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
@@ -3408,6 +3410,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    // regression: #12485 explain fetch failures without exposing remote output
     it.effect("explains a real fetch failure for a missing local remote", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
@@ -4269,6 +4272,7 @@ describe("Windows long path configuration", () => {
     }
   });
 
+  // regression: #14917 Windows worktrees with long paths failed or stranded
   it("leaves a count Git would reject for Git to report", () => {
     for (const count of ["nope", "2x", "-1", "1.5", "  ", "1 "]) {
       assert.deepStrictEqual(

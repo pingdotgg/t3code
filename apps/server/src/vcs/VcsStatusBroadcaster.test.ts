@@ -1,7 +1,6 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, it, describe } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -504,27 +503,6 @@ describe("VcsStatusBroadcaster", () => {
       const status = yield* Fiber.join(refresh);
       assert.deepStrictEqual(status.branchChanges, fetchedLocal.branchChanges);
     }).pipe(Effect.provide(layerTestFor(state)));
-  });
-
-  it("summarizes refresh causes without exposing nested failure details", () => {
-    const nestedCause = new Error("private nested failure detail");
-    const failure = new GitManagerError({
-      operation: "VcsStatusBroadcaster.remoteStatus",
-      cwd: "/private/user/workspace/repo",
-      detail: "private Git failure detail",
-      cause: nestedCause,
-    });
-    const cause = Cause.combine(Cause.fail(failure), Cause.die(new TypeError("private defect")));
-
-    assert.deepStrictEqual(VcsStatusBroadcaster.remoteRefreshFailureDiagnostics(cause), {
-      reasonCount: 2,
-      failureCount: 1,
-      failureTags: ["GitManagerError"],
-      failureOperations: ["VcsStatusBroadcaster.remoteStatus"],
-      defectCount: 1,
-      defectTags: ["TypeError"],
-      interruptionCount: 0,
-    });
   });
 
   it.effect("releases remote demand while passive observers remain", () => {

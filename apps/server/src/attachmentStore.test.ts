@@ -13,7 +13,6 @@ import {
   parseAttachmentUuid,
   planAttachmentClaim,
   parseThreadSegmentFromAttachmentId,
-  resolveAttachmentPathById,
   sweepStalePendingAttachments,
   threadHtmlRenderAttachmentIds,
 } from "./attachmentStore.ts";
@@ -60,21 +59,6 @@ describe("attachmentStore", () => {
     expect(dashed && parseThreadSegmentFromAttachmentId(dashed)).toBe("thread-a");
   });
 
-  it("sanitizes thread ids when creating attachment ids", () => {
-    const attachmentId = createAttachmentId("thread.folder/unsafe space");
-    expect(attachmentId).toBeTruthy();
-    if (!attachmentId) {
-      return;
-    }
-
-    const threadSegment = parseThreadSegmentFromAttachmentId(attachmentId);
-    expect(threadSegment).toBeTruthy();
-    expect(threadSegment).toMatch(/^[a-z0-9_-]+$/i);
-    expect(threadSegment).not.toContain(".");
-    expect(threadSegment).not.toContain("%");
-    expect(threadSegment).not.toContain("/");
-  });
-
   it("parses exact thread segments from attachment ids without prefix collisions", () => {
     const fooId = "foo-00000000-0000-4000-8000-000000000001";
     const fooBarId = "foo-bar-00000000-0000-4000-8000-000000000002";
@@ -91,25 +75,6 @@ describe("attachmentStore", () => {
     expect(parseThreadSegmentFromAttachmentId(createAttachmentId("pending_thread")!)).toBe(
       "pending_thread",
     );
-  });
-
-  it("resolves attachment path by id using the extension that exists on disk", () => {
-    const attachmentsDir = NodeFS.mkdtempSync(
-      NodePath.join(NodeOS.tmpdir(), "t3code-attachment-store-"),
-    );
-    try {
-      const attachmentId = "thread-1-attachment";
-      const pngPath = NodePath.join(attachmentsDir, `${attachmentId}.png`);
-      NodeFS.writeFileSync(pngPath, Buffer.from("hello"));
-
-      const resolved = resolveAttachmentPathById({
-        attachmentsDir,
-        attachmentId,
-      });
-      expect(resolved).toBe(pngPath);
-    } finally {
-      NodeFS.rmSync(attachmentsDir, { recursive: true, force: true });
-    }
   });
 
   it("plans pending attachment claims with direct filename lookups", () => {

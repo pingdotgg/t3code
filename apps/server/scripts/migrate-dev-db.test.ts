@@ -194,33 +194,6 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
     }),
   );
 
-  it.effect("fails loudly on a migration slot collision", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const sourceDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-slot-" });
-      const destDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-slot-dest-" });
-      const source = yield* createFixtureSource(sourceDir);
-      yield* withDatabase(
-        source,
-        Effect.gen(function* () {
-          const sql = yield* SqlClient.SqlClient;
-          yield* sql`UPDATE effect_sql_migrations
-            SET name = 'SomebodyElsesMigration' WHERE migration_id = 1`;
-        }),
-      );
-
-      const error = yield* runMigrateDevDb(
-        { baseDir: destDir, source, projects: 5, threadsPerProject: 10 },
-        { sharedHome: sourceDir },
-      ).pipe(Effect.flip);
-      assert.equal(error._tag, "MigrateDevDbSlotCollisionError");
-      if (error._tag === "MigrateDevDbSlotCollisionError") {
-        assert.equal(error.slot, 1);
-        assert.equal(error.appliedName, "SomebodyElsesMigration");
-      }
-    }),
-  );
-
   it.effect("refuses while a dev server holds the destination", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

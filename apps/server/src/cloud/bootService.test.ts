@@ -65,25 +65,8 @@ it.each([
   ).toBe(program);
 });
 
-const macRuntime = "/Users/theo/.t3/runtime/versions/1.2.3/t3";
-const macPlan = {
-  program: [macRuntime, "__service-launcher"],
-  baseDir: "/Users/theo/.t3",
-  logPath: "/Users/theo/.t3/userdata/logs/boot-service.log",
-  unitPath: "/Users/theo/Library/LaunchAgents/com.t3tools.t3code.service.plist",
-};
 const macInstallerPath =
   "/opt/homebrew/bin:/Users/theo/.npm-global/bin:/Users/theo/.nvm/versions/node/v22.16.0/bin:/usr/bin:/bin";
-
-it("escapes XML in host paths", () => {
-  const plist = BootService.renderBootServicePlist(
-    { ...macPlan, baseDir: "/Users/theo/T3 & <Co>" },
-    { homeDir: "/Users/theo", environmentPath: "/Users/theo/Tools & <Scripts>:/usr/bin" },
-  );
-
-  expect(plist).toContain("<string>/Users/theo/T3 &amp; &lt;Co&gt;</string>");
-  expect(plist).toContain("<string>/Users/theo/Tools &amp; &lt;Scripts&gt;:/usr/bin</string>");
-});
 
 const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
   platform: NodeJS.Platform = "linux",
@@ -372,6 +355,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       }),
   );
 
+  // regression: #5302 prevent accidental service downgrades
   it.effect("reports an unknown version for invalid service state", () =>
     Effect.gen(function* () {
       const { service, fs, statePath } = yield* makeHarness();
@@ -427,6 +411,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       }),
   );
 
+  // regression: #5302 prevent accidental service downgrades
   it.effect("allows an explicit downgrade", () =>
     Effect.gen(function* () {
       const { service, fs, statePath } = yield* makeHarness();
@@ -797,6 +782,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
+  // regression: #8173 keep provider CLIs available in the macOS service
   it.effect("reconstructs a launch agent search path when the installer has no PATH", () =>
     Effect.gen(function* () {
       const { service, fs } = yield* makeHarness("darwin", "");

@@ -165,6 +165,7 @@ describe("ServerLoggerLive", () => {
     }),
   );
 
+  // regression: #16642 logs printed causes as [Object]
   it.effect("leaves getters uncalled while printing a cause field", () =>
     Effect.gen(function* () {
       const output = yield* printThroughConsole({

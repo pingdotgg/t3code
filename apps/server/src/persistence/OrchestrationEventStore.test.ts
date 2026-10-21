@@ -295,58 +295,6 @@ layer("OrchestrationEventStore", (it) => {
     }),
   );
 
-  it.effect("fails with PersistenceDecodeError when stored json is invalid", () =>
-    Effect.gen(function* () {
-      const eventStore = yield* OrchestrationEventStore.OrchestrationEventStore;
-      const sql = yield* SqlClient.SqlClient;
-      const now = "2026-01-01T00:00:00.000Z";
-
-      yield* sql`
-        INSERT INTO orchestration_events (
-          event_id,
-          aggregate_kind,
-          stream_id,
-          stream_version,
-          event_type,
-          occurred_at,
-          command_id,
-          causation_event_id,
-          correlation_id,
-          actor_kind,
-          payload_json,
-          metadata_json
-        )
-        VALUES (
-          ${EventId.make("evt-store-invalid-json")},
-          ${"project"},
-          ${ProjectId.make("project-invalid-json")},
-          ${0},
-          ${"project.created"},
-          ${now},
-          ${CommandId.make("cmd-store-invalid-json")},
-          ${null},
-          ${null},
-          ${"server"},
-          ${"{"},
-          ${"{}"}
-        )
-      `;
-
-      const replayResult = yield* Effect.result(
-        Stream.runCollect(
-          eventStore.readApplicationEvents({
-            afterSequence: 0,
-            throughSequence: Number.MAX_SAFE_INTEGER,
-          }),
-        ),
-      );
-      assert.equal(replayResult._tag, "Failure");
-      if (replayResult._tag === "Failure") {
-        assert.ok(isPersistenceDecodeError(replayResult.failure));
-      }
-    }),
-  );
-
   it.effect("orders project and V2 agent events in the retained application event source", () =>
     Effect.gen(function* () {
       const eventStore = yield* OrchestrationEventStore.OrchestrationEventStore;

@@ -279,6 +279,7 @@ describe("Android SDK availability", () => {
     }),
   );
 
+  // regression: #12017 detect unsupported legacy Android command-line tools
   it.effect("explains how to upgrade legacy command-line tools in the standard macOS SDK", () =>
     Effect.gen(function* () {
       const root = "/test/home/Library/Android/sdk";

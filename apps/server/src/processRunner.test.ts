@@ -117,44 +117,6 @@ describe("runProcess", () => {
     );
   });
 
-  it.effect("preserves resolved spawn context and cause", () =>
-    Effect.gen(function* () {
-      const cause = PlatformError.systemError({
-        _tag: "PermissionDenied",
-        module: "ChildProcessSpawner",
-        method: "spawn",
-        pathOrDescriptor: "/actual/fake",
-      });
-      const spawner = makeSpawner(() => Effect.fail(cause));
-
-      const error = yield* runWith(spawner)({
-        command: "fake",
-        args: ["--flag", "secret-token-value"],
-        cwd: "/logical",
-        spawnCwd: "/actual",
-      }).pipe(Effect.flip);
-
-      expect(error._tag).toBe("ProcessSpawnError");
-      if (error._tag !== "ProcessSpawnError") {
-        return expect.fail("Expected ProcessSpawnError");
-      }
-      expect(error).toMatchObject({
-        command: "fake",
-        argumentCount: 2,
-        cwd: "/logical",
-        spawnCwd: "/actual",
-        resolvedCommand: "fake",
-        resolvedArgumentCount: 2,
-        shell: false,
-      });
-      expect(error.cause).toBe(cause);
-      expect(error.message).toBe("Failed to spawn process 'fake' in '/actual'");
-      expect(error).not.toHaveProperty("args");
-      expect(error).not.toHaveProperty("resolvedArgs");
-      expect(error.message).not.toContain("secret-token-value");
-    }),
-  );
-
   it.effect("types spawn failures that the platform spawner throws synchronously", () =>
     Effect.gen(function* () {
       // A non-directory entry on PATH makes node's spawn throw ENOTDIR

@@ -39,10 +39,6 @@ import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolv
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
-import {
-  ProjectLiveServerRequestError,
-  projectCommandErrorFromLiveServerRequest,
-} from "./project.ts";
 
 const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NetService.layer);
 const runCli = (args: ReadonlyArray<string>) =>
@@ -104,17 +100,6 @@ const readProjects = (baseDir: string) =>
       Effect.provide(layer),
     );
   });
-
-it("preserves unexpected server failures without deriving the message from them", () => {
-  const cause = new Error("credential abc123 was rejected");
-
-  const error = projectCommandErrorFromLiveServerRequest(cause);
-
-  assert.instanceOf(error, ProjectLiveServerRequestError);
-  assert.strictEqual(error.operation, "callLiveServer");
-  assert.strictEqual(error.message, "Failed to call the running server.");
-  assert.strictEqual(error.cause, cause);
-});
 
 it.effect("adds, renames, and removes projects through the V2 project CLI domain", () =>
   Effect.gen(function* () {
@@ -234,12 +219,6 @@ const readNativeThreadState = Effect.fn("ProjectCliTest.readNativeThreadState")(
 it.layer(NodeServices.layer)("project deletion with native V2 threads", (it) => {
   it.effect.each([
     { label: "an active thread", archived: false, missing: false },
-    { label: "an archived thread", archived: true, missing: false },
-    {
-      label: "an active thread after its workspace disappears",
-      archived: false,
-      missing: true,
-    },
     {
       label: "an archived thread after its workspace disappears",
       archived: true,

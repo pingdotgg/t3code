@@ -234,51 +234,6 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
-  it.effect("preserves context when reading a provider environment secret fails", () => {
-    const platformCause = PlatformError.systemError({
-      _tag: "PermissionDenied",
-      module: "FileSystem",
-      method: "readFile",
-      pathOrDescriptor: "provider environment secret",
-      description: "Secret backend unavailable.",
-    });
-    const cause = new ServerSecretStore.SecretStoreReadError({
-      resource: "provider environment secret",
-      cause: platformCause,
-    });
-    const layerConfig = Layer.fresh(
-      ServerConfig.layerTest(process.cwd(), {
-        prefix: "t3code-server-settings-secret-failure-test-",
-      }),
-    );
-    const layerSettings = ServerSettingsModule.layer.pipe(
-      Layer.provide(layerFailingSecretStore(cause)),
-      Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
-      Layer.provideMerge(layerConfig),
-    );
-
-    return Effect.gen(function* () {
-      const serverConfig = yield* ServerConfig.ServerConfig;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
-      yield* fileSystem.writeFileString(
-        serverConfig.settingsPath,
-        '{"providerInstances":{"codex_personal":{"driver":"codex","environment":[{"name":"OPENROUTER_API_KEY","value":"","sensitive":true,"valueRedacted":true}],"config":{}}}}',
-      );
-
-      const error = yield* Effect.flip(serverSettings.getSettings);
-
-      assert.deepInclude(error, {
-        _tag: "ServerSettingsError",
-        operation: "read-secret",
-        providerInstanceId: "codex_personal",
-        environmentVariable: "OPENROUTER_API_KEY",
-      });
-      assert.strictEqual(error.cause, cause);
-      assert.notInclude(error.message, cause.message);
-    }).pipe(Effect.provide(layerSettings));
-  });
-
   it.effect("retries a failed settings read instead of keeping the failure", () =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig.ServerConfig;

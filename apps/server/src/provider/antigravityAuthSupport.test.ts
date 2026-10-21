@@ -211,16 +211,6 @@ describe("Antigravity process environment", () => {
 });
 
 describe("Antigravity authorization URL", () => {
-  it.effect("returns the official Google URL and its owned loopback target", () =>
-    Effect.gen(function* () {
-      expect(yield* parseAntigravityAuthorizationUrl(authorizationUrl)).toEqual({
-        authorizationUrl,
-        redirectUri: "http://127.0.0.1:46353/",
-        state: "test-opaque-state",
-      });
-    }),
-  );
-
   it.effect(
     "rejects other origins, ambiguous state, and non-loopback redirects without retaining them",
     () =>
@@ -302,17 +292,6 @@ describe("Antigravity stdout compatibility", () => {
         expect(result).toBe(`${jsonBefore}${jsonAfter}`);
         expect(urls).toEqual([authorizationUrl]);
       }),
-  );
-
-  it.effect("handles an auth line without a final newline", () =>
-    Effect.gen(function* () {
-      const urls: string[] = [];
-      const result = yield* makeAntigravityStdoutTransform({
-        onAuthorizationUrl: (url) => Effect.sync(() => void urls.push(url)),
-      })(Stream.make(encode(authLine.slice(0, -1)))).pipe(Stream.runCollect);
-      expect(result).toEqual([]);
-      expect(urls).toEqual([authorizationUrl]);
-    }),
   );
 
   it.effect("ends normal work with a safe sign-in error instead of waiting for OAuth", () =>

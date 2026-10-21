@@ -112,6 +112,7 @@ it.effect("leaves a newer service unchanged during onboarding without prompting"
   }),
 );
 
+// regression: #9602 diagnose incomplete headless server setup
 it.effect("keeps the manual-server fallback when background prerequisites fail", () =>
   Effect.gen(function* () {
     const ready = yield* recoverServiceOnboardingOffer(

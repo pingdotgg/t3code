@@ -107,7 +107,7 @@ function toPosixRelativePath(input: string): string {
   return input.replaceAll("\\", "/");
 }
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 

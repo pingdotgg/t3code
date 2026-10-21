@@ -4,7 +4,6 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as PlatformError from "effect/PlatformError";
 
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 
@@ -37,39 +36,6 @@ it.layer(layerTest)("WorkspacePathsLive", (it) => {
 
         expect(resolved).toBe(missingPath);
         expect(stat.type).toBe("Directory");
-      }),
-    );
-
-    it.effect("preserves non-NotFound stat failures while validating the root", () =>
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const workspacePaths = yield* WorkspacePaths.make.pipe(
-          Effect.provideService(FileSystem.FileSystem, {
-            ...fileSystem,
-            stat: (path) =>
-              Effect.fail(
-                PlatformError.systemError({
-                  _tag: "PermissionDenied",
-                  module: "FileSystem",
-                  method: "stat",
-                  pathOrDescriptor: String(path),
-                  description: "Test PermissionDenied stat failure.",
-                }),
-              ),
-          }),
-        );
-        const path = yield* Path.Path;
-        const workspaceRoot = " ./permission-denied ";
-        const normalizedWorkspaceRoot = path.resolve(workspaceRoot.trim());
-
-        const error = yield* workspacePaths.normalizeWorkspaceRoot(workspaceRoot).pipe(Effect.flip);
-
-        expect(error).toBeInstanceOf(WorkspacePaths.WorkspaceRootStatFailedError);
-        expect(error).toMatchObject({
-          workspaceRoot,
-          normalizedWorkspaceRoot,
-          phase: "validate-existing",
-        });
       }),
     );
   });

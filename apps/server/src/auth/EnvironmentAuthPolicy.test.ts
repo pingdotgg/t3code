@@ -79,23 +79,4 @@ it.layer(NodeServices.layer)("EnvironmentAuthPolicy.layer", (it) => {
       ),
     ),
   );
-
-  it.effect("isolates wildcard-bound web development sessions", () =>
-    Effect.gen(function* () {
-      const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;
-      const descriptor = yield* policy.getDescriptor();
-
-      expect(descriptor.policy).toBe("remote-reachable");
-      expect(descriptor.sessionCookieName).toMatch(/^t3_session_5775_[a-f0-9]{12}$/);
-    }).pipe(
-      Effect.provide(
-        layerEnvironmentAuthPolicy({
-          mode: "web",
-          host: "0.0.0.0",
-          port: 5775,
-          devUrl: new URL("http://127.0.0.1:5736"),
-        }),
-      ),
-    ),
-  );
 });

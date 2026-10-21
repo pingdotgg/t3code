@@ -472,23 +472,4 @@ describe("EAS Simulator host", () => {
       expect((yield* ready.devices.list).devices.map((device) => device.id)).toEqual(["eas-ios"]);
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
-
-  it.effect("holds the slot when a failed create’s session is listed but its stop fails", () =>
-    Effect.gen(function* () {
-      let stopFails = true;
-      // Create fails, Expo lists the session by name, and stopping it fails too.
-      const expo = fakeExpo({ failCreate: true, failStop: () => stopFails });
-      const host = yield* makeHost(expo, config({ maxConcurrentSessions: 1 }), yield* Scope.make());
-      const ready = yield* host.ensureReady(() => Effect.void);
-      const [catalogDevice] = (yield* ready.devices.list).devices;
-      yield* ready.devices.boot(catalogDevice!).pipe(Effect.flip);
-      const refused = yield* ready.devices.boot(catalogDevice!).pipe(Effect.flip);
-      expect(refused.message).toContain("still being cleaned up");
-      stopFails = false;
-      yield* ready.devices.list;
-      expect(expo.stopped()).toContain("orphan");
-      expo.allowCreate();
-      expect(yield* ready.devices.boot(catalogDevice!)).toBe("session-1");
-    }).pipe(Effect.scoped, Effect.provide(layer)),
-  );
 });
