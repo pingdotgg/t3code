@@ -273,7 +273,11 @@ export function resolveMarkdownLinkPresentation(href: string): MarkdownLinkPrese
     }
   } catch {}
 
-  const target = parseMarkdownFileLink(normalized);
+  const target =
+    parseMarkdownFileLink(normalized) ??
+    (/^(?:[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*\/)+$/.test(normalized)
+      ? { path: normalized }
+      : null);
   if (target) {
     return {
       kind: "file",

@@ -1,3 +1,4 @@
+import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import {
   isWorkspaceAudioPreviewPath,
   isWorkspaceVideoPreviewPath,
@@ -66,16 +67,26 @@ function normalizeRelativePath(value: string): string | null {
   return segments.length > 0 ? segments.join("/") : null;
 }
 
+export function resolveFileLinkPath(
+  workspaceRoot: string | null | undefined,
+  targetPath: string,
+): string | null {
+  if (targetPath.startsWith("~/") || targetPath.startsWith("~\\")) {
+    if (!workspaceRoot) return null;
+    const expanded = resolvePathLinkTarget(targetPath, workspaceRoot);
+    return isAbsolutePath(expanded) ? expanded : null;
+  }
+  return isAbsolutePath(targetPath) ? targetPath : normalizeRelativePath(targetPath);
+}
+
 export function resolveWorkspaceRelativeFilePath(
   workspaceRoot: string | null | undefined,
   targetPath: string,
 ): string | null {
-  if (!isAbsolutePath(targetPath)) {
-    if (targetPath.startsWith("~/") || targetPath.startsWith("~\\")) {
-      return null;
-    }
-    return normalizeRelativePath(targetPath);
-  }
+  const resolved = resolveFileLinkPath(workspaceRoot, targetPath);
+  if (resolved === null) return null;
+  targetPath = resolved;
+  if (!isAbsolutePath(targetPath)) return targetPath;
   if (!workspaceRoot) {
     return null;
   }

@@ -14,6 +14,17 @@ describe("resolveMarkdownLinkIcon", () => {
 });
 
 describe("resolveMarkdownLinkPresentation", () => {
+  it("opens relative directory links as workspace paths", () => {
+    expect(resolveMarkdownLinkPresentation("src/")).toMatchObject({
+      kind: "file",
+      path: "src/",
+    });
+    expect(resolveMarkdownLinkPresentation("docs/My Folder/")).toMatchObject({
+      kind: "file",
+      path: "docs/My Folder/",
+    });
+  });
+
   it("keeps thread-link hrefs for in-app navigation", () => {
     const href = "t3-thread://v1/thread-1";
     expect(resolveMarkdownLinkPresentation(href)).toEqual({ kind: "link", href });

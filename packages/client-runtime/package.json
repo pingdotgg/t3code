@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./workspace-basename-lookup": {
+      "types": "./src/workspaceBasenameLookup.ts",
+      "default": "./src/workspaceBasenameLookup.ts"
+    },
     "./composerThreadItems": {
       "types": "./src/composerThreadItems.ts",
       "default": "./src/composerThreadItems.ts"

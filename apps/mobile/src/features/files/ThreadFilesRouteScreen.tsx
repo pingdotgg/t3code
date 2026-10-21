@@ -60,6 +60,9 @@ import { WorkspaceFileWebPreview } from "./WorkspaceFileWebPreview";
 import {
   basename,
   fileHeaderSubtitle,
+  fileRoutePathSegments,
+  resolveWorkspaceFilePath,
+  resolveWorkspaceRelativeFilePath,
   isAudioPreviewFile,
   isMarkdownPreviewFile,
   isSvgImagePreviewFile,
@@ -587,6 +590,32 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   const { cwd, environmentId, projectName, selectedThread, threadId } = useThreadFilesWorkspace(
     props.route.params,
   );
+  const fileAccessSession = useEnvironmentQuery(
+    environmentId !== null ? environmentSession.sessionStateAtom(environmentId) : null,
+  );
+  const fileEnvironment = useEnvironmentPresentation(environmentId);
+  const fileAccess = resolveFilesystemReadAccess({
+    isCatalogReady: fileEnvironment.isReady,
+    connection: fileEnvironment.presentation?.connection ?? null,
+    session: fileAccessSession.data,
+    sessionError: fileAccessSession.error,
+  });
+  const { canReadFiles } = fileAccess;
+  const targetPath =
+    cwd !== null && relativePath !== null ? resolveWorkspaceFilePath(cwd, relativePath) : null;
+  const metadata = useEnvironmentQuery(
+    canReadFiles && environmentId !== null && targetPath !== null
+      ? projectEnvironment.fileMetadata({ environmentId, input: { path: targetPath } })
+      : null,
+  );
+  const metadataPending = !metadata.isSuccess && metadata.error === null;
+  const directoryPath = metadata.data?.kind === "directory" ? targetPath : null;
+  const [searchQuery, setSearchQuery] = useState("");
+  const entriesQuery = useFileTreeEntries({
+    environmentId,
+    cwd: canReadFiles ? directoryPath : null,
+    searchQuery,
+  });
   const [modeOverride, setModeOverride] = useState<{
     readonly path: string;
     readonly mode: FileViewMode;
@@ -614,7 +643,11 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   const resolvedActiveMode =
     isVideoFile || isAudioFile ? "preview" : canPreview ? activeMode : "source";
   const assetPreviewPath =
-    isBrowserFile || isImageFile || isVideoFile || isAudioFile ? relativePath : null;
+    !metadataPending &&
+    directoryPath === null &&
+    (isBrowserFile || isImageFile || isVideoFile || isAudioFile)
+      ? relativePath
+      : null;
   const assetPreview = useWorkspaceFileAssetUrlState({
     cwd,
     environmentId,
@@ -665,21 +698,12 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     void assetPreview.refresh().finally(() => setPreviewRevision((current) => current + 1));
   };
   const needsFileContents =
+    !metadataPending &&
+    directoryPath === null &&
     relativePath !== null &&
     !isVideoFile &&
     !isAudioFile &&
     (resolvedActiveMode === "source" || isMarkdownPreviewFile(relativePath));
-  const fileAccessSession = useEnvironmentQuery(
-    environmentId !== null ? environmentSession.sessionStateAtom(environmentId) : null,
-  );
-  const fileEnvironment = useEnvironmentPresentation(environmentId);
-  const fileAccess = resolveFilesystemReadAccess({
-    isCatalogReady: fileEnvironment.isReady,
-    connection: fileEnvironment.presentation?.connection ?? null,
-    session: fileAccessSession.data,
-    sessionError: fileAccessSession.error,
-  });
-  const { canReadFiles } = fileAccess;
   const fileQuery = useEnvironmentQuery(
     canReadFiles &&
       environmentId !== null &&
@@ -695,7 +719,11 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   const fileData = fileQuery.data as ProjectReadFileResult | null;
 
   const handleSelectFile = (path: string) => {
-    const segments = path.split("/").filter(Boolean);
+    const targetPath =
+      directoryPath === null ? path : resolveWorkspaceFilePath(directoryPath, path);
+    const segments = fileRoutePathSegments(
+      resolveWorkspaceRelativeFilePath(cwd, targetPath) ?? targetPath,
+    );
     // A draft has no thread. `ThreadFile` would stringify null and then wait forever for a
     // thread to resolve, so a draft stays on its own route and carries its workspace along.
     if (threadId === null) {
@@ -709,20 +737,22 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
       );
       return;
     }
-    navigation.navigate("ThreadFile", {
+    const destination = {
       environmentId: String(environmentId),
       threadId: String(threadId),
       path: segments,
-    });
+    };
+    if (directoryPath !== null) navigation.dispatch(StackActions.push("ThreadFile", destination));
+    else navigation.navigate("ThreadFile", destination);
   };
   const renderInspector = (headerInset: number) =>
     fileInspector.supported && environmentId !== null && cwd !== null ? (
       <ThreadFileNavigatorPane
-        cwd={cwd}
+        cwd={directoryPath ?? cwd}
         environmentId={environmentId}
         headerInset={headerInset}
-        projectName={projectName}
-        selectedPath={relativePath}
+        projectName={directoryPath ?? projectName}
+        selectedPath={directoryPath === null ? relativePath : null}
         onSelectFile={handleSelectFile}
       />
     ) : undefined;
@@ -881,6 +911,41 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
       <View className="flex-1 items-center justify-center bg-sheet px-6">
         <NativeStackScreenOptions options={{ title: "Files" }} />
         <EmptyState title="File unavailable" detail="This file path is invalid." />
+      </View>
+    );
+  }
+
+  if (metadataPending) {
+    return <LoadingScreen message="Opening file..." messagePlacement="above-spinner" />;
+  }
+  if (directoryPath !== null) {
+    return (
+      <View className={Platform.OS === "android" ? "flex-1 bg-header" : "flex-1 bg-sheet"}>
+        <FilesBrowserHeader
+          projectName={directoryPath}
+          searchQuery={searchQuery}
+          onSearchQueryChange={setSearchQuery}
+          onRefresh={entriesQuery.refresh}
+          onBack={handleBack}
+        />
+        <ScreenContent>
+          <FileTreeBrowser
+            key={JSON.stringify([environmentId, directoryPath])}
+            entries={entriesQuery.entries}
+            loadingDirectories={entriesQuery.loadingDirectories}
+            onLoadDirectory={entriesQuery.loadDirectory}
+            error={entriesQuery.error}
+            isPending={entriesQuery.isPending}
+            isRefreshing={entriesQuery.isRefreshing}
+            searchQuery={searchQuery}
+            searchResultPaths={entriesQuery.searchResultPaths}
+            searchTruncated={entriesQuery.searchTruncated}
+            selectedPath={null}
+            onRefresh={entriesQuery.refresh}
+            onSelectFile={handleSelectFile}
+          />
+          <FilesToolbarBottomFade />
+        </ScreenContent>
       </View>
     );
   }

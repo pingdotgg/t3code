@@ -37,6 +37,19 @@ describe("resolveFileChipTarget", () => {
     expect(resolveFileChipTarget("src/app.ts", null)).toEqual({ relativePath: "src/app.ts" });
   });
 
+  it("resolves home links for navigation and menu actions", () => {
+    expect(resolveFileChipTarget("~/.agents/AGENTS.md:314", "/home/maria/repo")).toEqual({
+      fullPath: "/home/maria/.agents/AGENTS.md",
+    });
+    expect(resolveFileChipTarget("~/repo/src/main.ts:12", "/home/maria/repo")).toEqual({
+      fullPath: "/home/maria/repo/src/main.ts",
+      relativePath: "src/main.ts",
+    });
+    expect(resolveFileChipTarget("~/.agents/AGENTS.md", "C:\\Users\\maria\\repo")).toEqual({
+      fullPath: "C:\\Users\\maria\\.agents\\AGENTS.md",
+    });
+  });
+
   it("ignores links that are not files or cannot be opened", () => {
     expect(resolveFileChipTarget("https://example.com/app.ts", "/repo")).toBeNull();
     expect(resolveFileChipTarget("~/report.md", "/repo")).toBeNull();
