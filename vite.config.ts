@@ -284,6 +284,7 @@ export default defineConfig({
       },
       {
         files: [
+          "apps/web/src/components/settings/AuthorizedClientsSettings.tsx",
           "apps/web/src/components/settings/ConnectionsSettings.tsx",
           "apps/mobile/src/features/updates/app-updates.ts",
           "apps/web/src/components/device/DevicePhoneViewport.tsx",
