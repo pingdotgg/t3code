@@ -59,6 +59,10 @@
       "types": "./src/projectFaviconCache.ts",
       "default": "./src/projectFaviconCache.ts"
     },
+    "./assistant-message": {
+      "types": "./src/assistantMessage.ts",
+      "default": "./src/assistantMessage.ts"
+    },
     "./user-message": {
       "types": "./src/userMessage.ts",
       "default": "./src/userMessage.ts"
