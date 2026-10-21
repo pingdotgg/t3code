@@ -1241,6 +1241,59 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
+  it.live.each(["same-device", "other-device", "no-manifest"] as const)(
+    "counts the pnpm virtual store only when its store forces copies (%s)",
+    (store) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const storeDir = yield* fs.makeTempDirectoryScoped({ prefix: "pnpm-store-" });
+          const { service, worktree, setPolicy } = yield* cleanupFixture().pipe(
+            Effect.provideService(FileSystem.FileSystem, {
+              ...fs,
+              stat: (target) =>
+                fs
+                  .stat(target)
+                  .pipe(
+                    Effect.map((info) =>
+                      store === "other-device" && target === storeDir
+                        ? { ...info, dev: info.dev + 1n }
+                        : info,
+                    ),
+                  ),
+            }),
+          );
+          setPolicy("tracked-changes");
+          const nodeModules = `${worktree}/node_modules`;
+          yield* fs.makeDirectory(`${nodeModules}/.pnpm/pkg@1.0.0`, { recursive: true });
+          yield* fs.makeDirectory(`${nodeModules}/.vite`);
+          yield* fs.writeFileString(
+            `${nodeModules}/.pnpm/pkg@1.0.0/index.js`,
+            "clone ".repeat(10_000),
+          );
+          yield* fs.writeFileString(`${nodeModules}/.vite/deps.js`, "cache");
+          if (store !== "no-manifest")
+            yield* fs.writeFileString(
+              `${nodeModules}/.modules.yaml`,
+              JSON.stringify({ storeDir, virtualStoreDir: ".pnpm" }),
+            );
+          const counted = [
+            ...(yield* fs.readDirectory(worktree)).flatMap((name) =>
+              name === "node_modules" ? [] : [`${worktree}/${name}`],
+            ),
+            `${nodeModules}/.vite/deps.js`,
+            ...(store === "no-manifest" ? [] : [`${nodeModules}/.modules.yaml`]),
+            ...(store === "same-device" ? [] : [`${nodeModules}/.pnpm/pkg@1.0.0/index.js`]),
+          ];
+          const bytes = (yield* Effect.forEach(counted, (file) => allocatedBytes(fs, file))).reduce(
+            (sum, size) => sum + size,
+            0,
+          );
+          const report = yield* service.runNow;
+          expect(report.entries[0]).toMatchObject({ outcome: "removed", bytes });
+        }),
+      ),
+  );
   it.live("still removes a worktree when measuring its size fails", () =>
     runCleanupTest(
       Effect.gen(function* () {
