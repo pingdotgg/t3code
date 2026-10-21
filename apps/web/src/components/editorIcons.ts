@@ -9,6 +9,7 @@ import {
   FinderIcon,
   type Icon,
   KiroIcon,
+  QtCreatorIcon,
   TraeIcon,
   VisualStudioCode,
   VisualStudioCodeInsiders,
@@ -137,6 +138,11 @@ export function editorIconOptions(platform: string): ReadonlyArray<EditorIconOpt
     {
       Icon: WebStormIcon,
       value: "webstorm",
+      kind: "brand",
+    },
+    {
+      Icon: QtCreatorIcon,
+      value: "qtcreator",
       kind: "brand",
     },
     {
