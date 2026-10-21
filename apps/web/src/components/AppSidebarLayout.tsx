@@ -1,3 +1,5 @@
+import { SpaceCoordinator } from "./SpaceCoordinator";
+import { SpaceDots } from "./Spaces";
 import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import {
@@ -325,6 +327,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
       >
         <SidebarBrandWidthProbe onWidthChange={setBrandWidth} />
         <ProjectProjectionRetention />
+        <SpaceCoordinator />
         <Sidebar
           side="left"
           collapsible="offcanvas"
@@ -352,6 +355,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           ) : (
             <ThreadSidebar />
           )}
+          <SpaceDots />
           <SidebarRail onDoubleClick={resetSidebarWidth} />
         </Sidebar>
         {children}

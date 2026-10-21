@@ -1,3 +1,4 @@
+import { useMobileSpaces, useSpaceEntities } from "../../state/spaces";
 import * as Dialog from "../../components/ui/Dialog";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import { useEnvironmentPresentation } from "../../state/presentation";
@@ -258,6 +259,8 @@ const NewTaskFlowContext = React.createContext<NewTaskFlowContextValue | null>(n
 export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const projects = useProjects();
   const threads = useThreadShells();
+  const { state: spaces, ready: spacesReady } = useMobileSpaces();
+  const { projects: spaceProjects } = useSpaceEntities(projects, threads);
   const { savedConnectionsById } = useSavedRemoteConnections();
   const groupingSettings = useMobileProjectGroupingSettings();
   const { enabled: legacyPlanModeEnabled, loaded: planModePreferenceLoaded } =
@@ -265,7 +268,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
 
   const projectScopes = sortHomeProjectScopes({
     scopes: buildHomeProjectScopes({
-      projects,
+      projects: spaceProjects,
       environmentId: null,
       projectGroupingMode: groupingSettings.sidebarProjectGroupingMode,
     }),
@@ -281,7 +284,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     selectedEnvironmentIdOverride !== null &&
     projects.some((project) => project.environmentId === selectedEnvironmentIdOverride)
       ? selectedEnvironmentIdOverride
-      : (projects[0]?.environmentId ?? null);
+      : (spaceProjects[0]?.environmentId ?? projects[0]?.environmentId ?? null);
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
   const [activeDraftKey, setActiveDraftKey] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -347,7 +350,14 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     selectedProjectKey ===
       scopedProjectKey(editingPendingProject.environmentId, editingPendingProject.id)
       ? editingPendingProject
-      : (projectsForEnvironment[0] ?? null));
+      : (projectsForEnvironment.find((project) =>
+          spaceProjects.some(
+            (visible) =>
+              visible.environmentId === project.environmentId && visible.id === project.id,
+          ),
+        ) ??
+        projectsForEnvironment[0] ??
+        null));
 
   const selectedEnvironmentServerConfig = useEnvironmentServerConfig(
     selectedProject?.environmentId ?? null,
@@ -425,16 +435,22 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       ? activeDraftKey
       : null;
   useEffect(() => {
-    if (activeDraftKey !== null || editingPendingTask !== null || selectedProject === null) {
+    if (
+      !spacesReady ||
+      activeDraftKey !== null ||
+      editingPendingTask !== null ||
+      selectedProject === null
+    ) {
       return;
     }
     setActiveDraftKey(
       createNewTaskDraft({
+        spaceId: spaces.activeSpaceId,
         environmentId: selectedProject.environmentId,
         projectId: selectedProject.id,
       }),
     );
-  }, [activeDraftKey, editingPendingTask, selectedProject]);
+  }, [activeDraftKey, editingPendingTask, selectedProject, spaces.activeSpaceId, spacesReady]);
   const selectedProjectDraft = useComposerDraft(selectedProjectDraftKey);
   const prompt = selectedProjectDraft.text;
   const attachments = selectedProjectDraft.attachments;
@@ -691,8 +707,8 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     const target = { environmentId: project.environmentId, projectId: project.id };
     if (activeDraftKey !== null && isNewTaskDraftKey(activeDraftKey)) {
       retargetNewTaskDraft(activeDraftKey, target);
-    } else if (!editingPendingTaskRef.current) {
-      setActiveDraftKey(createNewTaskDraft(target));
+    } else if (spacesReady && !editingPendingTaskRef.current) {
+      setActiveDraftKey(createNewTaskDraft({ ...target, spaceId: spaces.activeSpaceId }));
     }
   };
 

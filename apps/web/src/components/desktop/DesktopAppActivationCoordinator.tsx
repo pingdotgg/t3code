@@ -1,3 +1,5 @@
+import { assignCreatedProjectSpace, captureActiveSpace } from "../../hooks/useSpaces";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { DesktopAppActivationRequest } from "@t3tools/contracts";
 import { useEffect, useEffectEvent, useRef } from "react";
@@ -27,8 +29,9 @@ export function DesktopAppActivationCoordinator() {
     primaryEnvironment.serverConfig !== null &&
     shellHasSnapshot;
 
-  const processRequest = useEffectEvent(async (request: DesktopAppActivationRequest) =>
-    handleDesktopAppActivationRequest(request, {
+  const processRequest = useEffectEvent(async (request: DesktopAppActivationRequest) => {
+    const spaceId = captureActiveSpace();
+    return handleDesktopAppActivationRequest(request, {
       getTarget: () => {
         if (
           primaryEnvironment?.connection.phase !== "connected" ||
@@ -62,14 +65,15 @@ export function DesktopAppActivationCoordinator() {
           const error = squashAtomCommandFailure(result);
           throw error instanceof Error ? error : new Error("T3 Code could not add the project.");
         }
+        await assignCreatedProjectSpace(scopeProjectRef(environmentId, projectId), spaceId);
         return projectId;
       },
       waitForProject: async (projectRef) => {
         await waitForProject(projectRef);
       },
-      openThread: (projectRef) => openThread(projectRef),
-    }),
-  );
+      openThread: (projectRef) => openThread(projectRef, { spaceId }),
+    });
+  });
 
   useEffect(() => {
     if (!ready || activation === undefined) return;

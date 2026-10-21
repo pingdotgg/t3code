@@ -1,4 +1,9 @@
-import { KeybindingCommand, KeybindingRule, KeybindingsConfig } from "@t3tools/contracts";
+import {
+  KeybindingCommand,
+  KeybindingRule,
+  KeybindingsConfig,
+  THREAD_JUMP_KEYBINDING_COMMANDS,
+} from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { assertFailure } from "@effect/vitest/utils";
@@ -289,6 +294,102 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       assert.deepStrictEqual(
         persisted.filter((entry) => entry.command === "composer.sendBackground"),
         [custom],
+      );
+    }).pipe(Effect.provide(layerKeybindings())),
+  );
+
+  for (const oldWhen of ["isDesktop", "!modelPickerOpen && isDesktop"]) {
+    it.effect(
+      `updates persisted thread defaults (${oldWhen}) once and respects later removals`,
+      () =>
+        Effect.gen(function* () {
+          const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+          const keybindings = yield* Keybindings.Keybindings;
+          const oldRules = THREAD_JUMP_KEYBINDING_COMMANDS.map((command, index) => ({
+            key: `mod+${index + 1}`,
+            command,
+            when: oldWhen,
+          }));
+          yield* writeKeybindingsConfig(keybindingsConfigPath, oldRules);
+          yield* keybindings.syncDefaultKeybindingsOnStartup;
+          const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+          for (const existing of oldRules) {
+            assert.deepStrictEqual(
+              persisted.filter((entry) => entry.command === existing.command),
+              [
+                {
+                  ...existing,
+                  key: existing.key.replace("mod+", "mod+alt+"),
+                  when: "isDesktop && !isMac",
+                },
+                { ...existing, when: "!modelPickerOpen && isDesktop && isMac" },
+              ],
+            );
+          }
+
+          const withoutAlternates = persisted.filter(
+            (entry) =>
+              !entry.command.startsWith("thread.jump.") ||
+              entry.when === "!modelPickerOpen && isDesktop && isMac",
+          );
+          yield* writeKeybindingsConfig(keybindingsConfigPath, withoutAlternates);
+          yield* keybindings.syncDefaultKeybindingsOnStartup;
+          assert.deepStrictEqual(
+            yield* readKeybindingsConfig(keybindingsConfigPath),
+            withoutAlternates,
+          );
+        }).pipe(Effect.provide(layerKeybindings())),
+    );
+  }
+
+  it.effect("preserves customized and conflicting persisted thread shortcuts", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      const keybindings = yield* Keybindings.Keybindings;
+      const existing = [
+        { key: "mod+shift+1", command: "thread.jump.1", when: "isDesktop" },
+        { key: "mod+2", command: "thread.jump.2", when: "isDesktop && !terminalFocus" },
+        { key: "mod+3", command: "thread.jump.3", when: "isDesktop" },
+        { key: "mod+alt+3", command: "script.custom.run", when: "isDesktop && !isMac" },
+      ] as const;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, existing);
+      yield* keybindings.syncDefaultKeybindingsOnStartup;
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      for (const entry of existing) {
+        assert.deepStrictEqual(
+          persisted.filter((rule) => rule.command === entry.command),
+          [entry],
+        );
+      }
+    }).pipe(Effect.provide(layerKeybindings())),
+  );
+
+  it.effect("keeps an old thread default unchanged while its replacement cannot fit", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      const keybindings = yield* Keybindings.Keybindings;
+      const existing = { key: "mod+1", command: "thread.jump.1", when: "isDesktop" } as const;
+      const fillers = Array.from({ length: MAX_KEYBINDINGS_COUNT - 1 }, (_, index) => ({
+        key: "mod+alt+f1",
+        command: `script.filler-${index}.run` as const,
+      }));
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [existing, ...fillers]);
+      yield* keybindings.syncDefaultKeybindingsOnStartup;
+      const fullConfig = yield* readKeybindingsConfig(keybindingsConfigPath);
+      assert.deepStrictEqual(
+        fullConfig.filter((entry) => entry.command === existing.command),
+        [existing],
+      );
+
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [existing]);
+      yield* keybindings.syncDefaultKeybindingsOnStartup;
+      const migrated = yield* readKeybindingsConfig(keybindingsConfigPath);
+      assert.deepStrictEqual(
+        migrated.filter((entry) => entry.command === existing.command),
+        [
+          { ...existing, key: "mod+alt+1", when: "isDesktop && !isMac" },
+          { ...existing, when: "!modelPickerOpen && isDesktop && isMac" },
+        ],
       );
     }).pipe(Effect.provide(layerKeybindings())),
   );

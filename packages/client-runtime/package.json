@@ -259,6 +259,10 @@
       "types": "./src/state/sharedSettings.ts",
       "default": "./src/state/sharedSettings.ts"
     },
+    "./state/spaces": {
+      "types": "./src/state/spaces.ts",
+      "default": "./src/state/spaces.ts"
+    },
     "./state/shell": {
       "types": "./src/state/shell.ts",
       "default": "./src/state/shell.ts"

@@ -2,6 +2,7 @@ package expo.modules.t3nativecontrols
 
 import android.content.Context
 import android.view.KeyEvent
+import android.widget.EditText
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
@@ -35,9 +36,20 @@ class T3KeyboardCommandsView(
   }
 
   private fun commandFor(event: KeyEvent): String? {
-    if (event.action != KeyEvent.ACTION_DOWN || event.repeatCount != 0 || !event.isCtrlPressed) {
+    if (event.action != KeyEvent.ACTION_DOWN || event.repeatCount != 0) {
       return null
     }
+    if (event.isAltPressed && event.isShiftPressed && !event.isCtrlPressed && findFocus() !is EditText) {
+      return when (event.keyCode) {
+        KeyEvent.KEYCODE_DPAD_RIGHT -> "spaces.next"
+        KeyEvent.KEYCODE_DPAD_LEFT -> "spaces.previous"
+        else -> null
+      }
+    }
+    if (event.isCtrlPressed && !event.isAltPressed && !event.isShiftPressed && !event.isMetaPressed && event.keyCode in KeyEvent.KEYCODE_1..KeyEvent.KEYCODE_9) {
+      return "spaces.jump.${event.keyCode - KeyEvent.KEYCODE_1 + 1}"
+    }
+    if (!event.isCtrlPressed) return null
     return when {
       event.keyCode == KeyEvent.KEYCODE_C && event.isShiftPressed && !event.isAltPressed ->
         "copyThreadReference"

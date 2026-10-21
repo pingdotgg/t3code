@@ -16,6 +16,7 @@ export type OrchestrationThreadSearchSource = typeof OrchestrationThreadSearchSo
 export const OrchestrationSearchThreadsInput = Schema.Struct({
   query: TrimmedString.check(Schema.isMinLength(2), Schema.isMaxLength(200)),
   limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
+  threadIds: Schema.optionalKey(Schema.Array(ThreadId)),
 });
 export type OrchestrationSearchThreadsInput = typeof OrchestrationSearchThreadsInput.Type;
 

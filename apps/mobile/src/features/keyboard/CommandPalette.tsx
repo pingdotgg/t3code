@@ -1,3 +1,5 @@
+import { resolveThreadSpace, selectSpace } from "@t3tools/client-runtime/state/spaces";
+import { useMobileSpaces, useSpaceEntities } from "../../state/spaces";
 import { useNavigation } from "@react-navigation/native";
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
 import { THREAD_JUMP_KEYBINDING_COMMANDS } from "@t3tools/contracts";
@@ -142,8 +144,10 @@ export function CommandPalette(props: {
   const { themeVariables } = useAppearancePreferences();
   const { selectThread } = useAdaptiveWorkspaceLayout();
   const runCommand = props.onCommand;
-  const projects = useProjects();
-  const threads = useThreadShells();
+  const allProjects = useProjects();
+  const allThreads = useThreadShells();
+  const { projects, threads } = useSpaceEntities(allProjects, allThreads);
+  const { state: spaces, update: updateSpaces } = useMobileSpaces();
   const activeThreadRef = useMemo(() => parseActiveThreadPath(props.pathname), [props.pathname]);
   const activeThread = useThreadShell(activeThreadRef);
   const environments = useWorkspaceEnvironments();
@@ -163,7 +167,25 @@ export function CommandPalette(props: {
         .map((environment) => environment.environmentId),
     [environments],
   );
-  const search = useThreadSearch(searchEnvironmentIds, query.startsWith(">") ? "" : query);
+  const searchScope = useMemo(
+    () =>
+      spaces.activeSpaceId === null
+        ? undefined
+        : Object.fromEntries(
+            searchEnvironmentIds.map((environmentId) => [
+              environmentId,
+              threads
+                .filter((thread) => thread.environmentId === environmentId)
+                .map((thread) => thread.id),
+            ]),
+          ),
+    [spaces.activeSpaceId, searchEnvironmentIds, threads],
+  );
+  const search = useThreadSearch(
+    searchEnvironmentIds,
+    query.startsWith(">") ? "" : query,
+    searchScope,
+  );
   const matchedThreadKeys = useMemo(
     () =>
       new Set(search.matches.map((match) => scopedThreadKey(match.environmentId, match.threadId))),
@@ -342,8 +364,38 @@ export function CommandPalette(props: {
           run: () => selectThread(thread),
         };
       });
-    return [...actions, ...projectItems, ...threadItems];
+    const spaceItems: CommandPaletteItem[] = [
+      { id: null, name: "All Spaces" },
+      ...spaces.spaces,
+    ].map((space) => ({
+      key: `space:${space.id ?? "all"}`,
+      kind: "action",
+      title: `Switch to ${space.name}`,
+      searchTerms: ["spaces", space.name],
+      run: () => {
+        updateSpaces((current) => selectSpace(current, space.id));
+        const recent = spaces.lastThreadBySpace[space.id ?? "all"];
+        const thread =
+          recent &&
+          allThreads.find(
+            (candidate) =>
+              candidate.environmentId === recent.environmentId && candidate.id === recent.threadId,
+          );
+        if (
+          thread &&
+          thread.archivedAt === null &&
+          thread.deletedAt === null &&
+          (space.id === null || resolveThreadSpace(spaces, thread) === space.id)
+        )
+          selectThread(thread);
+        else navigation.navigate("Home");
+      },
+    }));
+    return [...actions, ...spaceItems, ...projectItems, ...threadItems];
   }, [
+    spaces,
+    updateSpaces,
+    allThreads,
     activeThread,
     activeThreadRef,
     navigation,

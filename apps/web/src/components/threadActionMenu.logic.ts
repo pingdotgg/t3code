@@ -2,6 +2,7 @@ import type { ContextMenuItem } from "@t3tools/contracts";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 
 export type ThreadActionMenuId =
+  | `space:${string}`
   | "new-thread-on-branch"
   | "filter-by-project"
   | "project-settings"
@@ -26,6 +27,7 @@ export type ThreadActionMenuId =
   | "delete";
 
 export type DraftActionMenuId =
+  | `space:${string}`
   | "copy"
   | "copy-path"
   | "copy-branch"

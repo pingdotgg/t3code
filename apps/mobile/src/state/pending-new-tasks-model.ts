@@ -1,4 +1,5 @@
-import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { resolveProjectSpace, resolveThreadSpace } from "@t3tools/client-runtime/state/spaces";
+import type { EnvironmentId, ProjectId, SpacesState } from "@t3tools/contracts";
 
 import { deriveThreadTitleFromPrompt } from "../lib/projectThreadStartTurn";
 import type { QueuedThreadCreation, QueuedThreadMessage } from "./thread-outbox-model";
@@ -95,4 +96,25 @@ export function buildPendingNewTasks(input: {
     return right.createdAt.localeCompare(left.createdAt) || left.key.localeCompare(right.key);
   });
   return tasks;
+}
+
+export function filterPendingNewTasksBySpace(
+  state: SpacesState,
+  tasks: ReadonlyArray<PendingNewTask>,
+) {
+  if (state.activeSpaceId === null) return tasks;
+  return tasks.filter(
+    (task) =>
+      (task.kind === "pending"
+        ? resolveThreadSpace(state, {
+            environmentId: task.environmentId,
+            id: task.message.threadId,
+            projectId: task.projectId,
+          })
+        : (task.draft.project?.spaceId ??
+          resolveProjectSpace(state, {
+            environmentId: task.environmentId,
+            projectId: task.projectId,
+          }))) === state.activeSpaceId,
+  );
 }

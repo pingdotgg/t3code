@@ -3,6 +3,33 @@
 Use a new thread for a separate task. Choose **New worktree** when its code changes
 need a separate branch and working directory.
 
+## Organize work with Spaces
+
+Use the dots at the bottom of the sidebar to focus on one Space, or choose **All
+Spaces** to see everything. The selected Space shows its name there. Open **Spaces
+overview** beside the dots to see projects in columns. Drag a project into another
+Space, or into **No Space** to remove its assignment. Each project's menu also lets you move it without dragging. On mobile,
+hold a project to drag, and pause at the edge to scroll to more Spaces.
+
+Create a Space with **New Space** in the overview, and use a Space's menu there to
+rename it, pick its theme, or delete it. While a Space with its own theme is open,
+**Settings → Appearance → Themes** changes that Space's theme; choose **Use app theme**
+to go back to the app-wide theme. Spaces are saved on this device; assignments keep projects on different environments separate.
+
+On web and desktop, assign a project in its settings, or use **Move to Space** in
+a thread's menu. On mobile, use the Spaces overview to assign projects and threads.
+Threads inherit their project's Space unless you choose another Space or **No
+Space**. Choose **Inherit from project** to restore inheritance. New work belongs
+to the selected Space, and switching Spaces reopens its last available thread.
+Deleting a Space keeps its projects and threads available in All Spaces.
+
+Press `Ctrl+1` through `Ctrl+9` to open the corresponding Space, in dot order.
+`Alt+Shift+Right` and `Alt+Shift+Left` cycle through Spaces outside text fields.
+Numbered Space shortcuts also work while composing, and leave terminals and the
+model picker in control. Browsers can reserve
+number shortcuts for their tabs; web and desktop bindings can be changed in
+**Settings → Keybindings**.
+
 ## Start a thread
 
 On web and desktop, a new thread keeps the current project and carries your model

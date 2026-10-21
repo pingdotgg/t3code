@@ -1,3 +1,14 @@
+import { spaceIdForIndex } from "@t3tools/client-runtime/state/spaces";
+import { spaceJumpIndexFromCommand } from "../keybindings";
+import { isEditableFocused } from "../lib/editableFocus";
+import {
+  useSpaceEntities,
+  useSelectSpace,
+  useCycleSpace,
+  captureActiveSpace,
+  assignCreatedProjectSpace,
+  reportSpaceError,
+} from "../hooks/useSpaces";
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
@@ -50,6 +61,7 @@ import {
   type SourceControlDiscoveryResult,
   SourceControlProviderKind,
   type SourceControlRepositoryInfo,
+  type ThreadId,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
@@ -59,6 +71,7 @@ import {
   ChartNoAxesColumnIcon,
   CheckIcon,
   ChevronRightIcon,
+  Columns3Icon,
   CornerLeftUpIcon,
   FileSearchIcon,
   FolderGit2Icon,
@@ -101,7 +114,7 @@ import {
   copyPromptLink,
   promptLinkRepositoryOf,
 } from "./promptLinks/copyPromptLink";
-import { useClientSettings } from "../hooks/useSettings";
+import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import { useStableCallback } from "../hooks/useStableCallback";
 import { useTheme } from "../hooks/useTheme";
 import { useCustomThemes } from "../hooks/useCustomThemes";
@@ -132,7 +145,7 @@ import {
   useEnvironments,
   usePrimaryEnvironmentId,
 } from "../state/environments";
-import { useProjects, useServerConfigs, useThreadShells, waitForProject } from "../state/entities";
+import { readProjects, useProjects, useServerConfigs, waitForProject } from "../state/entities";
 import { useThreadSearch } from "../state/queries";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import {
@@ -395,8 +408,9 @@ function useThemeCards() {
 function useThreadSearchWithContentMatches(
   environmentIds: ReadonlyArray<EnvironmentId>,
   query: string,
+  threadIdsByEnvironment: Readonly<Record<string, ReadonlyArray<ThreadId>>> | undefined,
 ) {
-  const threadSearch = useThreadSearch(environmentIds, query);
+  const threadSearch = useThreadSearch(environmentIds, query, threadIdsByEnvironment);
   const contentMatchByKey = new Map(
     threadSearch.matches.flatMap((match) =>
       match.source === "user" || match.source === "assistant"
@@ -451,8 +465,7 @@ const selectCommandPaletteClientSettings = (settings: ClientSettings) => ({
 });
 
 function useSortedProjectGroups(environmentLabelById: ReadonlyMap<EnvironmentId, string>) {
-  const projects = useProjects();
-  const threads = useThreadShells();
+  const { projects, threads } = useSpaceEntities();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const clientSettings = useClientSettings(selectCommandPaletteClientSettings);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -483,7 +496,9 @@ function useSortedProjectGroups(environmentLabelById: ReadonlyMap<EnvironmentId,
 }
 
 export function CommandPalette({ children }: { children: ReactNode }) {
+  const selectSpace = useSelectSpace();
   const navigate = useNavigate();
+  const cycleSpace = useCycleSpace();
   const [state, dispatch] = useReducer(reduceCommandPaletteUiState, {
     open: false,
     mode: "command",
@@ -530,12 +545,29 @@ export function CommandPalette({ children }: { children: ReactNode }) {
       const command = resolveShortcutCommand(event, keybindings, {
         context: {
           terminalFocus: isTerminalFocused(),
+          editableFocus: isEditableFocused(event.target),
           terminalOpen,
           previewFocus: isPreviewFocused(),
           previewOpen,
           modelPickerOpen: composerHandleRef.current?.isModelPickerOpen() ?? false,
         },
       });
+      const spaceIndex = command === null ? null : spaceJumpIndexFromCommand(command);
+      if (spaceIndex !== null) {
+        const target = spaceIdForIndex(getClientSettings().spaces, spaceIndex);
+        if (target === undefined) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat) void selectSpace(target).catch(reportSpaceError);
+        return;
+      }
+      if (command === "spaces.next" || command === "spaces.previous") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.repeat) return;
+        void cycleSpace(command === "spaces.next" ? 1 : -1).catch(reportSpaceError);
+        return;
+      }
       if (command === "appearance.cycle") {
         event.preventDefault();
         event.stopPropagation();
@@ -588,6 +620,8 @@ export function CommandPalette({ children }: { children: ReactNode }) {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [
+    selectSpace,
+    cycleSpace,
     appearanceMode,
     keybindings,
     navigate,
@@ -768,7 +802,9 @@ function OpenCommandPaletteDialog(props: {
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
   const paletteRouteTarget = useThreadRouteTarget();
-  const projects = useProjects();
+  const { projects, threads, spaces } = useSpaceEntities();
+  const selectSpace = useSelectSpace();
+  const cycleSpace = useCycleSpace();
   const referenceThreadRef =
     pathname === "/pull-requests"
       ? environments.some(
@@ -815,7 +851,6 @@ function OpenCommandPaletteDialog(props: {
       );
     }
   };
-  const threads = useThreadShells();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const {
     theme,
@@ -849,8 +884,18 @@ function OpenCommandPaletteDialog(props: {
     .filter((environment) => environment.connection.phase === "connected")
     .map((environment) => environment.environmentId);
   const threadSearchQuery = currentView === null && !isActionsOnly ? deferredQuery : "";
+  // Scope content search to the active Space's threads; no Space searches everything.
+  const searchThreadIds =
+    spaces.activeSpaceId === null
+      ? undefined
+      : Object.fromEntries(
+          environmentIds.map((id) => [
+            id,
+            threads.filter((thread) => thread.environmentId === id).map((thread) => thread.id),
+          ]),
+        );
   const { threadSearch, contentMatchByKey: threadContentMatchByKey } =
-    useThreadSearchWithContentMatches(environmentIds, threadSearchQuery);
+    useThreadSearchWithContentMatches(environmentIds, threadSearchQuery, searchThreadIds);
   const [browseGeneration, setBrowseGeneration] = useState(0);
   const [browseNavigation] = useState(createBrowseNavigationCoordinator);
   const [addProjectEnvironmentId, setAddProjectEnvironmentId] = useState<EnvironmentId | null>(
@@ -2077,6 +2122,69 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
+  actionItems.push({
+    kind: "submenu",
+    value: "spaces:switch",
+    title: "Switch Space",
+    icon: <FolderIcon className={ITEM_ICON_CLASS} />,
+    addonIcon: <FolderIcon className={ADDON_ICON_CLASS} />,
+    searchTerms: ["spaces", "context", "switch"],
+    groups: [
+      {
+        value: "spaces",
+        label: "Spaces",
+        items: [
+          {
+            kind: "action",
+            value: "spaces:all",
+            title: "All Spaces",
+            icon: <FolderIcon className={ITEM_ICON_CLASS} />,
+            searchTerms: ["all spaces"],
+            run: async () => {
+              setOpen(false);
+              await selectSpace(null);
+            },
+          },
+          ...spaces.spaces.map((space): CommandPaletteActionItem => ({
+            kind: "action",
+            value: `spaces:${space.id}`,
+            title: space.name,
+            icon: <FolderIcon className={ITEM_ICON_CLASS} />,
+            searchTerms: [space.name],
+            run: async () => {
+              setOpen(false);
+              await selectSpace(space.id);
+            },
+          })),
+        ],
+      },
+    ],
+  });
+  actionItems.push({
+    kind: "action",
+    value: "spaces:manage",
+    title: "Spaces overview",
+    icon: <Columns3Icon className={ITEM_ICON_CLASS} />,
+    searchTerms: ["spaces", "create", "rename", "delete", "theme"],
+    run: async () => {
+      setOpen(false);
+      await navigate({ to: "/spaces" });
+    },
+  });
+  actionItems.push(
+    ...([1, -1] as const).map((direction): CommandPaletteActionItem => ({
+      kind: "action",
+      value: direction === 1 ? "spaces:next" : "spaces:previous",
+      title: direction === 1 ? "Next Space" : "Previous Space",
+      icon: <FolderIcon className={ITEM_ICON_CLASS} />,
+      searchTerms: ["spaces", "switch", direction === 1 ? "next" : "previous"],
+      shortcutCommand: direction === 1 ? "spaces.next" : "spaces.previous",
+      run: async () => {
+        setOpen(false);
+        await cycleSpace(direction);
+      },
+    })),
+  );
   const rootGroups = buildRootGroups({ actionItems, recentThreadItems });
   const settingsSearchItems: CommandPaletteActionItem[] = searchSettings(
     deferredQuery,
@@ -2124,6 +2232,16 @@ function OpenCommandPaletteDialog(props: {
       linkedThreadSearch?.linkedThreads && deferredQuery === linkedThreadSearch.query
         ? buildLinkedThreadActionItems({
             ...linkedThreadSearch.linkedThreads,
+            threads:
+              spaces.activeSpaceId === null
+                ? linkedThreadSearch.linkedThreads.threads
+                : linkedThreadSearch.linkedThreads.threads.filter((thread) =>
+                    threads.some(
+                      (visible) =>
+                        visible.environmentId === linkedThreadSearch.linkedThreads?.environmentId &&
+                        visible.id === thread.id,
+                    ),
+                  ),
             query: linkedThreadSearch.query,
             icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
             runThread: async (thread) => {
@@ -2141,7 +2259,9 @@ function OpenCommandPaletteDialog(props: {
     readonly rawCwd: string;
     readonly platform: string;
     readonly currentProjectCwd: string | null;
+    readonly spaceId?: string | null;
   }) => {
+    const spaceId = input.spaceId !== undefined ? input.spaceId : captureActiveSpace();
     const environment = environments.find(
       (candidate) => candidate.environmentId === input.environmentId,
     );
@@ -2183,7 +2303,7 @@ function OpenCommandPaletteDialog(props: {
     if (cwd.length === 0) return;
 
     const existing = findProjectByPath(
-      projects.filter((project) => project.environmentId === input.environmentId),
+      readProjects().filter((project) => project.environmentId === input.environmentId),
       cwd,
     );
     if (existing) {
@@ -2201,7 +2321,7 @@ function OpenCommandPaletteDialog(props: {
         });
       } else {
         const navigationResult = await settlePromise(() =>
-          handleNewThread(scopeProjectRef(existing.environmentId, existing.id)),
+          handleNewThread(scopeProjectRef(existing.environmentId, existing.id), { spaceId }),
         );
         if (navigationResult._tag === "Failure") {
           const error = squashAtomCommandFailure(navigationResult);
@@ -2254,8 +2374,9 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
 
+    await assignCreatedProjectSpace(scopeProjectRef(input.environmentId, projectId), spaceId);
     const navigationResult = await settlePromise(() =>
-      handleNewThread(scopeProjectRef(input.environmentId, projectId)),
+      handleNewThread(scopeProjectRef(input.environmentId, projectId), { spaceId }),
     );
     if (navigationResult._tag === "Failure") {
       const error = squashAtomCommandFailure(navigationResult);
@@ -2271,13 +2392,14 @@ function OpenCommandPaletteDialog(props: {
     setOpen(false);
   };
 
-  const handleAddProject = async (rawCwd: string) => {
+  const handleAddProject = async (rawCwd: string, spaceId?: string | null) => {
     if (!browseEnvironmentId) return;
     await handleAddProjectForEnvironment({
       environmentId: browseEnvironmentId,
       rawCwd,
       platform: browseEnvironmentPlatform,
       currentProjectCwd: currentProjectCwdForBrowse,
+      ...(spaceId === undefined ? {} : { spaceId }),
     });
   };
 
@@ -2401,6 +2523,7 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
 
+    const spaceId = captureActiveSpace();
     const rawDestination = (destinationPathInput ?? query).trim();
     if (
       !readEnvironmentScope(addProjectCloneFlow.environmentId, AuthSourceControlWriteScope) ||
@@ -2471,7 +2594,7 @@ function OpenCommandPaletteDialog(props: {
         }
         return;
       }
-      await handleAddProject(cloneResult.value.cwd);
+      await handleAddProject(cloneResult.value.cwd, spaceId);
       return;
     }
 
@@ -2502,8 +2625,9 @@ function OpenCommandPaletteDialog(props: {
     }
     setOpen(false);
     const projectRef = scopeProjectRef(addProjectCloneFlow.environmentId, projectId);
+    await assignCreatedProjectSpace(projectRef, spaceId);
     await waitForProject(projectRef, 3_000).catch(() => null);
-    const navigationResult = await settlePromise(() => handleNewThread(projectRef));
+    const navigationResult = await settlePromise(() => handleNewThread(projectRef, { spaceId }));
     if (navigationResult._tag === "Failure") {
       const error = squashAtomCommandFailure(navigationResult);
       toastManager.add(

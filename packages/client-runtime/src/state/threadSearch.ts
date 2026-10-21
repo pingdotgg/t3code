@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  ThreadId,
   OrchestrationSearchThreadsInput,
   type OrchestrationSearchThreadsResult,
   type OrchestrationThreadSearchMatch,
@@ -18,17 +19,28 @@ export interface ThreadSearchResultsState {
 }
 
 const ThreadSearchKey = Schema.fromJsonString(
-  Schema.Tuple([Schema.Array(EnvironmentId), OrchestrationSearchThreadsInput.fields.query]),
+  Schema.Tuple([
+    Schema.Array(EnvironmentId),
+    OrchestrationSearchThreadsInput.fields.query,
+    Schema.NullOr(Schema.Record(Schema.String, Schema.Array(ThreadId))),
+  ]),
 );
 const decodeThreadSearchKey = Schema.decodeUnknownOption(ThreadSearchKey);
 
 export function makeThreadSearchKey(
   environmentIds: ReadonlyArray<EnvironmentId>,
   query: string,
+  threadIdsByEnvironment?: Readonly<Record<string, ReadonlyArray<ThreadId>>>,
 ): string {
+  const sortedIds = [...environmentIds].sort((left, right) => left.localeCompare(right));
   return JSON.stringify([
-    [...environmentIds].sort((left, right) => left.localeCompare(right)),
+    sortedIds,
     query,
+    threadIdsByEnvironment === undefined
+      ? null
+      : Object.fromEntries(
+          sortedIds.map((id) => [id, [...new Set(threadIdsByEnvironment[id] ?? [])].sort()]),
+        ),
   ]);
 }
 
@@ -46,6 +58,7 @@ export function createThreadSearchResultsAtomFamily<E>(options: {
   readonly getSearchAtom: (
     environmentId: EnvironmentId,
     query: string,
+    threadIds?: ReadonlyArray<ThreadId>,
   ) => Atom.Atom<AsyncResult.AsyncResult<OrchestrationSearchThreadsResult, E>>;
   readonly labelPrefix: string;
 }) {
@@ -56,12 +69,14 @@ export function createThreadSearchResultsAtomFamily<E>(options: {
         return { matches: [], isLoading: false };
       }
 
-      const [environmentIds, query] = parsedKey.value;
+      const [environmentIds, query, threadIdsByEnvironment] = parsedKey.value;
       const matches: EnvironmentThreadSearchMatch[] = [];
       let isLoading = false;
 
       for (const environmentId of environmentIds) {
-        const result = get(options.getSearchAtom(environmentId, query));
+        const result = get(
+          options.getSearchAtom(environmentId, query, threadIdsByEnvironment?.[environmentId]),
+        );
         isLoading ||= result.waiting;
         const value = Option.getOrNull(AsyncResult.value(result));
         if (value !== null) {

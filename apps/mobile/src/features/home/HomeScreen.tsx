@@ -1,3 +1,4 @@
+import { useMobileSpaces } from "../../state/spaces";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import type { ThreadMoveDestination } from "../threads/threadOrder";
@@ -299,7 +300,19 @@ export function HomeScreen(props: HomeScreenProps) {
           )
         ? [props.selectedEnvironmentId]
         : [];
-  const threadSearch = useThreadSearch(searchEnvironmentIds, props.searchQuery);
+  const { state: spaces } = useMobileSpaces();
+  const searchScope =
+    spaces.activeSpaceId === null
+      ? undefined
+      : Object.fromEntries(
+          searchEnvironmentIds.map((environmentId) => [
+            environmentId,
+            props.threads
+              .filter((thread) => thread.environmentId === environmentId)
+              .map((thread) => thread.id),
+          ]),
+        );
+  const threadSearch = useThreadSearch(searchEnvironmentIds, props.searchQuery, searchScope);
   const threadSearchMatchByKey = (() => {
     const matches = new Map<string, EnvironmentThreadSearchMatch>();
     for (const match of threadSearch.matches) {
@@ -428,7 +441,7 @@ export function HomeScreen(props: HomeScreenProps) {
   const [settledVisibleCount, setSettledVisibleCount] = useState(
     THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
   );
-  const settledResetKey = `${props.selectedEnvironmentId ?? "all"}:${v2ProjectScopeKey ?? "all"}:${props.searchQuery.trim()}`;
+  const settledResetKey = `${spaces.activeSpaceId ?? "all"}:${props.selectedEnvironmentId ?? "all"}:${v2ProjectScopeKey ?? "all"}:${props.searchQuery.trim()}`;
   const [lastSettledResetKey, setLastSettledResetKey] = useState(settledResetKey);
   if (lastSettledResetKey !== settledResetKey) {
     setLastSettledResetKey(settledResetKey);

@@ -1,3 +1,9 @@
+import {
+  rememberSpaceThread,
+  resolveThreadSpace,
+  selectSpace,
+} from "@t3tools/client-runtime/state/spaces";
+import { useMobileSpaces } from "../../state/spaces";
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
@@ -11,7 +17,7 @@ import {
   useNavigation,
   type StaticScreenProps,
 } from "@react-navigation/native";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import * as Option from "effect/Option";
 import {
   AuthOrchestrationOperateScope,
@@ -192,6 +198,53 @@ export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
   const connectionsReady = useConnectionsReady();
   const { connectionState } = useRemoteConnectionStatus();
   const { selectedThread } = useThreadSelection();
+  const { state: spaces, update: updateSpaces, ready: spacesReady } = useMobileSpaces();
+  const spaceThreadEnvironmentId = selectedThread?.environmentId;
+  const spaceThreadId = selectedThread?.id;
+  const spaceThreadProjectId = selectedThread?.projectId;
+  const effectiveSpaceId = selectedThread ? resolveThreadSpace(spaces, selectedThread) : null;
+  useFocusEffect(
+    useCallback(() => {
+      if (!spacesReady || !spaceThreadEnvironmentId || !spaceThreadId || !spaceThreadProjectId)
+        return;
+      updateSpaces((current) =>
+        rememberSpaceThread(
+          current.activeSpaceId === null
+            ? current
+            : selectSpace(
+                current,
+                resolveThreadSpace(current, {
+                  environmentId: spaceThreadEnvironmentId,
+                  id: spaceThreadId,
+                  projectId: spaceThreadProjectId,
+                }),
+              ),
+          { environmentId: spaceThreadEnvironmentId, threadId: spaceThreadId },
+        ),
+      );
+    }, [
+      spaceThreadEnvironmentId,
+      spaceThreadId,
+      spaceThreadProjectId,
+      effectiveSpaceId,
+      spacesReady,
+      updateSpaces,
+    ]),
+  );
+  const allSpacesActive = spaces.activeSpaceId === null;
+  useFocusEffect(
+    useCallback(() => {
+      if (!spacesReady || !allSpacesActive || !spaceThreadEnvironmentId || !spaceThreadId) return;
+      updateSpaces((current) =>
+        current.activeSpaceId === null
+          ? rememberSpaceThread(current, {
+              environmentId: spaceThreadEnvironmentId,
+              threadId: spaceThreadId,
+            })
+          : current,
+      );
+    }, [spacesReady, allSpacesActive, spaceThreadEnvironmentId, spaceThreadId, updateSpaces]),
+  );
   const params = props.route.params;
   const environmentIdRaw = firstRouteParam(params.environmentId);
   const threadIdRaw = firstRouteParam(params.threadId);

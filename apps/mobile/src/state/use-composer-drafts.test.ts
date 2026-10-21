@@ -1890,6 +1890,21 @@ describe("mobile composer drafts", () => {
     expect(findNewTaskDraftKeys(appAtomRegistry.get(composerDraftsAtom), to)).toEqual([key]);
   });
 
+  it("keeps a new task's originating Space through retargeting and persistence", async () => {
+    const from = {
+      environmentId: EnvironmentId.make("env-from"),
+      projectId: ProjectId.make("scratch"),
+    };
+    const to = { environmentId: EnvironmentId.make("env-to"), projectId: ProjectId.make("repo") };
+    const key = createNewTaskDraft({ ...from, spaceId: "work" });
+    setComposerDraftText(key, "work in progress");
+    retargetNewTaskDraft(key, to);
+    expect(getComposerDraftSnapshot(key).project).toMatchObject({ ...to, spaceId: "work" });
+    await flushComposerDrafts();
+    const reloaded = decodePersistedComposerState(JSON.parse(composerDraftFileMocks.getDocument()));
+    expect(reloaded.drafts[key]?.project).toMatchObject({ ...to, spaceId: "work" });
+  });
+
   it("merges persisted option memory without replacing newer choices", async () => {
     composerDraftFileMocks.setDocument({
       schemaVersion: 1,

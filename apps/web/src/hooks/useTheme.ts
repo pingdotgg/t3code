@@ -130,6 +130,32 @@ export class DesktopThemeSyncError extends Schema.TaggedError<DesktopThemeSyncEr
 
 const isDesktopThemeSyncError = Schema.is(DesktopThemeSyncError);
 
+let requestedSpaceTheme: string | null = null;
+
+function getSpaceThemeOverlay(): Theme | null {
+  return requestedSpaceTheme !== null && isKnownThemePreference(requestedSpaceTheme)
+    ? canonicalThemePreference(requestedSpaceTheme)
+    : null;
+}
+
+/**
+ * A Space theme swaps the palette but keeps the user's Color scheme, unless the
+ * Space picked the Light or Dark theme, which is itself a scheme choice.
+ */
+function resolveAppearanceMode(storedTheme: Theme, spaceTheme: Theme | null): ThemePreferenceMode {
+  if (spaceTheme === "light" || spaceTheme === "dark") return spaceTheme;
+  return readAppearanceModePreference(storedTheme);
+}
+
+/** Apply a device-local Space theme without changing global preferences. */
+export function setSpaceThemeOverlay(theme: string | null) {
+  if (requestedSpaceTheme === theme) return;
+  requestedSpaceTheme = theme;
+  lastAppliedTheme = null;
+  applyTheme(getStored(), { suppressTransitions: true, preservePreview: false });
+  emitChange();
+}
+
 let listeners: Array<() => void> = [];
 let lastSnapshot: ThemeSnapshot | null = null;
 let snapshotStale = true;
@@ -315,10 +341,12 @@ function applyTheme(theme: Theme, { suppressTransitions = false, preservePreview
   if (preservePreview && document.documentElement.dataset?.themeId === THEME_PREVIEW_ID) {
     return;
   }
-  const appearanceMode = readAppearanceModePreference(theme);
+  const spaceThemeOverlay = getSpaceThemeOverlay();
+  const appearanceMode = resolveAppearanceMode(theme, spaceThemeOverlay);
+  theme = spaceThemeOverlay ?? theme;
   const followSystem = appearanceMode === "system";
   const systemDark = followSystem ? getSystemDark() : false;
-  const themeHalves = readStoredThemeHalves();
+  const themeHalves = spaceThemeOverlay ? null : readStoredThemeHalves();
   if (
     lastAppliedTheme?.theme === theme &&
     lastAppliedTheme.systemDark === systemDark &&
@@ -326,7 +354,7 @@ function applyTheme(theme: Theme, { suppressTransitions = false, preservePreview
     lastAppliedTheme.appearanceMode === appearanceMode &&
     themeHalvesSignature(lastAppliedTheme.themeHalves) === themeHalvesSignature(themeHalves)
   ) {
-    syncDesktopTheme(theme, followSystem, appearanceMode);
+    syncDesktopTheme(theme, followSystem, appearanceMode, themeHalves);
     return;
   }
 
@@ -344,7 +372,7 @@ function applyTheme(theme: Theme, { suppressTransitions = false, preservePreview
   document.documentElement.classList.toggle("dark", resolvedAppearance === "dark");
   lastAppliedTheme = { theme, systemDark, followSystem, appearanceMode, themeHalves };
   syncBrowserChromeTheme();
-  syncDesktopTheme(theme, followSystem, appearanceMode);
+  syncDesktopTheme(theme, followSystem, appearanceMode, themeHalves);
   if (suppressTransitions) {
     // Force a reflow so the no-transitions class takes effect before removal
     void document.documentElement.offsetHeight;
@@ -372,10 +400,10 @@ function syncDesktopTheme(
   theme: Theme,
   followSystem?: boolean,
   appearanceMode?: ThemePreferenceMode,
+  halves: ThemeHalves | null = readStoredThemeHalves(),
 ) {
   if (typeof window === "undefined") return;
   const bridge = window.desktopBridge;
-  const halves = readStoredThemeHalves();
   const desktopTheme = resolveDesktopTheme(theme, followSystem, appearanceMode, halves);
   if (!bridge || typeof bridge.setTheme !== "function" || lastDesktopTheme === desktopTheme) {
     return;
@@ -408,11 +436,13 @@ function getSnapshot(): ThemeSnapshot {
   // change was signalled; useTheme consumers call this on every render.
   if (!snapshotStale && lastSnapshot) return lastSnapshot;
   snapshotStale = false;
-  const theme = getStored();
-  const appearanceMode = readAppearanceModePreference(theme);
+  const spaceThemeOverlay = getSpaceThemeOverlay();
+  const storedTheme = getStored();
+  const theme = spaceThemeOverlay ?? storedTheme;
+  const appearanceMode = resolveAppearanceMode(storedTheme, spaceThemeOverlay);
   const followSystem = appearanceMode === "system";
   const systemDark = followSystem ? getSystemDark() : false;
-  const themeHalves = readStoredThemeHalves();
+  const themeHalves = spaceThemeOverlay ? null : readStoredThemeHalves();
 
   const resolvedTheme = resolveThemeAppearance(
     theme,
@@ -443,7 +473,7 @@ function getServerSnapshot() {
 
 function handleSystemAppearanceChange() {
   const storedTheme = getStored();
-  if (readAppearanceModePreference(storedTheme) === "system") {
+  if (resolveAppearanceMode(storedTheme, getSpaceThemeOverlay()) === "system") {
     applyTheme(storedTheme, { suppressTransitions: true });
   }
   emitChange();

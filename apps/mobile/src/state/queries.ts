@@ -10,6 +10,7 @@ import type {
   EnvironmentId,
   OrchestrationV2ProjectedTurnItem,
   ProjectId,
+  ThreadId,
   ThreadPullRequestLink,
   VcsListRefsResult,
   VcsRef,
@@ -51,10 +52,10 @@ const EMPTY_THREAD_SEARCH_ATOM = Atom.make({
 }).pipe(Atom.withLabel("mobile:thread-search:empty"));
 
 const threadSearchResultsAtom = createThreadSearchResultsAtomFamily({
-  getSearchAtom: (environmentId, query) =>
+  getSearchAtom: (environmentId, query, threadIds) =>
     orchestrationEnvironment.threadSearch({
       environmentId,
-      input: { query },
+      input: { query, ...(threadIds === undefined ? {} : { threadIds }) },
     }),
   labelPrefix: "mobile:thread-search",
 });
@@ -162,6 +163,7 @@ export function useComposerPullRequestSearch(input: {
 export function useThreadSearch(
   environmentIds: ReadonlyArray<EnvironmentId>,
   query: string,
+  threadIdsByEnvironment?: Readonly<Record<string, ReadonlyArray<ThreadId>>>,
 ): {
   readonly matches: ReadonlyArray<EnvironmentThreadSearchMatch>;
   readonly isPending: boolean;
@@ -171,7 +173,9 @@ export function useThreadSearch(
   const canSearch = environmentIds.length > 0 && normalizedQuery.length >= 2;
   const settledQuery = canSearch && normalizedQuery === debouncedQuery ? debouncedQuery : null;
   const searchKey =
-    settledQuery === null ? null : makeThreadSearchKey(environmentIds, settledQuery);
+    settledQuery === null
+      ? null
+      : makeThreadSearchKey(environmentIds, settledQuery, threadIdsByEnvironment);
   const result = useAtomValue(
     searchKey === null ? EMPTY_THREAD_SEARCH_ATOM : threadSearchResultsAtom(searchKey),
   );

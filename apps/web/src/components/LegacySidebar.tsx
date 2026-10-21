@@ -1,3 +1,11 @@
+import { isThreadInSpace } from "@t3tools/client-runtime/state/spaces";
+import {
+  useSpaceEntities,
+  threadSpaceMenu,
+  isSpaceMenuAction,
+  runThreadSpaceAction,
+  reportSpaceError,
+} from "../hooks/useSpaces";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
 import { Spinner } from "~/components/ui/spinner";
@@ -89,8 +97,6 @@ import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
 import {
   readThreadShell,
-  useProjects,
-  useThreadShells,
   useThreadShellsForProjectRefs,
   waitForProjectRemoval,
 } from "../state/entities";
@@ -1113,7 +1119,10 @@ function useProjectThreads(project: SidebarProjectSnapshot) {
   const threadSortOrder = useClientSettings<SidebarThreadSortOrder>(
     (settings) => settings.sidebarThreadSortOrder,
   );
-  const sidebarThreads = useThreadShellsForProjectRefs(project.memberProjectRefs);
+  const spaces = useClientSettings((settings) => settings.spaces);
+  const sidebarThreads = useThreadShellsForProjectRefs(project.memberProjectRefs).filter((thread) =>
+    isThreadInSpace(spaces, thread),
+  );
   const threadLastVisitedAts = useUiStateStore(
     useShallow((state) =>
       sidebarThreads.map(
@@ -2150,6 +2159,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       );
       const clicked = await api.contextMenu.show(
         [
+          threadSpaceMenu(threadRef),
           ...(thread.branch
             ? [{ id: "new-thread-on-branch", label: `New thread on ${thread.branch}` }]
             : []),
@@ -2169,6 +2179,10 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         position,
       );
 
+      if (clicked && isSpaceMenuAction(clicked)) {
+        await runThreadSpaceAction(threadRef, clicked).catch(reportSpaceError);
+        return;
+      }
       if (clicked === "project-settings") {
         if (isMobile) setOpenMobile(false);
         void router.navigate({
@@ -3027,7 +3041,7 @@ function openAddProjectCommandPalette() {
 // LegacySidebar frozen and cached on their real inputs; inline, its later hook
 // calls made the compiler recompute them, and the props of every row with them.
 function useLegacySidebarProjects() {
-  const projects = useProjects();
+  const { projects } = useSpaceEntities();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const { environments } = useEnvironments();
@@ -3096,7 +3110,7 @@ function useSortedLegacySidebarProjects(input: {
     projectPhysicalKeyByScopedRef,
     sidebarProjectSortOrder,
   } = input;
-  const sidebarThreads = useThreadShells();
+  const { threads: sidebarThreads } = useSpaceEntities();
   const sidebarProjectByKey = new Map(
     sidebarProjects.map((project) => [project.projectKey, project] as const),
   );
@@ -3146,7 +3160,7 @@ function useLegacySidebarThreads(input: {
     sidebarThreadPreviewCount,
     expandedThreadListsByProject,
   } = input;
-  const sidebarThreads = useThreadShells();
+  const { threads: sidebarThreads } = useSpaceEntities();
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const sidebarThreadByKey = new Map(
     sidebarThreads.map(
@@ -3265,6 +3279,7 @@ export default function LegacySidebar() {
   const desktopUpdateState = useDesktopUpdateState();
   const [desktopUpdateActionPending, setDesktopUpdateActionPending] = useState(false);
   const clearSelection = useThreadSelectionStore((s) => s.clearSelection);
+  const activeSpaceId = useClientSettings((s) => s.spaces.activeSpaceId);
   const setSelectionAnchor = useThreadSelectionStore((s) => s.setAnchor);
   const platform = navigator.platform;
   const shortcutModifiers = useShortcutModifierState();
@@ -3467,6 +3482,11 @@ export default function LegacySidebar() {
       window.removeEventListener("keydown", handleWindowKeyDown);
     };
   }, []);
+
+  useEffect(() => {
+    clearSelection();
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A Space switch hides rows selected in the previous Space.
+  }, [clearSelection, activeSpaceId]);
 
   useEffect(() => {
     const onMouseDown = (event: globalThis.MouseEvent) => {

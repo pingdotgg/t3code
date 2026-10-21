@@ -1,3 +1,4 @@
+import { assignCreatedProjectSpace, captureActiveSpace } from "../../hooks/useSpaces";
 import { useAuth } from "@clerk/react";
 import { useAtomValue } from "@effect/atom-react";
 import type {
@@ -1269,6 +1270,7 @@ function ImportStep({
 
   const runImport = async (selection: typeof candidates) => {
     if (isImporting) return;
+    const spaceId = captureActiveSpace();
     const hasAccess = () =>
       selection.every((candidate) =>
         readEnvironmentScope(candidate.environmentId, AuthOrchestrationOperateScope),
@@ -1348,6 +1350,7 @@ function ImportStep({
           }
           continue;
         }
+        await assignCreatedProjectSpace(scopeProjectRef(environmentId, projectId), spaceId);
       }
 
       if (!hasAccess()) {

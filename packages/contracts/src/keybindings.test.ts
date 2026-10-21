@@ -2,7 +2,7 @@ import { assert, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 
-import { ResolvedKeybindingsConfig } from "./keybindings.ts";
+import { KeybindingRule, ResolvedKeybindingsConfig } from "./keybindings.ts";
 
 const decode = <S extends Schema.Top>(
   schema: S,
@@ -13,6 +13,17 @@ const decode = <S extends Schema.Top>(
     Schema.SchemaError,
     never
   >;
+
+it.effect("accepts configurable Space navigation commands", () =>
+  Effect.gen(function* () {
+    for (const command of ["spaces.next", "spaces.previous"]) {
+      assert.strictEqual(
+        (yield* decode(KeybindingRule, { key: "alt+shift+arrowright", command })).command,
+        command,
+      );
+    }
+  }),
+);
 
 const shortcut = {
   key: "p",

@@ -76,6 +76,8 @@ const testState = vi.hoisted(() => {
       });
     },
     router,
+    activeSpaceId: null as string | null,
+    assignSpace: vi.fn(async () => undefined),
   };
 });
 
@@ -196,7 +198,23 @@ vi.mock("../uiStateStore", () => ({
   legacyProjectCwdPreferenceKey: () => "remote-project",
   useUiStateStore: () => [],
 }));
-vi.mock("./useSettings", () => ({ useClientSettings: () => ({}) }));
+vi.mock("./useSettings", () => ({
+  useClientSettings: () => ({}),
+  getClientSettings: () => ({
+    spaces: {
+      activeSpaceId: testState.activeSpaceId,
+      spaces: [],
+      projectSpaces: {},
+      threadSpaces: {},
+      lastThreadBySpace: {},
+    },
+  }),
+}));
+vi.mock("./useSpaces", () => ({
+  captureActiveSpace: () => testState.activeSpaceId,
+  assignCreatedThreadSpace: testState.assignSpace,
+  useSpaceEntities: () => ({ projects: [] }),
+}));
 
 import { useNewThreadHandler } from "./useHandleNewThread";
 
@@ -243,4 +261,23 @@ describe.each([
     expect(testState.router.navigate).not.toHaveBeenCalled();
     expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
   });
+});
+
+it("captures the active Space before async draft defaults resolve", async () => {
+  testState.reset(null);
+  testState.activeSpaceId = "work";
+  testState.assignSpace.mockClear();
+  const pending = useNewThreadHandler()({
+    environmentId: "environment-ssh",
+    projectId: "project-remote",
+  } as never);
+  testState.activeSpaceId = "personal";
+  testState.completeProjectFileRead(null);
+  const opened = await pending;
+  expect(testState.assignSpace).toHaveBeenCalledWith(
+    { environmentId: "environment-ssh", threadId: opened!.threadId },
+    "work",
+    "project-remote",
+  );
+  testState.activeSpaceId = null;
 });

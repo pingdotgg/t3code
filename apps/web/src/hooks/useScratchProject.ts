@@ -1,3 +1,4 @@
+import { captureActiveSpace } from "./useSpaces";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { availableScratchWorkspaceRoot } from "@t3tools/client-runtime/operations/projects";
 import {
@@ -54,10 +55,13 @@ export function useScratchProject() {
   };
 
   const startScratchThread = async (environmentId: EnvironmentId) => {
+    const spaceId = captureActiveSpace();
     const project = await openScratchProject(environmentId);
     if (project) {
-      await handleNewThread(scopeProjectRef(project.environmentId, project.id)).catch(
-        (error: unknown) => reportScratchFailure("Could not start without a project", error),
+      await handleNewThread(scopeProjectRef(project.environmentId, project.id), {
+        spaceId,
+      }).catch((error: unknown) =>
+        reportScratchFailure("Could not start without a project", error),
       );
     }
   };

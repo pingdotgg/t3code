@@ -110,16 +110,17 @@ Join modifiers and a key with `+`, such as `mod+shift+d` or `ctrl+l`.
 
 Available context keys are `terminalFocus`, `terminalOpen`, `previewFocus`,
 `previewOpen`, `modelPickerOpen`, `usagePageOpen`, `composerFocus`, `composerDraft`,
-`turnRunning`, `editableFocus`, `isWeb`, and `isDesktop`.
+`turnRunning`, `editableFocus`, `isWeb`, `isDesktop`, and `isMac`.
 `editableFocus` is true while a text field, the composer, or another editor has
 the keyboard. `isWeb` is true in a browser tab. `isDesktop` is true in the
-desktop app. Unknown keys evaluate to `false`.
+desktop app. `isMac` refers to the client keyboard's platform. Unknown keys evaluate to `false`.
 
-`mod+1` through `mod+9` jump to the first nine threads, and to models while the
-model picker is open. The thread jumps do not run while the model picker is open.
-Those defaults use `isDesktop` so they do not steal the
-browser's tab-switch shortcuts. Remove that condition in Settings if you want
-the same jumps in a browser.
+`Ctrl+1` through `Ctrl+9` select the first nine Spaces. On desktop, `Cmd+1` through
+`Cmd+9` jump to threads on macOS; Windows and Linux use `Ctrl+Alt+1` through
+`Ctrl+Alt+9`. While the model picker is open, `mod+1` through `mod+9` select models
+instead of threads. Thread and model jumps use `isDesktop` so they do not steal
+browser tab shortcuts. Browsers may also reserve `Ctrl+1` through `Ctrl+9`; customize
+the Space bindings in Settings when needed.
 
 Combine keys with `!` for not, `&&` for and, `||` for or, and parentheses:
 

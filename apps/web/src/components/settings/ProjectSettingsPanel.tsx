@@ -1,3 +1,4 @@
+import { SpaceAssignment } from "../Spaces";
 import { useComposerMenuState } from "../chat/useComposerMenuState";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
@@ -466,6 +467,16 @@ function ProjectDetail({
           </AlertDescription>
         </Alert>
         <SettingsSection id="project-overview" title="Project" hideTitle>
+          {group.memberProjects.map((member) => (
+            <SettingsRow
+              key={`${member.environmentId}:${member.id}`}
+              title={group.memberProjects.length > 1 ? `Space for ${member.title}` : "Space"}
+              description="Threads inherit this Space unless assigned separately."
+              control={
+                <SpaceAssignment projectRef={scopeProjectRef(member.environmentId, member.id)} />
+              }
+            />
+          ))}
           {!canEditGroup ? (
             <p className="px-3 py-2 text-sm text-muted-foreground sm:px-4">
               {group.memberProjects.length > 1

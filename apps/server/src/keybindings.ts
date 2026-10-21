@@ -7,6 +7,7 @@ import {
   MAX_KEYBINDINGS_COUNT,
   ResolvedKeybindingRule,
   ResolvedKeybindingsConfig,
+  THREAD_JUMP_KEYBINDING_COMMANDS,
   type ServerRemoveKeybindingInput,
   type ServerUpsertKeybindingInput,
   type ServerConfigIssue,
@@ -98,6 +99,7 @@ function isSameKeybindingRule(left: KeybindingRule, right: KeybindingRule): bool
 const LATE_DEFAULT_KEYBINDINGS: ReadonlyArray<{
   readonly id: string;
   readonly alongside: KeybindingRule;
+  readonly replacementAlongside?: KeybindingRule;
   readonly rule: KeybindingRule;
 }> = [
   {
@@ -113,6 +115,28 @@ const LATE_DEFAULT_KEYBINDINGS: ReadonlyArray<{
       when: "composerFocus && draftThreadRoute",
     },
   },
+  ...THREAD_JUMP_KEYBINDING_COMMANDS.flatMap((command, index) => {
+    const replacementAlongside = {
+      key: `mod+${index + 1}`,
+      command,
+      when: "!modelPickerOpen && isDesktop && isMac",
+    };
+    const rule = { key: `mod+alt+${index + 1}`, command, when: "isDesktop && !isMac" };
+    return [
+      {
+        id: `${command}:platform-shortcuts`,
+        alongside: { key: `mod+${index + 1}`, command, when: "isDesktop" },
+        replacementAlongside,
+        rule,
+      },
+      {
+        id: `${command}:platform-shortcuts-model-picker`,
+        alongside: { key: `mod+${index + 1}`, command, when: "!modelPickerOpen && isDesktop" },
+        replacementAlongside,
+        rule,
+      },
+    ];
+  }),
 ];
 
 function keybindingShortcutContext(rule: KeybindingRule): string | null {
@@ -561,7 +585,16 @@ const make = Effect.gen(function* () {
         });
       }
       if (defaultsToAppend.length > 0) {
-        yield* writeConfigAtomically([...defaultsToAppend, ...customConfig]);
+        const updatedConfig = customConfig.map((entry) => {
+          const replacement = pendingLateDefaults.find(
+            (late) =>
+              late.replacementAlongside &&
+              defaultsToAppend.includes(late.rule) &&
+              isSameKeybindingRule(entry, late.alongside),
+          );
+          return replacement?.replacementAlongside ?? entry;
+        });
+        yield* writeConfigAtomically([...defaultsToAppend, ...updatedConfig]);
       }
       const settledLateDefaults = pendingLateDefaults.filter(
         (late) => !skippedDefaults.includes(late.rule),

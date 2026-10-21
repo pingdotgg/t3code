@@ -1,3 +1,5 @@
+import { SpacesControl } from "../spaces/SpacesControl";
+import { useSpaceEntities, useSpacePendingTasks, useMobileSpaces } from "../../state/spaces";
 import { ThreadUndoNotice } from "../home/ThreadUndoNotice";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import { resolveScratchProjectScopeKey } from "@t3tools/client-runtime/state/project-grouping";
@@ -95,6 +97,7 @@ interface ThreadNavigationSidebarProps {
   readonly onNewThreadInProject: (project: EnvironmentProject) => void;
   readonly onOpenPendingTask: (pendingTask: PendingNewTask) => void;
   readonly onSearchQueryChange: (query: string) => void;
+  readonly onEmptySpace: () => void;
   readonly onSelectThread: (thread: EnvironmentThreadShell) => void;
   readonly onOpenThreadPullRequests: (
     thread: EnvironmentThreadShell,
@@ -133,8 +136,10 @@ function ThreadNavigationSidebarPane(
 
   const insets = useSafeAreaInsets();
   const { fabClearance } = useAndroidControlSizing();
-  const projects = useProjects();
-  const threads = useNavigationThreadShells();
+  const allProjects = useProjects();
+  const allThreads = useNavigationThreadShells();
+  const { projects, threads } = useSpaceEntities(allProjects, allThreads);
+  const { state: spaces } = useMobileSpaces();
   const { environments: workspaceEnvironments, state: catalogState } = useWorkspaceState();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const searchInputRef = useRef<TextInputInstance>(null);
@@ -155,7 +160,7 @@ function ThreadNavigationSidebarPane(
     renameThread,
     regenerateThreadTitle,
   } = useThreadListActions();
-  const pendingTasks = usePendingNewTasks();
+  const pendingTasks = useSpacePendingTasks(usePendingNewTasks());
   const queuedThreadKeys = useQueuedThreadKeys();
   const { confirmDeletePendingTask } = usePendingTaskListActions();
   const environments = Object.values(savedConnectionsById)
@@ -181,7 +186,18 @@ function ThreadNavigationSidebarPane(
           )
         ? [options.selectedEnvironmentId]
         : [];
-  const threadSearch = useThreadSearch(searchEnvironmentIds, props.searchQuery);
+  const searchScope =
+    spaces.activeSpaceId === null
+      ? undefined
+      : Object.fromEntries(
+          searchEnvironmentIds.map((environmentId) => [
+            environmentId,
+            threads
+              .filter((thread) => thread.environmentId === environmentId)
+              .map((thread) => thread.id),
+          ]),
+        );
+  const threadSearch = useThreadSearch(searchEnvironmentIds, props.searchQuery, searchScope);
   // These maps reach LegendList's extraData, which re-renders every row whenever it changes
   // identity. The compiler leaves them unmemoized because they stay live across later hook calls.
   const threadSearchMatchByKey = useMemo(() => {
@@ -254,7 +270,7 @@ function ThreadNavigationSidebarPane(
   const [settledVisibleCount, setSettledVisibleCount] = useState(
     THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
   );
-  const settledResetKey = `${options.selectedEnvironmentId ?? "all"}:${selectedProjectKey ?? "all"}:${props.searchQuery.trim()}`;
+  const settledResetKey = `${spaces.activeSpaceId ?? "all"}:${options.selectedEnvironmentId ?? "all"}:${selectedProjectKey ?? "all"}:${props.searchQuery.trim()}`;
   const [lastSettledResetKey, setLastSettledResetKey] = useState(settledResetKey);
   if (lastSettledResetKey !== settledResetKey) {
     setLastSettledResetKey(settledResetKey);
@@ -799,6 +815,7 @@ function ThreadNavigationSidebarPane(
               />
             </GestureDetector>
           </SwipeableScrollGateProvider>
+          <SpacesControl onSelectThread={props.onSelectThread} onEmptySpace={props.onEmptySpace} />
           <ThreadUndoNotice visible={props.visible} />
         </View>
       </>
@@ -869,6 +886,7 @@ function ThreadNavigationSidebarPane(
         )}
       </View>
 
+      <SpacesControl onSelectThread={props.onSelectThread} onEmptySpace={props.onEmptySpace} />
       {Platform.OS === "android" ? (
         <ThreadListToolbar
           sidebar

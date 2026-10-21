@@ -30,6 +30,10 @@ public final class T3KeyboardCommandsView: ExpoView {
        input.markedTextRange != nil {
       return false
     }
+    if action == #selector(nextSpace) || action == #selector(previousSpace),
+       window?.t3FirstResponder is UITextInput {
+      return false
+    }
     return super.canPerformAction(action, withSender: sender)
   }
 
@@ -56,8 +60,19 @@ public final class T3KeyboardCommandsView: ExpoView {
         title: "Copy PR Link or Thread ID"
       ),
       enabledCommand("toggleSidebar", input: "\\", modifiers: .command, action: #selector(handleToggleSidebar), title: "Toggle Sidebar"),
+      enabledCommand("spaces.next", input: UIKeyCommand.inputRightArrow, modifiers: [.alternate, .shift], action: #selector(nextSpace), title: "Next Space"),
+      enabledCommand("spaces.previous", input: UIKeyCommand.inputLeftArrow, modifiers: [.alternate, .shift], action: #selector(previousSpace), title: "Previous Space"),
       enabledCommand("cycleHost", input: "h", modifiers: [.command, .shift], action: #selector(cycleHost), title: "Next Machine"),
     ].compactMap { $0 }
+    commands += (1...9).compactMap { index in
+      enabledCommand(
+        "spaces.jump.\(index)",
+        input: String(index),
+        modifiers: .control,
+        action: #selector(jumpToSpace(_:)),
+        title: "Go to Space \(index)"
+      )
+    }
     if isPad {
       commands += (1...9).compactMap { index in
         enabledCommand(
@@ -157,6 +172,12 @@ public final class T3KeyboardCommandsView: ExpoView {
   @objc private func openReview() { emit("review") }
   @objc private func copyThreadReference() { emit("copyThreadReference") }
   @objc private func handleToggleSidebar() { emit("toggleSidebar") }
+  @objc private func jumpToSpace(_ sender: UIKeyCommand) {
+    guard let input = sender.input else { return }
+    emit("spaces.jump.\(input)")
+  }
+  @objc private func nextSpace() { emit("spaces.next") }
+  @objc private func previousSpace() { emit("spaces.previous") }
   @objc private func cycleHost() { emit("cycleHost") }
 
   private func emit(_ command: String) {

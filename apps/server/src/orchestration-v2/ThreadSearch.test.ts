@@ -120,6 +120,40 @@ const message = (
 });
 
 it.layer(layerTest)("ThreadSearch", (it) => {
+  it.effect("filters eligible threads before limiting matches and respects an empty scope", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const project = ProjectId.make("project:scoped-search");
+      const first = ThreadId.make("thread:a-outside");
+      const eligible = ThreadId.make("thread:z-eligible");
+      yield* createProject(project);
+      yield* Effect.forEach(
+        [
+          thread(first, project),
+          message(first, "outside", "user", "spacefilter"),
+          thread(eligible, project),
+          message(eligible, "eligible", "user", "spacefilter"),
+        ],
+        projections.apply,
+        { discard: true },
+      );
+      assert.deepEqual(
+        (yield* search.search({ query: "spacefilter", limit: 1 })).matches.map((m) => m.threadId),
+        [first],
+      );
+      assert.deepEqual(
+        (yield* search.search({
+          query: "spacefilter",
+          limit: 1,
+          threadIds: [eligible],
+        })).matches.map((m) => m.threadId),
+        [eligible],
+      );
+      assert.deepEqual((yield* search.search({ query: "spacefilter", threadIds: [] })).matches, []);
+    }),
+  );
+
   it.effect("returns one finished user or assistant match per active thread", () =>
     Effect.gen(function* () {
       const projections = yield* ProjectionStore.ProjectionStoreV2;

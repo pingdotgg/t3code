@@ -1,3 +1,5 @@
+import { DEFAULT_SPACES_STATE } from "@t3tools/contracts";
+import { updateSpace } from "@t3tools/client-runtime/state/spaces";
 import {
   createContext,
   startTransition,
@@ -29,6 +31,7 @@ import { materialYouPaletteToMobileThemeVariables } from "../../../lib/materialY
 import { getMobileThemeRuntimeVariables } from "../../../lib/mobileThemeVariables";
 import type { MobileThemeVariables } from "../../../lib/mobileTheme";
 import {
+  MOBILE_THEME_IDS,
   createMobileThemePairPatch,
   createMobileThemeSelectionPatch,
   normalizeMobileThemeMode,
@@ -87,7 +90,15 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
   );
   const themeMode = normalizeMobileThemeMode(storedPreferences?.themeMode);
   const themeAppearance = themeMode === "system" ? systemColorScheme : themeMode;
-  const resolvedThemeIds = resolveMobileThemeIds(storedPreferences ?? {});
+  const activeSpace = storedPreferences?.spaces?.spaces.find(
+    (space) => space.id === storedPreferences.spaces?.activeSpaceId,
+  );
+  const spaceTheme = activeSpace?.theme;
+  const resolvedThemeIds = resolveMobileThemeIds(
+    spaceTheme && (MOBILE_THEME_IDS as readonly string[]).includes(spaceTheme)
+      ? { lightThemeId: spaceTheme, darkThemeId: spaceTheme }
+      : (storedPreferences ?? {}),
+  );
   const themeIds = useMemo<MobileThemeIds>(
     () => ({ light: resolvedThemeIds.light, dark: resolvedThemeIds.dark }),
     [resolvedThemeIds.dark, resolvedThemeIds.light],
@@ -184,8 +195,26 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
     syncThemeRuntime(runtimeState);
   }, [runtimeState, syncThemeRuntime, themeIds]);
 
+  const setSpaceTheme = useCallback(
+    (value: MobileThemeId) => {
+      if (!activeSpace) return;
+      savePreferences({
+        transform: (current) => ({
+          spaces: updateSpace(current.spaces ?? DEFAULT_SPACES_STATE, activeSpace.id, {
+            theme: value,
+          }),
+        }),
+      });
+    },
+    [activeSpace, savePreferences],
+  );
+
   const setThemeIdForAppearance = useCallback(
     (appearance: MobileThemeAppearance, value: MobileThemeId) => {
+      if (activeSpace) {
+        setSpaceTheme(value);
+        return;
+      }
       const patch = createMobileThemeSelectionPatch(
         selectedThemeIdsRef.current,
         themeAppearance,
@@ -195,16 +224,20 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
       selectedThemeIdsRef.current = resolveMobileThemeIds(patch);
       updateThemePreferences(patch);
     },
-    [themeAppearance, updateThemePreferences],
+    [activeSpace, setSpaceTheme, themeAppearance, updateThemePreferences],
   );
 
   const setThemeIdForBothAppearances = useCallback(
     (value: MobileThemeId) => {
+      if (activeSpace) {
+        setSpaceTheme(value);
+        return;
+      }
       const patch = createMobileThemePairPatch(value);
       selectedThemeIdsRef.current = resolveMobileThemeIds(patch);
       updateThemePreferences(patch);
     },
-    [updateThemePreferences],
+    [activeSpace, setSpaceTheme, updateThemePreferences],
   );
 
   const setThemeMode = useCallback(

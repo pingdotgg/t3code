@@ -1,3 +1,5 @@
+import { useClientSettingsHydrated } from "../hooks/useSettings";
+import { useSpaceEntities } from "../hooks/useSpaces";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
@@ -12,12 +14,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/
 import { SidebarInset } from "../components/ui/sidebar";
 import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
-import {
-  readProject,
-  useAllEnvironmentShellsBootstrapped,
-  useProjects,
-  useThreadShells,
-} from "../state/entities";
+import { readProject, useAllEnvironmentShellsBootstrapped } from "../state/entities";
 import { useEnvironments } from "../state/environments";
 
 function ChatIndexRouteView() {
@@ -33,9 +30,10 @@ function ChatIndexRouteView() {
 }
 
 function IndexDraftLanding() {
-  const projects = useProjects();
-  const threads = useThreadShells();
-  const bootstrapped = useAllEnvironmentShellsBootstrapped();
+  const { projects, threads } = useSpaceEntities();
+  const shellsBootstrapped = useAllEnvironmentShellsBootstrapped();
+  const settingsHydrated = useClientSettingsHydrated();
+  const bootstrapped = shellsBootstrapped && settingsHydrated;
   const handleNewThread = useNewThreadHandler();
   const router = useRouter();
   // Read at effect time: this page stays mounted while a navigation away from
@@ -44,8 +42,11 @@ function IndexDraftLanding() {
   const startedAttemptRef = useRef<number | null>(null);
   const [startState, setStartState] = useState({ failed: false, retryRequest: 0 });
 
-  const mostRecentProject =
-    sortScopedProjectsForSidebar(projects, threads, "updated_at")[0] ?? null;
+  // Space membership lives in client settings; until they hydrate the active
+  // Space's filter is unknown, so the most recent project could be outside it.
+  const mostRecentProject = settingsHydrated
+    ? (sortScopedProjectsForSidebar(projects, threads, "updated_at")[0] ?? null)
+    : null;
   const attempt = startState.retryRequest;
 
   useEffect(() => {

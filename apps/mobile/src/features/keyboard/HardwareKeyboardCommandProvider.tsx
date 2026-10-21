@@ -1,3 +1,11 @@
+import { SPACE_JUMP_KEYBINDING_COMMANDS } from "@t3tools/contracts";
+import {
+  cycleSpace,
+  resolveThreadSpace,
+  selectSpace,
+  spaceIdForIndex,
+} from "@t3tools/client-runtime/state/spaces";
+import { useMobileSpaces } from "../../state/spaces";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/shared/threadReference";
 import {
@@ -15,7 +23,7 @@ import {
 
 import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { T3KeyboardCommands } from "../../native/T3KeyboardCommands";
-import { useThreadShell } from "../../state/entities";
+import { useThreadShell, useThreadShells } from "../../state/entities";
 import type { GitActionProgress } from "../../state/use-vcs-action-state";
 import { GitActionProgressOverlay } from "../threads/GitActionProgressOverlay";
 import { CommandPalette } from "./CommandPalette";
@@ -51,6 +59,8 @@ export function HardwareKeyboardCommandProvider({
   const closePalette = useCallback(() => setPaletteOpen(false), []);
   const activeThreadRef = useMemo(() => parseActiveThreadPath(pathname), [pathname]);
   const activeThread = useThreadShell(activeThreadRef);
+  const threads = useThreadShells();
+  const { state: spaces, update: updateSpaces } = useMobileSpaces();
   const copyTarget = useMemo(
     () =>
       activeThreadRef === null
@@ -100,6 +110,13 @@ export function HardwareKeyboardCommandProvider({
     const commands = new Set<HardwareKeyboardCommand>(getRegisteredHardwareKeyboardCommands());
     commands.add("newTask");
     commands.add("commandPalette");
+    if (spaces.spaces.length > 0 && !pathname.includes("/terminal")) {
+      commands.add("spaces.next");
+      commands.add("spaces.previous");
+      SPACE_JUMP_KEYBINDING_COMMANDS.slice(0, spaces.spaces.length).forEach((command) =>
+        commands.add(command),
+      );
+    }
     if (pathname !== "/" && !pathname.startsWith("/threads/")) {
       for (const command of commands) {
         if (command.startsWith("thread.jump.")) commands.delete(command);
@@ -113,10 +130,41 @@ export function HardwareKeyboardCommandProvider({
       if (pathname.split("/")[4] !== "terminal") commands.add("copyThreadReference");
     }
     return [...commands];
-  }, [activeThreadRef, pathname, registrationVersion, navigation]);
+  }, [activeThreadRef, pathname, registrationVersion, navigation, spaces.spaces.length]);
 
   const onCommand = useCallback(
     (command: HardwareKeyboardCommand) => {
+      if (
+        command === "spaces.next" ||
+        command === "spaces.previous" ||
+        command.startsWith("spaces.jump.")
+      ) {
+        const id = command.startsWith("spaces.jump.")
+          ? spaceIdForIndex(spaces, Number(command.slice("spaces.jump.".length)))
+          : cycleSpace(spaces, command === "spaces.next" ? 1 : -1).activeSpaceId;
+        if (id === undefined) return;
+        const next = selectSpace(spaces, id);
+        updateSpaces((current) => selectSpace(current, next.activeSpaceId));
+        const recent = next.lastThreadBySpace[next.activeSpaceId ?? "all"];
+        const thread =
+          recent &&
+          threads.find(
+            (candidate) =>
+              candidate.environmentId === recent.environmentId && candidate.id === recent.threadId,
+          );
+        if (
+          thread &&
+          thread.archivedAt === null &&
+          thread.deletedAt === null &&
+          (next.activeSpaceId === null || resolveThreadSpace(next, thread) === next.activeSpaceId)
+        ) {
+          navigation.navigate("Thread", {
+            environmentId: thread.environmentId,
+            threadId: thread.id,
+          });
+        } else navigation.navigate("Home");
+        return;
+      }
       if (command === "commandPalette") {
         setPaletteOpen(true);
         return;
@@ -172,7 +220,7 @@ export function HardwareKeyboardCommandProvider({
         navigation.navigate("ThreadReview", thread);
       }
     },
-    [copyTarget, navigation, pathname, showCopyFeedback],
+    [spaces, updateSpaces, threads, copyTarget, navigation, pathname, showCopyFeedback],
   );
 
   const palette = useMemo(

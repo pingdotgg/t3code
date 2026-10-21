@@ -1,3 +1,5 @@
+import { resolveThreadSpace } from "@t3tools/client-runtime/state/spaces";
+import { assignCreatedThreadSpace, captureActiveSpace, useSpaceEntities } from "./useSpaces";
 import {
   scopedProjectKey,
   scopeProjectRef,
@@ -26,7 +28,6 @@ import {
   readProjects,
   readThreadShell,
   readThreadShells,
-  useProjects,
   useQuietThreadShell,
 } from "../state/entities";
 import {
@@ -39,7 +40,7 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentServerConfigsAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
-import { useClientSettings } from "./useSettings";
+import { getClientSettings, useClientSettings } from "./useSettings";
 import { useThreadRouteTarget } from "./useThreadRouteTarget";
 
 interface NewThreadWorkspaceOptions {
@@ -74,8 +75,17 @@ export function useNewThreadHandler() {
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
       replace?: boolean;
+      spaceId?: string | null;
     },
   ): Promise<{ draftId: DraftId; threadId: ThreadId } | null> => {
+    const spaceId = options?.spaceId !== undefined ? options.spaceId : captureActiveSpace();
+    const matchesSpace = (draft: DraftThreadState) =>
+      spaceId === null ||
+      resolveThreadSpace(getClientSettings().spaces, {
+        environmentId: draft.environmentId,
+        id: draft.threadId,
+        projectId: draft.projectId,
+      }) === spaceId;
     const projects = readProjects();
     // Read at call time: every provider status push replaces the config map, and
     // subscribing would hand every sidebar row a new handler.
@@ -183,6 +193,7 @@ export function useNewThreadHandler() {
     }
     const emptyStoredDraftThread =
       reusableStoredDraftThread &&
+      matchesSpace(reusableStoredDraftThread) &&
       !composerDraftHasUserContent(getComposerDraft(reusableStoredDraftThread.draftId))
         ? reusableStoredDraftThread
         : null;
@@ -298,6 +309,7 @@ export function useNewThreadHandler() {
       currentRouteTarget?.kind === "draft" &&
       latestActiveDraftThread.logicalProjectKey === logicalProjectKey &&
       latestActiveDraftThread.promotedTo == null &&
+      matchesSpace(latestActiveDraftThread) &&
       !composerDraftHasUserContent(getComposerDraft(currentRouteTarget.draftId))
     ) {
       if (
@@ -329,6 +341,12 @@ export function useNewThreadHandler() {
       if (abandonedSinceRequest()) {
         return null;
       }
+      await assignCreatedThreadSpace(
+        scopeThreadRef(projectRef.environmentId, threadId),
+        spaceId,
+        projectRef.projectId,
+      );
+      if (abandonedSinceRequest()) return null;
       // The await yields, so a concurrent invocation may have registered a
       // draft for this logical project in the meantime. Registering ours
       // too would evict that draft while its navigation is in flight —
@@ -337,6 +355,7 @@ export function useNewThreadHandler() {
       if (
         racedDraft &&
         racedDraft.draftId !== storedDraftThread?.draftId &&
+        matchesSpace(racedDraft) &&
         readThreadShell(scopeThreadRef(racedDraft.environmentId, racedDraft.threadId)) === null
       ) {
         setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, racedDraft.draftId, {
@@ -397,7 +416,7 @@ export function useHandleNewThread() {
         : useComposerDraftStore.getState().getDraftSession(routeTarget.draftId)
       : null,
   );
-  const projects = useProjects();
+  const { projects } = useSpaceEntities();
   const handleNewThread = useNewThreadHandler();
   const [defaultProject] = orderItemsByPreferredIds({
     items: projects,

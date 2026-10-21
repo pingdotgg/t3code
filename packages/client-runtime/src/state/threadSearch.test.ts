@@ -22,11 +22,38 @@ it("creates keys without array methods unavailable in Hermes", () => {
   Reflect.deleteProperty(Array.prototype, "toSorted");
 
   try {
-    expect(makeThreadSearchKey([envB, envA], "needle")).toBe('[["env-a","env-b"],"needle"]');
+    expect(makeThreadSearchKey([envB, envA], "needle")).toBe('[["env-a","env-b"],"needle",null]');
   } finally {
     if (descriptor !== undefined) {
       Reflect.defineProperty(Array.prototype, "toSorted", descriptor);
     }
+  }
+});
+
+it("separates scoped searches and forwards eligibility to each environment", () => {
+  const a = ThreadId.make("thread-a");
+  const b = ThreadId.make("thread-b");
+  const scope = { [envA]: [b, a], [envB]: [] };
+  const key = makeThreadSearchKey([envB, envA], "needle", scope);
+  expect(key).toBe(makeThreadSearchKey([envA, envB], "needle", { [envB]: [], [envA]: [a, b] }));
+  expect(key).not.toBe(makeThreadSearchKey([envA, envB], "needle"));
+  const requests: unknown[] = [];
+  const family = createThreadSearchResultsAtomFamily({
+    getSearchAtom: (environmentId, query, threadIds) => {
+      requests.push({ environmentId, query, threadIds });
+      return Atom.make(AsyncResult.success({ matches: [] }));
+    },
+    labelPrefix: "test:scoped-search",
+  });
+  const registry = AtomRegistry.make();
+  try {
+    registry.get(family(key));
+    expect(requests).toEqual([
+      { environmentId: envA, query: "needle", threadIds: [a, b] },
+      { environmentId: envB, query: "needle", threadIds: [] },
+    ]);
+  } finally {
+    registry.dispose();
   }
 });
 

@@ -1,3 +1,4 @@
+import { SpacesControl } from "../spaces/SpacesControl";
 import { Toolbar } from "../../components/ui/Toolbar";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useAuth, useUser } from "@clerk/expo";
@@ -175,6 +176,7 @@ function SettingsIndexSections() {
             target="SettingsProjectOverview"
           />
         ) : null}
+        <SpacesControl settings />
         <SettingsRow icon="folder" label="Organization" target="SettingsOrganization" />
         <SettingsRow icon="text.bubble" label="Thread behavior" target="SettingsThreads" />
         <SettingsRow icon="arrow.turn.left.up" label="Follow-ups" target="SettingsFollowUp" />

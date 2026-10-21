@@ -7,6 +7,19 @@ export const MAX_WHEN_EXPRESSION_DEPTH = 64;
 export const MAX_SCRIPT_ID_LENGTH = 24;
 export const MAX_KEYBINDINGS_COUNT = 256;
 
+export const SPACE_JUMP_KEYBINDING_COMMANDS = [
+  "spaces.jump.1",
+  "spaces.jump.2",
+  "spaces.jump.3",
+  "spaces.jump.4",
+  "spaces.jump.5",
+  "spaces.jump.6",
+  "spaces.jump.7",
+  "spaces.jump.8",
+  "spaces.jump.9",
+] as const;
+export type SpaceJumpKeybindingCommand = (typeof SPACE_JUMP_KEYBINDING_COMMANDS)[number];
+
 export const THREAD_JUMP_KEYBINDING_COMMANDS = [
   "thread.jump.1",
   "thread.jump.2",
@@ -58,6 +71,9 @@ export type ModelPickerKeybindingCommand = (typeof MODEL_PICKER_KEYBINDING_COMMA
 
 export const STATIC_KEYBINDING_COMMANDS = [
   "sidebar.toggle",
+  "spaces.next",
+  "spaces.previous",
+  ...SPACE_JUMP_KEYBINDING_COMMANDS,
   "navigation.back",
   "navigation.forward",
   "terminal.toggle",

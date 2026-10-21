@@ -19,7 +19,12 @@ import {
   TrimmedString,
 } from "./baseSchemas.ts";
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
-import { EnvironmentMachineKind, ThreadEnvMode, WorktreeSubmodules } from "./environment.ts";
+import {
+  EnvironmentMachineKind,
+  ScopedThreadRef,
+  ThreadEnvMode,
+  WorktreeSubmodules,
+} from "./environment.ts";
 import { KeybindingShortcut } from "./keybindings.ts";
 import {
   CustomModelSetting,
@@ -293,6 +298,31 @@ export const DiffColorScheme = Schema.Literals(["red-green", "blue-orange"]);
 export const ChatWidth = Schema.Literals(["comfortable", "wide", "full"]);
 export type ChatWidth = typeof ChatWidth.Type;
 
+export const Space = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  theme: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type Space = typeof Space.Type;
+
+export const SpacesState = Schema.Struct({
+  spaces: Schema.Array(Space),
+  activeSpaceId: Schema.NullOr(TrimmedNonEmptyString),
+  projectSpaces: Schema.Record(Schema.String, TrimmedNonEmptyString),
+  // Missing keys inherit the project; null explicitly leaves a thread without a Space.
+  threadSpaces: Schema.Record(Schema.String, Schema.NullOr(TrimmedNonEmptyString)),
+  lastThreadBySpace: Schema.Record(Schema.String, ScopedThreadRef),
+});
+export type SpacesState = typeof SpacesState.Type;
+
+export const DEFAULT_SPACES_STATE: SpacesState = {
+  spaces: [],
+  activeSpaceId: null,
+  projectSpaces: {},
+  threadSpaces: {},
+  lastThreadBySpace: {},
+};
+
 export const ModelFavorite = Schema.Struct({
   provider: ProviderInstanceId,
   model: TrimmedNonEmptyString,
@@ -311,6 +341,7 @@ export type ModelPreferences = {
 };
 
 export const ClientSettingsSchema = Schema.Struct({
+  spaces: SpacesState.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_SPACES_STATE))),
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
   ),
@@ -1585,6 +1616,7 @@ export function requiredScopesForProjectMutation(
 }
 
 export const ClientSettingsPatch = Schema.Struct({
+  spaces: Schema.optionalKey(SpacesState),
   notificationMode: Schema.optionalKey(NotificationMode),
   inAppNotificationsEnabled: Schema.optionalKey(Schema.Boolean),
   diffColorScheme: Schema.optionalKey(DiffColorScheme),

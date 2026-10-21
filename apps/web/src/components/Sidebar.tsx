@@ -1,3 +1,11 @@
+import {
+  useSpaceEntities,
+  threadSpaceMenu,
+  isSpaceMenuAction,
+  runThreadSpaceAction,
+  reportSpaceError,
+} from "../hooks/useSpaces";
+import { isThreadInSpace } from "@t3tools/client-runtime/state/spaces";
 import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "./ThreadHoverCard";
@@ -162,9 +170,7 @@ import {
 import {
   readThreadShell,
   useAllEnvironmentProjectSnapshotsReady,
-  useProjects,
   useServerConfigs,
-  useThreadShells,
 } from "../state/entities";
 import { environmentPresentations } from "../state/presentation";
 import { primaryServerKeybindingsAtom } from "../state/server";
@@ -454,7 +460,7 @@ function useSidebarThreads(input: {
 }) {
   const { projectScopeKey, scopedProjectKeys, serverConfigs, optimisticDrop, routeThreadRef } =
     input;
-  const threads = useThreadShells();
+  const { threads } = useSpaceEntities();
   const routeRowThreadKey =
     routeThreadRef === null
       ? null
@@ -766,11 +772,11 @@ function isOptimisticDropReleased(input: {
 // Sidebar() is large enough that the compiler cannot prove its local maps stay
 // unmutated; built inside a hook they reach it frozen and cached.
 function useSidebarLookups() {
-  const projects = useProjects();
+  const { projects, threads } = useSpaceEntities();
   const environments = useEnvironmentIdentities();
   const serverConfigs = useServerConfigs();
   const providerEntriesByEnvironment = useAtomValue(sidebarProviderEntriesAtom);
-  const projectGroups = useSidebarProjectGroups();
+  const projectGroups = useSidebarProjectGroups({ projects, threads });
   const environmentLabelById = new Map(
     environments.map((environment) => [environment.environmentId, environment.label] as const),
   );
@@ -1435,6 +1441,7 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
 }) {
   const draftThreadsByThreadKey = useComposerDraftStore((store) => store.draftThreadsByThreadKey);
   const draftsByThreadKey = useComposerDraftStore((store) => store.draftsByThreadKey);
+  const spaces = useClientSettings((settings) => settings.spaces);
   const [frozenActive, setFrozenActive] = useState<{
     routeDraftId: string | null;
     row: SidebarDraftRowData | null;
@@ -1455,7 +1462,14 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
   const drafts = (() => {
     const rows: SidebarDraftRowData[] = [];
     for (const [draftKey, session] of Object.entries(draftThreadsByThreadKey)) {
-      if (session.promotedTo != null) {
+      if (
+        session.promotedTo != null ||
+        !isThreadInSpace(spaces, {
+          environmentId: session.environmentId,
+          id: session.threadId,
+          projectId: session.projectId,
+        })
+      ) {
         continue;
       }
       if (
@@ -2721,6 +2735,7 @@ export default function Sidebar() {
     projectGroupByScopeKey,
     projectScopeItems,
   } = useSidebarLookups();
+  const spaces = useClientSettings((settings) => settings.spaces);
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -2836,7 +2851,6 @@ export default function Sidebar() {
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
   const [searchHighlight, setSearchHighlight] = useState({ orderKey: "", index: 0 });
   const searchEnvironmentIds = useConnectedEnvironmentIds();
-  const threadSearch = useThreadSearch(searchEnvironmentIds, threadSearchQuery);
   const handleNewThreadRef = useRef(newThreadContext.handleNewThread);
   const queuePendingFileDrop = useSidebarPendingFileDropStore((s) => s.queuePendingFileDrop);
   const clearPendingFileDrop = useSidebarPendingFileDropStore((s) => s.clearPendingFileDrop);
@@ -2919,7 +2933,8 @@ export default function Sidebar() {
       groups: projectGroups,
       key: persistedProjectScopeKey,
       settings: projectGroupingSettings,
-      canClearMissingScope: allProjectSnapshotsReady && allProjectConfigsReady,
+      canClearMissingScope:
+        (allProjectSnapshotsReady && allProjectConfigsReady) || spaces.activeSpaceId !== null,
     });
     if (nextKey !== persistedProjectScopeKey) {
       clearSelection();
@@ -2933,12 +2948,24 @@ export default function Sidebar() {
     projectGroups,
     projectGroupingSettings,
     setPersistedProjectScopeKey,
+    spaces.activeSpaceId,
   ]);
+  useEffect(() => {
+    clearSelection();
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A Space switch hides rows selected in the previous Space, and bulk actions must never touch invisible rows.
+  }, [clearSelection, spaces.activeSpaceId]);
   const routeDraftIdForRows = routeTarget?.kind === "draft" ? routeTarget.draftId : null;
   const visibleDraftSessionCount = useComposerDraftStore((store) => {
     let count = 0;
     for (const [draftKey, session] of Object.entries(store.draftThreadsByThreadKey)) {
-      if (session.promotedTo != null) {
+      if (
+        session.promotedTo != null ||
+        !isThreadInSpace(spaces, {
+          environmentId: session.environmentId,
+          id: session.threadId,
+          projectId: session.projectId,
+        })
+      ) {
         continue;
       }
       if (!composerDraftHasUserContent(store.draftsByThreadKey[draftKey])) {
@@ -3028,6 +3055,19 @@ export default function Sidebar() {
     routeThreadRef,
   });
 
+  const searchThreadIds =
+    spaces.activeSpaceId === null
+      ? undefined
+      : Object.fromEntries(
+          searchEnvironmentIds.map((id) => [
+            id,
+            searchableThreads
+              .filter((thread) => thread.environmentId === id)
+              .map((thread) => thread.id),
+          ]),
+        );
+  // useThreadSearch owns the debounce and the two-character floor.
+  const threadSearch = useThreadSearch(searchEnvironmentIds, threadSearchQuery, searchThreadIds);
   const isSearchingThreads = threadSearchQuery.trim().length > 0;
   const threadSearchMatchByKey = new Map(
     threadSearch.matches.map((match) => [threadSearchMatchKey(match), match] as const),
@@ -4160,15 +4200,25 @@ export default function Sidebar() {
           projectByKey.get(`${session.environmentId}:${session.projectId}`)?.workspaceRoot;
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
-            buildDraftActionMenuItems({
-              hasPath: Boolean(workspacePath),
-              hasBranch: Boolean(session.branch),
-              hasProject: projectGroup != null,
-            }),
+            [
+              threadSpaceMenu(scopeThreadRef(session.environmentId, session.threadId)),
+              ...buildDraftActionMenuItems({
+                hasPath: Boolean(workspacePath),
+                hasBranch: Boolean(session.branch),
+                hasProject: projectGroup != null,
+              }),
+            ],
             position,
           ),
         );
         if (clicked._tag === "Failure") return;
+        if (clicked.value && isSpaceMenuAction(clicked.value)) {
+          await runThreadSpaceAction(
+            scopeThreadRef(session.environmentId, session.threadId),
+            clicked.value,
+          ).catch(reportSpaceError);
+          return;
+        }
         switch (clicked.value) {
           case "project-settings":
             if (projectGroup)
@@ -4240,38 +4290,45 @@ export default function Sidebar() {
           ) ?? null;
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
-            buildThreadActionMenuItems({
-              canOperate: readEnvironmentScope(
-                threadRef.environmentId,
-                AuthOrchestrationOperateScope,
-              ),
-              branch: thread.branch ?? null,
-              projectFilter: threadProjectGroup
-                ? {
-                    label: threadProjectGroup.displayName,
-                    isActive: projectScopeKey === threadProjectGroup.projectKey,
-                  }
-                : null,
-              isPinned,
-              isSettled,
-              autoSettleEnabled: thread.autoSettleDisabledAt == null,
-              isSnoozed,
-              canSnoozeNow: canSnooze(thread, { now: new Date().toISOString() }),
-              isRegeneratingTitle,
-              isRunning: !threadRuntimeCanArchive(thread.runtime),
-              supports: {
-                settlement: supportsSettlement,
-                autoSettleOptOut: supportsAutoSettleOptOut,
-                snooze: supportsSnooze,
-                pinning: supportsPinning,
-                titleRegeneration: supportsTitleRegeneration,
-              },
-              snoozePresets,
-            }),
+            [
+              threadSpaceMenu(threadRef),
+              ...buildThreadActionMenuItems({
+                canOperate: readEnvironmentScope(
+                  threadRef.environmentId,
+                  AuthOrchestrationOperateScope,
+                ),
+                branch: thread.branch ?? null,
+                projectFilter: threadProjectGroup
+                  ? {
+                      label: threadProjectGroup.displayName,
+                      isActive: projectScopeKey === threadProjectGroup.projectKey,
+                    }
+                  : null,
+                isPinned,
+                isSettled,
+                autoSettleEnabled: thread.autoSettleDisabledAt == null,
+                isSnoozed,
+                canSnoozeNow: canSnooze(thread, { now: new Date().toISOString() }),
+                isRegeneratingTitle,
+                isRunning: !threadRuntimeCanArchive(thread.runtime),
+                supports: {
+                  settlement: supportsSettlement,
+                  autoSettleOptOut: supportsAutoSettleOptOut,
+                  snooze: supportsSnooze,
+                  pinning: supportsPinning,
+                  titleRegeneration: supportsTitleRegeneration,
+                },
+                snoozePresets,
+              }),
+            ],
             position,
           ),
         );
         if (clicked._tag === "Failure" || clicked.value === null) return;
+        if (isSpaceMenuAction(clicked.value)) {
+          await runThreadSpaceAction(threadRef, clicked.value).catch(reportSpaceError);
+          return;
+        }
         if (threadActionRequiresOperate(clicked.value) && !checkThreadOperations([thread])) return;
         if (clicked.value?.startsWith("snooze:")) {
           const preset =

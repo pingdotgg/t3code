@@ -1,3 +1,5 @@
+import { assignThreadSpace, resolveProjectSpace } from "@t3tools/client-runtime/state/spaces";
+import { useMobileSpaces } from "../../state/spaces";
 import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
 import { SheetHeader } from "../../components/ui/SheetHeader";
 import { Button } from "../../components/ui/Button";
@@ -205,6 +207,7 @@ export function NewTaskDraftScreen(props: {
 }) {
   const projects = useProjects();
   const flow = useNewTaskFlow();
+  const { state: spaces, update: updateSpaces } = useMobileSpaces();
   const navigation = useNavigation();
   const {
     consumeShare,
@@ -1311,6 +1314,8 @@ export function NewTaskDraftScreen(props: {
     }
     // Persist before clearing the draft or leaving its editor. This only waits
     // for the local outbox write; server and worktree setup run on the thread.
+    const creationSpaceId =
+      draft.project?.spaceId === undefined ? spaces.activeSpaceId : draft.project.spaceId;
     flow.setSubmitting(true);
     const queued = await settlePromise(() => enqueueThreadOutboxMessage(message));
     flow.setSubmitting(false);
@@ -1321,6 +1326,22 @@ export function NewTaskDraftScreen(props: {
         error instanceof Error ? error.message : "The task could not be saved to the outbox.",
       );
       return;
+    }
+    const creation = message.creation;
+    if (!editingPendingTask && creation) {
+      updateSpaces((current) =>
+        creationSpaceId === null ||
+        resolveProjectSpace(current, {
+          environmentId: message.environmentId,
+          projectId: creation.projectId,
+        }) === creationSpaceId
+          ? current
+          : assignThreadSpace(
+              current,
+              { environmentId: message.environmentId, threadId: message.threadId },
+              creationSpaceId,
+            ),
+      );
     }
     const draftSnapshot = getComposerDraftSnapshot(draftKey);
     if (editingPendingTask) {

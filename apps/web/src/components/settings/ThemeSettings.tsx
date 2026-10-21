@@ -12,6 +12,9 @@ import {
 import { useState, type ReactElement } from "react";
 import { useEnvironmentThemeDefinitions } from "../../hooks/useEnvironmentTheme";
 import { readThemeHalvesRaw } from "../../hooks/useTheme";
+import { useClientSettings } from "../../hooks/useSettings";
+import { reportSpaceError, updateSpaces } from "../../hooks/useSpaces";
+import { updateSpace } from "@t3tools/client-runtime/state/spaces";
 import { cn } from "../../lib/utils";
 import {
   getThemeDefinition,
@@ -644,9 +647,31 @@ export function ThemeLibrary({
     if (!setAppearanceMode(mode)) notifyThemeSaveFailure();
   };
 
+  // While the active Space has its own theme, the cards edit that Space's theme rather than
+  // the app theme it is covering, so a click changes what is on screen. Space themes have no
+  // light/dark halves: the standard card's halves pick the Light or Dark theme instead.
+  const activeSpace = useClientSettings((settings) =>
+    settings.spaces.spaces.find((space) => space.id === settings.spaces.activeSpaceId),
+  );
+  const themedSpace = activeSpace?.theme ? activeSpace : null;
+  const setSpaceTheme = (nextTheme: string | null) => {
+    if (!themedSpace) return;
+    void updateSpaces((state) => updateSpace(state, themedSpace.id, { theme: nextTheme })).catch(
+      reportSpaceError,
+    );
+  };
+  const pickWhole = (themeId: string) => {
+    if (themedSpace) setSpaceTheme(themeId);
+    else persistTheme(themeId);
+  };
+  const pickHalf = (mode: ThemeAppearance, cardId: string | null) => {
+    if (themedSpace) setSpaceTheme(cardId ?? mode);
+    else assignHalf(mode, cardId);
+  };
+
   const handlePairPick = (cardId: string | null) => (mode: ThemeMode) => {
     if (mode === "system") return;
-    assignHalf(mode, cardId);
+    pickHalf(mode, cardId);
   };
 
   const pickedModesFor = (cardId: string | null): ThemeMode[] => {
@@ -740,7 +765,9 @@ export function ThemeLibrary({
                 initialAppearance,
               })
             }
-            onUse={() => persistTheme(appearanceMode === "system" ? "system" : appearanceMode)}
+            onUse={() =>
+              pickWhole(themedSpace || appearanceMode === "system" ? "system" : appearanceMode)
+            }
             onUseMode={handlePairPick(null)}
             theme={standardTheme}
           />
@@ -760,7 +787,7 @@ export function ThemeLibrary({
                   initialAppearance,
                 })
               }
-              onUse={() => persistTheme(maintainerTheme.id)}
+              onUse={() => pickWhole(maintainerTheme.id)}
               onUseMode={handlePairPick(maintainerTheme.id)}
               theme={card}
             />
@@ -787,8 +814,8 @@ export function ThemeLibrary({
               }
               onUse={() => {
                 const half = singleAppearanceOf(environmentTheme);
-                if (half === null) persistTheme(environmentTheme.id);
-                else assignHalf(half, environmentTheme.id);
+                if (half === null) pickWhole(environmentTheme.id);
+                else pickHalf(half, environmentTheme.id);
               }}
               onUseMode={handlePairPick(environmentTheme.id)}
               theme={getThemeCardDefinition(environmentTheme)}
@@ -820,8 +847,8 @@ export function ThemeLibrary({
             onRemove={(customTheme) => handleRemoveTheme(customTheme, themes)}
             onUse={(customTheme) => {
               const modes = getThemeModes(customTheme);
-              if (modes.length === 1) assignHalf(modes[0]!, customTheme.id);
-              else persistTheme(customTheme.id);
+              if (modes.length === 1) pickHalf(modes[0]!, customTheme.id);
+              else pickWhole(customTheme.id);
             }}
             onUseMode={(customTheme, mode) => handlePairPick(customTheme.id)(mode)}
             themes={themes}
@@ -839,9 +866,14 @@ export function ThemeLibrary({
       {renderModeTiles()}
       <div className="flex min-h-8 flex-wrap items-center justify-between gap-3 px-3 pt-2 sm:px-4">
         <h3 className="text-sm font-normal text-foreground/70">
-          {searchableSetting("theme").title}
+          {themedSpace ? `Theme for ${themedSpace.name}` : searchableSetting("theme").title}
         </h3>
         <div className="flex flex-wrap items-center justify-end gap-2">
+          {themedSpace ? (
+            <Button size="xs" variant="outline" onClick={() => setSpaceTheme(null)}>
+              Use app theme
+            </Button>
+          ) : null}
           <Button
             size="xs"
             variant="outline"

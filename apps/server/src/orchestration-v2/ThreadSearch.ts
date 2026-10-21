@@ -26,7 +26,11 @@ export class ThreadSearchError extends Schema.TaggedError<ThreadSearchError>()(
   }
 }
 
-const SearchRequest = Schema.Struct({ pattern: Schema.String, limit: Schema.Int });
+const SearchRequest = Schema.Struct({
+  pattern: Schema.String,
+  limit: Schema.Int,
+  threadIds: Schema.NullOr(Schema.String),
+});
 const SearchRow = Schema.Struct({
   threadId: ThreadId,
   projectId: ProjectId,
@@ -34,6 +38,7 @@ const SearchRow = Schema.Struct({
   matchText: Schema.String,
   messageCreatedAt: Schema.NullOr(IsoDateTime),
 });
+const encodeThreadIds = Schema.encodeSync(Schema.fromJsonString(Schema.Array(ThreadId)));
 
 function escapeLikePattern(value: string): string {
   return value.replaceAll("!", "!!").replaceAll("%", "!%").replaceAll("_", "!_");
@@ -75,7 +80,7 @@ export const make = Effect.gen(function* () {
   const searchRows = SqlSchema.findAll({
     Request: SearchRequest,
     Result: SearchRow,
-    execute: ({ pattern, limit }) => sql`
+    execute: ({ pattern, limit, threadIds }) => sql`
       WITH candidate AS (
         SELECT
           threads.thread_id,
@@ -93,6 +98,7 @@ export const make = Effect.gen(function* () {
         WHERE threads.deleted_at IS NULL
           AND threads.archived_at IS NULL
           AND projects.deleted_at IS NULL
+          AND (${threadIds} IS NULL OR threads.thread_id IN (SELECT value FROM json_each(${threadIds})))
           AND messages.streaming = 0
           AND messages.role IN ('user', 'assistant')
           AND json_extract(messages.payload_json, '$.text') LIKE ${pattern} ESCAPE '!'
@@ -137,6 +143,7 @@ export const make = Effect.gen(function* () {
           searchRows({
             pattern: `%${escapeLikePattern(input.query)}%`,
             limit: input.limit ?? 50,
+            threadIds: input.threadIds === undefined ? null : encodeThreadIds(input.threadIds),
           }),
         )
         .pipe(

@@ -21,6 +21,7 @@ import {
   resolveShortcutCommand,
   shouldShowThreadJumpHintsForModifiers,
   shortcutLabelForCommand,
+  spaceJumpIndexFromCommand,
   type ShortcutEventLike,
 } from "./keybindings";
 
@@ -176,6 +177,98 @@ const DEFAULT_BINDINGS = compile([
     whenAst: whenIdentifier("modelPickerOpen"),
   },
 ]);
+
+it("maps Space commands to one-based named Space indices", () => {
+  assert.equal(spaceJumpIndexFromCommand("spaces.jump.1"), 1);
+  assert.equal(spaceJumpIndexFromCommand("spaces.jump.9"), 9);
+  assert.isNull(spaceJumpIndexFromCommand("spaces.next"));
+});
+
+it("uses literal Control for Spaces while preserving desktop thread jumps", () => {
+  for (const platform of ["MacIntel", "Win32", "Linux x86_64"]) {
+    assert.equal(
+      resolveShortcutCommand(event({ key: "1", ctrlKey: true }), DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform,
+        context: { isDesktop: true },
+      }),
+      "spaces.jump.1",
+    );
+    assert.equal(
+      resolveShortcutCommand(
+        event({
+          key: "1",
+          ...(platform === "MacIntel" ? { metaKey: true } : { ctrlKey: true, altKey: true }),
+        }),
+        DEFAULT_RESOLVED_KEYBINDINGS,
+        { platform, context: { isDesktop: true } },
+      ),
+      "thread.jump.1",
+    );
+    assert.isNull(
+      resolveShortcutCommand(event({ key: "1", ctrlKey: true }), DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform,
+        context: { terminalFocus: true },
+      }),
+    );
+    assert.equal(
+      resolveShortcutCommand(event({ key: "1", ctrlKey: true }), DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform,
+        context: { editableFocus: true },
+      }),
+      "spaces.jump.1",
+    );
+  }
+});
+
+it("lets the desktop model picker own number shortcuts while open", () => {
+  assert.equal(
+    resolveShortcutCommand(event({ key: "2", ctrlKey: true }), DEFAULT_RESOLVED_KEYBINDINGS, {
+      platform: "Win32",
+      context: { isDesktop: true, modelPickerOpen: true },
+    }),
+    "modelPicker.jump.2",
+  );
+  assert.equal(
+    resolveShortcutCommand(event({ key: "2", metaKey: true }), DEFAULT_RESOLVED_KEYBINDINGS, {
+      platform: "MacIntel",
+      context: { isDesktop: true, modelPickerOpen: true },
+    }),
+    "modelPicker.jump.2",
+  );
+  assert.isNull(
+    resolveShortcutCommand(event({ key: "2", ctrlKey: true }), DEFAULT_RESOLVED_KEYBINDINGS, {
+      platform: "MacIntel",
+      context: { isDesktop: true, modelPickerOpen: true },
+    }),
+  );
+});
+
+it("keeps Space navigation out of text editing and terminal shortcuts", () => {
+  for (const key of ["ArrowLeft", "ArrowRight"]) {
+    const input = event({ key, altKey: true, shiftKey: true });
+    assert.equal(
+      resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "MacIntel",
+        context: { editableFocus: false, terminalFocus: false },
+      }),
+      key === "ArrowLeft" ? "spaces.previous" : "spaces.next",
+    );
+    assert.equal(
+      resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "MacIntel",
+        context: { editableFocus: true, terminalFocus: false },
+      }),
+      null,
+    );
+    assert.equal(
+      resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: true },
+      }),
+      null,
+    );
+  }
+});
 
 describe("effectiveShortcutsForCommand", () => {
   it("passes only effective preview shortcuts to the desktop bridge", () => {
@@ -848,6 +941,7 @@ describe("Usage shortcuts", () => {
       const shortcut = event({
         key: "2",
         ctrlKey: platform === "Linux",
+        altKey: platform === "Linux",
         metaKey: platform === "MacIntel",
       });
       assert.strictEqual(

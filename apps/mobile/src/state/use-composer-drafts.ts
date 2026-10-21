@@ -344,6 +344,7 @@ export interface ComposerDraft {
 }
 
 export interface ComposerDraftProject {
+  readonly spaceId?: string | null;
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
   readonly createdAt: string;
@@ -378,6 +379,7 @@ const ComposerDraftWorkspaceSelectionSchema = Schema.Struct({
 });
 
 const ComposerDraftProjectSchema = Schema.Struct({
+  spaceId: Schema.optional(Schema.NullOr(Schema.String)),
   environmentId: EnvironmentIdSchema,
   projectId: ProjectIdSchema,
   createdAt: Schema.String,
@@ -1874,11 +1876,13 @@ export function removeComposerDraftsForEnvironment(
 }
 
 export function createNewTaskDraft(project: {
+  readonly spaceId?: string | null;
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
 }): string {
   const draftKey = newTaskDraftKey(newDraftId());
   const stamp: ComposerDraftProject = {
+    ...(project.spaceId !== undefined ? { spaceId: project.spaceId } : {}),
     environmentId: project.environmentId,
     projectId: project.projectId,
     createdAt: new Date().toISOString(),
@@ -1924,6 +1928,7 @@ export function retargetNewTaskDraft(
           environmentId: project.environmentId,
           projectId: project.projectId,
           createdAt: stamp?.createdAt ?? new Date().toISOString(),
+          ...(stamp?.spaceId !== undefined ? { spaceId: stamp.spaceId } : {}),
         },
       },
     };

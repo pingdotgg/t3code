@@ -49,10 +49,10 @@ const EMPTY_THREAD_SEARCH_ATOM = Atom.make({
 }).pipe(Atom.withLabel("web:thread-search:empty"));
 
 const threadSearchResultsAtom = createThreadSearchResultsAtomFamily({
-  getSearchAtom: (environmentId, query) =>
+  getSearchAtom: (environmentId, query, threadIds) =>
     orchestrationEnvironment.threadSearch({
       environmentId,
-      input: { query },
+      input: { query, ...(threadIds === undefined ? {} : { threadIds }) },
     }),
   labelPrefix: "web:thread-search",
 });
@@ -75,6 +75,7 @@ export function useDebouncedValue<A>(value: A, delayMs: number): A {
 export function useThreadSearch(
   environmentIds: ReadonlyArray<EnvironmentId>,
   query: string,
+  threadIdsByEnvironment?: Readonly<Record<string, ReadonlyArray<ThreadId>>>,
 ): {
   readonly matches: ReadonlyArray<EnvironmentThreadSearchMatch>;
   readonly query: string;
@@ -85,7 +86,9 @@ export function useThreadSearch(
   const canSearch = environmentIds.length > 0 && normalizedQuery.length >= 2;
   const settledQuery = canSearch && normalizedQuery === debouncedQuery ? debouncedQuery : null;
   const searchKey =
-    settledQuery === null ? null : makeThreadSearchKey(environmentIds, settledQuery);
+    settledQuery === null
+      ? null
+      : makeThreadSearchKey(environmentIds, settledQuery, threadIdsByEnvironment);
   const result = useAtomValue(
     searchKey === null ? EMPTY_THREAD_SEARCH_ATOM : threadSearchResultsAtom(searchKey),
   );
