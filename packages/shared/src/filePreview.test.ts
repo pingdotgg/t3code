@@ -68,6 +68,12 @@ describe("workspace file previews", () => {
       "pptx",
       "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     ],
+    ["notes.odt", "odt", "application/vnd.oasis.opendocument.text"],
+    ["budget.ods", "ods", "application/vnd.oasis.opendocument.spreadsheet"],
+    ["deck.odp", "odp", "application/vnd.oasis.opendocument.presentation"],
+    ["notes.rtf", "rtf", "application/rtf"],
+    ["guide.epub", "epub", "application/epub+zip"],
+    ["analysis.ipynb", "ipynb", "application/x-ipynb+json"],
   ])("recognizes Office assets at literal path %s", (name, kind, mimeType) => {
     expect(officePreviewKind({ name })).toBe(kind);
     expect(filePreviewKind({ name, mimeType: "application/octet-stream" })).toBe(kind);
@@ -85,6 +91,9 @@ describe("workspace file previews", () => {
     "report.xlsx?download=1",
     "slides%2Epptx",
     "report.docm",
+    "guide.epub?download=1",
+    "analysis.ipynb#notes.txt",
+    "report.odt.ts",
     "slides.ppt",
   ])("rejects non-preview path %s", (path) => {
     expect(isWorkspacePreviewEntryPath(path)).toBe(false);
@@ -145,8 +154,10 @@ describe("attachment preview classification", () => {
     ["diagram.MERMAID", "text/plain", "mermaid"],
     ["download", "text/vnd.mermaid", "mermaid"],
     ["source-code.otf", "application/vnd.oasis.opendocument.formula-template", "font"],
-    ["notes.rtf", "application/rtf", "text"],
-    ["notes.rtf", "", "text"],
+    ["notes.rtf", "application/rtf", "rtf"],
+    ["notes.rtf", "", "rtf"],
+    ["download", "text/rtf", "rtf"],
+    ["analysis.IPYNB", "application/json", "ipynb"],
     ["clip.weba", "", "audio"],
     ["image.bmp", "application/octet-stream", "image"],
     ["photo.heic", "application/octet-stream", "image"],
@@ -165,7 +176,7 @@ describe("attachment preview classification", () => {
     expect(() => decodeFilePreviewText(new Uint8Array([65, 0, 66]))).toThrow("binary");
     expect(() => decodeFilePreviewText(new Uint8Array([255]))).toThrow("UTF-8");
   });
-  it.each(["doc", "xls", "ppt", "odt", "ods", "odp", "epub", "7z", "rar"])(
+  it.each(["doc", "xls", "ppt", "7z", "rar"])(
     "retains the binary fallback for %s, which opencode does not render",
     (extension) => {
       expect(filePreviewKind({ name: `sample.${extension}` })).toBe("unsupported");

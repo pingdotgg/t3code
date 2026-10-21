@@ -1,3 +1,4 @@
+import DocumentPages, { sanitizeDocumentHtml } from "./DocumentPages";
 import { act, render, stubGlobal, type Screen } from "../../../test/render";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -1539,6 +1540,40 @@ describe("attachment HTML preview recovery", () => {
   });
 });
 
+describe("document output sanitization", () => {
+  it("fits saved HTML outputs to their content and resizes when the content changes", async () => {
+    await using screen = await render(
+      <DocumentPages html="<table><tr><td>42</td></tr></table>" name="Output" output />,
+    );
+    const frame = screen.container.querySelector("iframe")!;
+    await vi.waitFor(() => {
+      expect(frame.contentDocument?.querySelector("td")?.textContent).toBe("42");
+      expect(frame.clientHeight).toBeGreaterThan(32);
+      expect(frame.clientHeight).toBeLessThan(120);
+    });
+    const initialHeight = frame.clientHeight;
+    await screen.rerender(
+      <DocumentPages html={"<p>More saved output</p>".repeat(10)} name="Output" output />,
+    );
+    await vi.waitFor(() => {
+      expect(frame.contentDocument?.querySelectorAll("p")).toHaveLength(10);
+      expect(frame.clientHeight).toBeGreaterThan(initialHeight);
+      expect(frame.contentDocument!.body.scrollHeight).toBeLessThanOrEqual(frame.clientHeight);
+    });
+  });
+
+  it("preserves table content and raster data while removing scripts and network resources", () => {
+    const html = sanitizeDocumentHtml(
+      '<script>alert(1)</script><style>@import "https://example.com/style.css";</style><iframe src="https://example.com"></iframe><img src="https://example.com/tracker.png" onerror="alert(1)"><img src="data:image/png;base64,iVBORw0KGgo="><table><tr><td>Research</td></tr></table><a href="https://example.com">Results</a>',
+    );
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    expect(doc.querySelector("td")?.textContent).toBe("Research");
+    expect(doc.images).toHaveLength(1);
+    expect(doc.images[0]!.getAttribute("src")).toBe("data:image/png;base64,iVBORw0KGgo=");
+    expect(doc.querySelector("script,style,iframe,a,[onerror]")).toBeNull();
+    expect(html).not.toContain("https://");
+  });
+});
 it("opens a known empty attachment even when its range response is inaccessible", async () => {
   refresh.mockResolvedValue("https://unreachable.invalid/empty.txt");
   await using screen = await render(

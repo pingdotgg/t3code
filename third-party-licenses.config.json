@@ -207,6 +207,12 @@
   ],
   "packageOverrides": [
     {
+      "name": "entities",
+      "version": "8.1.0",
+      "license": "BSD-2-Clause",
+      "sourceUrl": "https://github.com/fb55/entities"
+    },
+    {
       "name": "@nodable/entities",
       "version": "2.1.1",
       "sourceUrl": "https://github.com/nodable/val-parsers",

@@ -777,6 +777,19 @@ async function wordExpansion(
 // must not turn into an unbounded allocation on the UI thread.
 async function boundedArchive(input: Extract<OfficeWorkerRequest, { type: "open" }>) {
   const { bytes } = input;
+  if (!["docx", "xlsx", "pptx"].includes(input.kind)) {
+    const { boundedZip } = await import("./boundedZip");
+    const files = await boundedZip(bytes, undefined, {
+      totalLimit: OFFICE_PREVIEW_MAX_BYTES,
+      xmlLimit: 8 * 1024 * 1024,
+      ratioFloor: 8 * 1024 * 1024,
+    });
+    const archive = new JSZip();
+    for (const [name, file] of files) {
+      if (!file.directory) archive.file(name, file.bytes);
+    }
+    return { archive, word: null, truncatedSheets: [] };
+  }
   const spreadsheet = input.kind === "xlsx";
   if (bytes.byteLength > OFFICE_PREVIEW_MAX_BYTES)
     throw new Error("Preview limited to files under 50 MB.");
@@ -996,7 +1009,33 @@ async function handle(input: OfficeWorkerRequest) {
     reply({ type: "slide", index: input.index, frame, images, text });
     return;
   }
+  if (input.kind === "ipynb" || input.kind === "rtf") {
+    const { openNotebook, openRtf } = await import("./extendedDocumentPreview");
+    reply(input.kind === "ipynb" ? openNotebook(input.bytes) : openRtf(input.bytes));
+    return;
+  }
   const { archive, word, truncatedSheets } = await boundedArchive(input);
+  if (
+    input.kind === "odt" ||
+    input.kind === "ods" ||
+    input.kind === "odp" ||
+    input.kind === "epub"
+  ) {
+    const { openDocument, openEpub } = await import("./extendedDocumentPreview");
+    const result =
+      input.kind === "epub" ? await openEpub(archive) : await openDocument(archive, input.kind);
+    if (result.type === "xlsx") {
+      workbook = result.sheets.map((sheet) => sheet.rows);
+      reply({
+        ...result,
+        sheets: result.sheets.map((sheet) => ({
+          ...sheet,
+          rows: sheet.rows.slice(0, PREVIEW_PAGE_ROWS),
+        })),
+      });
+    } else reply(result);
+    return;
+  }
   const root =
     input.kind === "docx"
       ? "word/document.xml"

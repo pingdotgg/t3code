@@ -960,6 +960,9 @@ importers:
       fast-xml-parser:
         specifier: 5.7.3
         version: 5.7.3
+      entities:
+        specifier: 8.1.0
+        version: 8.1.0
       hast-util-to-html:
         specifier: ^9.0.5
         version: 9.0.5
