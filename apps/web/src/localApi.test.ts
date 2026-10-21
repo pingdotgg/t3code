@@ -79,6 +79,18 @@ afterEach(() => {
 });
 
 describe("LocalApi", () => {
+  it("uses the native context menu on desktop when Styled Context Menu is disabled", async () => {
+    const showContextMenu = vi.fn().mockResolvedValue("delete");
+    testWindow().desktopBridge = { showContextMenu } as unknown as DesktopBridge;
+    const { createLocalApi } = await import("./localApi");
+    const items = [{ id: "delete", label: "Delete" }] as const;
+    const position = { x: 1, y: 2 };
+
+    await expect(createLocalApi().contextMenu.show(items, position)).resolves.toBe("delete");
+    expect(showContextMenu).toHaveBeenCalledWith(items, position);
+    expect(showContextMenuFallbackMock).not.toHaveBeenCalled();
+  });
+
   it("uses the styled fallback on desktop when Styled Context Menu is enabled", async () => {
     styledContextMenuState.enabled = true;
     showContextMenuFallbackMock.mockResolvedValue("rename");
