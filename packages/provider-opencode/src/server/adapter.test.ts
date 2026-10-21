@@ -840,6 +840,62 @@ describe("OpenCodeAdapterV2", () => {
     ),
   );
 
+  it.effect("drops cancelled OpenCode todos so a finished list completes", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const nativeSessionId = "native-opencode-todos";
+      const harness = yield* makeOpenCodeRuntimeHarness("todos", nativeSessionId, {
+        event: {
+          subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+            options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+            return { stream: nativeEvents.stream };
+          },
+        },
+        mcp: { status: async () => ({ data: {} }) },
+        session: {
+          create: async () => ({
+            data: { id: nativeSessionId, time: { created: 1, updated: 1 } },
+          }),
+          promptAsync: async () => ({ data: true }),
+        },
+      });
+      yield* harness.startTurn();
+      const received = yield* harness.runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "plan.updated"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "todo.updated",
+          properties: {
+            sessionID: nativeSessionId,
+            todos: [
+              { content: "Write the fix", status: "completed", priority: "high" },
+              { content: "Try another approach", status: "cancelled", priority: "low" },
+              { content: "Add a test", status: "completed", priority: "medium" },
+            ],
+          },
+        }),
+      );
+      const plan = (yield* Fiber.join(received)).flatMap((event) =>
+        event.type === "plan.updated" ? [event.plan] : [],
+      )[0];
+      assert.ok(plan?.kind === "todo_list");
+      assert.deepEqual(
+        plan.steps.map((step) => ({ text: step.text, status: step.status })),
+        [
+          { text: "Write the fix", status: "completed" },
+          { text: "Add a test", status: "completed" },
+        ],
+      );
+      assert.equal(plan.status, "completed");
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
   it.effect("presents OpenCode MCP calls without treating remote tools as local edits", () =>
     Effect.gen(function* () {
       const output =

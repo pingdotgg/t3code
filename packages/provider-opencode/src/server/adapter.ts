@@ -1665,17 +1665,25 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             driver: OPENCODE_PROVIDER,
             nativeItemId,
           });
-          const steps: Array<OrchestrationV2PlanStep> = todos.map((todo, index) => ({
-            id: `${nativeItemId}:${index + 1}`,
-            text: todo.content.trim() || `Todo ${index + 1}`,
-            status:
-              todo.status === "completed"
-                ? "completed"
-                : todo.status === "in_progress"
-                  ? "running"
-                  : "pending",
-          }));
-          const completed = steps.length > 0 && steps.every((step) => step.status === "completed");
+          // A cancelled todo is not outstanding work, and plan steps have no
+          // cancelled status, so drop it rather than show it as pending.
+          const steps: Array<OrchestrationV2PlanStep> = todos.flatMap((todo, index) =>
+            todo.status === "cancelled"
+              ? []
+              : [
+                  {
+                    id: `${nativeItemId}:${index + 1}`,
+                    text: todo.content.trim() || `Todo ${index + 1}`,
+                    status:
+                      todo.status === "completed"
+                        ? "completed"
+                        : todo.status === "in_progress"
+                          ? "running"
+                          : "pending",
+                  },
+                ],
+          );
+          const completed = todos.length > 0 && steps.every((step) => step.status === "completed");
           yield* emitProviderEvent({
             type: "node.updated",
             driver: OPENCODE_PROVIDER,
