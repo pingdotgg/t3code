@@ -6,6 +6,7 @@ import { expect, it, vi } from "vite-plus/test";
 const state = vi.hoisted(() => ({
   status: "success" as PullRequestCheck["status"],
   extraStatus: null as PullRequestCheck["status"] | null,
+  mergeMethods: ["merge"] as Array<"merge" | "squash" | "rebase">,
   perform: vi.fn(),
   newThread: vi.fn(),
   prepareThread: vi.fn(),
@@ -45,9 +46,13 @@ const queryData = () => ({
     description: null,
     url: null,
   })),
-  capabilities: { actions: ["merge"], mergeMethods: ["merge"] },
+  capabilities: { actions: ["merge"], mergeMethods: state.mergeMethods },
   viewerPermissions: { actions: ["merge"] },
-  mergeCapabilities: { merge: true, squash: false, rebase: false },
+  mergeCapabilities: {
+    merge: state.mergeMethods.includes("merge"),
+    squash: state.mergeMethods.includes("squash"),
+    rebase: state.mergeMethods.includes("rebase"),
+  },
 });
 vi.mock(import("~/state/query"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -96,7 +101,40 @@ vi.mock(import("../ui/toast"), async (original) => {
 });
 
 import { act, render as renderUi } from "../../../test/render";
+import { useUiStateStore } from "~/uiStateStore";
 import { ThreadDetailsPrRow } from "./ThreadDetailsPrRow";
+
+it("merges with the last selected merge method", async () => {
+  await using screen = await setup();
+  const { container } = screen;
+  state.mergeMethods = ["merge", "squash"];
+  useUiStateStore.getState().setPullRequestMergeMethod("squash");
+  await act(async () => {
+    await screen.rerender(
+      <ThreadDetailsPrRow
+        environmentId={EnvironmentId.make("environment")}
+        pr={null}
+        number={1}
+        status={null}
+        project={null}
+        label="Test PR"
+        openAriaLabel="Open PR"
+        onOpen={vi.fn()}
+      />,
+    );
+  });
+  const clickMerge = async (scope: ParentNode) =>
+    await act(async () => {
+      [...scope.querySelectorAll("button")]
+        .find((button) => button.textContent?.trim() === "Merge")!
+        .click();
+    });
+  await clickMerge(container);
+  const dialog = document.querySelector('[role="alertdialog"]')!;
+  expect(dialog.textContent).toContain("using squash");
+  await clickMerge(dialog);
+  expect(state.perform).toHaveBeenCalledWith("merge", "squash");
+});
 
 it("requires a new merge click after passing checks become pending and pass again", async () => {
   await using screen = await setup();
@@ -152,5 +190,7 @@ async function setup() {
 
   state.status = "success";
   state.extraStatus = null;
+  state.mergeMethods = ["merge"];
+  useUiStateStore.getState().setPullRequestMergeMethod("merge");
   return renderUi(null);
 }

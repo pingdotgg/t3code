@@ -292,13 +292,6 @@ export function allowedPullRequestMergeMethods(
     : detail.capabilities.mergeMethods.filter((method) => detail.mergeCapabilities[method]);
 }
 
-export function resolveSelectedMergeMethod(
-  allowedMergeMethods: ReadonlyArray<PullRequestMergeMethod>,
-  preferred: PullRequestMergeMethod,
-): PullRequestMergeMethod {
-  return allowedMergeMethods.includes(preferred) ? preferred : (allowedMergeMethods[0] ?? "merge");
-}
-
 function canPerformPullRequestAction(
   detail: Pick<PullRequestActionableDetail, "capabilities" | "viewerPermissions"> | null,
   action: PullRequestAction,
