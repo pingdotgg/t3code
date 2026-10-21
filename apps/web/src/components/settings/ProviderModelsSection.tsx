@@ -1,5 +1,3 @@
-"use client";
-
 import { ArrowDownIcon, ArrowUpIcon, PencilIcon, PlusIcon, StarIcon, XIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import {

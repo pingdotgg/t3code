@@ -1,5 +1,3 @@
-"use client";
-
 import { useAtomValue } from "@effect/atom-react";
 import {
   parseScopedThreadKey,

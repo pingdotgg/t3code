@@ -1,5 +1,3 @@
-"use client";
-
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { previewStreamDownloadUrl } from "@t3tools/client-runtime/preview/server-browser-stream";

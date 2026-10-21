@@ -1,5 +1,3 @@
-"use client";
-
 import { PlusIcon, XIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
