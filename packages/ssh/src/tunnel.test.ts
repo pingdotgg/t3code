@@ -502,7 +502,7 @@ describe("ssh tunnel scripts", () => {
             tunnelKillCount += 1;
           });
         }
-        if (args.includes("sh") && args.includes("--")) {
+        if (args.includes("sh") && args.includes("-l")) {
           return makeSuccessfulProcess('{"remotePort":3773}\n');
         }
         if (args.includes("sh")) {
@@ -535,6 +535,7 @@ describe("ssh tunnel scripts", () => {
       assert.equal(tunnelKillCount, 1);
       assert.equal(stopCommandCount, 0);
 
+      yield* manager.reopenLocalForwards;
       yield* manager.ensureEnvironment(target);
     }).pipe(
       Effect.provide(layer),
