@@ -420,6 +420,7 @@ describe("OrchestratorMcpService", () => {
                 : Effect.succeed(childProjection),
             getThreadShell: (threadId) => Effect.succeed(liveThreadShell(threadId)),
             delegatedTaskResultPending: () => Effect.succeed(false),
+            stopDelegatedTasks: () => Effect.void,
             // The orchestrator's subagent.stop repair is covered in ThreadStop.test.ts.
             dispatch: (command) =>
               Ref.update(dispatched, (commands) => [...commands, command]).pipe(
@@ -458,9 +459,15 @@ describe("OrchestratorMcpService", () => {
             clientRequestId: "cancel-orphan-task",
           });
           assert.deepEqual(result, { taskId, status: "cancelled" });
-          const [stop, ...rest] = yield* Ref.get(dispatched);
-          assert.isEmpty(rest);
-          assert.equal(stop?.type, "subagent.stop");
+          const commands = yield* Ref.get(dispatched);
+          // A child whose run finished can still run another turn's work, so it is stopped too.
+          assert.deepEqual(
+            commands.flatMap((command) =>
+              command.type === "thread.stop" ? [command.threadId] : [],
+            ),
+            childState === "a finished run" ? [childThreadId] : [],
+          );
+          const stop = commands.find((command) => command.type === "subagent.stop");
           if (stop?.type !== "subagent.stop") return;
           assert.deepEqual(
             { threadId: stop.threadId, runId: stop.runId, subagentId: stop.subagentId },

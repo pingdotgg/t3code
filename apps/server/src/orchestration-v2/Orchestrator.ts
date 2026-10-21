@@ -539,6 +539,20 @@ function withoutPreparationResult(
   return rest;
 }
 
+/** Stop ended this task, so its result is not delivered to the parent agent. */
+function cancelledAppOwnedTask(
+  task: OrchestrationV2Subagent,
+  now: DateTime.Utc,
+): OrchestrationV2Subagent {
+  return {
+    ...task,
+    status: "cancelled",
+    completedAt: now,
+    updatedAt: now,
+    completionDelivery: { state: "disposed", observedByRunId: null },
+  };
+}
+
 function isBlockingRun(run: OrchestrationV2Run): boolean {
   return (
     run.status === "preparing" ||
@@ -9397,22 +9411,46 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ]);
     const run = projection.runs.find((candidate) => candidate.id === command.runId);
     const subagent = projection.subagents.find((candidate) => candidate.id === command.subagentId);
-    // An app-owned task stops through its child thread. Here the parent only cancels the child's
-    // orphaned tasks: the child is idle and no child run is bound to them (#19002).
+    // A user Stop cancels an app-owned task here when nothing else can settle it: no child run was
+    // ever bound to it and it is not the child's original task (#19002). This holds whatever else
+    // the child is doing. A task with a bound run, live or ended, keeps its settlement path, since
+    // its result may still be on the way, and the child stop the client sends next interrupts the
+    // run. A task that already ended is written again, so a client holding a stale copy, such as
+    // one cached before a repair, shows it ended.
     if (
       subagent?.origin === "app_owned" &&
       subagent.childThreadId !== null &&
       subagent.runId === command.runId
     ) {
-      const records = yield* loadProjectionForCommand(command, ["subagents", "turnItems"], {
+      const childThreadId = subagent.childThreadId;
+      const child = yield* projectionStore.getThreadRecords(childThreadId, ["runs"]).pipe(
+        Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: childThreadId, cause }),
+        ),
+      );
+      const active = isOrchestrationV2WorkActive(subagent.status);
+      if (
+        active &&
+        child !== null &&
+        ((child.thread.forkedFrom?.type === "node" &&
+          child.thread.forkedFrom.nodeId === subagent.id) ||
+          child.runs.some((run) => run.delegatedTaskId === subagent.id))
+      )
+        return;
+      const records = yield* loadProjectionForCommand(command, ["nodes", "turnItems"], {
         turnItemTypes: ["subagent"],
-        turnItemStatuses: ["pending", "running", "waiting"],
+        turnItemRunIds: [subagent.runId],
+        omitSettledLeafNodes: true,
       });
-      return yield* cancelIdleOrphans({
+      const now = yield* DateTime.now;
+      return yield* writeAppOwnedTask({
         command,
         events,
-        projection: records,
-        childThreadId: subagent.childThreadId,
+        task: active ? cancelledAppOwnedTask(subagent, now) : subagent,
+        nodes: records.nodes,
+        turnItems: records.turnItems,
+        now,
       });
     }
     if (
@@ -9857,16 +9895,56 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     return undefined;
   });
 
+  /** Writes a parent's app-owned task, and sets its node and turn items to the task's status. */
+  const writeAppOwnedTask = Effect.fn("Orchestrator.writeAppOwnedTask")(function* (input: {
+    readonly command: Extract<
+      OrchestrationV2ServerCommand,
+      { readonly type: "run.interrupt" | "thread.stop" | "subagent.stop" }
+    >;
+    readonly events: Ref.Ref<Array<OrchestrationV2DomainEvent>>;
+    readonly task: OrchestrationV2Subagent;
+    readonly nodes: ReadonlyArray<OrchestrationV2ExecutionNode>;
+    readonly turnItems: ReadonlyArray<OrchestrationV2TurnItem>;
+    readonly now: DateTime.Utc;
+  }) {
+    const { command, task, now } = input;
+    const emitEvent = emit(input.events, command);
+    yield* emitEvent({
+      type: "subagent.updated",
+      threadId: command.threadId,
+      nodeId: task.id,
+      occurredAt: now,
+      payload: task,
+    });
+    const node = input.nodes.find((candidate) => candidate.id === task.id);
+    if (node !== undefined)
+      yield* emitEvent({
+        type: "node.updated",
+        threadId: command.threadId,
+        nodeId: node.id,
+        occurredAt: now,
+        payload: { ...node, status: task.status, completedAt: task.completedAt },
+      });
+    for (const item of input.turnItems) {
+      if (item.type !== "subagent" || item.subagentId !== task.id) continue;
+      yield* emitEvent({
+        type: "turn-item.updated",
+        threadId: command.threadId,
+        nodeId: task.id,
+        occurredAt: now,
+        payload: { ...item, status: task.status, completedAt: task.completedAt, updatedAt: now },
+      });
+    }
+  });
+
   const cancelIdleOrphans = Effect.fn("Orchestrator.cancelIdleOrphans")(
     function* (input: {
       readonly command: Extract<
         OrchestrationV2ServerCommand,
-        { readonly type: "run.interrupt" | "thread.stop" | "subagent.stop" }
+        { readonly type: "run.interrupt" | "thread.stop" }
       >;
       readonly events: Ref.Ref<Array<OrchestrationV2DomainEvent>>;
       readonly projection: Pick<OrchestrationV2ThreadProjection, "subagents" | "turnItems">;
-      /** Limits the repair to tasks delegated to this child thread. */
-      readonly childThreadId?: ThreadId;
     }) {
       const { command, events, projection } = input;
       const pending = yield* Ref.get(events);
@@ -9884,8 +9962,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         if (
           task.origin !== "app_owned" ||
           task.childThreadId === null ||
-          !isOrchestrationV2WorkActive(task.status) ||
-          (input.childThreadId !== undefined && task.childThreadId !== input.childThreadId)
+          !isOrchestrationV2WorkActive(task.status)
         )
           continue;
         const childThreadId = task.childThreadId;
@@ -9932,40 +10009,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         if (!idle) continue;
         // Stop can cancel an idle orphan without guessing which completed run owned its result.
         const now = yield* DateTime.now;
-        const emitEvent = emit(events, command);
-        yield* emitEvent({
-          type: "subagent.updated",
-          threadId: command.threadId,
-          nodeId: task.id,
-          occurredAt: now,
-          payload: {
-            ...task,
-            status: "cancelled",
-            completedAt: now,
-            updatedAt: now,
-            completionDelivery: { state: "disposed", observedByRunId: null },
-          },
-        });
         nodes ??= (yield* projectionStore.getThreadRecords(command.threadId, ["nodes"])).nodes;
-        const node = nodes.find((candidate) => candidate.id === task.id);
-        if (node !== undefined)
-          yield* emitEvent({
-            type: "node.updated",
-            threadId: command.threadId,
-            nodeId: node.id,
-            occurredAt: now,
-            payload: { ...node, status: "cancelled", completedAt: now },
-          });
-        for (const item of projection.turnItems) {
-          if (item.type !== "subagent" || item.subagentId !== task.id) continue;
-          yield* emitEvent({
-            type: "turn-item.updated",
-            threadId: command.threadId,
-            nodeId: task.id,
-            occurredAt: now,
-            payload: { ...item, status: "cancelled", completedAt: now, updatedAt: now },
-          });
-        }
+        yield* writeAppOwnedTask({
+          command,
+          events,
+          task: cancelledAppOwnedTask(task, now),
+          nodes,
+          turnItems: projection.turnItems,
+          now,
+        });
       }
     },
     (effect, input) =>
