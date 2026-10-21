@@ -6,7 +6,8 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import "~/index.css";
 
 import { act, render } from "../../../test/render";
-import { MessagesTimeline, remarkThoughtPreview } from "./MessagesTimeline";
+import { MessagesTimeline } from "./MessagesTimeline";
+import { remarkThoughtPreview } from "./TimelineWorkEntryRow.logic";
 import { parseMarkdownWithMath } from "@t3tools/shared/markdownMath";
 
 const pullRequestQuery = vi.hoisted(() => ({ error: "Pull request not found" }));
