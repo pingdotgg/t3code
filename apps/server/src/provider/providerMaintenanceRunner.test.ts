@@ -454,14 +454,43 @@ describe("providerMaintenanceRunner", () => {
       const updateState = result.providers[0]?.updateState;
 
       assert.strictEqual(updateState?.status, "failed");
-      assert.strictEqual(updateState?.message, "Update command exited with code 1.");
-      assert.include(updateState?.output ?? "", "permission denied");
+      assert.strictEqual(
+        updateState?.message,
+        "Update command exited with code 1: Error: Could not detect the Codex installation method.",
+      );
+      assert.include(updateState?.output ?? "", "checking install");
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
           layerNonWindowsPlatform,
           layerLatestVersionHttpClient("0.0.0"),
-          layerMockSpawner(() => ({ stderr: "permission denied", code: 1 })),
+          layerMockSpawner(() => ({
+            stdout: "checking install\n",
+            stderr: "Error: Could not detect the Codex installation method.\n\n",
+            code: 1,
+          })),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("keeps the exit code message when a failed command prints nothing", () =>
+    Effect.gen(function* () {
+      const { registry } = yield* makeRegistry();
+      const updater = yield* makeTestRunner(registry);
+
+      const result = yield* updater.updateProvider(CODEX_DRIVER);
+
+      assert.strictEqual(
+        result.providers[0]?.updateState?.message,
+        "Update command exited with code 1.",
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerNonWindowsPlatform,
+          layerLatestVersionHttpClient("0.0.0"),
+          layerMockSpawner(() => ({ code: 1 })),
         ),
       ),
     ),
