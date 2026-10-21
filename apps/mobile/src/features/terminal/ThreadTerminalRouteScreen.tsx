@@ -566,15 +566,15 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
           ];
 
     return [
+      { kind: "send", key: "up", label: "↑", data: "\u001b[A" },
+      { kind: "send", key: "down", label: "↓", data: "\u001b[B" },
+      { kind: "send", key: "left", label: "←", data: "\u001b[D" },
+      { kind: "send", key: "right", label: "→", data: "\u001b[C" },
       { kind: "send", key: "esc", label: "esc", data: "\u001b" },
       ...modifierActions,
       { kind: "send", key: "tab", label: "tab", data: "\t" },
       { kind: "paste", key: "paste", label: "paste" },
       { kind: "clear", key: "clear", label: "clear" },
-      { kind: "send", key: "up", label: "↑", data: "\u001b[A" },
-      { kind: "send", key: "down", label: "↓", data: "\u001b[B" },
-      { kind: "send", key: "left", label: "←", data: "\u001b[D" },
-      { kind: "send", key: "right", label: "→", data: "\u001b[C" },
       { kind: "send", key: "tilde", label: "~", data: "~" },
       { kind: "send", key: "pipe", label: "|", data: "|" },
       { kind: "send", key: "slash", label: "/", data: "/" },
