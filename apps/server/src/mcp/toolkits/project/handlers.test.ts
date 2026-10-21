@@ -4,6 +4,8 @@ import {
   ProjectId,
   ProviderInstanceId,
   type Project as ProjectRecord,
+  type ModelSelection,
+  type RuntimeMode,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -28,7 +30,10 @@ import * as ProjectHandlers from "./handlers.ts";
 import { ProjectToolkit } from "./tools.ts";
 
 const clientLaunchHarness = (input: {
-  readonly runtimeModeCeiling: "approval-required" | "auto-accept-edits" | "auto" | "full-access";
+  readonly runtimeModeCeiling: RuntimeMode;
+  readonly defaultRuntimeMode?: RuntimeMode;
+  /** Where Settings saves a project's model; the legacy project field stays null. */
+  readonly overrideModel?: ModelSelection;
   readonly launched: Array<ThreadLaunch.ThreadLaunchInput>;
   readonly workspaceRoot?: string;
   readonly checkWorktreeBase?: ThreadLaunch.ThreadLaunchService["Service"]["checkWorktreeBase"];
@@ -39,7 +44,19 @@ const clientLaunchHarness = (input: {
     model: "claude-opus",
   };
   const layerDependencies = Layer.mergeAll(
-    ServerSettings.layerTest(),
+    ServerSettings.layerTest({
+      ...(input.defaultRuntimeMode === undefined
+        ? {}
+        : { defaultRuntimeMode: input.defaultRuntimeMode }),
+      ...(input.overrideModel === undefined
+        ? {}
+        : {
+            projectSettingsFolded: true,
+            projectSettingsOverrides: {
+              [projectId]: { defaultModelSelection: input.overrideModel },
+            },
+          }),
+    }),
     NodeCrypto.layer,
     Layer.succeed(McpInvocationContext.McpInvocationContext, {
       environmentId: EnvironmentId.make("environment"),
@@ -79,7 +96,7 @@ const clientLaunchHarness = (input: {
             ? Option.some({
                 id,
                 workspaceRoot: input.workspaceRoot ?? "/projects/client-target",
-                defaultModelSelection: modelSelection,
+                defaultModelSelection: input.overrideModel === undefined ? modelSelection : null,
               } as unknown as ProjectRecord)
             : Option.none(),
         ),
@@ -99,35 +116,85 @@ const clientLaunchHarness = (input: {
   return { projectId, modelSelection, dependencies: layerDependencies };
 };
 
-it.effect("a client launches at its ceiling with the project's default model", () =>
-  Effect.gen(function* () {
-    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
-    const { projectId, modelSelection, dependencies } = clientLaunchHarness({
-      runtimeModeCeiling: "auto-accept-edits",
-      launched,
-    });
-    const toolkit = yield* ProjectToolkit.pipe(
-      Effect.provide(
-        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
-      ),
-    );
-    const handle = (params: Parameters<typeof toolkit.handle<"t3_thread_launch">>[1]) =>
-      toolkit
-        .handle("t3_thread_launch", params)
-        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+it.effect(
+  "a client launches with the project's default model and mode, capped at its ceiling",
+  () =>
+    Effect.gen(function* () {
+      const launchWith = Effect.fn("test.launchWith")(function* (
+        runtimeModeCeiling: RuntimeMode,
+        defaultRuntimeMode: RuntimeMode,
+        params: {
+          readonly title: string;
+          readonly message?: string;
+          readonly runtimeMode?: RuntimeMode;
+          readonly targeted?: false;
+          readonly overrideModel?: ModelSelection;
+        },
+      ) {
+        const { targeted, overrideModel, ...input } = params;
+        const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+        const { projectId, modelSelection, dependencies } = clientLaunchHarness({
+          runtimeModeCeiling,
+          defaultRuntimeMode,
+          launched,
+          ...(overrideModel === undefined ? {} : { overrideModel }),
+        });
+        const toolkit = yield* ProjectToolkit.pipe(
+          Effect.provide(
+            McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+              Layer.provide(dependencies),
+            ),
+          ),
+        );
+        const result = yield* toolkit
+          .handle("t3_thread_launch", targeted === false ? input : { ...input, projectId })
+          .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+        return { result: result.at(-1)?.result, launched, projectId, modelSelection };
+      });
 
-    const result = yield* handle({ title: "Fix", projectId, message: "Fix the bug" });
-    expect(result.at(-1)?.result).toMatchObject({ projectId, modelSelection });
-    expect(launched[0]?.runtimeMode).toBe("auto-accept-edits");
-    expect(launched[0]?.initialMessage?.senderThreadId).toBeUndefined();
+      const belowCeiling = yield* launchWith("full-access", "approval-required", {
+        title: "Fix",
+        message: "Fix the bug",
+      });
+      expect(belowCeiling.result).toMatchObject({
+        projectId: belowCeiling.projectId,
+        modelSelection: belowCeiling.modelSelection,
+      });
+      expect(belowCeiling.launched[0]?.runtimeMode).toBe("approval-required");
+      expect(belowCeiling.launched[0]?.initialMessage?.senderThreadId).toBeUndefined();
 
-    const escalated = yield* handle({ title: "Fix", projectId, runtimeMode: "full-access" });
-    expect(escalated.at(-1)?.result).toMatchObject({ code: "runtime_mode_escalation_denied" });
+      const aboveCeiling = yield* launchWith("auto-accept-edits", "full-access", { title: "Fix" });
+      expect(aboveCeiling.launched[0]?.runtimeMode).toBe("auto-accept-edits");
 
-    const untargeted = yield* handle({ title: "Fix" });
-    expect(untargeted.at(-1)?.result).toMatchObject({ code: "target_required" });
-    expect(launched).toHaveLength(1);
-  }),
+      const requested = yield* launchWith("full-access", "approval-required", {
+        title: "Fix",
+        runtimeMode: "auto",
+      });
+      expect(requested.launched[0]?.runtimeMode).toBe("auto");
+
+      const escalated = yield* launchWith("auto-accept-edits", "auto-accept-edits", {
+        title: "Fix",
+        runtimeMode: "full-access",
+      });
+      expect(escalated.result).toMatchObject({ code: "runtime_mode_escalation_denied" });
+      expect(escalated.launched).toHaveLength(0);
+
+      const untargeted = yield* launchWith("full-access", "full-access", {
+        title: "Fix",
+        targeted: false,
+      });
+      expect(untargeted.result).toMatchObject({ code: "target_required" });
+
+      const overrideModel = {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-settings",
+      };
+      const fromSettings = yield* launchWith("full-access", "full-access", {
+        title: "Fix",
+        overrideModel,
+      });
+      expect(fromSettings.launched[0]?.modelSelection).toEqual(overrideModel);
+    }),
 );
 
 it.effect("a launch binds only an existing checkout that is one of the project's worktrees", () =>
