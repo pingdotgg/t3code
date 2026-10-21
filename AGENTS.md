@@ -98,7 +98,7 @@ An empty database is a bad test. Seed your worktree's `.t3` with a copy of real 
 
 ## Verifying
 
-- Before you push, run `vp run check:changed`. It runs CI checks for changed files: format, lint, tests beside changes, typecheck of affected packages and dependents, plus knip when files, exports, or dependencies change.
+- Before you push, run `vp run check:changed`. It runs CI's fast checks for changed files: format, lint, knip, typecheck of affected packages and dependents, and tests beside changes. CI still runs the full test suites.
 - While you iterate, run `vp test run <files>`. For big files, add `-t "<name>"`.
 - Do not use `npx tsc`. Use `vp run typecheck`; it uses tsc-rs, which is 3x faster.
 - Run `node -e` snippets from `apps/server` or the owning package. `effect` does not resolve from the repo root.
