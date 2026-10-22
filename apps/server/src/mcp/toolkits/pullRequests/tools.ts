@@ -5,6 +5,11 @@ import {
   PullRequestReviewGuide,
   PullRequestReviewGuideRun,
   PullRequestState,
+  PullRequestHostAction,
+  PullRequestHostDetails,
+  PullRequestHostActionResult,
+  PullRequestOperationError,
+  PullRequestUnavailableError,
   ThreadPullRequestLinkSource,
   TrimmedNonEmptyString,
   ThreadId,
@@ -17,6 +22,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
+import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
 import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
 
 const dependencies = [
@@ -199,6 +205,8 @@ export const PullRequestToolError = Schema.Union([
   PullRequestWatchFromSubagentError,
   PullRequestProjectNotFoundError,
   PullRequestGuideFailedError,
+  PullRequestOperationError,
+  PullRequestUnavailableError,
 ]);
 export type PullRequestToolError = typeof PullRequestToolError.Type;
 
@@ -405,6 +413,32 @@ const ReadPullRequestGuideTool = Tool.make("read_pull_request_guide", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, true);
 
+const ReadPullRequestHostDetailsTool = Tool.make("read_pull_request_host_details", {
+  description:
+    "Read Azure DevOps PR votes, reviewers, policies, work items, attachments, following state, and branches through this environment's checkout and credentials.",
+  parameters: GuideTarget,
+  success: Schema.NullOr(PullRequestHostDetails),
+  failure: PullRequestToolError,
+  dependencies: [...dependencies, PullRequestService.PullRequestService],
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, true);
+
+const RunPullRequestHostActionTool = Tool.make("run_pull_request_host_action", {
+  description:
+    "Perform an Azure DevOps PR action through T3 Code: vote, manage reviewers, follow, favorite, retarget, link work items, manage attachments, apply suggestions, requeue policies, complete or auto-complete with native options, revert, or cherry-pick. Mutates the actual remote PR. Follow the user's authorization for destructive actions and sending shared PR email.",
+  parameters: Schema.Struct({ ...GuideTarget.fields, action: PullRequestHostAction }),
+  success: PullRequestHostActionResult,
+  failure: PullRequestToolError,
+  dependencies: [...dependencies, PullRequestService.PullRequestService],
+})
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Idempotent, false)
+  .annotate(Tool.OpenWorld, true);
+
 export const PullRequestsToolkit = Toolkit.make(
   LinkPullRequestTool,
   UnlinkPullRequestTool,
@@ -413,4 +447,6 @@ export const PullRequestsToolkit = Toolkit.make(
   UnwatchPullRequestTool,
   WritePullRequestGuidesTool,
   ReadPullRequestGuideTool,
+  ReadPullRequestHostDetailsTool,
+  RunPullRequestHostActionTool,
 );

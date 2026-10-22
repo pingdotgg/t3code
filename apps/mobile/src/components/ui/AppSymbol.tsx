@@ -43,6 +43,7 @@ import IconCircleCheck from "@tabler/icons-react-native/IconCircleCheck";
 import IconCircleDashed from "@tabler/icons-react-native/IconCircleDashed";
 import IconCircleDot from "@tabler/icons-react-native/IconCircleDot";
 import IconCircleXFilled from "@tabler/icons-react-native/IconCircleXFilled";
+import IconThumbUp from "@tabler/icons-react-native/IconThumbUp";
 import IconTicket from "@tabler/icons-react-native/IconTicket";
 import IconClock from "@tabler/icons-react-native/IconClock";
 import IconCode from "@tabler/icons-react-native/IconCode";
@@ -195,6 +196,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "doc.on.doc": IconCopy,
   "doc.text": IconFileText,
   "file.diff": IconFileDiff,
+  "hand.thumbsup": IconThumbUp,
   ellipsis: IconDots,
   moon: IconMoon,
   "ellipsis.circle": IconDotsCircleHorizontal,

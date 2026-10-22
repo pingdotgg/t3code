@@ -114,3 +114,21 @@ describe("pull request summary cache", () => {
     ).toBeNull();
   });
 });
+
+it("replaces an abandoned Azure snapshot when a later read reports reactivation", () => {
+  const provider = SourceControlProviderKind.make("azure-devops");
+  const closed = summary({
+    provider,
+    state: "closed",
+    updatedAt: "2026-10-15T10:00:00Z",
+    observedAt: 100,
+  });
+  const reactivated = summary({
+    provider,
+    state: "open",
+    updatedAt: "2026-09-10T00:00:00Z",
+    observedAt: 200,
+  });
+  expect(newestPullRequestSummary(closed, reactivated)).toBe(reactivated);
+  expect(newestPullRequestSummary(reactivated, closed)).toBe(reactivated);
+});

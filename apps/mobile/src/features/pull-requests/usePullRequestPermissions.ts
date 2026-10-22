@@ -10,12 +10,25 @@ export function usePullRequestPermissions(params: PullRequestParams, pr: PullReq
   const canWrite = useAtomValue(composerPullRequests.runAction.permissionAtom(environmentId));
   const canComment = useAtomValue(composerPullRequests.comment.permissionAtom(environmentId));
   const canReview = useAtomValue(composerPullRequests.submitReview.permissionAtom(environmentId));
+  const canEditComment = useAtomValue(
+    composerPullRequests.updateComment.permissionAtom(environmentId),
+  );
+  const canDeleteComment = useAtomValue(
+    composerPullRequests.deleteComment.permissionAtom(environmentId),
+  );
+  const canLikeComment = useAtomValue(
+    composerPullRequests.setReaction.permissionAtom(environmentId),
+  );
   const canReply = useAtomValue(composerPullRequests.replyToThread.permissionAtom(environmentId));
   const canResolve = useAtomValue(
     composerPullRequests.setThreadResolution.permissionAtom(environmentId),
   );
   return {
     connected,
+    canLikeComment: connected && canLikeComment && pr?.capabilities.commentLikes === true,
+    canEditComment: connected && canEditComment && pr?.capabilities.edit?.comment === true,
+    canDeleteComment:
+      connected && canDeleteComment && pr?.capabilities.edit?.deleteComment === true,
     canInlineComment:
       connected &&
       canReview &&

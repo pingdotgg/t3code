@@ -46,7 +46,7 @@ export const definition = defineSourceControlClient({
   ] as const),
   checkoutCommand: ({ number }) => `az repos pr checkout --id ${number}`,
   authorProfileUrl: () => null,
-  referenceAutolinkRepositoryUrl: () => null,
+  referenceAutolinkRepositoryUrl: (url) => url,
   reviewSummaryRequired: () => false,
   checkoutCommandArgument: (input) => {
     const args = CHECKOUT_COMMAND.exec(input)?.[1];

@@ -5,6 +5,10 @@ import {
   useRoute,
   type StaticScreenProps,
 } from "@react-navigation/native";
+import {
+  resolvePullRequestUpdateComparison,
+  type PullRequestUpdateComparison,
+} from "@t3tools/client-runtime/pull-request-update-comparison";
 import type { PullRequestChangeBreakdown } from "@t3tools/contracts";
 import { useState } from "react";
 import { Platform, View } from "react-native";
@@ -33,6 +37,7 @@ import {
   type PullRequestParams,
 } from "./usePullRequestDiff";
 import { usePullRequestFileFilter } from "./usePullRequestFileFilter";
+import { pullRequestReviewKey } from "./pullRequestReviewDrafts";
 import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
 
 const BREAKDOWN_LABELS = {
@@ -48,15 +53,84 @@ function fileDirectory(path: string) {
   return separator < 0 ? "" : path.slice(0, separator);
 }
 
-function useChangedFiles(params: PullRequestDiffParams) {
+function useChangedFiles(input: PullRequestDiffParams) {
+  const activity = useEnvironmentQuery(composerPullRequests.activity(pullRequestTarget(input)));
+  // A screen can stay mounted while its route moves to another pull request, so a pick only
+  // applies to the one it was made on; until then the route's own commit or range does.
+  const reviewKey = pullRequestReviewKey(input);
+  const [picked, setPicked] = useState<{
+    readonly key: string;
+    readonly comparison: PullRequestUpdateComparison;
+  } | null>(null);
+  const pickedComparison = picked?.key === reviewKey ? picked.comparison : undefined;
+  const { commit, iterationRange: initialRange, ...currentParams } = input;
+  const updates = activity.data?.updates ?? [];
+  const latestUpdateId = updates.at(-1)?.id;
+  const { comparison, iterationRange: range } = resolvePullRequestUpdateComparison(
+    pickedComparison ?? initialRange,
+    latestUpdateId,
+  );
+  const pick = (next: Partial<PullRequestUpdateComparison>) =>
+    setPicked({ key: reviewKey, comparison: { ...comparison, ...next } });
+  const params: PullRequestDiffParams = range
+    ? { ...currentParams, iterationRange: range }
+    : { ...currentParams, ...(commit && !pickedComparison ? { commit } : {}) };
+
   const diff = usePullRequestDiff(params);
   const detail = useEnvironmentQuery(composerPullRequests.detail(pullRequestTarget(params)));
-  // A commit's diff is part of the pull request, so the PR's file counts and viewed state don't apply.
-  const pr = params.commit ? null : detail.data;
+  // Historical diffs don't share the current pull request's file counts or viewed state.
+  const pr = params.commit || params.iterationRange ? null : detail.data;
   const viewed = usePullRequestFilesViewed(params, pr);
   const filter = usePullRequestFileFilter(diff.parsed);
   const parsed = filter.parsed;
   return {
+    params,
+    comparisonHeader: (
+      <>
+        {latestUpdateId !== undefined ? (
+          <View className="flex-row gap-2 py-2">
+            <Menu
+              title="Compare from update"
+              actions={[
+                { id: "0", title: "Base" },
+                ...updates
+                  .filter((update) => update.id < (range?.to ?? latestUpdateId))
+                  .map((update) => ({ id: String(update.id), title: `Update ${update.id}` })),
+              ]}
+              onPressAction={({ nativeEvent }) => pick({ from: Number(nativeEvent.event) })}
+            >
+              <View pointerEvents="none">
+                <Button
+                  onPress={() => {}}
+                  label={comparison.from ? `From update ${comparison.from}` : "From base"}
+                />
+              </View>
+            </Menu>
+            <Menu
+              title="Compare to update"
+              actions={[
+                { id: "latest", title: "Latest" },
+                ...updates
+                  .filter((update) => update.id > comparison.from)
+                  .map((update) => ({ id: String(update.id), title: `Update ${update.id}` })),
+              ]}
+              onPressAction={({ nativeEvent }) =>
+                pick({
+                  to: nativeEvent.event === "latest" ? "latest" : Number(nativeEvent.event),
+                })
+              }
+            >
+              <View pointerEvents="none">
+                <Button
+                  onPress={() => {}}
+                  label={comparison.to === "latest" ? "To latest" : `To update ${comparison.to}`}
+                />
+              </View>
+            </Menu>
+          </View>
+        ) : null}
+      </>
+    ),
     diff,
     filter,
     viewed,
@@ -249,19 +323,23 @@ function ChangeBreakdownLine(props: {
  * The changed-files section of the pull request overview. The overview tab is a single list,
  * so the section supplies its header, rows, and footer instead of rendering a list of its own.
  */
-export function usePullRequestFilesSection(params: PullRequestParams) {
+export function usePullRequestFilesSection(input: PullRequestParams) {
   const navigation = useNavigation();
-  const files = useChangedFiles(params);
-  const { diff, filter, viewed, pr, parsed, loading } = files;
+  const files = useChangedFiles(input);
+  const { params, diff, filter, viewed, pr, parsed, loading } = files;
   const breakdown = useEnvironmentQuery(
-    composerPullRequests.changeBreakdown(pullRequestTarget(params)),
+    params.commit || params.iterationRange
+      ? null
+      : composerPullRequests.changeBreakdown(pullRequestTarget(params)),
   ).data;
-  const expected = pr ?? params.initialSummary;
+  const expected =
+    params.commit || params.iterationRange ? undefined : (pr ?? params.initialSummary);
   return {
     refresh: diff.refresh,
     header: (
       <>
         <PullRequestReadStatus pending={false} error={diff.error} />
+        {files.comparisonHeader}
         {loading ? (
           <View
             accessibilityLabel="Loading changed files"
@@ -395,11 +473,10 @@ function DirectoryRow(props: {
 
 /** The `PullRequestFiles` sheet: a changed-file picker presented over a file diff. */
 export function PullRequestFilesSheet({ route }: StaticScreenProps<PullRequestDiffParams>) {
-  const params = route.params;
   const navigation = useNavigation();
   const fileSelectionId = useRoute().key;
-  const files = useChangedFiles(params);
-  const { diff, filter, viewed, parsed, loading } = files;
+  const files = useChangedFiles(route.params);
+  const { params, diff, filter, viewed, parsed, loading } = files;
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
   const [animationsReady, setAnimationsReady] = useState(false);
   const toggleDirectory = (directory: string) =>
@@ -475,6 +552,7 @@ export function PullRequestFilesSheet({ route }: StaticScreenProps<PullRequestDi
           ListHeaderComponent={
             <>
               <PullRequestReadStatus pending={false} error={diff.error} />
+              {files.comparisonHeader}
               {parsed.kind === "files" ? (
                 <View className="flex-row items-center gap-2 py-2">
                   <Text textRole="caption" className="min-w-0 flex-1 text-foreground-muted">

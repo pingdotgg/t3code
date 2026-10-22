@@ -7,6 +7,19 @@ function completed(input: unknown, output?: unknown): T3ToolSummaryCall {
 }
 
 describe("summarizeT3ToolCalls", () => {
+  it("summarizes pull request host reads and actions without counting failed actions as applied", () => {
+    expect(summarizeT3ToolCalls("read-pr-host-details", [completed({ number: 1 })])).toEqual({
+      label: "Read pull request host details 1 time",
+      failedCount: 0,
+    });
+    expect(
+      summarizeT3ToolCalls("run-pr-host-action", [
+        completed({ number: 1, action: { type: "vote", vote: "approve" } }),
+        { input: { number: 1 }, output: { isError: true }, outcome: "completed" },
+      ]),
+    ).toEqual({ label: "Applied 1 pull request action", failedCount: 1 });
+  });
+
   it("reads provider result envelopes without treating JSON in the message as result data", () => {
     const result = { messageId: "message-1", threadId: "actual-thread" };
     const json = JSON.stringify(result);

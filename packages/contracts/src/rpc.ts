@@ -22,6 +22,11 @@ import {
   ChatGptHandoffState,
 } from "./providerSetup.ts";
 import * as Schema from "effect/Schema";
+import {
+  PullRequestHostActionInput,
+  PullRequestHostActionResult,
+  PullRequestHostDetails,
+} from "./pullRequestHost.ts";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
@@ -168,6 +173,7 @@ import {
   PullRequestChangeBreakdown,
   PullRequestCommentInput,
   PullRequestCommentUpdateInput,
+  PullRequestCommentDeleteInput,
   PullRequestDetail,
   PullRequestPreview,
   PullRequestChecks,
@@ -292,7 +298,6 @@ import {
   DeviceSession,
   DeviceShutdownInput,
 } from "./device.ts";
-import {} from "./previewAutomation.ts";
 import {
   ServerConfigStreamEvent,
   DesktopUpdateCommitInput,
@@ -545,7 +550,10 @@ export const WS_METHODS = {
   pullRequestsRunAction: "pullRequests.runAction",
   pullRequestsUpdate: "pullRequests.update",
   pullRequestsComment: "pullRequests.comment",
+  pullRequestsHostDetails: "pullRequests.hostDetails",
+  pullRequestsRunHostAction: "pullRequests.runHostAction",
   pullRequestsUpdateComment: "pullRequests.updateComment",
+  pullRequestsDeleteComment: "pullRequests.deleteComment",
   pullRequestsSubmitReview: "pullRequests.submitReview",
   pullRequestsReplyToThread: "pullRequests.replyToThread",
   pullRequestsSetThreadResolution: "pullRequests.setThreadResolution",
@@ -1011,6 +1019,17 @@ const WsPullRequestsChecksRpc = Rpc.make(WS_METHODS.pullRequestsChecks, {
   error: PullRequestRpcError,
 });
 
+const WsPullRequestsHostDetailsRpc = Rpc.make(WS_METHODS.pullRequestsHostDetails, {
+  payload: PullRequestRef,
+  success: Schema.NullOr(PullRequestHostDetails),
+  error: PullRequestRpcError,
+});
+const WsPullRequestsRunHostActionRpc = Rpc.make(WS_METHODS.pullRequestsRunHostAction, {
+  payload: PullRequestHostActionInput,
+  success: PullRequestHostActionResult,
+  error: PullRequestRpcError,
+});
+
 const WsPullRequestsActivityRpc = Rpc.make(WS_METHODS.pullRequestsActivity, {
   payload: PullRequestRef,
   success: PullRequestActivity,
@@ -1073,6 +1092,12 @@ const WsPullRequestsUpdateRpc = Rpc.make(WS_METHODS.pullRequestsUpdate, {
 
 const WsPullRequestsCommentRpc = Rpc.make(WS_METHODS.pullRequestsComment, {
   payload: PullRequestCommentInput,
+  success: Schema.Void,
+  error: PullRequestRpcError,
+});
+
+const WsPullRequestsDeleteCommentRpc = Rpc.make(WS_METHODS.pullRequestsDeleteComment, {
+  payload: PullRequestCommentDeleteInput,
   success: Schema.Void,
   error: PullRequestRpcError,
 });
@@ -1957,6 +1982,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsPullRequestsPreviewRpc,
   WsPullRequestsChecksRpc,
   WsPullRequestsActivityRpc,
+  WsPullRequestsHostDetailsRpc,
+  WsPullRequestsRunHostActionRpc,
   WsPullRequestsReviewGuideRpc,
   WsPullRequestsGenerateReviewGuideRpc,
   WsPullRequestsThreadCommentsRpc,
@@ -1968,6 +1995,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPullRequestsUpdateRpc,
   WsPullRequestsCommentRpc,
   WsPullRequestsUpdateCommentRpc,
+  WsPullRequestsDeleteCommentRpc,
   WsPullRequestsSubmitReviewRpc,
   WsPullRequestsReplyToThreadRpc,
   WsPullRequestsSetThreadResolutionRpc,

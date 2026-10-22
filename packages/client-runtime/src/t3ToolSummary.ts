@@ -425,6 +425,12 @@ export function summarizeT3ToolCalls(
     case "read-pr-guide":
       label = phrase("Read", "read", quantity(selected.length, "review guide"));
       break;
+    case "read-pr-host-details":
+      label = phrase("Read", "read", `pull request host details ${times}`);
+      break;
+    case "run-pr-host-action":
+      label = phrase("Applied", "apply", quantity(selected.length, "pull request action"));
+      break;
     case "browser":
       label = phrase("Used", "use", `browser ${times}`);
       break;

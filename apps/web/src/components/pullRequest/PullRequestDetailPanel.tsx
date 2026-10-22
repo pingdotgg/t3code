@@ -1,3 +1,7 @@
+import { reusePullRequestIdentities } from "@t3tools/client-runtime/pull-request-markdown";
+import { PullRequestGlyph } from "./pullRequestIcons";
+import { PullRequestReviewButton } from "./PullRequestReviewButton";
+import { PullRequestReviewContext, usePullRequestPreviousVisit } from "./PullRequestReviewContext";
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import { useAtomValue } from "@effect/atom-react";
 import { usePullRequestStack } from "~/state/usePullRequestStack";
@@ -21,6 +25,7 @@ import {
   type PullRequestUpdateMethod,
   type PullRequestRef,
   type PullRequestReviewGuideStop,
+  type PullRequestReviewVerdict,
   resolveEnvironmentMachineKind,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -74,6 +79,7 @@ import { RelativeTime } from "~/components/RelativeTime";
 import { useUiStateStore } from "~/uiStateStore";
 
 import { Button } from "../ui/button";
+import { Badge } from "../ui/badge";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
 import { MiddleTruncate } from "../ui/middle-truncate";
@@ -237,8 +243,10 @@ function pullRequestMarkdownContext(
   hostClient: ReturnType<typeof sourceControlClients.get>,
   repositoryUrl: string | null,
   threadRef: ScopedThreadRef | null,
+  identities: Readonly<Record<string, string>>,
 ) {
   return {
+    identities,
     repositoryUrl:
       repositoryUrl === null ? null : hostClient.referenceAutolinkRepositoryUrl(repositoryUrl),
     threadRef,
@@ -320,7 +328,9 @@ export function PullRequestDetailPanel({
       ? listEntry
       : null;
   const [threadPickerOpen, setThreadPickerOpen] = useState(false);
-  const [openReviewRequest, setOpenReviewRequest] = useState(0);
+  const [openReviewRequest, setOpenReviewRequest] = useState<{
+    verdict?: PullRequestReviewVerdict;
+  } | null>(null);
   const [tab, setTab] = useState<PullRequestDetailTab>(initialTab);
   const selectTab = (next: PullRequestDetailTab) => {
     setTab(next);
@@ -469,10 +479,29 @@ export function PullRequestDetailPanel({
     setSeenAutoMergeKey(autoMergeKey);
     if (detail?.autoMergeMethod !== undefined) setMergeMethod(detail.autoMergeMethod);
   }
+  const previousVisit = usePullRequestPreviousVisit(
+    `${environmentId}:${reference.projectId}:${reference.host}:${reference.repository}:${reference.number}`,
+    activityQuery.isSuccess,
+  );
+  const reviewContext = {
+    environmentId,
+    reference,
+    deniedActions: detail?.viewerPermissions.deniedActions ?? {},
+    azure: detail?.capabilities.hostActions === true,
+    previousVisit,
+  };
   const repositoryUrl = detail === null ? null : changeRequestRepositoryUrl(detail.url);
   const hostClient = sourceControlClients.get(detail?.provider);
   const openOnHostText = openOnHostLabel(hostClient);
-  const markdownContext = pullRequestMarkdownContext(hostClient, repositoryUrl, threadRef);
+  const [identities, setIdentities] = useState<Readonly<Record<string, string>>>({});
+  const nextIdentities = reusePullRequestIdentities(identities, activity?.identities ?? {});
+  if (nextIdentities !== identities) setIdentities(nextIdentities);
+  const markdownContext = pullRequestMarkdownContext(
+    hostClient,
+    repositoryUrl,
+    threadRef,
+    identities,
+  );
   const authorProfileUrl =
     detail?.author && repositoryUrl !== null
       ? hostClient.authorProfileUrl(detail.author.login, repositoryUrl)
@@ -1116,6 +1145,17 @@ export function PullRequestDetailPanel({
       ? "pending"
       : latestChecksState;
   const checksStale = checksState !== detailChecksState;
+  // The merge state remains in one stable slot from waiting through completion. Conflicts take
+  // the slot while they need a person; the armed badge remains beside them so that state is not lost.
+  const denied = detail?.viewerPermissions.deniedActions ?? {};
+  const readyLabel = detail?.provider === "azure-devops" ? "Publish" : "Ready for review";
+  const readyReason =
+    denied.ready ??
+    (!canWriteSourceControl
+      ? "This connection does not allow pull request changes."
+      : !can("ready")
+        ? "You do not have permission to publish this pull request."
+        : undefined);
   const primaryAction = detail
     ? resolvePullRequestPrimaryControl({
         state: detail.state,
@@ -1125,7 +1165,10 @@ export function PullRequestDetailPanel({
         autoMergeEnabled: detail.autoMergeEnabled,
         hasMergeMethod: allowedMergeMethods.length > 0,
         canMerge: canMergeSinglePullRequest && can("merge"),
-        canMarkReady: can("ready"),
+        canMarkReady:
+          detail.provider === "azure-devops"
+            ? detail.capabilities.actions.includes("ready")
+            : can("ready"),
         canEnableAutoMerge: canMergeSinglePullRequest && can("enable-auto-merge"),
       })
     : null;
@@ -1185,12 +1228,13 @@ export function PullRequestDetailPanel({
     : detail
       ? summarizePullRequestChecks(detail.checks)
       : null;
-  const approvalCount =
-    detail && !detail.commentsTruncated
-      ? latestPullRequestReviewOutcomes(detail.comments, detail.commits).filter(
-          (entry) => entry.outcome === "approved" && !entry.stale,
-        ).length
-      : 0;
+  const approvalCount = detail
+    ? latestPullRequestReviewOutcomes(
+        detail.commentsTruncated ? [] : detail.comments,
+        detail.commits,
+        detail.reviewers,
+      ).filter((entry) => entry.outcome === "approved" && !entry.stale).length
+    : 0;
 
   const checkoutControl =
     context === "page" ? (
@@ -1312,6 +1356,21 @@ export function PullRequestDetailPanel({
                   threadRef={null}
                 />
               ) : null}
+              {detail.state === "open" && detail.isDraft ? (
+                <Badge size="control" variant="outline">
+                  <PullRequestGlyph.draft aria-hidden className="size-3.5" />
+                  Draft
+                </Badge>
+              ) : null}
+              <PullRequestReviewButton
+                key={`${environmentId}:${pullRequestKey}`}
+                environmentId={environmentId}
+                reference={reference}
+                detail={detail}
+                actionPending={actionPending}
+                onReview={(verdict) => setOpenReviewRequest({ verdict })}
+                onActed={refreshDetail}
+              />
               <PullRequestPrimaryAction
                 pullRequestKey={pullRequestKey}
                 primaryAction={primaryAction}
@@ -1324,6 +1383,9 @@ export function PullRequestDetailPanel({
                 pendingAction={pendingAction}
                 perform={perform}
                 resolveConflicts={resolveConflictsControl}
+                readyLabel={readyLabel}
+                readyReason={readyReason}
+                denied={denied}
               />
               {checkoutControl}
               <PullRequestActionsMenu
@@ -1368,6 +1430,9 @@ export function PullRequestDetailPanel({
                 perform={perform}
                 openOnHostText={openOnHostText}
                 copyReference={copyReference}
+                showResolveConflicts={conflicting && primaryAction !== "resolve"}
+                resolveConflictsUnavailable={attachTarget === null && checkoutRoot === null}
+                onResolveConflicts={startResolveConflicts}
               />
             </TooltipProvider>
           ) : null}
@@ -1563,6 +1628,7 @@ export function PullRequestDetailPanel({
             {tab === "summary" ? (
               showsApproveWorkflows ? (
                 <PullRequestApproveWorkflowsButton
+                  reason={denied["approve-workflows"]}
                   pullRequestKey={pullRequestKey}
                   pendingAction={pendingAction}
                   perform={perform}
@@ -1698,122 +1764,128 @@ export function PullRequestDetailPanel({
             {...(unavailableGitHubUrl ? { gitHubUrl: unavailableGitHubUrl } : {})}
           />
         ) : detail ? (
-          <PullRequestMarkdownContext value={markdownContext}>
-            {mountedTabs.has("summary") ? (
-              <div className={cn("absolute inset-0", tab !== "summary" && "invisible")}>
-                <PullRequestSummaryTab
-                  scrollerRef={scrollerRefs.summary}
-                  environmentId={environmentId}
-                  threadRef={threadRef}
-                  reference={reference}
-                  detail={detail}
-                  activityPending={activityPending}
-                  checksStale={checksStale}
-                  activityError={activityError}
-                  pendingFinding={handoff}
-                  fixFindingLabel={handoffLabels.fixFinding}
-                  fixCheckLabel={handoffLabels.fixCheck}
-                  {...(canFixFindings ? { onFixFinding: startFixFinding } : {})}
-                  onRefresh={refreshDetail}
-                  onRefreshChecks={refreshFromHost}
-                />
-              </div>
-            ) : null}
-            {mountedTabs.has("guide") ? (
-              <div className={cn("absolute inset-0", tab !== "guide" && "invisible")}>
-                <PullRequestGuideTab
-                  environmentId={environmentId}
-                  reference={reference}
-                  active={tab === "guide"}
-                  title={detail.title}
-                  workspaceRoot={detail.workspaceRoot}
-                  canComment={
-                    detail.capabilities.review.inlineComment && detail.viewerPermissions.comment
-                  }
-                  onAskAboutLines={(comment, request) =>
-                    addSelectionToAgent({ comment, request }, { keepGuide: true })
-                  }
-                  onAskAboutStop={askAboutGuideStop}
-                  onFinishReview={
-                    detail.capabilities.review.verdicts.some((verdict) =>
-                      detail.viewerPermissions.verdicts.includes(verdict),
-                    )
-                      ? () => setOpenReviewRequest((count) => count + 1)
-                      : null
-                  }
-                  onOpenFile={openFileInCode}
-                  onTourShown={onGuideShown}
-                />
-              </div>
-            ) : null}
-            {mountedTabs.has("timeline") ? (
-              <div className={cn("absolute inset-0", tab !== "timeline" && "invisible")}>
-                {activityPending ? (
-                  <PullRequestTimelineGhost />
-                ) : activityError ? (
-                  <PullRequestActivityUnavailableState
-                    error={activityError}
-                    onRetry={activityQuery.refresh}
-                  />
-                ) : (
-                  <PullRequestTimelineTab
-                    scrollerRef={scrollerRefs.timeline}
-                    detail={detail}
+          <PullRequestReviewContext value={reviewContext}>
+            <PullRequestMarkdownContext value={markdownContext}>
+              {mountedTabs.has("summary") ? (
+                <div className={cn("absolute inset-0", tab !== "summary" && "invisible")}>
+                  <PullRequestSummaryTab
+                    scrollerRef={scrollerRefs.summary}
                     environmentId={environmentId}
                     threadRef={threadRef}
                     reference={reference}
-                    order={timelineOrder}
-                    onOpenCommit={openCommit}
-                    onRefresh={refreshDetail}
-                  />
-                )}
-              </div>
-            ) : null}
-            {mountedTabs.has("code") ? (
-              <div className={cn("absolute inset-0", tab !== "code" && "invisible")}>
-                <Suspense fallback={<DiffPanelLoadingState label="Loading pull request diff..." />}>
-                  <PullRequestCodeTab
-                    scrollerRef={scrollerRefs.code}
-                    onAddToAgentSelection={addSelectionToAgent}
-                    environmentId={environmentId}
-                    reference={reference}
                     detail={detail}
-                    selectedCommitOid={selectedCodeCommitOid}
-                    onSelectedCommitChange={selectCodeCommit}
+                    activityPending={activityPending}
+                    checksStale={checksStale}
+                    activityError={activityError}
                     pendingFinding={handoff}
                     fixFindingLabel={handoffLabels.fixFinding}
+                    fixCheckLabel={handoffLabels.fixCheck}
                     {...(canFixFindings ? { onFixFinding: startFixFinding } : {})}
                     onRefresh={refreshDetail}
-                    refreshToken={refreshToken}
-                    backgroundRefreshToken={turnRefresh ?? 0}
-                    revealRequest={codeRevealRequest}
+                    onRefreshChecks={refreshFromHost}
                   />
-                </Suspense>
-              </div>
-            ) : null}
-          </PullRequestMarkdownContext>
+                </div>
+              ) : null}
+              {mountedTabs.has("guide") ? (
+                <div className={cn("absolute inset-0", tab !== "guide" && "invisible")}>
+                  <PullRequestGuideTab
+                    environmentId={environmentId}
+                    reference={reference}
+                    active={tab === "guide"}
+                    title={detail.title}
+                    workspaceRoot={detail.workspaceRoot}
+                    canComment={
+                      detail.capabilities.review.inlineComment && detail.viewerPermissions.comment
+                    }
+                    onAskAboutLines={(comment, request) =>
+                      addSelectionToAgent({ comment, request }, { keepGuide: true })
+                    }
+                    onAskAboutStop={askAboutGuideStop}
+                    onFinishReview={
+                      detail.capabilities.review.verdicts.some((verdict) =>
+                        detail.viewerPermissions.verdicts.includes(verdict),
+                      )
+                        ? () => setOpenReviewRequest({})
+                        : null
+                    }
+                    onOpenFile={openFileInCode}
+                    onTourShown={onGuideShown}
+                  />
+                </div>
+              ) : null}
+              {mountedTabs.has("timeline") ? (
+                <div className={cn("absolute inset-0", tab !== "timeline" && "invisible")}>
+                  {activityPending ? (
+                    <PullRequestTimelineGhost />
+                  ) : activityError ? (
+                    <PullRequestActivityUnavailableState
+                      error={activityError}
+                      onRetry={activityQuery.refresh}
+                    />
+                  ) : (
+                    <PullRequestTimelineTab
+                      scrollerRef={scrollerRefs.timeline}
+                      detail={detail}
+                      environmentId={environmentId}
+                      threadRef={threadRef}
+                      reference={reference}
+                      order={timelineOrder}
+                      onOpenCommit={openCommit}
+                      onRefresh={refreshDetail}
+                    />
+                  )}
+                </div>
+              ) : null}
+              {mountedTabs.has("code") ? (
+                <div className={cn("absolute inset-0", tab !== "code" && "invisible")}>
+                  <Suspense
+                    fallback={<DiffPanelLoadingState label="Loading pull request diff..." />}
+                  >
+                    <PullRequestCodeTab
+                      scrollerRef={scrollerRefs.code}
+                      onAddToAgentSelection={addSelectionToAgent}
+                      environmentId={environmentId}
+                      reference={reference}
+                      detail={detail}
+                      selectedCommitOid={selectedCodeCommitOid}
+                      onSelectedCommitChange={selectCodeCommit}
+                      pendingFinding={handoff}
+                      fixFindingLabel={handoffLabels.fixFinding}
+                      {...(canFixFindings ? { onFixFinding: startFixFinding } : {})}
+                      onRefresh={refreshDetail}
+                      refreshToken={refreshToken}
+                      backgroundRefreshToken={turnRefresh ?? 0}
+                      revealRequest={codeRevealRequest}
+                    />
+                  </Suspense>
+                </div>
+              ) : null}
+            </PullRequestMarkdownContext>
+          </PullRequestReviewContext>
         ) : null}
       </div>
 
       {detail ? (
         <div className="absolute right-4 bottom-3 z-20">
-          <PullRequestComposer
-            key={JSON.stringify([
-              environmentId,
-              reference.projectId,
-              reference.host,
-              reference.repository,
-              reference.number,
-            ])}
-            environmentId={environmentId}
-            reference={reference}
-            detail={detail}
-            actionPending={actionPending}
-            onCommentAction={performCommentAction}
-            onCommented={refreshDetail}
-            onReviewSubmitted={refreshDetail}
-            openReviewRequest={openReviewRequest}
-          />
+          <PullRequestReviewContext value={reviewContext}>
+            <PullRequestComposer
+              key={JSON.stringify([
+                environmentId,
+                reference.projectId,
+                reference.host,
+                reference.repository,
+                reference.number,
+              ])}
+              environmentId={environmentId}
+              reference={reference}
+              detail={detail}
+              actionPending={actionPending}
+              onCommentAction={performCommentAction}
+              onCommented={refreshDetail}
+              onReviewSubmitted={refreshDetail}
+              openReviewRequest={openReviewRequest}
+            />
+          </PullRequestReviewContext>
         </div>
       ) : null}
     </div>

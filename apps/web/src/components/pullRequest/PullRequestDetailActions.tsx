@@ -2,6 +2,7 @@ import type {
   EnvironmentId,
   PullRequestAction,
   PullRequestMergeMethod,
+  PullRequestDetail,
   PullRequestUpdateMethod,
 } from "@t3tools/contracts";
 import { CheckIcon, ChevronDownIcon, FolderGit2Icon, GitBranchIcon, PlayIcon } from "lucide-react";
@@ -26,6 +27,7 @@ import type { resolvePullRequestPrimaryControl } from "./pullRequestDetail.logic
 import { PullRequestGlyph } from "./pullRequestIcons";
 import type { resolvePullRequestState } from "./pullRequestPresentation";
 import type { PickableEnvironment } from "./pullRequestProjectAssignment.logic";
+import { PullRequestPermissionButton } from "./PullRequestPermissionButton";
 import { useInlineActionConfirm } from "./useInlineActionConfirm";
 
 export type PerformPullRequestAction = (
@@ -197,6 +199,9 @@ export function PullRequestPrimaryAction({
   pendingAction,
   perform,
   resolveConflicts,
+  readyLabel,
+  readyReason,
+  denied,
 }: {
   pullRequestKey: string;
   primaryAction: ReturnType<typeof resolvePullRequestPrimaryControl> | null;
@@ -209,6 +214,9 @@ export function PullRequestPrimaryAction({
   pendingAction: PullRequestAction | null;
   perform: PerformPullRequestAction;
   resolveConflicts: ReactNode;
+  readyLabel: string;
+  readyReason: string | undefined;
+  denied: NonNullable<PullRequestDetail["viewerPermissions"]["deniedActions"]>;
 }) {
   const inlineConfirm = useInlineActionConfirm(pullRequestKey);
   const actionPending = pendingAction !== null;
@@ -235,31 +243,41 @@ export function PullRequestPrimaryAction({
         <Tooltip>
           <TooltipTrigger
             render={
-              <span className="inline-flex shrink-0">
+              <span
+                tabIndex={readyReason ? 0 : undefined}
+                className="inline-flex shrink-0 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              >
                 <Button
                   size="xs"
                   variant="default"
-                  disabled={actionPending}
-                  onClick={() => void perform("ready")}
-                  aria-label="Ready for review"
+                  disabled={actionPending || Boolean(readyReason)}
+                  onClick={() => {
+                    if (!readyReason) void perform("ready");
+                  }}
+                  aria-label={pendingAction === "ready" ? "Publishing…" : readyLabel}
                 >
                   <PullRequestGlyph.pullRequest aria-hidden className="size-3.5" />
-                  <span className="@max-[30rem]/pr-header:hidden">Ready for review</span>
+                  <span className="@max-[30rem]/pr-header:hidden">
+                    {pendingAction === "ready" ? "Publishing…" : readyLabel}
+                  </span>
                 </Button>
               </span>
             }
           />
-          <TooltipPopup side="top">Ready for review</TooltipPopup>
+          <TooltipPopup side="top">{readyReason ?? readyLabel}</TooltipPopup>
         </Tooltip>
       ) : primaryAction === "enable-auto-merge" ? (
         <Tooltip>
           <TooltipTrigger
             render={
-              <span className="inline-flex shrink-0">
+              <span
+                tabIndex={denied["enable-auto-merge"] ? 0 : undefined}
+                className="inline-flex shrink-0 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              >
                 <Button
                   size="xs"
                   variant="default"
-                  disabled={actionPending}
+                  disabled={actionPending || Boolean(denied["enable-auto-merge"])}
                   {...inlineConfirm.props(
                     "enable-auto-merge",
                     () => void perform("enable-auto-merge", selectedMergeMethod),
@@ -296,11 +314,12 @@ export function PullRequestPrimaryAction({
             }
           />
           <TooltipPopup side="top">
-            {pendingAction === "enable-auto-merge"
-              ? "Enabling..."
-              : inlineConfirm.isArmed("enable-auto-merge")
-                ? "Confirm auto-merge?"
-                : pendingAutoMergeLabel}
+            {denied["enable-auto-merge"] ??
+              (pendingAction === "enable-auto-merge"
+                ? "Enabling..."
+                : inlineConfirm.isArmed("enable-auto-merge")
+                  ? "Confirm auto-merge?"
+                  : pendingAutoMergeLabel)}
           </TooltipPopup>
         </Tooltip>
       ) : primaryAction === "auto-merge-armed" ? (
@@ -321,11 +340,14 @@ export function PullRequestPrimaryAction({
         <Tooltip>
           <TooltipTrigger
             render={
-              <span className="inline-flex shrink-0">
+              <span
+                tabIndex={denied["merge"] ? 0 : undefined}
+                className="inline-flex shrink-0 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              >
                 <Button
                   size="xs"
                   variant="default"
-                  disabled={actionPending}
+                  disabled={actionPending || Boolean(denied["merge"])}
                   {...inlineConfirm.props(
                     "merge",
                     () => void perform("merge", selectedMergeMethod),
@@ -362,11 +384,12 @@ export function PullRequestPrimaryAction({
             }
           />
           <TooltipPopup side="top">
-            {pendingAction === "merge"
-              ? "Merging..."
-              : inlineConfirm.isArmed("merge")
-                ? "Confirm merge?"
-                : selectedMergeMethodLabel}
+            {denied["merge"] ??
+              (pendingAction === "merge"
+                ? "Merging..."
+                : inlineConfirm.isArmed("merge")
+                  ? "Confirm merge?"
+                  : selectedMergeMethodLabel)}
           </TooltipPopup>
         </Tooltip>
       ) : (primaryAction === "merged" || primaryAction === "closed") &&
@@ -386,10 +409,12 @@ export function PullRequestApproveWorkflowsButton({
   pullRequestKey,
   pendingAction,
   perform,
+  reason,
 }: {
   pullRequestKey: string;
   pendingAction: PullRequestAction | null;
   perform: PerformPullRequestAction;
+  reason: string | undefined;
 }) {
   const inlineConfirm = useInlineActionConfirm(pullRequestKey);
   const actionPending = pendingAction !== null;
@@ -398,10 +423,11 @@ export function PullRequestApproveWorkflowsButton({
       <TooltipTrigger
         render={
           <span className="ml-auto inline-flex shrink-0">
-            <Button
+            <PullRequestPermissionButton
               size="xs"
               variant="warning-outline"
               disabled={actionPending}
+              reason={reason}
               {...inlineConfirm.props("approve-workflows", () => void perform("approve-workflows"))}
               aria-label={
                 pendingAction === "approve-workflows"
@@ -427,7 +453,7 @@ export function PullRequestApproveWorkflowsButton({
                       : "Approve workflows to run"}
                 </span>
               </span>
-            </Button>
+            </PullRequestPermissionButton>
           </span>
         }
       />

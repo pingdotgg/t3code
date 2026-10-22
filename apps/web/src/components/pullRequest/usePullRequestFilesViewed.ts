@@ -25,6 +25,7 @@ const NO_OVERLAY: FileViewedOverlay = new Map();
 
 export interface PullRequestFilesViewedView {
   readonly enabled: boolean;
+  readonly disabledReason?: string;
   readonly isViewed: (path: string) => boolean;
   readonly isStale: (path: string) => boolean;
   readonly setViewed: (path: string, viewed: boolean) => void;
@@ -37,6 +38,7 @@ export function usePullRequestFilesViewed(options: {
   readonly environmentId: EnvironmentId;
   readonly reference: PullRequestRef;
   readonly enabled: boolean;
+  readonly disabledReason?: string;
 }): PullRequestFilesViewedView {
   const { environmentId, reference, enabled } = options;
   const query = useEnvironmentQuery(
@@ -46,6 +48,7 @@ export function usePullRequestFilesViewed(options: {
   const states = toFileViewedStates(query.data);
   const truncated = query.data?.truncated === true;
   const error = query.error;
+  const disabledReason = options.disabledReason ?? query.data?.disabledReason;
   const [overlay, setOverlay] = useState<FileViewedOverlay>(NO_OVERLAY);
   const setFilesViewed = useAtomCommand(pullRequestEnvironment.setFilesViewed, {
     reportFailure: false,
@@ -140,6 +143,7 @@ export function usePullRequestFilesViewed(options: {
 
   // Handed to every file header the viewer draws; a new identity would rebuild all of them.
   const setViewed = useStableCallback((path: string, viewed: boolean) => {
+    if (disabledReason) return;
     setOverlay((current) => new Map(current).set(path, viewed));
     queued.current.set(path, viewed);
     if (flushTimer.current !== null) clearTimeout(flushTimer.current);
@@ -149,6 +153,7 @@ export function usePullRequestFilesViewed(options: {
 
   return {
     enabled,
+    ...(disabledReason ? { disabledReason } : {}),
     isViewed: (path: string) => isFileViewed(path, states, overlay),
     isStale: (path: string) => !overlay.has(path) && isStaleViewedState(states?.get(path)),
     setViewed,

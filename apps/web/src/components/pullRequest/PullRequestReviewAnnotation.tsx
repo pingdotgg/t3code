@@ -6,6 +6,7 @@ import type {
   PullRequestReviewThread,
   PullRequestThreadCommentsResult,
   PullRequestThreadComment,
+  PullRequestThreadStatus,
 } from "@t3tools/contracts";
 import { HammerIcon, MessageSquareIcon, Trash2Icon } from "lucide-react";
 import { Circle, CircleCheck } from "lucide";
@@ -17,8 +18,9 @@ import { cn } from "~/lib/utils";
 
 import { Button } from "../ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
-import { PullRequestEditButton } from "./PullRequestEditButton";
-import { Textarea } from "../ui/textarea";
+import { PullRequestCommentActions } from "./PullRequestCommentActions";
+import { PullRequestDiscussionStatus } from "./PullRequestDiscussionStatus";
+import { PullRequestTextarea as Textarea } from "./PullRequestTextarea";
 import { isCommentSubmitShortcut } from "../diffs/commentSubmitShortcut";
 import {
   editPullRequestThreadComment,
@@ -109,6 +111,11 @@ export function ReviewThreadCard({
   canReply,
   canResolve,
   canReact,
+  canLike = false,
+  canDelete = false,
+  suggestionHead,
+  status,
+  statuses,
   environmentId,
   reference,
   pending,
@@ -127,6 +134,11 @@ export function ReviewThreadCard({
   canReply: boolean;
   canResolve: boolean;
   canReact: boolean;
+  canLike?: boolean;
+  canDelete?: boolean;
+  suggestionHead?: string | undefined;
+  status?: PullRequestThreadStatus | undefined;
+  statuses?: ReadonlyArray<PullRequestThreadStatus> | undefined;
   environmentId: EnvironmentId;
   reference: PullRequestRef;
   pending: boolean;
@@ -219,7 +231,7 @@ export function ReviewThreadCard({
       contentEditable={false}
       onPointerDown={(event) => event.stopPropagation()}
     >
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         <MorphIcon
           className={cn("size-3.5", thread.isResolved && "text-success-foreground")}
           icon={thread.isResolved ? CircleCheck : Circle}
@@ -246,7 +258,15 @@ export function ReviewThreadCard({
             {fixPending ? "Preparing..." : fixLabel}
           </Button>
         ) : null}
-        {canResolve ? (
+        {canResolve && status && statuses ? (
+          <PullRequestDiscussionStatus
+            environmentId={environmentId}
+            reference={reference}
+            threadId={thread.id}
+            status={status}
+            statuses={statuses}
+          />
+        ) : canResolve ? (
           <Button
             size="xs"
             variant="ghost"
@@ -269,15 +289,34 @@ export function ReviewThreadCard({
                   <span>
                     <RelativeTime timestamp={comment.createdAt} />
                   </span>
-                  <PullRequestReactionBar
-                    className="ml-auto justify-end"
-                    reactions={comment.reactions ?? []}
-                    canReact={canReact}
-                    subjectId={comment.id}
+                  <PullRequestCommentActions
+                    comment={{
+                      ...comment,
+                      kind: "review-comment",
+                      path: thread.path,
+                      threadId: thread.id,
+                      reviewState: null,
+                      ...(status === undefined ? {} : { threadStatus: status }),
+                    }}
                     environmentId={environmentId}
                     reference={reference}
-                    onRefresh={onReacted}
+                    canEdit={canEditComment(comment)}
+                    canDelete={canDelete && canEditComment(comment)}
+                    canLike={canLike}
+                    suggestionHead={suggestionHead}
+                    onEdit={() => setEditingId(comment.id)}
                   />
+                  {!canLike ? (
+                    <PullRequestReactionBar
+                      className="ml-auto justify-end"
+                      reactions={comment.reactions ?? []}
+                      canReact={canReact}
+                      subjectId={comment.id}
+                      environmentId={environmentId}
+                      reference={reference}
+                      onRefresh={onReacted}
+                    />
+                  ) : null}
                 </div>
                 {editingId === comment.id ? (
                   <PullRequestMarkdownEditor
@@ -298,12 +337,6 @@ export function ReviewThreadCard({
                       cwd={workspaceRoot}
                       environmentId={environmentId}
                     />
-                    {canEditComment(comment) ? (
-                      <PullRequestEditButton
-                        aria-label="Edit comment"
-                        onClick={() => setEditingId(comment.id)}
-                      />
-                    ) : null}
                   </div>
                 )}
               </article>

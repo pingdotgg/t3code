@@ -77,6 +77,7 @@ export function PullRequestTitleEditor({
         </Tooltip>
         {canEditPullRequestChangeRequest(detail) ? (
           <PullRequestEditButton
+            reason={detail.viewerPermissions.deniedActions?.edit}
             aria-label="Edit title"
             onClick={() => setTitleScope({ pullRequestKey, text: detail.title })}
           />

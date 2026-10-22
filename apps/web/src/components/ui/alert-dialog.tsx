@@ -3,6 +3,7 @@ import { AlertDialog as AlertDialogPrimitive } from "@base-ui/react/alert-dialog
 import { cn } from "~/lib/utils";
 import {
   DIALOG_BACKDROP_CLASS,
+  DIALOG_DIMMED_BACKDROP_CLASS,
   DIALOG_MOBILE_SHEET_CLASS,
   DIALOG_POPUP_CLASS,
 } from "~/components/ui/dialog-styles";
@@ -18,11 +19,18 @@ function AlertDialog<Payload>(props: AlertDialogPrimitive.Root.Props<Payload>) {
 
 const AlertDialogPortal = AlertDialogPrimitive.Portal;
 
-function AlertDialogBackdrop({ className, ...props }: AlertDialogPrimitive.Backdrop.Props) {
+function AlertDialogBackdrop({
+  className,
+  variant = "blurred",
+  ...props
+}: AlertDialogPrimitive.Backdrop.Props & { variant?: "blurred" | "dimmed" }) {
   return (
     <AlertDialogPrimitive.Backdrop
       forceRender
-      className={cn(DIALOG_BACKDROP_CLASS, className)}
+      className={cn(
+        variant === "dimmed" ? DIALOG_DIMMED_BACKDROP_CLASS : DIALOG_BACKDROP_CLASS,
+        className,
+      )}
       data-slot="alert-dialog-backdrop"
       {...props}
     />
@@ -46,14 +54,16 @@ function AlertDialogPopup({
   className,
   bottomStickOnMobile = true,
   portalContainer,
+  backdropVariant = "blurred",
   ...props
 }: AlertDialogPrimitive.Popup.Props & {
   bottomStickOnMobile?: boolean;
+  backdropVariant?: "blurred" | "dimmed";
   portalContainer?: AlertDialogPrimitive.Portal.Props["container"];
 }) {
   return (
     <AlertDialogPortal container={portalContainer}>
-      <AlertDialogBackdrop />
+      <AlertDialogBackdrop variant={backdropVariant} />
       <AlertDialogViewport
         className={cn(bottomStickOnMobile && "max-sm:grid-rows-[1fr_auto] max-sm:p-0 max-sm:pt-12")}
       >

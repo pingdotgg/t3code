@@ -2,7 +2,7 @@ import { PencilIcon } from "lucide-react";
 import type { ComponentProps } from "react";
 
 import { cn } from "../../lib/utils";
-import { Button } from "../ui/button";
+import { PullRequestPermissionButton as Button } from "./PullRequestPermissionButton";
 
 export function PullRequestEditButton({
   className,

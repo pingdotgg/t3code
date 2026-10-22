@@ -87,3 +87,100 @@ export function githubMarkdownLinks(markdown: string, pullRequestUrl: string | n
   }
   return markdown;
 }
+
+/** Azure references are rewritten only in prose; code and authored links retain their source. */
+export function azureDevOpsMarkdownLinks(
+  markdown: string,
+  repositoryUrl: string | null,
+  identities: Readonly<Record<string, string>> = {},
+): string {
+  if (!repositoryUrl || !/[#!][1-9]|@<[\da-f]|\b[\da-f]{40}\b/i.test(markdown)) return markdown;
+  let url: URL;
+  try {
+    url = new URL(repositoryUrl);
+  } catch {
+    return markdown;
+  }
+  if (
+    !(url.hostname === "dev.azure.com" || url.hostname.endsWith(".visualstudio.com")) ||
+    !url.pathname.includes("/_git/")
+  )
+    return markdown;
+  const project = `${url.origin}${url.pathname.split("/_git/")[0]}`;
+  const repository = `${project}/_git/${url.pathname.split("/_git/")[1]!.split("/")[0]}`;
+  const protectedRanges: { start: number; end: number }[] = [];
+  const visit = (node: MarkdownNode) => {
+    if (
+      [
+        "link",
+        "linkReference",
+        "image",
+        "imageReference",
+        "code",
+        "inlineCode",
+        "definition",
+        "html",
+      ].includes(node.type)
+    ) {
+      const start = node.position?.start.offset;
+      const end = node.position?.end.offset;
+      if (
+        start !== undefined &&
+        end !== undefined &&
+        !(node.type === "html" && /^<[0-9a-f-]{36}>$/i.test(markdown.slice(start, end)))
+      )
+        protectedRanges.push({ start, end });
+      return;
+    }
+    let protectedStart: number | undefined;
+    let depth = 0;
+    for (const child of node.children ?? []) {
+      if (child.type === "html") {
+        const start = child.position?.start.offset;
+        const end = child.position?.end.offset;
+        const tag = start === undefined || end === undefined ? "" : markdown.slice(start, end);
+        for (const match of tag.matchAll(/<(\/)?(?:a|code|pre|script|style)(?=[\s>])[^>]*>/gi)) {
+          if (!match[1] && depth++ === 0) protectedStart = start;
+          if (match[1] && --depth === 0 && protectedStart !== undefined && end !== undefined)
+            protectedRanges.push({ start: protectedStart, end });
+        }
+      }
+      visit(child);
+    }
+    if (depth > 0 && protectedStart !== undefined)
+      protectedRanges.push({
+        start: protectedStart,
+        end: node.position?.end.offset ?? markdown.length,
+      });
+  };
+  visit(parser.parse(markdown));
+  const pattern =
+    /(?<![\w/\\])(?:@<([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})>|([#!])([1-9]\d*)|\b([0-9a-f]{40})\b)/gi;
+  const edits = [...markdown.matchAll(pattern)].filter(
+    (match) =>
+      !protectedRanges.some(
+        (range) => match.index < range.end && match.index + match[0].length > range.start,
+      ),
+  );
+  for (let index = edits.length - 1; index >= 0; index--) {
+    const match = edits[index]!;
+    const [original, identity, pullRequest, reference, commit] = match;
+    const name = identity ? (identities[identity.toLowerCase()] ?? identity) : original;
+    const label = (identity ? `@${name}` : commit ? commit.slice(0, 7) : name).replace(
+      /[\\[\]]/g,
+      "\\$&",
+    );
+    const target = identity
+      ? `${project}/_settings/people?userId=${identity}`
+      : commit
+        ? `${repository}/commit/${commit}`
+        : pullRequest === "!"
+          ? `${repository}/pullrequest/${reference}`
+          : `${project}/_workitems/edit/${reference}`;
+    markdown =
+      markdown.slice(0, match.index) +
+      `[${label}](<${target}>)` +
+      markdown.slice(match.index + original.length);
+  }
+  return markdown;
+}

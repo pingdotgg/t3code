@@ -6,14 +6,12 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Base64 from "effect/encoding/Base64";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
-import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
@@ -208,7 +206,6 @@ import * as ProjectService from "./project/ProjectService.ts";
 import { threadWorkspaceRoot } from "./project/threadWorkspaceRoot.ts";
 import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
 import { projectMutationOperation } from "./project/ProjectMutation.ts";
-import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
@@ -1268,7 +1265,6 @@ export const layerWsRpc = (
             );
       const usage = yield* UsageService.UsageService;
       const usageLimitSources = yield* UsageLimitSources.UsageLimitSources;
-      const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
       const worktreeSetupTracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
       const projectCloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
       const repositoryIdentityResolver =
@@ -2531,6 +2527,12 @@ export const layerWsRpc = (
           withPullRequestViewer(input, pullRequests.update(input)),
         [WS_METHODS.pullRequestsComment]: (input) =>
           withPullRequestViewer(input, pullRequests.comment(input)),
+        [WS_METHODS.pullRequestsHostDetails]: (input) =>
+          withPullRequestViewer(input, pullRequests.hostDetails(input)),
+        [WS_METHODS.pullRequestsRunHostAction]: (input) =>
+          withPullRequestViewer(input, pullRequests.runHostAction(input)),
+        [WS_METHODS.pullRequestsDeleteComment]: (input) =>
+          withPullRequestViewer(input, pullRequests.deleteComment(input)),
         [WS_METHODS.pullRequestsUpdateComment]: (input) =>
           withPullRequestViewer(input, pullRequests.updateComment(input)),
         [WS_METHODS.pullRequestsSubmitReview]: (input) =>
@@ -2543,19 +2545,19 @@ export const layerWsRpc = (
           withPullRequestViewer(input, pullRequests.setReaction(input)),
         [WS_METHODS.pullRequestsReportState]: (input) => pullRequests.reportState(input),
         [WS_METHODS.pullRequestsInvalidate]: (input) =>
-          pullRequests
-            .invalidate(input, { notifyReaders: true })
-            .pipe(
-              Effect.andThen(
-                input.reference === undefined || input.filesViewedOnly === true
-                  ? Effect.void
-                  : resolvePullRequestSyncKey(input.reference).pipe(
-                      Effect.flatMap((key) =>
-                        key === null ? Effect.void : pullRequestSync.requestSync(key),
-                      ),
+          pullRequests.invalidate(input, { notifyReaders: true, refreshProvider: true }).pipe(
+            // A reader asking for fresh host state also wants the thread badges it feeds to
+            // catch up, including a merged link the sweep would otherwise never revisit.
+            Effect.andThen(
+              input.reference === undefined || input.filesViewedOnly === true
+                ? Effect.void
+                : resolvePullRequestSyncKey(input.reference).pipe(
+                    Effect.flatMap((key) =>
+                      key === null ? Effect.void : pullRequestSync.requestSync(key),
                     ),
-              ),
+                  ),
             ),
+          ),
         [WS_METHODS.pullRequestsSubscribeRefreshes]: () => pullRequests.subscribeRefreshes,
         [WS_METHODS.pullRequestsReviewerCandidates]: (input) =>
           withPullRequestViewer(input, pullRequests.reviewerCandidates(input)),

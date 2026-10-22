@@ -40,13 +40,14 @@ const baseInput = {
 
 const captureProcessResult = (
   result: Effect.Effect<ProcessRunner.ProcessRunOutput, ProcessRunner.ProcessRunError>,
+  input: VcsProcess.VcsProcessInput = baseInput,
 ) =>
   VcsProcess.make.pipe(
     Effect.provideService(
       ProcessRunner.ProcessRunner,
       ProcessRunner.ProcessRunner.of({ run: () => result }),
     ),
-    Effect.flatMap((service) => service.run(baseInput)),
+    Effect.flatMap((service) => service.run(input)),
     Effect.flip,
   );
 
@@ -91,6 +92,32 @@ describe("VcsProcess.run", () => {
       yield* git(restore);
       expect(yield* fs.readFileString(file)).toBe("before\n");
     }).pipe(provideLive, Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("classifies Azure scope refusals without retaining their resource URL", () =>
+    Effect.gen(function* () {
+      const stderr =
+        "ERROR: The requested resource requires user authentication: https://dev.azure.com/private/project/_apis/git/cherryPicks";
+      const error = yield* captureProcessResult(
+        Effect.succeed({
+          stdout: "",
+          stderr,
+          code: ChildProcessSpawner.ExitCode(1),
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          stdoutInvalidUtf8: false,
+          stderrInvalidUtf8: false,
+        }),
+        { ...baseInput, command: "az" },
+      );
+      expect(error).toMatchObject({
+        failureKind: "authentication",
+        detail: "Authentication failed.",
+      });
+      assert.instanceOf(error, VcsProcessExitError);
+      expect(yield* encodeExitError(error)).not.toContain("https://dev.azure.com");
+    }),
   );
 
   it.effect.each([

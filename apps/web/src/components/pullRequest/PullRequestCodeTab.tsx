@@ -1,3 +1,5 @@
+import { Select, SelectItem, SelectPopup, SelectTrigger } from "../ui/select";
+import { PullRequestPermissionHint } from "./PullRequestPermissionButton";
 import type { CodeViewItem, DiffLineAnnotation, SelectedLineRange } from "@pierre/diffs";
 import type { CodeViewDiffItem, CodeViewHandle } from "@pierre/diffs/react";
 import type {
@@ -25,6 +27,10 @@ import {
 } from "lucide-react";
 import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown } from "lucide";
 import { useAtomRefresh } from "@effect/atom-react";
+import {
+  resolvePullRequestUpdateComparison,
+  type PullRequestUpdateComparison,
+} from "@t3tools/client-runtime/pull-request-update-comparison";
 import * as Schema from "effect/Schema";
 import {
   createContext,
@@ -145,6 +151,25 @@ const REPLACE_FILE_COUNTS_CSS = `
 
 const NO_SLICES: ReadonlyArray<DiffSlice> = [];
 
+function sameSlice(slice: DiffSlice, page: DiffSlice) {
+  return (
+    slice.cursor === page.cursor &&
+    slice.patch === page.patch &&
+    slice.truncated === page.truncated &&
+    slice.nextCursor === page.nextCursor &&
+    slice.omittedFileStats.length === page.omittedFileStats.length &&
+    slice.omittedFileStats.every((file, index) => {
+      const refreshed = page.omittedFileStats[index];
+      return (
+        refreshed !== undefined &&
+        refreshed.path === file.path &&
+        refreshed.additions === file.additions &&
+        refreshed.deletions === file.deletions
+      );
+    })
+  );
+}
+
 // Each slice is parsed once per cache key and the parse lives as long as the slice does, so a
 // slice arriving costs one parse rather than one per slice already on screen.
 const sliceParses = new WeakMap<DiffSlice, Map<string, RenderablePatch | null>>();
@@ -166,6 +191,7 @@ function parseSlice(slice: DiffSlice, cacheKey: string, ignoreWhitespace: boolea
 
 interface FileViewedToggleState {
   readonly enabled: boolean;
+  readonly disabledReason?: string;
   readonly isViewed: (path: string) => boolean;
   readonly isStale: (path: string) => boolean;
   readonly setFileViewed: (fileKey: string, path: string, viewed: boolean) => void;
@@ -191,29 +217,32 @@ function FileViewedToggle({
   return (
     <span className="flex items-center gap-3">
       {stat}
-      <label
-        data-viewed-toggle=""
-        className="flex cursor-pointer select-none items-center gap-1.5 text-2xs text-muted-foreground"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <Checkbox
-          aria-label={stale ? "Changed" : "Viewed"}
-          checked={viewed}
-          onCheckedChange={(next) => viewedFiles.setFileViewed(fileKey, path, next === true)}
-        />
-        {stale ? (
-          <Tooltip>
-            <TooltipTrigger render={<span className="text-warning-foreground" />}>
-              Changed
-            </TooltipTrigger>
-            <TooltipPopup side="bottom">
-              This file has been pushed to since you marked it viewed.
-            </TooltipPopup>
-          </Tooltip>
-        ) : (
-          <span className="@max-xs:hidden">Viewed</span>
-        )}
-      </label>
+      <PullRequestPermissionHint reason={viewedFiles.disabledReason}>
+        <label
+          data-viewed-toggle=""
+          className="flex cursor-pointer select-none items-center gap-1.5 text-2xs text-muted-foreground"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <Checkbox
+            disabled={Boolean(viewedFiles.disabledReason)}
+            aria-label={viewedFiles.disabledReason ?? (stale ? "Changed" : "Viewed")}
+            checked={viewed}
+            onCheckedChange={(next) => viewedFiles.setFileViewed(fileKey, path, next === true)}
+          />
+          {stale ? (
+            <Tooltip>
+              <TooltipTrigger render={<span className="text-warning-foreground" />}>
+                Changed
+              </TooltipTrigger>
+              <TooltipPopup side="bottom">
+                This file has been pushed to since you marked it viewed.
+              </TooltipPopup>
+            </Tooltip>
+          ) : (
+            <span className="@max-xs:hidden">Viewed</span>
+          )}
+        </label>
+      </PullRequestPermissionHint>
     </span>
   );
 }
@@ -231,6 +260,9 @@ interface DraftAnchor {
   readonly path: string;
   readonly oldPath: string | null;
   readonly position: PullRequestReviewPosition;
+  readonly startLine?: number;
+  readonly fileLevel?: boolean;
+  /** The whole selection, which the comment collapses to one line but a question keeps. */
   readonly range: SelectedLineRange;
 }
 
@@ -309,8 +341,27 @@ function PullRequestCodeTab({
   );
 
   const referenceKey = pullRequestReviewKey(reference);
+  const [updateSelection, setUpdateSelection] = useState<{
+    key: string;
+    comparison: PullRequestUpdateComparison;
+  } | null>(null);
+  const latestUpdateId = detail.updates?.at(-1)?.id;
+  const updateComparison = resolvePullRequestUpdateComparison(
+    updateSelection?.key === referenceKey && selectedCommitOid === null
+      ? updateSelection.comparison
+      : null,
+    latestUpdateId,
+  );
+  const iterationRange = updateComparison.iterationRange;
+  const pickUpdates = (next: Partial<PullRequestUpdateComparison>) => {
+    onSelectedCommitChange(null);
+    setUpdateSelection({
+      key: referenceKey,
+      comparison: { ...updateComparison.comparison, ...next },
+    });
+  };
   const commit = selectedCommitOid;
-  const scopeKey = JSON.stringify([environmentId, referenceKey, commit]);
+  const scopeKey = JSON.stringify([environmentId, referenceKey, commit, iterationRange ?? null]);
   // The panel keeps this mounted across pull requests, so an open composer would otherwise
   // survive the switch and attach its comment to whichever one is on screen when it is sent.
   const [stateScopeKey, setStateScopeKey] = useState(scopeKey);
@@ -334,65 +385,46 @@ function PullRequestCodeTab({
         ...reference,
         ...(cursor === null ? {} : { cursor }),
         ...(commit === null ? {} : { commit }),
+        ...(iterationRange === undefined ? {} : { iterationRange }),
       },
     }),
   );
   // Pages accumulate into slices as each answer arrives, so the slice list is adjusted while
-  // rendering the answer rather than one commit later.
-  const [appliedPage, setAppliedPage] = useState<{
-    readonly data: typeof diffQuery.data;
-    readonly cursor: string | null;
-    readonly scopeKey: string;
-  } | null>(null);
+  // rendering the answer rather than one commit later. Whether an answer is in is read from the
+  // slices: an equal refetch keeps the answer's identity, so it cannot signal a reset's refill.
   const data = diffQuery.data;
-  if (
-    data !== null &&
-    (appliedPage?.data !== data ||
-      appliedPage.cursor !== cursor ||
-      appliedPage.scopeKey !== scopeKey)
-  ) {
-    setAppliedPage({ data, cursor, scopeKey });
+  const page: DiffSlice | null =
+    data === null
+      ? null
+      : {
+          cursor,
+          patch: data.patch,
+          truncated: data.truncated,
+          nextCursor: data.nextCursor,
+          omittedFileStats: data.omittedFileStats ?? [],
+        };
+  if (page !== null && !loadedSlices.some((slice) => sameSlice(slice, page))) {
     setSliceState((previous) => {
       const slices = previous.key === scopeKey ? previous.slices : NO_SLICES;
-      const next = {
-        cursor,
-        patch: data.patch,
-        truncated: data.truncated,
-        nextCursor: data.nextCursor,
-        omittedFileStats: data.omittedFileStats ?? [],
-      };
       const index = slices.findIndex((slice) => slice.cursor === cursor);
       if (index === -1) {
-        return { key: scopeKey, cursor, slices: [...slices, next] };
+        return { key: scopeKey, cursor, slices: [...slices, page] };
       }
       const existing = slices[index];
-      if (
-        existing !== undefined &&
-        existing.patch === next.patch &&
-        existing.truncated === next.truncated &&
-        existing.nextCursor === next.nextCursor &&
-        existing.omittedFileStats.length === next.omittedFileStats.length &&
-        existing.omittedFileStats.every((file, index) => {
-          const refreshed = next.omittedFileStats[index];
-          return (
-            refreshed !== undefined &&
-            refreshed.path === file.path &&
-            refreshed.additions === file.additions &&
-            refreshed.deletions === file.deletions
-          );
-        })
-      ) {
-        return previous;
-      }
+      if (existing !== undefined && sameSlice(existing, page)) return previous;
       // A page that came back different means the diff moved under the review. The slices
       // after it go with the replacement: their cursors were positions in the old diff.
-      return { key: scopeKey, cursor, slices: [...slices.slice(0, index), next] };
+      return { key: scopeKey, cursor, slices: [...slices.slice(0, index), page] };
     });
   }
   const refreshFirstDiffPage = useAtomRefresh(
     pullRequestEnvironment.diff({
       environmentId,
-      input: { ...reference, ...(commit === null ? {} : { commit }) },
+      input: {
+        ...reference,
+        ...(commit === null ? {} : { commit }),
+        ...(iterationRange === undefined ? {} : { iterationRange }),
+      },
     }),
   );
   const reviewKey = referenceKey;
@@ -431,9 +463,6 @@ function PullRequestCodeTab({
     if (appliedRefreshToken.current === refreshToken) return;
     appliedRefreshToken.current = refreshToken;
     setSliceState({ key: scopeKey, cursor: null, slices: NO_SLICES });
-    // An equal refetch keeps the answer's identity, so the emptied slices refill only if the
-    // applied page is forgotten too.
-    setAppliedPage(null);
     refreshFirstDiffPage();
     refreshFilesViewed();
   }, [refreshToken, scopeKey, refreshFirstDiffPage, refreshFilesViewed]);
@@ -457,7 +486,8 @@ function PullRequestCodeTab({
     environmentId,
     reference,
     commit,
-    cacheKey: `pull-request:${referenceKey}:${detail.updatedAt}:${commit ?? "all"}`,
+    iterationRange,
+    cacheKey: `pull-request:${referenceKey}:${detail.headSha ?? detail.updatedAt}:${scopeKey}`,
   });
   const hostReview = detail.capabilities.review;
   const review = {
@@ -465,10 +495,12 @@ function PullRequestCodeTab({
     reply: hostReview.reply && detail.viewerPermissions.comment,
     resolve: hostReview.resolve && detail.viewerPermissions.resolve,
   };
-  const canCommentOnLines = review.inlineComment && commit === null;
+  const canCommentOnLines = review.inlineComment && commit === null && iterationRange === undefined;
   // Agent context is local, so it does not require host comment permission.
   const canSelectLines =
-    commit === null && (review.inlineComment || onAddToAgentSelection !== undefined);
+    commit === null &&
+    iterationRange === undefined &&
+    (review.inlineComment || onAddToAgentSelection !== undefined);
   // The cache key carries the theme, which is what the tokenizer caches against, so a theme
   // change is still a fresh parse. The patch's own hash is part of it too: a refreshed page
   // reuses its cursor, and a key of position alone would hand back the parse it replaced.
@@ -511,11 +543,12 @@ function PullRequestCodeTab({
     // pull request's head diff. Pinning one onto the other would put the remark against
     // whichever code happens to hold that line number in this commit, so while a commit is on
     // screen every conversation is listed rather than placed.
-    if (commit !== null) return placed;
+    if (commit !== null || iterationRange !== undefined) return placed;
     for (const file of files) {
       const path = resolveFileDiffPath(file);
       for (const thread of detail.reviewThreads) {
         if (
+          !thread.isOutdated &&
           thread.path === path &&
           thread.line !== null &&
           isLineInFileDiff(file, thread.side, thread.line)
@@ -551,7 +584,7 @@ function PullRequestCodeTab({
       if (!placedThreadIds.has(thread.id)) continue;
       groupAt(thread.side, thread.line).threads.push(thread);
     }
-    if (commit === null) {
+    if (commit === null && iterationRange === undefined) {
       for (const comment of pendingComments) {
         if (comment.path !== path) continue;
         const anchor = getReviewPositionAnchor(comment.position);
@@ -687,6 +720,7 @@ function PullRequestCodeTab({
   };
   const fileViewedToggle = {
     enabled: filesViewedEnabled,
+    ...(filesViewed.disabledReason ? { disabledReason: filesViewed.disabledReason } : {}),
     isViewed: isFileViewed,
     isStale: isFileViewedStale,
     setFileViewed,
@@ -719,23 +753,24 @@ function PullRequestCodeTab({
     if (item.type !== "diff") return;
     const file = files.find((candidate) => buildFileDiffRenderKey(candidate) === item.id);
     if (!file) return;
-    // A range collapses to its last line: only GitHub carries a multi-line comment, and one
-    // that silently lost its first line on the other hosts would be worse than one line.
     const path = resolveFileDiffPath(file);
     const previousPath = resolveFileDiffPreviousPath(file);
     const sourceFile = parsedSlices
       .flatMap((slice) => (slice?.kind === "files" ? slice.sourceFiles : []))
       .find((candidate) => resolveFileDiffPath(candidate) === path);
     const side = range.endSide ?? range.side;
+    const azureRange = detail.capabilities.hostActions && side === range.side;
+    const endLine = azureRange ? Math.max(range.start, range.end) : range.end;
     const position =
-      (sourceFile && resolveDiffReviewPosition(sourceFile, range.end, side)) ??
-      resolveDiffReviewPosition(file, range.end, side);
+      (sourceFile && resolveDiffReviewPosition(sourceFile, endLine, side)) ??
+      resolveDiffReviewPosition(file, endLine, side);
     if (position === null) return;
     setDraft({
       fileKey: item.id,
       path,
       oldPath: previousPath === path ? null : previousPath,
       position,
+      ...(azureRange ? { startLine: Math.min(range.start, range.end) } : {}),
       range,
     });
   };
@@ -871,6 +906,11 @@ function PullRequestCodeTab({
       canReply={review.reply}
       canResolve={review.resolve && canResolvePullRequestThread(detail, thread)}
       canReact={detail.capabilities.reactions === true}
+      canLike={detail.capabilities.commentLikes === true}
+      canDelete={detail.capabilities.edit?.deleteComment === true}
+      suggestionHead={detail.provider === "azure-devops" ? detail.headSha : undefined}
+      status={detail.comments.find((comment) => comment.threadId === thread.id)?.threadStatus}
+      statuses={detail.capabilities.review.threadStatuses}
       environmentId={environmentId}
       reference={reference}
       pending={threadPending}
@@ -937,46 +977,67 @@ function PullRequestCodeTab({
         />
       ))}
       {annotation.metadata.draft && draft && canSelectLines ? (
-        <DiffCommentAnnotation
-          kind="draft"
-          rangeLabel={`${draft.path}:${getReviewPositionAnchor(draft.position).line}`}
-          text=""
-          submitLabel={canCommentOnLines ? "Add to review" : "Add to agent"}
-          {...(canCommentOnLines && onAddToAgentSelection
-            ? {
-                secondaryAction: {
-                  label: "Add to agent",
-                  onAction: (text: string) =>
-                    finishSelection(draft, text, (comment) =>
-                      onAddToAgentSelection({ comment, request: text }),
-                    ),
-                },
-              }
-            : {})}
-          onCancel={() => {
-            setDraft(null);
-            setSelectedLines(null);
-          }}
-          onComment={(body) => {
-            if (!canCommentOnLines) {
-              if (onAddToAgentSelection) {
-                finishSelection(draft, body, (comment) =>
-                  onAddToAgentSelection({ comment, request: body }),
-                );
-              }
-              return;
+        <>
+          {detail.capabilities.hostActions && canCommentOnLines ? (
+            <label className="mx-3 flex items-center gap-2 text-xs text-muted-foreground">
+              <Checkbox
+                checked={draft.fileLevel === true}
+                onCheckedChange={(value) =>
+                  setDraft((current) =>
+                    current ? { ...current, fileLevel: value === true } : current,
+                  )
+                }
+              />
+              Discuss the whole file
+            </label>
+          ) : null}
+          <DiffCommentAnnotation
+            kind="draft"
+            rangeLabel={
+              draft.fileLevel
+                ? draft.path
+                : `${draft.path}:${draft.startLine !== undefined && draft.startLine !== getReviewPositionAnchor(draft.position).line ? `${draft.startLine}–` : ""}${getReviewPositionAnchor(draft.position).line}`
             }
-            addComment(reviewKey, {
-              id: nextPendingReviewCommentId(),
-              path: draft.path,
-              ...(draft.oldPath === null ? {} : { oldPath: draft.oldPath }),
-              position: draft.position,
-              body,
-            });
-            setDraft(null);
-            setSelectedLines(null);
-          }}
-        />
+            text=""
+            submitLabel={canCommentOnLines ? "Add to review" : "Add to agent"}
+            {...(canCommentOnLines && onAddToAgentSelection
+              ? {
+                  secondaryAction: {
+                    label: "Add to agent",
+                    onAction: (text: string) =>
+                      finishSelection(draft, text, (comment) =>
+                        onAddToAgentSelection({ comment, request: text }),
+                      ),
+                  },
+                }
+              : {})}
+            onCancel={() => {
+              setDraft(null);
+              setSelectedLines(null);
+            }}
+            onComment={(body) => {
+              if (!canCommentOnLines) {
+                if (onAddToAgentSelection) {
+                  finishSelection(draft, body, (comment) =>
+                    onAddToAgentSelection({ comment, request: body }),
+                  );
+                }
+                return;
+              }
+              addComment(reviewKey, {
+                id: nextPendingReviewCommentId(),
+                path: draft.path,
+                ...(draft.oldPath === null ? {} : { oldPath: draft.oldPath }),
+                position: draft.position,
+                ...(draft.startLine === undefined ? {} : { startLine: draft.startLine }),
+                ...(draft.fileLevel ? { fileLevel: true } : {}),
+                body,
+              });
+              setDraft(null);
+              setSelectedLines(null);
+            }}
+          />
+        </>
       ) : null}
     </div>
   );
@@ -995,8 +1056,20 @@ function PullRequestCodeTab({
     setSelectedLines(null);
   };
   const toolbar = (
-    <div className="@container flex h-10 min-h-10 shrink-0 items-center justify-between gap-2 border-b border-border/60 bg-background px-4 text-xs text-muted-foreground">
-      <div className="flex min-w-0 flex-1 items-center gap-3">
+    <div
+      className={cn(
+        "@container flex min-h-10 shrink-0 items-center justify-between gap-2 border-b border-border/60 bg-background px-4 text-xs text-muted-foreground",
+        latestUpdateId !== undefined ? "flex-wrap py-1.5" : "h-10",
+      )}
+    >
+      <div
+        className={cn(
+          "flex items-center gap-3",
+          latestUpdateId !== undefined ? "flex-wrap" : "min-w-0 flex-1",
+        )}
+      >
+        {/* A host that reports no commits has nothing to scope by, and a dropdown whose only
+            entry is the scope already showing is a control that does nothing. */}
         {orderedCommits.length > 0 ? (
           <DropdownMenu>
             <DropdownMenuTrigger
@@ -1010,7 +1083,10 @@ function PullRequestCodeTab({
             <DropdownMenuContent align="start" className="max-w-[min(28rem,calc(100vw-2rem))]">
               <DropdownMenuRadioGroup
                 value={commit ?? "all"}
-                onValueChange={(value) => onSelectedCommitChange(value === "all" ? null : value)}
+                onValueChange={(value) => {
+                  setUpdateSelection(null);
+                  onSelectedCommitChange(value === "all" ? null : value);
+                }}
               >
                 <DropdownMenuRadioItem value="all" closeOnClick>
                   <span>All commits</span>
@@ -1044,6 +1120,57 @@ function PullRequestCodeTab({
             </DropdownMenuContent>
           </DropdownMenu>
         ) : null}
+        {latestUpdateId !== undefined ? (
+          <div className="flex items-center gap-1">
+            <Select
+              value={updateComparison.comparison.from}
+              onValueChange={(value) => {
+                if (typeof value === "number") pickUpdates({ from: value });
+              }}
+            >
+              <SelectTrigger size="xs" aria-label="Compare from update">
+                {updateComparison.comparison.from === 0
+                  ? "Base"
+                  : `Update ${updateComparison.comparison.from}`}
+              </SelectTrigger>
+              <SelectPopup>
+                <SelectItem value={0}>Base</SelectItem>
+                {detail
+                  .updates!.filter((update) => update.id < (iterationRange?.to ?? latestUpdateId))
+                  .map((update) => (
+                    <SelectItem key={update.id} value={update.id}>
+                      Update {update.id}
+                    </SelectItem>
+                  ))}
+              </SelectPopup>
+            </Select>
+            <span>→</span>
+            <Select<number | "latest">
+              value={updateComparison.comparison.to}
+              onValueChange={(value) => {
+                if (value === "latest" || typeof value === "number") pickUpdates({ to: value });
+              }}
+            >
+              <SelectTrigger size="xs" aria-label="Compare to update">
+                {updateComparison.comparison.to === "latest"
+                  ? "Latest"
+                  : `Update ${updateComparison.comparison.to}`}
+              </SelectTrigger>
+              <SelectPopup>
+                <SelectItem value="latest">Latest</SelectItem>
+                {detail
+                  .updates!.filter((update) => update.id > updateComparison.comparison.from)
+                  .map((update) => (
+                    <SelectItem key={update.id} value={update.id}>
+                      Update {update.id}
+                    </SelectItem>
+                  ))}
+              </SelectPopup>
+            </Select>
+          </div>
+        ) : null}
+        {/* One count, and the caveats as icons that carry their own words. Spelled out they
+            competed for a strip this narrow and every one of them truncated to nothing. */}
         <PullRequestMetaLine>
           <span className="shrink-0 tabular-nums">
             {files.length} {files.length === 1 ? "file" : "files"}
@@ -1131,7 +1258,12 @@ function PullRequestCodeTab({
           ) : null}
         </PullRequestMetaLine>
       </div>
-      <div className="flex shrink-0 items-center gap-1">
+      <div
+        className={cn(
+          "flex shrink-0 items-center gap-1",
+          latestUpdateId !== undefined && "ml-auto",
+        )}
+      >
         <DropdownMenu>
           <Tooltip>
             <TooltipTrigger
@@ -1406,7 +1538,12 @@ function PullRequestCodeTab({
                       {threads.map((thread) => (
                         <div key={thread.id}>
                           {thread.line === null ? null : (
-                            <p className="px-3 text-xs text-muted-foreground">Line {thread.line}</p>
+                            <p className="px-3 text-xs text-muted-foreground">
+                              Line {thread.line}
+                              {thread.endLine && thread.endLine !== thread.line
+                                ? `–${thread.endLine}`
+                                : ""}
+                            </p>
                           )}
                           {renderThreadCard(thread)}
                         </div>
