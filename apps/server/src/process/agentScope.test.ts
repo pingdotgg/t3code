@@ -56,7 +56,12 @@ const withFakeSystemd = <A, E>(
   {
     oomPolicy = true,
     stopFails = false,
-  }: { readonly oomPolicy?: boolean; readonly stopFails?: boolean } = {},
+    stalled = false,
+  }: {
+    readonly oomPolicy?: boolean;
+    readonly stopFails?: boolean;
+    readonly stalled?: boolean;
+  } = {},
 ) =>
   Effect.gen(function* () {
     const bin = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-agent-scope-"));
@@ -66,7 +71,7 @@ const withFakeSystemd = <A, E>(
     const cgroupRoot = NodePath.join(bin, "cgroup");
     const units = new Map<string, FakeUnit>();
     const calls: Array<ReadonlyArray<string>> = [];
-    const manager = { stalled: false };
+    const manager = { stalled };
     const output = (stdout: string, code = 0): ProcessRunner.ProcessRunOutput => ({
       stdout,
       stderr: "",
@@ -316,16 +321,22 @@ describe("AgentScope service", () => {
   );
 
   it.effect("probes systemd again after its user manager missed the timeout", () =>
-    withFakeSystemd(({ scope, manager }) =>
-      Effect.gen(function* () {
-        manager.stalled = true;
-        const first = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
-        expect(unitOf(first)).toBe("");
-        manager.stalled = false;
-        const second = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
-        expect(unitOf(second)).not.toBe("");
-        expect(second.args).toContain("--property=OOMPolicy=stop");
-      }),
+    withFakeSystemd(
+      ({ scope, manager }) =>
+        Effect.gen(function* () {
+          const first = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+          expect(unitOf(first)).toBe("");
+          manager.stalled = false;
+          const second = yield* scope.wrap({
+            command: "agent",
+            args: [],
+            name: "t",
+            threadId: "a",
+          });
+          expect(unitOf(second)).not.toBe("");
+          expect(second.args).toContain("--property=OOMPolicy=stop");
+        }),
+      { stalled: true },
     ),
   );
 
