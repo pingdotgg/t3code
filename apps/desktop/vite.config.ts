@@ -43,9 +43,9 @@ export default defineConfig({
         dependsOn: ["t3#build"],
         cache: false,
       },
-      // tsc-rs rewrites the tsbuildinfo it reads, which keeps a task out of the cache.
+      // tsc (tsc-rs) rewrites the tsbuildinfo it reads, which keeps a task out of the cache.
       typecheck: {
-        command: "tsc-rs --noEmit",
+        command: "tsc --noEmit",
         cache: { input: [{ auto: true }, "!*.tsbuildinfo"] },
       },
     },
