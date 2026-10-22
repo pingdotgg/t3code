@@ -476,10 +476,7 @@ export const make = Effect.gen(function* () {
         cachedRelayClient = yield* makeRelayClient(relayConfig);
       }
       const relayClient = cachedRelayClient;
-      // Someone at a computer already sees this there; the phone only needs its
-      // state. The flag rides inside the signed state so the relay cannot be
-      // asked to alert for a version the environment published quietly. It
-      // holds until the phase changes: the relay alerts on any republish, so a
+      // Quiet until the phase changes: the relay alerts on any republish, so a
       // rename after the person walks away would ring for a result they saw.
       const notify =
         !(yield* backgroundPolicy.hasAttendedClient) &&

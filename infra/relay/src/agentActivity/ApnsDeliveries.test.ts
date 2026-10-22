@@ -1311,160 +1311,140 @@ describe("quiet state delivery", () => {
       ...(quiet.includes(row) ? { notify: false } : {}),
     })),
   });
-  const stateFor = (row: typeof attendedRow): RelayAgentActivityState => ({
-    ...state,
-    environmentId: row.environmentId,
-    threadId: row.threadId,
-    threadTitle: row.threadTitle,
-    phase: row.phase,
-    updatedAt: row.updatedAt,
-    ...(row.notify === false ? { notify: false } : {}),
-  });
-  const execute =
-    (requests: HttpClientRequest.HttpClientRequest[]) =>
-    (request: HttpClientRequest.HttpClientRequest) =>
-      Effect.sync(() => {
-        requests.push(request);
-        return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
-      });
-  const alertOf = (request: HttpClientRequest.HttpClientRequest) => {
-    expect(request.body._tag).toBe("Uint8Array");
-    return request.body._tag === "Uint8Array"
-      ? JSON.parse(new TextDecoder().decode(request.body.body)).aps.alert
-      : null;
-  };
-  const updateJob = (done: ReturnType<typeof finish>, jobId: string) =>
+  const statesFor = (done: ReturnType<typeof finish>): RelayAgentActivityState[] =>
+    done.activities.map((row) => ({
+      ...state,
+      environmentId: row.environmentId,
+      threadId: row.threadId,
+      threadTitle: row.threadTitle,
+      phase: row.phase,
+      updatedAt: row.updatedAt,
+      ...(row.notify === false ? { notify: false } : {}),
+    }));
+  const jobFor = (
+    payload:
+      | { kind: "live_activity_update"; aggregate: ReturnType<typeof finish> }
+      | { kind: "push_notification"; state: RelayAgentActivityState },
+  ) =>
     signApnsDeliveryJob({
       secret: config.apnsDeliveryJobSigningSecret,
       payload: makeApnsDeliveryJobPayload({
-        kind: "live_activity_update",
         userId: target.user_id,
         deviceId: target.device_id,
-        token: "activity-token",
-        aggregate: done,
-        alert: { title: "2 agents finished", body: "Thread, Away thread" },
         createdAt: state.updatedAt,
         expiresAt: "1970-01-01T00:10:00.000Z",
-        jobId,
+        jobId: "job-quiet",
+        ...(payload.kind === "live_activity_update"
+          ? {
+              kind: payload.kind,
+              token: "activity-token",
+              aggregate: payload.aggregate,
+              alert: { title: "2 agents finished", body: "Thread, Away thread" },
+            }
+          : {
+              kind: payload.kind,
+              token: "apns-device-token",
+              aggregate: null,
+              notification: {
+                title: "Thread",
+                body: "Done: Project",
+                environmentId: payload.state.environmentId,
+                threadId: payload.state.threadId,
+                deepLink: "/",
+                phase: payload.state.phase,
+                updatedAt: payload.state.updatedAt,
+              },
+            }),
       }),
     });
+  const deliver = (
+    job: SignedApnsDeliveryJob,
+    activityStates: ReadonlyArray<RelayAgentActivityState>,
+    currentTargets: ReadonlyArray<LiveActivities.TargetRow> = [device],
+  ) => {
+    const requests: HttpClientRequest.HttpClientRequest[] = [];
+    const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      yield* deliveries.processSignedJob(job);
+      return { requests, attempts };
+    }).pipe(
+      Effect.provide(
+        layerFor({
+          attempts,
+          config: signingConfig,
+          currentTargets: [...currentTargets],
+          activityStates: [...activityStates],
+          execute: (request) =>
+            Effect.sync(() => {
+              requests.push(request);
+              return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
+            }),
+        }),
+      ),
+    );
+  };
 
-  it.effect("updates the card without alerting for a quietly published state", () => {
+  it.effect.each([
+    { label: "only the quiet state finishes", finished: [attendedRow], alertTitle: undefined },
+    {
+      label: "another state finishes too",
+      finished: [attendedRow, awayRow],
+      alertTitle: "Away thread",
+    },
+  ])("updates the card and alerts only for loud states when $label", ({ finished, alertTitle }) => {
     const queuedJobs: SignedApnsDeliveryJob[] = [];
     return Effect.gen(function* () {
       const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
       yield* deliveries.sendForTarget({
         target: device,
-        aggregate: finish([attendedRow], [attendedRow]),
+        aggregate: finish(finished, [attendedRow]),
         nowMs: 0,
       });
       expect(queuedJobs).toHaveLength(1);
-      expect(queuedJobs[0]?.payload.alert).toBeUndefined();
-    }).pipe(Effect.provide(layerFor({ attempts: [], queuedJobs })));
-  });
-
-  it.effect("still alerts for another state finishing in the same aggregate", () => {
-    const queuedJobs: SignedApnsDeliveryJob[] = [];
-    return Effect.gen(function* () {
-      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
-      yield* deliveries.sendForTarget({
-        target: device,
-        aggregate: finish([attendedRow, awayRow], [attendedRow]),
-        nowMs: 0,
-      });
-      expect(queuedJobs[0]?.payload.alert).toMatchObject({ title: awayRow.threadTitle });
+      expect(queuedJobs[0]?.payload.alert?.title).toBe(alertTitle);
     }).pipe(Effect.provide(layerFor({ attempts: [], queuedJobs })));
   });
 
   it.effect("re-picks a queued alert at delivery without the quiet state", () => {
-    const requests: HttpClientRequest.HttpClientRequest[] = [];
     const done = finish([attendedRow, awayRow], [attendedRow]);
     return Effect.gen(function* () {
-      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
-      yield* deliveries.processSignedJob(updateJob(done, "job-quiet-repick"));
-      expect(alertOf(requests[0]!)).toMatchObject({ title: awayRow.threadTitle });
-    }).pipe(
-      Effect.provide(
-        layerFor({
-          attempts: [],
-          config: signingConfig,
-          currentTargets: [device],
-          activityStates: done.activities.map(stateFor),
-          execute: execute(requests),
-        }),
-      ),
-    );
-  });
-
-  it.effect("skips a queued card update for a version republished quietly since", () => {
-    const requests: HttpClientRequest.HttpClientRequest[] = [];
-    const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
-    const done = finish([attendedRow, awayRow], []);
-    return Effect.gen(function* () {
-      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
-      yield* deliveries.processSignedJob(updateJob(done, "job-quiet-since"));
-      expect(requests).toHaveLength(0);
-      expect(attempts).toMatchObject([
-        { sourceJobId: "job-quiet-since", apnsReason: "Stale agent activity state skipped." },
-      ]);
-    }).pipe(
-      Effect.provide(
-        layerFor({
-          attempts,
-          config: signingConfig,
-          currentTargets: [device],
-          activityStates: finish([attendedRow, awayRow], [attendedRow]).activities.map(stateFor),
-          execute: execute(requests),
-        }),
-      ),
-    );
-  });
-
-  it.effect("drops a queued push for a state version republished quietly since", () => {
-    const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
-    const requests: HttpClientRequest.HttpClientRequest[] = [];
-    const completed = { ...state, phase: "completed" as const, headline: "Done" };
-    const signed = signApnsDeliveryJob({
-      secret: config.apnsDeliveryJobSigningSecret,
-      payload: makeApnsDeliveryJobPayload({
-        kind: "push_notification",
-        userId: target.user_id,
-        deviceId: target.device_id,
-        token: "apns-device-token",
-        aggregate: null,
-        notification: {
-          title: "Thread",
-          body: "Done: Project",
-          environmentId: completed.environmentId,
-          threadId: completed.threadId,
-          deepLink: "/",
-          phase: completed.phase,
-          updatedAt: completed.updatedAt,
-        },
-        createdAt: completed.updatedAt,
-        expiresAt: "1970-01-01T00:10:00.000Z",
-        jobId: "job-push-quiet",
-      }),
+      const { requests } = yield* deliver(
+        jobFor({ kind: "live_activity_update", aggregate: done }),
+        statesFor(done),
+      );
+      const body = requests[0]?.body;
+      expect(body?._tag).toBe("Uint8Array");
+      if (body?._tag !== "Uint8Array") return;
+      expect(JSON.parse(new TextDecoder().decode(body.body)).aps.alert).toMatchObject({
+        title: awayRow.threadTitle,
+      });
     });
-    return Effect.gen(function* () {
-      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
-      yield* deliveries.processSignedJob(signed);
+  });
+
+  const completed = { ...state, phase: "completed" as const, headline: "Done" };
+  it.effect.each([
+    {
+      label: "card update",
+      job: jobFor({ kind: "live_activity_update", aggregate: finish([attendedRow, awayRow], []) }),
+      states: statesFor(finish([attendedRow, awayRow], [attendedRow])),
+      targets: [device],
+    },
+    {
+      label: "push",
+      job: jobFor({ kind: "push_notification", state: completed }),
+      states: [{ ...completed, notify: false }],
+      targets: [{ ...target, push_token: "apns-device-token" }],
+    },
+  ])("skips a queued $label for a version republished quietly since", ({ job, states, targets }) =>
+    Effect.gen(function* () {
+      const { requests, attempts } = yield* deliver(job, states, targets);
       expect(requests).toHaveLength(0);
       expect(attempts).toMatchObject([
-        { sourceJobId: "job-push-quiet", apnsReason: "Stale agent activity state skipped." },
+        { sourceJobId: "job-quiet", apnsReason: "Stale agent activity state skipped." },
       ]);
-    }).pipe(
-      Effect.provide(
-        layerFor({
-          attempts,
-          config: signingConfig,
-          currentTargets: [{ ...target, push_token: "apns-device-token" }],
-          activityStates: [{ ...completed, notify: false }],
-          execute: execute(requests),
-        }),
-      ),
-    );
-  });
+    }),
+  );
 });
 
 describe("signed APNs registration metadata", () => {

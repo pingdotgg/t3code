@@ -599,8 +599,7 @@ export const make = Effect.gen(function* () {
         threadId: input.threadId,
       })
       .pipe(
-        // A version republished quietly since the job was queued is stale too:
-        // the phone must not ring for it.
+        // A version republished quietly since the job was queued must not ring.
         Effect.map(
           (current) =>
             current !== null &&
@@ -630,8 +629,7 @@ export const make = Effect.gen(function* () {
             current,
           ]),
         );
-        // Quietness is part of the version: a republish that flipped it since
-        // this job was queued carries its own job with the right alert.
+        // A quiet flip is a new version; its own job carries the right alert.
         return input.aggregate.activities.every((row) => {
           const current = currentByThread.get(`${row.environmentId}\u0000${row.threadId}`);
           return (

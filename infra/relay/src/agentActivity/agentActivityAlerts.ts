@@ -26,8 +26,6 @@ type TransitionInput = {
   readonly preferences: RelayAgentAwarenessPreferences | null;
 };
 
-// A version published while its user sat at a computer still updates the
-// card, but must not ring the phone. Other rows in the same aggregate still can.
 export function allowsAlert(activity: { readonly notify?: boolean | undefined }): boolean {
   return activity.notify !== false;
 }

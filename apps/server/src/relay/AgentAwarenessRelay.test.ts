@@ -20,6 +20,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -293,18 +294,8 @@ const makeTestRelay = Effect.fnUntraced(function* (
           }),
         ),
     }),
-    Effect.provideService(
-      BackgroundPolicy.BackgroundPolicy,
-      BackgroundPolicy.BackgroundPolicy.of({
-        reportClientActivity: unused,
-        removeRpcClient: unused,
-        reportHostPowerState: unused,
-        snapshot: unused(),
-        streamChanges: Stream.empty,
-        subscribe: unused(),
-        hasDemand: unused,
-        shouldRunScopeWork: unused,
-        shouldRunOpportunisticWork: unused(),
+    Effect.provide(
+      Layer.mock(BackgroundPolicy.BackgroundPolicy, {
         hasAttendedClient: options.attended ? Ref.get(options.attended) : Effect.succeed(false),
       }),
     ),

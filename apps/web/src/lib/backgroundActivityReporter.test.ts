@@ -26,38 +26,24 @@ import {
 } from "./backgroundActivityReporter.ts";
 
 describe("resolveUserIdleMs", () => {
-  const away = { visible: false, focused: false, pageIdleMs: 5_000 };
-
-  it("reports presence only when this client can tell the person about agent work", () => {
-    expect(
-      resolveUserIdleMs({ ...away, canNotify: false, systemIdleMs: undefined }),
-    ).toBeUndefined();
-    expect(resolveUserIdleMs({ ...away, canNotify: true, systemIdleMs: undefined })).toBe(5_000);
-    expect(
-      resolveUserIdleMs({
-        visible: true,
-        focused: true,
-        canNotify: false,
-        systemIdleMs: undefined,
-        pageIdleMs: 5_000,
-      }),
-    ).toBe(5_000);
-  });
-
-  it("reports no presence from a page that has not seen input", () => {
-    expect(
-      resolveUserIdleMs({
-        ...away,
-        canNotify: true,
-        systemIdleMs: undefined,
-        pageIdleMs: undefined,
-      }),
-    ).toBeUndefined();
-  });
-
-  it("prefers the desktop's system idle clock and treats a locked computer as away", () => {
-    expect(resolveUserIdleMs({ ...away, canNotify: true, systemIdleMs: 1_000 })).toBe(1_000);
-    expect(resolveUserIdleMs({ ...away, canNotify: true, systemIdleMs: null })).toBeUndefined();
+  const away = { visible: false, focused: false, canNotify: true, pageIdleMs: 5_000 };
+  it.each([
+    ["a client that cannot alert reports no presence", { ...away, canNotify: false }, undefined],
+    ["a client that can alert reports page input", away, 5_000],
+    [
+      "a focused window reports page input",
+      { ...away, visible: true, focused: true, canNotify: false },
+      5_000,
+    ],
+    [
+      "a page that has not seen input reports no presence",
+      { ...away, pageIdleMs: undefined },
+      undefined,
+    ],
+    ["the desktop's system idle clock wins", { ...away, systemIdleMs: 1_000 }, 1_000],
+    ["a locked computer is away", { ...away, systemIdleMs: null }, undefined],
+  ])("%s", (_name, input, expected) => {
+    expect(resolveUserIdleMs({ systemIdleMs: undefined, ...input })).toBe(expected);
   });
 });
 

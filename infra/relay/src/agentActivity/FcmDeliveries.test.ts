@@ -617,22 +617,12 @@ describe("quietly published states", () => {
     return Effect.gen(function* () {
       const d = yield* FcmDeliveries.FcmDeliveries;
       yield* d.process(h.job);
+      const olderJob = { ...h.job, state: { ...state } };
       publishQuietly(h, { ...state, phase: "completed" });
       yield* d.process({ ...h.job, state: h.current.state });
+      expect(h.sent.at(-1)).toMatchObject({ alert: false, data: { active: "false" } });
       yield* d.process({ ...h.job, state: h.current.state });
-      expect(h.sent.at(-2)).toMatchObject({ alert: false, data: { active: "false" } });
-      expect(h.sent.filter((x) => x.alert)).toHaveLength(0);
-    }).pipe(Effect.provide(h.layer));
-  });
-
-  it.effect("do not alert when an older job is consumed after the quiet publish", () => {
-    const h = harness();
-    return Effect.gen(function* () {
-      const d = yield* FcmDeliveries.FcmDeliveries;
-      yield* d.process(h.job);
-      const stale = { ...h.job, state: { ...state } };
-      publishQuietly(h, { ...state, phase: "completed" });
-      yield* d.process(stale);
+      yield* d.process(olderJob);
       expect(h.sent.filter((x) => x.alert)).toHaveLength(0);
     }).pipe(Effect.provide(h.layer));
   });

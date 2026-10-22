@@ -128,9 +128,7 @@ export const RelayAgentActivityState = Schema.Struct({
   modelTitle: TrimmedNonEmptyString,
   updatedAt: TrimmedNonEmptyString,
   deepLink: TrimmedNonEmptyString,
-  // False when published while the user sat at a computer connected to the
-  // environment: cards still update, but no delivery path may alert for this
-  // version. Omitted means true.
+  // False when published while someone sat at a computer: cards update, nothing alerts.
   notify: Schema.optional(Schema.Boolean),
 });
 export type RelayAgentActivityState = typeof RelayAgentActivityState.Type;

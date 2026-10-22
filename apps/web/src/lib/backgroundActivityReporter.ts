@@ -82,8 +82,7 @@ function wasRecentlyInteracted(lastInteractionAtMs: number, observedAtMs: number
   );
 }
 
-// Registered by the mounted notification coordinator; nothing alerts outside
-// the window without it.
+// Registered by the mounted notification coordinator.
 let canNotifyOutsideWindow = () => false;
 
 export function registerCanNotifyOutsideWindow(check: () => boolean): () => void {
@@ -93,9 +92,8 @@ export function registerCanNotifyOutsideWindow(check: () => boolean): () => void
   };
 }
 
-// The server silences phone pushes while someone is at a computer, so presence
-// only counts from a client that can itself tell them about agent work: a
-// focused window, or one able to alert outside it.
+// Presence silences the phone, so it only counts from a client that can alert
+// the person itself: a focused window, or one able to alert outside it.
 export function resolveUserIdleMs(input: {
   readonly visible: boolean;
   readonly focused: boolean;
@@ -111,7 +109,6 @@ export function resolveUserIdleMs(input: {
   return idleMs === undefined ? undefined : Math.max(0, idleMs);
 }
 
-// Outside the desktop shell this is undefined, and only input in this window counts.
 const readSystemIdleMs = Effect.tryPromise(async () =>
   window.desktopBridge?.getUserIdleMs?.(),
 ).pipe(Effect.orElseSucceed(() => undefined));
@@ -221,8 +218,7 @@ export const layer = Layer.effectDiscard(
     const reportRequests = yield* Queue.sliding<void>(1);
     const requestReport = () => Queue.offerUnsafe(reportRequests, undefined);
     let lastInteractionAtMs = clock.currentTimeMillisUnsafe();
-    // Loading or restoring a tab starts the interaction clock, but it is not
-    // input: presence waits for a real event.
+    // Loading or restoring a tab is not input: presence waits for a real event.
     let lastInputAtMs: number | null = null;
     const recordInteraction = () => {
       const observedAtMs = clock.currentTimeMillisUnsafe();

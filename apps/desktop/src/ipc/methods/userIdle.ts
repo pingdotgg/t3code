@@ -7,12 +7,10 @@ import * as ElectronPowerMonitor from "../../electron/ElectronPowerMonitor.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 import { GET_USER_IDLE_MS_CHANNEL, USER_AWAY_CHANGED_CHANNEL } from "../channels.ts";
 
-// Input in other apps reaches no renderer, so sample the idle clock here and
-// tell windows the moment someone comes back, not on their next heartbeat.
+// Input in other apps reaches no renderer, so the OS idle clock decides; sample it
+// to tell windows the moment someone comes back, not on their next heartbeat.
 const AWAY_SECONDS = 60;
 
-// The renderer only sees input aimed at its own window; the OS idle clock also
-// covers time spent in other apps, which is still time at this computer.
 export const installUserPresence = Effect.fn("desktop.ipc.installUserPresence")(function* () {
   const ipc = yield* DesktopIpc.DesktopIpc;
   const powerMonitor = yield* ElectronPowerMonitor.ElectronPowerMonitor;
