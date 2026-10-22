@@ -30,7 +30,35 @@ const windowsShim = [
   '"%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "%~dp0.muse-launcher.ps1" %*',
   "exit /b %ERRORLEVEL%",
 ].join("\r\n");
-const windowsLauncher = "# muse-code/launcher-ps-3\n# MUSE_SYNC_UPDATE\n";
+const windowsLauncherMarkers = "# muse-code/launcher-ps-3\n# MUSE_SYNC_UPDATE\n";
+// Keep the official launcher's update structure, with inert download functions.
+const windowsLauncher = `Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$launcher_url = 'https://api.meta.ai/muse-launcher.ps1'
+$launcher_version = '3'
+$user_agent = "muse-code/launcher-ps-$launcher_version"
+function Update-Launcher {
+  param([string]$Self)
+}
+function Update-Binary {
+  param([string]$Dir)
+}
+function Get-ActiveBinary {
+  param([string]$Dir)
+  return 'muse.exe'
+}
+function Invoke-Main {
+  $self = $PSCommandPath
+  $dir = Split-Path -Parent $self
+  if ($env:MUSE_SYNC_UPDATE -eq '1') {
+    Update-Launcher -Self $self
+    Update-Binary -Dir $dir
+    $binary = Get-ActiveBinary -Dir $dir
+  }
+}
+Invoke-Main @args
+`;
 
 const maintenanceCapabilities = {
   ...makeManualOnlyProviderMaintenanceCapabilities({
@@ -239,6 +267,43 @@ it.layer(NodeServices.layer)("Muse maintenance", (it) => {
       }
     }).pipe(Effect.scoped),
   );
+
+  it.effect("rejects marker-only Windows launchers and incomplete official update structures", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "muse-maintenance-" });
+      for (const source of [
+        windowsLauncherMarkers,
+        windowsLauncherMarkers + "Write-Output 'unrecognized wrapper'\n",
+        windowsLauncher.replace("Set-StrictMode -Version Latest", "# custom wrapper"),
+        windowsLauncher.replace(
+          "https://api.meta.ai/muse-launcher.ps1",
+          "https://example.com/wrapper.ps1",
+        ),
+        windowsLauncher.replace("function Update-Binary {", "function Other-Update {"),
+        windowsLauncher.replace("$self = $PSCommandPath", "$self = 'other.ps1'"),
+        windowsLauncher.replace("Update-Binary -Dir $dir", "Write-Output 'no update'"),
+        windowsLauncher.replace("Invoke-Main @args", "Write-Output 'no entry point'"),
+      ]) {
+        const launcher = path.join(directory, ".muse-launcher.ps1");
+        yield* fs.writeFileString(launcher, source);
+        const shim = path.join(directory, "muse.cmd");
+        yield* fs.writeFileString(shim, windowsShim);
+        for (const binaryPath of [launcher, shim]) {
+          expect(
+            (yield* museMaintenance.resolve({
+              binaryPath,
+              resolvedCommandPath: binaryPath,
+              realCommandPath: binaryPath,
+              platform: "win32",
+              env: {},
+            })).update,
+          ).toBeNull();
+        }
+      }
+    }).pipe(Effect.scoped),
+  );
 });
 
 it.live(
@@ -257,8 +322,10 @@ it.live(
       yield* fs.writeFileString(shim, windowsShim);
       yield* fs.writeFileString(
         path.join(directory, ".muse-launcher.ps1"),
-        windowsLauncher +
-          '[Console]::WriteLine(($args -join ",") + "|" + $env:MUSE_CHANNEL + "|" + $env:MUSE_NO_AUTO_UPDATE + "|" + $env:MUSE_SYNC_UPDATE + "|" + $env:MUSE_UPDATE_INTERVAL_SECONDS + "|" + $env:MUSE_AUTH_PATH)',
+        windowsLauncher.replace(
+          "    $binary = Get-ActiveBinary -Dir $dir",
+          '    $binary = Get-ActiveBinary -Dir $dir\n    [Console]::WriteLine(($args -join ",") + "|" + $env:MUSE_CHANNEL + "|" + $env:MUSE_NO_AUTO_UPDATE + "|" + $env:MUSE_SYNC_UPDATE + "|" + $env:MUSE_UPDATE_INTERVAL_SECONDS + "|" + $env:MUSE_AUTH_PATH)',
+        ),
       );
       const capabilities = yield* museMaintenance.resolve({
         binaryPath: "muse",

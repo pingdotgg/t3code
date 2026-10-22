@@ -85,10 +85,10 @@ export const museMaintenance: ProviderMaintenanceCapabilitiesResolver = {
           return null;
         }
       }
-      return source.includes(windows ? "muse-code/launcher-ps-" : "muse-code/launcher-") &&
-        source.includes("MUSE_SYNC_UPDATE")
-        ? launcher
-        : null;
+      const recognized = windows
+        ? isOfficialWindowsLauncher(source)
+        : source.includes("muse-code/launcher-") && source.includes("MUSE_SYNC_UPDATE");
+      return recognized ? launcher : null;
     }).pipe(Effect.orElseSucceed(() => null));
     if (!launcherPath) return manual;
     let executable = context.resolvedCommandPath;
@@ -135,6 +135,29 @@ export const museMaintenance: ProviderMaintenanceCapabilitiesResolver = {
     };
   }),
 };
+
+function isOfficialWindowsLauncher(source: string) {
+  const normalized = source
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .join("\n")
+    .trim();
+  // The banner alone also appears in wrappers; require the official entry point and updater.
+  return (
+    normalized.startsWith("Set-StrictMode -Version Latest\n$ErrorActionPreference = 'Stop'\n") &&
+    /^\$launcher_version = '\d+'$/m.test(normalized) &&
+    [
+      "$launcher_url = 'https://api.meta.ai/muse-launcher.ps1'",
+      '$user_agent = "muse-code/launcher-ps-$launcher_version"',
+      "function Update-Launcher {",
+      "function Update-Binary {",
+      "function Invoke-Main {",
+      "$self = $PSCommandPath\n$dir = Split-Path -Parent $self",
+      "if ($env:MUSE_SYNC_UPDATE -eq '1') {\nUpdate-Launcher -Self $self\nUpdate-Binary -Dir $dir\n$binary = Get-ActiveBinary -Dir $dir",
+    ].every((signature) => normalized.includes(`\n${signature}\n`)) &&
+    normalized.endsWith("\nInvoke-Main @args")
+  );
+}
 
 function shellQuote(word: string) {
   return /^[\w./:@=-]+$/.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'`;
