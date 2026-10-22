@@ -198,9 +198,16 @@ export function resolveScratchProjectScopeKey(
     : key;
 }
 
+/**
+ * A shared title wins once someone has renamed the project. Until then, a title
+ * that only repeats the repository name is a folder default, so the repository
+ * display path labels the group instead.
+ */
 export function deriveProjectGroupLabel(input: {
   readonly representative: Pick<EnvironmentProject, "title" | "repositoryIdentity">;
-  readonly members: ReadonlyArray<Pick<EnvironmentProject, "title" | "repositoryIdentity">>;
+  readonly members: ReadonlyArray<
+    Pick<EnvironmentProject, "title" | "hasCustomTitle" | "repositoryIdentity">
+  >;
 }): string {
   const sharedTitles = uniqueNonEmptyValues(input.members.map((member) => member.title));
   const sharedDisplayNames = uniqueNonEmptyValues(
@@ -215,8 +222,8 @@ export function deriveProjectGroupLabel(input: {
   if (
     sharedTitles.length === 1 &&
     sharedTitle !== undefined &&
-    !sharedDisplayNames.includes(sharedTitle) &&
-    !sharedRepositoryNames.includes(sharedTitle)
+    (input.members.some((member) => member.hasCustomTitle === true) ||
+      (!sharedDisplayNames.includes(sharedTitle) && !sharedRepositoryNames.includes(sharedTitle)))
   ) {
     return sharedTitle;
   }
