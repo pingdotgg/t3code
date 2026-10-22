@@ -15,6 +15,7 @@ import { useProject, useThreadShell } from "../../state/entities";
 import { MessageCopyButton } from "./MessageCopyButton";
 import { AssistantCitationSource } from "./AssistantCitationSource";
 import { resolveAssistantMessageCopyState } from "./MessagesTimeline.logic";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
@@ -92,6 +93,49 @@ function AssistantForkButton({
 
   if (!canFork || projectedItem.item.runId === null) return null;
   const runId = projectedItem.item.runId;
+  const fork = () => {
+    setBusy(true);
+    void ctx
+      .onForkFromRun({ sourceThreadId: projectedItem.sourceThreadId, runId })
+      .finally(() => setBusy(false));
+  };
+  // A side chat hangs off this thread, so only this thread's own responses can
+  // seed one. Inherited ones (from before a fork) keep the plain fork button.
+  const onAskAboutResponse =
+    projectedItem.sourceThreadId === ctx.threadRef?.threadId ? ctx.onAskAboutResponse : undefined;
+  const ask = () => {
+    if (!onAskAboutResponse) return;
+    setBusy(true);
+    void onAskAboutResponse({ sourceThreadId: projectedItem.sourceThreadId, runId }).finally(() =>
+      setBusy(false),
+    );
+  };
+
+  if (onAskAboutResponse) {
+    return (
+      <Menu>
+        <MenuTrigger
+          render={
+            <Button
+              type="button"
+              size="xs"
+              variant="ghost"
+              disabled={busy}
+              aria-label="Fork or ask about this response"
+            />
+          }
+        >
+          <GitForkIcon className={cn("size-3", busy && "animate-pulse")} />
+        </MenuTrigger>
+        <MenuPopup align="start" className="min-w-52">
+          <MenuItem onClick={fork}>Fork to new thread</MenuItem>
+          <MenuItem disabled={ctx.askAboutResponseDisabledReason !== null} onClick={ask}>
+            {ctx.askAboutResponseDisabledReason ?? "Ask about this response"}
+          </MenuItem>
+        </MenuPopup>
+      </Menu>
+    );
+  }
 
   return (
     <Tooltip>
@@ -102,12 +146,7 @@ function AssistantForkButton({
             size="xs"
             variant="ghost"
             disabled={busy}
-            onClick={() => {
-              setBusy(true);
-              void ctx
-                .onForkFromRun({ sourceThreadId: projectedItem.sourceThreadId, runId })
-                .finally(() => setBusy(false));
-            }}
+            onClick={fork}
             aria-label="Fork from this response"
           />
         }

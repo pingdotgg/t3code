@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
+  CheckpointId,
   CommandId,
   MessageId,
   EventId,
@@ -31,6 +32,7 @@ import * as DelegatedTaskQuestionReactor from "./DelegatedTaskQuestionReactor.ts
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import { dispatchRejectionReason } from "./UserFacingErrors.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
@@ -736,6 +738,228 @@ it.effect("keeps delegated child pull-request links independent of the parent", 
     const parentAfterChildLink = yield* projections.getThreadProjection(parentThreadId);
     assert.deepEqual(parentAfterChildLink.thread.linkedPullRequest, parentPullRequest);
     assert.deepEqual(parentAfterChildLink.thread.pullRequests, parent.thread.pullRequests);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("links a side chat under its parent without claiming a fork, and promotes it", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const projectId = ProjectId.make("project:side-chat");
+    const parentId = ThreadId.make("thread:side-chat-parent");
+    const sideChatId = ThreadId.make("thread:side-chat-child");
+    const base = {
+      projectId,
+      modelSelection,
+      runtimeMode: "approval-required",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    } as const;
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-side-chat-parent"),
+      threadId: parentId,
+      title: "Parent",
+      ...base,
+    });
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-side-chat-child"),
+      threadId: sideChatId,
+      title: "Side chat",
+      parentThreadId: parentId,
+      sideChat: true,
+      ...base,
+    });
+
+    const child = yield* projections.getThread(sideChatId);
+    assert.deepEqual(child.lineage, {
+      parentThreadId: parentId,
+      relationshipToParent: null,
+      rootThreadId: parentId,
+    });
+    assert.isNull(child.forkedFrom);
+    assert.equal(child.sideChat, true);
+    assert.equal((yield* projections.getThreadShell(sideChatId))?.sideChat, true);
+    assert.isUndefined((yield* projections.getThread(parentId)).sideChat);
+
+    yield* orchestrator.dispatch({
+      type: "thread.metadata.update",
+      commandId: CommandId.make("promote-side-chat"),
+      threadId: sideChatId,
+      sideChat: false,
+    });
+    assert.equal((yield* projections.getThread(sideChatId)).sideChat, false);
+    assert.equal((yield* projections.getThreadShell(sideChatId))?.sideChat, false);
+
+    // A stale "discard if empty" from a client that has not seen the promotion
+    // leaves the promoted thread alone.
+    const promotedDiscard = yield* Effect.flip(
+      orchestrator.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("discard-promoted-side-chat"),
+        threadId: sideChatId,
+        expectedEmpty: true,
+        expectedSideChat: true,
+      }),
+    );
+    assert.equal(dispatchRejectionReason(promotedDiscard), "thread_not_side_chat");
+    assert.isNull((yield* projections.getThread(sideChatId)).deletedAt);
+
+    const crossProject = yield* Effect.exit(
+      orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create-side-chat-cross-project"),
+        threadId: ThreadId.make("thread:side-chat-cross-project"),
+        title: "Elsewhere",
+        parentThreadId: parentId,
+        sideChat: true,
+        ...base,
+        projectId: ProjectId.make("project:side-chat-other"),
+      }),
+    );
+    assert.equal(crossProject._tag, "Failure");
+
+    const missingParent = yield* Effect.flip(
+      orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create-side-chat-missing-parent"),
+        threadId: ThreadId.make("thread:side-chat-orphan"),
+        title: "Orphan",
+        parentThreadId: ThreadId.make("thread:side-chat-no-such-parent"),
+        sideChat: true,
+        ...base,
+      }),
+    );
+    // An unknown parent is a rejected command, not a projection failure.
+    assert.equal(missingParent._tag, "OrchestratorDispatchError");
+
+    // Closing an unused side chat sends both guards, and it is deleted.
+    const unusedSideChatId = ThreadId.make("thread:side-chat-unused");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-unused-side-chat"),
+      threadId: unusedSideChatId,
+      title: "Unused side chat",
+      parentThreadId: parentId,
+      sideChat: true,
+      ...base,
+    });
+    yield* orchestrator.dispatch({
+      type: "thread.delete",
+      commandId: CommandId.make("discard-empty-side-chat"),
+      threadId: unusedSideChatId,
+      expectedEmpty: true,
+      expectedSideChat: true,
+    });
+    assert.isNotNull((yield* projections.getThread(unusedSideChatId)).deletedAt);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("forks a side chat from the last finished run while the source is mid-run", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const projectId = ProjectId.make("project:side-chat-active");
+    const sourceId = ThreadId.make("thread:side-chat-active-source");
+    const targetId = ThreadId.make("thread:side-chat-active-target");
+    const now = yield* DateTime.now;
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-side-chat-active-source"),
+      threadId: sourceId,
+      projectId,
+      title: "Busy parent",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const run = (ordinal: number, status: "completed" | "running") => ({
+      id: RunId.make(`run:side-chat-active-${ordinal}`),
+      threadId: sourceId,
+      ordinal,
+      providerInstanceId: instanceId,
+      modelSelection,
+      providerThreadId: null,
+      userMessageId: MessageId.make(`message:side-chat-active-${ordinal}`),
+      rootNodeId: null,
+      activeAttemptId: null,
+      status,
+      requestedAt: now,
+      startedAt: now,
+      completedAt: status === "completed" ? now : null,
+      checkpointId:
+        status === "completed" ? CheckpointId.make(`checkpoint:side-chat-${ordinal}`) : null,
+      contextHandoffId: null,
+    });
+    for (const next of [run(1, "completed"), run(2, "running")]) {
+      yield* projections.apply({
+        id: EventId.make(`event:side-chat-active-${next.ordinal}`),
+        type: "run.updated",
+        threadId: sourceId,
+        runId: next.id,
+        providerInstanceId: instanceId,
+        occurredAt: now,
+        payload: next,
+      });
+    }
+
+    yield* orchestrator.dispatch({
+      type: "thread.fork",
+      commandId: CommandId.make("fork-side-chat-active"),
+      sourceThreadId: sourceId,
+      targetThreadId: targetId,
+      sourcePoint: { type: "latest_stable" },
+      sideChat: true,
+      runtimeMode: "approval-required",
+      createdBy: "user",
+      creationSource: "web",
+    });
+
+    const target = yield* projections.getThread(targetId);
+    assert.deepEqual(target.forkedFrom, {
+      type: "run",
+      threadId: sourceId,
+      runId: RunId.make("run:side-chat-active-1"),
+    });
+    assert.equal(target.sideChat, true);
+    assert.equal(target.runtimeMode, "approval-required");
+    assert.equal(target.lineage.relationshipToParent, "fork");
+
+    // Pinning the run that is still streaming is refused: it is not a stable point.
+    const midRun = yield* Effect.exit(
+      orchestrator.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("fork-side-chat-mid-run"),
+        sourceThreadId: sourceId,
+        targetThreadId: ThreadId.make("thread:side-chat-active-refused"),
+        sourcePoint: { type: "run", runId: RunId.make("run:side-chat-active-2") },
+        sideChat: true,
+        createdBy: "user",
+        creationSource: "web",
+      }),
+    );
+    assert.equal(midRun._tag, "Failure");
+
+    // "Discard if empty" never deletes a thread that already has runs.
+    const notEmpty = yield* Effect.flip(
+      orchestrator.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("discard-non-empty-thread"),
+        threadId: sourceId,
+        expectedEmpty: true,
+      }),
+    );
+    assert.equal(notEmpty._tag, "OrchestratorThreadNotEmptyError");
+    assert.equal(dispatchRejectionReason(notEmpty), "thread_not_empty");
+    assert.isNull((yield* projections.getThread(sourceId)).deletedAt);
   }).pipe(Effect.provide(layerTest)),
 );
 

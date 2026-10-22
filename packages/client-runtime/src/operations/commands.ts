@@ -76,13 +76,21 @@ export interface CreateThreadInput extends CommandMetadata {
   readonly interactionMode: ProviderInteractionMode;
   readonly branch: string | null;
   readonly worktreePath: string | null;
+  /** Link under an existing thread without transferring any of its context. */
+  readonly parentThreadId?: ThreadId;
+  readonly sideChat?: boolean;
 }
 
 export interface ThreadCommandInput extends CommandMetadata {
   readonly threadId: ThreadId;
 }
 
-export type DeleteThreadInput = ThreadCommandInput;
+export interface DeleteThreadInput extends ThreadCommandInput {
+  /** Delete only while the thread has no message or run yet. */
+  readonly expectedEmpty?: boolean;
+  /** Delete only while the thread is still a side chat. */
+  readonly expectedSideChat?: boolean;
+}
 export type ArchiveThreadInput = ThreadCommandInput;
 export type UnarchiveThreadInput = ThreadCommandInput;
 export type SettleThreadInput = ThreadCommandInput;
@@ -127,6 +135,8 @@ export interface UpdateThreadMetadataInput extends ThreadCommandInput {
   readonly regenerateTitle?: boolean;
   readonly linkedPullRequest?: ThreadLinkedPullRequest | null;
   readonly expectedEmpty?: boolean;
+  /** `false` promotes a side chat to an ordinary thread. */
+  readonly sideChat?: boolean;
 }
 
 export interface SetThreadRuntimeModeInput extends ThreadCommandInput {
@@ -209,8 +219,11 @@ export type StopThreadSessionInput = ThreadCommandInput;
 export interface ForkThreadFromRunInput extends CommandMetadata {
   readonly sourceThreadId: ThreadId;
   readonly targetThreadId: ThreadId;
-  readonly runId: RunId;
+  /** Omitted forks at the latest stable point, which a running source resolves to its last completed run. */
+  readonly runId?: RunId;
   readonly title?: string;
+  readonly sideChat?: boolean;
+  readonly runtimeMode?: RuntimeMode;
 }
 
 export interface MergeThreadBackInput extends CommandMetadata {
@@ -403,6 +416,8 @@ export const createThread = Effect.fn("EnvironmentCommands.createThread")(functi
     interactionMode: input.interactionMode,
     branch: input.branch,
     worktreePath: input.worktreePath,
+    ...(input.parentThreadId === undefined ? {} : { parentThreadId: input.parentThreadId }),
+    ...(input.sideChat === undefined ? {} : { sideChat: input.sideChat }),
   });
 });
 
@@ -424,7 +439,17 @@ function simpleThreadCommand(
 export const deleteThread = Effect.fn("EnvironmentCommands.deleteThread")(function* (
   input: DeleteThreadInput,
 ) {
-  return yield* simpleThreadCommand("thread.delete", input);
+  if (input.expectedEmpty !== true && input.expectedSideChat !== true) {
+    return yield* simpleThreadCommand("thread.delete", input);
+  }
+  const commandId = yield* allocateCommandId(input);
+  return yield* dispatch({
+    type: "thread.delete",
+    commandId,
+    threadId: input.threadId,
+    ...(input.expectedEmpty === true ? { expectedEmpty: true } : {}),
+    ...(input.expectedSideChat === true ? { expectedSideChat: true } : {}),
+  });
 });
 
 export const archiveThread = Effect.fn("EnvironmentCommands.archiveThread")(function* (
@@ -564,6 +589,7 @@ export const updateThreadMetadata = Effect.fn("EnvironmentCommands.updateThreadM
       input.worktreePath !== undefined ||
       input.regenerateTitle !== undefined ||
       input.linkedPullRequest !== undefined ||
+      input.sideChat !== undefined ||
       input.limitRecovery !== undefined
     ) {
       result = yield* dispatch({
@@ -579,6 +605,7 @@ export const updateThreadMetadata = Effect.fn("EnvironmentCommands.updateThreadM
         ...(input.linkedPullRequest === undefined
           ? {}
           : { linkedPullRequest: input.linkedPullRequest }),
+        ...(input.sideChat === undefined ? {} : { sideChat: input.sideChat }),
       });
     }
     if (input.modelSelection !== undefined) {
@@ -978,8 +1005,11 @@ export const forkThreadFromRun = Effect.fn("EnvironmentCommands.forkThreadFromRu
     creationSource: input.creationSource ?? "web",
     sourceThreadId: input.sourceThreadId,
     targetThreadId: input.targetThreadId,
-    sourcePoint: { type: "run", runId: input.runId },
+    sourcePoint:
+      input.runId === undefined ? { type: "latest_stable" } : { type: "run", runId: input.runId },
     ...(input.title === undefined ? {} : { title: input.title }),
+    ...(input.sideChat === undefined ? {} : { sideChat: input.sideChat }),
+    ...(input.runtimeMode === undefined ? {} : { runtimeMode: input.runtimeMode }),
   });
 });
 

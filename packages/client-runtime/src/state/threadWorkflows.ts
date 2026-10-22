@@ -191,3 +191,88 @@ export function canDetachThreadProviderSession(projection: Projection): boolean 
   const session = resolveThreadProviderSession(projection);
   return session !== null && session.status !== "stopped" && session.status !== "error";
 }
+
+export type SideChatHistoryAvailability =
+  | { readonly available: true; readonly upToRunOrdinal: number }
+  | { readonly available: false; readonly reason: string };
+
+/**
+ * Whether a side chat can start with the thread's history. It forks at the
+ * latest completed run, so a run still streaming is never part of it, and the
+ * provider must be able to fork natively or hand its full thread off.
+ */
+export function resolveSideChatHistoryAvailability(
+  projection: Projection | null | undefined,
+): SideChatHistoryAvailability {
+  if (projection == null) {
+    return { available: false, reason: "This thread is still loading." };
+  }
+  const latestStable = projection.runs.reduce<Run | null>(
+    (latest, run) =>
+      run.status === "completed" &&
+      run.checkpointId !== null &&
+      (latest === null || run.ordinal > latest.ordinal)
+        ? run
+        : latest,
+    null,
+  );
+  if (latestStable === null) {
+    return { available: false, reason: "Nothing to share yet. A run has to finish first." };
+  }
+  const capabilities = resolveThreadProviderSession(projection)?.capabilities;
+  if (capabilities !== undefined) {
+    const canForkNatively =
+      capabilities.threads.canForkThread &&
+      capabilities.threads.canForkFromTurn &&
+      capabilities.identity.nativeThreadIds === "strong";
+    if (!canForkNatively && !capabilities.context.supportsFullThreadHandoff) {
+      return {
+        available: false,
+        reason: "This provider cannot share history with a side chat yet.",
+      };
+    }
+  }
+  return { available: true, upToRunOrdinal: latestStable.ordinal };
+}
+
+/** What a side chat can see of its parent, for the panel header chip. */
+export function describeSideChatVisibility(input: {
+  readonly forkedFrom: OrchestrationV2ThreadProjection["thread"]["forkedFrom"];
+  readonly parentRuns: ReadonlyArray<Pick<Run, "id" | "ordinal">> | null;
+}): string {
+  if (input.forkedFrom?.type !== "run") return "Sees no history";
+  const runId = input.forkedFrom.runId;
+  const run = input.parentRuns?.find((candidate) => candidate.id === runId);
+  return run === undefined ? "Sees history" : `Sees up to run ${run.ordinal}`;
+}
+
+export interface SideChatListingShell {
+  readonly environmentId: string;
+  readonly id: string;
+  readonly sideChat?: boolean | undefined;
+  readonly deletedAt?: string | null | undefined;
+  readonly lineage?: { readonly parentThreadId: string | null } | undefined;
+}
+
+/**
+ * Builds the sidebar and palette test for "list this thread". A side chat stays
+ * out while its parent is around to list it; once the parent leaves the active
+ * list, a surviving side chat shows up like an ordinary thread instead of
+ * vanishing. Archived and deleted parents both leave that list, so archiving a
+ * parent lists its side chats until it is unarchived.
+ */
+export function makeSideChatListingFilter<T extends SideChatListingShell>(
+  threads: ReadonlyArray<T>,
+): (thread: T) => boolean {
+  const present = new Set(
+    threads.flatMap((thread) => (thread.deletedAt ? [] : [`${thread.environmentId}:${thread.id}`])),
+  );
+  return (thread) => {
+    const parentThreadId = thread.lineage?.parentThreadId;
+    return (
+      !thread.sideChat ||
+      !parentThreadId ||
+      !present.has(`${thread.environmentId}:${parentThreadId}`)
+    );
+  };
+}

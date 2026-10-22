@@ -16,6 +16,7 @@ import {
   makeThreadErrorSetter,
 } from "../ChatView.logic";
 import { isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
+import { parseSideCommand } from "../../sideChat.logic";
 import {
   AuthOrchestrationOperateScope,
   DEFAULT_MODEL,
@@ -205,6 +206,8 @@ interface ComposerSendInput {
   readonly usageLimitsKey: string | null;
   readonly usageLimitsOffered: boolean;
   readonly openUsageLimits: UsageLimitsPanel["open"];
+  /** Starts or reopens a side chat; null when this thread cannot have one. */
+  readonly runSideChatCommand: ((question: string) => Promise<boolean>) | null;
   readonly clearUsageLimitsFor: UsageLimitsPanel["clearFor"];
   readonly needsLoadBalancing: boolean;
   readonly loadBalancing: DraftEnvironmentRouting["loadBalancing"];
@@ -292,6 +295,7 @@ export function useComposerSend(input: ComposerSendInput) {
     usageLimitsKey,
     usageLimitsOffered,
     openUsageLimits,
+    runSideChatCommand,
     clearUsageLimitsFor,
     needsLoadBalancing,
     loadBalancing,
@@ -406,6 +410,38 @@ export function useComposerSend(input: ComposerSendInput) {
         composerRef.current?.resetCursorState();
       }
       return;
+    }
+
+    // `/side` and `/btw` typed in full, like `/usage`: a question after it goes
+    // straight to a new side chat, the bare command reopens the latest one.
+    // Answering an agent question or editing a queued message sends it as text.
+    if (
+      runSideChatCommand !== null &&
+      !directAnnotation &&
+      !draftHasNonPromptContent(composerDraftTarget) &&
+      !(
+        activePendingProgress &&
+        composerRef.current?.getSendContext()?.answeringPendingUserInput !== false
+      ) &&
+      !queuedRunEdit.isEditing
+    ) {
+      const typedPrompt = promptRef.current;
+      const sideCommand = parseSideCommand(typedPrompt);
+      if (sideCommand !== null) {
+        const draftTarget = composerDraftTarget;
+        promptRef.current = "";
+        setComposerDraftPrompt(draftTarget, "");
+        composerRef.current?.resetCursorState();
+        void runSideChatCommand(sideCommand.question).then((opened) => {
+          // No side chat was created: give the command back unless the user
+          // has started typing something else.
+          if (opened) return;
+          const draftStore = useComposerDraftStore.getState();
+          if ((draftStore.getComposerDraft(draftTarget)?.prompt ?? "") !== "") return;
+          draftStore.setPrompt(draftTarget, typedPrompt);
+        });
+        return;
+      }
     }
 
     const notifyDirectAnnotationAttached = () => {

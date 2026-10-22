@@ -29,6 +29,13 @@ export interface ChatShortcutsInput {
     readonly modelPickerOpen: boolean;
   };
   readonly threadFindActive: boolean;
+  /**
+   * Whether this chat takes the event at all. A side chat mounts a second chat
+   * view, so each one claims only the keys meant for it.
+   */
+  readonly claimsEvent?: (event: KeyboardEvent) => boolean;
+  /** Whether this chat runs a resolved command; others pass through untouched. */
+  readonly runsCommand?: (command: KeybindingCommand) => boolean;
   /** Takes type-to-focus keys and the composer and branch toolbar chords. */
   readonly composerRef: ComposerHandleRef;
   readonly branchToolbarRef: { readonly current: BranchToolbarHandle | null };
@@ -46,6 +53,7 @@ export interface ChatShortcutsInput {
 export function useChatShortcuts(input: ChatShortcutsInput) {
   const handleShortcut = useEffectEvent((event: KeyboardEvent) => {
     const { keybindings } = input;
+    if (input.claimsEvent && !input.claimsEvent(event)) return;
     if (preventRepeatedTerminalCloseShortcut(event, keybindings)) {
       event.stopPropagation();
       return;
@@ -75,6 +83,7 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
       context: shortcutContext,
     });
     if (!command) return;
+    if (input.runsCommand && !input.runsCommand(command)) return;
     const run =
       input.commands[command] ??
       composerShortcutCommands(input.composerRef, input.branchToolbarRef)[command] ??

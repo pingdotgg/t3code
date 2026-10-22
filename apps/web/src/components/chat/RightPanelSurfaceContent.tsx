@@ -9,7 +9,7 @@ import type {
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { lazy, Suspense } from "react";
+import { lazy, type ReactNode, Suspense } from "react";
 import type { ComposerImageAttachment, DraftId } from "../../composerDraftStore";
 import type { ShortcutMatchContext } from "../../keybindings";
 import { type RightPanelSurface, useRightPanelStore } from "../../rightPanelStore";
@@ -77,6 +77,8 @@ export function RightPanelSurfaceContent(props: {
   readonly terminal: RightPanelTerminalProps;
   readonly pullRequest: RightPanelPullRequestProps;
   readonly files: RightPanelFileProps;
+  /** A side chat's tab renders its own chat view, which the host thread supplies. */
+  readonly renderSideChat: (surface: Extract<RightPanelSurface, { kind: "aside" }>) => ReactNode;
 }) {
   const { surface, threadRef, visible } = props;
   if (surface === null) return null;
@@ -167,6 +169,8 @@ export function RightPanelSurfaceContent(props: {
     }
     case "pull-requests":
       return <ThreadPullRequestsPanel threadRef={threadRef} />;
+    case "aside":
+      return props.renderSideChat(surface);
     case "device":
       return (
         <Suspense fallback={null}>

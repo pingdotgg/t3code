@@ -109,12 +109,23 @@ function makeSourceProjection(sourceRun: OrchestrationV2Run): OrchestrationV2Thr
 
 const planFork = (
   sourceRun: OrchestrationV2Run,
-  sourceProjection = makeSourceProjection(sourceRun),
+  options: {
+    readonly sideChat?: boolean;
+    readonly runtimeMode?: OrchestrationV2AppThread["runtimeMode"];
+    readonly sourceThread?: OrchestrationV2AppThread;
+    readonly sourceProjection?: OrchestrationV2ThreadProjection;
+  } = {},
 ) =>
   Effect.gen(function* () {
     const service = yield* ThreadForkService.ThreadForkServiceV2;
+    const sourceProjection = options.sourceProjection ?? makeSourceProjection(sourceRun);
     return yield* service.plan({
-      sourceProjection,
+      ...(options.sideChat === undefined ? {} : { sideChat: options.sideChat }),
+      ...(options.runtimeMode === undefined ? {} : { runtimeMode: options.runtimeMode }),
+      sourceProjection:
+        options.sourceThread === undefined
+          ? sourceProjection
+          : { ...sourceProjection, thread: options.sourceThread },
       sourceRun,
       sourceProviderThread: undefined,
       canonicalSourcePoint: {
@@ -219,7 +230,7 @@ it.effect("preserves pull request context without inheriting any watches", () =>
         branchPullRequest: legacyLink,
       },
     };
-    const result = yield* planFork(sourceRun, sourceProjection);
+    const result = yield* planFork(sourceRun, { sourceProjection });
 
     assert.deepEqual(result.targetThread.pullRequests, links);
     assert.deepEqual(result.targetThread.linkedPullRequest, legacyLink);
@@ -240,5 +251,28 @@ it.effect("rejects in-progress and rolled-back fork sources", () =>
       assert.equal(error.targetThreadId, targetThreadId);
       assert.equal(error.cause, ThreadForkService.forkableSourceRunStatusError(sourceRun));
     }
+  }),
+);
+
+it.effect("marks a side-chat fork and can narrow its runtime mode", () =>
+  Effect.gen(function* () {
+    const result = yield* planFork(makeSourceRun("completed"), {
+      sideChat: true,
+      runtimeMode: "approval-required",
+    });
+    assert.isTrue(result.targetThread.sideChat);
+    assert.equal(result.targetThread.runtimeMode, "approval-required");
+    // Lineage still says fork: presentation is a separate fact.
+    assert.equal(result.targetThread.lineage.relationshipToParent, "fork");
+  }),
+);
+
+it.effect("does not carry a side-chat source's flag into an ordinary fork", () =>
+  Effect.gen(function* () {
+    const result = yield* planFork(makeSourceRun("completed"), {
+      sourceThread: { ...makeSourceThread(), sideChat: true },
+    });
+    assert.isFalse(result.targetThread.sideChat);
+    assert.equal(result.targetThread.runtimeMode, "full-access");
   }),
 );

@@ -1,6 +1,6 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { type EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
-import { beforeEach, describe, expect, it } from "vite-plus/test";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { useClosedViewStore } from "./closedViewStore";
 import { reopenClosedView } from "./reopenClosedView";
@@ -8,6 +8,7 @@ import {
   migratePersistedRightPanelState,
   pullRequestSurface,
   pullRequestSurfaceId,
+  registerEmbeddedPanelHost,
   selectActiveRightPanel,
   selectActiveRightPanelSurface,
   selectThreadPanelVisibility,
@@ -134,6 +135,83 @@ describe("rightPanelStore", () => {
       { kind: "panel-tab", threadRef: refA, surface: { id: "file:src/app.ts" } },
     ]);
     expect(useClosedViewStore.getState().entries).toHaveLength(1);
+  });
+
+  it("opens a mounted side chat's files in its parent's panel, and its own once unmounted", () => {
+    const store = useRightPanelStore.getState();
+    const unregister = registerEmbeddedPanelHost(refB, refA, () => undefined);
+    store.openFile(refB, "src/app.ts");
+    const surfaceIds = (ref: typeof refA) =>
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref).surfaces.map(
+        (surface) => surface.id,
+      );
+    expect(surfaceIds(refA)).toEqual(["file:src/app.ts"]);
+    expect(surfaceIds(refB)).toEqual([]);
+
+    unregister();
+    store.openFile(refB, "src/other.ts");
+    expect(surfaceIds(refB)).toEqual(["file:src/other.ts"]);
+  });
+
+  it("opens a mounted side chat as a full thread only for user opens in its own panel", () => {
+    const store = useRightPanelStore.getState();
+    const opened = vi.fn();
+    const unregister = registerEmbeddedPanelHost(refB, refA, opened);
+    store.openBrowser(refB, "tab-1");
+    // Already selected, as when the session event lands before the user's open.
+    store.openBrowser(refB, "tab-1");
+    expect(opened).toHaveBeenCalledTimes(2);
+
+    opened.mockClear();
+    store.activateSurface(refB, "browser:tab-1");
+    store.openDevice(
+      refB,
+      { hostId: "host", deviceId: "device", platform: "ios", name: "iPhone" },
+      true,
+    );
+    store.openFile(refB, "src/app.ts");
+    expect(opened).not.toHaveBeenCalled();
+    unregister();
+  });
+
+  it("restores a mounted side chat's file into its own panel when asked", () => {
+    const store = useRightPanelStore.getState();
+    const unregister = registerEmbeddedPanelHost(refB, refA, () => undefined);
+    store.openFile(refB, "src/app.ts", undefined, { inOwnPanel: true });
+    const surfaceIds = (ref: typeof refA) =>
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref).surfaces.map(
+        (surface) => surface.id,
+      );
+    expect(surfaceIds(refB)).toEqual(["file:src/app.ts"]);
+    expect(surfaceIds(refA)).toEqual([]);
+    unregister();
+  });
+
+  it("keeps several side chats open as peer tabs and reloads only well-formed ones", () => {
+    const store = useRightPanelStore.getState();
+    store.openAside(refA, "side-1");
+    store.openAside(refA, "side-2");
+    store.openAside(refA, "side-1");
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces.map((surface) => surface.id)).toEqual(["aside:side-1", "aside:side-2"]);
+    expect(state.isOpen).toBe(true);
+    expect(state.activeSurfaceId).toBe("aside:side-1");
+
+    const migrated = migratePersistedRightPanelState({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: true,
+          activeSurfaceId: "aside:side-1",
+          surfaces: [
+            { id: "aside:side-1", kind: "aside", threadId: "side-1" },
+            { id: "aside:broken", kind: "aside" },
+          ],
+        },
+      },
+    });
+    expect(migrated.byThreadKey["env-1:thread-A"]?.surfaces).toEqual([
+      { id: "aside:side-1", kind: "aside", threadId: "side-1" },
+    ]);
   });
 
   it("gives each host/device its own tab and preserves renamed tabs", () => {

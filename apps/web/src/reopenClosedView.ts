@@ -122,8 +122,12 @@ export async function reopenClosedView(
       panels.openBrowser(ref, null);
       break;
     case "file":
-      if (surface.attachment) panels.openAttachment(ref, surface.attachment);
-      else panels.openFile(ref, surface.relativePath, surface.revealLine ?? undefined);
+      // Restored into the thread's own panel, which is where reopening navigates.
+      if (surface.attachment) panels.openAttachment(ref, surface.attachment, { inOwnPanel: true });
+      else
+        panels.openFile(ref, surface.relativePath, surface.revealLine ?? undefined, {
+          inOwnPanel: true,
+        });
       break;
     case "device":
       if (surface.target) {
@@ -132,8 +136,11 @@ export async function reopenClosedView(
       } else panels.open(ref, "device");
       break;
     case "pull-request":
-      panels.openPullRequest(ref, surface);
+      panels.openPullRequest(ref, surface, { inOwnPanel: true });
       break;
+    case "aside":
+      // Never remembered: side chats reopen from the thread's Side chats list.
+      return false;
     default:
       panels.open(ref, surface.kind);
   }

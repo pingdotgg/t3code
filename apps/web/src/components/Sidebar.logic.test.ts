@@ -33,6 +33,7 @@ import {
   type SidebarListMarker,
   type SidebarSection,
   resolveSidebarDropVerb,
+  filterSidebarV2VisibleThreads,
 } from "./Sidebar.logic";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { EnvironmentId, ProjectId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
@@ -161,6 +162,43 @@ describe("archiveSelectedThreadEntries", () => {
 });
 
 describe("sidebar thread lineage helpers", () => {
+  it("keeps side chats out of the sidebar, whether forked or only linked", () => {
+    const projectId = ProjectId.make("project-side-chat");
+    const environmentId = "env-side-chat" as never;
+    const parentId = ThreadId.make("thread-parent");
+    const ordinary = makeThreadFixture({ id: parentId, environmentId, projectId });
+    const forkedSideChat = makeThreadFixture({
+      id: ThreadId.make("thread-side-fork"),
+      environmentId,
+      projectId,
+      sideChat: true,
+      lineage: { rootThreadId: parentId, parentThreadId: parentId, relationshipToParent: "fork" },
+    });
+    const linkedSideChat = makeThreadFixture({
+      id: ThreadId.make("thread-side-linked"),
+      environmentId,
+      projectId,
+      sideChat: true,
+      lineage: { rootThreadId: parentId, parentThreadId: parentId, relationshipToParent: null },
+    });
+
+    expect(
+      filterSidebarV2VisibleThreads([ordinary, forkedSideChat, linkedSideChat], null).map(
+        (thread) => thread.id,
+      ),
+    ).toEqual([parentId]);
+    // Promoting clears the flag, and the thread joins the sidebar.
+    expect(
+      filterSidebarV2VisibleThreads([{ ...forkedSideChat, sideChat: false }], null),
+    ).toHaveLength(1);
+    // With the parent deleted there is nowhere else to reach it, so it is listed.
+    expect(
+      filterSidebarV2VisibleThreads([forkedSideChat, linkedSideChat], null).map(
+        (thread) => thread.id,
+      ),
+    ).toEqual([forkedSideChat.id, linkedSideChat.id]);
+  });
+
   it("maps an open subagent to its nearest visible ancestor's sidebar row", () => {
     const environmentId = EnvironmentId.make("environment-row");
     const otherEnvironmentId = EnvironmentId.make("environment-other");

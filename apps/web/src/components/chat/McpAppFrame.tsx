@@ -208,7 +208,9 @@ export function McpAppFrame(props: {
       if (event.target instanceof Node && !boxRef.current?.contains(event.target)) leave();
     };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") leave();
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      leave();
     };
     const onResize = () => hostRef.current?.updateHostContext();
     document.addEventListener("focusin", onFocus);

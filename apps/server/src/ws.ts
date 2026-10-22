@@ -157,7 +157,10 @@ import {
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
 import * as OrchestrationEventStore from "./persistence/OrchestrationEventStore.ts";
-import { userFacingDispatchErrorMessage } from "./orchestration-v2/UserFacingErrors.ts";
+import {
+  dispatchRejectionReason,
+  userFacingDispatchErrorMessage,
+} from "./orchestration-v2/UserFacingErrors.ts";
 import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
 import * as ProviderInstanceRegistry from "./provider/ProviderInstanceRegistry.ts";
 import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
@@ -1842,11 +1845,13 @@ export const layerWsRpc = (
                   Effect.map((result) => ({ sequence: result.sequence })),
                   Effect.mapError((cause) => {
                     const detail = userFacingDispatchErrorMessage(cause);
+                    const reason = dispatchRejectionReason(cause);
                     return new OrchestrationV2DispatchCommandError({
                       commandId: command.commandId,
                       commandType: command.type,
                       message: detail ?? "Failed to dispatch orchestration V2 command",
                       ...(detail === undefined ? {} : { detail }),
+                      ...(reason === undefined ? {} : { reason }),
                       cause,
                     });
                   }),
