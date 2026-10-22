@@ -448,6 +448,18 @@ function codexBackgroundCommandDetail(item: {
   return outputTail.length === 0 ? header : `${header}\n\nOutput tail:\n${outputTail}`;
 }
 
+// Codex spawns can omit the prompt, which registers as an empty string.
+function codexNativeSubagentLabel(task: OrchestrationV2Subagent): string | undefined {
+  return task.title?.trim() || task.prompt.trim() || undefined;
+}
+
+function codexNativeSubagentDetail(task: OrchestrationV2Subagent): string {
+  const header = `Subagent ${task.status}: ${codexNativeSubagentLabel(task) ?? task.id}`;
+  return task.result == null || task.result.length === 0
+    ? header
+    : `${header}\n\nResult:\n${task.result}`;
+}
+
 export interface CodexDynamicToolProjection extends McpToolPresentation {
   readonly toolName: string;
   readonly title?: string;
@@ -6053,6 +6065,41 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   status: input.status,
                   completedAt: input.completedAt,
                 });
+                // Codex does not wake a parent whose turn already completed, so
+                // the child's result would sit unread until the next message.
+                // Only direct children of a root turn wake it: a grandchild
+                // reports to its own parent, and a root turn already running on
+                // the thread receives the result natively.
+                const parent = input.context.subagent.parentContext;
+                if (
+                  continuationRequests !== undefined &&
+                  parent.subagent === null &&
+                  (input.status === "completed" || input.status === "failed") &&
+                  !(yield* Ref.get(terminalizedNonCompletedNativeTurns)).has(parent.nativeTurnId) &&
+                  ![...(yield* Ref.get(activeTurns)).values()].some(
+                    (active) =>
+                      active.subagent === null &&
+                      active.providerThread.id === parent.providerThread.id,
+                  )
+                ) {
+                  const task = input.context.subagent.task;
+                  yield* continuationRequests.offer({
+                    threadId: parent.projectionThreadId,
+                    providerThreadId: parent.providerThread.id,
+                    driver: CODEX_PROVIDER,
+                    detail: codexNativeSubagentDetail(task),
+                    // The detail is the whole wake; Codex buffers no output for it.
+                    delivery: "message_text",
+                    notification: backgroundWorkNotification([
+                      {
+                        kind: "subagent",
+                        label: codexNativeSubagentLabel(task),
+                        outcome: input.status,
+                        childThreadId: input.context.subagent.childThreadId,
+                      },
+                    ]),
+                  });
+                }
               }
               if (input.status === "interrupted" || input.status === "failed") {
                 yield* terminalizeRunningCommandItems(
