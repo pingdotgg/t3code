@@ -9,7 +9,7 @@ import {
   makePersistedServerRuntimeState,
   persistServerRuntimeState,
 } from "../serverRuntimeState.ts";
-import { describeServerProcess } from "./triage.ts";
+import { describeServerProcess } from "./triageSession.ts";
 
 it.effect("reports the version the running server recorded, not the CLI's", () =>
   Effect.gen(function* () {

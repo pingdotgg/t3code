@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
 import { THREAD_JUMP_KEYBINDING_COMMANDS } from "@t3tools/contracts";
@@ -26,13 +27,20 @@ import { deriveBottomControlInsets } from "../../lib/reserved-regions";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 import { T3KeyboardCommands } from "../../native/T3KeyboardCommands";
-import { useProjects, useThreadShell, useThreadShells } from "../../state/entities";
+import {
+  useProjects,
+  useServerConfigs,
+  useThreadShell,
+  useThreadShells,
+} from "../../state/entities";
 import { useThreadSearch } from "../../state/queries";
+import { serverEnvironment } from "../../state/server";
 import { useWorkspaceEnvironments } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { ThreadSearchMatchExcerpt } from "../threads/thread-search-match";
+import { useStartTriage } from "../triage/useStartTriage";
 import {
   filterCommandPaletteItems,
   nextPaletteIndex,
@@ -169,6 +177,13 @@ export function CommandPalette(props: {
     [environments],
   );
   const search = useThreadSearch(searchEnvironmentIds, query.startsWith(">") ? "" : query);
+  const serverConfigs = useServerConfigs();
+  const startTriage = useStartTriage();
+  const triageEnvironmentId = activeThread?.environmentId ?? searchEnvironmentIds[0] ?? null;
+  const canTriage =
+    useAtomValue(serverEnvironment.prepareTriage.permissionAtom(triageEnvironmentId)) &&
+    triageEnvironmentId !== null &&
+    serverConfigs.get(triageEnvironmentId)?.environment.capabilities.triage === true;
   const matchedThreadKeys = useMemo(
     () =>
       new Set(search.matches.map((match) => scopedThreadKey(match.environmentId, match.threadId))),
@@ -266,6 +281,15 @@ export function CommandPalette(props: {
           }),
       },
     ];
+    if (canTriage) {
+      actions.push({
+        key: "triage",
+        kind: "action",
+        title: "Triage an issue",
+        searchTerms: ["triage", "bug", "issue", "report", "broken", "debug", "help", "support"],
+        run: () => void startTriage(triageEnvironmentId),
+      });
+    }
     const projectByKey = new Map(
       projects.map((project) => [scopedProjectKey(project.environmentId, project.id), project]),
     );
@@ -351,12 +375,15 @@ export function CommandPalette(props: {
   }, [
     activeThread,
     activeThreadRef,
+    canTriage,
     navigation,
     projects,
     runCommand,
     savedConnectionsById,
     selectThread,
+    startTriage,
     threads,
+    triageEnvironmentId,
   ]);
   const results = useMemo(
     () => filterCommandPaletteItems(items, query, matchedThreadKeys),
