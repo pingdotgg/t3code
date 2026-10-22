@@ -65,6 +65,8 @@ import {
   resolveLiveThreadBranchUpdate,
   resolveThreadBranchMetadataPatch,
   resolveQuickAction,
+  resolveRegeneratePullRequestCandidates,
+  type RegeneratePullRequestCandidate,
   resolveThreadBranchUpdate,
 } from "./GitActionsControl.logic";
 import { WizardPopup, WizardHeader, WizardSteps, WizardPanel, WizardFooter } from "./ui/wizard";
@@ -117,6 +119,7 @@ import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { useOpenLink } from "~/browser/useOpenLink";
 import { CommitFileSelection } from "./CommitFileSelection";
 import { RewriteCommitMessagesDialog } from "./RewriteCommitMessagesDialog";
+import { RegeneratePullRequestsDialog } from "./RegeneratePullRequestsDialog";
 
 interface GitActionsControlProps {
   gitCwd: string | null;
@@ -987,6 +990,14 @@ export default function GitActionsControl({
   const [isPublishDialogOpen, setIsPublishDialogOpen] = useState(false);
   const [isRewriteCommitMessagesDialogOpen, setIsRewriteCommitMessagesDialogOpen] = useState(false);
   const [isRegeneratingDescription, setIsRegeneratingDescription] = useState(false);
+  const regenerateScopeKey = `${successScopeKey}\u0000${threadRefreshKey ?? ""}`;
+  const [regenerateSelection, setRegenerateSelection] = useState<{
+    readonly scopeKey: string;
+    readonly candidates: ReadonlyArray<RegeneratePullRequestCandidate>;
+  } | null>(null);
+  if (regenerateSelection !== null && regenerateSelection.scopeKey !== regenerateScopeKey) {
+    setRegenerateSelection(null);
+  }
   const regenerateDescription = useAtomCommand(gitEnvironment.regeneratePullRequestDescription, {
     reportFailure: false,
   });
@@ -1131,48 +1142,78 @@ export default function GitActionsControl({
     RUNNING_SOURCE_CONTROL_ACTIONS,
   );
   const isGitActionRunning = isSourceControlActionRunning || isRegeneratingDescription;
-  const runRegenerateDescription = async () => {
+  const availableRegenerateCandidates = resolveRegeneratePullRequestCandidates(
+    gitStatusForActions,
+    activeServerThread,
+  );
+  const runRegenerateDescriptions = async (
+    candidates: ReadonlyArray<RegeneratePullRequestCandidate>,
+  ) => {
     if (
       !activeEnvironmentId ||
       !gitCwd ||
       !projectId ||
       !canRegenerateDescription ||
-      isGitActionRunning
+      isGitActionRunning ||
+      candidates.length === 0
     ) {
-      return;
+      return candidates.map((candidate) => ({
+        url: candidate.url,
+        message: "Regeneration is unavailable.",
+      }));
     }
     setIsRegeneratingDescription(true);
+    const label = changeRequestTerminology.shortLabel;
     const toastId = toastManager.add({
       type: "loading",
-      title: `Regenerating ${changeRequestTerminology.shortLabel} description...`,
+      title: `Regenerating ${label} titles and descriptions...`,
     });
+    const failures: Array<{ url: string; message: string }> = [];
+    let updatedCount = 0;
     try {
-      const result = await regenerateDescription({
-        environmentId: activeEnvironmentId,
-        input: {
-          cwd: gitCwd,
-          projectId,
-          ...(activeServerThread ? { threadId: activeServerThread.id } : {}),
-        },
-      });
-      if (result._tag === "Failure") {
-        if (isAtomCommandInterrupted(result)) {
-          toastManager.close(toastId);
-          return;
-        }
-        const error = squashAtomCommandFailure(result);
-        toastManager.update(toastId, {
-          type: "error",
-          title: `Failed to regenerate ${changeRequestTerminology.shortLabel} description`,
-          description: error instanceof Error ? error.message : "An error occurred.",
+      for (const candidate of candidates) {
+        const result = await regenerateDescription({
+          environmentId: activeEnvironmentId,
+          input: {
+            cwd: gitCwd,
+            projectId,
+            reference: candidate.url,
+            ...(activeServerThread ? { threadId: activeServerThread.id } : {}),
+          },
         });
-        return;
+        if (result._tag === "Failure") {
+          const error = squashAtomCommandFailure(result);
+          failures.push({
+            url: candidate.url,
+            message: `${candidate.repository} #${candidate.number}: ${error instanceof Error ? error.message : "An error occurred."}`,
+          });
+        } else {
+          updatedCount += 1;
+        }
       }
-      requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd);
-      toastManager.update(toastId, {
-        type: "success",
-        title: `${changeRequestTerminology.shortLabel} description updated`,
-      });
+      if (updatedCount > 0) {
+        requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd);
+      }
+      toastManager.update(
+        toastId,
+        failures.length > 0
+          ? {
+              type: "error",
+              title:
+                updatedCount > 0
+                  ? `Updated ${updatedCount} of ${candidates.length} ${label} titles and descriptions`
+                  : `Failed to regenerate ${label} titles and descriptions`,
+              description: failures.map((failure) => failure.message).join("\n"),
+            }
+          : {
+              type: "success",
+              title:
+                candidates.length === 1
+                  ? `${label} title and description updated`
+                  : `Updated ${candidates.length} ${label} titles and descriptions`,
+            },
+      );
+      return failures;
     } finally {
       setIsRegeneratingDescription(false);
     }
@@ -1690,16 +1731,24 @@ export default function GitActionsControl({
           !canRegenerateDescription ||
           isGitActionRunning ||
           !projectId ||
-          !gitStatusForActions?.refName ||
-          gitStatusForActions.pr?.state !== "open"
+          availableRegenerateCandidates.length === 0
         }
-        onClick={() => void runRegenerateDescription()}
+        onClick={() => {
+          if (availableRegenerateCandidates.length > 1) {
+            setRegenerateSelection({
+              scopeKey: regenerateScopeKey,
+              candidates: availableRegenerateCandidates,
+            });
+          } else {
+            void runRegenerateDescriptions(availableRegenerateCandidates);
+          }
+        }}
       >
         <SourceControlIcon />
         <span className={THREAD_DETAILS_PANEL_LABEL_CLASS}>
           {isRegeneratingDescription
-            ? `Regenerating ${changeRequestTerminology.shortLabel} description...`
-            : `Regenerate ${changeRequestTerminology.shortLabel} description`}
+            ? `Regenerating ${changeRequestTerminology.shortLabel} title and description...`
+            : `Regenerate ${changeRequestTerminology.shortLabel} title and description${availableRegenerateCandidates.length > 1 ? "..." : ""}`}
         </span>
       </ThreadDetailsControl>
       {canPublishRepository ? (
@@ -1913,6 +1962,17 @@ export default function GitActionsControl({
         </DialogPopup>
       </Dialog>
 
+      {regenerateSelection !== null ? (
+        <RegeneratePullRequestsDialog
+          key={regenerateScopeKey}
+          candidates={regenerateSelection.candidates}
+          shortLabel={changeRequestTerminology.shortLabel}
+          canRegenerate={canRegenerateDescription}
+          isRegenerating={isRegeneratingDescription}
+          onRegenerate={runRegenerateDescriptions}
+          onClose={() => setRegenerateSelection(null)}
+        />
+      ) : null}
       <RewriteCommitMessagesDialog
         open={isRewriteCommitMessagesDialogOpen}
         environmentId={activeEnvironmentId}
