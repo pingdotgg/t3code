@@ -24,7 +24,7 @@ import { RadioGroup } from "../ui/radio-group";
 import { Spinner } from "../ui/spinner";
 import { AuthSurfaceShell } from "./AuthSurfaceShell";
 
-const accessConfig: Record<
+export const accessConfig: Record<
   AuthMcpClientAccess,
   { readonly label: string; readonly description: string; readonly icon: LucideIcon }
 > = {
@@ -281,7 +281,7 @@ function ConnectAgentHeading({
   );
 }
 
-function AccessOption({
+export function AccessOption({
   access,
   selected,
 }: {
