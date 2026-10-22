@@ -174,6 +174,55 @@ describe("MessagesTimeline messages", () => {
     expect(maxNestedCommits).toBeLessThan(20);
   });
 
+  it("keeps the first and last message headings reachable from either end", async () => {
+    setup();
+    const props = baseProps();
+    // Folded messages at both ends: their headings must not live inside the fold.
+    const entries = Array.from({ length: 120 }, (_, index) =>
+      index === 0
+        ? message("First turn", { scheduledTaskId: TASK_ID }, "turn-0")
+        : index === 119
+          ? message(
+              "Last turn",
+              { createdBy: "agent", senderThreadId: ThreadId.make("thread-sender") },
+              "turn-119",
+            )
+          : message(
+              `Turn ${index}:\n\n${"x ".repeat(200)}`,
+              { role: index % 2 === 0 ? "user" : "assistant" },
+              `turn-${index}`,
+            ),
+    );
+    await using screen = await renderElement(
+      <MessagesTimeline {...props} timelineEntries={entries} />,
+    );
+    const headings = () => [...screen.container.querySelectorAll("h3")];
+    const headingFor = (text: string) =>
+      headings().find((heading) => heading.parentElement?.textContent?.includes(text));
+    const viewport = props.listRef.current!.getScrollableNode()!;
+    // A screen reader scrolls the heading it moves to into view.
+    const expectHeadingInView = async (text: string, neighbour: string) => {
+      await act(() => headingFor(text)!.scrollIntoView({ block: "start" }));
+      await vi.waitFor(() => expect(screen.text()).toContain(neighbour));
+      const row = headingFor(text)!.parentElement!.getBoundingClientRect();
+      const view = viewport.getBoundingClientRect();
+      expect(row.top).toBeLessThan(view.bottom);
+      expect(row.bottom).toBeGreaterThan(view.top);
+    };
+
+    await vi.waitFor(() => expect(screen.text()).toContain("Turn 118:"));
+    expect(screen.text()).not.toContain("Turn 60:");
+    // Wrapping follows DOM order, so the ends must also sit first and last.
+    await vi.waitFor(() => {
+      expect(headings()[0]).toBe(headingFor("First turn"));
+      expect(headings().at(-1)).toBe(headingFor("Last turn"));
+    });
+
+    await expectHeadingInView("First turn", "Turn 1:");
+    expect(headingFor("Last turn")).toBeDefined();
+    await expectHeadingInView("Last turn", "Turn 118:");
+  });
+
   it("preserves XML-like tags and comparisons in user messages as text", async () => {
     const source = [
       'Without reading a file, do you have <global-agent-instructions scope="workspace">',

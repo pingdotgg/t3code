@@ -1619,10 +1619,23 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..d7cbe1cb43449cc29822b2646deabbdd
      }
    }
 diff --git a/react.js b/react.js
-index 914d2dafaafa001c9ab6791a0a0581659295e333..199aae77b3620b7c4bb2ecd96b82978c0430059a 100644
+index 914d2dafaafa001c9ab6791a0a0581659295e333..977a147abeee6236d6ff85b581c38b3b2343cbec 100644
 --- a/react.js
 +++ b/react.js
-@@ -4702,7 +4702,8 @@ function maybeUpdateAnchoredEndSpace(ctx) {
+@@ -3542,7 +3542,11 @@ function updateItemPositions(ctx, dataChanged, {
+     }
+     if (shouldOptimize && breakAt === void 0 && !scrollingTo && !dataChanged && currentRowTop > maxVisibleArea) {
+       const itemsPerRow = hasColumns ? numColumns : 1;
+-      breakAt = i + itemsPerRow + 10;
++      // alwaysRender rows stay mounted outside the visible window, so keep their
++      // positions current instead of leaving them where they were last laid out.
++      const pinnedIndices = state.props.alwaysRenderIndicesArr;
++      const lastPinnedIndex = pinnedIndices && pinnedIndices.length > 0 ? pinnedIndices[pinnedIndices.length - 1] : -1;
++      breakAt = Math.max(i + itemsPerRow + 10, lastPinnedIndex);
+     }
+     const id = (_e = idCache[i]) != null ? _e : getId(state, i);
+     let span = 1;
+@@ -4702,7 +4706,8 @@ function maybeUpdateAnchoredEndSpace(ctx) {
        contentBelowAnchor = Math.max(0, contentBelowAnchor - ctx.scrollAxisGap);
        contentBelowAnchor += (ctx.values.get("footerSize") || 0) + getStylePaddingEnd(state.props);
        isReady = !hasUnknownTailSize;
@@ -1632,7 +1645,7 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..199aae77b3620b7c4bb2ecd96b82978c
      } else if (anchorIndex >= 0) {
        isReady = false;
      }
-@@ -4722,6 +4723,12 @@ function maybeUpdateAnchoredEndSpace(ctx) {
+@@ -4722,6 +4727,12 @@ function maybeUpdateAnchoredEndSpace(ctx) {
        updateScroll(ctx, state.scroll, true, { markHasScrolled: false });
      }
      (_b = anchoredEndSpace == null ? void 0 : anchoredEndSpace.onReady) == null ? void 0 : _b.call(anchoredEndSpace, { anchorIndex: nextAnchorIndex, anchorKey: nextAnchorKey, size: nextSize });
@@ -1645,7 +1658,7 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..199aae77b3620b7c4bb2ecd96b82978c
    }
    return nextSize;
  }
-@@ -4956,7 +4963,8 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
+@@ -4956,7 +4967,8 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
      const itemKey = peek$(ctx, `containerItemKey${containerId}`);
      const element = viewRef == null ? void 0 : viewRef.current;
      if (itemKey !== void 0 && element) {
@@ -1655,7 +1668,7 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..199aae77b3620b7c4bb2ecd96b82978c
        setContainerLayoutBaseline(element, rect);
        measurements.push({
          containerId,
-@@ -4978,12 +4986,26 @@ var ContainerLayoutCoordinator = typedMemo(function ContainerLayoutCoordinatorCo
+@@ -4978,12 +4990,26 @@ var ContainerLayoutCoordinator = typedMemo(function ContainerLayoutCoordinatorCo
  }) {
    const ctx = useStateContext();
    const [containerLayoutEpoch] = useArr$(["containerLayoutEpoch"]);
@@ -1687,7 +1700,7 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..199aae77b3620b7c4bb2ecd96b82978c
      }
    }, [ctx, containerLayoutEpoch]);
    return children;
-@@ -5651,6 +5673,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
+@@ -5651,6 +5677,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
  });
  
  // src/utils/reordering.ts
@@ -1706,7 +1719,7 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..199aae77b3620b7c4bb2ecd96b82978c
  function sortDOMElements(container, indexByElement) {
    const elements = Array.from(container.children);
    if (elements.length <= 1) return elements;
-@@ -5690,9 +5724,9 @@ function sortDOMElements(container, indexByElement) {
+@@ -5690,9 +5728,9 @@ function sortDOMElements(container, indexByElement) {
          }
        }
        if (nextStableElement) {
@@ -1718,7 +1731,7 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..199aae77b3620b7c4bb2ecd96b82978c
        }
      }
    }
-@@ -6446,8 +6480,8 @@ function ScrollAdjust() {
+@@ -6446,8 +6484,8 @@ function ScrollAdjust() {
                window.getComputedStyle(contentNode)[axis.paddingEndProp]
              );
              const temporaryPaddingEnd = `${(currentPaddingEnd || 0) + pad}px`;
@@ -1729,10 +1742,23 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..199aae77b3620b7c4bb2ecd96b82978c
              scrollBy();
              if (resetPaddingRafRef.current !== void 0) {
 diff --git a/react.mjs b/react.mjs
-index 95465f2ab89ce41a10553f58af83618f7310e83c..a123bd3e9df510100d44dfae1f59b87e2e456cfc 100644
+index 95465f2ab89ce41a10553f58af83618f7310e83c..fe1120243184ad56719ce0471554691c394a91c8 100644
 --- a/react.mjs
 +++ b/react.mjs
-@@ -4681,7 +4681,8 @@ function maybeUpdateAnchoredEndSpace(ctx) {
+@@ -3521,7 +3521,11 @@ function updateItemPositions(ctx, dataChanged, {
+     }
+     if (shouldOptimize && breakAt === void 0 && !scrollingTo && !dataChanged && currentRowTop > maxVisibleArea) {
+       const itemsPerRow = hasColumns ? numColumns : 1;
+-      breakAt = i + itemsPerRow + 10;
++      // alwaysRender rows stay mounted outside the visible window, so keep their
++      // positions current instead of leaving them where they were last laid out.
++      const pinnedIndices = state.props.alwaysRenderIndicesArr;
++      const lastPinnedIndex = pinnedIndices && pinnedIndices.length > 0 ? pinnedIndices[pinnedIndices.length - 1] : -1;
++      breakAt = Math.max(i + itemsPerRow + 10, lastPinnedIndex);
+     }
+     const id = (_e = idCache[i]) != null ? _e : getId(state, i);
+     let span = 1;
+@@ -4681,7 +4685,8 @@ function maybeUpdateAnchoredEndSpace(ctx) {
        contentBelowAnchor = Math.max(0, contentBelowAnchor - ctx.scrollAxisGap);
        contentBelowAnchor += (ctx.values.get("footerSize") || 0) + getStylePaddingEnd(state.props);
        isReady = !hasUnknownTailSize;
@@ -1742,7 +1768,7 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..a123bd3e9df510100d44dfae1f59b87e
      } else if (anchorIndex >= 0) {
        isReady = false;
      }
-@@ -4701,6 +4702,12 @@ function maybeUpdateAnchoredEndSpace(ctx) {
+@@ -4701,6 +4706,12 @@ function maybeUpdateAnchoredEndSpace(ctx) {
        updateScroll(ctx, state.scroll, true, { markHasScrolled: false });
      }
      (_b = anchoredEndSpace == null ? void 0 : anchoredEndSpace.onReady) == null ? void 0 : _b.call(anchoredEndSpace, { anchorIndex: nextAnchorIndex, anchorKey: nextAnchorKey, size: nextSize });
@@ -1755,7 +1781,7 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..a123bd3e9df510100d44dfae1f59b87e
    }
    return nextSize;
  }
-@@ -4935,7 +4942,8 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
+@@ -4935,7 +4946,8 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
      const itemKey = peek$(ctx, `containerItemKey${containerId}`);
      const element = viewRef == null ? void 0 : viewRef.current;
      if (itemKey !== void 0 && element) {
@@ -1765,7 +1791,7 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..a123bd3e9df510100d44dfae1f59b87e
        setContainerLayoutBaseline(element, rect);
        measurements.push({
          containerId,
-@@ -4957,12 +4965,26 @@ var ContainerLayoutCoordinator = typedMemo(function ContainerLayoutCoordinatorCo
+@@ -4957,12 +4969,26 @@ var ContainerLayoutCoordinator = typedMemo(function ContainerLayoutCoordinatorCo
  }) {
    const ctx = useStateContext();
    const [containerLayoutEpoch] = useArr$(["containerLayoutEpoch"]);
@@ -1797,7 +1823,7 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..a123bd3e9df510100d44dfae1f59b87e
      }
    }, [ctx, containerLayoutEpoch]);
    return children;
-@@ -5630,6 +5652,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
+@@ -5630,6 +5656,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
  });
  
  // src/utils/reordering.ts
@@ -1816,7 +1842,7 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..a123bd3e9df510100d44dfae1f59b87e
  function sortDOMElements(container, indexByElement) {
    const elements = Array.from(container.children);
    if (elements.length <= 1) return elements;
-@@ -5669,9 +5703,9 @@ function sortDOMElements(container, indexByElement) {
+@@ -5669,9 +5707,9 @@ function sortDOMElements(container, indexByElement) {
          }
        }
        if (nextStableElement) {
@@ -1828,7 +1854,7 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..a123bd3e9df510100d44dfae1f59b87e
        }
      }
    }
-@@ -6425,8 +6459,8 @@ function ScrollAdjust() {
+@@ -6425,8 +6463,8 @@ function ScrollAdjust() {
                window.getComputedStyle(contentNode)[axis.paddingEndProp]
              );
              const temporaryPaddingEnd = `${(currentPaddingEnd || 0) + pad}px`;
