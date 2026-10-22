@@ -661,6 +661,48 @@ it.live(
     }),
 );
 
+it.live("binds one-click approval to the selected MCP resource", () => {
+  const aliases = ["https://gateway.example/mcp/one", "https://gateway.example/mcp/two"];
+  return withRoutes(
+    (handler, auth) =>
+      Effect.gen(function* () {
+        const clientId = yield* registeredClientId(handler);
+        const pairing = yield* auth.issuePairingCredential({
+          scopes: [...AuthStandardClientScopes],
+        });
+        const session = yield* handler(
+          at("/api/auth/browser-session", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: encodeJson({ credential: pairing.credential }),
+          }),
+        );
+        const cookie = session.headers.getSetCookie()[0]!.split(";", 1)[0]!;
+        const resources = [`${ORIGIN}/mcp`, ...aliases];
+        for (const resource of resources) {
+          const params = { ...authorizeParams(clientId), resource };
+          const approval = yield* handler(postJson("/oauth/mcp/approval", params, cookie)).pipe(
+            Effect.flatMap(json<{ csrfToken: string }>),
+          );
+          const decision = {
+            _tag: "browser-session",
+            access: "read-only",
+            csrfToken: approval.csrfToken,
+          };
+          for (const other of resources.filter((value) => value !== resource)) {
+            const changed = yield* decide(handler, { ...params, resource: other }, decision, cookie);
+            expect(changed.status).toBe(400);
+          }
+          const approved = yield* decide(handler, params, decision, cookie);
+          expect(new URL(approved.redirectTo!).searchParams.get("code")).toEqual(
+            expect.any(String),
+          );
+        }
+      }),
+    aliases,
+  );
+});
+
 it("matches loopback redirects on everything but the port, and https redirects exactly", () => {
   const matches = McpOAuth.redirectMatches;
   expect(matches("http://localhost/callback", "http://localhost:9/callback")).toBe(true);

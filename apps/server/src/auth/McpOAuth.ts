@@ -296,6 +296,7 @@ const make = Effect.gen(function* () {
         authorization.client.clientId,
         authorization.redirectUri,
         authorization.codeChallenge,
+        authorization.resource,
       ]),
     );
 

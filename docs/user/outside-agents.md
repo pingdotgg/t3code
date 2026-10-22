@@ -94,9 +94,10 @@ MCP URL, `<tunnel-service-address>/v1/mcp/<tunnel-id>`, exactly as ChatGPT
 shows it, to `T3CODE_MCP_RESOURCE_ALIASES` in the
 [service environment](./background-service.md#configure-the-service-environment).
 Separate several URLs with commas. Only list addresses that lead to this
-environment: a sign-in through any of them can use the whole environment. The
-browser that approves the sign-in must still reach the environment's own
-address.
+environment: a sign-in through any of them can use the whole environment.
+Removing an address stops new sign-ins through it but does not end sign-ins
+already approved; [revoke those](#remove-an-agent) separately. The browser that
+approves the sign-in must still reach the environment's own address.
 
 ## Other agents and bots
 
