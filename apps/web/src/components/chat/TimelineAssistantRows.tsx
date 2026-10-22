@@ -53,15 +53,16 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
             : "mt-2 border-t border-border px-1 pt-3 pb-0.5",
         )}
       >
-        <h3
-          className={cn(
-            "mb-2 select-none text-xs font-medium",
-            isCommentary ? "text-muted-foreground" : "text-foreground",
-          )}
-          aria-label={`T3 Code: ${row.assistantLabel}`}
-        >
-          {row.assistantLabel}
-        </h3>
+        {isCommentary ? (
+          <MessageAuthorHeading>T3 Code</MessageAuthorHeading>
+        ) : (
+          <h3
+            className="mb-2 select-none text-xs font-medium text-foreground"
+            aria-label={`T3 Code: ${row.assistantLabel}`}
+          >
+            {row.assistantLabel}
+          </h3>
+        )}
         <div data-thread-find-text="true">
           <AssistantCitationSource
             messageId={row.message.id}

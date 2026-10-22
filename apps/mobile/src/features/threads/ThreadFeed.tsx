@@ -2276,15 +2276,11 @@ function renderFeedEntry(
         )}
         {...(enterAnimated ? { entering: FadeIn.duration(220) } : {})}
       >
-        <Text
-          accessibilityRole="header"
-          className={cn(
-            "mb-2 font-t3-medium text-xs",
-            isCommentary ? "text-foreground-secondary" : "text-foreground",
-          )}
-        >
-          {assistantLabel}
-        </Text>
+        {!isCommentary ? (
+          <Text accessibilityRole="header" className="mb-2 font-t3-medium text-xs text-foreground">
+            {assistantLabel}
+          </Text>
+        ) : null}
         {renderedText.trim().length > 0 ? (
           <MarkdownImageAvailableWidthContext value={props.markdownContentWidth}>
             <AssistantMarkdownContent
