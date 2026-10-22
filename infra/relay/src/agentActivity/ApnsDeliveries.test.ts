@@ -1391,6 +1391,54 @@ describe("quiet state delivery", () => {
       ),
     );
   });
+  it.effect("drops a queued push for a state version published quietly since", () => {
+    const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
+    let executeCount = 0;
+    const completed = { ...state, phase: "completed" as const, headline: "Done" };
+    const signed = signApnsDeliveryJob({
+      secret: config.apnsDeliveryJobSigningSecret,
+      payload: makeApnsDeliveryJobPayload({
+        kind: "push_notification",
+        userId: target.user_id,
+        deviceId: target.device_id,
+        token: "apns-device-token",
+        aggregate: null,
+        notification: {
+          title: "Thread",
+          body: "Done: Project",
+          environmentId: completed.environmentId,
+          threadId: completed.threadId,
+          deepLink: "/",
+          phase: completed.phase,
+          updatedAt: completed.updatedAt,
+        },
+        createdAt: completed.updatedAt,
+        expiresAt: "1970-01-01T00:10:00.000Z",
+        jobId: "job-push-quiet",
+      }),
+    });
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      yield* deliveries.processSignedJob(signed);
+      expect(executeCount).toBe(0);
+      expect(attempts).toMatchObject([{ sourceJobId: "job-push-quiet" }]);
+    }).pipe(
+      Effect.provide(
+        layerFor({
+          attempts,
+          config: signingConfig,
+          currentTargets: [{ ...target, push_token: "apns-device-token" }],
+          activityStates: [completed],
+          quietRows: [completed],
+          execute: (request) =>
+            Effect.sync(() => {
+              executeCount += 1;
+              return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
+            }),
+        }),
+      ),
+    );
+  });
 });
 
 describe("signed APNs registration metadata", () => {

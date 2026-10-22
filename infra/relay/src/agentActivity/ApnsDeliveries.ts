@@ -50,6 +50,7 @@ import {
   alertForTerminalAggregate,
   rowPhasesChanged,
   shouldAlertForActivity,
+  quietRowKey,
   withoutQuietRows,
   type QuietRows,
 } from "./agentActivityAlerts.ts";
@@ -980,6 +981,7 @@ export const make = Effect.gen(function* () {
       }
       deliveryTarget = currentTarget;
       const preferences = parsePreferences(currentTarget.preferences_json);
+      const quiet = yield* quietRowsFor(input.target.user_id);
       const alertAllowed =
         notification.phase !== undefined && notification.updatedAt !== undefined
           ? shouldAlertForActivity({
@@ -988,7 +990,7 @@ export const make = Effect.gen(function* () {
               updatedAt: notification.updatedAt,
               preferences,
               nowMs: now.epochMilliseconds,
-            })
+            }) && !quiet?.has(quietRowKey({ ...notification, updatedAt: notification.updatedAt }))
           : preferences?.notificationsEnabled === true;
       if (!alertAllowed) {
         yield* attempts.completeSourceJob({
