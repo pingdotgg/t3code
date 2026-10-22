@@ -922,8 +922,10 @@ export function NewTaskFlowProvider(
   // a sibling path of the same repository.
   const balancedProjects = resolveBalancedProjects(projectScopes, selectedProject);
   // Only a project the user chose is routed; the flow's first-project fallback
-  // behind the project picker must not poll machines.
+  // behind the project picker must not poll machines. The flow outlives the
+  // draft screen, so routing also stops while no draft is open.
   const canAutoBalance =
+    props.active !== false &&
     loadBalancingEnabled &&
     selectedProjectKey !== null &&
     editingPendingTask === null &&
