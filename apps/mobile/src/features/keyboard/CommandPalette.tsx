@@ -22,7 +22,9 @@ import { RowPressable } from "../../components/ui/RowPressable";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { cn } from "../../lib/cn";
+import { deriveBottomControlInsets } from "../../lib/reserved-regions";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
+import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 import { T3KeyboardCommands } from "../../native/T3KeyboardCommands";
 import { useProjects, useThreadShell, useThreadShells } from "../../state/entities";
 import { useThreadSearch } from "../../state/queries";
@@ -156,6 +158,9 @@ export function CommandPalette(props: {
   const inputRef = useRef<TextInputInstance>(null);
   const listRef = useRef<FlatList<CommandPaletteItem>>(null);
   const { width, height } = useWindowDimensions();
+  // The palette floats above every column, so it keeps itself inside the window's side insets
+  // and to one side of a book fold.
+  const bounds = deriveBottomControlInsets(useNativeLayoutMetrics());
   const searchEnvironmentIds = useMemo(
     () =>
       environments
@@ -423,7 +428,8 @@ export function CommandPalette(props: {
         <T3KeyboardCommands enabledCommands={PALETTE_COMMANDS} onCommand={onCommand}>
           <KeyboardAvoidingView
             behavior="padding"
-            className="flex-1 items-center justify-center p-4"
+            className="flex-1 items-center justify-center py-4"
+            style={{ paddingLeft: 16 + bounds.left, paddingRight: 16 + bounds.right }}
           >
             <Pressable
               className="absolute inset-0 bg-backdrop"
@@ -436,7 +442,7 @@ export function CommandPalette(props: {
               tintColorClassName="accent-sheet/20"
               fallbackColor={themeVariables["--color-sheet"]}
               style={{
-                width: Math.min(600, width - 32),
+                width: Math.min(600, width - 32 - bounds.left - bounds.right),
                 height: Math.min(520, height - 80),
                 borderRadius: 20,
               }}
