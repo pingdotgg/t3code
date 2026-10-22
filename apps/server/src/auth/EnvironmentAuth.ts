@@ -729,7 +729,11 @@ export const make = Effect.gen(function* () {
     sessions.verify(token).pipe(
       Effect.tapError((cause) =>
         SessionStore.isSessionCredentialInvalidError(cause)
-          ? Effect.logWarning("Rejected authenticated session credential.").pipe(
+          ? Effect.logWithLevel(
+              cause._tag === "SessionTokenExpiredError" || cause._tag === "SessionTokenRevokedError"
+                ? "Debug"
+                : "Warn",
+            )("Rejected authenticated session credential.").pipe(
               Effect.annotateLogs({
                 reason: cause.message,
               }),
