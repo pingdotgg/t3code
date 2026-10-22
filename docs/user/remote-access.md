@@ -252,9 +252,16 @@ Link two machines, such as your laptop and a VPS, and agents on one can work on
 the other: launch, message, wait on and stop its threads, answer their
 questions, and manage its queues, projects and scheduled tasks. On the machine
 you will work from, open **Settings → Connections → Linked environments**,
-choose **Link**, and enter the other machine's address and a pairing code from
-it. From a terminal, use
+choose **Link**, and pick the other machine or enter its address. The list
+holds the machines this app knows and those on your T3 Connect account. If this
+app is connected to that machine with a session that manages access there, it
+makes the pairing code itself; otherwise paste one from that machine's
+**Settings → Connections**. From a terminal, use
 `t3 environment link <address> --pairing-code <code> --access <mode>`.
+
+You can also ask an agent to link a machine by name, such as "delegate this to
+my vps". It shows a card in the thread where you pick the machine the same way
+and the access, then approve.
 
 - The access you pick is the most agents from this machine may do there. An
   agent also never gets more there than its own mode here.
