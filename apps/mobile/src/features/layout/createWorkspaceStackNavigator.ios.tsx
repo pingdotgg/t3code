@@ -224,7 +224,10 @@ function WorkspaceColumns(
         collapsed.current = false;
       }}
       preferredDisplayMode={
-        panes.primarySidebarVisible || (!layout.usesSplitView && !activeDetailKey)
+        // UIKit applies the mode as a collapsed split expands, before the new width reaches JS, so a
+        // collapsed split already carries the sidebar the expanded one will show.
+        (layout.usesSplitView ? panes.primarySidebarVisible : panes.primarySidebarWhenExpanded) ||
+        (!layout.usesSplitView && !activeDetailKey)
           ? "oneBesideSecondary"
           : "secondaryOnly"
       }
