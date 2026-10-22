@@ -151,15 +151,13 @@ export const layerLinkingEnvironment = (descriptor: ExecutionEnvironmentDescript
   PeerMcpClient.layer.pipe(
     Layer.provideMerge(PeerLinks.layer),
     Layer.provideMerge(Sqlite.layerMemory),
-    Layer.provide(
-      Layer.mergeAll(
-        ServerSecretStore.layer,
-        FetchHttpClient.layer,
-        Layer.succeed(ServerEnvironment.ServerEnvironment, {
-          getEnvironmentId: Effect.succeed(descriptor.environmentId),
-          getDescriptor: Effect.succeed(descriptor),
-        }),
-      ),
+    Layer.provide(Layer.mergeAll(ServerSecretStore.layer, FetchHttpClient.layer)),
+    // Services that act for this environment, such as delegation, name it too.
+    Layer.provideMerge(
+      Layer.succeed(ServerEnvironment.ServerEnvironment, {
+        getEnvironmentId: Effect.succeed(descriptor.environmentId),
+        getDescriptor: Effect.succeed(descriptor),
+      }),
     ),
     Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-peer-link-here-" })),
     Layer.provideMerge(NodeServices.layer),

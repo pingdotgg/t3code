@@ -117,6 +117,18 @@ export const OrchestratorMcpTarget = Schema.Struct({
         "Model options from orchestrator_capabilities. For the same provider instance and model, overrides individual inherited values; [] or {} clears them. Claude: {effort: 'max', fastMode: true}; Codex: {reasoningEffort: 'max', serviceTier: 'priority'}. Only use options advertised by the selected model.",
     }),
   ),
+  environmentId: Schema.optional(
+    EnvironmentId.annotate({
+      description:
+        "Run the task in a linked environment (t3_environment_links). It uses this thread's provider and model unless providerInstanceId and model name others from orchestrator_capabilities with this environmentId.",
+    }),
+  ),
+  projectId: Schema.optional(
+    ProjectId.annotate({
+      description:
+        "With environmentId: that environment's project to run in. Omit to use the one with the same repository as this thread's project.",
+    }),
+  ),
 });
 export type OrchestratorMcpTarget = typeof OrchestratorMcpTarget.Type;
 
@@ -195,7 +207,12 @@ export type OrchestratorMcpDelegateTaskInput = typeof OrchestratorMcpDelegateTas
 
 export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   taskId: NodeId,
-  childThreadId: ThreadId,
+  /** Null for a task that runs in a linked environment; see `remoteChild`. */
+  childThreadId: Schema.NullOr(ThreadId),
+  /** The linked environment and thread a remote task runs as. */
+  remoteChild: Schema.optional(
+    Schema.Struct({ environmentId: EnvironmentId, threadId: ThreadId, label: Schema.String }),
+  ),
   childRunId: Schema.NullOr(RunId),
   childNodeId: NodeId,
   status: OrchestratorMcpDelegatedTaskStatus,
@@ -511,6 +528,12 @@ export const OrchestratorMcpThreadWaitInput = Schema.Struct({
   threadId: ThreadId,
   runId: Schema.optional(RunId),
   timeoutMs: Schema.optional(Schema.Finite),
+  untilDelegatedWorkSettled: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "Also wait until the thread's own delegated tasks, background tasks and their completion deliveries settle, as a delegated task's result does. resultRun then names the run with the thread's final answer.",
+    }),
+  ),
 });
 export type OrchestratorMcpThreadWaitInput = typeof OrchestratorMcpThreadWaitInput.Type;
 
@@ -519,6 +542,8 @@ export const OrchestratorMcpThreadWaitResult = Schema.Struct({
   runId: Schema.NullOr(RunId),
   status: OrchestratorMcpThreadStatus,
   timedOut: Schema.Boolean,
+  /** With untilDelegatedWorkSettled, once settled: the run whose reply is the thread's result. */
+  resultRun: Schema.optional(Schema.Struct({ runId: RunId, status: OrchestrationV2RunStatus })),
 });
 export type OrchestratorMcpThreadWaitResult = typeof OrchestratorMcpThreadWaitResult.Type;
 

@@ -2,7 +2,7 @@ import {
   type PendingSubagentRequest,
   presentThreadShell,
 } from "@t3tools/client-runtime/state/models";
-import { pendingSubagentRequestsByThread } from "@t3tools/client-runtime/state/threads";
+import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
@@ -17,7 +17,9 @@ import { useEffect, useRef } from "react";
 
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import { useEnvironmentIds } from "../state/environments";
+import { useDelegatedUnderParent } from "../state/entities";
 import { environmentShell } from "../state/shell";
+import { environmentThreadShells } from "../state/threads";
 import {
   hasDesktopNotifications,
   hasNotificationSound,
@@ -110,6 +112,11 @@ function EnvironmentNotifications({
   const shell = useAtomValue(environmentShell.stateValueAtom(environmentId));
   const threads =
     shell.status === "live" && Option.isSome(shell.snapshot) ? shell.snapshot.value.threads : null;
+  // A parent here also hears of what its tasks on linked environments ask.
+  const subagentRequests = useAtomValue(
+    environmentThreadShells.pendingSubagentRequestsAtom(environmentId),
+  );
+  const delegatedUnderParent = useDelegatedUnderParent();
   const mode = useClientSettings((settings) => settings.notificationMode);
   const inAppNotificationsEnabled = useClientSettings(
     (settings) => settings.inAppNotificationsEnabled,
@@ -126,9 +133,16 @@ function EnvironmentNotifications({
       return;
     }
     const next = new Map<ThreadId, NotificationState>();
-    const subagentRequests = pendingSubagentRequestsByThread(threads);
     for (const rawThread of threads) {
-      if (rawThread.lineage.relationshipToParent === "subagent") continue;
+      if (
+        isShownUnderParent(
+          { environmentId, threadId: rawThread.id },
+          rawThread.lineage,
+          delegatedUnderParent,
+        )
+      ) {
+        continue;
+      }
       const prior = previous.current.get(rawThread.id);
       const subagentRequest = subagentRequests.get(rawThread.id) ?? null;
       if (prior?.raw === rawThread && prior.subagentRequest === subagentRequest) {
@@ -242,11 +256,13 @@ function EnvironmentNotifications({
   }, [
     activeEnvironmentId,
     activeThreadId,
+    delegatedUnderParent,
     environmentId,
     inAppNotificationsEnabled,
     mode,
     navigate,
     onNotification,
+    subagentRequests,
     threads,
   ]);
 

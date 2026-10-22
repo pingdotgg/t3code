@@ -16,6 +16,7 @@ const state = vi.hoisted(() => ({
   sound: vi.fn(),
   badge: vi.fn(),
   environmentIds: ["one", "two"],
+  noDelegated: new Set(),
 }));
 vi.mock(import("@tanstack/react-router"), async (original) => ({
   ...(await original()),
@@ -40,6 +41,20 @@ vi.mock(import("../state/environments"), async (original) => ({
   ...(await original()),
   useEnvironmentIds: (() => state.environmentIds) as never,
 }));
+vi.mock(import("../state/threads"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    environmentThreadShells: {
+      ...actual.environmentThreadShells,
+      pendingSubagentRequestsAtom: (() => noRequestsAtom) as never,
+    },
+  };
+});
+vi.mock(import("../state/entities"), async (original) => ({
+  ...(await original()),
+  useDelegatedUnderParent: (() => state.noDelegated) as never,
+}));
 vi.mock(import("../hooks/useSettings"), async (original) => ({
   ...(await original()),
   useClientSettings: ((
@@ -58,6 +73,7 @@ import { ThreadNotificationCoordinator } from "./ThreadNotificationCoordinator";
 
 let registry: AtomRegistry.AtomRegistry;
 const shellAtom = Atom.family((_id: string) => Atom.make<unknown>(null));
+const noRequestsAtom = Atom.make(new Map());
 state.shells = { set: (id, value) => registry.set(shellAtom(id), value) };
 
 class TestNotification extends EventTarget {

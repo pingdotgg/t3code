@@ -964,6 +964,56 @@ const runlessNativeSubagentNeedsRecovery = Effect.gen(function* () {
   }
 });
 
+const subagentRecordsSelectById = Effect.gen(function* () {
+  const store = yield* ProjectionStore.ProjectionStoreV2;
+  const threadId = yield* addRolledBackRecoveryCandidate("subagent-records-by-id");
+  const now = yield* DateTime.now;
+  const ids = [NodeId.make("node:subagent-by-id:a"), NodeId.make("node:subagent-by-id:b")];
+  for (const id of ids) {
+    yield* store.apply({
+      id: EventId.make(`event:${id}`),
+      type: "subagent.updated",
+      threadId,
+      nodeId: id,
+      driver,
+      providerInstanceId,
+      occurredAt: now,
+      payload: {
+        id,
+        threadId,
+        runId: null,
+        parentNodeId: NodeId.make("node:subagent-by-id:parent"),
+        origin: "app_owned",
+        createdBy: "agent",
+        driver,
+        providerInstanceId,
+        providerThreadId: null,
+        childThreadId: null,
+        nativeTaskRef: null,
+        prompt: "Do the work",
+        title: "Delegated task",
+        model: null,
+        status: "running",
+        result: null,
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+      },
+    });
+  }
+  const read = (subagentIds?: ReadonlyArray<NodeId>) =>
+    store
+      .getThreadRecords(threadId, ["subagents"], subagentIds === undefined ? {} : { subagentIds })
+      .pipe(Effect.map(({ subagents }) => subagents.map((task) => task.id)));
+  assert.deepEqual(yield* read(), ids);
+  assert.deepEqual(yield* read([ids[1]!]), [ids[1]]);
+  assert.deepEqual(yield* read([]), []);
+});
+
+it.effect("memory record reads select subagents by id", () =>
+  subagentRecordsSelectById.pipe(Effect.provide(ProjectionStore.layerMemory)),
+);
+
 const assertProjectScopedShells = Effect.fn("assertProjectScopedShells")(function* (
   suffix: string,
 ) {
@@ -1179,6 +1229,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       assert.deepEqual(recovery?.restartCancelledBackgroundWork, work);
     }),
   );
+  it.effect("record reads select subagents by id", () => subagentRecordsSelectById);
   it.effect(
     "command reads skip finished leaf nodes of finished runs",
     () => commandReadsSkipSettledLeafNodes,
