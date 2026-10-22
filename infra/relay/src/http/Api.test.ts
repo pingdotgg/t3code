@@ -1447,8 +1447,6 @@ describe("relay routing fallback", () => {
           environmentPublicKey,
           threadId,
           state: null,
-          // Servers that predate the flag never asked to stay quiet.
-          notify: true,
         })),
       );
       expect(verified.map((input) => input.threadId)).toEqual(threadIds);

@@ -29,7 +29,6 @@ import {
   alertForActivityRows,
   attentionTransitionRows,
   terminalTransitionRows,
-  quietRowKey,
   shouldAlertForActivity,
 } from "./agentActivityAlerts.ts";
 
@@ -220,8 +219,6 @@ export const make = Effect.gen(function* () {
       // update the card, but must leave that transition for its own alert job.
       let acknowledgeAggregate = job.state !== null || job.replay === true || aggregate === null;
       if (job.state && preferences.value.notificationsEnabled) {
-        // Read at consume time: any queued job can see a state published quietly since.
-        const quiet = yield* rows.listQuietForUser({ userId: job.userId });
         const state = yield* rows.getForUserThread({
           userId: job.userId,
           environmentId: job.state.environmentId,
@@ -273,8 +270,8 @@ export const make = Effect.gen(function* () {
             previousAggregate,
             nextAggregate: {
               ...aggregate,
-              activities: aggregate.activities.filter(
-                (row) => allowedEnvironments.has(row.environmentId) && !quiet.has(quietRowKey(row)),
+              activities: aggregate.activities.filter((row) =>
+                allowedEnvironments.has(row.environmentId),
               ),
             },
             preferences: preferences.value,
@@ -282,9 +279,7 @@ export const make = Effect.gen(function* () {
           });
         } else if (
           deliveryUser?.notificationsEnabled &&
-          state !== null &&
-          !quiet.has(quietRowKey(state)) &&
-          state.phase === job.state.phase &&
+          state?.phase === job.state.phase &&
           state.updatedAt === job.state.updatedAt &&
           !isExpiredAgentActivityState(state, now.epochMilliseconds)
         ) {

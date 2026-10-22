@@ -43,8 +43,6 @@ export class AgentActivityPublisher extends Context.Service<
       readonly environmentPublicKey: string;
       readonly threadId: string;
       readonly state: RelayAgentActivityState | null;
-      /** False while the user is at a computer: mobile state still updates, without alerting. */
-      readonly notify: boolean;
     }) => Effect.Effect<RelayPublishResponse, AgentActivityPublishError>;
     readonly replayForLiveActivityRegistration: (input: {
       readonly userId: string;
@@ -67,7 +65,6 @@ export const make = Effect.gen(function* () {
   const publishForDeliveryUser = Effect.fnUntraced(function* (input: {
     readonly deliveryUser: EnvironmentLinks.AgentAwarenessDeliveryUserRecord;
     readonly state: RelayAgentActivityState | null;
-    readonly notify: boolean;
     readonly nowMs: number;
   }) {
     const activeStates = input.deliveryUser.liveActivitiesEnabled
@@ -81,7 +78,6 @@ export const make = Effect.gen(function* () {
         })
       : null;
     const notificationOnlyAggregate =
-      input.notify &&
       input.deliveryUser.notificationsEnabled &&
       !input.deliveryUser.liveActivitiesEnabled &&
       input.state !== null
@@ -91,9 +87,6 @@ export const make = Effect.gen(function* () {
             nowMs: input.nowMs,
           })
         : null;
-    const quiet = input.deliveryUser.notificationsEnabled
-      ? yield* rows.listQuietForUser({ userId: input.deliveryUser.userId })
-      : undefined;
     const targets = yield* liveActivities.listTargets({ userId: input.deliveryUser.userId });
     const deliveriesByTarget = yield* Effect.forEach(
       targets,
@@ -107,7 +100,6 @@ export const make = Effect.gen(function* () {
               target,
               aggregate: liveActivityAggregate,
               nowMs: input.nowMs,
-              quiet,
             }),
             notificationOnlyAggregate === null
               ? Effect.succeed(null)
@@ -217,7 +209,7 @@ export const make = Effect.gen(function* () {
         "relay.environment_id": input.environmentId,
         "relay.thread_id": input.threadId,
         "relay.agent_activity.phase": input.state?.phase ?? "deleted",
-        "relay.agent_activity.notify": input.notify,
+        "relay.agent_activity.notify": input.state?.notify !== false,
       });
       if (input.state) {
         // Terminal states are persisted too (pruned by the cron after they
@@ -227,7 +219,6 @@ export const make = Effect.gen(function* () {
         yield* rows.upsert({
           environmentPublicKey: input.environmentPublicKey,
           state: input.state,
-          notify: input.notify,
         });
       } else {
         yield* rows.remove({
@@ -248,7 +239,6 @@ export const make = Effect.gen(function* () {
           publishForDeliveryUser({
             deliveryUser,
             state: input.state,
-            notify: input.notify,
             nowMs: now.epochMilliseconds,
           }),
         { concurrency: 4 },

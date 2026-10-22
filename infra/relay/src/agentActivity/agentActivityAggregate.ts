@@ -43,6 +43,8 @@ function aggregateRowForState(state: RelayAgentActivityState) {
     status: statusForPhase(state.phase),
     updatedAt: state.updatedAt,
     deepLink: state.deepLink,
+    // Omitted when true so loud rows serialize exactly as before.
+    ...(state.notify === false ? { notify: false } : {}),
   };
 }
 

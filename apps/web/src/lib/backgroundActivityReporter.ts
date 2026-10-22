@@ -83,8 +83,9 @@ function wasRecentlyInteracted(lastInteractionAtMs: number, observedAtMs: number
   );
 }
 
-// The server silences phone pushes while someone is at a computer, so only
-// report presence when this client can itself tell them about agent work.
+// The server silences phone pushes while someone is at a computer, so presence
+// only counts from a client that can itself tell them about agent work: a
+// focused window, or one able to alert outside it.
 export function resolveUserIdleMs(input: {
   readonly visible: boolean;
   readonly focused: boolean;
@@ -94,8 +95,8 @@ export function resolveUserIdleMs(input: {
   /** `undefined` until this page has seen input. */
   readonly pageIdleMs: number | undefined;
 }): number | undefined {
-  if (!(input.visible && input.focused) && !input.canNotify) return undefined;
-  if (input.systemIdleMs === null) return undefined;
+  const reachable = (input.visible && input.focused) || input.canNotify;
+  if (!reachable || input.systemIdleMs === null) return undefined;
   const idleMs = input.systemIdleMs ?? input.pageIdleMs;
   return idleMs === undefined ? undefined : Math.max(0, idleMs);
 }
@@ -109,8 +110,7 @@ function createActivityReport(
   environmentId: EnvironmentId,
   lastInteractionAtMs: number,
   observedAtMs: number,
-  systemIdleMs: number | null | undefined,
-  lastInputAtMs: number | null,
+  userIdleMs: number | undefined,
 ): ClientActivityReportInput {
   const scopes = [...BASELINE_SCOPES];
   for (const entry of retainedScopes.values()) {
@@ -118,21 +118,12 @@ function createActivityReport(
       scopes.push(entry.scope);
     }
   }
-  const visible = document.visibilityState === "visible";
-  const focused = document.hasFocus();
-  const userIdleMs = resolveUserIdleMs({
-    visible,
-    focused,
-    canNotify: canNotifyOutsideWindow(),
-    systemIdleMs,
-    pageIdleMs: lastInputAtMs === null ? undefined : observedAtMs - lastInputAtMs,
-  });
   return {
     environmentId,
     clientId: getClientId(),
     clientKind: resolveClientKind(),
-    visible,
-    focused,
+    visible: document.visibilityState === "visible",
+    focused: document.hasFocus(),
     recentlyInteracted: wasRecentlyInteracted(lastInteractionAtMs, observedAtMs),
     ...(userIdleMs !== undefined ? { userIdleMs } : {}),
     appState: document.visibilityState === "visible" ? "active" : "background",
@@ -232,7 +223,13 @@ export const layer = Layer.effectDiscard(
 
     const report = Effect.gen(function* () {
       const observedAtMs = yield* Clock.currentTimeMillis;
-      const systemIdleMs = yield* readSystemIdleMs;
+      const userIdleMs = resolveUserIdleMs({
+        visible: document.visibilityState === "visible",
+        focused: document.hasFocus(),
+        canNotify: canNotifyOutsideWindow(),
+        systemIdleMs: yield* readSystemIdleMs,
+        pageIdleMs: lastInputAtMs === null ? undefined : observedAtMs - lastInputAtMs,
+      });
       const entries = yield* SubscriptionRef.get(registry.entries);
       yield* Effect.forEach(
         entries.keys(),
@@ -242,13 +239,7 @@ export const layer = Layer.effectDiscard(
               environmentId,
               request(
                 WS_METHODS.serverReportClientActivity,
-                createActivityReport(
-                  environmentId,
-                  lastInteractionAtMs,
-                  observedAtMs,
-                  systemIdleMs,
-                  lastInputAtMs,
-                ),
+                createActivityReport(environmentId, lastInteractionAtMs, observedAtMs, userIdleMs),
               ),
             )
             // Not `ignore`: tearing down an environment mid-request interrupts its report,

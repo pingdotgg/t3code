@@ -1,1 +1,0 @@
-ALTER TABLE "relay_agent_activity_rows" ADD COLUMN "notify" boolean DEFAULT true NOT NULL;

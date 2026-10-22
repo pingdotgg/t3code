@@ -48,11 +48,9 @@ import {
   alertForAttentionTransition,
   alertForNewlyTerminal,
   alertForTerminalAggregate,
+  isAlertableRow,
   rowPhasesChanged,
   shouldAlertForActivity,
-  quietRowKey,
-  withoutQuietRows,
-  type QuietRows,
 } from "./agentActivityAlerts.ts";
 export {
   alertForAttentionTransition,
@@ -205,17 +203,15 @@ function notificationForAggregate(input: {
   readonly target: LiveActivities.TargetRow;
   readonly aggregate: RelayAgentActivityAggregateState | null;
   readonly nowMs: number;
-  readonly quiet?: QuietRows | undefined;
 }): ApnsNotificationPayload | null {
-  const aggregate = withoutQuietRows(input.aggregate, input.quiet);
-  if (!input.target.push_token || aggregate === null) {
+  if (!input.target.push_token || input.aggregate === null) {
     return null;
   }
   const preferences = parsePreferences(input.target.preferences_json);
   if (!preferences?.notificationsEnabled) {
     return null;
   }
-  const activity = aggregate.activities[0];
+  const activity = input.aggregate.activities[0];
   if (!activity) {
     return null;
   }
@@ -231,7 +227,6 @@ function chooseLiveActivityDelivery(input: {
   readonly aggregate: RelayAgentActivityAggregateState | null;
   readonly nowMs: number;
   readonly replay?: boolean;
-  readonly quiet?: QuietRows | undefined;
 }): ChosenLiveActivityDelivery | "suppressed" | null {
   const preferences = parsePreferences(input.target.preferences_json);
   if (preferences?.liveActivitiesEnabled === false) {
@@ -271,7 +266,6 @@ function chooseLiveActivityDelivery(input: {
   }
   const nextAggregate = input.aggregate;
   const previousAggregate = parseAggregate(input.target.last_aggregate_json);
-  const alertable = withoutQuietRows(nextAggregate, input.quiet) ?? nextAggregate;
   return shouldUpdateLiveActivity({
     previousAggregate,
     nextAggregate,
@@ -286,12 +280,12 @@ function chooseLiveActivityDelivery(input: {
           ? null
           : (alertForAttentionTransition({
               previousAggregate,
-              nextAggregate: alertable,
+              nextAggregate,
               preferences,
             }) ??
             alertForNewlyTerminal({
               previousAggregate,
-              nextAggregate: alertable,
+              nextAggregate,
               preferences,
               nowMs: input.nowMs,
               includeUnobserved: true,
@@ -305,7 +299,6 @@ function chooseDelivery(input: {
   readonly aggregate: RelayAgentActivityAggregateState | null;
   readonly nowMs: number;
   readonly replay?: boolean;
-  readonly quiet?: QuietRows | undefined;
 }): ChosenDelivery | null {
   const liveActivityDelivery = chooseLiveActivityDelivery(input);
   if (liveActivityDelivery === "suppressed") {
@@ -520,7 +513,6 @@ export class ApnsDeliveries extends Context.Service<
       readonly aggregate: RelayAgentActivityAggregateState | null;
       readonly nowMs: number;
       readonly replay?: boolean;
-      readonly quiet?: QuietRows | undefined;
     }) => Effect.Effect<RelayDeliveryResult | null, ApnsDeliveryError>;
     readonly sendPushNotificationForTarget: (input: {
       readonly target: LiveActivities.TargetRow;
@@ -593,21 +585,6 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  // A queued alert is re-picked at delivery from the current aggregate, which
-  // can hold states published quietly since. Untraced and fail-open like the
-  // other per-delivery rechecks here.
-  const quietRowsFor = Effect.fnUntraced(function* (userId: string) {
-    return yield* activityRows
-      .listQuietForUser({ userId })
-      .pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("quiet-row recheck failed; alerting without it", { cause }).pipe(
-            Effect.as(undefined),
-          ),
-        ),
-      );
-  });
-
   const stateIdentityIsCurrent = Effect.fnUntraced(function* (input: {
     readonly userId: string;
     readonly environmentId: string;
@@ -622,11 +599,14 @@ export const make = Effect.gen(function* () {
         threadId: input.threadId,
       })
       .pipe(
+        // A version republished quietly since the job was queued is stale too:
+        // the phone must not ring for it.
         Effect.map(
           (current) =>
             current !== null &&
             current.phase === input.phase &&
-            current.updatedAt === input.updatedAt,
+            current.updatedAt === input.updatedAt &&
+            isAlertableRow(current),
         ),
         Effect.catchCause((cause) =>
           Effect.logWarning("agent-activity state recheck failed; allowing queued delivery", {
@@ -650,12 +630,15 @@ export const make = Effect.gen(function* () {
             current,
           ]),
         );
+        // Quietness is part of the version: a republish that flipped it since
+        // this job was queued carries its own job with the right alert.
         return input.aggregate.activities.every((row) => {
           const current = currentByThread.get(`${row.environmentId}\u0000${row.threadId}`);
           return (
             current !== undefined &&
             current.phase === row.phase &&
-            current.updatedAt === row.updatedAt
+            current.updatedAt === row.updatedAt &&
+            isAlertableRow(current) === isAlertableRow(row)
           );
         });
       }),
@@ -764,18 +747,17 @@ export const make = Effect.gen(function* () {
       if (alert) {
         const preferences = parsePreferences(currentTarget.preferences_json);
         const previousAggregate = parseAggregate(currentTarget.last_aggregate_json);
-        const alertable = withoutQuietRows(aggregate, yield* quietRowsFor(input.target.user_id));
         alert =
-          !preferences?.notificationsEnabled || !alertable
+          !preferences?.notificationsEnabled || !aggregate
             ? null
             : (alertForAttentionTransition({
                 previousAggregate,
-                nextAggregate: alertable,
+                nextAggregate: aggregate,
                 preferences,
               }) ??
               alertForNewlyTerminal({
                 previousAggregate,
-                nextAggregate: alertable,
+                nextAggregate: aggregate,
                 preferences,
                 nowMs: now.epochMilliseconds,
                 includeUnobserved: true,
@@ -981,7 +963,6 @@ export const make = Effect.gen(function* () {
       }
       deliveryTarget = currentTarget;
       const preferences = parsePreferences(currentTarget.preferences_json);
-      const quiet = yield* quietRowsFor(input.target.user_id);
       const alertAllowed =
         notification.phase !== undefined && notification.updatedAt !== undefined
           ? shouldAlertForActivity({
@@ -990,7 +971,7 @@ export const make = Effect.gen(function* () {
               updatedAt: notification.updatedAt,
               preferences,
               nowMs: now.epochMilliseconds,
-            }) && !quiet?.has(quietRowKey({ ...notification, updatedAt: notification.updatedAt }))
+            })
           : preferences?.notificationsEnabled === true;
       if (!alertAllowed) {
         yield* attempts.completeSourceJob({
@@ -1170,7 +1151,6 @@ export const make = Effect.gen(function* () {
         aggregate: input.aggregate,
         nowMs: input.nowMs,
         replay: input.replay ?? false,
-        quiet: input.quiet,
       });
       if (!delivery) {
         return null;
@@ -1192,7 +1172,6 @@ export const make = Effect.gen(function* () {
             target: input.target,
             aggregate: input.aggregate,
             nowMs: input.nowMs,
-            quiet: input.quiet,
           });
       // The end event doubles as the "task finished" moment. When a companion
       // push notification is about to ring the device (below), the activity end
@@ -1204,7 +1183,7 @@ export const make = Effect.gen(function* () {
           ? notification && input.target.push_token
             ? null
             : alertForTerminalAggregate({
-                aggregate: withoutQuietRows(delivery.aggregate, input.quiet),
+                aggregate: delivery.aggregate,
                 preferences: parsePreferences(input.target.preferences_json),
               })
           : delivery.alert;

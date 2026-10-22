@@ -21,7 +21,6 @@ import * as FcmClient from "./FcmClient.ts";
 import * as FcmDeliveries from "./FcmDeliveries.ts";
 import { androidActivityData, fitFcmData } from "./fcmPayloads.ts";
 import { makeAggregateState } from "./agentActivityAggregate.ts";
-import { quietRowKey } from "./agentActivityAlerts.ts";
 
 const aggregateFor = (states: ReadonlyArray<RelayAgentActivityState>) =>
   makeAggregateState({ activeStates: states, terminalState: null, nowMs: 0 })!;
@@ -95,7 +94,6 @@ function harness() {
     mutedEnvironments: [] as string[],
     notificationOnlyEnvironments: [] as string[],
     revokedEnvironments: [] as string[],
-    quietStates: [] as RelayAgentActivityState[],
     linked: true,
     deliveryFailure: null as FcmClient.FcmClientError | null,
   };
@@ -155,7 +153,6 @@ function harness() {
               ) ?? null)
             : null,
         ),
-      listQuietForUser: () => Effect.sync(() => new Set(current.quietStates.map(quietRowKey))),
     }),
     Layer.succeed(EnvironmentLinks.EnvironmentLinks, {
       upsert: () => Effect.void,
@@ -612,8 +609,7 @@ describe("delivery policy regressions", () => {
 
 describe("quietly published states", () => {
   const publishQuietly = (h: ReturnType<typeof harness>, next: RelayAgentActivityState) => {
-    h.current.state = next;
-    h.current.quietStates = [next];
+    h.current.state = { ...next, notify: false };
   };
 
   it.effect("update the ongoing card silently and never alert for that state later", () => {

@@ -128,6 +128,10 @@ export const RelayAgentActivityState = Schema.Struct({
   modelTitle: TrimmedNonEmptyString,
   updatedAt: TrimmedNonEmptyString,
   deepLink: TrimmedNonEmptyString,
+  // False when published while the user sat at a computer connected to the
+  // environment: cards still update, but no delivery path may alert for this
+  // version. Omitted means true.
+  notify: Schema.optional(Schema.Boolean),
 });
 export type RelayAgentActivityState = typeof RelayAgentActivityState.Type;
 
@@ -141,6 +145,7 @@ export const RelayAgentActivityAggregateRow = Schema.Struct({
   status: TrimmedNonEmptyString,
   updatedAt: TrimmedNonEmptyString,
   deepLink: TrimmedNonEmptyString,
+  notify: Schema.optional(Schema.Boolean),
 });
 export type RelayAgentActivityAggregateRow = typeof RelayAgentActivityAggregateRow.Type;
 
@@ -264,7 +269,6 @@ export const RelayAgentActivityPublishProofPayload = Schema.Struct({
   environmentId: EnvironmentId,
   threadId: ThreadId,
   state: Schema.NullOr(RelayAgentActivityState),
-  notify: Schema.optional(Schema.Boolean),
 });
 export type RelayAgentActivityPublishProofPayload =
   typeof RelayAgentActivityPublishProofPayload.Type;
@@ -276,10 +280,6 @@ export const RelayAgentActivityPublishRequest = Schema.Struct({
   }),
   proof: TrimmedNonEmptyString.annotate({
     description: "Environment-signed JWT covering this published activity state.",
-  }),
-  notify: Schema.optional(Schema.Boolean).annotate({
-    description:
-      "False when the user is already at a computer, so mobile state updates without alerting. Omitted means true.",
   }),
 }).annotate({ description: "Publishes a signed agent-awareness update from an environment." });
 export type RelayAgentActivityPublishRequest = typeof RelayAgentActivityPublishRequest.Type;

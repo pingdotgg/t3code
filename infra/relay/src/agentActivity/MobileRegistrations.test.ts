@@ -98,7 +98,6 @@ function makeAgentActivityRows(
       return Effect.succeed([activeState]);
     },
     getForUserThread: () => Effect.succeed(null),
-    listQuietForUser: () => Effect.succeed(new Set()),
     ...overrides,
   };
 }

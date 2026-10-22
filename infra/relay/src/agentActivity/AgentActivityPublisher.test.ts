@@ -9,7 +9,6 @@ import * as LiveActivities from "./LiveActivities.ts";
 import * as AgentActivityPublisher from "./AgentActivityPublisher.ts";
 import * as FcmDeliveries from "./FcmDeliveries.ts";
 import * as ApnsDeliveries from "./ApnsDeliveries.ts";
-import { quietRowKey } from "./agentActivityAlerts.ts";
 
 const layerPublisher = AgentActivityPublisher.layer.pipe(
   Layer.provide(
@@ -77,7 +76,6 @@ function makeAgentActivityRows(
     pruneTerminal: () => Effect.void,
     listForUser: () => Effect.succeed([state]),
     getForUserThread: () => Effect.succeed(state),
-    listQuietForUser: () => Effect.succeed(new Set()),
     ...overrides,
   };
 }
@@ -154,7 +152,6 @@ describe("AgentActivityPublisher", () => {
         environmentPublicKey: "key",
         threadId: state.threadId,
         state,
-        notify: true,
       });
       yield* publisher.replayForLiveActivityRegistration({
         userId: android.user_id,
@@ -272,90 +269,6 @@ describe("AgentActivityPublisher", () => {
     });
   });
 
-  it.effect("a quiet publish marks its row quiet and still reaches every device", () => {
-    const ios = { ...target("ios"), push_token: "apns-device-token" };
-    const android = { ...target("android"), platform: "android" as const, ios_major_version: null };
-    const completed: RelayAgentActivityState = { ...state, phase: "completed", headline: "Done" };
-    const liveDeliveries: Array<
-      Parameters<ApnsDeliveries.ApnsDeliveries["Service"]["sendForTarget"]>[0]
-    > = [];
-    const fcmCalls: Array<Parameters<FcmDeliveries.FcmDeliveries["Service"]["enqueue"]>[0]> = [];
-    const quietRows = new Set<string>();
-    let alertPushes = 0;
-    return Effect.gen(function* () {
-      const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
-      yield* publisher.publish({
-        environmentId: state.environmentId,
-        environmentPublicKey: "key",
-        threadId: state.threadId,
-        state: completed,
-        notify: false,
-      });
-      expect(alertPushes).toBe(0);
-      expect(liveDeliveries[0]?.quiet).toEqual(new Set([quietRowKey(completed)]));
-      expect(fcmCalls).toEqual([{ target: android, state: completed }]);
-    }).pipe(
-      Effect.provide(
-        AgentActivityPublisher.layer.pipe(
-          Layer.provide(
-            Layer.mergeAll(
-              Layer.succeed(
-                AgentActivityRows.AgentActivityRows,
-                makeAgentActivityRows({
-                  upsert: (input) =>
-                    Effect.sync(() => {
-                      if (!input.notify) quietRows.add(quietRowKey(input.state));
-                    }),
-                  listQuietForUser: () => Effect.sync(() => new Set(quietRows)),
-                }),
-              ),
-              Layer.succeed(
-                EnvironmentLinks.EnvironmentLinks,
-                makeEnvironmentLinks({
-                  listDeliveryUsersForEnvironment: () =>
-                    Effect.succeed([
-                      {
-                        userId: "dev:julius",
-                        notificationsEnabled: true,
-                        liveActivitiesEnabled: false,
-                      },
-                    ]),
-                }),
-              ),
-              Layer.succeed(
-                LiveActivities.LiveActivities,
-                makeLiveActivities({ listTargets: () => Effect.succeed([ios, android]) }),
-              ),
-              Layer.succeed(
-                ApnsDeliveries.ApnsDeliveries,
-                makeApnsDeliveries({
-                  sendForTarget: (input) =>
-                    Effect.sync(() => {
-                      liveDeliveries.push(input);
-                      return null;
-                    }),
-                  sendPushNotificationForTarget: () =>
-                    Effect.sync(() => {
-                      alertPushes += 1;
-                      return null;
-                    }),
-                }),
-              ),
-              Layer.succeed(FcmDeliveries.FcmDeliveries, {
-                enqueue: (input) =>
-                  Effect.sync(() => {
-                    fcmCalls.push(input);
-                    return null;
-                  }),
-                process: () => Effect.void,
-              }),
-            ),
-          ),
-        ),
-      ),
-    );
-  });
-
   it.effect(
     "delivers notifications without querying activity rows when Live Activities are disabled",
     () => {
@@ -379,7 +292,6 @@ describe("AgentActivityPublisher", () => {
             environmentPublicKey: "environment-public-key",
             threadId: "thread",
             state: notificationState,
-            notify: true,
           });
         }).pipe(
           Effect.provide(

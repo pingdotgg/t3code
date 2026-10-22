@@ -26,28 +26,10 @@ type TransitionInput = {
   readonly preferences: RelayAgentAwarenessPreferences | null;
 };
 
-export type QuietRows = ReadonlySet<string>;
-
-// Keyed by version so a later publish of the same thread can alert again.
-export function quietRowKey(row: {
-  readonly environmentId: string;
-  readonly threadId: string;
-  readonly updatedAt: string;
-}): string {
-  return JSON.stringify([row.environmentId, row.threadId, row.updatedAt]);
-}
-
-// A state published while its user sat at a computer still updates the card,
-// but must not ring the phone. Other rows in the same aggregate still can.
-export function withoutQuietRows(
-  aggregate: RelayAgentActivityAggregateState | null,
-  quiet: QuietRows | undefined,
-): RelayAgentActivityAggregateState | null {
-  if (aggregate === null || !quiet?.size) return aggregate;
-  return {
-    ...aggregate,
-    activities: aggregate.activities.filter((row) => !quiet.has(quietRowKey(row))),
-  };
+// A version published while its user sat at a computer still updates the
+// card, but must not ring the phone. Other rows in the same aggregate still can.
+export function isAlertableRow(row: { readonly notify?: boolean | undefined }): boolean {
+  return row.notify !== false;
 }
 
 function rowKey(row: RelayAgentActivityAggregateRow): string {
@@ -98,6 +80,7 @@ export function attentionTransitionRows(input: TransitionInput) {
     (row) =>
       isAttentionPhase(row.phase) &&
       !previouslyAttention.has(rowKey(row)) &&
+      isAlertableRow(row) &&
       alertAllowedForPhase(input.preferences, row.phase),
   );
 }
@@ -131,6 +114,7 @@ export function terminalTransitionRows(
     input.includeUnobserved,
   ).filter((row) => {
     return (
+      isAlertableRow(row) &&
       alertAllowedForPhase(input.preferences, row.phase) &&
       isFreshTerminalNotification(row.updatedAt, input.nowMs)
     );
@@ -167,16 +151,20 @@ export function alertForTerminalAggregate(input: {
 }): AgentActivityAlert | null {
   const row = input.aggregate?.activities[0];
   if (!row || (row.phase !== "completed" && row.phase !== "failed")) return null;
-  return alertAllowedForPhase(input.preferences, row.phase) ? alertForActivityRows([row]) : null;
+  return isAlertableRow(row) && alertAllowedForPhase(input.preferences, row.phase)
+    ? alertForActivityRows([row])
+    : null;
 }
 
 export function shouldAlertForActivity(input: {
   readonly phase: RelayAgentActivityAggregateRow["phase"];
   readonly updatedAt: string;
+  readonly notify?: boolean | undefined;
   readonly preferences: RelayAgentAwarenessPreferences | null;
   readonly nowMs: number;
 }): boolean {
   return (
+    isAlertableRow(input) &&
     input.preferences?.notificationsEnabled === true &&
     alertAllowedForPhase(input.preferences, input.phase) &&
     ((input.phase !== "completed" && input.phase !== "failed") ||

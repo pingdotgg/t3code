@@ -252,7 +252,6 @@ const makePublishProof = Effect.fn("makePublishProof")(function* (input: {
   readonly environmentId: string;
   readonly threadId: ThreadId;
   readonly state: RelayAgentActivityState | null;
-  readonly notify: boolean;
   readonly jti: string;
 }) {
   const now = yield* DateTime.now;
@@ -267,7 +266,6 @@ const makePublishProof = Effect.fn("makePublishProof")(function* (input: {
     environmentId: input.environmentId as RelayAgentActivityPublishProofPayload["environmentId"],
     threadId: input.threadId,
     state: input.state,
-    notify: input.notify,
   } satisfies RelayAgentActivityPublishProofPayload;
   return yield* signRelayAgentActivityPublishProof({ privateKey: input.privateKey, payload });
 });
@@ -476,15 +474,17 @@ export const make = Effect.gen(function* () {
         cachedRelayClient = yield* makeRelayClient(relayConfig);
       }
       const relayClient = cachedRelayClient;
-      // Someone at a computer already sees this there; the phone only needs its state.
+      // Someone at a computer already sees this there; the phone only needs its
+      // state. The flag rides inside the signed state so the relay cannot be
+      // asked to alert for a version the environment published quietly.
       const notify = !(yield* backgroundPolicy.hasAttendedClient);
+      const state = input.state && !notify ? { ...input.state, notify: false } : input.state;
       const proof = yield* makePublishProof({
         privateKey: cloudLinkKeyPair.privateKey,
         relayIssuer: relayConfig.issuer,
         environmentId,
         threadId,
-        state: input.state,
-        notify,
+        state,
         jti: yield* crypto.randomUUIDv4(),
       });
 
@@ -505,9 +505,8 @@ export const make = Effect.gen(function* () {
             threadId,
           },
           payload: {
-            state: input.state,
+            state,
             proof,
-            notify,
           },
         })
         .pipe(Effect.timeout("10 seconds"));

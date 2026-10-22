@@ -95,9 +95,11 @@ function shell(overrides: Partial<OrchestrationV2ThreadShell> = {}): Orchestrati
 const PublishPayload = Schema.Struct({
   state: Schema.NullOr(RelayAgentActivityState),
   proof: Schema.String,
-  notify: Schema.optional(Schema.Boolean),
 });
 const decodePublishPayload = Schema.decodeUnknownSync(Schema.fromJsonString(PublishPayload));
+const decodeSignedState = Schema.decodeUnknownSync(
+  Schema.Struct({ state: Schema.NullOr(RelayAgentActivityState) }),
+);
 const unused = () => Effect.die("Unexpected test dependency call");
 
 describe("startup agent activity", () => {
@@ -234,7 +236,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     readonly authorization: string | null;
     readonly state: RelayAgentActivityState | null;
     readonly notify: boolean | undefined;
-    readonly signedNotify: unknown;
+    readonly signedNotify: boolean | undefined;
   }> = [];
   const fetch: typeof globalThis.fetch = Object.assign(
     (
@@ -252,8 +254,8 @@ const makeTestRelay = Effect.fnUntraced(function* (
         url: String(input),
         authorization: new Headers(init?.headers).get("authorization"),
         state: payload.state,
-        notify: payload.notify,
-        signedNotify: decodeRelayJwt(payload.proof).notify,
+        notify: payload.state?.notify,
+        signedNotify: decodeSignedState(decodeRelayJwt(payload.proof)).state?.notify,
       });
       return Promise.resolve(
         options.respond?.(publications.length) ?? Response.json({ ok: true, deliveries: [] }),
@@ -389,7 +391,7 @@ describe("AgentAwarenessRelay", () => {
         publications.map(({ notify, signedNotify }) => ({ notify, signedNotify })),
         [
           { notify: false, signedNotify: false },
-          { notify: true, signedNotify: true },
+          { notify: undefined, signedNotify: undefined },
         ],
       );
     }),
