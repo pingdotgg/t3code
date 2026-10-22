@@ -350,9 +350,38 @@ function UncachedShikiCodeBlock({
   preserveLines,
 }: UncachedShikiCodeBlockProps) {
   const highlighter = use(getSyntaxHighlighterPromise(language));
-  const incrementalHighlight = preserveLines
-    ? createIncrementalHighlightedDocument(highlighter, language, themeName)
-    : null;
+  // The cache lives in the closure. A new closure on each token tokenizes the
+  // whole fence and gives every line a new node. State keeps one closure for
+  // the language and theme; the first render of a new pair stores it and
+  // React renders again with that same function.
+  const [incrementalHighlightState, setIncrementalHighlightState] = useState<null | {
+    readonly highlighter: typeof highlighter;
+    readonly language: string;
+    readonly themeName: DiffThemeName;
+    readonly highlight: ReturnType<typeof createIncrementalHighlightedDocument>;
+  }>(null);
+  if (
+    preserveLines &&
+    (incrementalHighlightState === null ||
+      incrementalHighlightState.highlighter !== highlighter ||
+      incrementalHighlightState.language !== language ||
+      incrementalHighlightState.themeName !== themeName)
+  ) {
+    setIncrementalHighlightState({
+      highlighter,
+      language,
+      themeName,
+      highlight: createIncrementalHighlightedDocument(highlighter, language, themeName),
+    });
+  }
+  const incrementalHighlight =
+    preserveLines &&
+    incrementalHighlightState !== null &&
+    incrementalHighlightState.highlighter === highlighter &&
+    incrementalHighlightState.language === language &&
+    incrementalHighlightState.themeName === themeName
+      ? incrementalHighlightState.highlight
+      : null;
   const highlighted = (() => {
     try {
       if (incrementalHighlight) return incrementalHighlight(code);

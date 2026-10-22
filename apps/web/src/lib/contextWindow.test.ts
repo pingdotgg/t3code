@@ -12,11 +12,35 @@ import {
 } from "@t3tools/contracts";
 import { makeThreadProjectionFixture } from "../test-fixtures";
 import { shouldOfferResumeCompaction } from "../components/chat/ContextWindowMeter.logic";
-import { deriveLatestContextWindowSnapshot, latestProviderTurnTokenUsage } from "./contextWindow";
+import {
+  deriveLatestContextWindowSnapshot,
+  latestProviderTurnTokenUsage,
+  retainContextWindowSnapshot,
+} from "./contextWindow";
 
 const decodeTokenUsage = Schema.decodeSync(OrchestrationV2ProviderTurnTokenUsage);
 
 describe("V2 context window presentation", () => {
+  it("reuses the snapshot when a later derive has the same fields", () => {
+    const usage = decodeTokenUsage({
+      usedTokens: 10,
+      maxTokens: 100,
+      inputTokens: 8,
+      outputTokens: 2,
+      autoCompactThreshold: 80,
+      updatedAt: "2026-10-19T12:10:00.000Z",
+    });
+    const first = deriveLatestContextWindowSnapshot([], usage);
+    const second = deriveLatestContextWindowSnapshot([], { ...usage });
+    expect(retainContextWindowSnapshot(first, second)).toBe(first);
+    expect(
+      retainContextWindowSnapshot(
+        first,
+        deriveLatestContextWindowSnapshot([], { ...usage, usedTokens: 11 }),
+      ),
+    ).not.toBe(first);
+  });
+
   it("uses retained compaction token data when available", () => {
     const snapshot = deriveLatestContextWindowSnapshot([
       {

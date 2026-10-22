@@ -64,6 +64,56 @@ describe("incremental code highlighting", () => {
     }
   });
 
+  it("tokenizes only the new line when one closure is kept for the stream", async () => {
+    const highlighter = await highlighterPromise;
+    const lines = Array.from({ length: 40 }, (_, index) => `const line${index} = ${index};`);
+    const original = highlighter.codeToHast.bind(highlighter);
+    let chars = 0;
+    highlighter.codeToHast = ((code: string, ...rest: unknown[]) => {
+      chars += code.length;
+      return original(code, ...(rest as [never]));
+    }) as typeof highlighter.codeToHast;
+
+    const measure = (reuseClosure: boolean) => {
+      chars = 0;
+      let misses = 0;
+      let previous = new Set<object>();
+      const highlight = reuseClosure
+        ? createIncrementalHighlightedDocument(highlighter, "typescript", "pierre-dark")
+        : null;
+      for (let count = 1; count <= lines.length; count += 1) {
+        const text = `${lines.slice(0, count).join("\n")}\n`;
+        const root = reuseClosure
+          ? highlight!(text)
+          : createIncrementalHighlightedDocument(highlighter, "typescript", "pierre-dark")(text);
+        const pre = root.children.find((node) => node.type === "element" && node.tagName === "pre");
+        const code =
+          pre?.type === "element"
+            ? pre.children.find((node) => node.type === "element" && node.tagName === "code")
+            : undefined;
+        const nodes =
+          code?.type === "element" ? code.children.filter((node) => node.type === "element") : [];
+        for (const node of nodes) {
+          if (!previous.has(node)) misses += 1;
+        }
+        previous = new Set(nodes);
+      }
+      return { chars, misses };
+    };
+
+    let freshClosure: { chars: number; misses: number };
+    let keptClosure: { chars: number; misses: number };
+    try {
+      freshClosure = measure(false);
+      keptClosure = measure(true);
+    } finally {
+      highlighter.codeToHast = original;
+    }
+    expect(keptClosure.chars).toBeLessThan(freshClosure.chars / 5);
+    expect(keptClosure.misses).toBeLessThanOrEqual(lines.length * 2);
+    expect(freshClosure.misses).toBeGreaterThan(lines.length * (lines.length / 2));
+  });
+
   it("preserves partial CRLF and CR line endings", async () => {
     const highlighter = await highlighterPromise;
     const highlight = createIncrementalHighlightedDocument(

@@ -384,7 +384,7 @@ export interface ChatComposerProps {
   activeThreadEnvironmentId: EnvironmentId | undefined;
   activeThread: Thread | undefined;
   activeThreadShell: ThreadShell | null;
-  promptHistoryMessages: ReadonlyArray<ChatMessage>;
+  promptHistoryMessagesRef: React.RefObject<ReadonlyArray<ChatMessage>>;
   isServerThread: boolean;
   isLocalDraftThread: boolean;
   forceExpandedOnMobile: boolean;
@@ -549,7 +549,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeThreadId,
     activeThreadEnvironmentId: _activeThreadEnvironmentId,
     activeThread,
-    promptHistoryMessages,
+    promptHistoryMessagesRef,
     isServerThread: _isServerThread,
     isLocalDraftThread: _isLocalDraftThread,
     forceExpandedOnMobile,
@@ -2254,7 +2254,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     planModeUiEnabled,
     isLiteralPendingAnswer,
     pendingUserInputs,
-    promptHistoryMessages,
+    promptHistoryMessagesRef,
     promptHistoryPositionRef,
     composerDraftTarget,
     promptRef,
@@ -2744,7 +2744,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       insertAttachmentReferences,
     });
 
-  const onComposerCommandKeyStable = useStableCallback(onComposerCommandKey);
   const isPathQueryActiveStable = useStableCallback(
     () => resolveActiveComposerTrigger().trigger?.kind === "path",
   );
@@ -3792,7 +3791,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     )}
                     onChange={onPromptChangeStable}
                     onVisibleSelectionChange={expandComposerForEditorChangeStable}
-                    onCommandKeyDown={onComposerCommandKeyStable}
+                    onCommandKeyDown={onComposerCommandKey}
                     onPageScrollKeyDown={onPageScrollKeyDown}
                     onPageScrollKeyUp={onPageScrollKeyUp}
                     onPageScrollRelease={onPageScrollRelease}

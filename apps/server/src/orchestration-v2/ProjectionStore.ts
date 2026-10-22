@@ -3895,15 +3895,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             case "delegated-completions":
               return sql`
                 SELECT thread_id FROM orchestration_v2_projection_runs
-                WHERE CASE WHEN json_valid(payload_json)
-                  THEN json_type(payload_json, '$.delegatedCompletion.delivery') = 'object'
-                  ELSE 0 END
+                WHERE json_valid(payload_json)
+                  AND json_type(payload_json, '$.delegatedCompletion.delivery') = 'object'
               `;
             case "subagent-results":
               return sql`
                 SELECT child.thread_id FROM orchestration_v2_projection_threads AS child
-                WHERE CASE WHEN json_valid(child.payload_json) THEN
-                  json_extract(child.payload_json, '$.lineage.relationshipToParent') = 'subagent'
+                WHERE json_valid(child.payload_json)
+                  AND json_extract(child.payload_json, '$.lineage.relationshipToParent') = 'subagent'
                   AND json_extract(child.payload_json, '$.lineage.parentThreadId') IS NOT NULL
                   AND json_extract(child.payload_json, '$.forkedFrom.type') = 'node'
                   AND (EXISTS (
@@ -3928,7 +3927,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       AND target_thread_id = json_extract(child.payload_json, '$.lineage.parentThreadId')
                       AND type = 'subagent_result'
                   )))
-                  ELSE 0 END
               `;
             case "runtime":
               return sql`

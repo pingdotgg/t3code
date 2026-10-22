@@ -99,6 +99,50 @@ export interface WorkLogEntry {
 export type PendingApproval = ThreadPendingApproval;
 export type PendingUserInput = ThreadPendingUserInput;
 
+export function retainComposerTasksProgress<
+  T extends {
+    readonly step: string;
+    readonly completedSteps: number;
+    readonly totalSteps: number;
+    readonly live: boolean;
+  },
+>(previous: T | null, next: T | null): T | null {
+  if (
+    previous === next ||
+    previous === null ||
+    next === null ||
+    previous.step !== next.step ||
+    previous.completedSteps !== next.completedSteps ||
+    previous.totalSteps !== next.totalSteps ||
+    previous.live !== next.live
+  ) {
+    return next;
+  }
+  return previous;
+}
+
+export function retainComposerTaskSteps<
+  T extends { readonly step: string; readonly status: string; readonly durationMs?: number },
+>(previous: readonly T[] | null, next: readonly T[] | null): readonly T[] | null {
+  if (previous === next || previous === null || next === null || previous.length !== next.length) {
+    return next;
+  }
+  for (let index = 0; index < previous.length; index += 1) {
+    const left = previous[index];
+    const right = next[index];
+    if (
+      left === undefined ||
+      right === undefined ||
+      left.step !== right.step ||
+      left.status !== right.status ||
+      !Object.is(left.durationMs, right.durationMs)
+    ) {
+      return next;
+    }
+  }
+  return previous;
+}
+
 export interface ActivePlanState {
   readonly createdAt: string;
   readonly runId: RunId | null;

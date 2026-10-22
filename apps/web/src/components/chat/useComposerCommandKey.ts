@@ -21,7 +21,8 @@ import { type PreviewAnnotationPayload } from "@t3tools/contracts";
 import { type ReviewCommentContext } from "../../reviewCommentContext";
 import { composerTargetKey } from "../../composerDraftStore";
 import { listContinuationForEnter, listIndentForTab } from "../../composer-list-continuation";
-import { type Dispatch, type RefObject, type SetStateAction, useLayoutEffect, useRef } from "react";
+import type { Dispatch, RefObject, SetStateAction } from "react";
+import { useStableCallback } from "../../hooks/useStableCallback";
 
 /**
  * The composer's key handling inside the editor: send shortcuts, the slash/mention menu,
@@ -38,7 +39,7 @@ export function useComposerCommandKey(input: {
   readonly planModeUiEnabled: boolean;
   readonly isLiteralPendingAnswer: boolean;
   readonly pendingUserInputs: ReadonlyArray<PendingUserInput>;
-  readonly promptHistoryMessages: ChatComposerProps["promptHistoryMessages"];
+  readonly promptHistoryMessagesRef: ChatComposerProps["promptHistoryMessagesRef"];
   readonly promptHistoryPositionRef: RefObject<{
     targetKey: string;
     position: ComposerPromptHistoryPosition;
@@ -90,7 +91,7 @@ export function useComposerCommandKey(input: {
     planModeUiEnabled,
     isLiteralPendingAnswer,
     pendingUserInputs,
-    promptHistoryMessages,
+    promptHistoryMessagesRef,
     promptHistoryPositionRef,
     composerDraftTarget,
     promptRef,
@@ -117,11 +118,8 @@ export function useComposerCommandKey(input: {
     submitComposer,
   } = input;
   // Entries are built on the keypress, not per render: the timeline changes
-  // on every streamed delta and ArrowUp is rare.
-  const promptHistoryMessagesRef = useRef(promptHistoryMessages);
-  useLayoutEffect(() => {
-    promptHistoryMessagesRef.current = promptHistoryMessages;
-  });
+  // on every streamed delta and ArrowUp is rare. The parent writes the ref,
+  // so that array is not a prop and cannot invalidate the composer's memo.
 
   // The composer persists across threads. A recall from thread A must not
   // be treated as active in thread B, where the text-match fallback could
@@ -259,6 +257,10 @@ export function useComposerCommandKey(input: {
   };
 
   return {
-    onComposerCommandKey,
+    // The handler is a prop of the editor, so its identity has to stay put.
+    // useStableCallback is also the hook this function needs: the history ref
+    // now lives on the parent, and a use* function that calls no hook is skipped
+    // by the compiler.
+    onComposerCommandKey: useStableCallback(onComposerCommandKey),
   };
 }

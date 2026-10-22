@@ -31,6 +31,8 @@ import {
   deriveRevertTurnCountByUserMessageId,
   derivePhase,
   isLatestRunSettled,
+  retainComposerTaskSteps,
+  retainComposerTasksProgress,
   selectComposerTasksPlan,
   selectHandoffImageResources,
   selectMessageImageResources,
@@ -1042,6 +1044,23 @@ describe("V2 session presentation", () => {
 });
 
 describe("composer tasks drawer", () => {
+  it("keeps the progress object and step list when a new projection copies them", () => {
+    const progress = { step: "Edit files", completedSteps: 1, totalSteps: 3, live: true };
+    const steps = [{ step: "Edit files", status: "inProgress" as const, durationMs: 12 }];
+    expect(
+      retainComposerTasksProgress(progress, {
+        step: "Edit files",
+        completedSteps: 1,
+        totalSteps: 3,
+        live: true,
+      }),
+    ).toBe(progress);
+    expect(retainComposerTaskSteps(steps, [{ ...steps[0]! }])).toBe(steps);
+    expect(retainComposerTasksProgress(progress, { ...progress, completedSteps: 2 })).not.toBe(
+      progress,
+    );
+  });
+
   const projection = makeThreadProjectionFixture();
   const now = projection.updatedAt;
 

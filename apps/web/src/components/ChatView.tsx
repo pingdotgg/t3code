@@ -123,6 +123,8 @@ import { composerRequiresModifier } from "../composer-logic";
 import {
   derivePhase,
   deriveActivePlanState,
+  retainComposerTaskSteps,
+  retainComposerTasksProgress,
   selectComposerTasksPlan,
   deriveActiveWorkStartedAt,
   deriveCanInterruptRunningThread,
@@ -309,6 +311,7 @@ import {
 import {
   deriveLatestContextWindowSnapshot,
   latestProviderTurnTokenUsage,
+  retainContextWindowSnapshot,
 } from "../lib/contextWindow";
 import {
   MOBILE_COMPOSER_VIEW_TRANSITION_NAME,
@@ -1024,7 +1027,7 @@ export default function ChatView(props: ChatViewProps) {
     activeActivityRun?.runId ?? null,
     activeActivityRunSettled,
   );
-  const activeComposerTasksProgress = (() => {
+  const nextComposerTasksProgress = (() => {
     if (!composerTasksPlan) return null;
     const live = !activeActivityRunSettled && composerTasksPlan.runId === activeActivityRun?.runId;
     const totalSteps = composerTasksPlan.steps.length;
@@ -1038,8 +1041,31 @@ export default function ChatView(props: ChatViewProps) {
       composerTasksPlan.steps.at(-1)!.step;
     return { step, completedSteps, totalSteps, live };
   })();
-  const activeComposerTaskSteps =
+  const [storedComposerTasksProgress, setStoredComposerTasksProgress] =
+    useState(nextComposerTasksProgress);
+  if (
+    retainComposerTasksProgress(storedComposerTasksProgress, nextComposerTasksProgress) !==
+    storedComposerTasksProgress
+  ) {
+    setStoredComposerTasksProgress(nextComposerTasksProgress);
+  }
+  const activeComposerTasksProgress = retainComposerTasksProgress(
+    storedComposerTasksProgress,
+    nextComposerTasksProgress,
+  );
+  const nextComposerTaskSteps =
     activeComposerTasksProgress && composerTasksPlan ? composerTasksPlan.steps : null;
+  const [storedComposerTaskSteps, setStoredComposerTaskSteps] = useState(nextComposerTaskSteps);
+  if (
+    retainComposerTaskSteps(storedComposerTaskSteps, nextComposerTaskSteps) !==
+    storedComposerTaskSteps
+  ) {
+    setStoredComposerTaskSteps(nextComposerTaskSteps);
+  }
+  const activeComposerTaskSteps = retainComposerTaskSteps(
+    storedComposerTaskSteps,
+    nextComposerTaskSteps,
+  );
   const activeThreadEnvironmentId = activeThread?.environmentId;
   const activeThreadProjectId = activeThread?.projectId;
   const activeProjectRef =
@@ -1406,10 +1432,20 @@ export default function ChatView(props: ChatViewProps) {
     isConnecting ||
     isCompacting ||
     runlessWorkStartedAt !== null;
-  const activeContextWindow = deriveLatestContextWindowSnapshot(
+  const derivedContextWindow = deriveLatestContextWindowSnapshot(
     serverVisibleTurnItems ?? [],
     activeThreadLiveTokenUsage,
     activeProviderThread,
+  );
+  const [storedContextWindow, setStoredContextWindow] = useState(derivedContextWindow);
+  if (
+    retainContextWindowSnapshot(storedContextWindow, derivedContextWindow) !== storedContextWindow
+  ) {
+    setStoredContextWindow(derivedContextWindow);
+  }
+  const activeContextWindow = retainContextWindowSnapshot(
+    storedContextWindow,
+    derivedContextWindow,
   );
   const pendingBackgroundTasks = deriveThreadPendingBackgroundTasks(serverProjection);
   const activeWorkStartedAt =
@@ -1502,6 +1538,10 @@ export default function ChatView(props: ChatViewProps) {
   const timelineMessages = timelineEntries.flatMap((entry) =>
     entry.kind === "message" ? [entry.message] : [],
   );
+  const timelineMessagesRef = useRef(timelineMessages);
+  useLayoutEffect(() => {
+    timelineMessagesRef.current = timelineMessages;
+  });
   const timelineEmpty = timelineEntries.length === 0 && !hasStreamedTimelineRows;
   const displayedTimeline = resolveThreadSwitchTimeline({
     loading: timelineEmpty && threadSyncPhase !== null,
@@ -3491,7 +3531,7 @@ export default function ChatView(props: ChatViewProps) {
                               activeThreadEnvironmentId={activeThread?.environmentId}
                               activeThread={activeThread}
                               activeThreadShell={activeThreadShell}
-                              promptHistoryMessages={timelineMessages}
+                              promptHistoryMessagesRef={timelineMessagesRef}
                               isServerThread={isServerThread}
                               isLocalDraftThread={isLocalDraftThread}
                               forceExpandedOnMobile={

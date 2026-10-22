@@ -55,6 +55,42 @@ export function latestProviderTurnTokenUsage(
   );
 }
 
+const CONTEXT_WINDOW_KEYS = [
+  "usedTokens",
+  "totalProcessedTokens",
+  "maxTokens",
+  "remainingTokens",
+  "usedPercentage",
+  "remainingPercentage",
+  "inputTokens",
+  "cachedInputTokens",
+  "outputTokens",
+  "reasoningOutputTokens",
+  "lastUsedTokens",
+  "lastInputTokens",
+  "lastCachedInputTokens",
+  "lastOutputTokens",
+  "lastReasoningOutputTokens",
+  "toolUses",
+  "durationMs",
+  "compactsAutomatically",
+  "autoCompactThreshold",
+  "cost",
+  "updatedAt",
+] as const satisfies readonly (keyof ContextWindowSnapshot)[];
+
+/** Keep the previous object when a newly derived snapshot has the same fields. */
+export function retainContextWindowSnapshot(
+  previous: ContextWindowSnapshot | null,
+  next: ContextWindowSnapshot | null,
+): ContextWindowSnapshot | null {
+  if (previous === next || previous === null || next === null) return next;
+  for (const key of CONTEXT_WINDOW_KEYS) {
+    if (!Object.is(previous[key], next[key])) return next;
+  }
+  return previous;
+}
+
 export function deriveLatestContextWindowSnapshot(
   entries: ReadonlyArray<{
     readonly item: ThreadStructureTurnItem;

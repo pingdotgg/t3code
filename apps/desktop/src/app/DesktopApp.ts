@@ -1,6 +1,7 @@
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -267,7 +268,15 @@ const startup = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const previewPasskeys = yield* PreviewPasskeys.PreviewPasskeys;
 
-  yield* shellEnvironment.installIntoProcess;
+  // The login-shell probe blocks on a slow profile. Electron ready does not
+  // read that PATH; joining before bootstrap is enough for the backend spawn.
+  // Linux is the exception: the probe also installs XDG_* desktop variables,
+  // which the early password-store resolution below reads.
+  const shellInstall = yield* Effect.forkScoped(shellEnvironment.installIntoProcess);
+  const joinShellInstall = Fiber.join(shellInstall).pipe(
+    Effect.catchCause((cause) => fatalStartupCause("shellEnvironment", cause)),
+  );
+  if (environment.platform === "linux") yield* joinShellInstall;
   const hasCommandLinePasswordStore =
     preReadyElectronOptions.linuxPasswordStoreCommandLine !== null;
   const linuxElectronOptions =
@@ -326,6 +335,7 @@ const startup = Effect.gen(function* () {
   yield* updates.configure;
   yield* DesktopRemoteUpdates.listen;
   yield* linuxUrlHandler.register;
+  yield* joinShellInstall;
   yield* bootstrap.pipe(Effect.catchCause((cause) => fatalStartupCause("bootstrap", cause)));
 }).pipe(Effect.withSpan("desktop.startup"));
 
