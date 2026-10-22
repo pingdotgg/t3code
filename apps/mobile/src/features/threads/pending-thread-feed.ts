@@ -16,7 +16,12 @@ export function appendPendingThreadMessages(
     feed.flatMap((entry) => (entry.type === "message" ? [entry.message.id] : [])),
   );
   return [
-    ...presentedFeed,
+    ...presentedFeed.map((entry): PendingThreadFeedEntry => {
+      const pendingMessage = queuedMessages.find(
+        (message) => message.creation !== undefined && message.messageId === entry.id,
+      );
+      return pendingMessage ? { ...entry, pendingMessage, acknowledged: false } : entry;
+    }),
     ...queuedMessages
       .filter((message) => !deliveredIds.has(message.messageId))
       .map((pendingMessage): PendingThreadFeedEntry => ({

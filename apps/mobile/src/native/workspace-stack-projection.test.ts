@@ -42,7 +42,7 @@ function history(
 
 describe("workspace router projection", () => {
   it("keeps workspace flows beside Home and restores them after a modal closes", () => {
-    const draft = { key: "draft", name: "NewTaskSheet" };
+    const draft = { key: "draft", name: "Thread", params: { draft: {} } };
     const modal = { key: "connect", name: "ConnectOnboarding" };
     const routes = [home, thread, draft, settings, legal];
     const isOverlay = (route: { name: string }) => route.name === "ConnectOnboarding";

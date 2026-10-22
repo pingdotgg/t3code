@@ -1,7 +1,7 @@
+import { useComposerAttachmentActions } from "./use-composer-attachment-actions";
 import * as Dialog from "../components/ui/Dialog";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { readEnvironmentScope } from "./session";
-import type { ComposerTextPaste } from "../native/T3ComposerEditor.types";
 import { useAtomValue } from "@effect/atom-react";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
@@ -27,7 +27,6 @@ import {
   type RuntimeMode,
   type ThreadId,
 } from "@t3tools/contracts";
-import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
 import { nextPastedTextFileName, pastedTextDisposition } from "@t3tools/client-runtime/text-paste";
 import {
@@ -47,11 +46,8 @@ import {
 } from "../lib/modelOptions";
 import { resolveProviderInteractionMode } from "./legacy-plan-mode";
 import {
-  convertPastedImagesToAttachments,
   createPastedTextComposerAttachment,
   pasteComposerClipboard,
-  pickComposerFiles,
-  pickComposerMedia,
   removePersistedComposerAttachmentFile,
 } from "../lib/composerImages";
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
@@ -741,68 +737,11 @@ export function useThreadComposerState() {
     setComposerDraftText(threadKey, value);
   };
 
-  const onPickDraftMedia = async () => {
-    if (!selectedThreadShell) {
-      return;
-    }
-
-    const threadKey = activeComposerDraftKey(selectedThreadShell);
-    const insertion = captureComposerDraftInsertion(threadKey);
-    const capabilities = selectedEnvironmentRuntime?.serverConfig?.environment.capabilities;
-    const result = await pickComposerMedia({
-      existingCount: countComposerDraftAttachmentsAfterSelection(threadKey, insertion),
-      maxVideoBytes:
-        capabilities?.attachmentUploads === true
-          ? capabilities.fileAttachments?.maxUploadBytes
-          : undefined,
+  const { onPickDraftMedia, onPickDraftFiles, onNativePasteImages, onNativePasteText } =
+    useComposerAttachmentActions({
+      draftKey: selectedThreadShell ? activeComposerDraftKey(selectedThreadShell) : null,
+      serverConfig: selectedEnvironmentRuntime?.serverConfig,
     });
-    const rejectedCount = appendComposerDraftAttachments(threadKey, result.attachments, {
-      appendReference: true,
-      insertion,
-    });
-    const problems = [
-      ...(result.error ? [result.error] : []),
-      ...(rejectedCount > 0
-        ? [`You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments per message.`]
-        : []),
-    ];
-    if (problems.length > 0) {
-      Dialog.alert("Could not attach photo or video", problems.join("\n\n"));
-    }
-  };
-
-  const onPickDraftFiles = async () => {
-    if (!selectedThreadShell) {
-      return;
-    }
-    const maxBytes =
-      selectedEnvironmentRuntime?.serverConfig?.environment.capabilities.fileAttachments
-        ?.maxUploadBytes;
-    if (maxBytes === undefined) {
-      Dialog.alert("Could not attach file", "This server does not support file attachments.");
-      return;
-    }
-
-    const threadKey = activeComposerDraftKey(selectedThreadShell);
-    const insertion = captureComposerDraftInsertion(threadKey);
-    const result = await pickComposerFiles({
-      existingCount: countComposerDraftAttachmentsAfterSelection(threadKey, insertion),
-      maxBytes,
-    });
-    const rejectedCount = appendComposerDraftAttachments(threadKey, result.files, {
-      appendReference: true,
-      insertion,
-    });
-    const problems = [
-      ...(result.error ? [result.error] : []),
-      ...(rejectedCount > 0
-        ? [`You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`]
-        : []),
-    ];
-    if (problems.length > 0) {
-      Dialog.alert("Could not attach file", problems.join("\n\n"));
-    }
-  };
 
   const onPasteIntoDraft = async () => {
     if (!selectedThreadShell) {
@@ -889,69 +828,6 @@ export function useThreadComposerState() {
     } else if (rejectedPasteCount > 0) {
       setPendingConnectionError(
         `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`,
-      );
-    }
-  };
-
-  const onNativePasteImages = async (uris: ReadonlyArray<string>) => {
-    if (!selectedThreadShell || uris.length === 0) {
-      return;
-    }
-
-    const threadKey = activeComposerDraftKey(selectedThreadShell);
-    const insertion = captureComposerDraftInsertion(threadKey);
-    try {
-      const images = await convertPastedImagesToAttachments({
-        uris,
-        existingCount: countComposerDraftAttachmentsAfterSelection(threadKey, insertion),
-      });
-      if (images.length > 0) {
-        appendComposerDraftAttachments(threadKey, images, { appendReference: true, insertion });
-      }
-    } catch (error) {
-      console.error("[native paste] error converting images", {
-        environmentId: selectedThreadShell.environmentId,
-        threadId: selectedThreadShell.id,
-        uriCount: uris.length,
-        ...safeErrorLogAttributes(error),
-      });
-    }
-  };
-
-  const onNativePasteText = async (paste: ComposerTextPaste) => {
-    if (!selectedThreadShell) return;
-    const capabilities = selectedEnvironmentRuntime?.serverConfig?.environment.capabilities;
-    const advertisedMax =
-      capabilities?.attachmentUploads === true
-        ? capabilities.fileAttachments?.maxUploadBytes
-        : undefined;
-    if (advertisedMax === undefined) return;
-
-    const threadKey = activeComposerDraftKey(selectedThreadShell);
-    const insertion = { text: paste.value, ...paste.selection };
-    const currentAttachments = getComposerDraftSnapshot(threadKey).attachments;
-    try {
-      const attachment = await createPastedTextComposerAttachment({
-        text: paste.text,
-        name: reservePastedTextFileName(
-          threadKey,
-          currentAttachments.map((item) => item.name),
-        ),
-        maxBytes: clampFileAttachmentUploadBytes(advertisedMax),
-      });
-      const rejectedCount = appendComposerDraftAttachments(threadKey, [attachment], {
-        appendReference: true,
-        insertion,
-      });
-      if (rejectedCount > 0) {
-        await removePersistedComposerAttachmentFile(attachment.fileUri);
-        setPendingConnectionError(
-          `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`,
-        );
-      }
-    } catch (error) {
-      setPendingConnectionError(
-        error instanceof Error ? error.message : "Could not attach pasted text.",
       );
     }
   };

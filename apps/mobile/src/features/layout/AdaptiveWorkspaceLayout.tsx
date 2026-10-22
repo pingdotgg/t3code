@@ -1,3 +1,5 @@
+import { createDeferredNavigation } from "./deferred-navigation";
+import { uuidv4 } from "../../lib/uuid";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
@@ -52,6 +54,9 @@ import {
 } from "../../lib/adaptive-navigation";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import type { ThreadListFilters } from "../../persistence/mobile-preferences";
+import { appAtomRegistry } from "../../state/atom-registry";
+import { useProjects } from "../../state/entities";
+import { environmentThreadShells } from "../../state/threads";
 import { mobilePreferencesAtom } from "../../state/preferences";
 import {
   DEFAULT_MOBILE_PROJECT_GROUPING_SETTINGS,
@@ -69,6 +74,7 @@ import {
 import { AndroidWorkspaceSidebar } from "../workspace/AndroidWorkspaceSidebar";
 import { useAndroidWorkspaceSelection } from "../workspace/useAndroidWorkspaceSelection";
 import { HomeListOptionsProvider } from "../home/home-list-options";
+import { newTaskDestination } from "../threads/new-task-project-selection";
 import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
 import { ThreadNavigationSidebar } from "../threads/ThreadNavigationSidebar";
 import { useOpenThreadPullRequests } from "../threads/use-open-thread-pull-requests";
@@ -93,7 +99,10 @@ interface AdaptiveWorkspaceContextValue {
   readonly panes: WorkspacePaneLayout;
   readonly fileInspector: FileInspectorPaneLayout;
   readonly primarySidebarSearchQuery: string;
+  readonly startNewTask: () => void;
+  readonly deferThreadSelectionUntil: (operation: Promise<unknown>) => void;
   readonly selectThread: (thread: EnvironmentThreadShell) => void;
+  readonly selectThreadRoute: (params: ReactNavigation.RootParamList["Thread"]) => void;
   readonly activateAuxiliaryPaneRole: (role: WorkspaceAuxiliaryPaneRole) => () => void;
   readonly registerWorkspaceInspector: (render: () => ReactNode) => () => void;
   readonly setPrimarySidebarSearchQuery: (query: string) => void;
@@ -126,7 +135,10 @@ const AdaptiveWorkspaceContext = createContext<AdaptiveWorkspaceContextValue>({
   panes: compactPanes,
   fileInspector: compactFileInspector,
   primarySidebarSearchQuery: "",
+  startNewTask: () => undefined,
+  deferThreadSelectionUntil: () => undefined,
   selectThread: () => undefined,
+  selectThreadRoute: () => undefined,
   activateAuxiliaryPaneRole: () => () => undefined,
   registerWorkspaceInspector: () => () => undefined,
   setPrimarySidebarSearchQuery: () => undefined,
@@ -485,9 +497,93 @@ function AdaptiveWorkspaceLayoutContent(
     });
   };
 
+  const selectAndroidWorkspace = useAndroidWorkspaceSelection();
+  const deferredThreadSelection = useMemo(() => createDeferredNavigation(), []);
+  function handleSelectThreadRoute(params: ReactNavigation.RootParamList["Thread"]) {
+    deferredThreadSelection.run(() => applyThreadRouteSelection(params));
+  }
+  function applyThreadRouteSelection(params: ReactNavigation.RootParamList["Thread"]) {
+    if (Platform.OS === "android") {
+      setFileInspectorPreferredVisible(false);
+      selectAndroidWorkspace({ name: "Thread", params });
+      return;
+    }
+    const navigationAction = resolveThreadSelectionNavigationAction({
+      usesSplitView: layout.usesSplitView,
+      pathname,
+      workspaceRouteName: navigation
+        .getState()
+        ?.routes.find((route) => route.key === props.workspaceRouteKey)?.name,
+    });
+    const overlayState = resolveThreadSelectionOverlayState({
+      state: navigation.getState(),
+      workspaceRouteKey: props.workspaceRouteKey,
+      action: navigationAction,
+      params,
+    });
+    if (overlayState !== null) {
+      setFileInspectorPreferredVisible(false);
+      navigation.dispatch(CommonActions.reset(overlayState));
+      return;
+    }
+    if (navigationAction === "set-params") {
+      setFileInspectorPreferredVisible(false);
+      const state = navigation.getState();
+      const route = state?.routes.find((candidate) => candidate.key === props.workspaceRouteKey);
+      if (route?.name === "Thread") {
+        navigation.dispatch({
+          ...CommonActions.setParams({
+            environmentId: undefined,
+            threadId: undefined,
+            draft: undefined,
+            ...params,
+          }),
+          source: route.key,
+        });
+      } else {
+        navigation.navigate("Thread", params);
+      }
+      return;
+    }
+    if (navigationAction === "replace") {
+      setFileInspectorPreferredVisible(false);
+      navigation.dispatch(StackActions.replace("Thread", params));
+      return;
+    }
+    navigation.navigate("Thread", params);
+  }
+
+  const projects = useProjects();
   const handleStartNewTask = () => {
-    navigation.navigate("NewTaskSheet", { screen: "NewTask" });
+    const thread = appAtomRegistry
+      .get(environmentThreadShells.navigationThreadShellsAtom)
+      .find((candidate) => candidate.environmentId === environmentId && candidate.id === threadId);
+    const currentRoute = navigation
+      .getState()
+      ?.routes.find((route) => route.key === props.workspaceRouteKey);
+    const draft =
+      currentRoute?.name === "Thread"
+        ? (currentRoute.params as ReactNavigation.RootParamList["Thread"])?.draft
+        : undefined;
+    const first = (value: string | string[] | undefined) =>
+      Array.isArray(value) ? value[0] : value;
+    const draftEnvironmentId = first(draft?.environmentId);
+    const draftProjectId = first(draft?.projectId);
+    const currentProject = thread
+      ? { environmentId: thread.environmentId, id: thread.projectId }
+      : projects.find(
+          (project) =>
+            project.environmentId === draftEnvironmentId && project.id === draftProjectId,
+        );
+    handleSelectThreadRoute(
+      newTaskDestination(layout.usesSplitView, projects, currentProject, uuidv4()),
+    );
   };
+
+  useHardwareKeyboardCommand("newTask", () => {
+    handleStartNewTask();
+    return true;
+  });
 
   // Minted here (root stack navigation) so the sidebar pane stays free of
   // navigation hooks — on iOS it renders inside an independent nav tree.
@@ -499,12 +595,13 @@ function AdaptiveWorkspaceLayoutContent(
   };
 
   const handleOpenThreadPullRequests = useOpenThreadPullRequests();
-  const { openPendingTask: handleOpenPendingTask } = usePendingTaskListActions();
+  const { openPendingTask: handleOpenPendingTask } =
+    usePendingTaskListActions(handleSelectThreadRoute);
 
   const handleNewThreadOnBranch = (thread: EnvironmentThreadShell) => {
-    navigation.navigate("NewTaskSheet", {
-      screen: "NewTaskDraft",
-      params: {
+    handleSelectThreadRoute({
+      draft: {
+        requestId: uuidv4(),
         environmentId: String(thread.environmentId),
         projectId: String(thread.projectId),
         branch: thread.branch,
@@ -514,9 +611,9 @@ function AdaptiveWorkspaceLayoutContent(
   };
 
   const handleNewThreadInProject = (project: EnvironmentProject) => {
-    navigation.navigate("NewTaskSheet", {
-      screen: "NewTaskDraft",
-      params: {
+    handleSelectThreadRoute({
+      draft: {
+        requestId: uuidv4(),
         environmentId: String(project.environmentId),
         projectId: String(project.id),
         title: project.title,
@@ -684,47 +781,11 @@ function AdaptiveWorkspaceLayoutContent(
     ),
   );
 
-  const selectAndroidWorkspace = useAndroidWorkspaceSelection();
   const handleSelectThread = (thread: EnvironmentThreadShell) => {
-    const params = {
+    handleSelectThreadRoute({
       environmentId: String(thread.environmentId),
       threadId: String(thread.id),
-    };
-    if (Platform.OS === "android") {
-      setFileInspectorPreferredVisible(false);
-      selectAndroidWorkspace({ name: "Thread", params });
-      return;
-    }
-    const navigationAction = resolveThreadSelectionNavigationAction({
-      usesSplitView: layout.usesSplitView,
-      pathname,
     });
-    const overlayState = resolveThreadSelectionOverlayState({
-      state: navigation.getState(),
-      workspaceRouteKey: props.workspaceRouteKey,
-      action: navigationAction,
-      params,
-    });
-    if (overlayState !== null) {
-      setFileInspectorPreferredVisible(false);
-      navigation.dispatch(CommonActions.reset(overlayState));
-      return;
-    }
-    if (navigationAction === "set-params") {
-      const nextThreadKey = scopedThreadKey(thread.environmentId, thread.id);
-      if (nextThreadKey === selectedThreadKey) {
-        return;
-      }
-      setFileInspectorPreferredVisible(false);
-      navigation.navigate("Thread", params);
-      return;
-    }
-    if (navigationAction === "replace") {
-      setFileInspectorPreferredVisible(false);
-      navigation.dispatch(StackActions.replace("Thread", params));
-      return;
-    }
-    navigation.navigate("Thread", params);
   };
 
   const contextValue = {
@@ -732,7 +793,10 @@ function AdaptiveWorkspaceLayoutContent(
     panes,
     fileInspector,
     primarySidebarSearchQuery,
+    startNewTask: handleStartNewTask,
+    deferThreadSelectionUntil: deferredThreadSelection.waitFor,
     selectThread: handleSelectThread,
+    selectThreadRoute: handleSelectThreadRoute,
     activateAuxiliaryPaneRole,
     registerWorkspaceInspector,
     setPrimarySidebarSearchQuery,
@@ -881,6 +945,7 @@ function AdaptiveWorkspaceLayoutContent(
                 style={railOverlay ? { right: 0 } : { width: navigationRailWidth }}
               >
                 <AndroidWorkspaceNavigation
+                  onNewThread={handleStartNewTask}
                   rail
                   onSelect={revealPrimarySidebar}
                   onOverlayChange={setRailOverlay}

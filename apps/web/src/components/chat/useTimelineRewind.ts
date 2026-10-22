@@ -1,5 +1,4 @@
-import type { EnvironmentThread } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentThreadShell, ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import type { ComposerThreadTarget } from "../../composerDraftStore";
 import type { ComposerHandleRef } from "../../composerHandleContext";
 import type { SessionPhase } from "../../types";
@@ -39,7 +38,7 @@ interface TimelineRewindInput {
   readonly routeThreadRef: ScopedThreadRef;
   readonly routeThreadKey: string;
   readonly currentRouteThreadKeyRef: { readonly current: string | null };
-  readonly serverProjection: EnvironmentThread["projection"] | null;
+  readonly serverProjection: ThreadStructure | null;
   readonly activeThread: EnvironmentThreadShell | undefined;
   readonly timelineMessages: ReadonlyArray<ChatMessage>;
   readonly paintOnlyDisplayedTimeline: boolean;

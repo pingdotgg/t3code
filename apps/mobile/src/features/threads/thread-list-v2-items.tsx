@@ -146,8 +146,6 @@ const LEGACY_MENU_ACTIONS: MenuAction[] = [
   { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
 ];
 
-const SIDEBAR_V2_ROW_RADIUS = 12;
-
 function ThreadListV2Section(props: {
   readonly label: string;
   readonly pane?: "screen" | "sidebar";
@@ -316,6 +314,7 @@ const DRAFT_TASK_MENU_ACTIONS: MenuAction[] = [
 
 export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props: {
   readonly pendingTask: PendingNewTask;
+  readonly selected?: boolean;
   readonly project: EnvironmentProject | null;
   readonly projectTitle?: string;
   readonly environmentLabel: string | null;
@@ -336,7 +335,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
   const dormant = useSwipeRowDormant(props.activationKey);
   const theme = useUniwindTheme();
   const sidebarPane = props.pane === "sidebar";
-  const rowAppearance = getThreadListV2RowAppearance(theme, sidebarPane, false);
+  const rowAppearance = getThreadListV2RowAppearance(theme, sidebarPane, props.selected ?? false);
   const isDraft = pendingTask.kind === "draft";
   const deleteLabel = isDraft ? "Discard" : "Delete";
   const handleDelete = useCallback(
@@ -497,19 +496,13 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
               }
               accessibilityLabel={pendingTask.title}
               accessibilityRole="button"
+              accessibilityState={{ selected: props.selected ?? false }}
               key={pendingTask.key}
-              className={sidebarPane ? "bg-drawer" : "bg-screen"}
-              interactionClassName={sidebarPane ? "bg-thread-hover" : "bg-row-hover"}
+              className={rowAppearance.className}
+              interactionClassName={rowAppearance.interactionClassName}
+              interactionOpacity={rowAppearance.interactionOpacity}
               onPress={() => onSelectPendingTask(pendingTask)}
-              style={
-                sidebarPane
-                  ? {
-                      borderRadius: SIDEBAR_V2_ROW_RADIUS,
-                      paddingHorizontal: 12,
-                      paddingVertical: 10,
-                    }
-                  : undefined
-              }
+              style={rowAppearance.cardStyle}
             >
               {sidebarPane ? (
                 rowContent

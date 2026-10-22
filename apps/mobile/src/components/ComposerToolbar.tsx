@@ -1,7 +1,6 @@
 import type { ComponentProps, ReactNode } from "react";
 import { useCallback, useMemo, useState } from "react";
 import {
-  Platform,
   Pressable,
   ScrollView,
   View,
@@ -13,7 +12,7 @@ import {
   type ViewStyle,
 } from "react-native";
 
-import Animated, { FadeIn, LinearTransition } from "react-native-reanimated";
+import Animated, { FadeIn } from "react-native-reanimated";
 
 import { cn } from "../lib/cn";
 import { AppText as Text } from "./ui/AppText";
@@ -24,11 +23,8 @@ const COMPOSER_TOOLBAR_GAP = 8;
 const COMPOSER_TOOLBAR_FADE_WIDTH = 18;
 const COMPOSER_TOOLBAR_SCROLL_EPSILON = 4;
 const INLINE_CONTROL_LABEL_ENTERING = FadeIn.duration(160);
-// Android runs no composer layout transitions, so the toolbar never trails the dock.
-const INLINE_CONTROL_WIDTH_TRANSITION =
-  Platform.OS === "android" ? undefined : LinearTransition.duration(180);
-
 export function ComposerInlineControl(props: {
+  readonly size?: "regular" | "large";
   readonly accessibilityHint?: string;
   readonly accessibilityLabel?: string;
   readonly disabled?: boolean;
@@ -47,13 +43,11 @@ export function ComposerInlineControl(props: {
   readonly showChevron?: boolean;
 }) {
   const { scale, smallIconSize } = useAndroidControlSizing();
-  // The label fades in as the control widens, and leaves at once: an exiting view keeps
-  // drawing at its old place while the chevron moves into it. The clip keeps content laid out
-  // at the final width inside the frame while it eases there.
+  // Keep the picker anchored to its parent while the editor changes height.
   const animatesLabel = props.iconOnly !== undefined;
+  const iconSize = props.size === "large" ? 20 : smallIconSize;
   return (
     <Animated.View
-      layout={animatesLabel ? INLINE_CONTROL_WIDTH_TRANSITION : undefined}
       style={{
         maxWidth: props.maxWidth ?? 190,
         overflow: animatesLabel ? "hidden" : undefined,
@@ -66,7 +60,7 @@ export function ComposerInlineControl(props: {
         accessibilityState={
           props.static ? undefined : { disabled: props.disabled, selected: props.selected }
         }
-        className="h-11 flex-row items-center gap-2 rounded-xl px-2 active:bg-subtle"
+        className="h-[44px] flex-row items-center gap-2 rounded-xl px-2 active:bg-subtle"
         disabled={props.disabled || props.static}
         onPress={props.onPress}
         style={{ opacity: props.disabled ? 0.45 : 1 }}
@@ -74,16 +68,14 @@ export function ComposerInlineControl(props: {
         {props.renderIcon ? (
           <View
             className="size-4 shrink-0 items-center justify-center"
-            style={
-              Platform.OS === "android" ? { width: 14 * scale, height: 14 * scale } : undefined
-            }
+            style={{ width: iconSize, height: iconSize }}
           >
-            {props.renderIcon(smallIconSize)}
+            {props.renderIcon(iconSize)}
           </View>
         ) : props.icon ? (
           <SymbolView
             name={props.icon}
-            size={smallIconSize}
+            size={iconSize}
             tintColorClassName={
               props.emphasized || props.selected ? "accent-icon" : "accent-icon-muted"
             }
@@ -97,7 +89,7 @@ export function ComposerInlineControl(props: {
           >
             <Text
               className={cn(
-                "text-sm font-t3-medium",
+                props.size === "large" ? "text-base font-t3-medium" : "text-sm font-t3-medium",
                 props.emphasized || props.selected ? "text-foreground" : "text-foreground-muted",
               )}
               numberOfLines={1}
@@ -112,7 +104,7 @@ export function ComposerInlineControl(props: {
         {props.showChevron === false ? null : (
           <SymbolView
             name={props.chevronDirection === "right" ? "chevron.right" : "chevron.down"}
-            size={Math.round(10 * scale)}
+            size={Math.round((props.size === "large" ? 12 : 10) * scale)}
             tintColorClassName={
               props.emphasized || props.selected ? "accent-icon" : "accent-icon-muted"
             }
@@ -252,6 +244,7 @@ export function ComposerToolbarScroller(props: {
 }
 
 export function ComposerActionButton(props: {
+  readonly size?: "regular" | "large";
   readonly accessibilityLabel: string;
   readonly disabled?: boolean;
   readonly icon: ComponentProps<typeof SymbolView>["name"];
@@ -263,13 +256,14 @@ export function ComposerActionButton(props: {
   readonly onTouchStart?: PressableProps["onTouchStart"];
 }) {
   const { scale, smallIconSize } = useAndroidControlSizing();
-  const circleSize = Math.round(30 * scale);
+  const circleSize = Math.round((props.size === "large" ? 44 : 30) * scale);
   return (
     <Pressable
       accessibilityLabel={props.accessibilityLabel}
       accessibilityRole="button"
       accessibilityState={{ disabled: props.disabled }}
       className="size-[44px] shrink-0 items-center justify-center active:opacity-70"
+      style={props.size === "large" ? { width: 62 } : undefined}
       disabled={props.disabled}
       onPress={props.onPress}
       onLongPress={props.onLongPress}
@@ -288,7 +282,7 @@ export function ComposerActionButton(props: {
       >
         <SymbolView
           name={props.icon}
-          size={smallIconSize}
+          size={props.size === "large" ? Math.round(20 * scale) : smallIconSize}
           weight="semibold"
           tintColorClassName={
             props.variant === "danger" ? "accent-danger-foreground" : "accent-primary-foreground"
