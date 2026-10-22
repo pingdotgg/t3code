@@ -47,7 +47,7 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
   const names = installNames[editor.id] ?? [editor.label];
   const command = editor.commands[0];
   const jetbrains = editor.launchStyle === "line-column";
-  // A Toolbox script names its IDE by absolute path. Keep a numbered script
+  // A Toolbox script names its IDE by absolute path or a HOME-based path. Keep a numbered script
   // only while one of those paths exists, so a script left behind by a
   // removed IDE is skipped. The script is read, never run.
   const hasLaunchTarget = Effect.fn("editor.hasLaunchTarget")(function* (script: string) {
@@ -57,6 +57,9 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
       .filter((line) => !/^\s*(#|::|@?rem\b)/i.test(line))
       .flatMap((line) => [...line.matchAll(/"([^"]*)"|([^\s"=;]+)/g)])
       .map((match) => match[1] ?? match[2] ?? "")
+      .map((target) =>
+        home ? target.replace(/^\$(?:HOME|\{HOME\})(?=\/)/, () => home) : target,
+      )
       .filter((target) => path.isAbsolute(target));
     for (const target of targets) {
       if (yield* fs.exists(target).pipe(Effect.orElseSucceed(() => false))) return true;
