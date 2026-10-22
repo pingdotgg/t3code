@@ -980,7 +980,6 @@ interface StagePackageJson {
 }
 
 export const STAGE_INSTALL_ARGS = ["install", "--prod"] as const;
-export const DESKTOP_ELECTRON_LANGUAGES = ["en-US"] as const;
 export const DESKTOP_FILE_EXCLUSIONS = [
   // Cursor finds platform assets by walking up from argv[1]. Keep them outside
   // asar so spawning helpers and loading native addons both use real paths.
@@ -2832,7 +2831,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     appId: DESKTOP_APP_ID,
     productName: resolveDesktopProductName(version),
     artifactName: "T3-Code-${version}-${arch}.${ext}",
-    electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
+    // Leave electronLanguages unset. Chromium takes navigator.language, the
+    // default Intl locale and date input formats from the shipped locale paks,
+    // so trimming them pins every page in the built-in browser to en-US.
     files: [
       ...DESKTOP_FILE_EXCLUSIONS,
       ...(platform === "mac"
