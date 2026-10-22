@@ -532,7 +532,19 @@ export const make = Effect.gen(function* () {
       groups.values(),
       (group) =>
         Effect.gen(function* () {
-          const pullRequest = yield* pullRequestFor(group);
+          const pullRequest = yield* pullRequestFor(group).pipe(
+            Effect.catchTags({
+              PullRequestUnavailableError: (error) =>
+                Effect.logWithLevel(error.reason === "provider-unsupported" ? "Debug" : "Warn")(
+                  "automatic thread settlement deferred; change request provider unavailable",
+                  {
+                    threadIds: group.map((thread) => thread.id),
+                    projectId: group[0]!.projectId,
+                    reason: error.reason,
+                  },
+                ).pipe(Effect.as(undefined)),
+            }),
+          );
           if (pullRequest === undefined) return;
           yield* Effect.forEach(group, (thread) => settleThread(thread, pullRequest), {
             discard: true,

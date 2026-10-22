@@ -4,6 +4,7 @@ import * as DateTime from "effect/DateTime";
 import {
   DEFAULT_SERVER_SETTINGS,
   ProjectId,
+  PullRequestUnavailableError,
   EventId,
   ProviderInstanceId,
   RuntimeRequestId,
@@ -28,9 +29,11 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Logger from "effect/Logger";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as References from "effect/References";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 
@@ -793,6 +796,59 @@ describe("ThreadSettlementServiceV2 worker", () => {
       }),
     ),
   );
+  it.effect("keeps unsupported hosts quiet and explains unavailable provider credentials", () =>
+    Effect.gen(function* () {
+      for (const reason of [
+        "provider-unsupported",
+        "cli-missing",
+        "cli-unauthenticated",
+      ] as const) {
+        const logs: Array<{ level: string; message: ReadonlyArray<unknown> }> = [];
+        const logger = Logger.make(({ logLevel, message }) => {
+          logs.push({ level: logLevel, message: Array.isArray(message) ? message : [message] });
+        });
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            yield* TestClock.setTime(Date.parse(NOW));
+            const thread = makeThread("unavailable-pr", {
+              branch: null,
+              branchPullRequest: {
+                projectId: PROJECT_ID,
+                repository: "owner/repository",
+                number: 42,
+                url: "https://example.test/owner/repository/pull/42",
+              },
+            });
+            const fixture = yield* makeHarness({
+              snapshot: makeSnapshot([thread]),
+              settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleAfterDays: null },
+              pullRequestSummary: () => Effect.fail(new PullRequestUnavailableError({ reason })),
+            });
+            yield* Effect.gen(function* () {
+              const reactor = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+              yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+              expect(yield* Ref.get(fixture.commands)).toEqual([]);
+            }).pipe(Effect.provide(fixture.layer));
+            expect(logs).toContainEqual({
+              level: reason === "provider-unsupported" ? "Debug" : "Warn",
+              message: [
+                "automatic thread settlement deferred; change request provider unavailable",
+                {
+                  threadIds: [thread.id],
+                  projectId: PROJECT_ID,
+                  reason,
+                },
+              ],
+            });
+          }),
+        ).pipe(
+          Effect.provide(Logger.layer([logger], { mergeWithExisting: false })),
+          Effect.provideService(References.MinimumLogLevel, "Debug"),
+        );
+      }
+    }),
+  );
+
   it.effect("settles a merged pull request stored only in the thread links", () =>
     Effect.scoped(
       Effect.gen(function* () {
