@@ -13,7 +13,7 @@ export const SOCKET_FRAME_PARTS_QUERY_PARAM = "frameParts";
 // link a multi-megabyte config snapshot outlasts the ping timeout, so the
 // client drops a healthy server and asks for the same snapshot again. Parts
 // this size keep a frame arriving within the timeout down to a few KB/s.
-export const SOCKET_FRAME_PART_LENGTH = 64 * 1024;
+export const SOCKET_FRAME_PART_BYTES = 64 * 1024;
 
 // No JSON message starts with a record separator. It marks every part but the last.
 const PART_PREFIX = "\u001e";
@@ -22,20 +22,27 @@ const PART_PREFIX = "\u001e";
 // ignores pongs, so each held-back part reads to it as one.
 const PART_RECEIVED_FRAME = '{"_tag":"Pong"}';
 
+/** Splits on the UTF-8 size the frame has on the wire, never inside a surrogate pair. */
 export function splitSocketFrame(
   frame: string,
-  partLength = SOCKET_FRAME_PART_LENGTH,
+  partBytes = SOCKET_FRAME_PART_BYTES,
 ): Arr.NonEmptyReadonlyArray<string> {
-  if (frame.length <= partLength) return [frame];
+  // UTF-8 spends at most 3 bytes on a UTF-16 code unit.
+  if (frame.length * 3 <= partBytes) return [frame];
   const parts: Array<string> = [];
   let start = 0;
-  while (frame.length - start > partLength) {
-    let end = start + partLength;
-    // A lone surrogate half does not survive the UTF-8 encoding of a text frame.
-    const last = frame.charCodeAt(end - 1);
-    if (last >= 0xd800 && last <= 0xdbff) end -= 1;
-    parts.push(PART_PREFIX + frame.slice(start, end));
-    start = end;
+  let bytes = PART_PREFIX.length;
+  for (let index = 0; index < frame.length;) {
+    const code = frame.charCodeAt(index);
+    const pair = code >= 0xd800 && code <= 0xdbff && index + 1 < frame.length;
+    const size = pair ? 4 : code < 0x80 ? 1 : code < 0x800 ? 2 : 3;
+    if (bytes + size > partBytes) {
+      parts.push(PART_PREFIX + frame.slice(start, index));
+      start = index;
+      bytes = PART_PREFIX.length;
+    }
+    bytes += size;
+    index += pair ? 2 : 1;
   }
   return Arr.append(parts, frame.slice(start));
 }
@@ -48,9 +55,7 @@ export function splitLargeSocketFrames(socket: Socket.Socket): Socket.Socket {
     reader: socket.reader,
     writer: Effect.map(socket.writer, (writer) => ({
       write: (chunk) =>
-        typeof chunk === "string" && chunk.length > SOCKET_FRAME_PART_LENGTH
-          ? writer.writeAll(splitSocketFrame(chunk))
-          : writer.write(chunk),
+        typeof chunk === "string" ? writer.writeAll(splitSocketFrame(chunk)) : writer.write(chunk),
       writeAll: (chunks) => writer.writeAll(Arr.flatMap(chunks, split)),
     })),
   });
