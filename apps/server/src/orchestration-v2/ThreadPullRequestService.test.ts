@@ -15,10 +15,12 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
+import * as References from "effect/References";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -87,6 +89,111 @@ describe("ThreadPullRequestServiceV2 reads", () => {
       deletedAt: null,
     };
   };
+
+  it.effect("logs stale discovery at debug while preserving unexpected dispatch warnings", () =>
+    Effect.gen(function* () {
+      for (const stale of [true, false]) {
+        const logs: Array<{ level: string; message: unknown }> = [];
+        const logger = Logger.make(({ logLevel, message }) => {
+          logs.push({ level: logLevel, message: Array.isArray(message) ? message[0] : message });
+        });
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const thread = { ...threadShell("discovery-thread"), branch: "feature" };
+            const project = {
+              id: thread.projectId,
+              title: "Project",
+              workspaceRoot: "/repo",
+              defaultModelSelection: null,
+              scripts: [],
+              createdAt: "2026-09-20T00:00:00.000Z",
+              updatedAt: "2026-09-20T00:00:00.000Z",
+              repositoryIdentity: {
+                canonicalKey: "github.com/owner/repo",
+                provider: "github" as const,
+                locator: {
+                  source: "git-remote" as const,
+                  remoteName: "origin",
+                  remoteUrl: "https://github.com/owner/repo.git",
+                },
+                displayName: "owner/repo",
+              },
+            } satisfies OrchestrationProjectShell;
+            const lookupStarted = yield* Deferred.make<void>();
+            const dependencies = Layer.mergeAll(
+              Layer.mock(Orchestrator.OrchestratorV2)({
+                streamDomainEvents: Stream.never,
+                getShellSnapshot: () =>
+                  Effect.succeed({
+                    schemaVersion: 2,
+                    snapshotSequence: 1,
+                    threads: [thread],
+                    archivedThreads: [],
+                  }),
+                dispatch: (command) =>
+                  Effect.fail(
+                    new Orchestrator.OrchestratorDispatchError({
+                      commandId: command.commandId,
+                      commandType: command.type,
+                      ...(stale ? { reason: "stale-snapshot" as const } : {}),
+                      cause: new Error(stale ? "changed before discovery" : "unexpected failure"),
+                    }),
+                  ),
+              }),
+              Layer.mock(ProjectStore.ProjectStoreV2)({
+                listShells: () => Effect.succeed([project]),
+                getShell: () => Effect.succeedSome(project),
+              }),
+              Layer.mock(GitManager.GitManager)({
+                branchPullRequest: () =>
+                  Deferred.succeed(lookupStarted, undefined).pipe(
+                    Effect.as({
+                      number: 42,
+                      title: "PR",
+                      url: "https://github.com/owner/repo/pull/42",
+                      baseRef: "main",
+                      headRef: "feature",
+                      state: "open" as const,
+                      repositoryKey: "github.com/owner/repo",
+                      updatedAt: null,
+                    }),
+                  ),
+              }),
+              Layer.mock(PullRequestService.PullRequestService)({}),
+              Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
+                resolve: () => Effect.succeed(project.repositoryIdentity),
+              }),
+              Layer.succeed(ServerActivation.ServerActivation, Effect.void),
+              Layer.succeed(
+                Crypto.Crypto,
+                Crypto.make({
+                  randomBytes: (size) => new Uint8Array(size).fill(1),
+                  digest: (_algorithm, data) => Effect.succeed(data),
+                }),
+              ),
+              FileSystem.layerNoop({}),
+            );
+            yield* Effect.gen(function* () {
+              const service = yield* ThreadPullRequestService.make;
+              yield* service.start();
+              yield* Deferred.await(lookupStarted);
+              yield* service.drain;
+            }).pipe(Effect.provide(dependencies));
+          }),
+        ).pipe(
+          Effect.provide(Logger.layer([logger], { mergeWithExisting: false })),
+          Effect.provideService(References.MinimumLogLevel, "Debug"),
+        );
+        expect(logs).toContainEqual({
+          level: stale ? "Debug" : "Warn",
+          message: stale
+            ? "thread pull request discovery superseded; skipping stale result"
+            : "thread pull request update failed",
+        });
+        if (stale) expect(logs.some((log) => log.level === "Warn")).toBe(false);
+      }
+    }),
+  );
 
   it.effect("does not sweep branch pull requests while no client is connected", () =>
     Effect.scoped(

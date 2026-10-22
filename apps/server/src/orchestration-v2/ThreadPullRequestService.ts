@@ -319,6 +319,15 @@ export const make = Effect.gen(function* () {
                 });
                 pendingBackfill.delete(thread.id);
               }).pipe(
+                Effect.catchTags({
+                  OrchestratorDispatchError: (error) =>
+                    error.reason === "stale-snapshot"
+                      ? Effect.logDebug(
+                          "thread pull request discovery superseded; skipping stale result",
+                          { threadId: thread.id },
+                        ).pipe(Effect.tap(() => Effect.sync(() => failBackfill([thread]))))
+                      : Effect.fail(error),
+                }),
                 Effect.catchCauseIf(
                   (cause) => !Cause.hasInterruptsOnly(cause),
                   (cause) =>
