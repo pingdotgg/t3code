@@ -43,14 +43,20 @@ export const installUserPresence = Effect.fn("desktop.ipc.installUserPresence")(
     Effect.repeat(Schedule.spaced("5 seconds")),
     Effect.forkScoped,
   );
+  // Chromium reports 0 forever where it has no idle source (Wayland outside GNOME
+  // and KDE), which would read as someone always at the computer. Until the clock
+  // moves once, input in the window decides instead.
+  let idleClockMoved = false;
   yield* ipc.handle(
     DesktopIpc.makeIpcMethod({
       channel: GET_USER_IDLE_MS_CHANNEL,
       payload: Schema.Undefined,
-      result: Schema.NullOr(Schema.Number),
+      result: Schema.NullishOr(Schema.Number),
       handler: Effect.fn("desktop.ipc.getUserIdleMs")(function* () {
         if (suspended || (yield* powerMonitor.getSystemIdleState(1)) === "locked") return null;
-        return (yield* powerMonitor.getSystemIdleTime) * 1_000;
+        const idleSeconds = yield* powerMonitor.getSystemIdleTime;
+        if (idleSeconds > 0) idleClockMoved = true;
+        return idleClockMoved ? idleSeconds * 1_000 : undefined;
       }),
     }),
   );

@@ -23,12 +23,13 @@ function withUserPresence(
     }) => void;
     readonly fire: (eventName: string) => void;
   }) => Effect.Effect<void>,
+  initialIdleSeconds = 42,
 ) {
   native.webContents.send.mockClear();
   const handlers = new Map<string, DesktopIpc.DesktopIpcHandleListener>();
   const powerEvents = new Map<string, () => void>();
   const machine = {
-    idleSeconds: 42,
+    idleSeconds: initialIdleSeconds,
     idleState: "active" as ElectronPowerMonitor.ElectronIdleState,
   };
   return Effect.scoped(
@@ -95,5 +96,19 @@ it.effect("tells windows as soon as someone comes back after a minute away", () 
         expect(native.webContents.send).toHaveBeenCalledTimes(sends);
       }
     }),
+  ),
+);
+
+it.effect("leaves presence to window input until the idle clock has moved", () =>
+  withUserPresence(
+    ({ readIdleMs, set }) =>
+      Effect.gen(function* () {
+        expect(yield* readIdleMs()).toBeUndefined();
+        set({ idleSeconds: 6 });
+        expect(yield* readIdleMs()).toBe(6_000);
+        set({ idleSeconds: 0 });
+        expect(yield* readIdleMs()).toBe(0);
+      }),
+    0,
   ),
 );

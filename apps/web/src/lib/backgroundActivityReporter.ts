@@ -98,7 +98,7 @@ export function resolveUserIdleMs(input: {
   readonly visible: boolean;
   readonly focused: boolean;
   readonly canNotify: boolean;
-  /** `undefined` without a desktop shell, `null` while the computer is locked or asleep. */
+  /** `undefined` without a working desktop idle clock, `null` while the computer is locked or asleep. */
   readonly systemIdleMs: number | null | undefined;
   /** `undefined` until this page has seen input. */
   readonly pageIdleMs: number | undefined;

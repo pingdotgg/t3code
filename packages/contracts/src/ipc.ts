@@ -1033,8 +1033,11 @@ export interface DesktopBridge {
   getClientPlatform?: () => string;
   setNotificationBadge?: (badge: { count: number; image: string | null }) => Promise<void>;
   onNotificationBadgeClear?: (listener: () => void) => () => void;
-  /** Milliseconds since any input on this computer, or null while it is locked or asleep. */
-  getUserIdleMs?: () => Promise<number | null>;
+  /**
+   * Milliseconds since any input on this computer, null while it is locked or asleep,
+   * or undefined until the OS idle clock has moved once.
+   */
+  getUserIdleMs?: () => Promise<number | null | undefined>;
   onUserAwayChange?: (listener: () => void) => () => void;
   onTrackpadScrollEnd?: (listener: () => void) => () => void;
   /**
