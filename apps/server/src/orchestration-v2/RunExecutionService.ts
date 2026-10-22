@@ -510,6 +510,8 @@ export function routeProviderEvent(
             state.ownedProviderTurns.has(event.runtimeRequest.providerTurnId)),
         state,
       ];
+    case "background_work.updated":
+      return [state.ownedProviderTurns.has(event.providerTurnId), state];
     case "command_output.delta":
       // The session manager hands live output to the command output hub; runs never see it.
       return [false, state];
@@ -1024,6 +1026,7 @@ export const layer: Layer.Layer<
         const rootTerminalSeen = yield* Ref.make(false);
         const rootRunFinalized = yield* Ref.make(false);
         const providerThreadOwnerLost = yield* Ref.make(false);
+        const pendingBackgroundProviderTurns = new Set<ProviderTurnId>();
         const activeChildProviderTurns = yield* Ref.make<ReadonlySet<ProviderTurnId>>(new Set());
         const activeChildSubagents = yield* Ref.make<ReadonlyMap<NodeId, ThreadId>>(new Map());
         const activeBackgroundTurnItems = yield* Ref.make<
@@ -1221,6 +1224,9 @@ export const layer: Layer.Layer<
             !childTurnsContinue(terminal)
           ) {
             return true;
+          }
+          if (pendingBackgroundProviderTurns.size > 0) {
+            return false;
           }
           const childProviderTurns = yield* Ref.get(activeChildProviderTurns);
           if (childProviderTurns.size > 0) {
@@ -1425,6 +1431,13 @@ export const layer: Layer.Layer<
                 yield* Ref.set(terminalEvent, event);
                 yield* Ref.set(rootTerminalSeen, true);
                 yield* finalizeRootRun(event);
+              }
+              if (event.type === "background_work.updated") {
+                if (event.pending) {
+                  pendingBackgroundProviderTurns.add(event.providerTurnId);
+                } else {
+                  pendingBackgroundProviderTurns.delete(event.providerTurnId);
+                }
               }
               yield* trackChildLifecycle(event, deliveredEvent !== null);
             }),

@@ -1747,6 +1747,160 @@ it.effect("ends a nested native subagent and its thread when the root run is int
   }),
 );
 
+it.effect(
+  "ingests every queued generated-image update when pending work clears during root finalization",
+  () =>
+    Effect.gen(function* () {
+      const key = "late-generated-image-chunks";
+      const ids = backgroundScenarioIds(key);
+      const now = yield* DateTime.now;
+      const pending = yield* Ref.make(true);
+      const ingested = yield* Ref.make<ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>>([]);
+      const nodeId = NodeId.make(`node:${key}:assistant`);
+      const messageId = MessageId.make(`message:${key}:assistant`);
+      const text = "Here is the image.";
+      const imageText = `${text}\n\n![Generated image](file:///tmp/codex-08/a%23b%2525%3F.png)`;
+      const nodeEvent = {
+        type: "node.updated",
+        driver,
+        node: {
+          id: nodeId,
+          threadId: ids.threadId,
+          runId: ids.runId,
+          parentNodeId: ids.rootNodeId,
+          rootNodeId: ids.rootNodeId,
+          kind: "assistant_message",
+          status: "completed",
+          countsForRun: false,
+          providerThreadId: ids.providerThreadId,
+          providerTurnId: ids.rootProviderTurnId,
+          nativeItemRef: null,
+          runtimeRequestId: null,
+          checkpointScopeId: null,
+          startedAt: now,
+          completedAt: now,
+        },
+      } satisfies ProviderAdapter.ProviderAdapterV2Event;
+      const messageEvent = {
+        type: "message.updated",
+        driver,
+        message: {
+          id: messageId,
+          threadId: ids.threadId,
+          runId: ids.runId,
+          nodeId,
+          role: "assistant",
+          createdBy: "agent",
+          creationSource: "provider",
+          text,
+          attachments: [],
+          streaming: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      } satisfies ProviderAdapter.ProviderAdapterV2Event;
+      const itemEvent = {
+        type: "turn_item.updated",
+        driver,
+        turnItem: {
+          id: ids.itemId,
+          threadId: ids.threadId,
+          runId: ids.runId,
+          nodeId,
+          providerThreadId: ids.providerThreadId,
+          providerTurnId: ids.rootProviderTurnId,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1,
+          status: "completed",
+          title: null,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "assistant_message",
+          messageId,
+          text,
+          streaming: false,
+        },
+      } satisfies ProviderAdapter.ProviderAdapterV2Event;
+      const lateMessage = {
+        ...messageEvent,
+        message: { ...messageEvent.message, text: imageText },
+      };
+      const lateItem = { ...itemEvent, turnItem: { ...itemEvent.turnItem, text: imageText } };
+      const bothImagesText = `${imageText}\n\n![Generated image](file:///tmp/codex-08/second.png)`;
+      const secondLateMessage = {
+        ...messageEvent,
+        message: { ...messageEvent.message, text: bothImagesText },
+      };
+      const secondLateItem = {
+        ...itemEvent,
+        turnItem: { ...itemEvent.turnItem, text: bothImagesText },
+      };
+      const terminal = rootTerminalEvent(ids, "completed");
+      const backgroundStarted = {
+        type: "background_work.updated",
+        driver,
+        providerTurnId: ids.rootProviderTurnId,
+        pending: true,
+      } satisfies ProviderAdapter.ProviderAdapterV2Event;
+      const backgroundCompleted = { ...backgroundStarted, pending: false };
+
+      const observed = yield* runBackgroundItemScenario(
+        key,
+        () =>
+          Stream.fromIterable([
+            backgroundStarted,
+            nodeEvent,
+            messageEvent,
+            itemEvent,
+            terminal,
+          ]).pipe(
+            // Both completions are queued when pending clears during root finalization.
+            // Separate chunks expose stop checks before the first node and between completions.
+            Stream.concat(Stream.succeed(nodeEvent)),
+            Stream.concat(Stream.succeed(lateMessage)),
+            Stream.concat(Stream.succeed(lateItem)),
+            Stream.concat(Stream.succeed(nodeEvent)),
+            Stream.concat(Stream.succeed(secondLateMessage)),
+            Stream.concat(Stream.succeed(secondLateItem)),
+            Stream.concat(Stream.succeed(backgroundCompleted)),
+          ),
+        {
+          keepEventStreamOpen: true,
+          hasPendingBackgroundWorkForThread: (providerThread) => {
+            assert.equal(providerThread.id, ids.providerThreadId);
+            return Ref.get(pending);
+          },
+          onFinalized: () => Ref.set(pending, false),
+          onIngest: (event) => Ref.update(ingested, (current) => [...current, event]),
+        },
+      );
+
+      assert.deepEqual(yield* Ref.get(ingested), [
+        backgroundStarted,
+        nodeEvent,
+        messageEvent,
+        itemEvent,
+        terminal,
+        nodeEvent,
+        lateMessage,
+        lateItem,
+        nodeEvent,
+        secondLateMessage,
+        secondLateItem,
+        backgroundCompleted,
+      ]);
+      assert.deepEqual(observed, [
+        "turn_item:completed",
+        "root-finalized",
+        "turn_item:completed",
+        "turn_item:completed",
+      ]);
+      assert.isFalse(yield* Ref.get(pending));
+    }),
+);
+
 it.effect("keeps ingesting a child thread's late background item completion", () =>
   Effect.gen(function* () {
     const observed = yield* runBackgroundItemScenario("bg-child-item", (ids) => [
@@ -3243,9 +3397,17 @@ function rootTerminalEvent(
 
 function runBackgroundItemScenario(
   key: string,
-  makeEvents: (ids: BackgroundScenarioIds) => ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
+  makeEvents: (
+    ids: BackgroundScenarioIds,
+  ) =>
+    | ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>
+    | Stream.Stream<ProviderAdapter.ProviderAdapterV2Event>,
   options?: {
     readonly keepEventStreamOpen?: boolean;
+    readonly hasPendingBackgroundWorkForThread?: (
+      providerThread: OrchestrationV2ProviderThread,
+    ) => Effect.Effect<boolean>;
+    readonly onIngest?: (event: ProviderAdapter.ProviderAdapterV2Event) => Effect.Effect<void>;
     readonly loadInheritedBackgroundTurnItems?: () => Effect.Effect<
       ReadonlyArray<{ readonly id: TurnItemId; readonly runId: RunId }>
     >;
@@ -3288,6 +3450,7 @@ function runBackgroundItemScenario(
             ingestNormalized: (input) =>
               Effect.gen(function* () {
                 const event = input.event;
+                yield* options?.onIngest?.(event) ?? Effect.void;
                 if (event.type === "turn_item.updated") {
                   yield* Ref.update(observed, (current) => [
                     ...current,
@@ -3316,9 +3479,13 @@ function runBackgroundItemScenario(
         providerSessionId: ProviderSessionId.make(`session:${key}`),
         session: {
           events: Stream.empty,
+          ...(options?.hasPendingBackgroundWorkForThread === undefined
+            ? {}
+            : { hasPendingBackgroundWorkForThread: options.hasPendingBackgroundWorkForThread }),
           subscribeEvents: Effect.gen(function* () {
             yield* options?.onSubscribe ?? Effect.void;
-            const events = Stream.fromIterable(makeEvents(ids)).pipe(
+            const source = makeEvents(ids);
+            const events = (Stream.isStream(source) ? source : Stream.fromIterable(source)).pipe(
               Stream.concat(
                 Stream.fromEffect(options?.onEventsConsumed ?? Effect.void).pipe(Stream.drain),
               ),

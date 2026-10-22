@@ -120,6 +120,14 @@ export const ProviderAdapterV2Event = Schema.Union([
     driver: ProviderDriverKind,
     turnItem: OrchestrationV2TurnItem,
   }),
+  // Start before the root terminal; clear only after the final covered projection.
+  // Consumer lifetime cannot depend on a producer probe that runs ahead of its queue.
+  Schema.Struct({
+    type: Schema.Literal("background_work.updated"),
+    driver: ProviderDriverKind,
+    providerTurnId: ProviderTurnId,
+    pending: Schema.Boolean,
+  }),
   /**
    * Raw output from a running command. Never persisted: the session manager
    * hands it to the command output hub, which only clients showing the row see.

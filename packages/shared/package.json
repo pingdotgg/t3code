@@ -459,6 +459,10 @@
       "types": "./src/proposedPlanText.ts",
       "import": "./src/proposedPlanText.ts"
     },
+    "./generatedImageMarkdown": {
+      "types": "./src/generatedImageMarkdown.ts",
+      "import": "./src/generatedImageMarkdown.ts"
+    },
     "./markdownPipeline": {
       "types": "./src/markdownPipeline.ts",
       "import": "./src/markdownPipeline.ts"

@@ -342,7 +342,7 @@ function keepWindowsPathEscape(this: EscapeCompileContext) {
  * Prose paths end at whitespace: past that, nothing tells a path from a sentence, and
  * `C:\x and \*this\*` must still read `*this*`.
  */
-function remarkKeepWindowsPaths(this: Processor) {
+export function remarkKeepWindowsPaths(this: Processor) {
   const data = this.data();
   (data.fromMarkdownExtensions ??= []).push({
     exit: {
