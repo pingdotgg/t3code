@@ -1,8 +1,10 @@
 import "vite-plus/test/config";
+import * as Effect from "effect/Effect";
 import { defineConfig, mergeConfig } from "vite-plus";
 
 import baseConfig from "../../vite.config.ts";
 import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
+import { isLinuxArm64SeaTarget } from "../../scripts/lib/cli-sea.ts";
 import rootPackageJson from "../../package.json" with { type: "json" };
 import packageJson from "./package.json" with { type: "json" };
 import { WeightedShardSequencer } from "./src/testUtils/weightedShardSequencer.ts";
@@ -87,7 +89,9 @@ export default mergeConfig(
       outDir: packExecutable ? "dist-exe" : "dist",
       sourcemap: !packExecutable,
       clean: true,
-      ...(packExecutable
+      // SEA can only resolve built-ins; keep dynamic imports inside its one module.
+      ...(packExecutable ? { outputOptions: { codeSplitting: false } } : {}),
+      ...(packExecutable && !Effect.runSync(isLinuxArm64SeaTarget(packExecutableTarget))
         ? {
             exe: {
               fileName: "t3",

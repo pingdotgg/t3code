@@ -11,6 +11,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { DEVELOPMENT_ICON_OVERRIDES } from "../../../scripts/lib/brand-assets.ts";
 import { findEsmImportsOfExternalPackages } from "../../../scripts/lib/cli-executable-imports.ts";
+import { buildLinuxArm64Sea, isLinuxArm64SeaTarget } from "../../../scripts/lib/cli-sea.ts";
 import rootPackageJson from "../../../package.json" with { type: "json" };
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import {
@@ -144,13 +145,22 @@ const buildExeCmd = Command.make(
       if (specifiers.length > 0) {
         return yield* new ServerCliExecutableImportError({ bundlePath, specifiers });
       }
+      const target = Option.getOrUndefined(config.target)?.trim();
+      if (yield* isLinuxArm64SeaTarget(target)) {
+        yield* buildLinuxArm64Sea({
+          bundlePath,
+          outputPath: path.join(serverDir, "dist-exe", target ? "t3-linux-arm64" : "t3"),
+          nodeVersion: rootPackageJson.engines.node,
+          crossTarget: Boolean(target),
+        }).pipe(Effect.scoped);
+      }
       yield* Effect.log(
         "[cli] Built dist-exe/t3 (expects client/, resource-monitor/, and the runtime-external node_modules beside it; scripts/build-cli-archive.ts assembles that tree)",
       );
     }),
 ).pipe(
   Command.withDescription(
-    `Build the server as a Node single-executable. Native builds require Node ${rootPackageJson.engines.node}; explicit cross-target builds need a Node 25.7+ host for --build-sea. The binary still resolves native packages from a node_modules tree beside it.`,
+    `Build the server as a Node single-executable. Native builds require Node ${rootPackageJson.engines.node}; Linux ARM64 cross-target builds require the same version; other cross-target builds need a Node 25.7+ host for --build-sea. The binary still resolves native packages from a node_modules tree beside it.`,
   ),
 );
 
