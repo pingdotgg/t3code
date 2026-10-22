@@ -493,10 +493,9 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       const path = yield* Path.Path;
       yield* service.install();
       const newer = yield* makeService(undefined, "1.2.4");
-      const unitPath = (yield* service.status).unitPath;
-      yield* fs.remove(unitPath);
-      yield* fs.makeDirectory(unitPath);
-      yield* fs.writeFileString(path.join(unitPath, "occupied"), "");
+      yield* fs.remove(statePath);
+      yield* fs.makeDirectory(statePath);
+      yield* fs.writeFileString(path.join(statePath, "occupied"), "");
 
       const error = yield* newer.install({ start: false }).pipe(Effect.flip);
       expect(error._tag).toBe("BootServiceInstallError");
@@ -632,6 +631,12 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         expect(error.message).toContain(`--base-dir ${baseDir}`);
         expect(yield* fs.readFileString(plan.unitPath)).toBe(unit);
         expect(commands).toEqual([]);
+
+        const alias = path.join(otherHome, "alias");
+        yield* fs.symlink(baseDir, alias);
+        const sameHome = yield* makeService(undefined, "1.2.3", alias);
+        expect((yield* sameHome.status).otherBaseDir).toBeUndefined();
+        yield* sameHome.install();
       }),
   );
 

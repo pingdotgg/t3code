@@ -616,13 +616,18 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const statePath = path.join(input.baseDir, "runtime", SERVICE_STATE_FILE);
   const restartPendingPath = path.join(input.baseDir, "runtime", SERVICE_RESTART_PENDING_FILE);
   const runtimePaths = pinnedRuntimePaths(path, input.baseDir, input.cliVersion, platform);
-  const otherBaseDirOf = (unit: string) => {
+  // Through realPath, so a home reached by a symlink still counts as this one.
+  const canonicalDir = (dir: string) =>
+    fs.realPath(dir).pipe(Effect.orElseSucceed(() => path.resolve(dir)));
+  const otherBaseDirOf = Effect.fn("cloud.boot_service.other_base_dir")(function* (unit: string) {
     const installedBaseDir = bootServiceBaseDirOf(unit);
-    return installedBaseDir !== undefined &&
-      path.resolve(installedBaseDir) !== path.resolve(input.baseDir)
-      ? installedBaseDir
-      : undefined;
-  };
+    if (installedBaseDir === undefined) return undefined;
+    const [installed, own] = yield* Effect.all([
+      canonicalDir(installedBaseDir),
+      canonicalDir(input.baseDir),
+    ]);
+    return installed === own ? undefined : installedBaseDir;
+  });
   const writeDurably = (filePath: string, contents: string) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -768,11 +773,15 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     // Rewriting another home's unit stops that server and restarts the service
     // on this home's data, which looks to the user like every thread vanished.
     const existingUnit = yield* fs.readFileString(unitPath).pipe(
-      Effect.option,
-      Effect.mapError((cause) => new BootServiceInstallError({ cause })),
+      Effect.asSome,
+      Effect.catch((cause) =>
+        cause.reason._tag === "NotFound"
+          ? Effect.succeedNone
+          : Effect.fail(new BootServiceInstallError({ cause })),
+      ),
     );
     const existingBaseDir = Option.isSome(existingUnit)
-      ? otherBaseDirOf(existingUnit.value)
+      ? yield* otherBaseDirOf(existingUnit.value)
       : undefined;
     if (existingBaseDir !== undefined) {
       return yield* new BootServiceOtherBaseDirError({
@@ -1050,20 +1059,10 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     if (!(yield* fs.exists(unitPath))) {
       return { supported: true, installed: false, current: false, unitPath, logPath };
     }
-    const [unit, runtimeEntryExists, runtimeSentinel, stateText] = yield* Effect.all([
-      fs.readFileString(unitPath),
-      fs.exists(runtimePaths.entryPath),
-      fs.readFileString(runtimePaths.sentinelPath).pipe(Effect.option),
-      fs.readFileString(statePath).pipe(Effect.option),
-    ]);
-    const state = Option.isSome(stateText) ? parseServiceState(stateText.value) : undefined;
-    const installedVersion = Option.isSome(stateText)
-      ? serviceStateActiveVersion(stateText.value)
-      : undefined;
-    const installedBaseDir = bootServiceBaseDirOf(unit);
-    const otherBaseDir = otherBaseDirOf(unit);
-    // The state, runtime and logs read above belong to this home, not to the
-    // one the unit serves, so they say nothing about that install.
+    const unit = yield* fs.readFileString(unitPath);
+    const otherBaseDir = yield* otherBaseDirOf(unit);
+    // This home's state, runtime and logs say nothing about the install the
+    // unit serves, so report only where it lives.
     if (otherBaseDir !== undefined) {
       return {
         supported: true,
@@ -1075,6 +1074,16 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         logPath,
       };
     }
+    const [runtimeEntryExists, runtimeSentinel, stateText] = yield* Effect.all([
+      fs.exists(runtimePaths.entryPath),
+      fs.readFileString(runtimePaths.sentinelPath).pipe(Effect.option),
+      fs.readFileString(statePath).pipe(Effect.option),
+    ]);
+    const state = Option.isSome(stateText) ? parseServiceState(stateText.value) : undefined;
+    const installedVersion = Option.isSome(stateText)
+      ? serviceStateActiveVersion(stateText.value)
+      : undefined;
+    const installedBaseDir = bootServiceBaseDirOf(unit);
     const normalizeUnit = (contents: string) =>
       detectedManager.kind === "launchd"
         ? contents.replace(/(<key>PATH<\/key>\n\s*<string>)[^<]*(<\/string>)/, "$1$2")
