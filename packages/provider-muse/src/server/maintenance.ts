@@ -164,7 +164,7 @@ function shellQuote(word: string) {
 }
 
 function powerShellQuote(word: string) {
-  return `'${word.replace(/['\u2018\u2019]/g, "$&$&")}'`;
+  return `'${word.replace(/['\u2018\u2019\u201a\u201b]/g, "$&$&")}'`;
 }
 
 export const latestMuseVersion = Effect.fn("latestMuseVersion")(function* (

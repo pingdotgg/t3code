@@ -307,7 +307,7 @@ it.layer(NodeServices.layer)("Muse maintenance", (it) => {
 });
 
 it.live(
-  "runs a fixture Windows update with literal paths, version arguments and forced environment",
+  "runs direct and copied Windows update commands with literal paths and forced environment",
   () =>
     Effect.gen(function* () {
       if ((yield* HostProcess.Platform) !== "win32") return;
@@ -315,7 +315,7 @@ it.live(
       const path = yield* Path.Path;
       const directory = path.join(
         yield* fs.makeTempDirectoryScoped({ prefix: "muse-maintenance-" }),
-        "Muse R&D (canary) @ ^ ' $; %PATH%",
+        "Muse R&D (canary) @ ^ ' \u2018 \u2019 \u201a \u201b $; %PATH%",
       );
       yield* fs.makeDirectory(directory);
       const shim = path.join(directory, "muse.cmd");
@@ -339,22 +339,36 @@ it.live(
       const resolved = yield* resolveSpawnCommand(update.executable, update.args);
       expect(resolved.shell).toBe(false);
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const child = yield* spawner.spawn(
-        ChildProcess.make(resolved.command, resolved.args, {
-          env: update.env,
-          extendEnv: true,
-          shell: resolved.shell,
-        }),
-      );
-      const [stdout, stderr, exitCode] = yield* Effect.all(
-        [
-          child.stdout.pipe(Stream.decodeText(), Stream.mkString),
-          child.stderr.pipe(Stream.decodeText(), Stream.mkString),
-          child.exitCode,
-        ],
-        { concurrency: "unbounded" },
-      );
-      expect(Number(exitCode), stderr).toBe(0);
-      expect(stdout.trim()).toBe("--version|muse-canary|0|1|0|kept");
+      for (const command of [
+        resolved,
+        {
+          command: update.executable,
+          // Preserve Unicode through the CLI transport; PowerShell still parses the copied command.
+          args: [
+            "-NoProfile",
+            "-EncodedCommand",
+            Buffer.from(update.command, "utf16le").toString("base64"),
+          ],
+          shell: false,
+        },
+      ]) {
+        const child = yield* spawner.spawn(
+          ChildProcess.make(command.command, command.args, {
+            env: update.env,
+            extendEnv: true,
+            shell: command.shell,
+          }),
+        );
+        const [stdout, stderr, exitCode] = yield* Effect.all(
+          [
+            child.stdout.pipe(Stream.decodeText(), Stream.mkString),
+            child.stderr.pipe(Stream.decodeText(), Stream.mkString),
+            child.exitCode,
+          ],
+          { concurrency: "unbounded" },
+        );
+        expect(Number(exitCode), stderr).toBe(0);
+        expect(stdout.trim()).toBe("--version|muse-canary|0|1|0|kept");
+      }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
