@@ -9,6 +9,7 @@ import * as Path from "effect/Path";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
+import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
@@ -169,6 +170,64 @@ it.layer(layerTest)("GrokDriver", (it) => {
       );
     });
   }
+
+  it.effect.skipIf(windowsHost)("updates a mise install through mise, not grok update", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs
+        .makeTempDirectoryScoped({ prefix: "t3-grok-mise-" })
+        .pipe(Effect.flatMap((directory) => fs.realPath(directory)));
+      const installPath = path.join(tempDir, "mise", "installs", "grok", "1.0.50");
+      const binaryPath = path.join(installPath, "grok");
+      const misePath = path.join(tempDir, "mise-bin", "mise");
+      for (const file of [binaryPath, misePath]) {
+        yield* fs.makeDirectory(path.dirname(file), { recursive: true });
+        yield* fs.writeFileString(file, "#!/bin/sh\n");
+        yield* fs.chmod(file, 0o755);
+      }
+      const installed = JSON.stringify({
+        grok: [{ install_path: installPath, requested_version: "latest", active: true }],
+      });
+      const miseSpawner = ChildProcessSpawner.make((command) =>
+        ChildProcess.isStandardCommand(command) && command.command === misePath
+          ? Effect.succeed(
+              ChildProcessSpawner.makeHandle({
+                pid: ChildProcessSpawner.ProcessId(1),
+                exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+                isRunning: Effect.succeed(false),
+                kill: () => Effect.void,
+                unref: Effect.succeed(Effect.void),
+                stdin: Sink.drain,
+                stdout: Stream.encodeText(Stream.make(installed)),
+                stderr: Stream.empty,
+                all: Stream.empty,
+                getInputFd: () => Sink.drain,
+                getOutputFd: () => Stream.empty,
+              }),
+            )
+          : Effect.die("Grok resolution may only query mise"),
+      );
+
+      const instance = yield* GrokDriver.create({
+        instanceId: ProviderInstanceId.make("grok-mise"),
+        displayName: "Grok test",
+        enabled: false,
+        environment: [{ name: "PATH", value: path.dirname(misePath), sensitive: false }],
+        config: { ...GrokDriver.defaultConfig(), binaryPath },
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, miseSpawner));
+
+      expect((yield* instance.snapshot.resolveMaintenance()).update).toMatchObject({
+        command: "mise upgrade grok",
+        executable: misePath,
+        args: ["upgrade", "grok"],
+        lockKey: "mise",
+      });
+    }).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawner),
+      Effect.scoped,
+    ),
+  );
 
   it.effect("stays manual-only when the configured executable does not exist", () =>
     Effect.gen(function* () {

@@ -159,9 +159,14 @@ on the environment's machine. An unlisted version is unverified.
 
 When a provider CLI is behind its latest release, its provider card shows the
 available version. **Update now** runs the installer that owns the CLI
-(Homebrew, or a global npm, pnpm, Yarn, Bun, Volta, or Vite+ install), or the
-CLI's own update command when T3 Code cannot tell. Update a CLI installed with
-mise through mise. Cursor and Antigravity update with T3 Code. Homebrew installs
+(Homebrew, mise, or a global npm, pnpm, Yarn, Bun, Volta, or Vite+ install), or
+the CLI's own update command when T3 Code cannot tell. For mise, T3 Code runs
+`mise upgrade` only for a tool your mise config requests as `latest`. It never
+edits your mise config, so update a pinned version, or OpenCode 1.x, through
+mise yourself. T3 Code offers the version mise would install, so a release that
+mise holds back, such as one newer than your `minimum_release_age`, appears once
+mise allows it.
+Cursor and Antigravity update with T3 Code. Homebrew installs
 compare against the version Homebrew offers, which can trail the npm release by
 a few hours.
 

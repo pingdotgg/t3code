@@ -24,6 +24,7 @@ import {
   makeCachedProviderMaintenanceResolution,
   makePackageManagedProviderMaintenanceResolver,
   makeProviderMaintenanceCapabilities,
+  miseOwnerFromInstalledTools,
   normalizeCommandPath,
   npmGlobalPrefixFromCommandPath,
   parseHomebrewLatestVersion,
@@ -98,6 +99,19 @@ function linkIntoPackage(tempDir: string, name: string, packageSegments: Readonl
 const noSpawn = ChildProcessSpawner.make(() =>
   Effect.die("maintenance resolution should not spawn a process here"),
 );
+
+/** A `mise` that answers `which`, `latest`, and `ls --json --installed`, recording each call. */
+function miseSpawner(
+  answers: { readonly which?: string; readonly latest?: string; readonly installed: unknown },
+  spawned: Array<ReadonlyArray<string>>,
+) {
+  return stdoutSpawner((command, args) => {
+    spawned.push([command, ...args]);
+    if (args[0] === "which") return `${answers.which ?? ""}\n`;
+    if (args[0] === "latest") return `${answers.latest ?? ""}\n`;
+    return JSON.stringify(answers.installed);
+  });
+}
 
 function stdoutSpawner(
   onSpawn: (command: string, args: ReadonlyArray<string>) => string,
@@ -1098,6 +1112,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           lockKey: "packageTool-native",
         });
 
+        // A mise install belongs to mise, so the provider's updater never runs on it.
         const misePath = NodePath.join(tempDir, "mise", "installs", "package-tool", "1.0.0", "bin");
         writeExecutable(NodePath.join(misePath, "package-tool"));
         const mise = yield* resolveProviderMaintenanceCapabilitiesEffect(selfUpdating, {
@@ -1105,6 +1120,336 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           env: { PATH: "" },
         }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
         expect(mise.update).toBeNull();
+      }),
+  );
+
+  it("names the active mise tool whose install holds the binary", () => {
+    const installed = JSON.stringify({
+      codex: [
+        { install_path: "/m/installs/codex/0.9.0", requested_version: null, active: false },
+        { install_path: "/m/installs/codex/0.1", requested_version: "latest", active: true },
+      ],
+      "npm:@example/package-tool": [
+        {
+          install_path: "/m/installs/npm-example-package-tool/1.0.0",
+          requested_version: "1.0.0",
+          active: true,
+        },
+      ],
+    });
+    expect(miseOwnerFromInstalledTools(installed, "/m/installs/codex/0.1/bin/codex")).toEqual({
+      tool: "codex",
+      requestedVersion: "latest",
+    });
+    expect(
+      miseOwnerFromInstalledTools(
+        installed,
+        "/m/installs/npm-example-package-tool/1.0.0/node_modules/.bin/package-tool",
+      ),
+    ).toEqual({ tool: "npm:@example/package-tool", requestedVersion: "1.0.0" });
+    // `mise upgrade` moves only the active install, and `0.1` does not own `0.10`.
+    expect(miseOwnerFromInstalledTools(installed, "/m/installs/codex/0.9.0/codex")).toBeNull();
+    expect(miseOwnerFromInstalledTools(installed, "/m/installs/codex/0.10/codex")).toBeNull();
+    expect(miseOwnerFromInstalledTools("not json", "/m/installs/codex/0.1/codex")).toBeNull();
+  });
+
+  it.effect.skipIf(windowsHost)("upgrades a mise tool requested as latest through mise", () =>
+    Effect.gen(function* () {
+      const tempDir = yield* makeTempDir("t3-mise-install");
+      const miseBinDir = NodePath.join(tempDir, "mise-bin");
+      const misePath = NodePath.join(miseBinDir, "mise");
+      writeExecutable(misePath);
+      const installPath = NodePath.join(
+        tempDir,
+        "mise",
+        "installs",
+        "npm-example-package-tool",
+        "1.0.0",
+      );
+      const binaryPath = NodePath.join(installPath, "node_modules", ".bin", "package-tool");
+      writeExecutable(binaryPath);
+      const env = { PATH: miseBinDir };
+      const spawned: Array<ReadonlyArray<string>> = [];
+
+      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
+        binaryPath,
+        env,
+      }).pipe(
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          miseSpawner(
+            {
+              // `minimum_release_age` holds mise at 1.0.0 while npm has 1.2.0.
+              latest: "1.0.0",
+              installed: {
+                "npm:@example/package-tool": [
+                  { install_path: installPath, requested_version: "latest", active: true },
+                ],
+              },
+            },
+            spawned,
+          ),
+        ),
+      );
+
+      expect(spawned).toEqual([[misePath, "ls", "--json", "--installed"]]);
+      expect(capabilities.update).toEqual({
+        command: "mise upgrade npm:@example/package-tool",
+        executable: misePath,
+        args: ["upgrade", "npm:@example/package-tool"],
+        lockKey: "mise",
+        env,
+      });
+      expect(makeTargetedProviderUpdateAction(capabilities, "2.0.0")).toBeNull();
+
+      const advise = (enableProviderUpdateChecks: boolean) =>
+        enrichProviderSnapshotWithVersionAdvisory(installedPackageToolProvider, capabilities, {
+          enableProviderUpdateChecks,
+        }).pipe(
+          Effect.provideServiceEffect(
+            ProviderLatestVersions.ProviderLatestVersions,
+            ProviderLatestVersions.make([["@example/package-tool", "1.2.0"]]),
+          ),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make(() => Effect.die("mise answers for its own installs")),
+          ),
+        );
+      // Disabled update checks never ask mise, which may go to the network.
+      expect((yield* advise(false)).versionAdvisory?.latestVersion).toBeNull();
+      expect(spawned).toHaveLength(1);
+      // The advisory offers what `mise upgrade` installs, not npm's newer release.
+      expect((yield* advise(true)).versionAdvisory).toMatchObject({
+        status: "current",
+        latestVersion: "1.0.0",
+      });
+      expect(spawned.at(-1)).toEqual([misePath, "latest", "npm:@example/package-tool"]);
+    }),
+  );
+
+  it.effect.each([
+    { name: "a pinned version", requestedVersion: "1.0.0", active: true, misePresent: true },
+    { name: "an inactive install", requestedVersion: "latest", active: false, misePresent: true },
+    {
+      name: "an install mise cannot vouch for",
+      requestedVersion: "latest",
+      active: true,
+      misePresent: false,
+    },
+  ])(
+    "leaves $name manual-only",
+    (fixture) =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-mise-manual");
+        const miseBinDir = NodePath.join(tempDir, "mise-bin");
+        if (fixture.misePresent) {
+          writeExecutable(NodePath.join(miseBinDir, "mise"));
+        }
+        const installPath = NodePath.join(tempDir, "mise", "installs", "package-tool", "1.0.0");
+        const binaryPath = NodePath.join(installPath, "bin", "package-tool");
+        writeExecutable(binaryPath);
+
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          packageToolUpdate,
+          { binaryPath, env: { PATH: miseBinDir } },
+        ).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            miseSpawner(
+              {
+                installed: {
+                  "package-tool": [
+                    {
+                      install_path: installPath,
+                      requested_version: fixture.requestedVersion,
+                      active: fixture.active,
+                    },
+                  ],
+                },
+              },
+              [],
+            ),
+          ),
+        );
+
+        // The manual advisory names the executable to update.
+        expect(capabilities).toEqual({ ...manualPackageTool, installPath: binaryPath });
+      }),
+    { skip: windowsHost },
+  );
+
+  it.effect.skipIf(!symlinksSupported || windowsHost)(
+    "upgrades a mise wrapper at the native installer's path through mise",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-mise-wrapper");
+        const miseBinDir = NodePath.join(tempDir, "mise-bin");
+        const misePath = NodePath.join(miseBinDir, "mise");
+        writeExecutable(misePath);
+        const toolDir = NodePath.join(tempDir, "mise", "installs", "native-package-tool");
+        const installPath = NodePath.join(toolDir, "2.0.0");
+        writeExecutable(NodePath.join(installPath, "native-package-tool"));
+        NodeFS.symlinkSync(installPath, NodePath.join(toolDir, "latest"));
+        // A `mise x` wrapper, written where the native installer links its binary.
+        const wrapperPath = NodePath.join(tempDir, ".local", "bin", "native-package-tool");
+        NodeFS.mkdirSync(NodePath.dirname(wrapperPath), { recursive: true });
+        NodeFS.writeFileSync(
+          wrapperPath,
+          '#!/bin/sh\nexec mise x "native-package-tool" -- "native-package-tool" "$@"\n',
+        );
+        NodeFS.chmodSync(wrapperPath, 0o755);
+        const resolve = resolveProviderMaintenanceCapabilitiesEffect(nativePackageToolUpdate, {
+          binaryPath: wrapperPath,
+          env: { PATH: miseBinDir },
+        });
+        const spawned: Array<ReadonlyArray<string>> = [];
+
+        const capabilities = yield* resolve.pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            miseSpawner(
+              {
+                which: NodePath.join(toolDir, "latest", "native-package-tool"),
+                installed: {
+                  "native-package-tool": [
+                    { install_path: installPath, requested_version: "latest", active: true },
+                  ],
+                },
+              },
+              spawned,
+            ),
+          ),
+        );
+
+        expect(spawned).toEqual([
+          [misePath, "which", "native-package-tool"],
+          [misePath, "ls", "--json", "--installed"],
+        ]);
+        expect(capabilities.update).toMatchObject({
+          command: "mise upgrade native-package-tool",
+          executable: misePath,
+          lockKey: "mise",
+        });
+
+        // A comment that mentions mise does not hand a native launcher to mise.
+        NodeFS.writeFileSync(
+          wrapperPath,
+          '#!/bin/sh\n# Alternative: mise exec other-tool -- tool\nexec /opt/native-package-tool "$@"\n',
+        );
+        const native = yield* resolve.pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+        );
+        expect(native.update).toMatchObject({ lockKey: "nativePackageTool-native" });
+
+        // A wrapper that may not follow mise's config could run an install
+        // `mise upgrade` never touches, so only a lone `mise x` counts.
+        for (const script of [
+          'exec mise x "native-package-tool@1.9.0" -- "native-package-tool" "$@"',
+          'exec mise x "$TOOL" -- "native-package-tool" "$@"',
+          'export MISE_NATIVE_PACKAGE_TOOL_VERSION=1.9.0\nexec mise x native-package-tool -- native-package-tool "$@"',
+          '. "$HOME/.native-package-tool-env"\nexec mise x native-package-tool -- native-package-tool "$@"',
+          'if [ -f "$HOME/.env" ]; then . "$HOME/.env"; fi\nexec mise x native-package-tool -- native-package-tool "$@"',
+          'MISE_NATIVE_PACKAGE_TOOL_VERSION=1.9.0 exec mise x native-package-tool -- native-package-tool "$@"',
+          'mise use -g --quiet "native-package-tool" || exit 1\nexec mise x "native-package-tool" -- "native-package-tool" "$@"',
+        ]) {
+          NodeFS.writeFileSync(wrapperPath, `#!/bin/sh\n${script}\n`);
+          const asked: Array<ReadonlyArray<string>> = [];
+          const pinned = yield* resolve.pipe(
+            Effect.provideService(
+              ChildProcessSpawner.ChildProcessSpawner,
+              miseSpawner(
+                {
+                  which: NodePath.join(toolDir, "latest", "native-package-tool"),
+                  installed: {
+                    "native-package-tool": [
+                      { install_path: installPath, requested_version: "latest", active: true },
+                    ],
+                  },
+                },
+                asked,
+              ),
+            ),
+          );
+          expect(pinned.update).toBeNull();
+          expect(pinned.installPath).toBe(NodeFS.realpathSync(wrapperPath));
+          expect(asked).toEqual([]);
+        }
+
+        // `@latest` and a scoped npm name still follow mise's config.
+        for (const tool of ['"native-package-tool@latest"', "npm:@example/native-package-tool"]) {
+          NodeFS.writeFileSync(
+            wrapperPath,
+            `#!/bin/sh\nexec mise x ${tool} -- native-package-tool "$@"\n`,
+          );
+          const followed = yield* resolve.pipe(
+            Effect.provideService(
+              ChildProcessSpawner.ChildProcessSpawner,
+              miseSpawner(
+                {
+                  which: NodePath.join(toolDir, "latest", "native-package-tool"),
+                  installed: {
+                    "native-package-tool": [
+                      { install_path: installPath, requested_version: "latest", active: true },
+                    ],
+                  },
+                },
+                [],
+              ),
+            ),
+          );
+          expect(followed.update).toMatchObject({ command: "mise upgrade native-package-tool" });
+        }
+      }),
+  );
+
+  it.effect.skipIf(!symlinksSupported || windowsHost)(
+    "upgrades a shim through the mise it links to, whatever mise's data directory",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-mise-shim");
+        const misePath = NodePath.join(tempDir, "opt", "bin", "mise");
+        writeExecutable(misePath);
+        const shimPath = NodePath.join(tempDir, "tool-data", "shims", "package-tool");
+        NodeFS.mkdirSync(NodePath.dirname(shimPath), { recursive: true });
+        NodeFS.symlinkSync(misePath, shimPath);
+        const installPath = NodePath.join(
+          tempDir,
+          "tool-data",
+          "installs",
+          "package-tool",
+          "1.2.0",
+        );
+        const binaryPath = NodePath.join(installPath, "bin", "package-tool");
+        writeExecutable(binaryPath);
+        const spawned: Array<ReadonlyArray<string>> = [];
+
+        // mise is not on PATH; the shim's own target is the mise to run.
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          packageToolUpdate,
+          { binaryPath: shimPath, env: { PATH: "" } },
+        ).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            miseSpawner(
+              {
+                which: binaryPath,
+                installed: {
+                  "package-tool": [
+                    { install_path: installPath, requested_version: "latest", active: true },
+                  ],
+                },
+              },
+              spawned,
+            ),
+          ),
+        );
+
+        expect(spawned[0]).toEqual([misePath, "which", "package-tool"]);
+        expect(capabilities.update).toMatchObject({
+          executable: misePath,
+          args: ["upgrade", "package-tool"],
+          lockKey: "mise",
+        });
       }),
   );
 

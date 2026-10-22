@@ -88,13 +88,27 @@ either the resolved path or its real target, since those installers place real f
 symlinks there. Volta is proven by its `volta-shim` link plus the package's image directory. When
 nothing is proven, the provider's own updater (`claude update`, `codex update`, `opencode upgrade`,
 `pi update --self`, `grok update`) runs instead, because each one detects its installer itself;
-the runner's version check catches an updater that exits 0 without updating. Mise installs stay
-manual-only because their version is pinned in mise's config. A Grok cask whose Homebrew prefix
-cannot be verified also stays manual-only: `grok update` would install a second copy. npm updates pin `--prefix` because the
-`npm` on `PATH` can belong to a different Node than the one that owns the provider. Homebrew
-compares against `brew info` since casks trail npm by hours; native installs share npm's version
-train, so the registry stays authoritative for them.
-See the [resolver](../../apps/server/src/provider/providerMaintenance.ts).
+the runner's version check catches an updater that exits 0 without updating. A Grok cask whose
+Homebrew prefix cannot be verified stays manual-only: `grok update` would install a second copy.
+npm updates pin `--prefix` because the `npm` on `PATH` can belong to a different Node than the one
+that owns the provider. Homebrew compares against `brew info` since casks trail npm by hours; native
+installs share npm's version train, so the registry stays authoritative for them.
+
+Mise is checked before everything else, because a `mise x` wrapper can sit at a native installer's
+path, such as `~/.local/bin/claude`. A binary under `mise/installs/`, a shim (a link to mise itself,
+under any data directory), or a `mise x` wrapper is only a hint. Mise proves ownership: `mise which`
+resolves shims and wrappers, and `mise ls --json --installed` must list an active install that
+contains the binary. That listing also names the tool, which install paths cannot (`npm:@scope/pkg`
+lives in `npm-scope-pkg`). Only a tool requested as `latest` gets `mise upgrade <tool>`, run with
+the instance environment the probe used. Like Homebrew, its latest version comes from the installer:
+`mise latest <tool>` applies mise's settings, such as `minimum_release_age`, which npm's registry
+cannot. Mise may go to the network for that answer, so it is asked lazily through
+`lookupLatestVersion` and never while update checks are off. A pinned tool stays manual-only, so T3
+Code never edits a mise config. A wrapper counts only when its one command is a `mise x` that names
+no version: `mise which` answers for mise's config, and anything else in the script could change
+what mise runs. OpenCode 1.x stays manual too, since mise's `opencode` follows releases into 2.x.
+npm globals under mise's own Node remain npm's.
+See the [resolver](../../packages/provider-core/src/server/maintenanceResolver.ts).
 
 Ownership is cached per instance and re-read immediately before an update runs. The
 [runner](../../apps/server/src/provider/providerMaintenanceRunner.ts) refuses when the lock key

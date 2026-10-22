@@ -11,6 +11,8 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -152,6 +154,63 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       assert.isNull(
         (yield* resolveUpdate("v1", NodePath.join(v2Prefix, "bin", "opencode"))).update,
       );
+    }),
+);
+
+it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+  "updates a mise OpenCode 2 install through mise but never moves 1.x onto 2.x",
+  () =>
+    Effect.gen(function* () {
+      const root = NodeFS.realpathSync(
+        NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-opencode-mise-")),
+      );
+      const installPath = NodePath.join(root, "mise", "installs", "opencode", "1.19.0");
+      const misePath = NodePath.join(root, "mise-bin", "mise");
+      for (const file of [NodePath.join(installPath, "opencode"), misePath]) {
+        NodeFS.mkdirSync(NodePath.dirname(file), { recursive: true });
+        NodeFS.writeFileSync(file, "#!/bin/sh\n");
+        NodeFS.chmodSync(file, 0o755);
+      }
+      const installed = JSON.stringify({
+        opencode: [{ install_path: installPath, requested_version: "latest", active: true }],
+      });
+      const resolveMiseUpdate = (generation: "v1" | "v2") =>
+        ProviderMaintenance.resolveProviderMaintenanceCapabilitiesEffect(
+          openCodeUpdateFor(generation),
+          {
+            binaryPath: NodePath.join(installPath, "opencode"),
+            env: { PATH: NodePath.dirname(misePath) },
+          },
+        ).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() =>
+              Effect.succeed(
+                ChildProcessSpawner.makeHandle({
+                  pid: ChildProcessSpawner.ProcessId(1),
+                  exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+                  isRunning: Effect.succeed(false),
+                  kill: () => Effect.void,
+                  unref: Effect.succeed(Effect.void),
+                  stdin: Sink.drain,
+                  stdout: Stream.encodeText(Stream.make(installed)),
+                  stderr: Stream.empty,
+                  all: Stream.empty,
+                  getInputFd: () => Sink.drain,
+                  getOutputFd: () => Stream.empty,
+                }),
+              ),
+            ),
+          ),
+          Effect.provide(NodeServices.layer),
+        );
+
+      // 2.x converts the shared database in place, so a 1.x install never takes mise's latest.
+      assert.isNull((yield* resolveMiseUpdate("v1")).update);
+      assert.deepStrictEqual((yield* resolveMiseUpdate("v2")).update?.args, [
+        "upgrade",
+        "opencode",
+      ]);
     }),
 );
 

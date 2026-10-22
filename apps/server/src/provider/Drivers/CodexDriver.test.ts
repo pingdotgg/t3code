@@ -93,6 +93,39 @@ const windowsHost = HostProcess.Platform.defaultValue() === "win32";
 const noSpawn = ChildProcessSpawner.make(() =>
   Effect.die("Disabled Codex must not spawn a process"),
 );
+
+/** A finished probe that prints `stdout`, or exits 1 when it has nothing to print. */
+const probeHandle = (stdout: string | null) =>
+  ChildProcessSpawner.makeHandle({
+    pid: ChildProcessSpawner.ProcessId(1),
+    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(stdout === null ? 1 : 0)),
+    isRunning: Effect.succeed(false),
+    kill: () => Effect.void,
+    unref: Effect.succeed(Effect.void),
+    stdin: Sink.drain,
+    stdout: Stream.encodeText(Stream.make(stdout ?? "")),
+    stderr: Stream.empty,
+    all: Stream.empty,
+    getInputFd: () => Sink.drain,
+    getOutputFd: () => Stream.empty,
+  });
+
+/** Lets resolution query only this `mise`, answering `which` and `ls --json --installed`. */
+const miseProbeSpawner = (
+  misePath: string,
+  answers: { readonly which?: string; readonly installed: unknown },
+) =>
+  ChildProcessSpawner.make((command) =>
+    ChildProcess.isStandardCommand(command) && command.command === misePath
+      ? Effect.succeed(
+          probeHandle(
+            command.args[0] === "which"
+              ? (answers.which ?? null)
+              : JSON.stringify(answers.installed),
+          ),
+        )
+      : Effect.die("Codex resolution may only query mise"),
+  );
 const encodeCredentials = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 it.layer(layerTest)("CodexDriver", (it) => {
@@ -337,24 +370,24 @@ it.layer(layerTest)("CodexDriver", (it) => {
 
   for (const fixture of [
     {
-      name: "leaves mise npm-backend installations manual-only",
+      name: "updates mise npm-backend installations through mise",
       installSegments: ["mise", "installs", "npm-openai-codex", "0.110.0"],
-      npmOwned: false,
+      miseTool: "npm:@openai/codex",
     },
     {
-      name: "leaves mise tool aliases backed by npm manual-only",
+      name: "updates mise tool aliases backed by npm through mise",
       installSegments: ["mise", "installs", "codex", "0.110.0"],
-      npmOwned: false,
+      miseTool: "codex",
     },
     {
       name: "keeps npm updates for globals in a mise Node installation",
       installSegments: ["mise", "installs", "node", "24.0.0"],
-      npmOwned: true,
+      miseTool: null,
     },
     {
       name: "keeps npm updates for ordinary global installations",
       installSegments: ["npm-global"],
-      npmOwned: true,
+      miseTool: null,
     },
   ] as const) {
     it.effect.skipIf(windowsHost)(fixture.name, () =>
@@ -374,26 +407,48 @@ it.layer(layerTest)("CodexDriver", (it) => {
           "codex.js",
         );
         const binaryPath = NodePath.join(tempDir, "bin", "codex");
-        yield* fs.makeDirectory(NodePath.dirname(realBinaryPath), { recursive: true });
+        const misePath = NodePath.join(tempDir, "mise-bin", "mise");
+        for (const file of [realBinaryPath, misePath]) {
+          yield* fs.makeDirectory(NodePath.dirname(file), { recursive: true });
+          yield* fs.writeFileString(file, "#!/bin/sh\n");
+          yield* fs.chmod(file, 0o755);
+        }
         yield* fs.makeDirectory(NodePath.dirname(binaryPath), { recursive: true });
-        yield* fs.writeFileString(realBinaryPath, "#!/bin/sh\n");
-        yield* fs.chmod(realBinaryPath, 0o755);
         yield* fs.symlink(realBinaryPath, binaryPath);
 
         const instance = yield* CodexDriver.create({
           instanceId: ProviderInstanceId.make("codex-installer"),
           displayName: "Codex installer test",
           enabled: false,
-          environment: [],
+          environment: [{ name: "PATH", value: NodePath.dirname(misePath), sensitive: false }],
           config: {
             ...CodexDriver.defaultConfig(),
             binaryPath,
             homePath: NodePath.join(tempDir, "codex-home"),
           },
-        });
+        }).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            miseProbeSpawner(misePath, {
+              installed: fixture.miseTool
+                ? {
+                    [fixture.miseTool]: [
+                      { install_path: installPath, requested_version: "latest", active: true },
+                    ],
+                  }
+                : {},
+            }),
+          ),
+        );
 
         const update = (yield* instance.snapshot.resolveMaintenance()).update;
-        if (fixture.npmOwned) {
+        if (fixture.miseTool) {
+          expect(update).toMatchObject({
+            executable: misePath,
+            args: ["upgrade", fixture.miseTool],
+            lockKey: "mise",
+          });
+        } else {
           expect(update).toMatchObject({
             executable: "npm",
             args: [
@@ -405,8 +460,6 @@ it.layer(layerTest)("CodexDriver", (it) => {
               "@openai/codex@latest",
             ],
           });
-        } else {
-          expect(update).toBeNull();
         }
       }).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
@@ -415,7 +468,61 @@ it.layer(layerTest)("CodexDriver", (it) => {
     );
   }
 
-  for (const {} of ["direct", "wrapper"] as const) {
+  for (const layout of ["direct", "wrapper"] as const) {
+    it.effect.skipIf(windowsHost)(`updates a mise ${layout} installation through mise`, () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const tempDir = yield* fs
+          .makeTempDirectoryScoped({ prefix: `t3-codex-mise-${layout}-` })
+          .pipe(Effect.flatMap((directory) => fs.realPath(directory)));
+        const installPath = NodePath.join(tempDir, "mise", "installs", "codex", "0.110.0");
+        const installedPath = NodePath.join(installPath, "codex");
+        const misePath = NodePath.join(tempDir, "mise-bin", "mise");
+        const binaryPath =
+          layout === "direct" ? installedPath : NodePath.join(tempDir, "omarchy", "bin", "codex");
+        for (const file of [installedPath, misePath, binaryPath]) {
+          yield* fs.makeDirectory(NodePath.dirname(file), { recursive: true });
+          yield* fs.writeFileString(
+            file,
+            file === binaryPath && layout === "wrapper"
+              ? '#!/bin/sh\nexec mise x "codex" -- "codex" "$@"\n'
+              : "#!/bin/sh\n",
+          );
+          yield* fs.chmod(file, 0o755);
+        }
+
+        const instance = yield* CodexDriver.create({
+          instanceId: ProviderInstanceId.make(`codex-mise-${layout}`),
+          displayName: "Codex mise test",
+          enabled: false,
+          environment: [{ name: "PATH", value: NodePath.dirname(misePath), sensitive: false }],
+          config: {
+            ...CodexDriver.defaultConfig(),
+            binaryPath,
+            homePath: NodePath.join(tempDir, "codex-home"),
+          },
+        }).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            miseProbeSpawner(misePath, {
+              which: installedPath,
+              installed: {
+                codex: [{ install_path: installPath, requested_version: "latest", active: true }],
+              },
+            }),
+          ),
+        );
+
+        expect((yield* instance.snapshot.resolveMaintenance()).update).toMatchObject({
+          command: "mise upgrade codex",
+          executable: misePath,
+          lockKey: "mise",
+        });
+      }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+        Effect.scoped,
+      ),
+    );
   }
 
   it.effect.each([
@@ -492,28 +599,23 @@ it.layer(layerTest)("CodexDriver", (it) => {
         ].join(NodePath.delimiter);
         const probes: Array<ReadonlyArray<string>> = [];
         const metadataSpawner = ChildProcessSpawner.make((command) => {
-          if (!ChildProcess.isStandardCommand(command) || command.command !== brewPath) {
+          if (!ChildProcess.isStandardCommand(command)) {
+            return Effect.die("Provider resolution must not execute a provider or updater");
+          }
+          // The shim asks its own mise, which has no Codex, so ownership stays unproven.
+          if (command.command === misePath) {
+            return Effect.succeed(probeHandle(null));
+          }
+          if (command.command !== brewPath) {
             return Effect.die("Provider resolution must not execute a provider or updater");
           }
           probes.push(command.args);
-          const stdout =
-            command.args[0] === "--prefix"
-              ? brewPrefix
-              : JSON.stringify({ formulae: [{ versions: { stable: "2026.9.1" } }] });
           return Effect.succeed(
-            ChildProcessSpawner.makeHandle({
-              pid: ChildProcessSpawner.ProcessId(1),
-              exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
-              isRunning: Effect.succeed(false),
-              kill: () => Effect.void,
-              unref: Effect.succeed(Effect.void),
-              stdin: Sink.drain,
-              stdout: Stream.encodeText(Stream.make(stdout)),
-              stderr: Stream.empty,
-              all: Stream.empty,
-              getInputFd: () => Sink.drain,
-              getOutputFd: () => Stream.empty,
-            }),
+            probeHandle(
+              command.args[0] === "--prefix"
+                ? brewPrefix
+                : JSON.stringify({ formulae: [{ versions: { stable: "2026.9.1" } }] }),
+            ),
           );
         });
         const instance = yield* CodexDriver.create({
