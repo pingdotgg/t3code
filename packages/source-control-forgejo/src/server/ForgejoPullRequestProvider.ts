@@ -465,11 +465,25 @@ export const make = Effect.gen(function* () {
     runAction: (input) => {
       switch (input.action) {
         case "merge":
-          return write({
-            ...input,
-            path: `${pullPath(input)}/merge`,
-            method: "POST",
-            body: { Do: input.mergeMethod ?? "merge" },
+          return Effect.gen(function* () {
+            const deleteBranch = (yield* getRepo(input)).default_delete_branch_after_merge ?? false;
+            yield* write({
+              ...input,
+              path: `${pullPath(input)}/merge`,
+              method: "POST",
+              body: { Do: input.mergeMethod ?? "merge", delete_branch_after_merge: deleteBranch },
+            }).pipe(
+              Effect.catchTags({
+                // Forgejo merges before deleting the branch, so a refused deletion still merged.
+                PullRequestProviderError: (error) =>
+                  deleteBranch
+                    ? getPull(input).pipe(
+                        Effect.mapError(() => error),
+                        Effect.flatMap((pr) => (pr.merged ? Effect.void : Effect.fail(error))),
+                      )
+                    : Effect.fail(error),
+              }),
+            );
           });
         case "close":
         case "reopen":
