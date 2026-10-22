@@ -816,6 +816,8 @@ export default function ChatView(props: ChatViewProps) {
     ? threadError
     : null;
   const [, setThreadErrorBannerDismissTick] = useState(0);
+  const threadErrorIsServerRuntimeError =
+    localServerError === null && visibleThreadError === serverRuntime?.lastError;
   const defaultRuntimeMode = resolveProjectSettings(settings, activeThread?.projectId ?? null)
     .settings.defaultRuntimeMode;
   const runtimeMode =
@@ -3235,9 +3237,10 @@ export default function ChatView(props: ChatViewProps) {
               threadId={activeThread.id}
               threadError={timelineThreadError}
               threadErrorClass={
-                localServerError === null && visibleThreadError === serverRuntime?.lastError
-                  ? (serverRuntime?.lastErrorClass ?? null)
-                  : null
+                threadErrorIsServerRuntimeError ? (serverRuntime?.lastErrorClass ?? null) : null
+              }
+              threadErrorCode={
+                threadErrorIsServerRuntimeError ? (serverRuntime?.lastErrorCode ?? null) : null
               }
               threadErrorBannerKey={threadErrorBannerKey}
               setThreadError={setThreadError}
