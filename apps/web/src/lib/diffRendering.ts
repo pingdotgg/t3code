@@ -316,7 +316,7 @@ export const DIFF_SURFACE_THEME_UNSAFE_CSS = `
   --diffs-token-dark-bg: transparent;
 
   /* Gutter, context, and row tints all derive from the code surface the diff
-     body sits on — mixing from the canvas leaves the gutter looking unthemed
+     body sits on. Mixing from the canvas leaves the gutter looking unthemed
      when a palette separates the two. */
   --diffs-bg-context-override: color-mix(in srgb, var(--code-background) 97%, var(--code-foreground));
   --diffs-bg-hover-override: color-mix(in srgb, var(--code-background) 94%, var(--code-foreground));

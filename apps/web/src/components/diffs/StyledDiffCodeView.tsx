@@ -181,7 +181,7 @@ export const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
 }
 
 /* Expanding a file mounts its body all at once; easing it in matches the 200ms the app's
-   collapsibles take. Appearance only — the viewer owns geometry, so height cannot animate.
+   collapsibles take. Appearance only: the viewer owns geometry, so height cannot animate.
    Departing content cuts, the same one-way rule the pull request chrome fold follows. */
 [data-diff],
 [data-file] {
