@@ -3,14 +3,31 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   changeRequestUrlFor,
+  canonicalizeChangeRequestUrl,
   matchesLinkedPullRequestUrl,
   parseChangeRequestUrl,
+  parseGitCafePullRequestUrl,
   pullRequestCandidateUrlFromReferenceAutolink,
   siblingPullRequestUrl,
 } from "./changeRequestUrl.ts";
 import { normalizeThreadPullRequestKey } from "./threadPullRequests.ts";
 
 describe("parseChangeRequestUrl", () => {
+  it.each(["git.cafe", "staging.git.cafe"])("reads both GitCafe routes on %s", (host) => {
+    for (const route of ["pull", "pulls"]) {
+      const url = `https://${host}/PingDotGG/T3Code/${route}/21353/files?w=1#diff`;
+      expect(parseChangeRequestUrl(url)).toEqual({
+        host,
+        repository: "pingdotgg/t3code",
+        number: 21353,
+      });
+      expect(canonicalizeChangeRequestUrl(url)).toBe(
+        `https://${host}/pingdotgg/t3code/pulls/21353`,
+      );
+      expect(parseGitCafePullRequestUrl(url)).toEqual(parseChangeRequestUrl(url));
+    }
+  });
+
   it("reads a GitHub pull request, lower-casing the repository", () => {
     expect(parseChangeRequestUrl("https://github.com/T3Tools/T3Code/pull/123")).toEqual({
       host: "github.com",
@@ -81,6 +98,8 @@ describe("parseChangeRequestUrl", () => {
         repository,
         number: 123,
       });
+      expect.soft(parseGitCafePullRequestUrl(linked.url), host).toBeNull();
+      expect.soft(canonicalizeChangeRequestUrl(linked.url), host).toBe(linked.url);
       expect.soft(matchesLinkedPullRequestUrl(linked, `${linked.url}?view=files`), host).toBe(true);
       expect.soft(matchesLinkedPullRequestUrl(linked, other.url), host).toBe(false);
       expect.soft([linked, other].map(normalizeThreadPullRequestKey), host).toEqual([
@@ -111,6 +130,9 @@ describe("parseChangeRequestUrl", () => {
       "https://github.com/t3tools/t3code/pull/abc",
       "https://gitlab.com/t3tools/t3code/-/issues/12",
       "https://blog.example.test/2026/updates/pull/3",
+      "https://git.cafe/owner/repo/pull/0",
+      "https://git.cafe/owner/repo/pull/9007199254740992",
+      "https://staging.git.cafe/owner/repo/pull/7suffix",
       "https://scm.example.test/tfs/Collection/Project/_git/Repo",
       "https://scm.example.test/tfs/Collection/Project/pullrequest/123",
       "https://scm.example.test/tfs/Collection/Project/_git/Repo/pullrequest/abc",

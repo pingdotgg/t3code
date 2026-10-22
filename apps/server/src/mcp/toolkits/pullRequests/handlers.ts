@@ -11,7 +11,11 @@ import {
   type ThreadId,
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
-import { changeRequestUrlFor, parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
+import {
+  canonicalizeChangeRequestUrl,
+  changeRequestUrlFor,
+  parseChangeRequestUrl,
+} from "@t3tools/shared/changeRequestUrl";
 import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 import {
   normalizeThreadPullRequestKey,
@@ -79,7 +83,10 @@ const resolveTarget = Effect.fn("PullRequestsToolkit.resolveTarget")(function* (
     if (parsed === null) {
       return yield* new PullRequestUrlInvalidError({});
     }
-    return { ...normalizeThreadPullRequestKey(parsed), url: input.url } satisfies ResolvedTarget;
+    return {
+      ...normalizeThreadPullRequestKey(parsed),
+      url: canonicalizeChangeRequestUrl(input.url),
+    } satisfies ResolvedTarget;
   }
   if (input.repository === undefined || input.number === undefined) {
     return yield* new PullRequestTargetIncompleteError({});
@@ -110,7 +117,7 @@ const resolveTarget = Effect.fn("PullRequestsToolkit.resolveTarget")(function* (
     `https://${host}/${repository}/pull/${input.number}`;
   return {
     ...normalizeThreadPullRequestKey({ host, repository, number: input.number, url }),
-    url,
+    url: canonicalizeChangeRequestUrl(url),
   } satisfies ResolvedTarget;
 });
 

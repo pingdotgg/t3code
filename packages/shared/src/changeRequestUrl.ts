@@ -18,6 +18,8 @@ function isHostOf(hostname: string, apex: string, label?: string): boolean {
   return label !== undefined && hostname.split(".").includes(label);
 }
 
+const gitCafePullRequestPath = /^\/([^/]+\/[^/]+)\/pulls?\/(\d+)(?:\/|$)/u;
+
 export function parseChangeRequestUrl(targetUrl: string): ChangeRequestLink | null {
   let url: URL;
   try {
@@ -29,7 +31,7 @@ export function parseChangeRequestUrl(targetUrl: string): ChangeRequestLink | nu
   const host = url.hostname.toLowerCase();
 
   if (host === "git.cafe" || host === "staging.git.cafe") {
-    const match = /^\/([^/]+\/[^/]+)\/pulls\/(\d+)(?:\/|$)/u.exec(url.pathname);
+    const match = gitCafePullRequestPath.exec(url.pathname);
     if (match) return claim(host, match);
   } else {
     if (isHostOf(host, "github.com", "github")) {
@@ -52,6 +54,20 @@ export function parseChangeRequestUrl(targetUrl: string): ChangeRequestLink | nu
   const azure = /^\/((?:[^/]+\/)*_git\/[^/]+)\/pullrequest\/(\d+)(?:\/|$)/u.exec(url.pathname);
   const link = claim(host, azure);
   return link === null || url.port === "" ? link : { ...link, authority: url.host.toLowerCase() };
+}
+
+export function parseGitCafePullRequestUrl(targetUrl: string): ChangeRequestLink | null {
+  const link = parseChangeRequestUrl(targetUrl);
+  return link !== null &&
+    (link.host === "git.cafe" || link.host === "staging.git.cafe") &&
+    gitCafePullRequestPath.test(new URL(targetUrl).pathname)
+    ? link
+    : null;
+}
+
+export function canonicalizeChangeRequestUrl(targetUrl: string): string {
+  const link = parseGitCafePullRequestUrl(targetUrl);
+  return link === null ? targetUrl : `https://${link.host}/${link.repository}/pulls/${link.number}`;
 }
 
 function claim(host: string, match: RegExpExecArray | null): ChangeRequestLink | null {

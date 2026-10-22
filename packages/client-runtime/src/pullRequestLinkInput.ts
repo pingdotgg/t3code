@@ -1,5 +1,8 @@
 import { pullRequestHostOf, type RepositoryIdentity } from "@t3tools/contracts";
-import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
+import {
+  canonicalizeChangeRequestUrl,
+  parseChangeRequestUrl,
+} from "@t3tools/shared/changeRequestUrl";
 
 import { sourceControlClients } from "./sourceControlClients.ts";
 
@@ -85,7 +88,12 @@ export function resolveLinkPullRequestInput(input: {
       return { error: `No project in this environment can read ${url.host}/${url.repository}.` };
     }
     return {
-      link: { host: url.host, repository: url.repository, number: url.number, url: parsed },
+      link: {
+        host: url.host,
+        repository: url.repository,
+        number: url.number,
+        url: canonicalizeChangeRequestUrl(parsed),
+      },
     };
   }
   const number = Number(parsed);

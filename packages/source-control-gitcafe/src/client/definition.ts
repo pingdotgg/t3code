@@ -6,15 +6,16 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { parseGitCafePullRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import {
   defineSourceControlClient,
   isChangeRequestInProjectRepository,
   isChangeRequestOnProjectHost,
-  isChangeRequestPath,
 } from "@t3tools/source-control-core/client/definition";
 
-/** GitCafe has no self-hosted installs: production and staging are its only hosts. */
-const GITCAFE_HOSTS = new Set(["git.cafe", "staging.git.cafe"]);
+function isGitCafePullRequestUrl(url: string): boolean {
+  return parseGitCafePullRequestUrl(url) !== null;
+}
 
 const KIND = SourceControlProviderKind.make("gitcafe");
 
@@ -60,22 +61,13 @@ export const definition = defineSourceControlClient({
   reviewSummaryRequired: () => false,
   // `/pulls/` is Forgejo's shape too, so only GitCafe's own hosts claim it.
   checkoutCommandArgument: () => null,
-  isChangeRequestReference: () => false,
+  isChangeRequestReference: isGitCafePullRequestUrl,
   changeRequestUrlHost: (url) => url.hostname,
   checkoutChangeRequestHost: () => null,
   isChangeRequestInRepository: (identity, link) =>
     isChangeRequestInProjectRepository(KIND, identity, link),
   canReadChangeRequestOnHost: (identity, link) =>
     isChangeRequestOnProjectHost(KIND, identity, link),
-  isChangeRequestUrl: (url) => {
-    try {
-      return (
-        GITCAFE_HOSTS.has(new URL(url).hostname.toLowerCase()) &&
-        isChangeRequestPath(url, "/pulls/")
-      );
-    } catch {
-      return false;
-    }
-  },
+  isChangeRequestUrl: isGitCafePullRequestUrl,
   settings,
 });
