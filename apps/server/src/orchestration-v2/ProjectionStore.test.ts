@@ -3115,7 +3115,30 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       assert.include(recoveryThreadIds, childThreadId);
       assert.notInclude(recoveryThreadIds, settledThreadId);
       assert.notInclude(recoveryThreadIds, rolledBackThreadId);
-      const memberRecovery = yield* projectionStore.getRuntimeRecoveryProjection(memberThreadId);
+      const { statements, tracer } = traceSqlStatements();
+      const memberRecovery = yield* projectionStore
+        .getRuntimeRecoveryProjection(memberThreadId)
+        .pipe(Effect.withTracer(tracer));
+      // Completed history grows without bound, so the provider-thread read's
+      // unfinished-item lookups must stay on a partial index.
+      const providerThreadRead = statements.find((query) =>
+        query.includes("SELECT provider_thread.payload_json"),
+      );
+      assert.isDefined(providerThreadRead);
+      const sql = yield* SqlClient.SqlClient;
+      const itemLookups = (yield* sql.unsafe<{ readonly detail: string }>(
+        `EXPLAIN QUERY PLAN ${providerThreadRead}`,
+      ))
+        .map((row) => row.detail)
+        .filter((detail) => /^(SEARCH|SCAN) item /.test(detail));
+      assert.isNotEmpty(itemLookups);
+      for (const detail of itemLookups) {
+        const indexName = /INDEX (\S+)/.exec(detail)?.[1] ?? "";
+        const [index] = yield* sql<{ readonly sql: string }>`
+          SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ${indexName}
+        `;
+        assert.match(index?.sql ?? "", /WHERE[\s\S]*status/, detail);
+      }
       const childRecovery = yield* projectionStore.getRuntimeRecoveryProjection(childThreadId);
       assert.deepEqual(
         memberRecovery.subagents.map((subagent) => subagent.id),
