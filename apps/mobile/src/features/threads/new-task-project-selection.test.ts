@@ -87,34 +87,32 @@ describe("resolveEnvironmentProjectMatch", () => {
     expect(resolveEnvironmentProjectMatch(target, selected)).toBe(target[1]);
   });
 
-  it("falls back to workspace basename, then title, for unindexed projects", () => {
-    const selected = makeProject("t3code", "mac", { workspaceRoot: "/Users/me/t3code" });
-    const byBasename = [
-      makeProject("other", "server"),
-      makeProject("srv", "server", { workspaceRoot: "/home/me/t3code" }),
-    ];
-    expect(resolveEnvironmentProjectMatch(byBasename, selected)).toBe(byBasename[1]);
-
-    const byTitle = [
-      makeProject("other", "server"),
-      makeProject("srv", "server", { title: "t3code" }),
-    ];
-    expect(resolveEnvironmentProjectMatch(byTitle, selected)).toBe(byTitle[1]);
+  it("requires explicit identity for non-Git copies and respects separate mode", () => {
+    const groupingIdentity = "39c61a1b-8a64-43a6-9da5-65c15da93d52";
+    const selected = { ...makeProject("sdk", "mac"), groupingIdentity };
+    const unrelated = makeProject("sdk", "server");
+    const target = { ...makeProject("copy", "server"), groupingIdentity };
+    expect(resolveEnvironmentProjectMatch([unrelated], selected)).toBeNull();
+    expect(resolveEnvironmentProjectMatch([unrelated, target], selected)).toBe(target);
+    expect(
+      resolveEnvironmentProjectMatch([target], selected, {
+        sidebarProjectGroupingMode: "separate",
+        sidebarProjectGroupingOverrides: {},
+      }),
+    ).toBeNull();
+    expect(
+      resolveEnvironmentProjectMatch([unrelated], { ...selected, groupingIdentity: null }),
+    ).toBeNull();
   });
-
-  it("does not treat a known different repository as a basename or title match", () => {
-    const selected = makeProject("t3code", "mac", {
-      repositoryKey: "github.com/t3tools/t3code",
-      workspaceRoot: "/Users/me/t3code",
-    });
-    const fork = makeProject("fork", "server", {
-      repositoryKey: "github.com/someone/t3code",
-      title: "t3code",
-      workspaceRoot: "/home/me/t3code",
-    });
-    const unindexed = makeProject("unindexed", "server", { workspaceRoot: "/srv/t3code" });
-    expect(resolveEnvironmentProjectMatch([fork, unindexed], selected)).toBe(unindexed);
-    expect(resolveEnvironmentProjectMatch([fork], selected)).toBe(fork);
+  it("does not switch to unrelated repositories or first-project fallbacks", () => {
+    const selected = makeProject("sdk", "mac", { repositoryKey: "github.com/g/sdk" });
+    expect(
+      resolveEnvironmentProjectMatch(
+        [makeProject("sdk", "server", { repositoryKey: "github.com/other/sdk" })],
+        selected,
+      ),
+    ).toBeNull();
+    expect(resolveEnvironmentProjectMatch([], selected)).toBeNull();
   });
 });
 

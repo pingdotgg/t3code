@@ -1,7 +1,11 @@
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import { availableScratchWorkspaceRoot } from "@t3tools/client-runtime/operations/projects";
+import {
+  deriveLogicalProjectKeyFromSettings,
+  type ProjectGroupingSettings,
+} from "@t3tools/client-runtime/state/project-grouping";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import { repositoryGroupingKeyOf, type EnvironmentId, type ServerConfig } from "@t3tools/contracts";
+import { type EnvironmentId, type ServerConfig } from "@t3tools/contracts";
 
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import type { HomeProjectScope } from "../home/homeThreadList";
@@ -75,45 +79,21 @@ export function resolveNewTaskScratchOption(input: {
   return environment ? { environmentId: environment.environmentId, ready: ready.length > 0 } : null;
 }
 
+
 export function resolveEnvironmentProjectMatch(
   projectsOnTarget: ReadonlyArray<EnvironmentProject>,
   selectedProject: EnvironmentProject | null,
+  settings: ProjectGroupingSettings = {
+    sidebarProjectGroupingMode: "repository",
+    sidebarProjectGroupingOverrides: {},
+  },
 ): EnvironmentProject | null {
-  const repositoryKey = selectedProject?.repositoryIdentity
-    ? repositoryGroupingKeyOf(selectedProject.repositoryIdentity)
-    : null;
-  // Use || null: placeholder workspaceRoot can be empty, which supplies no useful basename.
-  const workspaceBasename = selectedProject?.workspaceRoot.split("/").at(-1) || null;
-  // Use weaker signals only when identity is unknown; different known repositories never match by basename or title.
-  const isKnownMismatch = (project: EnvironmentProject) => {
-    const projectKey = project.repositoryIdentity
-      ? repositoryGroupingKeyOf(project.repositoryIdentity)
-      : null;
-    return repositoryKey !== null && projectKey !== null && projectKey !== repositoryKey;
-  };
+  if (selectedProject === null) return projectsOnTarget[0] ?? null;
+  const key = deriveLogicalProjectKeyFromSettings(selectedProject, settings);
   return (
-    (repositoryKey !== null
-      ? projectsOnTarget.find(
-          (project) =>
-            (project.repositoryIdentity
-              ? repositoryGroupingKeyOf(project.repositoryIdentity)
-              : null) === repositoryKey,
-        )
-      : undefined) ??
-    (workspaceBasename !== null
-      ? projectsOnTarget.find(
-          (project) =>
-            !isKnownMismatch(project) &&
-            project.workspaceRoot.split("/").at(-1) === workspaceBasename,
-        )
-      : undefined) ??
-    (selectedProject !== null
-      ? projectsOnTarget.find(
-          (project) => !isKnownMismatch(project) && project.title === selectedProject.title,
-        )
-      : undefined) ??
-    projectsOnTarget[0] ??
-    null
+    projectsOnTarget.find(
+      (project) => deriveLogicalProjectKeyFromSettings(project, settings) === key,
+    ) ?? null
   );
 }
 
