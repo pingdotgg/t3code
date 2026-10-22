@@ -116,7 +116,7 @@ kept in the server's secret store, applies right away, and is used before `CAFE_
 sent to `git.cafe`; `CAFE_TOKEN` follows `CAFE_HOST` if you set it. Repositories on
 `staging.git.cafe` need their own login with `--host https://staging.git.cafe/api`.
 
-Line comments, reviewer requests, and labels are not available for GitCafe pull requests yet.
+Line comments are not available for GitCafe pull requests yet.
 Merging a stack lands it through GitCafe, and updating a branch restacks the layers above it.
 
 ## Start, clone, or publish a project
