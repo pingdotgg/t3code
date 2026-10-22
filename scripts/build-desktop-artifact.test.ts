@@ -523,7 +523,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
-  it.effect("ships every Chromium locale so web pages follow the OS language", () =>
+  it.effect("leaves electronLanguages unset so every Chromium locale pak ships", () =>
     Effect.gen(function* () {
       for (const [platform, target] of [
         ["mac", "dmg"],

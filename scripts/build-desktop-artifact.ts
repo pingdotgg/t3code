@@ -1073,7 +1073,9 @@ export function resolveWindowsServerAsarIgnoreGlobs(arch: typeof BuildArch.Type)
   ];
 }
 
-export const WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT = 80;
+// Catches loose dependency trees, which run to hundreds of files. Chromium's
+// locale paks alone are 55 files.
+export const WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT = 140;
 export const WINDOWS_SERVER_RESOURCE_SOURCE_DIR = "apps/desktop/prod-resources/windows-server";
 export const WINDOWS_SERVER_EXTRA_RESOURCES = [
   {
