@@ -253,18 +253,13 @@ jobs:
           if [[ "${{ inputs.version }}" =~ -nightly\.[0-9]{8}\.[0-9]+$ ]]; then brand=nightly; fi
           node scripts/apply-web-brand-assets.ts "$brand" apps/server/dist/client
 
-      # The single-executable is built with a Node that supports --build-sea
-      # (25.7+); the repo itself stays on the engines.node version. A native
-      # build injects into the runner's own Node; a Windows target downloads its
-      # node.exe.
+      # Setup Vite+ selects the exact engines.node version from package.json.
+      # Native builds embed that executable; cross-target builds download the
+      # same version for their target.
       - name: Build CLI single-executable
         if: inputs.cli_archive
         shell: bash
         env:
-          # The exact version, not a major: vp downloads it from nodejs.org/dist on
-          # the runner, and only exact versions have a dist directory. Keep in
-          # step with SEA_NODE_VERSION in apps/server/vite.config.ts.
-          VP_NODE_VERSION: "26.8.2"
           # The executable bundles the server again, so it needs the same stamp
           # as release.yml's JS bundle.
           T3CODE_TELEMETRY_CHANNEL: ${{ github.repository == 'pingdotgg/t3code' && inputs.release_channel || 'dev' }}
