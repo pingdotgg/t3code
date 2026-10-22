@@ -421,3 +421,82 @@ describe("sortProjectsByGroupOrder", () => {
     expect(sorted.map((entry) => entry.environmentId)).toEqual([remote, environmentId]);
   });
 });
+
+describe("explicit non-Git grouping", () => {
+  const sdk = "39c61a1b-8a64-43a6-9da5-65c15da93d52";
+  const spacetime = "e703c118-3547-41b1-88c5-9774cf40ae86";
+  const copies = ["windows", "linux", "mac"].flatMap((machine) =>
+    [sdk, spacetime].map((groupingIdentity, index) =>
+      makeProject(`${machine}-${index}`, `/${machine}/${index}`, {
+        environmentId: EnvironmentId.make(machine),
+        repositoryIdentity: null,
+        groupingIdentity,
+        title: index === 0 ? "sdk" : "spacetimedb",
+      }),
+    ),
+  );
+  it.each(["repository", "repository_path"] as const)(
+    "preserves all physical refs across three machines in %s mode",
+    (mode) => {
+      const groups = buildProjectGroups({ projects: copies, settings: settings(mode) });
+      expect(groups).toHaveLength(2);
+      for (const group of groups) {
+        expect(group.members).toHaveLength(3);
+        expect(group.memberProjectRefs).toHaveLength(3);
+        expect(new Set(group.members.map(({ project }) => project.environmentId)).size).toBe(3);
+      }
+    },
+  );
+  it("honors separate mode, per-project overrides, and clearing", () => {
+    expect(buildProjectGroups({ projects: copies, settings: settings("separate") })).toHaveLength(
+      6,
+    );
+    expect(
+      buildProjectGroups({
+        projects: copies,
+        settings: settings("repository", { [derivePhysicalProjectKey(copies[0]!)]: "separate" }),
+      }),
+    ).toHaveLength(3);
+    expect(
+      buildProjectGroups({
+        projects: copies.map((p, i) => (i === 0 ? { ...p, groupingIdentity: null } : p)),
+        settings: settings("repository"),
+      }),
+    ).toHaveLength(3);
+  });
+  it("never groups by name and keeps Git identity authoritative", () => {
+    const sameNames = copies.map((p) => ({ ...p, groupingIdentity: null, title: "sdk" }));
+    expect(
+      buildProjectGroups({ projects: sameNames, settings: settings("repository") }),
+    ).toHaveLength(6);
+    const git = copies.map((p) => ({ ...p, repositoryIdentity }));
+    expect(buildProjectGroups({ projects: git, settings: settings("repository") })).toHaveLength(1);
+  });
+  it("keeps known Git identity authoritative while the newest duplicate is still enriching", () => {
+    const stale = { ...copies[0]!, repositoryIdentity };
+    const fresh = {
+      ...copies[0]!,
+      id: ProjectId.make("fresh-git"),
+      updatedAt: "2026-10-20T00:00:00.000Z",
+    };
+    const remote = { ...copies[2]!, repositoryIdentity };
+    expect(
+      buildProjectGroups({ projects: [stale, fresh, remote], settings: settings("repository") }),
+    ).toHaveLength(1);
+  });
+  it("does not resurrect a cleared identity from an older duplicate registration", () => {
+    const first = copies[0]!;
+    const fresh = {
+      ...first,
+      id: ProjectId.make("fresh"),
+      groupingIdentity: null,
+      updatedAt: "2026-10-20T00:00:00.000Z",
+    };
+    const groups = buildProjectGroups({
+      projects: [first, fresh, copies[2]!],
+      settings: settings("repository"),
+    });
+    expect(groups).toHaveLength(2);
+    expect(groups.flatMap((g) => g.memberProjectRefs)).toHaveLength(3);
+  });
+});

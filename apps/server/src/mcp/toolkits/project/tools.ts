@@ -87,7 +87,8 @@ const ProjectCreateTool = Tool.make("t3_project_create", {
 }).annotate(Tool.Destructive, true);
 const ProjectUpdateTool = Tool.make("t3_project_update", {
   ...shared,
-  description: "Update one project's settings. Omitted fields are unchanged.",
+  description:
+    "Update project settings; omitted fields stay unchanged. groupingIdentity: shared lowercase UUID v4 for non-Git copies, null to clear. Git identity wins; read/list shows the value.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     projectId: ProjectId,

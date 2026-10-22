@@ -249,3 +249,19 @@ On mobile, use **Settings → Source control** to change selected environment de
 T3 Code only pulls when it can fast-forward and the checkout has no changed files, untracked files,
 or local commits. It skips checkouts on another branch or without an upstream. If a checkout has
 local work, resolve it yourself before automatic pulls can resume.
+
+## Group non-Git projects across computers
+
+Assign the same explicit grouping identity to copies of a non-Git project to show them as one project with a choice of computers. Each computer keeps its own directory, project record, and threads. Names and paths alone never establish this relationship. Git projects continue to group by repository identity; the Separate grouping setting keeps all copies apart.
+
+Generate a lowercase UUID v4 once (for example, `python -c "import uuid; print(uuid.uuid4())"`) and reuse it only for copies of that project:
+
+```sh
+t3 project add /path/to/sdk --grouping-identity <uuid>
+t3 project grouping /path/to/sdk
+t3 project grouping /path/to/sdk --identity <another-uuid>
+t3 project grouping /path/to/sdk --clear
+t3 project list
+```
+
+With `--grouping-identity`, `project add` also updates an existing registration at that path, preserving its title and threads. Without the flag, adding an existing project still reports a conflict. `project list` returns JSON including the saved identity. Agents can use `t3_project_create` or `t3_project_update` with `groupingIdentity`; omit it to preserve the value or pass `null` to clear it. Read and list tools expose the identity. Update the servers and clients on all computers before assigning identities.
