@@ -610,6 +610,31 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
+  it.effect.each(["linux", "darwin"] as const)(
+    "install refuses to rebind a service that serves another T3 home on %s",
+    (platform) =>
+      Effect.gen(function* () {
+        const { service, fs, baseDir, commands, makeService } = yield* makeHarness(platform);
+        const plan = yield* service.install();
+        const unit = yield* fs.readFileString(plan.unitPath);
+        const path = yield* Path.Path;
+        const otherHome = yield* fs.makeTempDirectoryScoped({ prefix: "t3-other-home-" });
+        const other = yield* makeService(undefined, "1.2.3", path.join(otherHome, ".t3"));
+
+        expect(yield* other.status).toMatchObject({
+          installed: true,
+          current: false,
+          otherBaseDir: baseDir,
+        });
+        commands.length = 0;
+        const error = yield* other.install().pipe(Effect.flip);
+        expect(error).toMatchObject({ _tag: "BootServiceOtherBaseDirError" });
+        expect(error.message).toContain(`--base-dir ${baseDir}`);
+        expect(yield* fs.readFileString(plan.unitPath)).toBe(unit);
+        expect(commands).toEqual([]);
+      }),
+  );
+
   it.effect("hands the whole install to systemd without changing the running service", () =>
     Effect.gen(function* () {
       const { fs, commands, invocations, control, makeService } = yield* makeHarness();
