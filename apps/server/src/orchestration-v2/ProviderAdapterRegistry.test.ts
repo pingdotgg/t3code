@@ -224,6 +224,29 @@ it.effect(
     }),
 );
 
+it.effect("reports a new instance build only after the instance is rebuilt", () =>
+  Effect.gen(function* () {
+    const current = yield* Ref.make<ProviderInstance>(instances[0]);
+    const registry = yield* Effect.service(ProviderAdapterRegistry.ProviderAdapterRegistryV2).pipe(
+      Effect.provide(
+        ProviderAdapterRegistry.layerFromProviderInstanceRegistry.pipe(
+          Layer.provide(
+            Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+              getInstance: () => Ref.get(current),
+            }),
+          ),
+        ),
+      ),
+    );
+    const instanceBuild = registry.instanceBuild!;
+
+    const first = yield* instanceBuild(personalId);
+    assert.strictEqual(yield* instanceBuild(personalId), first);
+    yield* Ref.set(current, { ...instances[0] });
+    assert.notStrictEqual(yield* instanceBuild(personalId), first);
+  }),
+);
+
 it.effect("interrupts admitted session startup when a shared peer signs out", () =>
   Effect.gen(function* () {
     const entered = yield* Deferred.make<void>();

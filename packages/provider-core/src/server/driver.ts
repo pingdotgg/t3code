@@ -8,9 +8,11 @@ import type {
   AcpRegistryListProvidersResult,
   AcpRegistryOperationError,
   AcpRegistrySetProviderInput,
+  ProviderDisabledInventory,
   ProviderDriverKind,
   ProviderInstanceEnvironment,
   ProviderInstanceId,
+  ProviderInventory,
   ServerProvider,
   ServerProviderWorkspaceSnapshot,
 } from "@t3tools/contracts";
@@ -39,6 +41,8 @@ export interface ProviderDriverMetadata {
 export type ProviderWorkspaceSnapshot = ServerProvider &
   Pick<ServerProviderWorkspaceSnapshot, "slashCommandsPending" | "optionDescriptors">;
 
+export type ProviderInventoryDraft = Omit<ProviderInventory, "instanceId" | "checkedAt">;
+
 export interface ProviderInstance {
   readonly instanceId: ProviderInstanceId;
   readonly driverKind: ProviderDriverKind;
@@ -59,6 +63,13 @@ export interface ProviderInstance {
   readonly orchestrationAdapter: ProviderAdapter.ProviderAdapterV2["Service"];
   readonly textGeneration: ProviderTextGeneration;
   readonly auth?: ProviderAuthController;
+  /**
+   * Lists what the provider loads from the user's own configuration and
+   * account, ignoring `disabledInventory` so switched-off items can be
+   * switched back on. Starts every configured MCP server, so it only runs on
+   * an explicit request, never as part of a health check.
+   */
+  readonly readInventory?: Effect.Effect<ProviderInventoryDraft, ProviderDriverError>;
   readonly acpSessionManagement?: {
     readonly listSessions: (input: {
       readonly cwd: string;
@@ -105,6 +116,8 @@ export interface ProviderDriverCreateInput<Config> {
   readonly accentColor?: string | undefined;
   readonly environment: ProviderInstanceEnvironment;
   readonly enabled: boolean;
+  /** Absent means nothing is switched off. */
+  readonly disabledInventory?: ProviderDisabledInventory;
   readonly config: Config;
 }
 

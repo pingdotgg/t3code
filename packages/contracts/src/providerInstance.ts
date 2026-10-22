@@ -46,6 +46,29 @@ export type ProviderInstanceEnvironmentVariable = typeof ProviderInstanceEnviron
 export const ProviderInstanceEnvironment = Schema.Array(ProviderInstanceEnvironmentVariable);
 export type ProviderInstanceEnvironment = typeof ProviderInstanceEnvironment.Type;
 
+export const ProviderInventoryKind = Schema.Literals([
+  "connectors",
+  "mcpServers",
+  "plugins",
+  "skills",
+]);
+export type ProviderInventoryKind = typeof ProviderInventoryKind.Type;
+
+const ProviderInventoryItemIds = Schema.optionalKey(Schema.Array(TrimmedNonEmptyString));
+
+/**
+ * Inventory item ids this instance keeps out of its T3 sessions. The
+ * provider's own configuration is never touched, so its other apps still
+ * load them.
+ */
+export const ProviderDisabledInventory = Schema.Struct({
+  connectors: ProviderInventoryItemIds,
+  mcpServers: ProviderInventoryItemIds,
+  plugins: ProviderInventoryItemIds,
+  skills: ProviderInventoryItemIds,
+});
+export type ProviderDisabledInventory = typeof ProviderDisabledInventory.Type;
+
 /**
  * The driver-specific config payload is left as `Schema.Unknown`; each driver
  * registers its own decoder with the runtime registry, and envelopes for
@@ -58,6 +81,7 @@ export const ProviderInstanceConfig = Schema.Struct({
   accentColor: Schema.optional(TrimmedNonEmptyString),
   environment: Schema.optionalKey(ProviderInstanceEnvironment),
   enabled: Schema.optionalKey(Schema.Boolean),
+  disabledInventory: Schema.optionalKey(ProviderDisabledInventory),
   config: Schema.optionalKey(Schema.Unknown),
 });
 export type ProviderInstanceConfig = typeof ProviderInstanceConfig.Type;
@@ -76,6 +100,14 @@ export const ProviderInstanceMutation = Schema.Union([
   Schema.Struct({
     operation: Schema.Literal("remove"),
     instanceId: ProviderInstanceId,
+  }),
+  Schema.Struct({
+    operation: Schema.Literal("set-inventory-item"),
+    instanceId: ProviderInstanceId,
+    driver: ProviderDriverKind,
+    kind: ProviderInventoryKind,
+    itemId: TrimmedNonEmptyString,
+    enabledInT3: Schema.Boolean,
   }),
 ]);
 export type ProviderInstanceMutation = typeof ProviderInstanceMutation.Type;

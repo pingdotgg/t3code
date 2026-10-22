@@ -1,5 +1,5 @@
 import * as ProviderRegistry from "../ProviderRegistry.ts";
-import type { ServerProvider } from "@t3tools/contracts";
+import { ProviderSetupError, type ServerProvider } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -16,6 +16,10 @@ const makeProviderRegistryMock = (
   getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
     Effect.succeed(makeManualOnlyProviderMaintenanceCapabilities({ provider, packageName: null })),
   setProviderMaintenanceActionState: () => Effect.succeed(providers),
+  readInventory: (instanceId) =>
+    Effect.fail(
+      new ProviderSetupError({ instanceId, operation: "read-inventory", detail: "Not mocked." }),
+    ),
   streamChanges: Stream.empty,
 });
 

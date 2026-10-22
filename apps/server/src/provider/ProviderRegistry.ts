@@ -2,7 +2,9 @@ import {
   defaultInstanceIdForDriver,
   isProviderWorkspaceSnapshotCurrent,
   ProviderDriverKind,
+  ProviderSetupError,
   type ProviderInstanceId,
+  type ProviderInventory,
   type ServerProvider,
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
@@ -88,9 +90,19 @@ export class ProviderRegistry extends Context.Service<
       readonly state: ServerProviderUpdateState | null;
     }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
+    /**
+     * Starts the provider to list its connectors, MCP servers, plugins and
+     * skills. Only for explicit user requests: it launches MCP servers.
+     */
+    readonly readInventory: (
+      instanceId: ProviderInstanceId,
+    ) => Effect.Effect<ProviderInventory, ProviderSetupError>;
+
     readonly streamChanges: Stream.Stream<ReadonlyArray<ServerProvider>>;
   }
 >()("t3/provider/ProviderRegistry") {}
+
+const UNSUPPORTED_INVENTORY_SECTION = { _tag: "Unsupported" } as const;
 
 const loadProviders = (
   providerSources: ReadonlyArray<ProviderSnapshotSource>,
@@ -1008,6 +1020,42 @@ export const layer = Layer.effect(
       );
     });
 
+    const readInventory = Effect.fn("ProviderRegistry.readInventory")(function* (
+      instanceId: ProviderInstanceId,
+    ) {
+      const instance = yield* instanceRegistry.getInstance(instanceId);
+      if (instance === undefined || !instance.enabled) {
+        return yield* new ProviderSetupError({
+          instanceId,
+          operation: "read-inventory",
+          detail: instance ? "This provider is disabled." : "Provider instance not found.",
+        });
+      }
+      const draft = instance.readInventory
+        ? yield* instance.readInventory.pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderSetupError({
+                  instanceId,
+                  operation: "read-inventory",
+                  detail: cause.detail,
+                  cause,
+                }),
+            ),
+          )
+        : {
+            connectors: UNSUPPORTED_INVENTORY_SECTION,
+            mcpServers: UNSUPPORTED_INVENTORY_SECTION,
+            plugins: UNSUPPORTED_INVENTORY_SECTION,
+            skills: UNSUPPORTED_INVENTORY_SECTION,
+          };
+      return {
+        ...draft,
+        instanceId,
+        checkedAt: DateTime.formatIso(yield* DateTime.now),
+      } satisfies ProviderInventory;
+    });
+
     return {
       getProviders: Ref.get(providersRef),
       refresh: (provider?: ProviderDriverKind) =>
@@ -1019,6 +1067,7 @@ export const layer = Layer.effect(
       refreshAfterUpdate,
       getProviderMaintenanceCapabilitiesForInstance,
       setProviderMaintenanceActionState,
+      readInventory,
       get streamChanges() {
         return Stream.fromPubSub(changesPubSub);
       },

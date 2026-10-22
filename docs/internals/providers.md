@@ -56,6 +56,18 @@ Opening a provider session can start MCP servers, run hooks, or launch a login b
 session creation for this reason. Antigravity likewise reserves authenticated catalog sessions for
 explicit setup or model refresh; background checks use initialization only.
 
+Listing what a provider loads (connectors, plugins, MCP servers, skills) also starts every
+configured MCP server, so [`readInventory`](../../packages/provider-core/src/server/driver.ts)
+runs only when a user opens the list. Switching an item off is T3-only: drivers pass per-process
+overrides, Claude's `--settings` layer and Codex's `-c`, and never write the provider's own
+configuration. Those overrides, like any instance setting, reach a session only when it opens, and
+Codex and OpenCode 2.x share one session across threads. The
+[session manager](../../apps/server/src/orchestration-v2/ProviderSessionManager.ts) therefore
+retires an idle session opened by an earlier build of its instance before reusing it. Account connectors live on claude.ai or chatgpt.com, where T3 cannot turn them off
+everywhere, and a remote client should not rewrite configuration on the host. Codex MCP servers
+and plugins stay view-only: a `-c` override for a server missing from the user's config hangs
+`app-server` on startup, and remote marketplace plugins ignore overrides.
+
 [Antigravity sign-in](../../apps/server/src/provider/AntigravityAuth.ts) belongs to the initiating
 T3 auth session. The client carries the return URL back to the environment because the provider's
 loopback listener may be on another machine. Forward only the callback for the owned pending flow;

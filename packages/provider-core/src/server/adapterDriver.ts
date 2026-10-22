@@ -1,6 +1,7 @@
 import {
   ProviderDriverKind,
   ProviderInstanceId,
+  type ProviderDisabledInventory,
   type ProviderInstanceEnvironment,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -29,6 +30,8 @@ export interface ProviderAdapterDriverCreateInput<Config> {
   readonly accentColor?: string | undefined;
   readonly environment: ProviderInstanceEnvironment;
   readonly enabled: boolean;
+  /** Absent when the driver does not support keeping inventory items out of T3. */
+  readonly disabledInventory?: ProviderDisabledInventory;
   readonly config: Config;
 }
 

@@ -23,9 +23,11 @@ import * as ResetCreditCoordinator from "../resetCreditCoordinator.ts";
 import {
   checkCodexProviderStatus,
   makePendingCodexProvider,
+  probeCodexInventory,
   probeCodexSkillsForCwd,
   withCodexAppServerClient,
 } from "../CodexProvider.ts";
+import { withCodexDisabledInventory } from "./CodexInventory.ts";
 import { resolveCodexLaunchArgs } from "../codexLaunchArgs.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
@@ -118,6 +120,7 @@ export const CodexDriver: ProviderDriver<
     accentColor,
     environment,
     enabled,
+    disabledInventory = {},
     config,
   }) {
     if (config.setupMode === "managed")
@@ -127,6 +130,7 @@ export const CodexDriver: ProviderDriver<
         accentColor,
         environment,
         enabled,
+        disabledInventory,
         config,
       });
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -185,6 +189,7 @@ export const CodexDriver: ProviderDriver<
         accentColor,
         environment,
         enabled,
+        disabledInventory,
         config,
       },
       { onUsageLimits: (update) => snapshot.applyUsageLimits(update) },
@@ -207,7 +212,13 @@ export const CodexDriver: ProviderDriver<
         Effect.zipWith(
           checkCodexProviderStatus(effectiveConfig, undefined, processEnv),
           currentCatalog,
-          (draft, catalog) => stampIdentity(applyCodexModelCatalog(draft, catalog)),
+          (draft, catalog) =>
+            stampIdentity(
+              applyCodexModelCatalog(
+                { ...draft, skills: withCodexDisabledInventory(draft.skills, disabledInventory) },
+                catalog,
+              ),
+            ),
           { concurrent: true },
         ),
       ),
@@ -272,7 +283,10 @@ export const CodexDriver: ProviderDriver<
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
             ),
           ]).pipe(
-            Effect.map(([machineSnapshot, skills]) => ({ ...machineSnapshot, skills })),
+            Effect.map(([machineSnapshot, skills]) => ({
+              ...machineSnapshot,
+              skills: withCodexDisabledInventory(skills, disabledInventory),
+            })),
             Effect.mapError(
               (cause) =>
                 new ProviderDriverError({
@@ -346,6 +360,30 @@ export const CodexDriver: ProviderDriver<
           ),
         );
 
+    const readInventory = probeCodexInventory({
+      binaryPath: effectiveConfig.binaryPath,
+      homePath: effectiveConfig.homePath,
+      launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
+      cwd: process.cwd(),
+      environment: processEnv,
+    }).pipe(
+      Effect.scoped,
+      Effect.timeout("30 seconds"),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.mapError(
+        (cause) =>
+          new ProviderDriverError({
+            driver: DRIVER_KIND,
+            instanceId,
+            detail:
+              cause._tag === "TimeoutError"
+                ? "Codex took too long to list its connectors."
+                : "Codex could not list its connectors.",
+            cause,
+          }),
+      ),
+    );
+
     return {
       instanceId,
       driverKind: DRIVER_KIND,
@@ -355,6 +393,7 @@ export const CodexDriver: ProviderDriver<
       enabled,
       snapshot,
       snapshotForCwd,
+      readInventory,
       consumeResetCredit,
       orchestrationAdapter,
       textGeneration,

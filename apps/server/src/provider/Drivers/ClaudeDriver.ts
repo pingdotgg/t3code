@@ -30,9 +30,11 @@ import {
   checkClaudeProviderStatus,
   makePendingClaudeProvider,
   probeClaudeCapabilities,
+  probeClaudeInventory,
   probeClaudeWorkspaceSnapshot,
   type ClaudeCapabilitiesProbe,
 } from "../ClaudeProvider.ts";
+import { withClaudeDisabledInventory } from "./ClaudeInventory.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
 import { resolveClaudeModelCatalog } from "../ClaudeModelCatalog.ts";
@@ -119,6 +121,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     accentColor,
     environment,
     enabled,
+    disabledInventory = {},
     config,
   }) {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -177,6 +180,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         accentColor,
         environment,
         enabled,
+        disabledInventory,
         config,
       },
       { scopedLimitNames, onUsageLimits: (update) => snapshot.applyUsageLimits(update) },
@@ -279,6 +283,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
               ? Cache.invalidateAll(capabilitiesProbeCache)
               : Effect.void,
           ),
+          Effect.map((provider) => ({
+            ...provider,
+            skills: withClaudeDisabledInventory(provider.skills, disabledInventory),
+          })),
           Effect.map(stampIdentity),
         ),
       ),
@@ -401,9 +409,29 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
           Effect.flatMap((machineSnapshot) =>
             probeClaudeWorkspaceSnapshot(effectiveConfig, machineSnapshot, cwd, processEnv),
           ),
+          Effect.map((workspaceSnapshot) => ({
+            ...workspaceSnapshot,
+            skills: withClaudeDisabledInventory(workspaceSnapshot.skills, disabledInventory),
+          })),
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(Path.Path, path),
         ),
+      readInventory: probeClaudeInventory(effectiveConfig, processEnv, stateDir).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+        Effect.mapError(
+          (cause) =>
+            new ProviderDriverError({
+              driver: DRIVER_KIND,
+              instanceId,
+              detail:
+                cause._tag === "TimeoutError"
+                  ? "Claude took too long to list its connectors."
+                  : "Claude could not list its connectors.",
+              cause,
+            }),
+        ),
+      ),
       orchestrationAdapter,
       textGeneration,
       consumeResetCredit,

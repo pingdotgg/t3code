@@ -37,6 +37,7 @@ import {
 } from "@t3tools/provider-core/server/snapshotProbe";
 import { resolveClaudeSdkExecutablePath } from "./Drivers/ClaudeExecutable.ts";
 import { hasClaudeManagedMcpConfig, makeClaudeEnvironment } from "./Drivers/ClaudeHome.ts";
+import { claudeInventoryFromProbe, type ClaudeInventoryProbe } from "./Drivers/ClaudeInventory.ts";
 import { discoverClaudeSkills } from "./Drivers/ClaudeSkills.ts";
 import type { ProviderWorkspaceSnapshot } from "@t3tools/provider-core/server/driver";
 import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
@@ -60,6 +61,7 @@ const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabili
 const CLAUDE_PRESENTATION = {
   displayName: "Claude",
   showInteractionModeToggle: true,
+  supportsInventory: true,
   reportsContextWindow: true,
 } as const;
 function toTitleCaseWords(value: string): string {
@@ -431,6 +433,110 @@ const probeClaudeCapabilities = (
 };
 
 type ClaudeCapabilitiesProbeError = Effect.Error<ReturnType<typeof probeClaudeCapabilities>>;
+
+const CLAUDE_INVENTORY_TIMEOUT_MS = 30_000;
+const CLAUDE_INVENTORY_INITIALIZATION_TIMEOUT_MS = 10_000;
+const CLAUDE_INVENTORY_SERVER_TIMEOUT_MS = 15_000;
+const CLAUDE_INVENTORY_POLL_MS = 250;
+
+const readClaudeInventoryPart = Effect.fn("ClaudeProvider.readInventoryPart")(
+  <A, E>(effect: Effect.Effect<A, E>, message: string) =>
+    effect.pipe(
+      Effect.timeout(DEFAULT_TIMEOUT_MS),
+      Effect.map((value) => ({ _tag: "Success" as const, value })),
+      Effect.catch(() => Effect.succeed({ _tag: "Failure" as const, message })),
+    ),
+);
+
+/**
+ * Unlike the health probe, this keeps the user's MCP configuration and
+ * claude.ai connectors so it can report them, which starts every configured
+ * server. Like it, the prompt never yields, so nothing reaches the API.
+ */
+export const probeClaudeInventory = Effect.fn("probeClaudeInventory")(
+  function* (claudeSettings: ClaudeSettings, environment: NodeJS.ProcessEnv, cwd: string) {
+    const abort = yield* Effect.acquireRelease(
+      Effect.sync(() => new AbortController()),
+      (controller) => Effect.sync(() => controller.abort()),
+    );
+    const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
+    const executablePath = yield* resolveClaudeSdkExecutablePath(
+      claudeSettings.binaryPath,
+      claudeEnvironment,
+    );
+    const q = claudeQuery({
+      // Never yield, so no prompt reaches the API.
+      // oxlint-disable-next-line require-yield
+      prompt: (async function* (): AsyncGenerator<SDKUserMessage> {
+        await waitForAbortSignal(abort.signal);
+      })(),
+      options: {
+        persistSession: false,
+        pathToClaudeCodeExecutable: executablePath,
+        abortController: abort,
+        settingSources: [...CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES],
+        settings: { disableAllHooks: true },
+        allowedTools: [],
+        env: {
+          ...claudeEnvironment,
+          FORCE_CODE_TERMINAL: undefined,
+          CLAUDE_CODE_AUTO_CONNECT_IDE: "0",
+          CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL: "1",
+        },
+        cwd,
+        stderr: () => {},
+      },
+    });
+    yield* Effect.tryPromise(() => q.initializationResult()).pipe(
+      Effect.timeout(CLAUDE_INVENTORY_INITIALIZATION_TIMEOUT_MS),
+    );
+    const readServers = readClaudeInventoryPart(
+      Effect.tryPromise(() => q.mcpServerStatus()),
+      "Claude could not list its MCP servers.",
+    );
+    let lastServers: ClaudeInventoryProbe["servers"] = {
+      _tag: "Failure",
+      message: "Claude could not list its MCP servers.",
+    };
+    const pollServers = Effect.gen(function* () {
+      lastServers = yield* readServers;
+      while (
+        lastServers._tag === "Success" &&
+        lastServers.value.some((server) => server.status === "pending")
+      ) {
+        yield* Effect.sleep(CLAUDE_INVENTORY_POLL_MS);
+        const next = yield* readServers;
+        if (next._tag === "Failure") break;
+        lastServers = next;
+      }
+      return lastServers;
+    }).pipe(
+      // Keep the last listing, including pending servers, before the outer
+      // deadline can discard sections that already loaded.
+      Effect.timeoutOrElse({
+        duration: CLAUDE_INVENTORY_SERVER_TIMEOUT_MS,
+        orElse: () => Effect.succeed(lastServers),
+      }),
+    );
+    const readPlugins = readClaudeInventoryPart(
+      Effect.tryPromise(() => q.reloadPlugins({ holdOnCacheImpact: true })).pipe(
+        Effect.map((result) => result.plugins),
+      ),
+      "Claude could not list its plugins.",
+    );
+    const readSkills = readClaudeInventoryPart(
+      Effect.tryPromise(() => q.reloadSkills()).pipe(Effect.map((result) => result.skills)),
+      "Claude could not list its skills.",
+    );
+    const [servers, plugins, skills] = yield* Effect.all([pollServers, readPlugins, readSkills], {
+      concurrency: "unbounded",
+    });
+    const probe: ClaudeInventoryProbe = { servers, plugins, skills };
+    return claudeInventoryFromProbe(probe);
+  },
+  Effect.scoped,
+  Effect.timeout(CLAUDE_INVENTORY_TIMEOUT_MS),
+);
 
 const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
   claudeSettings: ClaudeSettings,

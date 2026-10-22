@@ -319,6 +319,90 @@ const layerTestNodeServices = Layer.mergeAll(
 it.layer(
   Layer.mergeAll(layerTestNodeServices, ServerSettingsModule.layerTest(), layerTestHttpClient),
 )("ProviderRegistry", (it) => {
+  it.effect("reads inventory only on request and rejects unavailable instances", () =>
+    Effect.gen(function* () {
+      const calls = yield* Ref.make(0);
+      const instanceId = ProviderInstanceId.make("codex_inventory");
+      const driver = ProviderDriverKind.make("codex");
+      const provider: ServerProvider = {
+        instanceId,
+        driver,
+        installed: true,
+        version: "test-version",
+        enabled: true,
+        status: "ready",
+        auth: { status: "authenticated" },
+        checkedAt: "1970-01-01T00:00:00.000Z",
+        models: [],
+        skills: [],
+        slashCommands: [],
+      };
+      const draft = {
+        connectors: { _tag: "Listed", canDisable: true, items: [{ id: "gmail", name: "Gmail" }] },
+        plugins: { _tag: "Unsupported" },
+        mcpServers: { _tag: "Unsupported" },
+        skills: { _tag: "Unsupported" },
+      } as const;
+      const instance: ProviderInstance = {
+        instanceId,
+        driverKind: driver,
+        continuationIdentity: { driverKind: driver, continuationKey: "codex:inventory-test" },
+        displayName: undefined,
+        enabled: true,
+        snapshot: {
+          getSnapshot: Effect.succeed(provider),
+          refresh: Effect.succeed(provider),
+          streamChanges: Stream.empty,
+          resolveMaintenance: () =>
+            Effect.succeed(
+              makeManualOnlyProviderMaintenanceCapabilities({
+                provider: driver,
+                packageName: null,
+              }),
+            ),
+          applyUsageLimits: () => Effect.void,
+        },
+        orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+        textGeneration: {} as ProviderInstance["textGeneration"],
+        readInventory: Ref.update(calls, (count) => count + 1).pipe(Effect.as(draft)),
+      };
+      const selectedInstance = yield* Ref.make<ProviderInstance | undefined>(instance);
+      const registryLayer = ProviderRegistry.layer.pipe(
+        Layer.provide(
+          Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+            getInstance: () => Ref.get(selectedInstance),
+            listInstances: Effect.succeed([instance]),
+            listUnavailable: Effect.succeed([]),
+            streamChanges: Stream.empty,
+            subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+          }),
+        ),
+        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-provider-inventory-" })),
+      );
+
+      yield* Effect.gen(function* () {
+        const registry = yield* ProviderRegistry.ProviderRegistry;
+        assert.strictEqual(yield* Ref.get(calls), 0);
+        const inventory = yield* registry.readInventory(instanceId);
+        assert.deepStrictEqual(inventory, {
+          ...draft,
+          instanceId,
+          checkedAt: DateTime.formatIso(yield* DateTime.now),
+        });
+        assert.strictEqual(yield* Ref.get(calls), 1);
+
+        yield* Ref.set(selectedInstance, { ...instance, enabled: false });
+        const disabled = yield* registry.readInventory(instanceId).pipe(Effect.flip);
+        assert.strictEqual(disabled._tag, "ProviderSetupError");
+        assert.strictEqual(disabled.detail, "This provider is disabled.");
+        yield* Ref.set(selectedInstance, undefined);
+        const missing = yield* registry.readInventory(instanceId).pipe(Effect.flip);
+        assert.strictEqual(missing.detail, "Provider instance not found.");
+        assert.strictEqual(yield* Ref.get(calls), 1);
+      }).pipe(Effect.provide(registryLayer));
+    }),
+  );
+
   describe("checkCodexProviderStatus", () => {
     it.effect("uses the app-server account and model list for provider status", () =>
       Effect.gen(function* () {

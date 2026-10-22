@@ -40,6 +40,13 @@ export interface ProviderClientDefinition {
   readonly environmentFields?: ReadonlyArray<ProviderEnvironmentField>;
   readonly hasDefaultInstance?: boolean;
   readonly badgeLabel?: string;
+  /**
+   * Adding an instance ends on its sign-in and what it loads, connectors,
+   * plugins and skills, so the user can keep any of them out of T3 from the
+   * start. Matches `ServerProvider.supportsInventory`, which arrives only once
+   * the new instance has been checked.
+   */
+  readonly listsInventory?: boolean;
 }
 
 export function defineProviderClient<const Definition extends ProviderClientDefinition>(

@@ -1082,6 +1082,12 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:provider:install-remove",
       tag: WS_METHODS.providerInstallRemove,
     }),
+    // Listing starts configured MCP servers, so reuse the result across visits.
+    providerInventory: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:provider:inventory",
+      tag: WS_METHODS.providerReadInventory,
+      staleTimeMs: 5 * 60_000,
+    }),
     traceDiagnostics: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:trace-diagnostics",
       tag: WS_METHODS.serverGetTraceDiagnostics,

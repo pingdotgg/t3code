@@ -1,11 +1,13 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
+import type { EnvironmentId, ProviderInstanceConfig, ProviderInstanceId } from "@t3tools/contracts";
+import { useState } from "react";
 
 import { useEnvironmentQuery } from "../../state/query";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { Button } from "../ui/button";
 import { WizardFooter, WizardPanel } from "../ui/wizard";
 import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
+import { ProviderInventoryList } from "./ProviderInventorySection";
 import { SettingsGroup } from "./SettingsGroup";
 import { SettingsRow } from "./settingsLayout";
 
@@ -13,11 +15,13 @@ export function ProviderWizardAuthenticationStep({
   environmentId,
   environmentLabel,
   instanceId,
+  instance,
   onFinish,
 }: {
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
   readonly instanceId: ProviderInstanceId;
+  readonly instance?: ProviderInstanceConfig | undefined;
   readonly onFinish: () => void;
 }) {
   const providers =
@@ -33,6 +37,10 @@ export function ProviderWizardAuthenticationStep({
     provider?.auth.status === "authenticated" ||
     (provider?.auth.status === "unknown" && auth?.phase === "succeeded");
   const isDiscovering = !signedIn && !query.error && auth?.methods === undefined;
+  // Each switch rebuilds the instance, whose status reads unknown until it is
+  // checked again, so the list stays once it has appeared.
+  const [showInventory, setShowInventory] = useState(false);
+  if (!showInventory && signedIn && provider?.supportsInventory) setShowInventory(true);
   const canAuthenticate = (auth?.methods?.length ?? 0) > 0;
 
   return (
@@ -84,6 +92,16 @@ export function ProviderWizardAuthenticationStep({
             />
           )}
         </SettingsGroup>
+        {showInventory && instance ? (
+          <SettingsGroup variant="plain" className="mt-4 max-h-96 overflow-y-auto">
+            <ProviderInventoryList
+              environmentId={environmentId}
+              instanceId={instanceId}
+              driver={instance.driver}
+              disabled={instance.disabledInventory}
+            />
+          </SettingsGroup>
+        ) : null}
       </WizardPanel>
       <WizardFooter>
         <Button

@@ -842,7 +842,7 @@ function ConnectedAgentsStep({
           environmentId={environmentId}
           onClose={() => setAddingAccount(false)}
           onAccountCreated={(instanceId, displayName) =>
-            setCreatedAccount({ instanceId, displayName, autoStart: true })
+            setCreatedAccount({ instanceId, displayName, autoStart: false })
           }
         />
       ) : null}

@@ -59,6 +59,12 @@ export interface ProviderAdapterRegistryV2Shape {
     },
     ProviderAdapterRegistryV2Error
   >;
+  /**
+   * A value that changes whenever a settings change rebuilds the instance, so
+   * a live session can tell it started under older settings. Registries
+   * without one never retire sessions for that reason.
+   */
+  readonly instanceBuild?: (instanceId: ProviderInstanceId) => Effect.Effect<unknown>;
 }
 
 export class ProviderAdapterRegistryV2 extends Context.Service<
@@ -136,6 +142,8 @@ export const layerFromProviderInstanceRegistry: Layer.Layer<
         instances.listInstances.pipe(
           Effect.map((available) => available.map((instance) => instance.instanceId)),
         ),
+      // The registry replaces the instance object on every rebuild.
+      instanceBuild: (instanceId) => instances.getInstance(instanceId),
       getMetadata: Effect.fn("ProviderAdapterRegistry.getMetadata")(function* (instanceId) {
         const instance = yield* instances.getInstance(instanceId);
         if (instance === undefined) {
@@ -266,6 +274,7 @@ const createAdapterEntryFromConfigEntry = Effect.fn(
       accentColor: input.entry.accentColor,
       environment: input.entry.environment ?? [],
       enabled: input.entry.enabled ?? decodedConfigEnabled(typedConfig) ?? true,
+      disabledInventory: input.entry.disabledInventory ?? {},
       config: typedConfig,
     })
     .pipe(

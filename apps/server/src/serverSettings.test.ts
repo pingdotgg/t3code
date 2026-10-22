@@ -94,6 +94,192 @@ const recordProviderUsage = (provider: string, instanceId: string | null = provi
   });
 
 it.layer(NodeServices.layer)("server settings", (it) => {
+  it.effect("preserves concurrent inventory edits without replacing provider configuration", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const instanceId = ProviderInstanceId.make("codex_inventory");
+      const driver = ProviderDriverKind.make("codex");
+      const instance = {
+        driver,
+        displayName: "Work",
+        enabled: true,
+        config: { homePath: "/work/codex" },
+        environment: [{ name: "WORKSPACE", value: "work", sensitive: false }],
+        disabledInventory: { plugins: ["existing-plugin"] },
+      };
+      yield* service.updateProviderInstance({ operation: "create", instanceId, instance });
+      yield* Effect.all(
+        [
+          service.updateProviderInstance({
+            operation: "set-inventory-item",
+            instanceId,
+            driver,
+            kind: "skills",
+            itemId: "/skills/first/SKILL.md",
+            enabledInT3: false,
+          }),
+          service.updateProviderInstance({
+            operation: "set-inventory-item",
+            instanceId,
+            driver,
+            kind: "skills",
+            itemId: "/skills/second/SKILL.md",
+            enabledInT3: false,
+          }),
+          service.updateProviderInstance({
+            operation: "set-inventory-item",
+            instanceId,
+            driver,
+            kind: "connectors",
+            itemId: "connector_gmail",
+            enabledInT3: false,
+          }),
+        ],
+        { concurrency: "unbounded" },
+      );
+      const saved = (yield* service.getSettings).providerInstances[instanceId];
+      assert.deepEqual(saved, {
+        ...instance,
+        disabledInventory: {
+          plugins: ["existing-plugin"],
+          connectors: ["connector_gmail"],
+          skills: ["/skills/first/SKILL.md", "/skills/second/SKILL.md"],
+        },
+      });
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("deduplicates inventory exclusions and removes them when switched back on", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const instanceId = ProviderInstanceId.make("claudeAgent");
+      const driver = ProviderDriverKind.make("claudeAgent");
+      const toggle = {
+        operation: "set-inventory-item" as const,
+        instanceId,
+        driver,
+        kind: "skills" as const,
+        itemId: "pdf",
+      };
+      yield* service.updateProviderInstance({ ...toggle, enabledInT3: false });
+      yield* service.updateProviderInstance({ ...toggle, enabledInT3: false });
+      assert.deepEqual((yield* service.getSettings).providerInstances[instanceId], {
+        driver,
+        disabledInventory: { skills: ["pdf"] },
+      });
+      const connector = { ...toggle, kind: "connectors" as const, itemId: "claude.ai Gmail" };
+      yield* service.updateProviderInstance({ ...connector, enabledInT3: false });
+      yield* service.updateProviderInstance({ ...toggle, enabledInT3: true });
+      assert.deepEqual(
+        (yield* service.getSettings).providerInstances[instanceId]?.disabledInventory,
+        { connectors: ["claude.ai Gmail"] },
+      );
+      yield* service.updateProviderInstance({ ...connector, enabledInT3: true });
+      assert.deepEqual((yield* service.getSettings).providerInstances[instanceId], { driver });
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("does not recreate a removed custom provider from an inventory edit", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const instanceId = ProviderInstanceId.make("codex_removed");
+      const driver = ProviderDriverKind.make("codex");
+      yield* service.updateProviderInstance({
+        operation: "create",
+        instanceId,
+        instance: { driver },
+      });
+      yield* service.updateProviderInstance({ operation: "remove", instanceId });
+      const error = yield* service
+        .updateProviderInstance({
+          operation: "set-inventory-item",
+          instanceId,
+          driver,
+          kind: "skills",
+          itemId: "pdf",
+          enabledInT3: false,
+        })
+        .pipe(Effect.flip);
+      assert.equal(error.operation, "update-provider-inventory");
+      assert.isUndefined((yield* service.getSettings).providerInstances[instanceId]);
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("rejects an inventory edit for a provider whose driver changed", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const instanceId = ProviderInstanceId.make("work");
+      const instance = { driver: ProviderDriverKind.make("claudeAgent"), displayName: "Work" };
+      yield* service.updateProviderInstance({ operation: "create", instanceId, instance });
+      const error = yield* service
+        .updateProviderInstance({
+          operation: "set-inventory-item",
+          instanceId,
+          driver: ProviderDriverKind.make("codex"),
+          kind: "skills",
+          itemId: "pdf",
+          enabledInT3: false,
+        })
+        .pipe(Effect.flip);
+      assert.equal(error.operation, "update-provider-inventory");
+      assert.deepEqual((yield* service.getSettings).providerInstances[instanceId], instance);
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("validates inventory edits against the provider map in the same request", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const instanceId = ProviderInstanceId.make("codex_combined");
+      const driver = ProviderDriverKind.make("codex");
+      const instance = { driver, displayName: "Work", config: { homePath: "/work/codex" } };
+      yield* service.updateProviderInstance({ operation: "create", instanceId, instance });
+      for (const providerInstances of [
+        {},
+        { [instanceId]: { driver: ProviderDriverKind.make("claudeAgent") } },
+      ]) {
+        const error = yield* service
+          .updateProviderInstance(
+            {
+              operation: "set-inventory-item",
+              instanceId,
+              driver,
+              kind: "connectors",
+              itemId: "connector_gmail",
+              enabledInT3: false,
+            },
+            { providerInstances },
+          )
+          .pipe(Effect.flip);
+        assert.equal(error.operation, "update-provider-inventory");
+        assert.deepEqual((yield* service.getSettings).providerInstances[instanceId], instance);
+      }
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("applies an inventory edit to a provider introduced by the same settings patch", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const instanceId = ProviderInstanceId.make("codex_combined");
+      const driver = ProviderDriverKind.make("codex");
+      const instance = { driver, displayName: "Work", config: { homePath: "/work/codex" } };
+      yield* service.updateProviderInstance(
+        {
+          operation: "set-inventory-item",
+          instanceId,
+          driver,
+          kind: "connectors",
+          itemId: "connector_gmail",
+          enabledInT3: false,
+        },
+        { providerInstances: { [instanceId]: instance } },
+      );
+      assert.deepEqual((yield* service.getSettings).providerInstances[instanceId], {
+        ...instance,
+        disabledInventory: { connectors: ["connector_gmail"] },
+      });
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
   it.effect("serializes concurrent model preference edits without cancelling duplicate adds", () =>
     Effect.gen(function* () {
       const service = yield* ServerSettingsModule.ServerSettingsService;

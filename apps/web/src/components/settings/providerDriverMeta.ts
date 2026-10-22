@@ -17,11 +17,13 @@ export const providerClients = makeProviderClientRegistry([
     driverKind: ProviderDriverKind.make("codex"),
     label: "Codex",
     settingsSchema: CodexSettings,
+    listsInventory: true,
   },
   {
     driverKind: ProviderDriverKind.make("claudeAgent"),
     label: "Claude",
     settingsSchema: ClaudeSettings,
+    listsInventory: true,
   },
   cursorClient,
   grokClient,

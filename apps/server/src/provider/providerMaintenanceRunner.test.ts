@@ -200,6 +200,7 @@ function makeRegistry(
       getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
         Effect.succeed(lifecycleFor(provider)),
       setProviderMaintenanceActionState,
+      readInventory: () => Effect.die("readInventory is not used by maintenance runs"),
       streamChanges: Stream.empty,
     };
 

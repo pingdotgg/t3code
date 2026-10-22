@@ -59,6 +59,7 @@ import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
 import { AcpSessionManagementSection } from "./AcpSessionManagementSection";
+import { ProviderInventorySection } from "./ProviderInventorySection";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { readCodexSetupMode } from "./CodexSetupSection.logic";
 import {
@@ -1245,6 +1246,19 @@ export function ProviderInstanceCard({
           instanceId={instanceId}
           provider={liveProvider}
           projects={acpProjects}
+          readOnly={readOnly}
+        />
+      ) : null}
+
+      {environmentId !== undefined &&
+      projectOverride === undefined &&
+      enabled &&
+      liveProvider?.supportsInventory === true ? (
+        <ProviderInventorySection
+          environmentId={environmentId}
+          instanceId={instanceId}
+          driver={instance.driver}
+          disabled={instance.disabledInventory}
           readOnly={readOnly}
         />
       ) : null}

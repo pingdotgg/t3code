@@ -19,6 +19,7 @@ import { Dialog } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { WizardFooter, WizardHeader, WizardPanel, WizardPopup } from "../ui/wizard";
 import { SettingsRow } from "./settingsLayout";
+import { ProviderInventoryList } from "./ProviderInventorySection";
 
 export function AddCodexAccountDialog({
   environmentId,
@@ -43,10 +44,15 @@ export function AddCodexAccountDialog({
   const [pending, setPending] = useState(false);
   const provider = providers?.find((candidate) => candidate.instanceId === instanceId);
   const connected = usesChatGptSharing(provider);
+  // Saving a switch rebuilds the provider and briefly clears its auth status.
+  const [showInventory, setShowInventory] = useState(false);
+  if (!showInventory && connected && provider?.supportsInventory) setShowInventory(true);
+  const closeOnConnection = connected && !provider?.supportsInventory;
   const closeAfterConnection = useEffectEvent(onClose);
   useEffect(() => {
-    if (connected) closeAfterConnection();
-  }, [connected]);
+    if (closeOnConnection) closeAfterConnection();
+  }, [closeOnConnection]);
+  const instance = instanceId ? settings.providerInstances?.[instanceId] : undefined;
 
   const createAccount = async () => {
     if (pending || !name.trim() || !readEnvironmentScope(environmentId, AuthProvidersManageScope))
@@ -71,19 +77,15 @@ export function AddCodexAccountDialog({
       },
     });
     if (result._tag === "Success") {
-      if (onAccountCreated) {
-        onAccountCreated(id, displayName);
-        onClose();
-      } else {
-        setInstanceId(id);
-      }
+      onAccountCreated?.(id, displayName);
+      setInstanceId(id);
     }
     setPending(false);
   };
 
   return (
     <Dialog
-      open={!connected}
+      open={!closeOnConnection}
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
@@ -91,11 +93,25 @@ export function AddCodexAccountDialog({
       <WizardPopup size="wide">
         <WizardHeader
           title={instanceId ? displayName : "Add ChatGPT account"}
-          description="Each account has its own Codex instance and sign-in. Choose the other account on the sign-in page."
+          description={
+            showInventory
+              ? "Choose which connectors, plugins and skills this account uses in T3."
+              : "Each account has its own Codex instance and sign-in. Choose the other account on the sign-in page."
+          }
         />
         <WizardPanel>
           {instanceId ? (
-            provider?.setup ? (
+            showInventory && instance ? (
+              <div className="max-h-96 overflow-y-auto">
+                <ProviderInventoryList
+                  environmentId={environmentId}
+                  instanceId={instanceId}
+                  driver={instance.driver}
+                  disabled={instance.disabledInventory}
+                  readOnly={!canManageProviders}
+                />
+              </div>
+            ) : provider?.setup ? (
               renderSetup(instanceId, provider)
             ) : (
               <SettingsRow title="Codex runtime" description="Preparing managed setup." />
@@ -126,8 +142,8 @@ export function AddCodexAccountDialog({
         </WizardPanel>
         <WizardFooter>
           {instanceId ? (
-            <Button variant="outline" onClick={onClose}>
-              Finish later
+            <Button variant={showInventory ? "default" : "outline"} onClick={onClose}>
+              {showInventory ? "Done" : "Finish later"}
             </Button>
           ) : (
             <>

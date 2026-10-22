@@ -11,9 +11,11 @@ import { chatGptModels } from "../CodexChatGptModels.ts";
 import { makeCodexManagedRuntime } from "../CodexManagedRuntime.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { createCodexAdapterV2 } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
+import { withCodexDisabledInventory } from "./CodexInventory.ts";
 import {
   checkCodexProviderStatus,
   makePendingCodexProvider,
+  probeCodexInventory,
   probeCodexSkillsForCwd,
 } from "../CodexProvider.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
@@ -30,7 +32,7 @@ const DRIVER = ProviderDriverKind.make("codex");
 export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(function* (
   input: ProviderDriverCreateInput<CodexSettings>,
 ) {
-  const { instanceId, enabled, displayName, accentColor, config } = input;
+  const { instanceId, enabled, displayName, accentColor, config, disabledInventory = {} } = input;
   const http = yield* HttpClient.HttpClient;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -132,7 +134,11 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
             effective.environment.ACCESS_TOKEN!,
             draft.models,
           ).pipe(Effect.provideService(HttpClient.HttpClient, http));
-          return { ...draft, models };
+          return {
+            ...draft,
+            models,
+            skills: withCodexDisabledInventory(draft.skills, disabledInventory),
+          };
         }),
       ),
       Effect.map((draft) =>
@@ -281,6 +287,32 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
     orchestrationAdapter,
     textGeneration,
     auth: runtime.auth.controller,
+    readInventory: resolveRuntime.pipe(
+      Effect.flatMap((effective) =>
+        probeCodexInventory({
+          binaryPath: effective.config.binaryPath,
+          homePath: effective.config.homePath,
+          launchArgs: effective.config.launchArgs,
+          cwd: process.cwd(),
+          environment: effective.environment,
+        }),
+      ),
+      Effect.scoped,
+      Effect.timeout("30 seconds"),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.mapError(
+        (cause) =>
+          new ProviderDriverError({
+            driver: DRIVER,
+            instanceId,
+            detail:
+              cause._tag === "TimeoutError"
+                ? "Codex took too long to list its connectors."
+                : "Codex could not list its connectors.",
+            cause,
+          }),
+      ),
+    ),
     snapshotForCwd: (cwd: string) =>
       enabled
         ? resolveRuntime.pipe(
@@ -305,7 +337,12 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
                   environment: effective.environment,
                 }).pipe(
                   Effect.flatMap((skills) =>
-                    snapshot.getSnapshot.pipe(Effect.map((draft) => ({ ...draft, skills }))),
+                    snapshot.getSnapshot.pipe(
+                      Effect.map((draft) => ({
+                        ...draft,
+                        skills: withCodexDisabledInventory(skills, disabledInventory),
+                      })),
+                    ),
                   ),
                 ),
             }),

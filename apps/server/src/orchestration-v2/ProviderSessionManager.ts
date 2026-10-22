@@ -56,6 +56,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_IDLE_PIN_MS = 4 * 60 * 60 * 1000;
 const RELEASE_SCOPE_CLOSE_TIMEOUT_MS = 30 * 1000;
+const RECONFIGURATION_PROBE_TIMEOUT_MS = 5 * 1000;
 
 const busyTurnPrefix = (providerThreadId: ProviderThreadId) => `${providerThreadId}#`;
 const busyTurnKey = (providerThreadId: ProviderThreadId, runOrdinal: number) =>
@@ -64,6 +65,7 @@ const UNLOAD_THREAD_TIMEOUT_MS = 10 * 1000;
 
 export const ProviderSessionReleaseReason = Schema.Literals([
   "idle_timeout",
+  "configuration_changed",
   "runtime_error",
   "manual_shutdown",
   "server_shutdown",
@@ -198,6 +200,8 @@ interface LiveSessionEntry {
    */
   readonly mcpCredentialIdByThread: ReadonlyMap<ThreadId, string>;
   readonly supportsMultipleProviderThreads: boolean;
+  /** The instance build that opened the session; see `ProviderAdapterRegistryV2.instanceBuild`. */
+  readonly instanceBuild: unknown;
   readonly runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
   readonly exposedRuntime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
   readonly eventSubscribers: Ref.Ref<
@@ -1128,6 +1132,7 @@ export const layerWithOptions = (
             probedRuntime.hasPendingBackgroundWork === undefined
               ? false
               : yield* probedRuntime.hasPendingBackgroundWork.pipe(
+                  Effect.timeout(RECONFIGURATION_PROBE_TIMEOUT_MS),
                   Effect.catchCause(() => Effect.succeed(false)),
                 );
           if (hasPendingWork) {
@@ -1183,6 +1188,56 @@ export const layerWithOptions = (
               }),
             ),
           );
+        },
+      );
+
+      /**
+       * A settings change rebuilds the provider instance, but a live session
+       * keeps the process it started with, and a shared session would keep
+       * serving new threads with it. An idle one is released like an idle
+       * timeout so this turn reopens under the new settings. A busy one stays
+       * until a later turn finds it idle.
+       */
+      const retireIfReconfigured = Effect.fn("ProviderSessionManager.retireIfReconfigured")(
+        function* (entry: LiveSessionEntry, providerSessionId: ProviderSessionId) {
+          if (registry.instanceBuild === undefined) return false;
+          const current = yield* registry.instanceBuild(entry.runtime.instanceId);
+          if (current === undefined) {
+            return yield* new ProviderSessionOpenError({
+              instanceId: entry.runtime.instanceId,
+              providerSessionId,
+              cause: new ProviderAdapterRegistry.ProviderAdapterRegistryLookupError({
+                instanceId: entry.runtime.instanceId,
+              }),
+            });
+          }
+          if (current === entry.instanceBuild) return false;
+          if (entry.busyTurns.size > 0) return false;
+          const hasPendingWork =
+            entry.runtime.hasPendingBackgroundWork === undefined
+              ? false
+              : yield* entry.runtime.hasPendingBackgroundWork.pipe(
+                  // An unknown activity state must neither block the open lock
+                  // indefinitely nor admit another turn with stale exclusions.
+                  Effect.timeout(RECONFIGURATION_PROBE_TIMEOUT_MS),
+                  Effect.catchCause((cause) =>
+                    Effect.fail(
+                      new ProviderSessionOpenError({
+                        instanceId: entry.runtime.instanceId,
+                        providerSessionId,
+                        cause,
+                      }),
+                    ),
+                  ),
+                );
+          if (hasPendingWork) return false;
+          yield* releaseEntry({
+            providerSessionId,
+            reason: "configuration_changed",
+            detail: "Provider settings changed.",
+            onlyIfIdleGeneration: entry.idleGeneration,
+          }).pipe(logReleaseFailure(providerSessionId));
+          return !(yield* Ref.get(sessions)).has(sessionKey(providerSessionId));
         },
       );
 
@@ -2119,7 +2174,10 @@ export const layerWithOptions = (
               }
               const key = sessionKey(input.providerSessionId);
               const existing = (yield* Ref.get(sessions)).get(key);
-              if (existing !== undefined) {
+              if (
+                existing !== undefined &&
+                !(yield* retireIfReconfigured(existing, input.providerSessionId))
+              ) {
                 const attached = existing.attachedThreadIds.has(input.threadId);
                 if (!attached && !existing.supportsMultipleProviderThreads) {
                   return yield* new ProviderSessionOpenError({
@@ -2138,6 +2196,12 @@ export const layerWithOptions = (
                 return existing.exposedRuntime;
               }
 
+              // Read before the adapter, so a rebuild racing this open can only
+              // cost an extra reopen, never leave the session on old settings.
+              const instanceBuild =
+                registry.instanceBuild === undefined
+                  ? undefined
+                  : yield* registry.instanceBuild(input.modelSelection.instanceId);
               const adapter = yield* registry.get(input.modelSelection.instanceId).pipe(
                 Effect.mapError(
                   (cause) =>
@@ -2222,6 +2286,7 @@ export const layerWithOptions = (
               const now = yield* Clock.currentTimeMillis;
               const entry: LiveSessionEntry = {
                 attachedThreadIds: new Set([input.threadId]),
+                instanceBuild,
                 loadedProviderThreadKeyByThread: new Map(),
                 mcpCredentialIdByThread:
                   mcpCredentialId === undefined

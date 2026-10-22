@@ -35,6 +35,7 @@ import {
 } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { codexAppServerArgs, resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
+import { codexInventoryFromProbe, type CodexInventoryPart } from "./Drivers/CodexInventory.ts";
 import {
   buildServerProvider,
   COMPACT_SLASH_COMMAND,
@@ -81,6 +82,7 @@ const CODEX_DISCOVERY_MARGIN_MS = 250;
 const CODEX_PRESENTATION = {
   displayName: "Codex",
   showInteractionModeToggle: true,
+  supportsInventory: true,
   reportsContextWindow: true,
 } as const;
 
@@ -612,6 +614,69 @@ export const probeCodexSkillsForCwd = Effect.fn("probeCodexSkillsForCwd")(functi
   const { client } = yield* withCodexAppServerClient(input);
   const skillsResponse = yield* client.request("skills/list", { cwds: [input.cwd] });
   return parseCodexSkillsListResponse(skillsResponse, input.cwd);
+});
+
+const CODEX_INVENTORY_MAX_MCP_PAGES = 20;
+
+const codexInventoryPart = <A, E>(
+  effect: Effect.Effect<A, E>,
+  label: string,
+): Effect.Effect<CodexInventoryPart<A>> =>
+  effect.pipe(
+    Effect.map((value) => ({ _tag: "Success" as const, value })),
+    Effect.catch((cause) =>
+      Effect.logDebug(`Codex could not list its ${label}.`, { cause }).pipe(
+        Effect.as({ _tag: "Failure" as const, message: `Codex could not list its ${label}.` }),
+      ),
+    ),
+  );
+
+/** Lists the MCP servers it reports on by starting each one. */
+export const probeCodexInventory = Effect.fn("probeCodexInventory")(function* (input: {
+  readonly binaryPath: string;
+  readonly homePath?: string;
+  readonly launchArgs?: string;
+  readonly cwd: string;
+  readonly environment?: NodeJS.ProcessEnv;
+}) {
+  const { client } = yield* withCodexAppServerClient(input);
+  const listMcpServers = Effect.gen(function* () {
+    const servers: Array<CodexSchema.V2ListMcpServerStatusResponse["data"][number]> = [];
+    let cursor: string | null | undefined;
+    for (let page = 0; page < CODEX_INVENTORY_MAX_MCP_PAGES; page++) {
+      const response = yield* client.request("mcpServerStatus/list", {
+        detail: "toolsAndAuthOnly",
+        ...(cursor ? { cursor } : {}),
+      });
+      servers.push(...response.data);
+      cursor = response.nextCursor;
+      if (!cursor) break;
+    }
+    return servers;
+  });
+  const probe = yield* Effect.all(
+    {
+      mcpServers: codexInventoryPart(listMcpServers, "MCP servers"),
+      plugins: codexInventoryPart(
+        client
+          .request("plugin/installed", { cwds: [input.cwd] })
+          .pipe(Effect.map((response) => response.marketplaces)),
+        "plugins",
+      ),
+      apps: codexInventoryPart(
+        client.request("app/installed", {}).pipe(Effect.map((response) => response.apps)),
+        "connectors",
+      ),
+      skills: codexInventoryPart(
+        client
+          .request("skills/list", { cwds: [input.cwd] })
+          .pipe(Effect.map((response) => parseCodexSkillsListResponse(response, input.cwd))),
+        "skills",
+      ),
+    },
+    { concurrency: "unbounded" },
+  );
+  return codexInventoryFromProbe(probe);
 });
 
 const emptyCodexModelsFromSettings = (codexSettings: CodexSettings): ServerProvider["models"] =>
