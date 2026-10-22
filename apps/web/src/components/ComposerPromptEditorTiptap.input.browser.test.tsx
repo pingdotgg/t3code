@@ -10,7 +10,8 @@ import {
 import type { ServerProviderSkill } from "@t3tools/contracts";
 import type { Editor } from "@tiptap/core";
 import { createElement, createRef, useEffect, useState } from "react";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../test/render";
 
@@ -351,4 +352,64 @@ describe("composer context undo lifetime", () => {
       expect(composer.draft()).toEqual({ value: "", files: [] });
     },
   );
+});
+
+describe("an Arabic line", () => {
+  async function focusEnd(editor: Editor) {
+    await act(async () => {
+      editor.commands.focus("end");
+    });
+    await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
+  }
+
+  it("leaves inline code through its start with ArrowRight, which points back", async () => {
+    // Positions: اكتب at 1-5, sumBy at 6-11, الان at 12-16.
+    await using screen = await mountEditor("اكتب `sumBy` الان");
+    const { editor } = screen;
+    await focusEnd(editor);
+    const caret = () => ({
+      head: editor.state.selection.head,
+      inCode: (editor.state.storedMarks ?? editor.state.selection.$head.marks()).length > 0,
+    });
+    const visited = [caret()];
+    while (visited.at(-1)!.head > 5) {
+      const before = visited.at(-1)!;
+      await userEvent.keyboard("{ArrowRight}");
+      await vi.waitFor(() => {
+        const after = caret();
+        expect(after.head < before.head || after.inCode !== before.inCode).toBe(true);
+      });
+      visited.push(caret());
+    }
+    expect(visited.some((stop) => stop.inCode)).toBe(true);
+  });
+
+  it("shows the backticks on either side of inline code it is editing", async () => {
+    await using screen = await mountEditor("اكتب `sumBy` الان");
+    const { editor } = screen;
+    await act(async () => {
+      editor.commands.setTextSelection("اكتب su".length + 1);
+    });
+    const code = editor.view.dom.querySelector("code")!;
+    const word = document.createRange();
+    word.selectNodeContents([...code.childNodes].find((node) => node instanceof Text)!);
+    const text = word.getBoundingClientRect();
+    const [open, close] = [...editor.view.dom.querySelectorAll(".composer-rich-marker")].map(
+      (marker) => marker.getBoundingClientRect(),
+    );
+    expect(open!.right).toBeLessThanOrEqual(text.left + 1);
+    expect(close!.left).toBeGreaterThanOrEqual(text.right - 1);
+  });
+
+  it("starts the next line on the right", async () => {
+    await using screen = await mountEditor("اكتب الدالة");
+    const { editor } = screen;
+    await focusEnd(editor);
+    await userEvent.keyboard("{Shift>}{Enter}{/Shift}");
+    await vi.waitFor(() => expect(editor.state.doc.childCount).toBe(2));
+    const box = editor.view.dom.getBoundingClientRect();
+    expect(editor.view.coordsAtPos(editor.state.selection.head).left).toBeGreaterThan(
+      box.left + box.width / 2,
+    );
+  });
 });

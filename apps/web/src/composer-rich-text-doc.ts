@@ -126,9 +126,14 @@ function codePairCaretPlugin(type: MarkType) {
  */
 export const ComposerCodeExtension = Code.extend({
   excludes: "code",
-  // ArrowRight leaves code through the caret stops at styled edges, so the
-  // stock exit (inserting a space at the end of a line) is not needed.
+  // The forward arrow leaves code through the caret stops at styled edges, so
+  // the stock exit (inserting a space at the end of a line) is not needed.
   exitable: false,
+  // Code reads left to right inside an Arabic or Hebrew line, and the isolate
+  // keeps its punctuation from trading places with the text around it.
+  addOptions() {
+    return { ...this.parent!(), HTMLAttributes: { dir: "ltr" } };
+  },
   addProseMirrorPlugins() {
     return [...(this.parent?.() ?? []), codePairCaretPlugin(this.type)];
   },
