@@ -593,9 +593,10 @@ export const make = Effect.gen(function* () {
   });
 
   // A queued alert is re-picked at delivery from the current aggregate, which
-  // can hold states published quietly since. Fails open like the rechecks here.
-  const quietRowsFor = (userId: string) =>
-    activityRows
+  // can hold states published quietly since. Untraced and fail-open like the
+  // other per-delivery rechecks here.
+  const quietRowsFor = Effect.fnUntraced(function* (userId: string) {
+    return yield* activityRows
       .listQuietForUser({ userId })
       .pipe(
         Effect.catchCause((cause) =>
@@ -604,6 +605,7 @@ export const make = Effect.gen(function* () {
           ),
         ),
       );
+  });
 
   const stateIdentityIsCurrent = Effect.fnUntraced(function* (input: {
     readonly userId: string;
