@@ -95,6 +95,11 @@ export const ThreadPullRequestWatch = Schema.Struct({
   conflicting: Schema.Boolean,
   /** Comment-only wakes in a row. Watching stops at a limit, so bots cannot loop it. */
   wakes: NonNegativeInt,
+  /**
+   * When the head was first read without any check, until a check shows up or the agent is told
+   * none did. Null once either happened; absent on watches saved before it existed.
+   */
+  checksAwaitedSince: Schema.optional(Schema.NullOr(IsoDateTime)),
 });
 export type ThreadPullRequestWatch = typeof ThreadPullRequestWatch.Type;
 

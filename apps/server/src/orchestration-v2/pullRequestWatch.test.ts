@@ -1,11 +1,20 @@
-import type {
-  PullRequestCheck,
+import {
+  SourceControlProviderKind,
+  type PullRequestCheck,
   PullRequestComment,
   ThreadPullRequestWatch,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 
-import { PULL_REQUEST_WATCH_WAKE_LIMIT, evaluatePullRequestWatch } from "./pullRequestWatch.ts";
+import {
+  PULL_REQUEST_WATCH_WAKE_LIMIT,
+  evaluatePullRequestWatch as evaluate,
+} from "./pullRequestWatch.ts";
+
+// These cases read the head once or at one moment, so the no-checks notice never comes due.
+const evaluatePullRequestWatch = (
+  ...args: Parameters<typeof evaluate> extends [...infer Head, number] ? Head : never
+) => evaluate(...args, 0);
 
 const STARTED = "2026-10-02T12:00:00.000Z";
 
@@ -32,6 +41,7 @@ const check = (name: string, status: PullRequestCheck["status"]): PullRequestChe
 type Detail = Parameters<typeof evaluatePullRequestWatch>[1];
 
 const detail = (overrides: Partial<Detail> = {}): Detail => ({
+  provider: SourceControlProviderKind.make("github"),
   headSha: "aaaaaaaaaa",
   checks: [check("lint", "success"), check("test", "pending")],
   mergeability: "mergeable",
@@ -251,5 +261,35 @@ describe("evaluatePullRequestWatch", () => {
     const pushed = evaluatePullRequestWatch(tired, detail({ headSha: "cccccccccc" }), comments);
     assert.isFalse(pushed.exhausted);
     assert.equal(pushed.next.wakes, 1);
+  });
+
+  const anHourLater = (
+    first: ThreadPullRequestWatch,
+    read: Detail,
+  ): ReadonlyArray<ReadonlyArray<string>> => {
+    const kinds: Array<ReadonlyArray<string>> = [];
+    let current = first;
+    for (let minute = 0; minute <= 60; minute += 10) {
+      const { changes, next } = evaluate(current, read, noRemarks, minute * 60_000);
+      kinds.push(changes.map((change) => change.kind));
+      current = next;
+    }
+    return kinds;
+  };
+
+  it("does not tell a watch saved before the no-checks clock that its seen head has none", () => {
+    // Such a watch may have seen this head's checks pending, which records nothing.
+    const legacy = watch({ headSha: "aaaaaaaaaa" });
+    assert.isTrue(anHourLater(legacy, detail({ checks: [] })).every((kinds) => kinds.length === 0));
+    const pushed = anHourLater(legacy, detail({ headSha: "bbbbbbbbbb", checks: [] }));
+    assert.deepEqual(pushed.flat(), ["no-checks"]);
+  });
+
+  it("never reports missing checks on a host whose checks it cannot read", () => {
+    const azure = detail({
+      provider: SourceControlProviderKind.make("azure-devops"),
+      checks: [],
+    });
+    assert.isTrue(anHourLater(watch(), azure).every((kinds) => kinds.length === 0));
   });
 });
