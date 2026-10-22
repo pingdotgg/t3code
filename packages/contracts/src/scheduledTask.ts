@@ -109,7 +109,7 @@ const WebhookFilterPath = TrimmedNonEmptyString.check(
   Schema.isPattern(/^(body|headers|query)(\.|$)/),
 ).annotate({
   description:
-    "Request value to test, in placeholder syntax without braces: headers.x-github-event, body.action, query.source.",
+    "Request value to test, in placeholder syntax without braces: headers.x-github-event, body.action, query.source. A segment ending in [] fans out over an array, so body.issue.labels[].name tests every label's name.",
 });
 
 /**
@@ -134,7 +134,7 @@ export const ScheduledTaskWebhookFilter = Schema.Union([
   Schema.Struct({ path: WebhookFilterPath, op: Schema.Literal("exists") }),
 ]).annotate({
   description:
-    "Scalars compare as strings; objects and arrays only satisfy 'exists'. Every op but 'exists' fails when the path is missing.",
+    "Scalars compare as strings; objects and arrays only satisfy 'exists'. Every op but 'exists' fails when the path is missing. A [] wildcard path yields a list: equals, in and startsWith match when any element does, notEquals when no element equals the value, exists when the list is not empty.",
 });
 export type ScheduledTaskWebhookFilter = typeof ScheduledTaskWebhookFilter.Type;
 export type ScheduledTaskWebhookFilterOp = ScheduledTaskWebhookFilter["op"];
