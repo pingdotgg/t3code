@@ -535,6 +535,28 @@ describe("mobile model options", () => {
     expect(resolveDefaultableModelSelection(null, legacy, null)).toBe(legacy);
   });
 
+  it("retains the submitted model through draft cleanup until the snapshot is cleared", () => {
+    const submitted = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" };
+    const project = { ...submitted, model: "gpt-6-astra" };
+    const input = {
+      submittedSelection: submitted,
+      draftSelection: project,
+      projectDefaultSelection: project,
+      stickySelection: null,
+      modelOptions: [],
+    };
+
+    expect(resolveNewTaskModelSelection(input)).toBe(submitted);
+    expect(resolveNewTaskModelSelection({ ...input, draftSelection: null })).toBe(submitted);
+    expect(
+      resolveNewTaskModelSelection({
+        ...input,
+        draftSelection: null,
+        submittedSelection: null,
+      }),
+    ).toBe(project);
+  });
+
   it("resolves new tasks from draft, project, sticky, then provider defaults", () => {
     const draft = { instanceId: ProviderInstanceId.make("codex"), model: "draft" };
     const project = { instanceId: ProviderInstanceId.make("codex"), model: "project" };

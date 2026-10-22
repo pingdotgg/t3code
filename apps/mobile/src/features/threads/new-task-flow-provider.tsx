@@ -1,3 +1,5 @@
+import { useAtom } from "@effect/atom-react";
+import { Atom } from "effect/reactivity";
 import * as Dialog from "../../components/ui/Dialog";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import { useEnvironmentPresentation } from "../../state/presentation";
@@ -242,6 +244,7 @@ type NewTaskFlowContextValue = {
   readonly removeAttachment: (imageId: string) => void;
   readonly clearAttachments: () => void;
   readonly setSubmitting: (value: boolean) => void;
+  readonly setSubmittedModelSelection: (value: ModelSelection | null) => void;
   readonly setBranchQuery: (value: string) => void;
   readonly loadBranches: () => void;
   readonly loadMoreBranches: () => void;
@@ -285,6 +288,11 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
   const [activeDraftKey, setActiveDraftKey] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // Share the draft's synchronous store so cleanup cannot render ahead of this snapshot.
+  const [submittedModelSelectionAtom] = useState(() => Atom.make<ModelSelection | null>(null));
+  const [submittedModelSelection, setSubmittedModelSelection] = useAtom(
+    submittedModelSelectionAtom,
+  );
   const [branchQuery, setBranchQuery] = useState("");
   const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
   const [editingPendingTask, setEditingPendingTask] = useState<QueuedThreadMessage | null>(null);
@@ -299,6 +307,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     setSelectedProjectKey(null);
     setActiveDraftKey(null);
     setSubmitting(false);
+    setSubmittedModelSelection(null);
     setBranchQuery("");
     setExpandedProvider(null);
     pendingLocalBranchSyncDraftKeysRef.current.clear();
@@ -555,12 +564,16 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   );
   const modelOptions = buildModelOptions(
     selectedEnvironmentServerConfig,
-    draftModelSelection ?? projectDefaultModelSelection ?? stickyModelSelection,
+    submittedModelSelection ??
+      draftModelSelection ??
+      projectDefaultModelSelection ??
+      stickyModelSelection,
     undefined,
     selectedProject?.id ?? null,
   );
 
   const selectedModel = resolveNewTaskModelSelection({
+    submittedSelection: submittedModelSelection,
     draftSelection: draftModelSelection,
     projectDefaultSelection: projectDefaultModelSelection,
     stickySelection: stickyModelSelection,
@@ -1200,6 +1213,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     removeAttachment,
     clearAttachments,
     setSubmitting,
+    setSubmittedModelSelection,
     setBranchQuery,
     loadBranches,
     loadMoreBranches,
