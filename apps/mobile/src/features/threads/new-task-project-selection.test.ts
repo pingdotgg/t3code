@@ -9,6 +9,7 @@ import {
   resolveDraftProjectSelection,
   resolveEnvironmentProjectMatch,
   resolveNewTaskScratchOption,
+  resolveNewTaskEnvironmentProject,
   resolveNewTaskEnvironments,
 } from "./new-task-project-selection";
 
@@ -114,6 +115,54 @@ describe("resolveEnvironmentProjectMatch", () => {
       ),
     ).toBeNull();
     expect(resolveEnvironmentProjectMatch([], selected)).toBeNull();
+  });
+});
+
+describe("resolveNewTaskEnvironmentProject", () => {
+  const settings = {
+    sidebarProjectGroupingMode: "repository" as const,
+    sidebarProjectGroupingOverrides: {},
+  };
+
+  it("preserves the queued project's identity when its host has no loaded projects", () => {
+    const pendingProject = makeProject("queued-project", "offline");
+    const unrelated = makeProject("unrelated", "server");
+    const input = {
+      environmentId: pendingProject.environmentId,
+      projects: [unrelated],
+      selectedProject: pendingProject,
+      pendingProject,
+      settings,
+    };
+    expect(resolveNewTaskEnvironmentProject(input)).toBe(pendingProject);
+    // Returning to the task's own host must also preserve its stamped project.
+    expect(resolveNewTaskEnvironmentProject({ ...input, selectedProject: unrelated })).toBe(
+      pendingProject,
+    );
+    expect(
+      resolveNewTaskEnvironmentProject({ ...input, environmentId: unrelated.environmentId }),
+    ).toBeNull();
+  });
+
+  it("switches within the explicit group without reusing the queued project on another host", () => {
+    const groupingIdentity = "39c61a1b-8a64-43a6-9da5-65c15da93d52";
+    const pendingProject = { ...makeProject("sdk", "mac"), groupingIdentity };
+    const copy = { ...makeProject("sdk-copy", "server"), groupingIdentity };
+    const input = {
+      environmentId: copy.environmentId,
+      projects: [pendingProject, copy],
+      selectedProject: pendingProject,
+      pendingProject,
+      settings,
+    };
+    expect(resolveNewTaskEnvironmentProject(input)).toBe(copy);
+    expect(resolveNewTaskEnvironmentProject({ ...input, projects: [] })).toBeNull();
+    expect(
+      resolveNewTaskEnvironmentProject({
+        ...input,
+        settings: { ...settings, sidebarProjectGroupingMode: "separate" },
+      }),
+    ).toBeNull();
   });
 });
 

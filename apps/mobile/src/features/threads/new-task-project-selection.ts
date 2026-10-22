@@ -97,6 +97,22 @@ export function resolveEnvironmentProjectMatch(
   );
 }
 
+export function resolveNewTaskEnvironmentProject(input: {
+  readonly environmentId: EnvironmentId;
+  readonly projects: ReadonlyArray<EnvironmentProject>;
+  readonly selectedProject: EnvironmentProject | null;
+  readonly pendingProject: EnvironmentProject | null;
+  readonly settings: ProjectGroupingSettings;
+}): EnvironmentProject | null {
+  return (
+    resolveEnvironmentProjectMatch(
+      input.projects.filter((project) => project.environmentId === input.environmentId),
+      input.selectedProject,
+      input.settings,
+    ) ?? (input.pendingProject?.environmentId === input.environmentId ? input.pendingProject : null)
+  );
+}
+
 /** Keep a queued task's host available even before its project shell loads. */
 export function resolveNewTaskEnvironments(input: {
   readonly projects: ReadonlyArray<EnvironmentProject>;
