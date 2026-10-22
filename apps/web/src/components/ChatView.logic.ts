@@ -1629,14 +1629,18 @@ export function sendTitleFallbackLabels(snapshot: ComposerSendSnapshot) {
 
 /**
  * A thread shell built from its loaded detail, for direct links that hydrate the detail first.
- * `updatedAt` is passed live: the thread structure leaves it out.
+ * `updatedAt` and `lastVisitedAt` are passed live: the thread structure leaves them out.
  */
 export function presentThreadShellFromProjection(
   environmentId: EnvironmentId,
   threadId: ThreadId,
   projection: ThreadStructure,
-  updatedAt: ThreadProjection["updatedAt"],
+  live: {
+    readonly updatedAt: ThreadProjection["updatedAt"];
+    readonly lastVisitedAt: ThreadProjection["thread"]["lastVisitedAt"];
+  },
 ) {
+  const { updatedAt, lastVisitedAt } = live;
   const latestRun = deriveLatestThreadRun(projection);
   const runtime = deriveThreadRuntime({ ...projection, updatedAt });
   const pendingRuntimeRequest =
@@ -1645,6 +1649,7 @@ export function presentThreadShellFromProjection(
   return {
     ...presentThreadShell(environmentId, {
       ...projection.thread,
+      lastVisitedAt,
       latestRunId: latestRun?.runId ?? null,
       activeRunId: runtime?.activeRunId ?? null,
       status: runtime?.status ?? "idle",

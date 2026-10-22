@@ -65,6 +65,9 @@ const EMPTY_VISIBLE_TURN_ITEMS_ATOM = Atom.make(EMPTY_VISIBLE_TURN_ITEMS).pipe(
 const EMPTY_CHECKPOINT_SUMMARIES_ATOM = Atom.make<ReadonlyArray<ThreadCheckpointSummary>>(
   Object.freeze([]),
 ).pipe(Atom.withLabel("web-thread-checkpoint-summaries:empty"));
+const EMPTY_LAST_VISITED_AT_ATOM = Atom.make<DateTime.Utc | null>(null).pipe(
+  Atom.withLabel("web-thread-last-visited:empty"),
+);
 const EMPTY_UPDATED_AT_ATOM = Atom.make<DateTime.Utc | null>(null).pipe(
   Atom.withLabel("web-thread-updated-at:empty"),
 );
@@ -168,6 +171,13 @@ export function useQuietThreadProjection(
 ): EnvironmentThreadStructure | null {
   return useAtomValue(
     ref === null ? EMPTY_THREAD_PROJECTION_ATOM : environmentThreadDetails.quietThreadAtom(ref),
+  );
+}
+
+/** The detail's live visit mark, which the thread structure leaves out. */
+export function useThreadLastVisitedAt(ref: ScopedThreadRef | null): DateTime.Utc | null {
+  return useAtomValue(
+    ref === null ? EMPTY_LAST_VISITED_AT_ATOM : environmentThreadDetails.lastVisitedAtAtom(ref),
   );
 }
 

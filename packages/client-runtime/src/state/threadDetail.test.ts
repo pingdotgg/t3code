@@ -78,8 +78,45 @@ describe("sameThreadStructure", () => {
     expect(sameThreadStructure(before, next)).toBe(false);
   });
 
+  it("holds through a visit mark", () => {
+    const thread = { ...before.thread, lastVisitedAt: later, updatedAt: later };
+    expect(sameThreadStructure(before, { ...before, thread })).toBe(true);
+  });
+
+  it("sees other thread changes", () => {
+    const thread = { ...before.thread, title: "Renamed" };
+    expect(sameThreadStructure(before, { ...before, thread })).toBe(false);
+  });
+
   it("sees changes outside the turn items", () => {
     expect(sameThreadStructure(before, { ...before, runs: [] })).toBe(false);
+  });
+});
+
+describe("lastVisitedAtAtom", () => {
+  it("follows a visit mark the quiet thread holds through", () => {
+    const projection = withItem(assistant);
+    const state = Atom.make(
+      AsyncResult.success({ ...EMPTY_ENVIRONMENT_THREAD_STATE, data: Option.some(projection) }),
+    );
+    const details = createEnvironmentThreadDetailAtoms(() => state);
+    const ref = { environmentId: EnvironmentId.make("env"), threadId: v2ThreadId };
+    const registry = AtomRegistry.make();
+    const unmountQuiet = registry.mount(details.quietThreadAtom(ref));
+    const unmountVisit = registry.mount(details.lastVisitedAtAtom(ref));
+    const quietBefore = registry.get(details.quietThreadAtom(ref));
+
+    const visited = { ...projection, thread: { ...projection.thread, lastVisitedAt: later } };
+    registry.set(
+      state,
+      AsyncResult.success({ ...EMPTY_ENVIRONMENT_THREAD_STATE, data: Option.some(visited) }),
+    );
+
+    expect(registry.get(details.quietThreadAtom(ref))).toBe(quietBefore);
+    expect(registry.get(details.lastVisitedAtAtom(ref))).toBe(later);
+    unmountQuiet();
+    unmountVisit();
+    registry.dispose();
   });
 });
 
@@ -125,6 +162,8 @@ describe("quietThreadAtom", () => {
     const thread = setup(withItem(assistant));
     const projection = thread.read()?.projection;
     expect(projection).not.toHaveProperty("updatedAt");
+    expect(projection?.thread).not.toHaveProperty("updatedAt");
+    expect(projection?.thread).not.toHaveProperty("lastVisitedAt");
     expect(projection?.turnItems[0]).not.toHaveProperty("text");
     expect(projection?.turnItems[0]).not.toHaveProperty("updatedAt");
     expect(projection?.visibleTurnItems[0]?.item).not.toHaveProperty("text");

@@ -58,10 +58,16 @@ export type ThreadStructureVisibleTurnItem = Omit<
  * reader of the quiet thread cannot depend on them and go stale. A full
  * projection is assignable to it.
  */
+export type ThreadStructureThread = Omit<
+  OrchestrationV2ThreadProjection["thread"],
+  "updatedAt" | "lastVisitedAt"
+>;
+
 export type ThreadStructure = Omit<
   OrchestrationV2ThreadProjection,
-  "turnItems" | "visibleTurnItems" | "updatedAt"
+  "thread" | "turnItems" | "visibleTurnItems" | "updatedAt"
 > & {
+  readonly thread: ThreadStructureThread;
   readonly turnItems: ReadonlyArray<ThreadStructureTurnItem>;
   readonly visibleTurnItems: ReadonlyArray<ThreadStructureVisibleTurnItem>;
 };
