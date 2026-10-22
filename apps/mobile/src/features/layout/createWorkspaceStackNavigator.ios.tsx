@@ -305,7 +305,9 @@ function WorkspaceColumns(
       </Split.Column>
       <Split.Inspector>
         <Split.HeaderConfig hidden />
-        <ColumnContent>
+        {/* Inspector panes host their own native stacks, which UIKit insets for the Duo's
+            vertical bar wherever they sit, so each pane insets its own content instead. */}
+        <ColumnContent insetHorizontally={false}>
           <View className="flex-1 bg-screen">{inspector.render?.()}</View>
         </ColumnContent>
       </Split.Inspector>

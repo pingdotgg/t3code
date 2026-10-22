@@ -20,7 +20,7 @@ import { Platform, Pressable, RefreshControl, ScrollView, View } from "react-nat
 
 import { ScreenStack } from "react-native-screens";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { NativeSheetContent } from "../../../native/NativeSheetContent";
+import { NativeInspectorContent } from "../../../native/NativeInspectorContent";
 import { NativeHeader, NativeScreen } from "../../../native/ThemedScreenStack";
 import {
   AndroidHeaderIconButton,
@@ -349,7 +349,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
             scrollEdgeEffects={HEADER_SCROLL_EDGE_EFFECTS}
             className="flex-1 bg-sheet"
           >
-            <NativeSheetContent>{content}</NativeSheetContent>
+            <NativeInspectorContent>{content}</NativeInspectorContent>
             <NativeHeader
               backgroundColor="rgba(0,0,0,0)"
               tintColorClassName="accent-foreground"
