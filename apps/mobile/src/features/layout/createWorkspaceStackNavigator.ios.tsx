@@ -282,8 +282,8 @@ function WorkspaceColumns(
               <WorkspaceEmptyDetail
                 tab={selectedTab}
                 onStartNewTask={
-                  // The detail bar or a visible sidebar already carries compose.
-                  detailCompose || panes.primarySidebarVisible ? undefined : openNewTask
+                  // Duo provides compose in the detail bar; iPad uses the empty-state action.
+                  detailCompose ? undefined : openNewTask
                 }
               />
             </ColumnContent>

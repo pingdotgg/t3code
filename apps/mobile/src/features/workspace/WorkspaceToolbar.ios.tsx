@@ -67,9 +67,8 @@ export function WorkspaceToolbar(props: {
   // On the Duo, compose belongs to the threads tab, in the detail column's bar when unfolded.
   const nativeToolbarCompose =
     Platform.OS === "ios" &&
-    (isDuoDevice(deviceType)
-      ? deviceType === "duo-folded" && workspace.state.selectedTab === "threads"
-      : deviceType === "pad");
+    deviceType === "duo-folded" &&
+    workspace.state.selectedTab === "threads";
   // The Duo searches from a field at the bottom of the list in every pose. UIKit has no such
   // placement once the vertical bar holds the toolbar, and re-placing its search controller on
   // each fold replaces the search field.

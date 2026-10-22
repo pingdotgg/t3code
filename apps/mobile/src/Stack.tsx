@@ -1059,10 +1059,19 @@ export const RootStack = RootStackConfig.with(function AdaptiveRootStack({ Navig
   const nativeMetrics = useNativeLayoutMetrics();
   const usesSplitView = deriveLayout({ width, height, nativeMetrics }).usesSplitView;
   const usesWorkspaceFlowScreens = Platform.OS === "android" || usesSplitView;
+  const flowPresentations = useRef(new Map<string, boolean>());
 
   return (
     <Navigator
       screenLayout={(props) => <GuardedScreenLayout {...props} />}
+      screenListeners={{
+        state: ({ data }) => {
+          const keys = new Set(data.state.routes.map((route) => route.key));
+          for (const key of flowPresentations.current.keys()) {
+            if (!keys.has(key)) flowPresentations.current.delete(key);
+          }
+        },
+      }}
       screenOptions={({ route }) => {
         if (route.name !== "SettingsSheet" && route.name !== "NewTaskSheet") {
           return Platform.OS === "android"
@@ -1070,7 +1079,14 @@ export const RootStack = RootStackConfig.with(function AdaptiveRootStack({ Navig
             : {};
         }
 
-        return usesWorkspaceFlowScreens
+        // Moving an open flow between a sheet and a split column remounts its nested
+        // navigator. Keep its presentation until dismissal so folding preserves the draft.
+        let usesCard = flowPresentations.current.get(route.key);
+        if (usesCard === undefined) {
+          usesCard = usesWorkspaceFlowScreens;
+          flowPresentations.current.set(route.key, usesCard);
+        }
+        return usesCard
           ? { presentation: "card" }
           : {
               presentation: "formSheet",
