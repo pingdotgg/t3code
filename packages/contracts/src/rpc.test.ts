@@ -4,6 +4,10 @@ import * as Schema from "effect/Schema";
 
 import { ORCHESTRATION_V2_WS_METHODS } from "./orchestrationV2.ts";
 import { WS_METHODS, WsRpcGroup } from "./rpc.ts";
+import { ServerConfigSettingsUpdatedPayload } from "./server.ts";
+import { DEFAULT_SERVER_SETTINGS } from "./settings.ts";
+
+const encodeSettingsUpdatedPayload = Schema.encodeSync(ServerConfigSettingsUpdatedPayload);
 
 describe("WebSocket RPC contracts", () => {
   it("rejects server-internal commands sent to dispatchCommand", () => {
@@ -43,5 +47,23 @@ describe("WebSocket RPC contracts", () => {
 
     expect(Exit.isSuccess(decode({ ...request, path: null }))).toBe(true);
     expect(Exit.isFailure(decode({ ...request, path: "/repo/.git/hooks" }))).toBe(true);
+  });
+
+  it("sends compactIdleThreads as the boolean older clients decode", () => {
+    const settings = { ...DEFAULT_SERVER_SETTINGS, compactIdleThreads: "off" as const };
+    const successSchemas = [WS_METHODS.serverGetSettings, WS_METHODS.serverUpdateSettings].map(
+      (method) => {
+        const rpc = WsRpcGroup.requests.get(method);
+        if (rpc === undefined) throw new Error(`${method} is not registered`);
+        return rpc.successSchema;
+      },
+    );
+    const encoded = [
+      ...successSchemas.map((schema) => Schema.encodeUnknownSync(schema)(settings)),
+      encodeSettingsUpdatedPayload({ settings }).settings,
+    ];
+    for (const value of encoded) {
+      expect(value).toMatchObject({ compactIdleThreads: false, idleCompactionMode: "off" });
+    }
   });
 });

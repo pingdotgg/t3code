@@ -334,7 +334,7 @@ import { UsagePricing, UsageReadError, UsageSummary, UsageSummaryInput } from ".
 import {
   StorageCleanupReport,
   DatabaseStorageStatus,
-  ServerSettings,
+  ServerSettingsWire,
   ServerSettingsError,
   ServerSettingsPatch,
 } from "./settings.ts";
@@ -757,7 +757,7 @@ const WsServerGetDatabaseStorageRpc = Rpc.make(WS_METHODS.serverGetDatabaseStora
 
 const WsServerGetSettingsRpc = Rpc.make(WS_METHODS.serverGetSettings, {
   payload: Schema.Struct({}),
-  success: ServerSettings,
+  success: ServerSettingsWire,
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
 });
 
@@ -766,7 +766,7 @@ const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
     patch: ServerSettingsPatch,
     providerInstanceMutation: Schema.optionalKey(ProviderInstanceMutation),
   }),
-  success: ServerSettings,
+  success: ServerSettingsWire,
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
 });
 
