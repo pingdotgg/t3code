@@ -361,6 +361,25 @@ describe("instance-scoped model selection", () => {
     expect(dispatch.modelOptionsForDispatch).toBeUndefined();
   });
 
+  it("does not apply default options to an existing thread saved without options", () => {
+    const instanceId = ProviderInstanceId.make("claudeAgent");
+    const driver = ProviderDriverKind.make("claudeAgent");
+    const providers = [provider({ provider: driver, instanceId, models: ["claude-opus-5-5"] })];
+    const state = deriveEffectiveComposerModelState({
+      draft: null,
+      providers,
+      selectedProvider: driver,
+      selectedInstanceId: instanceId,
+      threadModelSelection: createModelSelection(instanceId, "claude-opus-5-5"),
+      projectModelSelection: createModelSelection(instanceId, "claude-opus-5-5", [
+        { id: "effort", value: "high" },
+      ]),
+      settings: settingsWithProviderInstances(),
+    });
+
+    expect(state.modelOptions?.[instanceId]).toBeUndefined();
+  });
+
   it("preserves an explicit draft OpenCode selection while the catalog is empty", () => {
     const instanceId = ProviderInstanceId.make("opencode_work");
     const driver = ProviderDriverKind.make("opencode");

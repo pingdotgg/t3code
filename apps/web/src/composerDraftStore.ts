@@ -1158,9 +1158,11 @@ export function deriveEffectiveComposerModelState(input: {
     : baseModel;
   const modelOptions =
     modelSelectionByProviderToOptions(input.draft?.modelSelectionByProvider) ??
-    providerSelectionsFromModelSelection(input.threadModelSelection) ??
-    providerSelectionsFromModelSelection(input.projectModelSelection) ??
-    null;
+    // A thread saved without options keeps provider defaults; only threads with
+    // no selection of their own inherit the project/settings default options.
+    (input.threadModelSelection
+      ? providerSelectionsFromModelSelection(input.threadModelSelection)
+      : providerSelectionsFromModelSelection(input.projectModelSelection));
 
   return {
     selectedModel,
