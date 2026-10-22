@@ -57,9 +57,7 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
       .filter((line) => !/^\s*(#|::|@?rem\b)/i.test(line))
       .flatMap((line) => [...line.matchAll(/"([^"]*)"|([^\s"=;]+)/g)])
       .map((match) => match[1] ?? match[2] ?? "")
-      .map((target) =>
-        home ? target.replace(/^\$(?:HOME|\{HOME\})(?=\/)/, () => home) : target,
-      )
+      .map((target) => (home ? target.replace(/^\$(?:HOME|\{HOME\})(?=\/)/, () => home) : target))
       .filter((target) => path.isAbsolute(target));
     for (const target of targets) {
       if (yield* fs.exists(target).pipe(Effect.orElseSucceed(() => false))) return true;
