@@ -240,7 +240,7 @@ import {
   pickWorkspaceBasenameMatch,
   WORKSPACE_BASENAME_LOOKUP_LIMIT,
 } from "@t3tools/client-runtime/workspace-basename-lookup";
-import { useLiveThreadLinkLabels } from "../../state/entities";
+import { useLiveThreadLinkLabels, useQuietThreadShell } from "../../state/entities";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
@@ -969,33 +969,76 @@ function useMarkdownStyles(): MarkdownStyleSets {
   ]);
 }
 
-function AgentMessageAttribution(props: {
+/** Messages from other agents fold to one line so the user's own messages stay easy to find. */
+function AgentMessageFoldHeader(props: {
   readonly environmentId: EnvironmentId;
   readonly senderThreadId?: ThreadId;
+  readonly summary: string;
+  readonly expanded: boolean;
+  readonly onToggle: () => void;
+  readonly iconSubtleColor: ColorValue;
 }) {
-  const navigation = useNavigation();
-  const senderThreadId = props.senderThreadId;
-  const label = (
-    <Text className="mb-1 pr-1 font-t3-medium text-2xs text-foreground-muted opacity-60">
-      Sent by another agent
-    </Text>
+  const senderShell = useQuietThreadShell(
+    props.senderThreadId ? scopeThreadRef(props.environmentId, props.senderThreadId) : null,
   );
-  return senderThreadId ? (
+  const label = senderShell?.title.trim() || "Agent";
+  return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel="Open sending thread"
+      accessibilityLabel={`${label}: ${props.summary}`}
+      accessibilityHint={`Double tap to ${props.expanded ? "hide" : "show"} the message.`}
+      accessibilityState={{ expanded: props.expanded }}
       hitSlop={4}
+      className="min-h-10 flex-row items-center gap-1.5 px-3.5 py-2"
+      onPress={() => {
+        void Haptics.selectionAsync();
+        props.onToggle();
+      }}
+    >
+      <SymbolView
+        name="bubble.left.and.bubble.right"
+        size={14}
+        weight="medium"
+        tintColorClassName="accent-user-bubble-foreground-muted"
+        type="monochrome"
+      />
+      <Text
+        numberOfLines={1}
+        className="max-w-[50%] shrink-0 font-t3-medium text-sm text-user-bubble-foreground-muted"
+      >
+        {label}
+      </Text>
+      <Text numberOfLines={1} className="min-w-0 shrink text-sm text-user-bubble-foreground">
+        {props.summary}
+      </Text>
+      <ThreadDisclosureChevron
+        expanded={props.expanded}
+        collapsedDirection="down"
+        size={11}
+        tintColor={props.iconSubtleColor}
+      />
+    </Pressable>
+  );
+}
+
+function OpenSenderThreadButton(props: {
+  readonly environmentId: EnvironmentId;
+  readonly senderThreadId: ThreadId;
+}) {
+  const navigation = useNavigation();
+  return (
+    <Pressable
+      accessibilityRole="link"
+      hitSlop={6}
       onPress={() =>
         navigation.navigate("Thread", {
           environmentId: String(props.environmentId),
-          threadId: String(senderThreadId),
+          threadId: String(props.senderThreadId),
         })
       }
     >
-      {label}
+      <Text className="font-t3-medium text-xs text-foreground-secondary">Open thread</Text>
     </Pressable>
-  ) : (
-    label
   );
 }
 
@@ -1360,6 +1403,9 @@ function renderFeedEntry(
     }
     if (isUser) {
       const enterAnimated = isFreshTimestamp(message.createdAt);
+      const foldRowId = presentation.attribution === "agent" ? `agent:${message.id}` : null;
+      const foldExpanded = foldRowId !== null && (props.expandedWorkRows[foldRowId] ?? false);
+      const bubbleBodyVisible = foldRowId === null || foldExpanded;
       const intentBadge = resolveUserMessageIntentBadge(message.inputIntent);
       const referenceIds = new Set(
         collectComposerContextReferences(message.text).map((reference) => reference.contextId),
@@ -1383,169 +1429,193 @@ function renderFeedEntry(
             <Text className="mb-1 pr-1 font-t3-medium text-2xs text-foreground-muted opacity-60">
               Sent by T3 Code
             </Text>
-          ) : presentation.attribution === "agent" ? (
-            <AgentMessageAttribution
-              environmentId={props.environmentId}
-              senderThreadId={message.senderThreadId}
-            />
           ) : null}
           <View
-            className="min-w-0 gap-2 rounded-[20px] px-3.5 py-2.5"
+            className="min-w-0 rounded-[20px]"
             style={{
               backgroundColor: userBubbleColor,
               maxWidth: props.duoColumns ? "85%" : props.userBubbleMaxWidth,
-              ...(hasReviewCommentContext
-                ? { width: props.reviewCommentBubbleWidth }
-                : hasWideBlock
-                  ? { width: props.duoColumns ? "85%" : props.userBubbleMaxWidth }
-                  : null),
+              ...(!bubbleBodyVisible
+                ? null
+                : hasReviewCommentContext
+                  ? { width: props.reviewCommentBubbleWidth }
+                  : hasWideBlock || foldExpanded
+                    ? { width: props.duoColumns ? "85%" : props.userBubbleMaxWidth }
+                    : null),
             }}
           >
-            {entry.pendingMessage?.attachments.map((attachment) =>
-              attachment.type === "image" && attachment.uploadedAttachmentId ? (
-                <MessageAttachmentImage
-                  key={attachment.id}
-                  environmentId={props.environmentId}
-                  attachmentId={attachment.uploadedAttachmentId}
-                  name={attachment.name}
-                  mimeType={attachment.mimeType}
-                  className="h-[140px] w-[180px] rounded-[14px]"
-                  onPressPreview={props.onPressPreview}
-                />
-              ) : attachment.type === "image" ? (
-                <Pressable
-                  key={attachment.id}
-                  accessibilityRole="imagebutton"
-                  accessibilityLabel={`Open ${attachment.name}`}
-                  onPress={() =>
-                    props.onPressPreview({
-                      kind: "image",
-                      name: attachment.name,
-                      uri: attachment.dataUrl ?? attachment.previewUri,
-                      gallery: composerImageGallery(entry.pendingMessage?.attachments ?? []),
-                    })
-                  }
-                >
-                  <Image
-                    source={{ uri: attachment.previewUri }}
-                    style={{ width: 180, height: 140, borderRadius: 14 }}
-                  />
-                </Pressable>
-              ) : (
-                <MessageAttachmentUnknown key={attachment.id} name={attachment.name} />
-              ),
-            )}
-            {/* An empty container still takes a gap, which pads every attachment-free bubble. */}
-            {visibleAttachments.length > 0 ? (
-              <View className={inlineAttachmentIds.size ? "flex-row flex-wrap gap-2" : "gap-2"}>
-                {visibleAttachments.map((attachment) => {
-                  return isImageAttachment(attachment) ? (
+            {foldRowId !== null ? (
+              <AgentMessageFoldHeader
+                environmentId={props.environmentId}
+                senderThreadId={message.senderThreadId}
+                summary={
+                  replaceComposerContextReferences(presentation.text, (ref) => ref.label)
+                    .split(/\r?\n/)
+                    .find((line) => line.trim().length > 0)
+                    ?.trim() ?? ""
+                }
+                expanded={foldExpanded}
+                onToggle={() => props.onToggleWorkRow(foldRowId, entry.id)}
+                iconSubtleColor={iconSubtleColor}
+              />
+            ) : null}
+            {bubbleBodyVisible ? (
+              <View className={cn("gap-2 px-3.5 pb-2.5", foldRowId === null && "pt-2.5")}>
+                {entry.pendingMessage?.attachments.map((attachment) =>
+                  attachment.type === "image" && attachment.uploadedAttachmentId ? (
                     <MessageAttachmentImage
                       key={attachment.id}
                       environmentId={props.environmentId}
-                      attachmentId={attachment.id}
+                      attachmentId={attachment.uploadedAttachmentId}
                       name={attachment.name}
                       mimeType={attachment.mimeType}
-                      className={
-                        inlineAttachmentIds.size
-                          ? "h-24 w-24 rounded-[14px] bg-user-bubble-foreground/15"
-                          : "aspect-[1.3] w-full rounded-[14px] bg-user-bubble-foreground/15"
-                      }
+                      className="h-[140px] w-[180px] rounded-[14px]"
                       onPressPreview={props.onPressPreview}
                     />
-                  ) : isFileAttachment(attachment) ? (
-                    <MessageAttachmentFile
+                  ) : attachment.type === "image" ? (
+                    <Pressable
                       key={attachment.id}
-                      environmentId={props.environmentId}
-                      attachment={attachment}
-                      onPressPreview={props.onPressPreview}
-                      onPressVideo={props.onPressVideo}
-                    />
+                      accessibilityRole="imagebutton"
+                      accessibilityLabel={`Open ${attachment.name}`}
+                      onPress={() =>
+                        props.onPressPreview({
+                          kind: "image",
+                          name: attachment.name,
+                          uri: attachment.dataUrl ?? attachment.previewUri,
+                          gallery: composerImageGallery(entry.pendingMessage?.attachments ?? []),
+                        })
+                      }
+                    >
+                      <Image
+                        source={{ uri: attachment.previewUri }}
+                        style={{ width: 180, height: 140, borderRadius: 14 }}
+                      />
+                    </Pressable>
                   ) : (
                     <MessageAttachmentUnknown key={attachment.id} name={attachment.name} />
-                  );
-                })}
+                  ),
+                )}
+                {/* An empty container still takes a gap, which pads every attachment-free bubble. */}
+                {visibleAttachments.length > 0 ? (
+                  <View className={inlineAttachmentIds.size ? "flex-row flex-wrap gap-2" : "gap-2"}>
+                    {visibleAttachments.map((attachment) => {
+                      return isImageAttachment(attachment) ? (
+                        <MessageAttachmentImage
+                          key={attachment.id}
+                          environmentId={props.environmentId}
+                          attachmentId={attachment.id}
+                          name={attachment.name}
+                          mimeType={attachment.mimeType}
+                          className={
+                            inlineAttachmentIds.size
+                              ? "h-24 w-24 rounded-[14px] bg-user-bubble-foreground/15"
+                              : "aspect-[1.3] w-full rounded-[14px] bg-user-bubble-foreground/15"
+                          }
+                          onPressPreview={props.onPressPreview}
+                        />
+                      ) : isFileAttachment(attachment) ? (
+                        <MessageAttachmentFile
+                          key={attachment.id}
+                          environmentId={props.environmentId}
+                          attachment={attachment}
+                          onPressPreview={props.onPressPreview}
+                          onPressVideo={props.onPressVideo}
+                        />
+                      ) : (
+                        <MessageAttachmentUnknown key={attachment.id} name={attachment.name} />
+                      );
+                    })}
+                  </View>
+                ) : null}
+                {message.text.trim().length > 0 ? (
+                  <MarkdownImageAvailableWidthContext
+                    value={props.userBubbleMaxWidth - USER_BUBBLE_HORIZONTAL_PADDING * 2}
+                  >
+                    <UserMessageContent
+                      text={renderedText}
+                      environmentId={props.environmentId}
+                      context={message.context}
+                      markdownStyles={styles}
+                      reviewCommentColors={props.reviewCommentColors}
+                      skills={props.skills}
+                      linkHandlers={props.markdownLinkHandlers}
+                      renderImage={props.renderMarkdownImage}
+                    />
+                  </MarkdownImageAvailableWidthContext>
+                ) : null}
               </View>
             ) : null}
-            {message.text.trim().length > 0 ? (
-              <MarkdownImageAvailableWidthContext
-                value={props.userBubbleMaxWidth - USER_BUBBLE_HORIZONTAL_PADDING * 2}
-              >
-                <UserMessageContent
-                  text={renderedText}
+          </View>
+          {bubbleBodyVisible ? (
+            <View className="mt-1 flex-row items-center justify-end gap-1 pr-0.5">
+              {foldRowId !== null && message.senderThreadId ? (
+                <OpenSenderThreadButton
                   environmentId={props.environmentId}
-                  context={message.context}
-                  markdownStyles={styles}
-                  reviewCommentColors={props.reviewCommentColors}
-                  skills={props.skills}
-                  linkHandlers={props.markdownLinkHandlers}
-                  renderImage={props.renderMarkdownImage}
+                  senderThreadId={message.senderThreadId}
                 />
-              </MarkdownImageAvailableWidthContext>
-            ) : null}
-          </View>
-          <View className="mt-1 flex-row items-center justify-end gap-1 pr-0.5">
-            {intentBadge ? (
-              <View
-                accessible
-                accessibilityLabel={intentBadge.accessibilityLabel}
-                className="flex-row items-center gap-1"
-              >
-                <SymbolView name="arrow.uturn.forward" size={12} tintColor={iconSubtleColor} />
-                <Text className="font-t3-medium text-xs text-foreground-secondary">
-                  {intentBadge.label}
+              ) : null}
+              {intentBadge ? (
+                <View
+                  accessible
+                  accessibilityLabel={intentBadge.accessibilityLabel}
+                  className="flex-row items-center gap-1"
+                >
+                  <SymbolView name="arrow.uturn.forward" size={12} tintColor={iconSubtleColor} />
+                  <Text className="font-t3-medium text-xs text-foreground-secondary">
+                    {intentBadge.label}
+                  </Text>
+                </View>
+              ) : null}
+              {intentBadge ? (
+                <Text
+                  accessible={false}
+                  accessibilityElementsHidden
+                  importantForAccessibility="no"
+                  className="font-t3-medium text-xs text-foreground-secondary"
+                >
+                  ·
                 </Text>
-              </View>
-            ) : null}
-            {intentBadge ? (
-              <Text
-                accessible={false}
-                accessibilityElementsHidden
-                importantForAccessibility="no"
-                className="font-t3-medium text-xs text-foreground-secondary"
-              >
-                ·
+              ) : null}
+              <Text className="font-t3-medium text-xs tabular-nums text-foreground-secondary">
+                {entry.pendingMessage && !entry.acknowledged ? "Pending" : timestampLabel}
               </Text>
-            ) : null}
-            <Text className="font-t3-medium text-xs tabular-nums text-foreground-secondary">
-              {entry.pendingMessage && !entry.acknowledged ? "Pending" : timestampLabel}
-            </Text>
-            {props.onEditPendingMessage !== null &&
-            entry.pendingMessage &&
-            !entry.acknowledged &&
-            !entry.pendingMessage.creation &&
-            entry.pendingMessage.messageId !== props.dispatchingMessageId ? (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Edit pending message"
-                hitSlop={8}
-                className="size-7 items-center justify-center"
-                onPress={() => {
-                  if (entry.pendingMessage && props.onEditPendingMessage) {
-                    props.onEditPendingMessage(entry.pendingMessage);
+              {props.onEditPendingMessage !== null &&
+              entry.pendingMessage &&
+              !entry.acknowledged &&
+              !entry.pendingMessage.creation &&
+              entry.pendingMessage.messageId !== props.dispatchingMessageId ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Edit pending message"
+                  hitSlop={8}
+                  className="size-7 items-center justify-center"
+                  onPress={() => {
+                    if (entry.pendingMessage && props.onEditPendingMessage) {
+                      props.onEditPendingMessage(entry.pendingMessage);
+                    }
+                  }}
+                >
+                  <SymbolView name="pencil" size={14} tintColor={iconSubtleColor} />
+                </Pressable>
+              ) : null}
+              {presentation.text.trim().length > 0 ? (
+                <UserMessageCopyButton
+                  text={presentation.text}
+                  onCopy={
+                    message.context
+                      ? () =>
+                          writeComposerContextClipboard(message.text, {
+                            version: 1,
+                            source: { environmentId: props.environmentId, messageId: message.id },
+                            records: message.context!.records,
+                          })
+                      : undefined
                   }
-                }}
-              >
-                <SymbolView name="pencil" size={14} tintColor={iconSubtleColor} />
-              </Pressable>
-            ) : null}
-            {presentation.text.trim().length > 0 ? (
-              <UserMessageCopyButton
-                text={presentation.text}
-                onCopy={
-                  message.context
-                    ? () =>
-                        writeComposerContextClipboard(message.text, {
-                          version: 1,
-                          source: { environmentId: props.environmentId, messageId: message.id },
-                          records: message.context!.records,
-                        })
-                    : undefined
-                }
-                tintColor={iconSubtleColor}
-              />
-            ) : null}
-          </View>
+                  tintColor={iconSubtleColor}
+                />
+              ) : null}
+            </View>
+          ) : null}
         </Animated.View>
       );
     }
@@ -2974,13 +3044,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             renderItem={renderItem}
             viewabilityConfig={THREAD_MEDIA_VIEWABILITY_CONFIG}
             keyExtractor={(entry) => entry.id}
-            getItemType={(entry) =>
-              entry.type !== "message"
-                ? entry.type
-                : resolveUserMessagePresentation(entry.message).attribution === "automation"
-                  ? "message:automation"
-                  : `message:${entry.message.role}`
-            }
+            getItemType={(entry) => {
+              if (entry.type !== "message") return entry.type;
+              const { attribution } = resolveUserMessagePresentation(entry.message);
+              return attribution === "automation" || attribution === "agent"
+                ? `message:${attribution}`
+                : `message:${entry.message.role}`;
+            }}
             getFixedItemSize={getFixedItemSize}
             // Virtualized rows must move with their measurements. Native layout
             // transitions can retain stale positions during sync, even at duration 0.
