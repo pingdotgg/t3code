@@ -85,6 +85,7 @@ import {
   createNativeMailSearchToolbarItem,
   NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET,
 } from "../layout/native-mail-search-toolbar";
+import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 import { useNativeMailSearchToolbar } from "../../native/use-native-mail-search-toolbar";
 import { ModelRow, ChoiceRow } from "./ThreadSettingsRows";
 import {
@@ -847,10 +848,8 @@ function ThreadSettingsOptionsItem(props: {
         .get(session.environmentId)
         ?.providers.find((provider) => provider.instanceId === session.providerInstanceId) ?? null)
     : null;
-  const usesNativeMailSearchToolbar = useNativeMailSearchToolbar();
-  const bottomToolbarInset = usesNativeMailSearchToolbar
-    ? NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET
-    : 0;
+  // Both iOS search layouts float a bottom toolbar over the list's last rows.
+  const bottomToolbarInset = Platform.OS === "ios" ? NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET : 0;
 
   return (
     <View style={{ paddingBottom: insets.bottom + bottomToolbarInset + 12 }}>
@@ -1211,11 +1210,17 @@ function useThreadSettingsPickerPresentation() {
   return value;
 }
 
+// With a Duo vertical bar, filter and search join cancel and confirm in the rail.
+function useThreadSettingsMailSearchToolbar() {
+  const metrics = useNativeLayoutMetrics();
+  return useNativeMailSearchToolbar() && (metrics?.verticalBarEdge ?? "none") === "none";
+}
+
 function ThreadSettingsModelsScreen() {
   const session = useThreadSettingsSession();
   const presentation = useThreadSettingsPickerPresentation();
   const navigation = useNavigation<NativeStackNavigationProp<ThreadSettingsPickerStackParams>>();
-  const usesNativeMailSearchToolbar = useNativeMailSearchToolbar();
+  const usesNativeMailSearchToolbar = useThreadSettingsMailSearchToolbar();
   const hasCustomCatalogFilter = session.providerFilter !== null || session.showLegacy;
   const commitAndClose = useEffectEvent(() => {
     if (!session.commitPendingModel()) return;
@@ -1335,6 +1340,7 @@ function ThreadSettingsModelsScreen() {
           headerSearchBarOptions:
             Platform.OS === "ios" && !usesNativeMailSearchToolbar
               ? {
+                  allowToolbarIntegration: true,
                   autoCapitalize: "none",
                   hideNavigationBar: false,
                   obscureBackground: false,
@@ -1378,7 +1384,6 @@ function ThreadSettingsModelsScreen() {
                 ? "line.3.horizontal.decrease.circle.fill"
                 : "line.3.horizontal.decrease.circle"
             }
-            separateBackground
             title="Model filters"
           >
             <Toolbar.Menu title="Provider">
@@ -1414,6 +1419,7 @@ function ThreadSettingsModelsScreen() {
               </Toolbar.MenuAction>
             ) : null}
           </Toolbar.Menu>
+          <Toolbar.SearchBarSlot />
         </Toolbar>
       ) : null}
     </>

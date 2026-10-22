@@ -2,15 +2,14 @@ import { useNavigation, type StaticScreenProps } from "@react-navigation/native"
 import { LegendList } from "@legendapp/list/react-native";
 import { useMemo } from "react";
 import { Platform, View } from "react-native";
-import { ScreenStack } from "react-native-screens";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AndroidSheetHeader } from "../../components/ui/AndroidScreenHeader";
 import { AppText as Text } from "../../components/ui/AppText";
 import { ScreenContent } from "../../components/ui/ScreenContent";
-import { NativeSheetContent } from "../../native/NativeSheetContent";
-import { NativeStackScreenOptions, nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
-import { NativeHeader, NativeScreen } from "../../native/ThemedScreenStack";
+import { SheetHeader } from "../../components/ui/SheetHeader";
+import { Toolbar } from "../../components/ui/Toolbar";
+import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
@@ -21,7 +20,6 @@ import {
 } from "./LinkedPullRequestList";
 import { useLinkedPullRequestActions } from "./useLinkedPullRequestActions";
 
-const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 const TITLE = "Linked pull requests";
 
 export function ThreadPullRequestsSheet(
@@ -92,47 +90,19 @@ export function ThreadPullRequestsSheet(
   );
 
   if (Platform.OS === "ios") {
-    // A plain formSheet screen never renders a stack header, so it comes from
-    // a nested native stack inside the sheet (same shape as the git sheet).
     return (
       <View collapsable={false} className="flex-1 bg-sheet">
-        <ScreenStack style={{ flex: 1 }}>
-          <NativeScreen
-            activityState={2}
-            enabled
-            isNativeStack
-            screenId="thread-pull-requests-sheet-native"
-            scrollEdgeEffects={HEADER_SCROLL_EDGE_EFFECTS}
-            className="flex-1 bg-sheet"
-          >
-            <NativeSheetContent>{content}</NativeSheetContent>
-            <NativeHeader
-              backgroundColor="rgba(0,0,0,0)"
-              tintColorClassName="accent-foreground"
-              hideBackButton
-              hideShadow={false}
-              navigationItemStyle="editor"
-              title={TITLE}
-              titleColorClassName="accent-foreground"
-              titleFontSize={18}
-              titleFontWeight="800"
-              translucent
-              headerRightBarButtonItems={
-                actions.canLink
-                  ? [
-                      {
-                        type: "button",
-                        accessibilityLabel: "Link pull request",
-                        icon: { name: "plus", type: "sfSymbol" },
-                        identifier: "thread-pull-requests-link",
-                        onPress: actions.promptLink,
-                      },
-                    ]
-                  : undefined
-              }
+        <SheetHeader presentation="native" title={TITLE} onClose={() => navigation.goBack()} />
+        {actions.canLink ? (
+          <Toolbar placement="right">
+            <Toolbar.Button
+              icon="plus"
+              accessibilityLabel="Link pull request"
+              onPress={actions.promptLink}
             />
-          </NativeScreen>
-        </ScreenStack>
+          </Toolbar>
+        ) : null}
+        {content}
       </View>
     );
   }

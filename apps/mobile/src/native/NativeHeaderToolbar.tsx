@@ -42,6 +42,10 @@ type NativeStackHeaderAxisBehavior = Extract<
   NativeStackHeaderItem,
   { type: "button" }
 >["axisBehavior"];
+type NativeStackHeaderVisibilityPriority = Extract<
+  NativeStackHeaderItem,
+  { type: "button" }
+>["visibilityPriority"];
 type NativeToolbarItem = NativeStackHeaderItem | HeaderBarButtonSearchBarPlacementItem;
 type NativeStackOptionsWithToolbar = NativeStackNavigationOptions & {
   unstable_headerToolbarItems?: () => NativeToolbarItem[];
@@ -166,6 +170,7 @@ function convertToolbarChild(child: ReactNode): NativeToolbarItem | null {
           ? child.props.variant
           : "plain",
       identifier: typeof child.props.identifier === "string" ? child.props.identifier : undefined,
+      visibilityPriority: child.props.visibilityPriority as NativeStackHeaderVisibilityPriority,
     };
   }
 
@@ -277,6 +282,7 @@ function NativeHeaderToolbarButton(_props: {
   readonly tintColor?: ColorValue;
   readonly variant?: "plain" | "done" | "prominent";
   readonly identifier?: string;
+  readonly visibilityPriority?: NativeStackHeaderVisibilityPriority;
 }) {
   return null;
 }

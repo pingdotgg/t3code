@@ -1,4 +1,5 @@
 import * as Dialog from "../../../components/ui/Dialog";
+import { SheetHeader } from "../../../components/ui/SheetHeader";
 import { useOpenPullRequest } from "../../../native/useOpenPullRequest";
 import {
   type GitActionRequestInput,
@@ -368,35 +369,15 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   }
 
   if (Platform.OS === "ios") {
-    // Compact form sheet: a plain screen presented as formSheet never renders a
-    // stack header, so — like the Settings sheet — the header must come from a
-    // nested native stack INSIDE the sheet.
     return (
       <View collapsable={false} className="flex-1 bg-sheet">
-        <ScreenStack style={{ flex: 1 }}>
-          <NativeScreen
-            activityState={2}
-            enabled
-            isNativeStack
-            screenId="thread-git-sheet-native"
-            scrollEdgeEffects={HEADER_SCROLL_EDGE_EFFECTS}
-            className="flex-1 bg-sheet"
-          >
-            <NativeSheetContent>{content}</NativeSheetContent>
-            <NativeHeader
-              backgroundColor="rgba(0,0,0,0)"
-              tintColorClassName="accent-foreground"
-              hideBackButton
-              hideShadow={false}
-              navigationItemStyle="editor"
-              title={currentBranchLabel}
-              titleColorClassName="accent-foreground"
-              titleFontSize={18}
-              titleFontWeight="800"
-              translucent
-            />
-          </NativeScreen>
-        </ScreenStack>
+        <SheetHeader
+          presentation="native"
+          title={currentBranchLabel}
+          subtitle={currentStatusSummary}
+          onClose={() => navigation.goBack()}
+        />
+        {content}
       </View>
     );
   }

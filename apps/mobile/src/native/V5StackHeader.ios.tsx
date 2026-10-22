@@ -128,6 +128,8 @@ function convertItems(items: NativeStackHeaderItem[], prefix: string): HeaderIte
           axisBehavior: item.axisBehavior,
           icon: convertIcon(item.icon),
           onPress: item.disabled ? undefined : item.onPress,
+          visibilityPriority:
+            item.visibilityPriority === "default" ? "standard" : item.visibilityPriority,
           variant: item.variant,
           tintColor: item.tintColor,
           hidesSharedBackground: item.hidesSharedBackground,
