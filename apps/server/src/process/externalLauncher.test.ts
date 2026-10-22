@@ -704,7 +704,7 @@ it.effect.skipIf(windowsHost)(
         ["idea1", path.join(home, "apps/removed/bin/idea")],
         ["idea10", target],
         ["idea2", target],
-      ]) {
+      ] as const) {
         const executable = path.join(scripts, name);
         yield* fs.writeFileString(executable, `#!/bin/sh\nexec "${script}" "$@"\n`);
         yield* fs.chmod(executable, 0o755);

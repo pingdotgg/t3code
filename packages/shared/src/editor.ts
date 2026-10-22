@@ -50,20 +50,19 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
   // A Toolbox script names its IDE by absolute path. Keep a numbered script
   // only while one of those paths exists, so a script left behind by a
   // removed IDE is skipped. The script is read, never run.
-  const hasLaunchTarget = (script: string) =>
-    Effect.gen(function* () {
-      const text = yield* fs.readFileString(script).pipe(Effect.orElseSucceed(() => ""));
-      const targets = text
-        .split(/\r?\n/)
-        .filter((line) => !/^\s*(#|::|@?rem\b)/i.test(line))
-        .flatMap((line) => [...line.matchAll(/"([^"]*)"|([^\s"=;]+)/g)])
-        .map((match) => match[1] ?? match[2] ?? "")
-        .filter((target) => path.isAbsolute(target));
-      for (const target of targets) {
-        if (yield* fs.exists(target).pipe(Effect.orElseSucceed(() => false))) return true;
-      }
-      return false;
-    });
+  const hasLaunchTarget = Effect.fn("editor.hasLaunchTarget")(function* (script: string) {
+    const text = yield* fs.readFileString(script).pipe(Effect.orElseSucceed(() => ""));
+    const targets = text
+      .split(/\r?\n/)
+      .filter((line) => !/^\s*(#|::|@?rem\b)/i.test(line))
+      .flatMap((line) => [...line.matchAll(/"([^"]*)"|([^\s"=;]+)/g)])
+      .map((match) => match[1] ?? match[2] ?? "")
+      .filter((target) => path.isAbsolute(target));
+    for (const target of targets) {
+      if (yield* fs.exists(target).pipe(Effect.orElseSucceed(() => false))) return true;
+    }
+    return false;
+  });
   // Toolbox names a launch script `idea1`, `idea2`, ... when another installed
   // version already has `idea`.
   const numberedScripts = (dir: string, suffix: string) =>
