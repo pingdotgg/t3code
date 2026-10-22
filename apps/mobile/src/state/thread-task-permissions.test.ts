@@ -70,6 +70,7 @@ vi.mock("react", () => ({
 vi.mock("expo-crypto", () => ({ randomUUID: () => "uuid" }));
 vi.mock("../lib/attachmentUpload", () => ({ prepareTurnAttachments: vi.fn() }));
 vi.mock("../lib/uuid", () => ({ uuidv4: () => "uuid" }));
+vi.mock("./thread-message-rewind", () => ({ rewindUserMessage: vi.fn() }));
 vi.mock("./queued-run-edit", () => ({
   useQueuedRunEdit: () => null,
   getQueuedRunEdit: () => null,
@@ -87,6 +88,10 @@ vi.mock("./entities", () => ({ useServerConfigs: () => new Map() }));
 vi.mock("./session", () => ({
   readEnvironmentScope: (environmentId: string, scope: string) =>
     scope === AuthOrchestrationOperateScope && state.grantedEnvironments.has(environmentId),
+  useEnvironmentScope: (environmentId: string | null, scope: string) =>
+    scope === AuthOrchestrationOperateScope &&
+    environmentId !== null &&
+    state.grantedEnvironments.has(environmentId),
 }));
 vi.mock("./use-thread-selection", () => ({
   useThreadSelection: () => ({
@@ -111,6 +116,7 @@ vi.mock("./threads", async () => {
     environmentThreadDetails: {
       queueWorkflowAtom: () => Atom.make(null),
       checkpointSummariesAtom: () => Atom.make([]),
+      historyAtom: () => Atom.make({ hasMoreHistory: false }),
     },
     threadEnvironment: {
       respondToApproval: state.approve,

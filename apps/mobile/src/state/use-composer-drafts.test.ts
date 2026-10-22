@@ -2583,3 +2583,25 @@ describe("mobile composer drafts", () => {
     expect(composerAttachmentCleanupMocks.remove).not.toHaveBeenCalled();
   });
 });
+
+it("preserves every rewind attachment when another draft import fills the cap during rollback", () => {
+  const existing = Array.from({ length: 100 }, (_, index) => ({
+    id: `existing-${index}`,
+    type: "image" as const,
+    name: "image.png",
+    mimeType: "image/png",
+    sizeBytes: 1,
+    dataUrl: "data:image/png;base64,YQ==",
+    previewUri: "data:image/png;base64,YQ==",
+  }));
+  const incoming = { ...existing[0]!, id: "rewound" };
+  const merged = mergeComposerDraftContentState(
+    { rewind: { text: "Unsent", attachments: existing } },
+    "rewind",
+    { text: "Restored", attachments: [incoming] },
+    { allowAttachmentOverflow: true },
+  );
+  expect(merged.rewind?.attachments).toHaveLength(101);
+  expect(merged.rewind?.text).toBe("Unsent\n\nRestored");
+  expect(merged.rewind?.attachments.at(-1)).toBe(incoming);
+});

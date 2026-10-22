@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   COMPOSER_CONTEXT_MAX_RECORDS,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+  ChatAttachmentId,
   ComposerContextId,
   EnvironmentId,
   ThreadId,
@@ -52,7 +55,10 @@ vi.mock("./composerImages", () => ({
 }));
 vi.mock("./uuid", () => ({ uuidv4: () => `import-${++mocks.sequence}` }));
 
-import { importComposerContextClipboard } from "./composerContextClipboard";
+import {
+  importComposerContextClipboard,
+  prepareRewindComposerContent,
+} from "./composerContextClipboard";
 import { createComposerContextHistory } from "./composerContext";
 
 const image = {
@@ -296,4 +302,172 @@ describe("mobile context clipboard imports", () => {
       collectComposerContextReferences(result!.text).map((reference) => reference.contextId),
     ).toEqual(result!.context.records.map((record) => record.contextId));
   });
+});
+
+describe("rewind content preparation", () => {
+  const message = {
+    text: clipboard.text,
+    context: { version: 1 as const, records: [image, terminal] },
+    attachments: [],
+  };
+  it("restores context with durable files and new identities", async () => {
+    const result = await prepareRewindComposerContent(
+      message,
+      EnvironmentId.make("source"),
+      { attachments: [], context: undefined },
+      new AbortController().signal,
+    );
+    expect(result.text).toContain("/image/import-1)");
+    expect(result.context?.records[0]).toMatchObject({ attachmentId: result.attachments[0]!.id });
+    expect(result.attachments[0]).toMatchObject({ fileUri: "file:///owned.png" });
+    expect(result.context?.records[1]).toMatchObject({ text: "Build failed" });
+  });
+  it("rejects missing context and any failed attachment instead of restoring partially", async () => {
+    await expect(
+      prepareRewindComposerContent(
+        { ...message, context: undefined },
+        EnvironmentId.make("source"),
+        { attachments: [] },
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("context");
+    mocks.download.mockRejectedValueOnce(new Error("missing bytes"));
+    await expect(
+      prepareRewindComposerContent(
+        message,
+        EnvironmentId.make("source"),
+        { attachments: [] },
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("missing bytes");
+  });
+  it("preflights context limits before downloading", async () => {
+    await expect(
+      prepareRewindComposerContent(
+        message,
+        EnvironmentId.make("source"),
+        {
+          attachments: [],
+          context: {
+            version: 1,
+            records: Array.from({ length: COMPOSER_CONTEXT_MAX_RECORDS }, () => terminal),
+          },
+        },
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("context");
+    expect(mocks.download).not.toHaveBeenCalled();
+  });
+});
+
+it("preserves pasted-text attachment handling when restoring a prompt", async () => {
+  const restored = await prepareRewindComposerContent(
+    {
+      text: "Use this text",
+      attachments: [
+        {
+          id: ChatAttachmentId.make("pasted-file"),
+          type: "file",
+          name: "pasted.txt",
+          mimeType: "text/plain",
+          sizeBytes: 3,
+          source: { _tag: "pasted-text" },
+        },
+      ],
+    },
+    EnvironmentId.make("source"),
+    { attachments: [] },
+    new AbortController().signal,
+  );
+  expect(restored.attachments[0]).toMatchObject({ source: { _tag: "pasted-text" } });
+});
+
+it("restores files without context as visible chips and deduplicates repeated file bindings", async () => {
+  const record = { ...image, kind: "file" as const, name: "notes.txt", mimeType: "text/plain" };
+  const secondRecord = { ...record, contextId: ComposerContextId.make("file-second") };
+  const text = [record, secondRecord].map(formatComposerContextReference).join(" ");
+  const restored = await prepareRewindComposerContent(
+    {
+      text,
+      context: { version: 1, records: [record, secondRecord] },
+      attachments: [
+        {
+          id: ChatAttachmentId.make("extra-file"),
+          type: "file",
+          name: "extra.txt",
+          mimeType: "text/plain",
+          sizeBytes: 3,
+        },
+      ],
+    },
+    EnvironmentId.make("source"),
+    { attachments: [] },
+    new AbortController().signal,
+  );
+  expect(restored.attachments).toHaveLength(2);
+  expect(restored.context?.records[0]).toMatchObject({ attachmentId: restored.attachments[0]!.id });
+  expect(restored.context?.records[1]).toMatchObject({ attachmentId: restored.attachments[0]!.id });
+  expect(restored.context?.records[2]).toMatchObject({ attachmentId: restored.attachments[1]!.id });
+  expect(restored.text).toContain("extra.txt");
+  expect(mocks.download).toHaveBeenCalledTimes(2);
+});
+
+it("cleans earlier prepared files when a later attachment cannot be restored", async () => {
+  const secondImage = {
+    ...image,
+    contextId: ComposerContextId.make("image-second"),
+    attachmentId: "second-file",
+  };
+  mocks.persist
+    .mockResolvedValueOnce("file:///first-owned.png")
+    .mockRejectedValueOnce(new Error("disk full"));
+  await expect(
+    prepareRewindComposerContent(
+      {
+        text: [image, secondImage].map(formatComposerContextReference).join(" "),
+        context: { version: 1, records: [image, secondImage] },
+        attachments: [],
+      },
+      EnvironmentId.make("source"),
+      { attachments: [] },
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow("disk full");
+  expect(mocks.remove).toHaveBeenCalledWith("file:///first-owned.png");
+});
+
+it("rejects attachment and text overflow before downloading rewind content", async () => {
+  const message = {
+    text: clipboard.text,
+    context: { version: 1 as const, records: [image, terminal] },
+    attachments: [],
+  };
+  for (const existing of [
+    { attachments: Array.from({ length: PROVIDER_SEND_TURN_MAX_ATTACHMENTS }, () => ({})) },
+    { attachments: [], text: "x".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS) },
+  ])
+    await expect(
+      prepareRewindComposerContent(
+        message,
+        EnvironmentId.make("source"),
+        existing,
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("Make room");
+  expect(mocks.download).not.toHaveBeenCalled();
+});
+
+it("refuses foreign thread context instead of dropping it during rewind", async () => {
+  await expect(
+    prepareRewindComposerContent(
+      {
+        text: formatComposerContextReference(foreignThread),
+        context: { version: 1, records: [foreignThread] },
+        attachments: [],
+      },
+      EnvironmentId.make("destination"),
+      { attachments: [] },
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow("another environment");
 });

@@ -1,6 +1,12 @@
 import * as Dialog from "../components/ui/Dialog";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
-import { readEnvironmentScope } from "./session";
+import { rewindingThreadKeysAtom, sendingThreadKeysAtom } from "./thread-composer-operations";
+import { rewindUserMessage } from "./thread-message-rewind";
+import {
+  deriveMessageRevertTargets,
+  supportsThreadRollback,
+} from "@t3tools/client-runtime/state/thread-checkpoints";
+import { readEnvironmentScope, useEnvironmentScope } from "./session";
 import type { ComposerTextPaste } from "../native/T3ComposerEditor.types";
 import { useAtomValue } from "@effect/atom-react";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
@@ -119,6 +125,7 @@ const EMPTY_QUEUE_WORKFLOW_ATOM = Atom.make<null>(null).pipe(
   Atom.withLabel("mobile-thread-queue-workflow:empty"),
 );
 const EMPTY_CHECKPOINT_SUMMARIES_ATOM = Atom.make<ReadonlyArray<ThreadCheckpointSummary>>([]);
+const EMPTY_HISTORY_ATOM = Atom.make({ hasMoreHistory: true });
 
 export function appendReviewCommentToDraft(input: {
   readonly environmentId: EnvironmentId;
@@ -186,6 +193,11 @@ export function useThreadComposerState() {
     selectedEnvironmentRuntime,
   } = useThreadSelection();
   const selectedThreadProjection = useSelectedThreadProjection();
+  const selectedThreadHistory = useAtomValue(
+    selectedThreadDetailRef === null
+      ? EMPTY_HISTORY_ATOM
+      : environmentThreadDetails.historyAtom(selectedThreadDetailRef),
+  );
   const selectedThreadVisibleTurnItems = useSelectedThreadVisibleTurnItems();
   const acknowledgedMessages = useAtomValue(acknowledgedThreadMessagesAtom);
   const queuedMessagesByThreadKey = useThreadOutboxMessages();
@@ -224,6 +236,13 @@ export function useThreadComposerState() {
   const selectedThreadKey = selectedThreadShell
     ? scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id)
     : null;
+  const rewindingThreadKeys = useAtomValue(rewindingThreadKeysAtom);
+  const sendingThreadKeys = useAtomValue(sendingThreadKeysAtom);
+  const isRewinding = selectedThreadKey !== null && rewindingThreadKeys.has(selectedThreadKey);
+  const canOperateThread = useEnvironmentScope(
+    selectedThreadShell?.environmentId ?? null,
+    AuthOrchestrationOperateScope,
+  );
   const selectedThreadQueuedMessages = selectedThreadKey
     ? (queuedMessagesByThreadKey[selectedThreadKey] ?? []).filter(
         (message) => message.creation === undefined,
@@ -528,7 +547,7 @@ export function useThreadComposerState() {
     scheduleUnusedComposerAttachmentCleanup(draft.attachments);
   };
 
-  const onSendMessage = async (
+  const sendMessage = async (
     followUpOverride?: ActiveTurnComposerAction,
     beforeDispatch?: () => Promise<boolean>,
   ) => {
@@ -730,6 +749,28 @@ export function useThreadComposerState() {
       },
     );
     return messageId;
+  };
+
+  const onSendMessage = async (
+    followUpOverride?: ActiveTurnComposerAction,
+    beforeDispatch?: () => Promise<boolean>,
+  ) => {
+    const key = selectedThreadKey;
+    if (
+      key === null ||
+      appAtomRegistry.get(rewindingThreadKeysAtom).has(key) ||
+      appAtomRegistry.get(sendingThreadKeysAtom).has(key)
+    )
+      return null;
+    appAtomRegistry.set(
+      sendingThreadKeysAtom,
+      new Set(appAtomRegistry.get(sendingThreadKeysAtom)).add(key),
+    );
+    return sendMessage(followUpOverride, beforeDispatch).finally(() => {
+      const next = new Set(appAtomRegistry.get(sendingThreadKeysAtom));
+      next.delete(key);
+      appAtomRegistry.set(sendingThreadKeysAtom, next);
+    });
   };
 
   const onChangeDraftMessage = (value: string) => {
@@ -1001,7 +1042,37 @@ export function useThreadComposerState() {
     });
   };
 
+  const rewindTargets =
+    !isRewinding &&
+    canOperateThread &&
+    selectedEnvironmentRuntime?.connectionState === "connected" &&
+    !activeThreadBusy &&
+    activeWorkStartedAt === null &&
+    !isSavingQueuedEdit &&
+    queuedRunEdit === null &&
+    selectedThreadQueuedMessages.length === 0 &&
+    selectedThreadKey !== null &&
+    !sendingThreadKeys.has(selectedThreadKey) &&
+    selectedThreadProjection &&
+    supportsThreadRollback(
+      selectedThreadProjection.projection,
+      serverConfig?.providers.find(
+        (provider) => provider.instanceId === selectedThreadShell?.providerInstanceId,
+      ),
+    )
+      ? deriveMessageRevertTargets(selectedThreadProjection.projection, {
+          historyComplete: !selectedThreadHistory.hasMoreHistory,
+        })
+      : new Map<MessageId, never>();
+  const onRewindMessage = async (messageId: MessageId, confirm: () => Promise<boolean | null>) =>
+    selectedThreadDetailRef === null
+      ? false
+      : rewindUserMessage(selectedThreadDetailRef, messageId, confirm);
+
   return {
+    isRewinding,
+    rewindMessageIds: new Set<MessageId>(rewindTargets.keys()),
+    onRewindMessage,
     feedbackSubmissions,
     dismissFeedback,
     selectedThreadFeed,

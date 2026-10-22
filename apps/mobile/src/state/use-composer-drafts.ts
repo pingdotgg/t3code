@@ -1622,6 +1622,7 @@ export function mergeComposerDraftContentState(
   current: Record<string, ComposerDraft>,
   draftKey: string,
   content: ComposerDraftContent,
+  options?: { readonly allowAttachmentOverflow?: boolean },
 ): Record<string, ComposerDraft> {
   const existing = normalizeDraft(current[draftKey]);
   if (content.sourceShareId && existing.importedShareIds?.includes(content.sourceShareId)) {
@@ -1635,10 +1636,10 @@ export function mergeComposerDraftContentState(
     attachmentIds.add(attachment.id);
     return true;
   });
-  const attachments = [...existing.attachments, ...incomingAttachments].slice(
-    0,
-    PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
-  );
+  const combined = [...existing.attachments, ...incomingAttachments];
+  const attachments = options?.allowAttachmentOverflow
+    ? combined
+    : combined.slice(0, PROVIDER_SEND_TURN_MAX_ATTACHMENTS);
   const text = mergeComposerDraftText(existing.text, content.text);
   const context = mergeReferencedComposerContext(text, existing.context, content.context);
   const importedShareIds = content.sourceShareId
@@ -1677,6 +1678,7 @@ export function mergeComposerDraftContentState(
 export async function mergeComposerDraftContent(
   draftKey: string,
   content: ComposerDraftContent,
+  options?: { readonly allowAttachmentOverflow?: boolean },
 ): Promise<{ readonly skippedAttachmentCount: number }> {
   ensureComposerDraftsLoaded();
   if (loadPromise !== null) {
@@ -1687,7 +1689,7 @@ export async function mergeComposerDraftContent(
     persistTimer = null;
   }
   const current = appAtomRegistry.get(composerDraftsAtom);
-  const next = mergeComposerDraftContentState(current, draftKey, content);
+  const next = mergeComposerDraftContentState(current, draftKey, content, options);
   const currentAttachmentIds = new Set(
     normalizeDraft(current[draftKey]).attachments.map((attachment) => attachment.id),
   );

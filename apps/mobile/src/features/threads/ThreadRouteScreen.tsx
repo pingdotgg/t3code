@@ -945,6 +945,9 @@ function ThreadRouteContent(
           canStopThread={awaitingBootstrapTurn || composer.interruptibleRunId !== null}
           queuedRunEdit={composer.queuedRunEdit}
           composerDraftKey={composer.composerDraftKey}
+          isRewinding={composer.isRewinding}
+          rewindMessageIds={composer.rewindMessageIds}
+          onRewindMessage={composer.onRewindMessage}
           followUpBehavior={composer.followUpBehavior}
           canSteerActiveTurn={composer.canSteerActiveTurn}
           isSavingQueuedEdit={composer.isSavingQueuedEdit}
