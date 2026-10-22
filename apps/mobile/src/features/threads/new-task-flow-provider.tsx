@@ -90,7 +90,7 @@ import {
 } from "./new-task-context-presentation";
 import {
   isSameRepository,
-  resolveEnvironmentProjectMatch,
+  resolveNewTaskEnvironmentProject,
   resolveNewTaskEnvironments,
 } from "./new-task-project-selection";
 import { useNewTaskProjectDefaults } from "./use-new-task-project-defaults";
@@ -585,21 +585,22 @@ export function NewTaskFlowProvider(
   };
 
   const selectEnvironment = (environmentId: EnvironmentId) => {
-    const match = resolveEnvironmentProjectMatch(
-      projects.filter((project) => project.environmentId === environmentId),
-      selectedProject,
-      groupingSettings,
-    );
-    updateFlow({
-      // A name or title match may be another repository, which must not receive the PR checkout.
-      draftKey: match
-        ? carryDraftContentTo(match, {
-            keepPullRequestWorkspace: isSameRepository(match, selectedProject),
-          })
-        : readFlow().draftKey,
+    const match = resolveNewTaskEnvironmentProject({
       environmentId,
-      projectKey: match ? scopedProjectKey(match.environmentId, match.id) : null,
+      projects,
+      selectedProject,
+      pendingProject: null,
+      settings: groupingSettings,
     });
+    if (!match) return false;
+    updateFlow({
+      draftKey: carryDraftContentTo(match, {
+        keepPullRequestWorkspace: isSameRepository(match, selectedProject),
+      }),
+      environmentId,
+      projectKey: scopedProjectKey(match.environmentId, match.id),
+    });
+    return true;
   };
 
   const openScratch = useAtomCommand(projectEnvironment.openScratch, { reportFailure: false });
@@ -615,8 +616,7 @@ export function NewTaskFlowProvider(
       return true;
     }
     if (!isScratchDraft) {
-      selectEnvironment(environmentId);
-      return true;
+      return selectEnvironment(environmentId);
     }
     const request = {};
     latestSwitchRef.current = request;
@@ -822,7 +822,7 @@ export function NewTaskFlowProvider(
       selectedProject,
       settings: groupingSettings,
       savedConnectionsById,
-      pendingTaskEnvironmentId: editingPendingTask?.environmentId ?? null,
+      pendingTaskEnvironmentId: null,
     });
   })();
 
