@@ -230,6 +230,7 @@ const desktopRenders = (tabId: string) => {
   }
   return desktopTabs.has(tabId);
 };
+const shownDesktopTabs = new Set<string>();
 const releasedDesktopTabs: Array<string> = [];
 const desktopConnections: Array<{ endpoint: string; context: ReturnType<typeof makeContext> }> = [];
 const testThread = {
@@ -286,6 +287,7 @@ const dependencies = Layer.mergeAll(
       ),
     ),
     isAttached: (key) => Effect.sync(() => desktopRenders(key.tabId)),
+    isShown: (key) => shownDesktopTabs.has(key.tabId),
     endpoint: (key) =>
       Effect.acquireRelease(Effect.succeed(`ws://desktop/${key.tabId}`), () =>
         Effect.sync(() => releasedDesktopTabs.push(key.tabId)),
@@ -329,6 +331,7 @@ beforeEach(() => {
   focusedFrame = null;
   desktopTabs.clear();
   desktopRendersNext = false;
+  shownDesktopTabs.clear();
   releasedDesktopTabs.length = 0;
   desktopConnections.length = 0;
 });
@@ -987,6 +990,47 @@ it.live("only the current controller can answer a file picker", () =>
       });
       expect(answered).toBe(false);
       expect(setFiles).not.toHaveBeenCalled();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("the tab the desktop shows is visible and picked for agents without a tab", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* Broker.PreviewAutomationBroker;
+      const manager = yield* Manager.PreviewManager;
+      yield* ServerBrowser.ServerBrowser;
+      yield* Effect.yieldNow;
+      const openDesktopTab = Effect.fn("openDesktopTab")(function* (url: string) {
+        desktopRendersNext = true;
+        const opened = yield* manager.open({
+          threadId: scope.thread.threadId,
+          url,
+          runtime: "server",
+        });
+        const tabId = PreviewTabId.make(opened.tabId);
+        yield* broker.invoke({ scope, tabId, operation: "status", input: {} });
+        return tabId;
+      });
+      const recentTab = yield* openDesktopTab("http://localhost:5173/recent");
+      const shownTab = yield* openDesktopTab("http://localhost:5173/shown");
+      // Opened first and used last, so recency or insertion order alone picks it.
+      yield* broker.invoke({ scope, tabId: recentTab, operation: "status", input: {} });
+
+      shownDesktopTabs.add(shownTab);
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope: asSession("agent-b"),
+        operation: "status",
+        input: {},
+      });
+      expect(status).toMatchObject({
+        tabId: shownTab,
+        visible: true,
+        tabs: [
+          expect.objectContaining({ tabId: recentTab, visible: false }),
+          expect.objectContaining({ tabId: shownTab, visible: true }),
+        ],
+      });
     }),
   ).pipe(Effect.provide(layer)),
 );
