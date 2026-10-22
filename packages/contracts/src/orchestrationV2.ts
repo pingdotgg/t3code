@@ -73,6 +73,7 @@ import {
   ToolActivitySource,
 } from "./providerRuntime.ts";
 import { ThreadTokenUsageSnapshot } from "./providerRuntime.ts";
+import { ThreadTitleRegenerationFailure, TITLE_GENERATION_FAILED_MESSAGE } from "./threadTitle.ts";
 
 export const OrchestrationV2Actor = Schema.Literals(["user", "agent", "system"]);
 export type OrchestrationV2Actor = typeof OrchestrationV2Actor.Type;
@@ -427,6 +428,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
       }),
     ),
   ),
+  /** Latest title generation that failed; cleared when the next regeneration starts. */
+  titleRegenerationFailure: Schema.optional(Schema.NullOr(ThreadTitleRegenerationFailure)),
   rollbackRequestId: Schema.optional(CommandId),
   rollbackFailure: Schema.optional(
     Schema.NullOr(
@@ -1880,6 +1883,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
       }),
     ),
   ),
+  /** Latest failed title generation; omitted when the last one did not fail. */
+  titleRegenerationFailure: Schema.optional(ThreadTitleRegenerationFailure),
   deletedAt: Schema.NullOr(Schema.DateTimeUtc),
 });
 export type OrchestrationV2ThreadShell = typeof OrchestrationV2ThreadShell.Type;
@@ -2762,6 +2767,8 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     requestId: CommandId,
     title: Schema.optional(TrimmedNonEmptyString),
+    /** Why generation failed; recorded on the thread as `titleRegenerationFailure`. */
+    failure: Schema.optional(Schema.Literal(TITLE_GENERATION_FAILED_MESSAGE)),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.runtime-mode.set"),

@@ -5,6 +5,7 @@ import * as Schema from "effect/Schema";
 import { NodeId, RunAttemptId, TrimmedNonEmptyString } from "./index.ts";
 import {
   latestProviderTurnForAttempt,
+  OrchestrationV2Command,
   OrchestrationV2ProviderCapabilities,
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderThreadJson,
@@ -20,6 +21,7 @@ const now = DateTime.makeUnsafe("2026-04-20T00:00:00.000Z");
 
 const decodeOrchestrationV2TurnItemJson = Schema.decodeUnknownSync(OrchestrationV2TurnItemJson);
 const encodeOrchestrationV2TurnItemJson = Schema.encodeSync(OrchestrationV2TurnItemJson);
+const decodeOrchestrationV2Command = Schema.decodeUnknownSync(OrchestrationV2Command);
 const decodeOrchestrationV2Subagent = Schema.decodeUnknownSync(OrchestrationV2Subagent);
 const encodeOrchestrationV2SubagentJson = Schema.encodeSync(OrchestrationV2SubagentJson);
 const decodeOrchestrationV2ProviderThreadJson = Schema.decodeUnknownSync(
@@ -368,6 +370,20 @@ describe("orchestration V2 contracts", () => {
       }
     },
   );
+
+  it("accepts only the fixed safe title generation failure in completion commands", () => {
+    const command = {
+      type: "thread.title.regeneration.complete",
+      commandId: "command-1",
+      threadId: "thread-1",
+      requestId: "title-request-1",
+      failure: "The thread title could not be generated.",
+    };
+    expect(decodeOrchestrationV2Command(command)).toEqual(command);
+    expect(() =>
+      decodeOrchestrationV2Command({ ...command, failure: "CLI stderr: private output" }),
+    ).toThrow();
+  });
 
   it("decodes historical provider-thread JSON without pendingBackgroundTasks as empty roster", () => {
     const providerThread = decodeOrchestrationV2ProviderThreadJson({

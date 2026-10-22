@@ -1,4 +1,5 @@
 import {
+  CommandId,
   EnvironmentId,
   ProjectId,
   RunId,
@@ -10,12 +11,13 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { Atom, AtomRegistry } from "effect/reactivity";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { PrimaryConnectionTarget } from "../connection/model.ts";
 import { v2Now, v2ShellSnapshot, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import { applyShellStreamEvent } from "./shellReducer.ts";
 import { isThreadWorking } from "./threadInbox.ts";
+import { waitForTitleRegenerationFailure } from "./titleRegeneration.ts";
 import { childThreadInputsTitle, createEnvironmentThreadShellAtoms } from "./threadShell.ts";
 
 const environmentId = EnvironmentId.make("environment-v2");
@@ -377,6 +379,229 @@ describe("v2 thread shell lists", () => {
     } finally {
       dispose();
       harness.registry.dispose();
+    }
+  });
+});
+
+describe("title regeneration on thread shells", () => {
+  const requestId = CommandId.make("manual-title");
+  const message = "The thread title could not be generated.";
+
+  it("reports a fast failure independently of an unseen bulk success and ignores unrelated requests", async () => {
+    const { registry, threads, snapshotAtom } = makeHarness();
+    const controller = new AbortController();
+    const other = { ...v2ThreadShell, id: ThreadId.make("other-thread"), title: "Fast success" };
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: [v2ThreadShell, { ...other, title: v2ThreadShell.title }],
+    });
+    const watch = (threadId: ThreadId) =>
+      waitForTitleRegenerationFailure({
+        registry,
+        atom: threads.threadShellAtom({ environmentId, threadId }),
+        requestId: threadId === v2ThreadShell.id ? requestId : CommandId.make("other-title"),
+        timeoutMs: 60_000,
+        signal: controller.signal,
+      });
+    try {
+      const failed = watch(v2ThreadShell.id);
+      let successSettled = false;
+      const success = watch(other.id).then((reason) => {
+        successSettled = true;
+        return reason;
+      });
+      registry.set(snapshotAtom(environmentId), {
+        ...v2ShellSnapshot,
+        threads: [
+          {
+            ...v2ThreadShell,
+            titleRegenerationFailure: {
+              requestId: CommandId.make("unrelated"),
+              message: "Old failure",
+            },
+          },
+          other,
+        ],
+      });
+      registry.set(snapshotAtom(environmentId), {
+        ...v2ShellSnapshot,
+        threads: [{ ...v2ThreadShell, titleRegenerationFailure: { requestId, message } }, other],
+      });
+      await expect(failed).resolves.toBe(message);
+      expect(successSettled).toBe(false);
+      controller.abort();
+      await expect(success).resolves.toBeNull();
+    } finally {
+      controller.abort();
+      registry.dispose();
+    }
+  });
+
+  it("keeps a queued request past the deadline and observes success after arming", async () => {
+    vi.useFakeTimers();
+    const { registry, threads, snapshotAtom } = makeHarness();
+    const controller = new AbortController();
+    const atom = threads.threadShellAtom({ environmentId, threadId: v2ThreadShell.id });
+    const watch = () =>
+      waitForTitleRegenerationFailure({
+        registry,
+        atom,
+        requestId,
+        timeoutMs: 60_000,
+        signal: controller.signal,
+      });
+    const set = (thread: OrchestrationV2ThreadShell) =>
+      registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [thread] });
+    try {
+      const wait = watch();
+      const settled = vi.fn();
+      void wait.then(settled);
+      set({ ...v2ThreadShell, titleRegeneration: { requestId, startedAt: v2Now } });
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(settled).not.toHaveBeenCalled();
+      set({ ...v2ThreadShell, titleRegenerationFailure: { requestId, message } });
+      await expect(wait).resolves.toBe(message);
+
+      set(v2ThreadShell);
+      const success = watch();
+      set({ ...v2ThreadShell, titleRegeneration: { requestId, startedAt: v2Now } });
+      set({ ...v2ThreadShell, title: "Generated title" });
+      await expect(success).resolves.toBeNull();
+    } finally {
+      controller.abort();
+      registry.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it("observes a failure after reconnect or an index gap and releases disconnected requests at their deadline", async () => {
+    vi.useFakeTimers();
+    const { registry, threads, snapshotAtom } = makeHarness();
+    const unmountSnapshot = registry.mount(snapshotAtom(environmentId));
+    const controller = new AbortController();
+    const statusAtom = Atom.make<"live" | "cached" | "empty">("live");
+    const atom = Atom.make((get) => {
+      const status = get(statusAtom);
+      return status === "cached" || status === "empty"
+        ? undefined
+        : get(threads.threadShellAtom({ environmentId, threadId: v2ThreadShell.id }));
+    });
+    const set = (thread: OrchestrationV2ThreadShell) =>
+      registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [thread] });
+    const stop = vi.fn();
+    const subscribe = registry.subscribe.bind(registry);
+    const subscribeSpy = vi.spyOn(registry, "subscribe");
+    const watch = () => {
+      const ready = Promise.withResolvers<void>();
+      subscribeSpy.mockImplementationOnce((...args) => {
+        const unsubscribe = subscribe(...args);
+        ready.resolve();
+        return () => {
+          stop();
+          unsubscribe();
+        };
+      });
+      const result = waitForTitleRegenerationFailure({
+        registry,
+        atom,
+        requestId,
+        timeoutMs: 5 * 60_000,
+        signal: controller.signal,
+      });
+      return { result, ready: ready.promise };
+    };
+    const inFlight = { ...v2ThreadShell, titleRegeneration: { requestId, startedAt: v2Now } };
+    try {
+      set(inFlight);
+      const reconnect = watch();
+      await reconnect.ready;
+      const settled = vi.fn();
+      void reconnect.result.then(settled);
+      registry.set(statusAtom, "cached");
+      set({ ...v2ThreadShell, titleRegenerationFailure: { requestId, message } });
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(settled).not.toHaveBeenCalled();
+      registry.set(statusAtom, "live");
+      await expect(reconnect.result).resolves.toBe(message);
+      expect(stop).toHaveBeenCalledTimes(1);
+
+      set(inFlight);
+      const unindexed = watch();
+      await unindexed.ready;
+      registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [] });
+      set({ ...v2ThreadShell, titleRegenerationFailure: { requestId, message } });
+      await expect(unindexed.result).resolves.toBe(message);
+      expect(stop).toHaveBeenCalledTimes(2);
+
+      set(inFlight);
+      const disconnected = watch();
+      await disconnected.ready;
+      registry.set(statusAtom, "empty");
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      await expect(disconnected.result).resolves.toBeNull();
+      expect(stop).toHaveBeenCalledTimes(3);
+
+      registry.set(statusAtom, "live");
+      const overdue = watch();
+      await overdue.ready;
+      settled.mockClear();
+      void overdue.result.then(settled);
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      expect(settled).not.toHaveBeenCalled();
+      registry.set(statusAtom, "cached");
+      await expect(overdue.result).resolves.toBeNull();
+      expect(stop).toHaveBeenCalledTimes(4);
+    } finally {
+      controller.abort();
+      unmountSnapshot();
+      registry.dispose();
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+    }
+  });
+
+  it("releases the shell subscription on command rejection or an unobserved request timeout", async () => {
+    vi.useFakeTimers();
+    const { registry, threads } = makeHarness();
+    const controller = new AbortController();
+    const atom = threads.threadShellAtom({ environmentId, threadId: v2ThreadShell.id });
+    const get = vi.spyOn(registry, "get");
+    const stop = vi.fn();
+    const subscribe = registry.subscribe.bind(registry);
+    vi.spyOn(registry, "subscribe").mockImplementation((...args) => {
+      const unsubscribe = subscribe(...args);
+      return () => {
+        stop();
+        unsubscribe();
+      };
+    });
+    const watch = () =>
+      waitForTitleRegenerationFailure({
+        registry,
+        atom,
+        requestId,
+        timeoutMs: 60_000,
+        signal: controller.signal,
+      });
+    try {
+      const timedOut = watch();
+      await vi.advanceTimersByTimeAsync(60_000);
+      await expect(timedOut).resolves.toBeNull();
+      expect(stop).toHaveBeenCalledTimes(1);
+
+      const rejected = watch();
+      controller.abort();
+      await expect(rejected).resolves.toBeNull();
+      expect(stop).toHaveBeenCalledTimes(2);
+      get.mockClear();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(get).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      controller.abort();
+      registry.dispose();
+      vi.restoreAllMocks();
+      vi.useRealTimers();
     }
   });
 });

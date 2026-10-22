@@ -97,6 +97,10 @@ vi.mock("../uiStateStore", () => ({
       markThreadUnread: () => recordEffect("mark-unread"),
     }),
 }));
+vi.mock("../lib/utils", () => ({ randomUUID: () => "00000000-0000-4000-8000-000000000000" }));
+vi.mock("../lib/titleRegenerationFailures", () => ({
+  createTitleRegenerationReporter: () => ({ watch: () => () => {} }),
+}));
 vi.mock("../components/ui/toast", () => ({
   stackedThreadToast: (toast: unknown) => toast,
   toastManager: { add: () => state.completed.resolve() },

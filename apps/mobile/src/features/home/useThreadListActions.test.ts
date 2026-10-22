@@ -46,6 +46,12 @@ vi.mock("expo-haptics", () => ({
   impactAsync: async () => {},
   ImpactFeedbackStyle: { Light: "light" },
 }));
+// The failure watcher has its own tests in client-runtime.
+vi.mock("@t3tools/client-runtime/state/title-regeneration", () => ({
+  waitForTitleRegenerationFailure: () => Promise.resolve(null),
+}));
+// The real helper loads expo-crypto, which needs the native Expo runtime.
+vi.mock("../../lib/uuid", () => ({ uuidv4: () => "00000000-0000-4000-8000-000000000000" }));
 vi.mock("../../components/ui/Dialog", () => ({
   alert: (title: string, _message: string, buttons?: { text: string; onPress?: () => void }[]) =>
     state.alerts.push({ title, buttons }),
@@ -113,8 +119,14 @@ vi.mock("../../state/thread-order", () => ({
     };
   },
 }));
+vi.mock("../../state/shell", () => ({
+  environmentShell: { statusAtom: () => "shell-status" },
+}));
 vi.mock("../../state/threads", () => ({
-  environmentThreadShells: { threadShellsAtom: "thread-shells" },
+  environmentThreadShells: {
+    threadShellsAtom: "thread-shells",
+    threadShellAtom: () => "thread-shell",
+  },
   threadEnvironment: Object.fromEntries(
     [
       "archive",

@@ -43,6 +43,7 @@ import {
 } from "@t3tools/client-runtime/environment";
 import {
   AuthOrchestrationOperateScope,
+  CommandId,
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -128,7 +129,8 @@ import { readEnvironmentScope } from "../state/session";
 import { buildThreadRouteParams, resolveActiveThreadRouteRef } from "../threadRoutes";
 import type { SidebarThreadSummary } from "../types";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
-import { cn } from "~/lib/utils";
+import { cn, randomUUID } from "~/lib/utils";
+import { createTitleRegenerationReporter } from "~/lib/titleRegenerationFailures";
 import { ProjectEnvironmentBadge } from "./ProjectEnvironmentBadge";
 import {
   buildDraftActionMenuItems,
@@ -2086,12 +2088,19 @@ export default function Sidebar() {
         return;
       }
       if (clicked.value === "regenerate-title") {
+        const reporter = createTitleRegenerationReporter();
         for (const thread of regeneratableTitleThreads) {
+          const requestId = CommandId.make(randomUUID());
+          const stopWatching = reporter.watch(
+            scopeThreadRef(thread.environmentId, thread.id),
+            requestId,
+          );
           const result = await updateThreadMetadata({
             environmentId: thread.environmentId,
-            input: { threadId: thread.id, regenerateTitle: true },
+            input: { commandId: requestId, threadId: thread.id, regenerateTitle: true },
           });
           if (result._tag === "Success") continue;
+          stopWatching();
           if (!isAtomCommandInterrupted(result)) {
             const error = squashAtomCommandFailure(result);
             toastManager.add(
@@ -2389,10 +2398,13 @@ export default function Sidebar() {
             return;
           case "regenerate-title": {
             if (isRegeneratingTitle) return;
+            const requestId = CommandId.make(randomUUID());
+            const stopWatching = createTitleRegenerationReporter().watch(threadRef, requestId);
             const result = await updateThreadMetadata({
               environmentId: threadRef.environmentId,
-              input: { threadId: threadRef.threadId, regenerateTitle: true },
+              input: { commandId: requestId, threadId: threadRef.threadId, regenerateTitle: true },
             });
+            if (result._tag === "Failure") stopWatching();
             if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
               const error = squashAtomCommandFailure(result);
               toastManager.add(

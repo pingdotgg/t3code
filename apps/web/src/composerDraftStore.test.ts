@@ -1179,8 +1179,10 @@ function modelReconciliationHarness(
     for (let task = tasks.shift(); task !== undefined; task = tasks.shift()) task();
   };
   const selectedThreadId = ThreadId.make("another-selected-thread");
+  const { titleRegenerationFailure: _failure, ...fixtureThread } =
+    makeThreadProjectionFixture().thread;
   const thread: OrchestrationV2ThreadShell = {
-    ...makeThreadProjectionFixture().thread,
+    ...fixtureThread,
     latestRunId: null,
     activeRunId: null,
     status: "idle",
