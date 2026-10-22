@@ -39,6 +39,7 @@
         "src/claude-history-worker.ts!",
         "scripts/cli.ts",
         "scripts/evaluate-thread-titles.ts",
+        "scripts/evidence/**/*.mjs",
         "scripts/fetch-expo-schema.ts",
         "scripts/measure-pr-preview.ts",
         "scripts/probe-claude-fork-local-rollback-replay.ts",
