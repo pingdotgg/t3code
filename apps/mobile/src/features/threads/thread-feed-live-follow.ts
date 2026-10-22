@@ -141,18 +141,38 @@ export function resolveThreadFeedReflowAnchor(
   return row && size ? { key: row.rowId, offsetWithinRow: row.offsetWithinRow, size } : null;
 }
 
-export function resolveThreadFeedReflowScroll(
+function resolveReflowAnchorPoint(
   anchor: ThreadFeedReflowRowAnchor,
   state: ThreadFeedReflowListState,
-  layout: ThreadFeedReflowLayout,
-): { readonly index: number; readonly viewOffset: number } | null {
+) {
   const index = state.indexByKey(anchor.key);
   const top = index === undefined ? undefined : state.positionAtIndex(index);
   const size = state.sizes.get(anchor.key);
   if (index === undefined || top === undefined || size === undefined) return null;
   // Rewrapped text grows with its row, so the reader's line sits at the same share of the
   // row rather than the same pixel offset into it.
-  const offsetWithinRow = (anchor.offsetWithinRow * size) / anchor.size;
-  if (Math.abs(readingLine(state, layout) - (top + offsetWithinRow)) < 1) return null;
-  return { index, viewOffset: layout.headerInset - offsetWithinRow };
+  return { index, top, offsetWithinRow: (anchor.offsetWithinRow * size) / anchor.size };
+}
+
+/** The scroll offset that puts the reader's line back under the header at the current sizes. */
+export function resolveThreadFeedReflowOffset(
+  anchor: ThreadFeedReflowRowAnchor,
+  state: ThreadFeedReflowListState,
+  layout: ThreadFeedReflowLayout,
+): number | undefined {
+  const point = resolveReflowAnchorPoint(anchor, state);
+  return point
+    ? point.top + point.offsetWithinRow - layout.headerInset + layout.rowsTop
+    : undefined;
+}
+
+export function resolveThreadFeedReflowScroll(
+  anchor: ThreadFeedReflowRowAnchor,
+  state: ThreadFeedReflowListState,
+  layout: ThreadFeedReflowLayout,
+): { readonly index: number; readonly viewOffset: number } | null {
+  const point = resolveReflowAnchorPoint(anchor, state);
+  if (!point) return null;
+  if (Math.abs(readingLine(state, layout) - (point.top + point.offsetWithinRow)) < 1) return null;
+  return { index: point.index, viewOffset: layout.headerInset - point.offsetWithinRow };
 }

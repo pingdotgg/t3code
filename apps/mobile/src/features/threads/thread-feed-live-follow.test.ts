@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   resolveThreadFeedLiveFollow,
   resolveThreadFeedReflowAnchor,
+  resolveThreadFeedReflowOffset,
   resolveThreadFeedReflowScroll,
   resolveThreadFeedSubmissionAnchor,
   resolveThreadWorkGroupInitialScroll,
@@ -242,6 +243,33 @@ describe("width reflow anchors", () => {
       viewOffset: layout.headerInset - 0.6 * replySize,
     });
   });
+
+  it.each([
+    { change: "narrows", replySize: 4_000 },
+    { change: "widens", replySize: 1_000 },
+  ])(
+    "holds the reader 60% into a reply on each re-measure as the feed $change",
+    ({ replySize }) => {
+      const anchor = resolveThreadFeedReflowAnchor(readingReply, layout, false);
+      if (anchor === null || anchor === "end") throw new Error("expected a row anchor");
+      const rows = [
+        { id: "question", size: 400 * (replySize / 2_000) },
+        { id: "reply", size: replySize },
+        { id: "follow-up", size: 300 },
+      ];
+      const offset = resolveThreadFeedReflowOffset(
+        anchor,
+        feedState(rows, readingReply.scroll),
+        layout,
+      );
+      if (offset === undefined) throw new Error("expected an offset");
+      expect(resolveThreadFeedReflowAnchor(feedState(rows, offset), layout, false)).toEqual({
+        key: "reply",
+        offsetWithinRow: 0.6 * replySize,
+        size: replySize,
+      });
+    },
+  );
 
   it("leaves a reader at the top of the thread where they are", () => {
     expect(resolveThreadFeedReflowAnchor(feedState(wide, -layout.headerInset), layout, false)).toBe(
