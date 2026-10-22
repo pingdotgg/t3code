@@ -1950,10 +1950,17 @@ export function ThreadsSettingsPanel() {
 export function MaintenanceSettingsPanel() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
-  const { scope, environment, connectedEnvironments } = useSettingsScope();
+  const { scope, environment, connectedEnvironments, targets } = useSettingsScope();
   const environmentId = environment?.environmentId ?? null;
   const isEnvironmentScope = scope.environmentIds.length === 1 && environmentId !== null;
   const hasServerTargets = connectedEnvironments.length > 0;
+  // Compared by effective value: an unset switch follows Provider update checks.
+  const modelCatalogUpdates = targets.map((candidate) =>
+    resolveModelCatalogUpdatesEnabled(candidate.settings),
+  );
+  const mixedModelCatalogUpdates = modelCatalogUpdates.some(
+    (enabled) => enabled !== modelCatalogUpdates[0],
+  );
 
   return (
     <SettingsPageContainer>
@@ -1990,6 +1997,7 @@ export function MaintenanceSettingsPanel() {
         <SettingsRow
           serverScoped
           settingKeys={["enableModelCatalogUpdates"]}
+          mixed={mixedModelCatalogUpdates}
           {...searchableSetting("download-new-models")}
           description="Download the latest T3 Code model catalog so new models appear between releases. Follows Provider update checks until you change it."
           resetAction={
@@ -2006,9 +2014,11 @@ export function MaintenanceSettingsPanel() {
             ) : null
           }
           control={
-            <ScopedSwitch
-              settingKeys={["enableModelCatalogUpdates", "enableProviderUpdateChecks"]}
-              checked={resolveModelCatalogUpdatesEnabled(settings)}
+            <Switch
+              mixed={mixedModelCatalogUpdates}
+              checked={
+                mixedModelCatalogUpdates ? false : resolveModelCatalogUpdatesEnabled(settings)
+              }
               onCheckedChange={(checked) =>
                 updateSettings({ enableModelCatalogUpdates: Boolean(checked) })
               }
