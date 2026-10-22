@@ -52,7 +52,7 @@ catalog:
   "@legendapp/list": 3.3.5
   "@noble/curves": 1.9.1
   "@noble/hashes": 1.8.0
-  "@pierre/diffs": 1.5.2
+  "@pierre/diffs": 1.6.1
   "@tailwindcss/node": 4.3.3
   "@tailwindcss/oxide": 4.3.3
   "@tailwindcss/vite": 4.3.3
@@ -221,6 +221,9 @@ minimumReleaseAgeExclude:
   - react-native-svg@15.16.0
   - "@expo/schema-utils@58.0.2"
   - pele@1.8.0
+  - "@pierre/diffs@1.6.1"
+  - "@pierre/highlights@0.2.0"
+  - "@pierre/theming@1.0.2"
 
 overrides:
   # Keep on the patched version. A fresh resolution would take a newer release and
@@ -342,7 +345,7 @@ patchedDependencies:
   "@legendapp/list@3.3.5": patches/@legendapp__list@3.3.5.patch
   # Exports the dependency-light subpaths mobile and the web diff parser import, and keeps
   # measured wrapped-row heights above an edit (fileEditorVirtualization.test.ts).
-  "@pierre/diffs@1.5.2": patches/@pierre%2Fdiffs@1.5.2.patch
+  "@pierre/diffs@1.6.1": patches/@pierre%2Fdiffs@1.6.1.patch
   "@react-native-ai/apple@0.12.0": patches/@react-native-ai__apple@0.12.0.patch
   "@react-native-menu/menu@2.0.0": patches/@react-native-menu__menu@2.0.0.patch
   "@react-navigation/native-stack@7.21.0": patches/@react-navigation%2Fnative-stack@7.21.0.patch

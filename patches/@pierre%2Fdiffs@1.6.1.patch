@@ -1,5 +1,5 @@
 diff --git a/dist/components/CodeView.d.ts b/dist/components/CodeView.d.ts
-index cc32d28..3a46bf4 100644
+index 234ec4baa4..274ff5e32b 100644
 --- a/dist/components/CodeView.d.ts
 +++ b/dist/components/CodeView.d.ts
 @@ -158,6 +158,12 @@ interface CodeViewOptions<LAnnotation, Caret> extends CodeViewPassThroughOptions
@@ -15,7 +15,7 @@ index cc32d28..3a46bf4 100644
    /** Render a non-virtualized element at the very start of the scroll content,
     * before the first item. It is always rendered and scrolls with the content.
     * Return the same element across calls and mutate it in place to update;
-@@ -268,6 +274,13 @@ declare class CodeView<LAnnotation = undefined, Caret = undefined> {
+@@ -269,6 +275,13 @@ declare class CodeView<LAnnotation = undefined, Caret = undefined> {
    getSelectedLines(): CodeViewLineSelection | null;
    clearSelectedLines(options?: SelectionWriteOptions): void;
    getItem(itemId: string): CodeViewItem<LAnnotation> | undefined;
@@ -30,10 +30,10 @@ index cc32d28..3a46bf4 100644
     * Returns the editor while this item is being edited. Partial diffs get an
     * editor after their files load; scrolling away or collapsing keeps it.
 diff --git a/dist/components/CodeView.js b/dist/components/CodeView.js
-index 140f94f..96fc774 100644
+index ee5c91c5ab..7d0a2901e4 100644
 --- a/dist/components/CodeView.js
 +++ b/dist/components/CodeView.js
-@@ -16,6 +16,7 @@ import { prefersReducedMotion } from "../utils/prefersReducedMotion.js";
+@@ -18,6 +18,7 @@ import { resolvePreferredHighlighter } from "../utils/resolvePreferredHighlighte
  import { roundToDevicePixel } from "../utils/roundToDevicePixel.js";
  import { VirtualizedFile } from "./VirtualizedFile.js";
  import { VirtualizedFileDiff } from "./VirtualizedFileDiff.js";
@@ -41,7 +41,7 @@ index 140f94f..96fc774 100644
  //#region src/components/CodeView.ts
  const CODE_VIEW_DIFF_OPTION_KEYS = [
  	"theme",
-@@ -114,6 +115,8 @@ function defineItemOption(target, key, get) {
+@@ -116,6 +117,8 @@ function defineItemOption(target, key, get) {
  }
  const DEFAULT_SCROLL_INTERACTION_RESTORE_DELAY_MS = 120;
  const SUB_PIXEL_TOLERANCE = 1;
@@ -50,16 +50,16 @@ index 140f94f..96fc774 100644
  const SCROLLING_CODE_OVERFLOW_FIX_VARIABLE = "--diffs-overflow-override";
  function createScrollRebaseConfig(containerHeight, triggerTop, targetTop) {
  	return {
-@@ -211,6 +214,8 @@ var CodeView = class CodeView {
+@@ -213,6 +216,8 @@ var CodeView = class CodeView {
  	isReadySubscription;
  	pendingHighlighterTheme;
- 	isContainerManaged;
+ 	isComponentManaged;
 +	search = new CodeViewSearch(this);
 +	pendingSearchReveal;
- 	constructor(options = { theme: DEFAULT_THEMES }, workerManager, isContainerManaged = false) {
+ 	slotSnapshotStale = false;
+ 	constructor(options = { theme: DEFAULT_THEMES }, workerManager, isComponentManaged = false) {
  		this.options = options;
- 		this.computeMetricsCache(options.itemMetrics);
-@@ -392,6 +397,7 @@ var CodeView = class CodeView {
+@@ -395,6 +400,7 @@ var CodeView = class CodeView {
  		this.root.addEventListener("touchstart", this.clearPendingScroll, { passive: true });
  		this.root.addEventListener("pointerdown", this.clearPendingScroll, { passive: true });
  		this.root.addEventListener("keydown", this.clearPendingScroll, { passive: true });
@@ -67,15 +67,15 @@ index 140f94f..96fc774 100644
  		this.resizeObserver.observe(this.root);
  		this.render(true);
  		window.__INSTANCE = this;
-@@ -464,6 +470,7 @@ var CodeView = class CodeView {
+@@ -467,6 +473,7 @@ var CodeView = class CodeView {
  		this.heightDirty = true;
  		this.resetRenderState();
- 		if (!this.isContainerManaged) this.flushSlotCoordinator();
+ 		if (!this.isComponentManaged) this.flushSlotCoordinator();
 +		this.search.refresh();
  		if (failed) throw failure;
  	}
  	cleanUp() {
-@@ -485,6 +492,8 @@ var CodeView = class CodeView {
+@@ -488,6 +495,8 @@ var CodeView = class CodeView {
  		this.root?.removeEventListener("touchstart", this.clearPendingScroll);
  		this.root?.removeEventListener("pointerdown", this.clearPendingScroll);
  		this.root?.removeEventListener("keydown", this.clearPendingScroll);
@@ -84,7 +84,7 @@ index 140f94f..96fc774 100644
  		this.root?.style.removeProperty("overflow-anchor");
  		this.container?.remove();
  		this.stickyOffset.remove();
-@@ -626,6 +635,137 @@ var CodeView = class CodeView {
+@@ -629,6 +638,137 @@ var CodeView = class CodeView {
  	getItem(itemId) {
  		return this.idToItem.get(itemId)?.item;
  	}
@@ -222,7 +222,7 @@ index 140f94f..96fc774 100644
  	/**
  	* Returns the editor while this item is being edited. Partial diffs get an
  	* editor after their files load; scrolling away or collapsing keeps it.
-@@ -645,6 +785,7 @@ var CodeView = class CodeView {
+@@ -648,6 +788,7 @@ var CodeView = class CodeView {
  		this.render();
  		this.syncItemEditors();
  		this.syncSelection();
@@ -230,7 +230,7 @@ index 140f94f..96fc774 100644
  		return true;
  	}
  	updateItemId(oldId, newId) {
-@@ -678,6 +819,7 @@ var CodeView = class CodeView {
+@@ -681,6 +822,7 @@ var CodeView = class CodeView {
  		this.renamePendingScrollTarget(oldId, newId);
  		this.renamePendingLayoutAnchor(oldId, newId);
  		this.render();
@@ -238,7 +238,7 @@ index 140f94f..96fc774 100644
  		return true;
  	}
  	addItem(input) {
-@@ -687,6 +829,7 @@ var CodeView = class CodeView {
+@@ -690,6 +832,7 @@ var CodeView = class CodeView {
  		this.appendItemsInternal(inputs);
  		this.syncItemEditors();
  		this.syncSelection();
@@ -246,7 +246,7 @@ index 140f94f..96fc774 100644
  	}
  	removeItem(itemId) {
  		const item = this.idToItem.get(itemId);
-@@ -709,6 +852,7 @@ var CodeView = class CodeView {
+@@ -712,6 +855,7 @@ var CodeView = class CodeView {
  			for (const removedItem of removedItemsById?.values() ?? []) removedItem.instance.cleanUp();
  		}
  		this.syncSelection();
@@ -254,7 +254,7 @@ index 140f94f..96fc774 100644
  	}
  	/**
  	* Append new records to the viewer while preserving existing layout state.
-@@ -1330,6 +1474,10 @@ var CodeView = class CodeView {
+@@ -1334,6 +1478,10 @@ var CodeView = class CodeView {
  		item.item = nextItem;
  		item.version = nextItem.version;
  		item.renderedOptionsRevision = -1;
@@ -265,7 +265,7 @@ index 140f94f..96fc774 100644
  		return true;
  	}
  	getMaxScrollTopForHeight(scrollHeight) {
-@@ -1710,6 +1858,10 @@ var CodeView = class CodeView {
+@@ -1714,6 +1862,10 @@ var CodeView = class CodeView {
  		this.updateStickyPositioning();
  		this.validateStickyContainerHeight();
  		this.fixContainerFocus();
@@ -276,7 +276,7 @@ index 140f94f..96fc774 100644
  		if (fitPerfectly || this.scrollAnimation != null) this.render();
  	};
  	flushManagers(updatedItems) {
-@@ -1804,7 +1956,8 @@ var CodeView = class CodeView {
+@@ -1808,7 +1960,8 @@ var CodeView = class CodeView {
  		this.notifyScroll();
  		this.render();
  	};
@@ -286,7 +286,7 @@ index 140f94f..96fc774 100644
  		this.pendingScrollTarget = void 0;
  		this.pendingLayoutAnchor = void 0;
  		this.scrollAnimation = void 0;
-@@ -2066,7 +2219,12 @@ var CodeView = class CodeView {
+@@ -2071,7 +2224,12 @@ var CodeView = class CodeView {
  			const item = this.items[index];
  			if (item == null) throw new Error("CodeView.recomputeLayout: invalid item index");
  			item.top = runningTop;
@@ -300,7 +300,7 @@ index 140f94f..96fc774 100644
  			else item.height = item.instance.updateCodeViewLayout(item.item.file, runningTop, reset, item.item.annotations ?? []);
  			runningTop += item.height;
  			if (index < this.items.length - 1) runningTop += layout.gap;
-@@ -2086,6 +2244,27 @@ var CodeView = class CodeView {
+@@ -2091,6 +2249,27 @@ var CodeView = class CodeView {
  		return this.getLayout().gap + this.itemMetricsCache.diffHeaderHeight;
  	}
  };
@@ -330,7 +330,7 @@ index 140f94f..96fc774 100644
  	if (item.type === "diff") return item.instance.updateCodeViewLayout(item.item.fileDiff, item.top, void 0, item.item.annotations ?? []);
 diff --git a/dist/components/CodeViewSearch.js b/dist/components/CodeViewSearch.js
 new file mode 100644
-index 0000000..29370ad
+index 0000000000..29370adf88
 --- /dev/null
 +++ b/dist/components/CodeViewSearch.js
 @@ -0,0 +1,360 @@
@@ -695,22 +695,32 @@ index 0000000..29370ad
 +
 +//# sourceMappingURL=CodeViewSearch.js.map
 diff --git a/dist/components/FileDiff.js b/dist/components/FileDiff.js
-index 6f66bd3..3125fac 100644
+index 12f4f8949f..e33a5ed319 100644
 --- a/dist/components/FileDiff.js
 +++ b/dist/components/FileDiff.js
-@@ -1,5 +1,6 @@
--import { CUSTOM_HEADER_SLOT_ID, DEFAULT_THEMES, EMPTY_RENDER_RANGE, HEADER_FILENAME_SUFFIX_SLOT_ID, HEADER_METADATA_SLOT_ID, HEADER_PREFIX_SLOT_ID } from "../constants.js";
-+import { CUSTOM_HEADER_SLOT_ID, DEFAULT_THEMES, HEADER_FILENAME_SUFFIX_SLOT_ID, HEADER_METADATA_SLOT_ID, HEADER_PREFIX_SLOT_ID } from "../constants.js";
+@@ -1,6 +1,7 @@
+-import { CUSTOM_HEADER_SLOT_ID, DEFAULT_THEMES, EMPTY_LINE_ANNOTATIONS, EMPTY_RENDER_RANGE, HEADER_FILENAME_SUFFIX_SLOT_ID, HEADER_METADATA_SLOT_ID, HEADER_PREFIX_SLOT_ID } from "../constants.js";
++import { CUSTOM_HEADER_SLOT_ID, DEFAULT_THEMES, EMPTY_LINE_ANNOTATIONS, HEADER_FILENAME_SUFFIX_SLOT_ID, HEADER_METADATA_SLOT_ID, HEADER_PREFIX_SLOT_ID } from "../constants.js";
+ import { HighlighterDisposedError } from "../highlighter/highlighterType.js";
  import { getThemes } from "../utils/getThemes.js";
 +import { getHighlighterThemeStyles } from "../utils/getHighlighterThemeStyles.js";
  import { getHighlighterIfLoaded, getSharedHighlighter } from "../highlighter/shared_highlighter.js";
  import { dequeueRender, queueRender } from "../managers/UniversalRenderingManager.js";
  import { areThemesEqual } from "../utils/areThemesEqual.js";
-@@ -691,11 +692,20 @@ var FileDiff = class {
+@@ -724,7 +725,7 @@ var FileDiff = class {
+ 		if (expandUnchanged) this.loadFilesIfNecessary();
+ 		this.hunksRenderer.setOptions(this.getHunksRendererOptions(this.options));
+ 		this.syncInteractionOptions();
+-		this.prepareRenderData(this.hunksRenderer.getDiffForNextRender(workingDiff));
++		this.prepareRenderData(collapsed ? workingDiff : this.hunksRenderer.getDiffForNextRender(workingDiff));
+ 		const { disableErrorHandling = false, disableFileHeader = false } = this.options;
+ 		if (disableFileHeader) {
+ 			if (this.headerElement != null) {
+@@ -740,11 +741,22 @@ var FileDiff = class {
  			this.removeRenderedCode();
  			this.clearAuxiliaryNodes();
  			try {
--				const hunksResult = this.hunksRenderer.renderDiff(latestDiff, EMPTY_RENDER_RANGE);
+-				const hunksResult = this.hunksRenderer.renderDiff(workingDiff, EMPTY_RENDER_RANGE);
 -				if (hunksResult != null) this.applyThemeState(fileContainer, hunksResult.themeStyles, themeType, hunksResult.baseThemeType);
 -				if (hunksResult?.headerElement != null) this.applyHeaderToDOM(hunksResult.headerElement, fileContainer, hunksResult.fileDiff);
 +				// An empty render range still highlights the full diff. Headers only need the theme.
@@ -720,24 +730,26 @@ index 6f66bd3..3125fac 100644
 +				else getSharedHighlighter({
 +					themes: getThemes(theme),
 +					langs: ["text"],
-+					preferredHighlighter: this.workerManager?.getPreferredHighlighter() ?? this.options.preferredHighlighter
++					preferredHighlighter: resolvePreferredHighlighter(this.workerManager, this.options)
 +				}).then(() => {
 +					if (this.enabled && this.fileContainer === fileContainer && this.options.collapsed && areThemesEqual(theme, this.getTheme())) this.rerender();
-+				}).catch((error) => console.error(error));
-+				if (!disableFileHeader) this.applyHeaderToDOM(this.hunksRenderer.renderHeader(latestDiff), fileContainer, latestDiff);
++				}).catch((error) => {
++					if (!(error instanceof HighlighterDisposedError)) console.error(error);
++				});
++				if (!disableFileHeader) this.applyHeaderToDOM(this.hunksRenderer.renderHeader(workingDiff), fileContainer, workingDiff);
  				this.renderSeparators([]);
--				this.renderedDiff = hunksResult?.fileDiff ?? latestDiff;
-+				this.renderedDiff = latestDiff;
+-				this.adoptRenderData(hunksResult?.fileDiff ?? workingDiff);
++				this.adoptRenderData(workingDiff);
  				this.injectUnsafeCSS();
  			} catch (error) {
  				if (disableErrorHandling) throw error;
 diff --git a/dist/components/VirtualizedFile.d.ts b/dist/components/VirtualizedFile.d.ts
-index 5e68e35..79dcd88 100644
+index 90ef575932..0fd262cbb7 100644
 --- a/dist/components/VirtualizedFile.d.ts
 +++ b/dist/components/VirtualizedFile.d.ts
-@@ -49,7 +49,7 @@ declare class VirtualizedFile<LAnnotation = undefined, Caret = undefined> extend
-   setVisibility(visible: boolean): void;
+@@ -50,7 +50,7 @@ declare class VirtualizedFile<LAnnotation = undefined, Caret = undefined> extend
    rerender(): void;
+   protected get isComponentManaged(): boolean;
    syncGhostTextRows(): void;
 -  applyDocumentChange(textDocument: TextDocument<'file', LAnnotation>, newLineAnnotations?: LineAnnotation<LAnnotation>[], shouldUpdateBuffer?: boolean): void;
 +  applyDocumentChange(textDocument: TextDocument<'file', LAnnotation>, newLineAnnotations?: LineAnnotation<LAnnotation>[], shouldUpdateBuffer?: boolean, startLine?: number): void;
@@ -745,7 +757,7 @@ index 5e68e35..79dcd88 100644
    protected finalizeRender(): void;
    private updatePendingRender;
 diff --git a/dist/components/VirtualizedFile.js b/dist/components/VirtualizedFile.js
-index d1f57cd..5908ad7 100644
+index 95d4ca8fdf..24a980672d 100644
 --- a/dist/components/VirtualizedFile.js
 +++ b/dist/components/VirtualizedFile.js
 @@ -23,6 +23,7 @@ var VirtualizedFile = class extends File {
@@ -756,8 +768,8 @@ index d1f57cd..5908ad7 100644
  		ghostTextRows: NO_GHOST_TEXT_ROWS
  	};
  	pendingRender;
-@@ -35,6 +36,8 @@ var VirtualizedFile = class extends File {
- 		super(options, workerManager, isContainerManaged);
+@@ -34,6 +35,8 @@ var VirtualizedFile = class extends File {
+ 		super(options, workerManager, requestOwnerRender);
  		this.virtualizer = virtualizer;
  		this.metrics = metrics;
 +		const simpleVirtualizer = this.getSimpleVirtualizer();
@@ -765,7 +777,7 @@ index d1f57cd..5908ad7 100644
  	}
  	setMetrics(metrics, force = false) {
  		const nextMetrics = computeVirtualFileMetrics(metrics);
-@@ -86,10 +89,12 @@ var VirtualizedFile = class extends File {
+@@ -85,10 +88,12 @@ var VirtualizedFile = class extends File {
  		if (this.isAdvancedMode()) throw new Error("VirtualizedFile.setThemeType cannot be used inside CodeView. Update CodeView options instead.");
  		super.setThemeType(themeType);
  	}
@@ -781,7 +793,7 @@ index d1f57cd..5908ad7 100644
  		if (this.cache.checkpoints.length > 0) this.cache.checkpoints.length = 0;
  		this.cache.ghostTextRows = NO_GHOST_TEXT_ROWS;
  		if (this.renderRange != null && resetRenderRange) this.renderRange = void 0;
-@@ -135,6 +140,13 @@ var VirtualizedFile = class extends File {
+@@ -134,6 +139,13 @@ var VirtualizedFile = class extends File {
  		if (this.code == null) return hasHeightChange;
  		const content = this.code.children[1];
  		if (!(content instanceof HTMLElement)) return hasHeightChange;
@@ -795,7 +807,7 @@ index d1f57cd..5908ad7 100644
  		if (this.renderRange != null && shouldRenderFileAnnotations(this.renderRange)) {
  			const nextFileAnnotationHeight = measureFileAnnotationHeight(content) ?? 0;
  			if (nextFileAnnotationHeight !== this.cache.fileAnnotationHeight) {
-@@ -358,12 +370,12 @@ var VirtualizedFile = class extends File {
+@@ -366,12 +378,12 @@ var VirtualizedFile = class extends File {
  			codeView.instanceChanged(this, true);
  		} else this.getSimpleVirtualizer()?.requestHeightReconcile(this);
  	}
@@ -811,29 +823,29 @@ index d1f57cd..5908ad7 100644
  		if (!this.isSimpleMode()) this.computeApproximateSize(true);
  		else if (shouldUpdateBuffer && previousRenderRange != null && file != null) {
 diff --git a/dist/components/VirtualizedFileDiff.js b/dist/components/VirtualizedFileDiff.js
-index 96f970f..1bb59c6 100644
+index eb34dd4a77..821bb0ab11 100644
 --- a/dist/components/VirtualizedFileDiff.js
 +++ b/dist/components/VirtualizedFileDiff.js
-@@ -552,7 +552,7 @@ var VirtualizedFileDiff = class extends FileDiff {
+@@ -551,7 +551,7 @@ var VirtualizedFileDiff = class extends FileDiff {
  	rerender() {
- 		if (!this.enabled || this.fileDiff == null && this.additionFile == null && this.deletionFile == null) return;
- 		const latestDiff = this.getLatestDiff();
--		const nextRenderDiff = latestDiff == null ? void 0 : this.hunksRenderer.getDiffForNextRender(latestDiff);
-+		const nextRenderDiff = latestDiff == null || this.options.collapsed === true ? latestDiff : this.hunksRenderer.getDiffForNextRender(latestDiff);
+ 		if (!this.enabled || this.getInputDiff() == null && this.additionFile == null && this.deletionFile == null) return;
+ 		const workingDiff = this.getWorkingDiff();
+-		const nextRenderDiff = workingDiff == null ? void 0 : this.hunksRenderer.getDiffForNextRender(workingDiff);
++		const nextRenderDiff = workingDiff == null || this.options.collapsed === true ? workingDiff : this.hunksRenderer.getDiffForNextRender(workingDiff);
  		if (this.isSimpleMode()) this.pendingRender = void 0;
  		this.forceRenderOverride = true;
- 		this.virtualizer.instanceChanged(this, !areDiffTargetsEqual(this.getRenderedDiff(), nextRenderDiff));
-@@ -724,7 +724,7 @@ var VirtualizedFileDiff = class extends FileDiff {
+ 		if (this.isSimpleMode() && this.requestRender()) return;
+@@ -731,7 +731,7 @@ var VirtualizedFileDiff = class extends FileDiff {
  		const previousRenderedDiff = this.getRenderedDiff();
  		const { pendingRender } = this;
  		const previousLayoutDiff = pendingRender?.diff ?? previousRenderedDiff;
--		const pendingRenderDiff = this.hunksRenderer.getDiffForNextRender(latestDiff);
-+		const pendingRenderDiff = this.options.collapsed === true ? latestDiff : this.hunksRenderer.getDiffForNextRender(latestDiff);
+-		const pendingRenderDiff = this.hunksRenderer.getDiffForNextRender(workingDiff);
++		const pendingRenderDiff = this.options.collapsed === true ? workingDiff : this.hunksRenderer.getDiffForNextRender(workingDiff);
  		this.pendingRender = {
- 			latestDiff,
+ 			workingDiff,
  			diff: pendingRenderDiff
 diff --git a/dist/components/web-components.js b/dist/components/web-components.js
-index 6e7b486..5b7290f 100644
+index 6e7b486a02..5b7290f181 100644
 --- a/dist/components/web-components.js
 +++ b/dist/components/web-components.js
 @@ -2,8 +2,17 @@ import { DIFFS_TAG_NAME } from "../constants.js";
@@ -867,10 +879,10 @@ index 6e7b486..5b7290f 100644
  		connectedCallback() {
  			const shadowRoot = this.shadowRoot ?? this.attachShadow({ mode: "open" });
 diff --git a/dist/editor/editor.js b/dist/editor/editor.js
-index 8f04a6f..c203023 100644
+index bf17cea32f..671e77b8cd 100644
 --- a/dist/editor/editor.js
 +++ b/dist/editor/editor.js
-@@ -1899,7 +1899,11 @@ var Editor = class {
+@@ -1903,7 +1903,11 @@ var Editor = class {
  			changedDocumentLines: this.#isDiff && !didLineCountChange ? getChangedDocumentLines(textDocument, change) : void 0,
  			documentLineCount: textDocument.lineCount
  		});
@@ -884,7 +896,7 @@ index 8f04a6f..c203023 100644
  		if (newLineAnnotations != null) {
  			this.#lineAnnotations = newLineAnnotations;
 diff --git a/dist/editor/searchPanel.d.ts b/dist/editor/searchPanel.d.ts
-index 9542849..1c1a51f 100644
+index 9542849786..1c1a51f56d 100644
 --- a/dist/editor/searchPanel.d.ts
 +++ b/dist/editor/searchPanel.d.ts
 @@ -15,6 +15,8 @@ interface SearchPanelOptions {
@@ -897,7 +909,7 @@ index 9542849..1c1a51f 100644
    scrollToMatch: (nextMatch: MatchRange, retainFocus: boolean) => void;
    applyReplace: (edits: ResolvedTextEdit[]) => void;
 diff --git a/dist/editor/searchPanel.js b/dist/editor/searchPanel.js
-index df1ba63..676751b 100644
+index df1ba637c2..676751bb0e 100644
 --- a/dist/editor/searchPanel.js
 +++ b/dist/editor/searchPanel.js
 @@ -12,7 +12,7 @@ var SearchPanelWidget = class {
@@ -919,7 +931,7 @@ index df1ba63..676751b 100644
  			this.#inputElement.select();
  		};
 diff --git a/dist/managers/ResizeManager.d.ts b/dist/managers/ResizeManager.d.ts
-index 3efafc4..9e5b751 100644
+index 3efafc4132..9e5b7511f9 100644
 --- a/dist/managers/ResizeManager.d.ts
 +++ b/dist/managers/ResizeManager.d.ts
 @@ -5,6 +5,8 @@ interface ResizeManagerSetupOptions {
@@ -932,7 +944,7 @@ index 3efafc4..9e5b751 100644
    private static managersByElement;
    private static getResizeObserver;
 diff --git a/dist/managers/ResizeManager.js b/dist/managers/ResizeManager.js
-index 9724cb1..14145d8 100644
+index 9724cb1e34..14145d8329 100644
 --- a/dist/managers/ResizeManager.js
 +++ b/dist/managers/ResizeManager.js
 @@ -19,6 +19,7 @@ var ResizeManager = class ResizeManager {
@@ -952,10 +964,10 @@ index 9724cb1..14145d8 100644
  	}
  	applyAnnotationUpdates(annotationUpdates) {
 diff --git a/dist/react/CodeView.d.ts b/dist/react/CodeView.d.ts
-index e78e713..642b235 100644
+index 12e12c50cd..684c7a89fa 100644
 --- a/dist/react/CodeView.d.ts
 +++ b/dist/react/CodeView.d.ts
-@@ -56,6 +56,8 @@ interface CodeViewBaseProps<LAnnotation, Caret> {
+@@ -57,6 +57,8 @@ interface CodeViewBaseProps<LAnnotation, Caret> {
     * is frozen; re-key the accepted value in place before accepting.
     */
    onItemEditComplete?: CodeViewItemEditCompleteHandler<LAnnotation, Caret>;
@@ -965,7 +977,7 @@ index e78e713..642b235 100644
    renderHeaderPrefix?(item: CodeViewItem<LAnnotation>): ReactNode;
    renderHeaderFilenameSuffix?(item: CodeViewItem<LAnnotation>): ReactNode;
 diff --git a/dist/react/CodeView.js b/dist/react/CodeView.js
-index 84c7915..d1930bf 100644
+index 4dfed6bd0a..ac35a5a455 100644
 --- a/dist/react/CodeView.js
 +++ b/dist/react/CodeView.js
 @@ -24,7 +24,7 @@ function createDefaultCache(controlled) {
@@ -1030,7 +1042,7 @@ index 84c7915..d1930bf 100644
  	if (hasGutterRenderer) managedOptions.renderGutterUtility = noopRender;
  	if (hasCodeViewHeader) managedOptions.renderCodeViewHeader = noopRender;
 diff --git a/dist/utils/createFileHeaderElement.js b/dist/utils/createFileHeaderElement.js
-index 39fe30e..600442e 100644
+index 39fe30e47b..600442e3eb 100644
 --- a/dist/utils/createFileHeaderElement.js
 +++ b/dist/utils/createFileHeaderElement.js
 @@ -73,12 +73,12 @@ function createMetadataElement(fileDiff) {
@@ -1049,10 +1061,10 @@ index 39fe30e..600442e 100644
  		}));
  	}
 diff --git a/package.json b/package.json
-index d9dc7b5..3c37bae 100644
+index 0cc43c4a7d..60b7d17d61 100644
 --- a/package.json
 +++ b/package.json
-@@ -58,6 +58,18 @@
+@@ -60,6 +60,18 @@
      "./worker/worker-portable.js": {
        "types": "./dist/worker/worker-portable.d.ts",
        "import": "./dist/worker/worker-portable.js"

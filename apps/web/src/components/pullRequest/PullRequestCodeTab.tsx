@@ -1,5 +1,5 @@
 import type { CodeViewItem, DiffLineAnnotation, SelectedLineRange } from "@pierre/diffs";
-import type { CodeViewDiffItem, CodeViewHandle } from "@pierre/diffs/react";
+import type { CodeViewAnnotationArgs, CodeViewDiffItem, CodeViewHandle } from "@pierre/diffs/react";
 import type {
   EnvironmentId,
   PullRequestDetailView,
@@ -926,7 +926,7 @@ function PullRequestCodeTab({
     />
   );
 
-  const renderAnnotation = (annotation: ReviewAnnotation) => (
+  const renderAnnotation = (...[annotation]: CodeViewAnnotationArgs<ReviewAnnotationGroup>) => (
     <div className="py-1 font-sans text-foreground">
       {annotation.metadata.threads.map(renderThreadCard)}
       {annotation.metadata.pending.map((comment) => (

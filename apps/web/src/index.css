@@ -1713,7 +1713,7 @@ code {
    inherited sizes on unrelated pre surfaces (terminal previews, approvals).
    Inline code stays relative to its sentence so it never towers over prose;
    diffs and file previews take the size through --diffs-font-size. */
-.chat-markdown .chat-markdown-shiki .shiki,
+.chat-markdown .chat-markdown-shiki :is(.shiki, .diffs),
 .chat-markdown .chat-markdown-codeblock pre,
 :is(.chat-markdown, .composer-tiptap) pre code {
   font-size: var(--font-size-code, inherit);
@@ -2094,7 +2094,7 @@ code {
   overflow-wrap: anywhere;
 }
 
-:is(.chat-markdown, .composer-tiptap) .chat-markdown-shiki .shiki {
+:is(.chat-markdown, .composer-tiptap) .chat-markdown-shiki :is(.shiki, .diffs) {
   background: transparent !important;
 }
 

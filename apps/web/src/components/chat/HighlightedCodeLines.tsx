@@ -1,10 +1,11 @@
-import type { DiffsHighlighter } from "@pierre/diffs";
 import { toHtml } from "hast-util-to-html";
 import { toJsxRuntime } from "hast-util-to-jsx-runtime";
 import { cloneElement, isValidElement, memo, type DOMAttributes } from "react";
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 
-type HighlightedRoot = ReturnType<DiffsHighlighter["codeToHast"]>;
+import type { highlightCodeToHast } from "../../lib/incrementalHighlighting";
+
+type HighlightedRoot = ReturnType<typeof highlightCodeToHast>;
 type HighlightedNode = HighlightedRoot["children"][number];
 const runtime = { Fragment, jsx, jsxs };
 

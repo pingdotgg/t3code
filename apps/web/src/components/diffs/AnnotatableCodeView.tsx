@@ -285,7 +285,7 @@ export function AnnotatableCodeView({
           ? renderHeaderPrefix(item.fileDiff, item.id, item.collapsed === true)
           : null
       }
-      renderAnnotation={(annotation) => {
+      renderAnnotation={(...[annotation]) => {
         const hasDraft = annotation.metadata.entries.some((entry) => entry.kind === "draft");
         return (
           <div
