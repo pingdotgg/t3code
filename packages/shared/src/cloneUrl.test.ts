@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { cloneUrlForProtocol, cloneUrlProtocol } from "./addProjectToMachine";
+import { cloneUrlForProtocol, cloneUrlProtocol } from "./cloneUrl.ts";
 
 describe("cloneUrlForProtocol", () => {
   it("switches between scp-style SSH and HTTPS", () => {
