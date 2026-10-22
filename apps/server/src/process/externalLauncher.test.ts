@@ -646,9 +646,17 @@ for (const { platform, installPath } of [
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editor-toolbox-" });
+        const target = path.join(home, "apps/idea/bin/idea");
+        yield* fs.makeDirectory(path.dirname(target), { recursive: true });
+        yield* fs.writeFileString(target, "");
         const executable = path.join(home, installPath);
         yield* fs.makeDirectory(path.dirname(executable), { recursive: true });
-        yield* fs.writeFileString(executable, "#!/bin/sh\n");
+        yield* fs.writeFileString(
+          executable,
+          platform === "win32"
+            ? `@echo off\r\nstart "" "${target}" %*\r\n`
+            : `#!/bin/sh\nexec "${target}" "$@"\n`,
+        );
         yield* fs.chmod(executable, 0o755);
 
         let spawned: ChildProcess.StandardCommand | undefined;
@@ -679,6 +687,48 @@ for (const { platform, installPath } of [
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 }
+
+it.effect.skipIf(windowsHost)(
+  "skips a numbered JetBrains Toolbox script whose IDE was removed",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editor-toolbox-" });
+      const scripts = path.join(home, ".local/share/JetBrains/Toolbox/scripts");
+      const target = path.join(home, "apps/idea/bin/idea");
+      yield* fs.makeDirectory(scripts, { recursive: true });
+      yield* fs.makeDirectory(path.dirname(target), { recursive: true });
+      yield* fs.writeFileString(target, "");
+      for (const [name, script] of [
+        ["idea1", path.join(home, "apps/removed/bin/idea")],
+        ["idea10", target],
+        ["idea2", target],
+      ]) {
+        const executable = path.join(scripts, name);
+        yield* fs.writeFileString(executable, `#!/bin/sh\nexec "${script}" "$@"\n`);
+        yield* fs.chmod(executable, 0o755);
+      }
+
+      let spawned: ChildProcess.StandardCommand | undefined;
+      yield* Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        yield* launcher.launchEditor({ editor: "idea", cwd: "/workspace/file.ts" });
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            platform: "linux",
+            env: { HOME: home, PATH: path.join(home, "empty") },
+            onSpawn: (command) => {
+              spawned = command;
+            },
+          }),
+        ),
+      );
+
+      assert.include(spawned?.command, "idea2");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
 
 for (const { platform, installPath, onPath } of [
   { platform: "darwin", installPath: ".local/bin/agy", onPath: true },
