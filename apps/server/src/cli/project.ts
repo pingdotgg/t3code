@@ -57,6 +57,26 @@ type ProjectCliDispatchCommand = ProjectMutation;
 
 const isEnvironmentHttpCommonError = Schema.is(EnvironmentHttpCommonError);
 
+class ProjectGroupingIdentityInvalidError extends Schema.TaggedError<ProjectGroupingIdentityInvalidError>()(
+  "ProjectGroupingIdentityInvalidError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Grouping identity must be a lowercase UUID v4.";
+  }
+}
+
+class ProjectGroupingFlagsError extends Schema.TaggedError<ProjectGroupingFlagsError>()(
+  "ProjectGroupingFlagsError",
+  {},
+) {
+  override get message(): string {
+    return "Use either --identity or --clear.";
+  }
+}
+
+const decodeGroupingIdentity = Schema.decodeUnknownEffect(ProjectGroupingIdentity);
+
 export class ProjectCommandIdGenerationError extends Schema.TaggedError<ProjectCommandIdGenerationError>()(
   "ProjectCommandIdGenerationError",
   {
@@ -475,56 +495,67 @@ const projectAddCommand = Command.make("add", {
 }).pipe(
   Command.withDescription("Add a project."),
   Command.withHandler((flags) =>
-    runProjectMutation(
-      flags,
-      Effect.fn("projectAddMutation")(function* ({
-        snapshot,
-        dispatch,
-      }: {
-        readonly snapshot: ProjectSnapshot;
-        readonly dispatch: (
-          command: ProjectCliDispatchCommand,
-        ) => Effect.Effect<void, Error, FileSystem.FileSystem | HttpClient.HttpClient | Path.Path>;
-      }) {
-        const workspaceRoot = yield* normalizeWorkspaceRootForProjectCommand(flags.workspaceRoot);
-        const existingProject = snapshot.projects.find(
-          (project) => project.deletedAt === null && project.workspaceRoot === workspaceRoot,
-        );
-        if (existingProject && Option.isSome(flags.groupingIdentity)) {
-          if (existingProject.groupingIdentity === flags.groupingIdentity.value)
-            return `Project ${existingProject.id} already has this grouping identity.`;
-          yield* dispatch({
-            type: "project.update",
-            commandId: CommandId.make(yield* projectCommandUuid),
-            projectId: existingProject.id,
-            groupingIdentity: flags.groupingIdentity.value,
-          });
-          return `Updated grouping identity for project ${existingProject.id}.`;
-        }
-        if (existingProject) {
-          return yield* new ProjectAlreadyExistsError({
-            operation: "addProject",
-            projectId: existingProject.id,
-            workspaceRoot,
-          });
-        }
+    Effect.gen(function* () {
+      const groupingIdentity = Option.isSome(flags.groupingIdentity)
+        ? yield* decodeGroupingIdentity(flags.groupingIdentity.value).pipe(
+            Effect.mapError((cause) => new ProjectGroupingIdentityInvalidError({ cause })),
+          )
+        : undefined;
+      return yield* runProjectMutation(
+        flags,
+        Effect.fn("projectAddMutation")(function* ({
+          snapshot,
+          dispatch,
+        }: {
+          readonly snapshot: ProjectSnapshot;
+          readonly dispatch: (
+            command: ProjectCliDispatchCommand,
+          ) => Effect.Effect<
+            void,
+            Error,
+            FileSystem.FileSystem | HttpClient.HttpClient | Path.Path
+          >;
+        }) {
+          const workspaceRoot = yield* normalizeWorkspaceRootForProjectCommand(flags.workspaceRoot);
+          const existingProject = snapshot.projects.find(
+            (project) => project.deletedAt === null && project.workspaceRoot === workspaceRoot,
+          );
+          if (existingProject && groupingIdentity !== undefined) {
+            if (existingProject.groupingIdentity === groupingIdentity)
+              return `Project ${existingProject.id} already has this grouping identity.`;
+            yield* dispatch({
+              type: "project.update",
+              commandId: CommandId.make(yield* projectCommandUuid),
+              projectId: existingProject.id,
+              groupingIdentity,
+            });
+            return `Updated grouping identity for project ${existingProject.id}.`;
+          }
+          if (existingProject) {
+            return yield* new ProjectAlreadyExistsError({
+              operation: "addProject",
+              projectId: existingProject.id,
+              workspaceRoot,
+            });
+          }
 
-        const title = yield* resolveProjectTitle(workspaceRoot, Option.getOrUndefined(flags.title));
-        const projectId = ProjectId.make(yield* projectCommandUuid);
-        yield* dispatch({
-          type: "project.create",
-          commandId: CommandId.make(yield* projectCommandUuid),
-          projectId,
-          title,
-          workspaceRoot,
-          ...Option.match(flags.groupingIdentity, {
-            onNone: () => ({}),
-            onSome: (groupingIdentity) => ({ groupingIdentity }),
-          }),
-        });
-        return `Added project ${projectId} (${title}) at ${workspaceRoot}.`;
-      }),
-    ),
+          const title = yield* resolveProjectTitle(
+            workspaceRoot,
+            Option.getOrUndefined(flags.title),
+          );
+          const projectId = ProjectId.make(yield* projectCommandUuid);
+          yield* dispatch({
+            type: "project.create",
+            commandId: CommandId.make(yield* projectCommandUuid),
+            projectId,
+            title,
+            workspaceRoot,
+            ...(groupingIdentity === undefined ? {} : { groupingIdentity }),
+          });
+          return `Added project ${projectId} (${title}) at ${workspaceRoot}.`;
+        }),
+      );
+    }),
   ),
 );
 
@@ -638,41 +669,41 @@ const projectGroupingCommand = Command.make("grouping", {
 }).pipe(
   Command.withDescription("Show, set, or clear a project's explicit grouping identity."),
   Command.withHandler((flags) =>
-    runProjectMutation(
-      flags,
-      Effect.fn("projectGroupingMutation")(function* ({ snapshot, dispatch }) {
-        const project = yield* findActiveProjectTarget({ snapshot, identifier: flags.project });
-        if (flags.clear && Option.isSome(flags.identity)) {
-          return yield* new ProjectGroupingFlagsError({});
-        }
-        if (!flags.clear && Option.isNone(flags.identity)) {
-          return yield* encodeGroupingResult({
+    Effect.gen(function* () {
+      if (flags.clear && Option.isSome(flags.identity)) {
+        return yield* new ProjectGroupingFlagsError({});
+      }
+      const groupingIdentity = flags.clear
+        ? null
+        : Option.isSome(flags.identity)
+          ? yield* decodeGroupingIdentity(flags.identity.value).pipe(
+              Effect.mapError((cause) => new ProjectGroupingIdentityInvalidError({ cause })),
+            )
+          : undefined;
+      return yield* runProjectMutation(
+        flags,
+        Effect.fn("projectGroupingMutation")(function* ({ snapshot, dispatch }) {
+          const project = yield* findActiveProjectTarget({ snapshot, identifier: flags.project });
+          if (groupingIdentity === undefined) {
+            return yield* encodeGroupingResult({
+              projectId: project.id,
+              groupingIdentity:
+                snapshot.projects.find((entry) => entry.id === project.id)?.groupingIdentity ??
+                null,
+            });
+          }
+          yield* dispatch({
+            type: "project.update",
+            commandId: CommandId.make(yield* projectCommandUuid),
             projectId: project.id,
-            groupingIdentity:
-              snapshot.projects.find((entry) => entry.id === project.id)?.groupingIdentity ?? null,
+            groupingIdentity,
           });
-        }
-        const groupingIdentity = flags.clear ? null : Option.getOrThrow(flags.identity);
-        yield* dispatch({
-          type: "project.update",
-          commandId: CommandId.make(yield* projectCommandUuid),
-          projectId: project.id,
-          groupingIdentity,
-        });
-        return yield* encodeGroupingResult({ projectId: project.id, groupingIdentity });
-      }),
-    ),
+          return yield* encodeGroupingResult({ projectId: project.id, groupingIdentity });
+        }),
+      );
+    }),
   ),
 );
-
-class ProjectGroupingFlagsError extends Schema.TaggedError<ProjectGroupingFlagsError>()(
-  "ProjectGroupingFlagsError",
-  {},
-) {
-  override get message(): string {
-    return "Use either --identity or --clear.";
-  }
-}
 
 export const projectCommand = Command.make("project").pipe(
   Command.withDescription("Manage projects."),

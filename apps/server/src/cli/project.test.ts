@@ -517,7 +517,45 @@ it.effect(
         baseDir,
       ]).pipe(Effect.result);
       assert.equal(invalid._tag, "Failure");
+      if (invalid._tag === "Failure") {
+        assert.equal(invalid.failure.message, "Grouping identity must be a lowercase UUID v4.");
+      }
       assert.isNull((yield* readProjects(baseDir)).projects[0]?.groupingIdentity);
       assert.deepEqual(yield* readNativeThreadState(baseDir, threadId), before);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("rejects malformed grouping flags before opening project state", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-invalid-grouping-cli-" });
+    const baseDir = NodePath.join(root, "unopened-state");
+    for (const command of [
+      ["add", root, "--grouping-identity", "group/sdk"],
+      ["grouping", root, "--identity", "group/sdk"],
+    ]) {
+      const error = yield* runCli(["project", ...command, "--base-dir", baseDir]).pipe(Effect.flip);
+      assert.equal(error.message, "Grouping identity must be a lowercase UUID v4.");
+      assert.isFalse(yield* fs.exists(baseDir));
+    }
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("malformed grouping flags cannot create or change project registrations", () =>
+  Effect.gen(function* () {
+    const { baseDir, workspaceRoot } = yield* makeProjectLookupFixture();
+    const before = yield* readProjects(baseDir);
+    const fs = yield* FileSystem.FileSystem;
+    const newRoot = `${workspaceRoot}-new`;
+    yield* fs.makeDirectory(newRoot);
+    for (const command of [
+      ["add", newRoot, "--grouping-identity", "group/sdk"],
+      ["add", workspaceRoot, "--grouping-identity", "group/sdk"],
+      ["grouping", workspaceRoot, "--identity", "group/sdk"],
+    ]) {
+      const error = yield* runCli(["project", ...command, "--base-dir", baseDir]).pipe(Effect.flip);
+      assert.equal(error.message, "Grouping identity must be a lowercase UUID v4.");
+      assert.deepEqual(yield* readProjects(baseDir), before);
+    }
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
