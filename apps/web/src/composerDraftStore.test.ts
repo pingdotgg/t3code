@@ -2278,3 +2278,34 @@ describe("composerDraftStore attachment references", () => {
     );
   });
 });
+
+describe("Daybreak explicit clearing", () => {
+  it("keeps an explicit empty option set instead of restoring old sticky or thread options", () => {
+    resetComposerDraftStore();
+    const store = useComposerDraftStore.getState();
+    const previous = {
+      instanceId: CODEX_INSTANCE,
+      model: "gpt-5.4",
+      options: [{ id: "cyberAccessProgram", value: "daybreakRed" }],
+    };
+    store.setStickyModelSelection(previous);
+    const off = { instanceId: CODEX_INSTANCE, model: "gpt-5.4", options: [] };
+    store.setStickyModelSelection(off);
+    expect(
+      useComposerDraftStore.getState().stickyModelSelectionByProvider[CODEX_INSTANCE]?.options,
+    ).toEqual([]);
+    const ref = scopeThreadRef(TEST_ENVIRONMENT_ID, ThreadId.make("daybreak-off"));
+    store.setModelSelection(ref, off, { explicit: true, replaceOptions: true });
+    const draft = draftFor(ref.threadId, TEST_ENVIRONMENT_ID);
+    const effective = deriveEffectiveComposerModelState({
+      draft,
+      providers: [],
+      selectedProvider: CODEX_DRIVER,
+      selectedInstanceId: CODEX_INSTANCE,
+      threadModelSelection: previous,
+      projectModelSelection: null,
+      settings: DEFAULT_UNIFIED_SETTINGS,
+    });
+    expect(effective.modelOptions?.[CODEX_INSTANCE]).toEqual([]);
+  });
+});

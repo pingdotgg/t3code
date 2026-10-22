@@ -1,3 +1,5 @@
+import { decideDaybreakModelChange } from "@t3tools/client-runtime/model-traits";
+import type { ProviderOptionSelection } from "@t3tools/contracts";
 import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
 import type { ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
 
@@ -72,4 +74,17 @@ export function providerSectionIsCollapsed(input: {
     return false;
   }
   return input.defaultExpanded ? input.hasExpansionOverride : !input.hasExpansionOverride;
+}
+
+export function pendingDaybreakModelChange(
+  currentOptions: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+  pending: ModelOption,
+  groups: ReadonlyArray<ProviderGroup>,
+) {
+  const live = groups.flatMap((group) => group.models).find((model) => model.key === pending.key);
+  return decideDaybreakModelChange(
+    currentOptions,
+    pending.selection,
+    live?.capabilities?.optionDescriptors ?? [],
+  );
 }

@@ -1,3 +1,9 @@
+import type { AlertOptions } from "react-native";
+
+export type DialogAlertOptions = AlertOptions & {
+  readonly equalWeightActions?: boolean;
+};
+
 export type ConfirmDialogRequest = {
   readonly title: string;
   readonly message?: string;

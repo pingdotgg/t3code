@@ -1,5 +1,9 @@
 import {
   getPromptControlledTraits,
+  getModelTraitDescriptors,
+  visibleModelTraitDescriptors,
+  preserveExplicitDaybreakOption,
+  DAYBREAK_OPTION_ID,
   getTraitSelectChange,
 } from "@t3tools/client-runtime/model-traits";
 import { SheetHeader } from "../../components/ui/SheetHeader";
@@ -27,7 +31,6 @@ import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import {
   getProviderOptionCurrentLabel,
   getProviderOptionCurrentValue,
-  getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
 import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
 import { type NativeStackNavigationProp } from "@react-navigation/native-stack";
@@ -99,6 +102,7 @@ import {
   modelFavoriteKey,
   modelMatchesCatalogQuery,
   pendingModelAfterPress,
+  pendingDaybreakModelChange,
   providerSectionIsCollapsed,
 } from "./thread-settings-sheet-state";
 import { formatProviderUpdateRequiredNotice } from "@t3tools/client-runtime/providerUpdateRequiredModels";
@@ -328,7 +332,7 @@ type ThreadSettingsSessionValue = {
   readonly searchQuery: string;
   readonly showLegacy: boolean;
   readonly applyOptionChange: (id: string, value: string | boolean) => void;
-  readonly commitPendingModel: () => boolean;
+  readonly commitPendingModel: () => Promise<boolean>;
   readonly isApplied: (option: ModelOption) => boolean;
   readonly isDisplayed: (option: ModelOption) => boolean;
   readonly pressModel: (option: ModelOption) => void;
@@ -508,14 +512,20 @@ function ThreadSettingsSessionProvider(
   const isDisplayed = (option: ModelOption) =>
     pendingModel ? option.key === pendingModel.key : isApplied(option);
 
-  const displayedDescriptors = pendingModel
-    ? pendingModel.capabilities
-      ? getProviderOptionDescriptors({
-          caps: pendingModel.capabilities,
+  const livePendingModel = pendingModel
+    ? providerGroups
+        .flatMap((group) => group.models)
+        .find((model) => model.key === pendingModel.key)
+    : null;
+  const optionDescriptors = pendingModel
+    ? livePendingModel?.capabilities
+      ? getModelTraitDescriptors({
+          caps: livePendingModel.capabilities,
           selections: pendingModel.selection.options,
         })
       : []
     : props.optionDescriptors;
+  const displayedDescriptors = visibleModelTraitDescriptors(optionDescriptors);
   const promptTraits = getPromptControlledTraits(displayedDescriptors, displayedPrompt);
   const displayedModel =
     pendingModel ??
@@ -532,20 +542,80 @@ function ThreadSettingsSessionProvider(
   const hasLegacyModels = props.providerGroups.some((group) =>
     group.models.some((model) => model.isLegacy),
   );
-  const commitPendingModel = () => {
+  const getLatestGroups = () => {
+    const latestConfig = props.environmentId
+      ? registry.get(environmentServerConfigsAtom).get(props.environmentId)
+      : null;
+    return latestConfig
+      ? groupByProvider(
+          buildModelOptions(
+            latestConfig,
+            props.selectedModel,
+            props.lockedProviderInstanceId,
+            props.projectId,
+            manageHidden,
+          ),
+        )
+      : providerGroups;
+  };
+  const confirmModelChange = async (
+    sourceOptions: ReadonlyArray<ProviderOptionSelection> | undefined,
+    target: ModelOption,
+  ): Promise<ModelOption | null> => {
+    const decide = () => pendingDaybreakModelChange(sourceOptions, target, getLatestGroups());
+    const decision = decide();
+    if (decision.type === "ready") return { ...target, selection: decision.selection };
+    const selection = await new Promise<ModelSelection | null>((resolve) => {
+      Dialog.alert(
+        `${decision.activeLabel} isn’t available on ${target.label}`,
+        "Choose an available option to switch models, or cancel to keep your current selection.",
+        [
+          ...decision.choices.map((choice) => ({
+            text: choice.label,
+            onPress: () => resolve(choice.selection),
+          })),
+          { text: "Cancel", style: "cancel", onPress: () => resolve(null) },
+        ],
+        { cancelable: true, equalWeightActions: true, onDismiss: () => resolve(null) },
+      );
+    });
+    if (!selection) return null;
+    if (!canCommitPendingModel(target, getLatestGroups())) return null;
+    const latest = pendingDaybreakModelChange(
+      selection.options,
+      { ...target, selection },
+      getLatestGroups(),
+    );
+    const accepted = latest.type === "ready" ? latest.selection : null;
+    if (!accepted) {
+      Dialog.alert(
+        "Daybreak availability changed",
+        "Choose the model again using the refreshed catalog.",
+      );
+      return null;
+    }
+    return { ...target, selection: accepted };
+  };
+  const commitPendingModel = async () => {
     if (pendingModel) {
-      if (!canCommitPendingModel(pendingModel, props.providerGroups)) {
+      if (!canCommitPendingModel(pendingModel, getLatestGroups())) {
         Dialog.alert(
           "Model unavailable",
           "Set up this provider on web or desktop, or select another model.",
         );
         return false;
       }
+      const accepted = await confirmModelChange(pendingModel.selection.options, pendingModel);
+      if (!accepted || !canCommitPendingModel(accepted, getLatestGroups())) return false;
       void Haptics.selectionAsync();
-      props.onSelectModel(pendingModel);
-      if (pendingPrompt !== null && pendingPrompt !== props.prompt) {
+      rememberModelOptions(
+        accepted.selection.instanceId,
+        accepted.selection.model,
+        accepted.selection.options ?? [],
+      );
+      props.onSelectModel(accepted);
+      if (pendingPrompt !== null && pendingPrompt !== props.prompt)
         props.onPromptChange(pendingPrompt);
-      }
     }
     return true;
   };
@@ -555,7 +625,11 @@ function ThreadSettingsSessionProvider(
     const change =
       descriptor?.type === "select" && typeof value === "string"
         ? getTraitSelectChange(
-            { ...promptTraits, descriptors: displayedDescriptors },
+            {
+              ...promptTraits,
+              descriptors: optionDescriptors,
+              modelOptions: pendingModel?.selection.options ?? props.selectedModel?.options,
+            },
             descriptor,
             displayedPrompt,
             value,
@@ -572,15 +646,23 @@ function ThreadSettingsSessionProvider(
       }
       if (!("modelOptions" in change)) return;
     }
-    const next =
+    const changed =
       change && "modelOptions" in change
         ? (change.modelOptions ?? [])
-        : applyProviderOptionSelection(displayedDescriptors, { id, value });
+        : applyProviderOptionSelection(optionDescriptors, { id, value });
+    const next =
+      changed === null
+        ? null
+        : (preserveExplicitDaybreakOption(
+            changed,
+            id === DAYBREAK_OPTION_ID
+              ? undefined
+              : (pendingModel?.selection.options ?? props.selectedModel?.options),
+          ) ?? []);
     if (!next) {
       return;
     }
     if (pendingModel) {
-      rememberModelOptions(pendingModel.selection.instanceId, pendingModel.selection.model, next);
       setPendingModel({
         ...pendingModel,
         selection: { ...pendingModel.selection, options: next },
@@ -600,19 +682,21 @@ function ThreadSettingsSessionProvider(
     });
   };
 
-  const pressModel = (option: ModelOption) => {
+  const pressModel = async (option: ModelOption) => {
+    const next = pendingModelAfterPress({
+      current: pendingModel,
+      pressed: option,
+      pressedIsApplied: isApplied(option),
+      restoreSelection: props.restoreSelection,
+    });
+    if (next === pendingModel) return;
+    const accepted = next
+      ? await confirmModelChange((pendingModel?.selection ?? props.selectedModel)?.options, next)
+      : null;
+    if (next && !accepted) return;
     void Haptics.selectionAsync();
-    if (isApplied(option) || option.key !== pendingModel?.key) {
-      setPendingPrompt(null);
-    }
-    setPendingModel((current) =>
-      pendingModelAfterPress({
-        current,
-        pressed: option,
-        pressedIsApplied: isApplied(option),
-        restoreSelection: props.restoreSelection,
-      }),
-    );
+    setPendingPrompt(null);
+    setPendingModel(accepted);
   };
 
   const value = {
@@ -1222,8 +1306,8 @@ function ThreadSettingsModelsScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<ThreadSettingsPickerStackParams>>();
   const usesNativeMailSearchToolbar = useThreadSettingsMailSearchToolbar();
   const hasCustomCatalogFilter = session.providerFilter !== null || session.showLegacy;
-  const commitAndClose = useEffectEvent(() => {
-    if (!session.commitPendingModel()) return;
+  const commitAndClose = useEffectEvent(async () => {
+    if (!(await session.commitPendingModel())) return;
     presentation.onClose();
   });
   const providerFilters = [

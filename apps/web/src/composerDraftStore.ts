@@ -659,7 +659,7 @@ function modelSelectionByProviderToOptions(
   if (!map) return null;
   const result: ProviderOptionSelectionsByProvider = {};
   for (const [provider, selection] of Object.entries(map)) {
-    if (selection?.options && selection.options.length > 0) {
+    if (selection?.options) {
       result[provider] = selection.options;
     }
   }
@@ -996,7 +996,7 @@ function normalizeModelSelection(
   }
   if (Array.isArray(candidate?.options)) {
     const selections = coerceProviderOptionSelections(candidate.options);
-    return createModelSelection(instanceId, model, selections) as NormalizedModelSelection;
+    return { instanceId, model, options: selections ?? [] };
   }
   const kindForLegacyOptions = normalizeProviderDriverKind(instanceId);
   const modelOptions = kindForLegacyOptions

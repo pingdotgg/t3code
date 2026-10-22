@@ -11,7 +11,11 @@ import {
   rememberModelOptions,
   withRememberedModelOptions,
 } from "../../state/use-model-option-memory";
-import { canCommitPendingModel, pendingModelAfterPress } from "./thread-settings-sheet-state";
+import {
+  canCommitPendingModel,
+  pendingModelAfterPress,
+  pendingDaybreakModelChange,
+} from "./thread-settings-sheet-state";
 
 function modelOption(
   model: string,
@@ -157,5 +161,43 @@ describe("thread settings sheet state", () => {
         },
       ]),
     ).toBe(false);
+  });
+});
+
+describe("Daybreak staged choices", () => {
+  it("uses refreshed model capabilities when saving a staged choice", () => {
+    const red = [{ id: "cyberAccessProgram", value: "daybreakRed" }];
+    const pending = modelOption("target", red);
+    const refreshed = {
+      ...pending,
+      capabilities: {
+        optionDescriptors: [
+          {
+            id: "cyberAccessProgram",
+            label: "Daybreak",
+            type: "select" as const,
+            options: [
+              { id: "standard", label: "Off" },
+              { id: "daybreakBlue", label: "Blue" },
+            ],
+          },
+        ],
+      },
+    };
+    const decision = pendingDaybreakModelChange(red, pending, [
+      { providerKey: "codex", providerLabel: "Codex", models: [refreshed] },
+    ]);
+    expect(decision.type === "confirm" && decision.choices.map((choice) => choice.label)).toEqual([
+      "Use Blue",
+      "Turn Off",
+    ]);
+    expect(pending.selection.options).toEqual(red);
+  });
+  it("records an empty option set so an old Daybreak selection cannot return", () => {
+    rememberModelOptions("codex", "target", [{ id: "cyberAccessProgram", value: "daybreakRed" }]);
+    rememberModelOptions("codex", "target", []);
+    expect(
+      withRememberedModelOptions({ instanceId: "codex", model: "target", options: [] }).options,
+    ).toEqual([]);
   });
 });

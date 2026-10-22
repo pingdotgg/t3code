@@ -1,5 +1,6 @@
 import type {
   ModelSelection,
+  ProviderOptionSelection,
   ProviderDriverKind,
   ProviderOptionDescriptor,
 } from "@t3tools/contracts";
@@ -8,9 +9,136 @@ import {
   buildProviderOptionSelectionsFromDescriptors,
   getProviderOptionCurrentLabel,
   getProviderOptionCurrentValue,
+  getProviderOptionDescriptors,
   isClaudeUltrathinkPrompt,
 } from "@t3tools/shared/model";
 import { REASONING_EFFORT_OPTION_IDS } from "./state/threadExecution.ts";
+
+export const DAYBREAK_OPTION_ID = "cyberAccessProgram";
+
+export function daybreakLabel(value: string | boolean | undefined): string | null {
+  return value === "daybreakBlue"
+    ? "Daybreak Blue"
+    : value === "daybreakRed"
+      ? "Daybreak Red"
+      : null;
+}
+
+export function preserveExplicitDaybreakOption(
+  options: ReadonlyArray<ProviderOptionSelection> | undefined,
+  explicit: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+): ReadonlyArray<ProviderOptionSelection> | undefined {
+  const program = explicit?.find((option) => option.id === DAYBREAK_OPTION_ID);
+  return program
+    ? [...(options ?? []).filter((option) => option.id !== DAYBREAK_OPTION_ID), program]
+    : options;
+}
+
+export function getModelTraitDescriptors(
+  input: Parameters<typeof getProviderOptionDescriptors>[0],
+) {
+  const program = input.selections?.find((option) => option.id === DAYBREAK_OPTION_ID);
+  // Revocation must reach backend validation, including when another trait changes.
+  return getProviderOptionDescriptors(input).map((descriptor) =>
+    descriptor.id === DAYBREAK_OPTION_ID &&
+    descriptor.type === "select" &&
+    typeof program?.value === "string"
+      ? { ...descriptor, currentValue: program.value }
+      : descriptor,
+  );
+}
+
+export function visibleModelTraitDescriptors(
+  descriptors: ReadonlyArray<ProviderOptionDescriptor>,
+  allowDaybreak = true,
+) {
+  return descriptors.filter(
+    (descriptor) =>
+      descriptor.id !== DAYBREAK_OPTION_ID ||
+      (allowDaybreak &&
+        descriptor.type === "select" &&
+        (descriptor.options.some((option) => daybreakLabel(option.id) !== null) ||
+          // Keep advertised Off reachable after the active program is revoked.
+          daybreakLabel(descriptor.currentValue) !== null)),
+  );
+}
+
+export function decideDaybreakModelChange(
+  currentOptions: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+  target: ModelSelection,
+  targetDescriptors: ReadonlyArray<ProviderOptionDescriptor>,
+) {
+  const descriptor = targetDescriptors.find(
+    (entry) => entry.id === DAYBREAK_OPTION_ID && entry.type === "select",
+  );
+  const choices = descriptor?.type === "select" ? descriptor.options : [];
+  const current = currentOptions?.find((option) => option.id === DAYBREAK_OPTION_ID)?.value;
+  const activeLabel = daybreakLabel(current);
+  const select = (value: string | undefined): ModelSelection => ({
+    ...target,
+    options: [
+      ...(target.options ?? []).filter((option) => option.id !== DAYBREAK_OPTION_ID),
+      ...(value ? [{ id: DAYBREAK_OPTION_ID, value }] : []),
+    ],
+  });
+  if (!activeLabel && (!descriptor || choices.some((choice) => choice.id === "standard"))) {
+    // Preserve model-only updates so the caller can retain unrelated sticky traits.
+    if (!target.options?.some((option) => option.id === DAYBREAK_OPTION_ID))
+      return { type: "ready" as const, selection: target };
+    // Daybreak follows the current selection, never a target's old remembered program.
+    return {
+      type: "ready" as const,
+      selection: select(
+        choices.some((choice) => choice.id === "standard") ? "standard" : undefined,
+      ),
+    };
+  }
+  if (typeof current === "string" && choices.some((choice) => choice.id === current)) {
+    return { type: "ready" as const, selection: select(current) };
+  }
+  return {
+    type: "confirm" as const,
+    activeLabel: activeLabel ?? "Daybreak Off",
+    choices: getDaybreakModelChangeChoices(target, targetDescriptors),
+  };
+}
+
+export function getDaybreakModelChangeChoices(
+  target: ModelSelection,
+  targetDescriptors: ReadonlyArray<ProviderOptionDescriptor>,
+) {
+  const descriptor = targetDescriptors.find(
+    (entry) => entry.id === DAYBREAK_OPTION_ID && entry.type === "select",
+  );
+  const choices = descriptor?.type === "select" ? descriptor.options : [];
+  const select = (value: string | undefined): ModelSelection => ({
+    ...target,
+    options: [
+      ...(target.options ?? []).filter((option) => option.id !== DAYBREAK_OPTION_ID),
+      ...(value ? [{ id: DAYBREAK_OPTION_ID, value }] : []),
+    ],
+  });
+  return [
+    ...choices.flatMap((choice) =>
+      daybreakLabel(choice.id)
+        ? [
+            {
+              label: choice.id === "daybreakBlue" ? "Use Blue" : "Use Red",
+              selection: select(choice.id),
+            },
+          ]
+        : [],
+    ),
+    ...(!descriptor || choices.some((choice) => choice.id === "standard")
+      ? [
+          {
+            label: "Turn Off",
+            selection: select(descriptor ? "standard" : undefined),
+          },
+        ]
+      : []),
+  ];
+}
 
 export const ULTRATHINK_PROMPT_PREFIX = "Ultrathink:\n";
 
@@ -54,7 +182,11 @@ export function getDescriptorStringValue(
 export function selectableProviderOptionChoices(
   descriptor: Extract<ProviderOptionDescriptor, { type: "select" }>,
 ) {
-  return descriptor.options;
+  return descriptor.id === DAYBREAK_OPTION_ID
+    ? descriptor.options.filter(
+        (option) => option.id === "standard" || daybreakLabel(option.id) !== null,
+      )
+    : descriptor.options;
 }
 
 export function getPromptControlledTraits(
@@ -63,7 +195,12 @@ export function getPromptControlledTraits(
   allowPromptInjectedEffort = true,
 ) {
   const primarySelectDescriptor =
-    descriptors.find((descriptor) => descriptor.type === "select") ?? null;
+    descriptors.find(
+      (descriptor): descriptor is Extract<ProviderOptionDescriptor, { type: "select" }> =>
+        descriptor.type === "select" &&
+        descriptor.id !== DAYBREAK_OPTION_ID &&
+        descriptor.id !== "serviceTier",
+    ) ?? null;
   const ultrathinkPromptControlled =
     allowPromptInjectedEffort &&
     (primarySelectDescriptor?.promptInjectedValues?.length ?? 0) > 0 &&
@@ -76,6 +213,7 @@ export function getPromptControlledTraits(
 export function getTraitSelectChange(
   selected: ReturnType<typeof getPromptControlledTraits> & {
     descriptors: ReadonlyArray<ProviderOptionDescriptor>;
+    modelOptions?: ReadonlyArray<ProviderOptionSelection> | null | undefined;
   },
   descriptor: Extract<ProviderOptionDescriptor, { type: "select" }>,
   prompt: string,
@@ -97,8 +235,11 @@ export function getTraitSelectChange(
       isPrimary && selected.ultrathinkPromptControlled
         ? prompt.replace(/^Ultrathink:\s*/i, "")
         : prompt,
-    modelOptions: buildProviderOptionSelectionsFromDescriptors(
-      replaceDescriptorCurrentValue(selected.descriptors, descriptor.id, value),
+    modelOptions: preserveExplicitDaybreakOption(
+      buildProviderOptionSelectionsFromDescriptors(
+        replaceDescriptorCurrentValue(selected.descriptors, descriptor.id, value),
+      ),
+      descriptor.id === DAYBREAK_OPTION_ID ? undefined : selected.modelOptions,
     ),
   };
 }
@@ -116,6 +257,17 @@ export function buildTraitsTriggerDisplay(input: {
   let reasoningLabelIndex = -1;
   const labels: Array<string> = [];
   for (const descriptor of input.descriptors) {
+    if (descriptor.id === DAYBREAK_OPTION_ID) {
+      const label = daybreakLabel(
+        getProviderOptionCurrentValue(
+          descriptor,
+          input.modelSelection,
+          input.reportedModelSelection,
+        ),
+      );
+      if (label) labels.push(label);
+      continue;
+    }
     if (descriptor.id === "fastMode" && descriptor.type === "boolean") {
       speedLabel = descriptor.currentValue === true ? "Fast" : null;
       fastModeFallbackLabel = speedLabel ?? "Normal";

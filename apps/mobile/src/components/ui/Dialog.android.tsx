@@ -1,3 +1,4 @@
+import { fillMaxWidth } from "@expo/ui/jetpack-compose/modifiers";
 import { NativeThemeHost } from "./NativeThemeHost.android";
 import {
   AlertDialog,
@@ -17,15 +18,23 @@ import { useScaledTextRole } from "../../features/settings/appearance/useScaledT
 import { useCallback, useEffect, useRef, useState } from "react";
 import { themeColorWithContrast } from "../../lib/mobileTheme";
 import type { Alert, AlertButton } from "react-native";
-import type { ConfirmDialogRequest, TextInputDialogRequest } from "./Dialog.types";
+import type {
+  ConfirmDialogRequest,
+  DialogAlertOptions,
+  TextInputDialogRequest,
+} from "./Dialog.types";
 
-export type { ConfirmDialogRequest, TextInputDialogRequest } from "./Dialog.types";
+export type {
+  ConfirmDialogRequest,
+  DialogAlertOptions,
+  TextInputDialogRequest,
+} from "./Dialog.types";
 
 type AlertRequest = {
   readonly title: Parameters<typeof Alert.alert>[0];
   readonly message: Parameters<typeof Alert.alert>[1];
   readonly buttons: Parameters<typeof Alert.alert>[2];
-  readonly options: Parameters<typeof Alert.alert>[3];
+  readonly options: DialogAlertOptions | undefined;
 };
 
 type DialogRequest =
@@ -35,7 +44,12 @@ type DialogRequest =
 
 let presentRequest: ((request: DialogRequest) => void) | null = null;
 
-export function alert(...[title, message, buttons, options]: Parameters<typeof Alert.alert>): void {
+export function alert(
+  title: string,
+  message?: string,
+  buttons?: Parameters<typeof Alert.alert>[2],
+  options?: DialogAlertOptions,
+): void {
   const actions = buttons?.length ? buttons.slice(0, 3) : [{ text: "OK" }];
   const normalized = actions.map((action, index) =>
     index === actions.length - 1 ? { ...action, text: action.text || "OK" } : action,
@@ -103,6 +117,7 @@ export function Host() {
         }}
         alertActions={presented.request.buttons ?? [{ text: "OK" }]}
         dismissable={presented.request.options?.cancelable ?? false}
+        equalWeightActions={presented.request.options?.equalWeightActions}
         onAlertAction={(action) => {
           setPresented(null);
           action.onPress?.();
@@ -152,11 +167,12 @@ function DialogPresentation(props: DialogPresentationProps) {
   const destructiveFill = themeColorWithContrast(colors["--color-danger-foreground"], "#ffffff");
   const renderAction = (action: AlertButton, index: number) => {
     const isDestructive = action.style === "destructive";
-    const isPrimary = isDestructive || index === actions.length - 1;
+    const isPrimary = !props.equalWeightActions && (isDestructive || index === actions.length - 1);
     const Component = isPrimary ? Button : OutlinedButton;
     return (
       <Component
         key={index}
+        modifiers={props.equalWeightActions ? [fillMaxWidth()] : undefined}
         onClick={() => (props.alertActions ? props.onAlertAction?.(action) : action.onPress?.())}
         colors={{
           containerColor: isDestructive
@@ -243,14 +259,20 @@ function DialogPresentation(props: DialogPresentationProps) {
             <Text style={bodyTypography}>{props.request.message}</Text>
           </AlertDialog.Text>
         ) : null}
-        {actions.length > 1 ? (
+        {!props.equalWeightActions && actions.length > 1 ? (
           <AlertDialog.DismissButton>
             <FlowRow>{actions.slice(0, -1).map(renderAction)}</FlowRow>
           </AlertDialog.DismissButton>
         ) : null}
         {actions.length > 0 ? (
           <AlertDialog.ConfirmButton>
-            {renderAction(actions[actions.length - 1]!, actions.length - 1)}
+            {props.equalWeightActions ? (
+              <Column modifiers={[fillMaxWidth()]} verticalArrangement={{ spacedBy: 8 }}>
+                {actions.map(renderAction)}
+              </Column>
+            ) : (
+              renderAction(actions[actions.length - 1]!, actions.length - 1)
+            )}
           </AlertDialog.ConfirmButton>
         ) : null}
       </AlertDialog>
@@ -262,6 +284,7 @@ interface DialogPresentationProps {
   readonly alertActions?: readonly AlertButton[];
   readonly onAlertAction?: (action: AlertButton) => void;
   readonly dismissable?: boolean;
+  readonly equalWeightActions?: boolean | undefined;
   readonly request: Pick<
     ConfirmDialogRequest,
     "title" | "message" | "cancelText" | "confirmText" | "destructive"

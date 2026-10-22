@@ -1,3 +1,6 @@
+import { useDaybreakModelChange } from "../chat/useDaybreakModelChange";
+import { daybreakLabel } from "@t3tools/client-runtime/model-traits";
+import { TraitsPicker } from "../chat/TraitsPicker";
 import { useAtomValue } from "@effect/atom-react";
 import { connectionStatusTitle } from "@t3tools/client-runtime/connection";
 import * as Option from "effect/Option";
@@ -46,7 +49,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 
 import { formatRelativeTime } from "../../timestampFormat";
-import { useEnvironmentSettings } from "../../hooks/useSettings";
+import { mergeEnvironmentSettings, useEnvironmentSettings } from "../../hooks/useSettings";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
   applyProviderInstanceSettings,
@@ -61,6 +64,7 @@ import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import {
   useEnvironment,
+  useEnvironmentProviders,
   useEnvironmentHttpBaseUrl,
   type EnvironmentPresentation,
 } from "../../state/environments";
@@ -85,6 +89,7 @@ import {
   matchesScheduledTaskScope,
   scheduleFromDraft,
   scheduledTaskDefaultModel,
+  scheduledTaskModelDescriptors,
   taskToDraft,
   type DraftState,
   type ScheduleMode,
@@ -1102,6 +1107,7 @@ function ScheduledTaskEditorForm({
   readonly onClose: () => void;
 }) {
   const { scope, connectedEnvironments } = useSettingsScope();
+  const providersByEnvironment = useEnvironmentProviders();
   const [environmentId, setEnvironmentId] = useState(initialEnvironmentId);
   const environment = useEnvironment(environmentId);
   const connected =
@@ -1161,6 +1167,54 @@ function ScheduledTaskEditorForm({
     activeInstanceId,
     activeModel,
   );
+
+  const effectiveSelection =
+    draft.baseModelSelection &&
+    draft.baseModelSelection.instanceId === activeSelection?.instanceId &&
+    draft.baseModelSelection.model === activeSelection.model
+      ? draft.baseModelSelection
+      : activeSelection;
+  const activeEntry = instanceEntries.find((entry) => entry.instanceId === activeInstanceId);
+  const activeDaybreak = effectiveSelection?.options?.some(
+    (option) => option.id === "cyberAccessProgram" && daybreakLabel(option.value) !== null,
+  );
+  const { requestModelChange, daybreakDialog } = useDaybreakModelChange(
+    (next, destinationContext) => {
+      const destinationScope = destinationContext
+        ? (JSON.parse(destinationContext) as {
+            environmentId: EnvironmentId;
+            projectId: ProjectId | null;
+          })
+        : { environmentId, projectId: selectedProject?.id ?? null };
+      const destination = destinationContext
+        ? connectedEnvironments.find(
+            (entry) => entry.environmentId === destinationScope.environmentId,
+          )
+        : environment;
+      if (!destination?.serverConfig) return null;
+      const destinationProviders =
+        providersByEnvironment.get(destination.environmentId) ?? EMPTY_SERVER_PROVIDERS;
+      const destinationSettings = mergeEnvironmentSettings(
+        destination.serverConfig.settings,
+        settings,
+      );
+      return scheduledTaskModelDescriptors(
+        destinationSettings,
+        destinationProviders,
+        next,
+        destinationScope.projectId,
+      );
+    },
+    `${environmentId}:${selectedProjectId}`,
+  );
+  const selectModel = (next: ModelSelection) =>
+    requestModelChange(effectiveSelection?.options, next, (selection) =>
+      setDraft((current) => ({
+        ...current,
+        modelKey: `${selection.instanceId}:${selection.model}`,
+        baseModelSelection: selection,
+      })),
+    );
 
   const reportFailure = (title: string, error: unknown) => {
     toastManager.add(
@@ -1270,6 +1324,7 @@ function ScheduledTaskEditorForm({
 
   return (
     <>
+      {daybreakDialog}
       <DialogHeader>
         <DialogTitle>{draft.editingId ? "Edit task" : "New task"}</DialogTitle>
         <DialogDescription>
@@ -1290,16 +1345,60 @@ function ScheduledTaskEditorForm({
               onValueChange={(id) => {
                 const next = connectedEnvironments.find((entry) => entry.environmentId === id);
                 if (!next) return;
-                setEnvironmentId(next.environmentId);
-                setDraft((current) => ({
-                  ...current,
-                  projectId: "",
-                  modelKey: "",
-                  baseModelSelection: null,
-                  baseRef: "main",
-                  startFromOrigin: true,
-                  existingWorktreePath: "",
-                }));
+                if (!activeDaybreak) {
+                  setEnvironmentId(next.environmentId);
+                  setDraft((current) => ({
+                    ...current,
+                    projectId: "",
+                    modelKey: "",
+                    baseModelSelection: null,
+                    baseRef: "main",
+                    startFromOrigin: true,
+                    existingWorktreePath: "",
+                  }));
+                  return;
+                }
+                if (!next.serverConfig) return;
+                const nextProviders =
+                  providersByEnvironment.get(next.environmentId) ?? EMPTY_SERVER_PROVIDERS;
+                const nextSettings = mergeEnvironmentSettings(next.serverConfig.settings, settings);
+                const nextProject = allProjects.find(
+                  (project) =>
+                    project.environmentId === next.environmentId &&
+                    matchesScheduledTaskScope(scope, next.environmentId, project.id),
+                );
+                const nextEntries = applyProviderInstanceSettings(
+                  deriveProviderInstanceEntries(nextProviders),
+                  nextSettings,
+                  nextProject?.id ?? null,
+                );
+                const nextSelection = scheduledTaskDefaultModel(
+                  nextSettings,
+                  nextProject ?? null,
+                  nextEntries,
+                );
+                if (!nextSelection) return;
+                requestModelChange(
+                  effectiveSelection?.options,
+                  nextSelection,
+                  (selection) => {
+                    setEnvironmentId(next.environmentId);
+                    setDraft((current) => ({
+                      ...current,
+                      projectId: nextProject?.id ?? "",
+                      modelKey: `${selection.instanceId}:${selection.model}`,
+                      baseModelSelection: selection,
+                      baseRef: "main",
+                      startFromOrigin: true,
+                      existingWorktreePath: "",
+                    }));
+                  },
+                  false,
+                  JSON.stringify({
+                    environmentId: next.environmentId,
+                    projectId: nextProject?.id ?? null,
+                  }),
+                );
               }}
             >
               <SelectTrigger id="scheduled-task-environment" size="sm">
@@ -1370,9 +1469,33 @@ function ScheduledTaskEditorForm({
             <Field label="Project" htmlFor="scheduled-task-project">
               <Select
                 value={selectedProjectId}
-                onValueChange={(projectId) =>
-                  setDraft((current) => ({ ...current, projectId: projectId ?? "" }))
-                }
+                onValueChange={(projectId) => {
+                  const project = projects.find((project) => project.id === projectId);
+                  if (!project || !activeDaybreak) {
+                    setDraft((current) => ({ ...current, projectId: projectId ?? "" }));
+                    return;
+                  }
+                  const next = scheduledTaskDefaultModel(
+                    settings,
+                    project,
+                    instanceEntries,
+                    draft.modelKey ? effectiveSelection : null,
+                  );
+                  if (!next) return;
+                  requestModelChange(
+                    effectiveSelection?.options,
+                    next,
+                    (selection) =>
+                      setDraft((current) => ({
+                        ...current,
+                        projectId: project.id,
+                        modelKey: `${selection.instanceId}:${selection.model}`,
+                        baseModelSelection: selection,
+                      })),
+                    false,
+                    JSON.stringify({ environmentId, projectId: project.id }),
+                  );
+                }}
               >
                 <SelectTrigger size="sm" id="scheduled-task-project">
                   <SelectValue placeholder="Select a project">{selectedProject?.title}</SelectValue>
@@ -1473,10 +1596,25 @@ function ScheduledTaskEditorForm({
                 modelOptionsByInstance={modelOptionsByInstance}
                 isComposerOwned={false}
                 triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                onInstanceModelChange={(instanceId, model) =>
-                  setDraft((current) => ({ ...current, modelKey: `${instanceId}:${model}` }))
-                }
+                onInstanceModelChange={(instanceId, model) => selectModel({ instanceId, model })}
               />
+              {activeEntry && effectiveSelection ? (
+                <TraitsPicker
+                  provider={activeEntry.driverKind}
+                  models={activeEntry.models}
+                  model={effectiveSelection.model}
+                  modelOptions={effectiveSelection.options ?? []}
+                  allowPromptInjectedEffort={false}
+                  planModeEnabled={settings.planModeEnabled}
+                  triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                  onModelOptionsChange={(options) =>
+                    setDraft((current) => ({
+                      ...current,
+                      baseModelSelection: { ...effectiveSelection, options: options ?? [] },
+                    }))
+                  }
+                />
+              ) : null}
             </div>
           </Field>
 

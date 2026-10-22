@@ -1866,6 +1866,7 @@ export function GeneralSettingsPanel() {
                 />
                 {textGenInstanceEntry ? (
                   <TraitsPicker
+                    allowDaybreak={false}
                     provider={textGenProvider}
                     models={textGenInstanceEntry?.models ?? []}
                     model={textGenModel}

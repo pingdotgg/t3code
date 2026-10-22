@@ -234,6 +234,21 @@ export function mapCodexModelCapabilities(
     });
   }
 
+  const cyberPrograms = model.availableAccessPrograms?.cyber ?? [];
+  if (cyberPrograms.length > 0) {
+    optionDescriptors.push({
+      id: "cyberAccessProgram",
+      label: "Daybreak",
+      type: "select",
+      options: [
+        { id: "standard", label: "Off", isDefault: true },
+        { id: "daybreakBlue", label: "Blue" },
+        { id: "daybreakRed", label: "Red" },
+      ].filter((option) => cyberPrograms.some((program) => program === option.id)),
+      ...(cyberPrograms.includes("standard") ? { currentValue: "standard" } : {}),
+    });
+  }
+
   return createModelCapabilities({
     optionDescriptors,
   });
@@ -305,15 +320,27 @@ function applyConfiguredCodexServiceTier(
 
 /**
  * Codex has no static default capability set, so a bare custom slug borrows
- * the first built-in's descriptors; an entry with its own capabilities keeps
- * them.
+ * the first built-in's descriptors. Account access requires native discovery,
+ * so custom-only slugs cannot borrow it or supply it through settings.
  */
 function appendCustomCodexModels(
   models: ReadonlyArray<ServerProviderModel>,
   customModels: ReadonlyArray<CustomModelSetting>,
 ): ReadonlyArray<ServerProviderModel> {
   const fallbackCapabilities = models.find((model) => model.capabilities)?.capabilities ?? null;
-  return providerModelsFromSettings(models, customModels, fallbackCapabilities);
+  return providerModelsFromSettings(models, customModels, fallbackCapabilities).map((model) =>
+    model.isCustom && model.capabilities
+      ? {
+          ...model,
+          capabilities: {
+            ...model.capabilities,
+            optionDescriptors: model.capabilities.optionDescriptors?.filter(
+              (descriptor) => descriptor.id !== "cyberAccessProgram",
+            ),
+          },
+        }
+      : model,
+  );
 }
 
 function parseCodexSkillsListResponse(

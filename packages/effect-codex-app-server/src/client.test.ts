@@ -10,6 +10,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 
 import * as CodexClient from "./client.ts";
+import * as CodexReplay from "./replay.ts";
 
 const mockPeerPath = Effect.map(Effect.service(Path.Path), (path) =>
   path.join(import.meta.dirname, "../test/fixtures/codex-app-server-mock-peer.ts"),
@@ -156,3 +157,45 @@ it.layer(NodeServices.layer)("effect-codex-app-server client", (it) => {
     }),
   );
 });
+
+it.effect.each(["standard", "daybreakBlue", "daybreakRed"] as const)(
+  "forwards validated cyberAccessProgram %s on the turn/start wire",
+  (cyberAccessProgram) =>
+    Effect.gen(function* () {
+      const params = { threadId: "thread-1", input: [], cyberAccessProgram };
+      const context = yield* Layer.build(
+        CodexReplay.layerReplay({
+          provider: "codex",
+          protocol: "codex.app-server",
+          version: "test",
+          scenario: "daybreak-wire",
+          entries: [
+            { type: "expect_outbound", frame: { id: 1, method: "turn/start", params } },
+            {
+              type: "emit_inbound",
+              frame: {
+                id: 1,
+                result: {
+                  turn: {
+                    id: "turn-1",
+                    items: [],
+                    itemsView: "notLoaded",
+                    status: "inProgress",
+                    error: null,
+                    startedAt: null,
+                    completedAt: null,
+                    durationMs: null,
+                  },
+                },
+              },
+            },
+          ],
+        }),
+      );
+      const client = yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
+        Effect.provide(context),
+      );
+      const result = yield* client.request("turn/start", params);
+      assert.equal(result.turn.id, "turn-1");
+    }).pipe(Effect.scoped),
+);

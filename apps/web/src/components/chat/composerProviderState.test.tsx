@@ -11,7 +11,7 @@ import {
   getComposerReasoningStep,
   withImplicitFastModeDefault,
 } from "./composerProviderState";
-import { readPromptUltrathink } from "./TraitsPicker";
+import { readPromptUltrathink, shouldRenderTraitsControls } from "./TraitsPicker";
 
 const PROVIDER: ProviderDriverKind = ProviderDriverKind.make("codex");
 const MODEL = "test-model";
@@ -430,4 +430,95 @@ describe("getComposerReasoningStep", () => {
       );
     }
   });
+});
+
+describe("Daybreak dispatch", () => {
+  it("keeps an explicit revoked program for backend validation", () => {
+    const state = getComposerProviderState({
+      provider: PROVIDER,
+      model: MODEL,
+      models: modelWith([
+        selectDescriptor("cyberAccessProgram", [
+          { id: "standard", label: "Off", isDefault: true },
+          { id: "daybreakBlue", label: "Blue" },
+        ]),
+      ]),
+      modelOptions: selections(["cyberAccessProgram", "daybreakRed"]),
+      planModeEnabled: true,
+    });
+    expect(state.modelOptionsForDispatch).toEqual(
+      selections(["cyberAccessProgram", "daybreakRed"]),
+    );
+    expect(state.promptEffort).toBeNull();
+  });
+  it("does not treat Daybreak or speed as reasoning", () => {
+    const models = modelWith([
+      selectDescriptor("cyberAccessProgram", [
+        { id: "daybreakBlue", label: "Blue", isDefault: true },
+      ]),
+      selectDescriptor("serviceTier", [{ id: "fast", label: "Fast", isDefault: true }]),
+    ]);
+    expect(
+      getComposerProviderState({
+        provider: PROVIDER,
+        model: MODEL,
+        models,
+        modelOptions: undefined,
+        planModeEnabled: true,
+      }).promptEffort,
+    ).toBeNull();
+    expect(
+      getComposerReasoningStep({
+        provider: PROVIDER,
+        instanceId: ProviderInstanceId.make("codex"),
+        model: MODEL,
+        models,
+        modelOptions: undefined,
+        prompt: "Keep this",
+        cursor: 3,
+        planModeEnabled: true,
+        direction: 1,
+      }),
+    ).toBeNull();
+  });
+});
+
+it("keeps a Daybreak-only traits control reachable while hiding standard-only controls", () => {
+  const input = {
+    provider: PROVIDER,
+    model: MODEL,
+    modelOptions: undefined,
+    planModeEnabled: true,
+  };
+  expect(
+    shouldRenderTraitsControls({
+      ...input,
+      models: modelWith([
+        selectDescriptor("cyberAccessProgram", [
+          { id: "standard", label: "Off", isDefault: true },
+          { id: "daybreakBlue", label: "Blue" },
+        ]),
+      ]),
+    }),
+  ).toBe(true);
+  expect(
+    shouldRenderTraitsControls({
+      ...input,
+      models: modelWith([
+        selectDescriptor("cyberAccessProgram", [{ id: "standard", label: "Off", isDefault: true }]),
+      ]),
+    }),
+  ).toBe(false);
+});
+
+it("retains an explicit program in dispatch when its descriptor disappears entirely", () => {
+  expect(
+    getComposerProviderState({
+      provider: PROVIDER,
+      model: MODEL,
+      models: modelWith([]),
+      modelOptions: selections(["cyberAccessProgram", "daybreakRed"]),
+      planModeEnabled: true,
+    }).modelOptionsForDispatch,
+  ).toEqual(selections(["cyberAccessProgram", "daybreakRed"]));
 });

@@ -1,3 +1,6 @@
+import { useDaybreakModelChange } from "./useDaybreakModelChange";
+import { getProviderModelCapabilities } from "../../providerModels";
+import { useComposerDraftModelState } from "../../composerDraftStore";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type { UnifiedSettings } from "@t3tools/contracts";
 import type { Dispatch } from "react";
@@ -13,11 +16,13 @@ import {
   RuntimeMode,
 } from "@t3tools/contracts";
 import { deriveThreadRuntime } from "@t3tools/client-runtime/state/thread-execution";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { type SetStateAction } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { toastManager } from "../ui/toast";
-import { resolveAppModelSelectionForInstance } from "../../modelSelection";
+import {
+  getCustomModelOptionsByInstance,
+  resolveAppModelSelectionForInstance,
+} from "../../modelSelection";
 import { resolveNewDraftStartFromOrigin } from "../../lib/chatThreadActions";
 import { type DraftThreadEnvMode, useComposerDraftStore } from "../../composerDraftStore";
 import {
@@ -80,6 +85,26 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     scheduleComposerFocus,
   } = input;
   const navigate = useNavigate();
+  const draftModelState = useComposerDraftModelState(composerDraftTarget);
+  const { requestModelChange, daybreakDialog } = useDaybreakModelChange((selection) => {
+    const provider = providerStatuses.find((entry) => entry.instanceId === selection.instanceId);
+    const available = getCustomModelOptionsByInstance(settings, providerStatuses)
+      .get(selection.instanceId)
+      ?.some((model) => model.slug === selection.model && !model.isUnavailable);
+    return provider &&
+      provider.enabled &&
+      provider.installed &&
+      provider.availability !== "unavailable" &&
+      provider.auth.status !== "unauthenticated" &&
+      available
+      ? (getProviderModelCapabilities(
+          provider.models,
+          selection.model,
+          provider.driver,
+          settings.planModeEnabled,
+        ).optionDescriptors ?? [])
+      : null;
+  }, JSON.stringify(composerDraftTarget));
   const setStickyComposerModelSelection = useComposerDraftStore(
     (store) => store.setStickyModelSelection,
   );
@@ -143,7 +168,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
   const onProviderModelSelect = (
     instanceId: ProviderInstanceId,
     model: string,
-    options?: { focusComposer?: boolean },
+    options?: { focusComposer?: boolean; currentSelection?: ModelSelection; onCommit?: () => void },
   ) => {
     if (!activeThread) return;
     const entry = providerStatuses.find((snapshot) => snapshot.instanceId === instanceId);
@@ -207,13 +232,22 @@ export function useComposerSelection(input: ComposerSelectionInput) {
       if (options?.focusComposer !== false) scheduleComposerFocus();
       return;
     }
-    setComposerDraftModelSelection(
-      scopeThreadRef(activeThread.environmentId, activeThread.id),
-      nextModelSelection,
-      { explicit: true, replaceOptions: true },
-    );
-    setStickyComposerModelSelection(nextModelSelection);
-    if (options?.focusComposer !== false) scheduleComposerFocus();
+    const currentSelection =
+      options?.currentSelection ??
+      (draftModelState.activeProvider
+        ? draftModelState.modelSelectionByProvider[draftModelState.activeProvider]
+        : null) ??
+      activeThread.modelSelection ??
+      settings.defaultModelSelection;
+    requestModelChange(currentSelection?.options, nextModelSelection, (selection) => {
+      setComposerDraftModelSelection(composerDraftTarget, selection, {
+        explicit: true,
+        replaceOptions: true,
+      });
+      setStickyComposerModelSelection(selection);
+      options?.onCommit?.();
+      if (options?.focusComposer !== false) scheduleComposerFocus();
+    });
   };
   const onProviderModelSelectStable = useStableCallback(onProviderModelSelect);
   const onEnvModeChange = (mode: DraftThreadEnvMode) => {
@@ -256,6 +290,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     }
   };
   return {
+    daybreakDialog,
     getModelDisabledReason,
     handleInteractionModeChange,
     handleInteractionModeChangeStable,

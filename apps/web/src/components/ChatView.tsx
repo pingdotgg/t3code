@@ -2785,6 +2785,7 @@ export default function ChatView(props: ChatViewProps) {
   };
 
   const {
+    daybreakDialog,
     getModelDisabledReason,
     handleInteractionModeChange,
     handleInteractionModeChangeStable,
@@ -3870,6 +3871,7 @@ export default function ChatView(props: ChatViewProps) {
         </ChatRightPanel>
       ) : null}
 
+      {daybreakDialog}
       <RevertConfirmHost threadKey={routeThreadKey} onConfirm={onConfirmRevertStable} />
       <LinkPullRequestDialogHost />
       <ThreadVisitWatermark threadRef={routeThreadRef} />

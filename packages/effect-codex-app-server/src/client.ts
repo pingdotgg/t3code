@@ -87,6 +87,7 @@ type ServerNotificationHandler = (
 
 const V2TurnStartParamsWithCollaborationMode = CodexSchema.V2TurnStartParams.pipe(
   Schema.fieldsAssign({
+    cyberAccessProgram: Schema.optionalKey(CodexSchema.V2TurnStartParams__CyberAccessProgram),
     collaborationMode: Schema.optionalKey(CodexSchema.ClientRequest__CollaborationMode),
     additionalContext: Schema.optionalKey(
       Schema.Record(Schema.String, CodexSchema.V2TurnStartParams__AdditionalContextEntry),

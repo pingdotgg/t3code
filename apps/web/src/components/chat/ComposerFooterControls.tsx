@@ -1,3 +1,5 @@
+import { useDaybreakModelChange } from "./useDaybreakModelChange";
+import { getProviderModelCapabilities } from "../../providerModels";
 import type {
   ModelSelection,
   ProviderInstanceId,
@@ -259,10 +261,30 @@ export function ComposerModelPicker({
   readonly onProviderModelSelect: (
     instanceId: ProviderInstanceId,
     model: string,
-    options?: { focusComposer?: boolean },
+    options?: { focusComposer?: boolean; currentSelection?: ModelSelection; onCommit?: () => void },
   ) => void;
 }) {
   const { instanceEntries, modelOptionsByInstance } = pickerProps;
+  const { requestModelChange, daybreakDialog } = useDaybreakModelChange(
+    (selection) => {
+      const entry = instanceEntries.find((entry) => entry.instanceId === selection.instanceId);
+      const available =
+        modelOptionsByInstance
+          ?.get(selection.instanceId)
+          ?.some((model) => model.slug === selection.model && !model.isUnavailable) ??
+        entry?.models.some((model) => model.slug === selection.model);
+      return entry &&
+        entry.enabled &&
+        entry.installed &&
+        entry.isAvailable &&
+        entry.snapshot.auth.status !== "unauthenticated" &&
+        available
+        ? (getProviderModelCapabilities(entry.models, selection.model, entry.driverKind, true)
+            .optionDescriptors ?? [])
+        : null;
+    },
+    JSON.stringify([pickerProps.environmentId, selectedModelSelection]),
+  );
   const toggleModel = (instanceId: ProviderInstanceId, model: string) => {
     const current = multipleModelSelections ?? [selectedModelSelection];
     const matchesModel = (selection: ModelSelection) => {
@@ -280,30 +302,42 @@ export function ComposerModelPicker({
       ? current.filter((selection) => !matchesModel(selection))
       : [...current, createModelSelection(instanceId, model)];
     if (next.length > 1) {
-      onMultipleModelSelectionsChange(next);
+      if (exists) onMultipleModelSelectionsChange(next);
+      else
+        requestModelChange(
+          selectedModelSelection.options,
+          createModelSelection(instanceId, model),
+          (selection) => onMultipleModelSelectionsChange([...current, selection]),
+        );
     } else {
-      onMultipleModelSelectionsChange(null);
       const remaining = next[0] ?? selectedModelSelection;
       onProviderModelSelect(remaining.instanceId, remaining.model, {
         focusComposer: false,
+        currentSelection: remaining,
+        onCommit: () => onMultipleModelSelectionsChange(null),
       });
     }
   };
   return (
-    <ProviderModelPicker
-      {...pickerProps}
-      {...(multipleModelsEnabled
-        ? {
-            ...(multipleModelSelections !== null
-              ? { selectedModels: multipleModelSelections }
-              : {}),
-            onToggleModel: toggleModel,
-          }
-        : {})}
-      onInstanceModelChange={(instanceId, model) => {
-        onMultipleModelSelectionsChange(null);
-        onProviderModelSelect(instanceId, model);
-      }}
-    />
+    <>
+      {daybreakDialog}
+      <ProviderModelPicker
+        {...pickerProps}
+        {...(multipleModelsEnabled
+          ? {
+              ...(multipleModelSelections !== null
+                ? { selectedModels: multipleModelSelections }
+                : {}),
+              onToggleModel: toggleModel,
+            }
+          : {})}
+        onInstanceModelChange={(instanceId, model) => {
+          onProviderModelSelect(instanceId, model, {
+            currentSelection: selectedModelSelection,
+            onCommit: () => onMultipleModelSelectionsChange(null),
+          });
+        }}
+      />
+    </>
   );
 }

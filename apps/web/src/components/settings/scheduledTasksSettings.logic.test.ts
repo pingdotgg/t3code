@@ -2,12 +2,15 @@ import {
   EnvironmentId,
   ProjectId,
   DEFAULT_SERVER_SETTINGS,
+  DEFAULT_UNIFIED_SETTINGS,
   type ServerConfig,
   ProviderInstanceId,
   ScheduledTaskId,
   type ScheduledTask,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
+import { decideDaybreakModelChange } from "@t3tools/client-runtime/model-traits";
+import { getCustomModelOptionsByInstance } from "../../modelSelection";
 
 import type {
   SidebarProjectGroupMember,
@@ -15,9 +18,13 @@ import type {
 } from "../../sidebarProjectGrouping";
 import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope";
 
-import { deriveProviderInstanceEntries } from "../../providerInstances";
+import {
+  applyProviderInstanceSettings,
+  deriveProviderInstanceEntries,
+} from "../../providerInstances";
 import {
   scheduledTaskDefaultModel,
+  scheduledTaskModelDescriptors,
   matchesScheduledTaskScope,
   scheduleFromDraft,
   taskToDraft,
@@ -302,6 +309,231 @@ describe("scheduled task model defaults", () => {
       project,
       deriveProviderInstanceEntries(value.providers),
     );
+  it("falls back to the destination project default when the preferred model disappeared", () => {
+    const active = {
+      instanceId,
+      model: "removed-model",
+      options: [{ id: "cyberAccessProgram", value: "daybreakRed" }],
+    };
+    const next = scheduledTaskDefaultModel(
+      config.settings,
+      { id: projectId, defaultModelSelection: projectSelection },
+      deriveProviderInstanceEntries(config.providers),
+      active,
+    );
+    expect(next).toEqual(projectSelection);
+    const descriptors = scheduledTaskModelDescriptors(
+      DEFAULT_UNIFIED_SETTINGS,
+      config.providers,
+      next!,
+      projectId,
+    );
+    expect(descriptors).not.toBeNull();
+    expect(decideDaybreakModelChange(active.options, next!, descriptors ?? [])).toMatchObject({
+      type: "confirm",
+      choices: [{ label: "Turn Off" }],
+    });
+  });
+
+  it("ignores missing configured defaults and legacy models when choosing a fallback", () => {
+    const missing = { instanceId, model: "removed-model" };
+    const providers = config.providers.map((provider) => ({
+      ...provider,
+      models: [
+        { slug: "legacy", name: "Legacy", isCustom: false, isLegacy: true, capabilities: null },
+        ...provider.models,
+      ],
+    }));
+    expect(
+      scheduledTaskDefaultModel(
+        { ...config.settings, defaultModelSelection: missing },
+        { id: projectId, defaultModelSelection: missing },
+        deriveProviderInstanceEntries(providers),
+        missing,
+      ),
+    ).toEqual({ instanceId, model: "catalog-default" });
+  });
+
+  it("preserves a configured custom model that is absent from native discovery", () => {
+    const preferred = { instanceId, model: "custom-model" };
+    const settings = {
+      ...config.settings,
+      providerInstances: {
+        [instanceId]: {
+          driver: config.providers[0]!.driver,
+          enabled: true,
+          config: { customModels: [{ slug: preferred.model, name: "Custom model" }] },
+        },
+      },
+    };
+    expect(
+      scheduledTaskDefaultModel(
+        settings,
+        { id: projectId },
+        deriveProviderInstanceEntries(config.providers),
+        preferred,
+      ),
+    ).toEqual(preferred);
+  });
+
+  it("resolves destination project enablement instead of carrying the source project's entries", () => {
+    const sourceId = ProjectId.make("source");
+    const settings = {
+      ...config.settings,
+      projectSettingsOverrides: {
+        [sourceId]: { providerInstances: { [instanceId]: { enabled: false } } },
+        [projectId]: { providerInstances: { [instanceId]: { enabled: true } } },
+      },
+    };
+    const sourceEntries = applyProviderInstanceSettings(
+      deriveProviderInstanceEntries(config.providers),
+      settings,
+      sourceId,
+    );
+    expect(scheduledTaskDefaultModel(settings, { id: projectId }, sourceEntries)).toEqual(
+      environmentSelection,
+    );
+    const destinationEntries = applyProviderInstanceSettings(
+      deriveProviderInstanceEntries(config.providers),
+      settings,
+      projectId,
+    );
+    expect(scheduledTaskDefaultModel(settings, { id: sourceId }, destinationEntries)).toBeNull();
+  });
+
+  it("accepts a configured hidden destination default without exposing it in the picker", () => {
+    const programOptions = [
+      {
+        id: "cyberAccessProgram",
+        type: "select" as const,
+        label: "Daybreak",
+        options: [
+          { id: "standard", label: "Off" },
+          { id: "daybreakBlue", label: "Blue" },
+        ],
+      },
+    ];
+    const providers = config.providers.map((provider) => ({
+      ...provider,
+      models: provider.models.map((model) =>
+        model.slug === environmentSelection.model
+          ? { ...model, capabilities: { optionDescriptors: programOptions } }
+          : model,
+      ),
+    }));
+    const settings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      defaultModelSelection: environmentSelection,
+      providerModelPreferences: {
+        [instanceId]: { hiddenModels: [environmentSelection.model], modelOrder: [] },
+      },
+    };
+    expect(
+      getCustomModelOptionsByInstance(settings, config.providers)
+        .get(instanceId)
+        ?.some((model) => model.slug === environmentSelection.model),
+    ).toBe(false);
+    expect(scheduledTaskModelDescriptors(settings, providers, environmentSelection, null)).toEqual(
+      programOptions,
+    );
+    const active = [{ id: "cyberAccessProgram", value: "daybreakBlue" }];
+    const preserved = decideDaybreakModelChange(
+      active,
+      environmentSelection,
+      scheduledTaskModelDescriptors(settings, providers, environmentSelection, null) ?? [],
+    );
+    expect(preserved).toMatchObject({
+      type: "ready",
+      selection: { options: [...environmentSelection.options, ...active] },
+    });
+    expect(
+      scheduledTaskModelDescriptors(
+        settings,
+        config.providers,
+        {
+          instanceId,
+          model: "missing-model",
+        },
+        null,
+      ),
+    ).toBeNull();
+    for (const provider of [
+      { ...config.providers[0]!, installed: false },
+      { ...config.providers[0]!, availability: "unavailable" as const },
+      { ...config.providers[0]!, auth: { status: "unauthenticated" as const } },
+    ]) {
+      expect(
+        scheduledTaskModelDescriptors(settings, [provider], environmentSelection, null),
+      ).toBeNull();
+    }
+  });
+
+  it("validates provider enablement for the destination project in both directions", () => {
+    const settings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: { [instanceId]: { driver: config.providers[0]!.driver, enabled: false } },
+      projectSettingsOverrides: {
+        [projectId]: { providerInstances: { [instanceId]: { enabled: true } } },
+      },
+    };
+    const providers = [{ ...config.providers[0]!, enabled: false }];
+    expect(
+      scheduledTaskModelDescriptors(settings, providers, environmentSelection, projectId),
+    ).not.toBeNull();
+    expect(
+      scheduledTaskModelDescriptors(settings, providers, environmentSelection, null),
+    ).toBeNull();
+  });
+
+  it("requires a downgrade decision for the destination project's enabled fallback provider", () => {
+    const sourceId = ProjectId.make("source");
+    const fallbackId = ProviderInstanceId.make("codex_fallback");
+    const active = {
+      ...environmentSelection,
+      options: [{ id: "cyberAccessProgram", value: "daybreakBlue" }],
+    };
+    const settings = {
+      ...config.settings,
+      defaultModelSelection: active,
+      providerInstances: {
+        ...config.settings.providerInstances,
+        [fallbackId]: { driver: config.providers[0]!.driver, enabled: true },
+      },
+      projectSettingsOverrides: {
+        [projectId]: { providerInstances: { [instanceId]: { enabled: false } } },
+      },
+    };
+    const providers = [config.providers[0]!, { ...config.providers[0]!, instanceId: fallbackId }];
+    const sourceEntries = applyProviderInstanceSettings(
+      deriveProviderInstanceEntries(providers),
+      settings,
+      sourceId,
+    );
+    const next = scheduledTaskDefaultModel(settings, { id: projectId }, sourceEntries);
+    expect(next).toEqual({ instanceId: fallbackId, model: "catalog-default" });
+    if (!next) throw new Error("Expected an enabled fallback provider");
+    const descriptors = scheduledTaskModelDescriptors(
+      { ...DEFAULT_UNIFIED_SETTINGS, providerInstances: settings.providerInstances },
+      providers,
+      next,
+      projectId,
+    );
+    expect(descriptors).not.toBeNull();
+    if (!descriptors) throw new Error("Expected an available destination model");
+    const decision = decideDaybreakModelChange(active.options, next, descriptors);
+    expect(decision).toMatchObject({ type: "confirm", choices: [{ label: "Turn Off" }] });
+    expect(scheduledTaskDefaultModel(settings, { id: projectId }, sourceEntries, active)).toEqual(
+      next,
+    );
+    expect(scheduledTaskDefaultModel(settings, { id: sourceId }, sourceEntries, active)).toEqual(
+      active,
+    );
+    const explicit = { ...active, model: "project-model" };
+    expect(scheduledTaskDefaultModel(settings, { id: sourceId }, sourceEntries, explicit)).toEqual(
+      explicit,
+    );
+  });
+
   it("uses the advertised default instead of catalog order when no default is configured", () => {
     expect(
       resolve({ ...config, settings: { ...config.settings, defaultModelSelection: null } }, null),

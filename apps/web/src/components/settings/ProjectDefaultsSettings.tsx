@@ -1,3 +1,5 @@
+import { useDaybreakModelChange } from "../chat/useDaybreakModelChange";
+import { getProviderModelCapabilities } from "../../providerModels";
 import {
   DEFAULT_SERVER_SETTINGS,
   type ModelSelection,
@@ -44,6 +46,10 @@ import {
   useScopedSettingSource,
   useUpdateScopedSettings,
 } from "./useScopedSettings";
+import {
+  blocksBulkDaybreakChange,
+  intersectDaybreakDescriptors,
+} from "./ProjectDefaultsSettings.logic";
 
 const WORKTREE_SUBMODULES_OPTIONS = ["recursive", "top-level", "none"] as const;
 function isWorktreeSubmodules(value: string | null): value is WorktreeSubmodules {
@@ -85,22 +91,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     selection?.model,
   );
   const activeEntry = entries.find((entry) => entry.instanceId === selection?.instanceId);
-  const mixedModel = useScopedSettingsMixed(["defaultModelSelection"]);
-  const mixedPermissions = useScopedSettingsMixed(["defaultRuntimeMode"]);
-  const PermissionIcon = runtimeModeConfig[settings.defaultRuntimeMode].icon;
-  const mixedWorkspace = useScopedSettingsMixed(["defaultThreadEnvMode"]);
-  const mixedSubmodules = useScopedSettingsMixed(["worktreeSubmodules"]);
-  const mixedAutoPull = useScopedSettingsMixed(["defaultAutoPull"]);
-  const mixedAgentCredits = useScopedSettingsMixed(["removeAgentCreditsOnMerge"]);
-  const mixedMergeMethod = useScopedSettingsMixed(["pullRequestMergeMethod"]);
-  const modelSource = useScopedSettingSource(["defaultModelSelection"]);
-  const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
-  const unavailable = connectedEnvironments.length === 0;
-  const effective = target
-    ? resolveProjectSettings(target.settings, null, null, null).settings
-    : null;
-
-  function modelDisabledReason(instanceId: ProviderInstanceId, model: string): string | null {
+  const modelDisabledReason = (instanceId: ProviderInstanceId, model: string): string | null => {
     const sourceEntry = entries.find((entry) => entry.instanceId === instanceId);
     for (const candidate of targets) {
       const environment = environments.find(
@@ -119,7 +110,9 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
       ).get(instanceId);
       if (
         !entry?.enabled ||
+        !entry.installed ||
         !entry.isAvailable ||
+        entry.snapshot.auth.status === "unauthenticated" ||
         entry.driverKind !== sourceEntry?.driverKind ||
         !options?.some((option) => option.slug === model && !option.isUnavailable)
       ) {
@@ -127,15 +120,84 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
       }
     }
     return null;
-  }
+  };
+
+  const { requestModelChange, daybreakDialog } = useDaybreakModelChange((next) => {
+    if (modelDisabledReason(next.instanceId, next.model)) return null;
+    const descriptorSets = targets.map((target) => {
+      const provider = providersByEnvironment
+        .get(target.environmentId)
+        ?.find((entry) => entry.instanceId === next.instanceId);
+      return provider
+        ? (getProviderModelCapabilities(
+            provider.models,
+            next.model,
+            provider.driver,
+            settings.planModeEnabled,
+          ).optionDescriptors ?? [])
+        : [];
+    });
+    return intersectDaybreakDescriptors(descriptorSets);
+  }, JSON.stringify(scope));
+  const mixedModel = useScopedSettingsMixed(["defaultModelSelection"]);
+  const mixedPermissions = useScopedSettingsMixed(["defaultRuntimeMode"]);
+  const PermissionIcon = runtimeModeConfig[settings.defaultRuntimeMode].icon;
+  const mixedWorkspace = useScopedSettingsMixed(["defaultThreadEnvMode"]);
+  const mixedSubmodules = useScopedSettingsMixed(["worktreeSubmodules"]);
+  const mixedAutoPull = useScopedSettingsMixed(["defaultAutoPull"]);
+  const mixedAgentCredits = useScopedSettingsMixed(["removeAgentCreditsOnMerge"]);
+  const mixedMergeMethod = useScopedSettingsMixed(["pullRequestMergeMethod"]);
+  const modelSource = useScopedSettingSource(["defaultModelSelection"]);
+  const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
+  const unavailable = connectedEnvironments.length === 0;
+  const effective = target
+    ? resolveProjectSettings(target.settings, null, null, null).settings
+    : null;
 
   const setModel = (value: ModelSelection | null) => {
+    if (
+      blocksBulkDaybreakChange(
+        targets.map((target) => target.settings.defaultModelSelection),
+        value,
+      )
+    ) {
+      toastManager.add({
+        type: "warning",
+        title: "Select one target to change Daybreak",
+        description:
+          "Choose a single environment or project before changing a model with an active Daybreak program.",
+      });
+      return;
+    }
     const reason = value ? modelDisabledReason(value.instanceId, value.model) : null;
     if (reason) {
       toastManager.add({ type: "error", title: "Default model not saved", description: reason });
       return;
     }
-    updateSettings({ defaultModelSelection: value });
+    if (
+      value &&
+      value.instanceId === selection?.instanceId &&
+      value.model === selection.model &&
+      value.options !== undefined
+    ) {
+      updateSettings({ defaultModelSelection: value });
+      return;
+    }
+    const next =
+      value ??
+      resolveDefaultProviderModelSelection(providers, null) ??
+      selection ??
+      settings.defaultModelSelection;
+    if (!next) {
+      updateSettings({ defaultModelSelection: value });
+      return;
+    }
+    requestModelChange(
+      selection?.options ?? settings.defaultModelSelection?.options,
+      next,
+      (resolved) => updateSettings({ defaultModelSelection: value === null ? null : resolved }),
+      value === null,
+    );
   };
 
   const modelRow = (
@@ -188,6 +250,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             />
             {!mixedModel ? (
               <TraitsPicker
+                allowDaybreak={targets.length === 1}
                 provider={activeEntry.driverKind}
                 models={activeEntry.models}
                 model={selection.model}
@@ -260,6 +323,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
       id={category === "source-control" ? "source-control-defaults" : "project-defaults"}
       title={category === "source-control" ? "Repositories" : "New threads"}
     >
+      {daybreakDialog}
       {category === "project" ? (
         <>
           {modelRow}
