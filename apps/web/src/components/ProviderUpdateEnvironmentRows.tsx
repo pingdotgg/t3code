@@ -111,6 +111,7 @@ function EnvironmentUpdateRow({
   readonly onUpdate: () => void;
 }) {
   const canManageProviders = useEnvironmentScope(group.environmentId, AuthProvidersManageScope);
+  const canUpdateProviders = canManageProviders && group.isReady;
   let trailing: ReactNode;
   switch (status.kind) {
     case "loading":
@@ -122,14 +123,14 @@ function EnvironmentUpdateRow({
     case "failed":
     case "unchanged":
       trailing = (
-        <Button size="xs" variant="outline" disabled={!canManageProviders} onClick={onUpdate}>
+        <Button size="xs" variant="outline" disabled={!canUpdateProviders} onClick={onUpdate}>
           Retry
         </Button>
       );
       break;
     default:
       trailing = (
-        <Button size="xs" variant="outline" disabled={!canManageProviders} onClick={onUpdate}>
+        <Button size="xs" variant="outline" disabled={!canUpdateProviders} onClick={onUpdate}>
           Update
         </Button>
       );
@@ -203,7 +204,7 @@ export function ProviderUpdateEnvironmentRows({
   const handleUpdate = async (environmentId: EnvironmentId) => {
     if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
     const group = groupByEnvironment.get(environmentId);
-    if (!group || group.candidates.length === 0) {
+    if (!group?.isReady || group.candidates.length === 0) {
       return;
     }
     if (inFlightEnvironmentsRef.current.has(environmentId)) {

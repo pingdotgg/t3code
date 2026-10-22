@@ -64,7 +64,7 @@ export function useLocalEnvironmentUpdateGroups(): {
           })
         : environment.label,
       isPrimary,
-      connectionState: isPrimary ? "ready" : normalizeConnectionState(environment.connection.phase),
+      connectionState: normalizeConnectionState(environment.connection.phase),
       providers: providersByEnvironment.get(environment.environmentId) ?? [],
     });
   }

@@ -20,6 +20,7 @@ import {
   hasOneClickUpdateProviderCandidate,
   isProviderUpdateCandidate,
   isProviderSettingsUpdateCandidate,
+  localEnvironmentUpdateNotificationKey,
   providerUpdateNotificationKey,
   resolveEnvironmentUpdateRowStatus,
   type LocalEnvironmentProvidersInput,
@@ -445,6 +446,27 @@ describe("provider update launch notification logic", () => {
           ?.isSettling,
       ).toBe(true);
     });
+
+    it("keeps the notification key stable while connection readiness changes", () => {
+      const cachedProvider = provider({ driver: driver("codex") });
+      const primary = environment({
+        environmentId: "env-cached",
+        isPrimary: true,
+        connectionState: "connecting",
+        providers: [cachedProvider],
+      });
+      for (const connectionState of [
+        "connecting",
+        "ready",
+        "disconnected",
+        "error",
+        "ready",
+      ] as const) {
+        const { groups } = buildLocalEnvironmentUpdateGroups([{ ...primary, connectionState }]);
+        expect(groups[0]?.isReady).toBe(connectionState === "ready");
+        expect(localEnvironmentUpdateNotificationKey(groups)).toBe("env-cached=codex:1.1.0");
+      }
+    });
   });
 
   describe("resolveEnvironmentUpdateRowStatus", () => {
@@ -453,6 +475,7 @@ describe("provider update launch notification logic", () => {
       label: "WSL",
       isPrimary: false,
       isSettling: false,
+      isReady: true,
       candidates: [updateCandidate({ driver: driver("codex"), latestVersion: "1.1.0" })],
       providers: [],
     };

@@ -37,6 +37,7 @@ type ActiveProviderUpdateToast =
       readonly key: string;
       readonly toastId: ProviderUpdateToastId;
       readonly canManageProviders: boolean;
+      readonly canUpdateProviders: boolean;
     }
   | {
       readonly kind: "update";
@@ -109,6 +110,8 @@ export function ProviderUpdatePrimaryNotification() {
     primaryEnvironment?.environmentId ?? null,
     AuthProvidersManageScope,
   );
+  const canUpdateProviders =
+    canManageProviders && primaryEnvironment?.connection.phase === "connected";
   const updateProvider = useAtomCommand(serverEnvironment.updateProvider, {
     reportFailure: false,
   });
@@ -179,7 +182,8 @@ export function ProviderUpdatePrimaryNotification() {
     const updateExistingPrompt =
       activeToast?.kind === "prompt" &&
       activeToast.key === notificationKey &&
-      activeToast.canManageProviders !== canManageProviders;
+      (activeToast.canManageProviders !== canManageProviders ||
+        activeToast.canUpdateProviders !== canUpdateProviders);
     if (
       !notificationKey ||
       dismissedNotificationKeys.has(notificationKey) ||
@@ -204,7 +208,7 @@ export function ProviderUpdatePrimaryNotification() {
       if (
         updateStarted ||
         oneClickProviders.length === 0 ||
-        !primaryEnvironment ||
+        primaryEnvironment?.connection.phase !== "connected" ||
         !readEnvironmentScope(primaryEnvironment.environmentId, AuthProvidersManageScope)
       ) {
         return;
@@ -291,7 +295,7 @@ export function ProviderUpdatePrimaryNotification() {
         oneClickProviders.length > 0
           ? {
               children: "Update",
-              disabled: !canManageProviders,
+              disabled: !canUpdateProviders,
               onClick: runUpdates,
             }
           : {
@@ -323,9 +327,16 @@ export function ProviderUpdatePrimaryNotification() {
     } else {
       toastId = toastManager.add(toastOptions);
     }
-    activeToastRef.current = { kind: "prompt", key: notificationKey, toastId, canManageProviders };
+    activeToastRef.current = {
+      kind: "prompt",
+      key: notificationKey,
+      toastId,
+      canManageProviders,
+      canUpdateProviders,
+    };
   }, [
     canManageProviders,
+    canUpdateProviders,
     updateProvider,
     dismissNotificationKey,
     dismissedNotificationKeys,

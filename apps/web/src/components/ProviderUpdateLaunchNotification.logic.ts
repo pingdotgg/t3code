@@ -737,6 +737,7 @@ export interface LocalEnvironmentUpdateGroup {
   readonly label: string;
   readonly isPrimary: boolean;
   readonly isSettling: boolean;
+  readonly isReady: boolean;
   readonly candidates: ProviderUpdateCandidate[];
   readonly providers: ReadonlyArray<ServerProvider>;
 }
@@ -749,6 +750,7 @@ export function buildLocalEnvironmentUpdateGroups(
     label: environment.label,
     isPrimary: environment.isPrimary,
     isSettling: environment.connectionState === "connecting",
+    isReady: environment.connectionState === "ready",
     candidates: collectProviderUpdateCandidates(environment.providers).filter((candidate) =>
       canOneClickUpdateProviderCandidate(candidate, environment.providers),
     ),
