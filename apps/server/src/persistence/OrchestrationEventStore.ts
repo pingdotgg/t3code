@@ -118,6 +118,7 @@ export class OrchestrationEventStore extends Context.Service<
     readonly streamProjectedApplicationEvents: <A extends { readonly sequence: number }>(input: {
       readonly afterSequence?: number;
       readonly project: (event: ApplicationStoredEvent) => A;
+      readonly filter?: (event: ApplicationStoredEvent) => boolean;
     }) => Stream.Stream<A, OrchestrationEventStoreError>;
   }
 >()("t3/persistence/OrchestrationEventStore") {}
@@ -716,11 +717,17 @@ const makeEventStore = Effect.gen(function* () {
 
   const streamProjectedApplicationEvents: OrchestrationEventStore["Service"]["streamProjectedApplicationEvents"] =
     (input) =>
-      replayAndBufferProjectedLiveEvents({
+      replayAndBufferProjectedLiveEvents<
+        ApplicationStoredEvent,
+        ReturnType<typeof input.project>,
+        OrchestrationEventStoreError,
+        never
+      >({
         subscribe: PubSub.subscribe(committedEvents),
         latestSequence: latestApplicationSequence,
         afterSequence: input.afterSequence ?? 0,
         project: input.project,
+        ...(input.filter === undefined ? {} : { filter: input.filter }),
         replay: (throughSequence) =>
           catchUpApplicationEvents({
             afterSequence: input?.afterSequence ?? 0,
