@@ -46,6 +46,7 @@ export class PeerMcpClient extends Context.Service<
 >()("t3/peer/PeerMcpClient") {}
 
 const ToolCallResponse = Schema.Struct({
+  id: Schema.Number,
   result: Schema.optional(
     Schema.Struct({
       content: Schema.Array(
@@ -57,7 +58,9 @@ const ToolCallResponse = Schema.Struct({
   ),
   error: Schema.optional(Schema.Struct({ code: Schema.Number, message: Schema.String })),
 });
-const decodeToolCallResponse = Schema.decodeUnknownEffect(Schema.fromJsonString(ToolCallResponse));
+const ToolCallResponseJson = Schema.fromJsonString(ToolCallResponse);
+const decodeToolCallResponse = Schema.decodeUnknownEffect(ToolCallResponseJson);
+const decodeToolCallResponseOption = Schema.decodeUnknownOption(ToolCallResponseJson);
 const decodeFailure = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Struct({ code: OrchestratorMcpFailure.fields.code, message: Schema.String }),
@@ -76,15 +79,29 @@ const fromLinkError = (error: PeerLinkError) =>
     message: error.message,
   });
 
-/** The body of an MCP response: JSON, or a single server-sent event carrying JSON. */
-const responseJson = (contentType: string | undefined, text: string) =>
-  contentType?.includes("text/event-stream") === true
-    ? text
-        .split("\n")
-        .filter((line) => line.startsWith("data:"))
-        .map((line) => line.slice("data:".length).trim())
-        .join("")
-    : text;
+/**
+ * The body of an MCP response: JSON, or the server-sent event answering
+ * `requestId`. A peer may stream notifications ahead of the answer.
+ */
+const responseJson = (contentType: string | undefined, text: string, requestId: number) => {
+  if (contentType?.includes("text/event-stream") !== true) return text;
+  for (const event of text.replace(/\r\n?/g, "\n").split("\n\n")) {
+    const data = event
+      .split("\n")
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice("data:".length).replace(/^ /, ""))
+      .join("\n");
+    const decoded = decodeToolCallResponseOption(data);
+    if (
+      decoded._tag === "Some" &&
+      decoded.value.id === requestId &&
+      (decoded.value.result !== undefined || decoded.value.error !== undefined)
+    ) {
+      return data;
+    }
+  }
+  return "";
+};
 
 const make = Effect.gen(function* () {
   const links = yield* PeerLinks.PeerLinks;
@@ -189,7 +206,7 @@ const make = Effect.gen(function* () {
         });
       }
       const body = yield* decodeToolCallResponse(
-        responseJson(response.headers["content-type"], yield* response.text),
+        responseJson(response.headers["content-type"], yield* response.text, 1),
       ).pipe(
         Effect.mapError(
           () =>

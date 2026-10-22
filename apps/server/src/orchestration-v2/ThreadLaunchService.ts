@@ -11,6 +11,7 @@ import {
   type OrchestrationV2CreationSource,
   type OrchestrationV2ProviderThreadNativeMetadata,
   type OrchestrationV2ThreadProjection,
+  type OrchestrationV2ThreadShell,
   type ProviderDriverKind,
   type ProviderInteractionMode,
   ProjectId,
@@ -167,6 +168,9 @@ export class ThreadLaunchService extends Context.Service<
       ThreadLaunchResult,
       ThreadLaunchError | ThreadManagement.ThreadManagementProviderInstanceDisabledError
     >;
+    readonly getAcceptedLaunch: (
+      input: Pick<ThreadLaunchInput, "commandId" | "projectId" | "threadId">,
+    ) => Effect.Effect<Option.Option<OrchestrationV2ThreadShell>, ThreadLaunchError>;
     /**
      * `launch` accepts such a launch and reports the failure inside the
      * thread; a caller that needs it before a thread exists checks first.
@@ -215,7 +219,11 @@ const make = Effect.gen(function* () {
   yield* Effect.addFinalizer(() => Scope.close(preparationScope, Exit.void));
 
   const mapError =
-    (input: PreparationInput, operation: ThreadLaunchError["operation"], threadId?: ThreadId) =>
+    (
+      input: Pick<ThreadLaunchInput, "commandId" | "projectId">,
+      operation: ThreadLaunchError["operation"],
+      threadId?: ThreadId,
+    ) =>
     (cause: unknown) =>
       new ThreadLaunchError({
         operation,
@@ -225,10 +233,38 @@ const make = Effect.gen(function* () {
         cause,
       });
 
-  const readReceipt = (input: ThreadLaunchInput, commandId: CommandId) =>
+  const readReceipt = (
+    input: Pick<ThreadLaunchInput, "commandId" | "projectId" | "threadId">,
+    commandId: CommandId,
+  ) =>
     receipts
       .getByCommandId(commandId)
       .pipe(Effect.mapError(mapError(input, "read-receipt", input.threadId)));
+
+  const getAcceptedLaunch: ThreadLaunchService["Service"]["getAcceptedLaunch"] = Effect.fn(
+    "ThreadLaunchService.getAcceptedLaunch",
+  )(function* (input) {
+    const receipt = yield* readReceipt(input, input.commandId);
+    if (Option.isNone(receipt)) return Option.none();
+    if (
+      receipt.value.status !== "accepted" ||
+      receipt.value.commandType !== "thread.create" ||
+      (input.threadId !== undefined && input.threadId !== receipt.value.threadId)
+    ) {
+      return yield* mapError(input, "read-receipt")("This command cannot be replayed as a launch.");
+    }
+    const shell = yield* threads
+      .getThreadShell(receipt.value.threadId)
+      .pipe(Effect.mapError(mapError(input, "create-thread", receipt.value.threadId)));
+    if (shell === null || shell.projectId !== input.projectId) {
+      return yield* mapError(
+        input,
+        "resolve-project",
+        receipt.value.threadId,
+      )("The accepted launch does not belong to this project.");
+    }
+    return Option.some(shell);
+  });
 
   const validateReusableThread = Effect.fn("ThreadLaunchService.validateReusableThread")(function* (
     input: ThreadLaunchInput,
@@ -1003,9 +1039,8 @@ const make = Effect.gen(function* () {
         const projection = yield* threads
           .getThreadProjection(threadId)
           .pipe(Effect.mapError(mapError(input, "create-thread", threadId)));
-        const runIsPreparing =
-          runId !== null &&
-          projection.runs.some((run) => run.id === runId && run.status === "preparing");
+        const acceptedRun = projection.runs.find((run) => run.id === runId);
+        const runIsPreparing = acceptedRun?.status === "preparing";
         const shouldSchedule = runId === null ? Option.isNone(launchReceipt) : runIsPreparing;
         const boundWorktreePath = projection.thread.worktreePath;
         const preparationStrategy: ThreadLaunchWorkspaceStrategy =
@@ -1032,11 +1067,20 @@ const make = Effect.gen(function* () {
                       Effect.mapError(mapError(input, "update-thread", threadId)),
                     );
               if (preparationStillRequired) {
-                yield* schedulePreparation(
-                  { ...input, workspaceStrategy: preparationStrategy },
-                  threadId,
-                  runId,
-                );
+                if (acceptedRun?.workspacePreparation !== undefined) {
+                  yield* scheduleRunPreparation(
+                    { commandId: input.commandId, threadId, runId: acceptedRun.id },
+                    projection,
+                    acceptedRun,
+                    acceptedRun.workspacePreparation,
+                  );
+                } else {
+                  yield* schedulePreparation(
+                    { ...input, workspaceStrategy: preparationStrategy },
+                    threadId,
+                    runId,
+                  );
+                }
               } else {
                 yield* releasePreparation(input.commandId);
               }
@@ -1125,7 +1169,13 @@ const make = Effect.gen(function* () {
     );
   };
 
-  return ThreadLaunchService.of({ launch, checkWorktreeBase, retryPreparation, prepareRun });
+  return ThreadLaunchService.of({
+    launch,
+    getAcceptedLaunch,
+    checkWorktreeBase,
+    retryPreparation,
+    prepareRun,
+  });
 });
 
 export const layer = Layer.effect(ThreadLaunchService, make);

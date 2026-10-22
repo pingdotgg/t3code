@@ -11619,6 +11619,33 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
         ),
       );
+      if (
+        command.type === "message.dispatch" &&
+        command.dispatchMode?.type === "defer_start" &&
+        (yield* DispatchModeLimit) !== undefined
+      ) {
+        const runCreated = storedEvents.find(
+          (stored) => stored.event.type === "run.created",
+        )?.event;
+        if (runCreated?.type === "run.created") {
+          const current = yield* projectionStore
+            .getThreadRecords(command.threadId, ["runs"])
+            .pipe(
+              Effect.mapError(
+                (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+              ),
+            );
+          // Replaying this receipt can resume workspace preparation, so it must
+          // respect the caller's current ceiling just like a fresh dispatch.
+          if (
+            current.runs.some(
+              (run) => run.id === runCreated.payload.id && run.status === "preparing",
+            )
+          ) {
+            yield* refuseAboveDispatchModeLimit(command, command.threadId, current.thread);
+          }
+        }
+      }
       if (command.type === "queue.resume" || command.type === "queued-run.start") {
         yield* mapDispatchError(command)(
           startNextQueuedRun(

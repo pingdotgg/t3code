@@ -8,8 +8,10 @@ import {
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -88,6 +90,12 @@ const serveB = (initial: ExecutionEnvironmentDescriptor) =>
     const descriptor = yield* Ref.make(initial);
     const bearers = yield* Ref.make<ReadonlyArray<string>>([]);
     const probes = yield* Ref.make(0);
+    // Answers tool calls as an event stream with other messages ahead of the answer.
+    const sse = yield* Ref.make(false);
+    // Canned answers by path, standing in for a peer's own refusals.
+    const replies = yield* Ref.make<ReadonlyMap<string, { status: number; body: unknown }>>(
+      new Map(),
+    );
     const layerEnvironment = Layer.succeed(ServerEnvironment.ServerEnvironment, {
       getEnvironmentId: Ref.get(descriptor).pipe(Effect.map((current) => current.environmentId)),
       getDescriptor: Ref.get(descriptor),
@@ -113,7 +121,32 @@ const serveB = (initial: ExecutionEnvironmentDescriptor) =>
           if (authorization !== undefined) {
             yield* Ref.update(bearers, (seen) => [...seen, authorization]);
           }
-          return yield* httpEffect;
+          const reply = (yield* Ref.get(replies)).get(request.url);
+          if (reply !== undefined)
+            return HttpServerResponse.jsonUnsafe(reply.body, { status: reply.status });
+          const response = yield* httpEffect;
+          if (
+            !(yield* Ref.get(sse)) ||
+            request.url !== "/mcp" ||
+            response.status !== 200 ||
+            response.body._tag !== "Uint8Array"
+          )
+            return response;
+          const answer = new TextDecoder().decode(response.body.body);
+          const split = answer.indexOf(",") + 1;
+          return HttpServerResponse.text(
+            [
+              'data: {"jsonrpc":"2.0","method":"notifications/progress","params":{"progress":1}}',
+              "",
+              'data: {"jsonrpc":"2.0","id":999,"error":{"code":-1,"message":"other request"}}',
+              "",
+              `data: ${answer.slice(0, split)}`,
+              `data: ${answer.slice(split)}`,
+              "",
+              "",
+            ].join("\r\n"),
+            { contentType: "text/event-stream" },
+          );
         }),
       { global: true },
     );
@@ -167,20 +200,34 @@ const serveB = (initial: ExecutionEnvironmentDescriptor) =>
       auth: Context.get(authContext, EnvironmentAuth.EnvironmentAuth),
       descriptor,
       bearers,
+      sse,
+      replies,
       /** How often its descriptor was asked for, as a probe of whether it answers. */
       probes,
     };
   });
 
 /** Environment A: its own database and secret store, reaching B over plain HTTP. */
-const makeA = (descriptor: ExecutionEnvironmentDescriptor) =>
+const makeA = (
+  descriptor: ExecutionEnvironmentDescriptor,
+  beforeSecretRemove: Effect.Effect<void, ServerSecretStore.SecretStoreError> = Effect.void,
+) =>
   Effect.gen(function* () {
+    const layerSecrets = Layer.effect(
+      ServerSecretStore.ServerSecretStore,
+      Effect.map(ServerSecretStore.ServerSecretStore, (secrets) =>
+        ServerSecretStore.ServerSecretStore.of({
+          ...secrets,
+          remove: (name) => beforeSecretRemove.pipe(Effect.andThen(secrets.remove(name))),
+        }),
+      ),
+    ).pipe(Layer.provide(ServerSecretStore.layer));
     const context = yield* PeerMcpClient.layer.pipe(
       Layer.provideMerge(PeerLinks.layer),
       Layer.provide(
         Layer.mergeAll(
           Sqlite.layerMemory,
-          ServerSecretStore.layer,
+          layerSecrets,
           FetchHttpClient.layer,
           Layer.succeed(ServerEnvironment.ServerEnvironment, {
             getEnvironmentId: Effect.succeed(descriptor.environmentId),
@@ -459,4 +506,132 @@ it.effect(
         expect(yield* linkedSessions(b)).toEqual([]);
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("reads a tool's answer from an event stream carrying other messages first", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const b = yield* serveB(box);
+      const a = yield* makeA(laptop);
+      const pairing = yield* b.auth.issuePairingCredential();
+      yield* a.links.link({ url: b.url, pairingCode: pairing.credential, access: "auto" });
+      const answered = yield* probe(a);
+
+      yield* Ref.set(b.sse, true);
+      expect(yield* probe(a)).toEqual(answered);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect(
+  "keeps a link and its token when forgetting it fails, and never forgets a newer link",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const b = yield* serveB(box);
+        const removal = yield* Ref.make<"fail" | "pause" | null>(null);
+        const removalEntered = yield* Deferred.make<void>();
+        const allowRemoval = yield* Deferred.make<void>();
+        const a = yield* makeA(
+          laptop,
+          Ref.get(removal).pipe(
+            Effect.flatMap((action) =>
+              action === "fail"
+                ? Effect.fail(
+                    new ServerSecretStore.SecretStoreRemoveError({
+                      resource: "test credential",
+                      cause: new Error("removal failed"),
+                    }),
+                  )
+                : action === "pause"
+                  ? Deferred.succeed(removalEntered, undefined).pipe(
+                      Effect.andThen(Deferred.await(allowRemoval)),
+                    )
+                  : Effect.void,
+            ),
+          ),
+        );
+        const pairing = yield* b.auth.issuePairingCredential();
+        yield* a.links.link({ url: b.url, pairingCode: pairing.credential, access: "auto" });
+        const linked = yield* a.links.get(box.environmentId);
+
+        yield* Ref.set(removal, "fail");
+        expect((yield* a.links.unlink(box.environmentId).pipe(Effect.flip)).reason).toBe("storage");
+        expect(yield* a.links.get(box.environmentId)).toEqual(linked);
+        expect(yield* probe(a)).toEqual({ caller: "T3 Code · Laptop", modes: "auto/default" });
+
+        // Linking again while an unlink is forgetting the old token keeps the new link.
+        yield* Ref.set(removal, "pause");
+        const unlinking = yield* a.links.unlink(box.environmentId).pipe(Effect.forkScoped);
+        yield* Deferred.await(removalEntered);
+        yield* Ref.set(removal, null);
+        const repairing = yield* b.auth.issuePairingCredential();
+        const relinked = yield* a.links.link({
+          url: b.url,
+          pairingCode: repairing.credential,
+          access: "approval-required",
+        });
+        yield* Deferred.succeed(allowRemoval, undefined);
+        expect(yield* Fiber.join(unlinking)).toBe(false);
+        expect(yield* a.links.get(box.environmentId)).toEqual(Option.some(relinked));
+        expect(yield* probe(a)).toEqual({
+          caller: "T3 Code · Laptop",
+          modes: "approval-required/default",
+        });
+        expect(yield* a.links.unlink(box.environmentId)).toBe(true);
+        expect(yield* a.links.get(box.environmentId)).toEqual(Option.none());
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("never repeats an address's credentials or a peer's own text in a link error", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const b = yield* serveB(box);
+      const a = yield* makeA(laptop);
+      for (const url of [
+        "file://username:password@example.test/path?token=private",
+        "http://username:password@192.168.1.20:3773/path?token=private",
+      ]) {
+        const invalid = yield* a.links
+          .link({ url, pairingCode: "unused", access: "auto" })
+          .pipe(Effect.flip);
+        expect(invalid.message).not.toMatch(/username|password|private|example\.test/);
+      }
+      const peerText = "PRIVATE-PEER-RESPONSE\n".repeat(200);
+      for (const [path, body, message] of [
+        [
+          "/oauth/mcp/register",
+          { error: "invalid_client_metadata", error_description: peerText },
+          "The peer refused to register this environment. Check its connection settings.",
+        ],
+        [
+          "/oauth/mcp/decision",
+          { _tag: "AuthMcpApprovalError", message: peerText },
+          "The peer refused link approval. Check the pairing code and try again.",
+        ],
+        [
+          "/oauth/mcp/token",
+          { error: "invalid_grant", error_description: peerText },
+          "The peer refused the sign-in token. Create a new pairing code and try again.",
+        ],
+        [
+          "/oauth/mcp/decision",
+          { redirectTo: "http://localhost/?error_description=" + encodeURIComponent(peerText) },
+          "The peer did not approve the link. Check the pairing code and try again.",
+        ],
+      ] as const) {
+        yield* Ref.set(
+          b.replies,
+          new Map([[path, { status: "redirectTo" in body ? 200 : 400, body }]]),
+        );
+        const code = yield* b.auth.issuePairingCredential();
+        const failed = yield* a.links
+          .link({ url: b.url, pairingCode: code.credential, access: "auto" })
+          .pipe(Effect.flip);
+        expect(failed.reason).toBe("pairing_rejected");
+        expect(failed.message).toBe(message);
+      }
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
