@@ -1,6 +1,5 @@
 import { useNavigation, type ParamListBase } from "@react-navigation/native";
 import type {
-  NativeStackHeaderItemMenu,
   NativeStackNavigationOptions,
   NativeStackNavigationProp,
 } from "@react-navigation/native-stack";
@@ -20,7 +19,6 @@ export type AppNativeStackNavigationOptions = Omit<
   "headerTintColor" | "unstable_headerLeftItems" | "unstable_headerRightItems"
 > & {
   readonly nativeContentInsetHorizontally?: boolean;
-  readonly nativeSidebarFilter?: NativeStackHeaderItemMenu;
   readonly headerTintColor?: string | ColorValue;
   readonly unstable_headerCenterItems?: unknown;
   readonly unstable_headerLeftItems?: unknown;
@@ -201,8 +199,19 @@ export function NativeStackScreenOptions(props: {
       return;
     }
     lastAppliedOptionsSignatureRef.current = signature;
-    navigation.setOptions(stableOptions);
-  }, [navigation, props.optionsVersion, stableOptions, tabActive]);
+    // React Navigation keeps a screen's descriptor while its options are shallowly equal. The
+    // stabilized factories keep their identity, so one whose output changed needs a new wrapper
+    // to reach the header.
+    optionFunctionWrappersRef.current = new Map();
+    navigation.setOptions(
+      stabilizeOptionFunctions(
+        normalizedOptions,
+        "options",
+        latestOptionFunctionsRef.current,
+        optionFunctionWrappersRef.current,
+      ) as NativeStackNavigationOptions,
+    );
+  }, [navigation, normalizedOptions, props.optionsVersion, stableOptions, tabActive]);
 
   useEffect(() => {
     if (!navigation || !props.listeners) {

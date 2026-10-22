@@ -50,6 +50,7 @@ import { removeLinkedWorktree } from "./vcs/worktreeRemoval.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import { isNetworkPath } from "@t3tools/shared/path";
 
 const decodeCleanupThread = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2AppThreadJson),
@@ -265,6 +266,11 @@ const make = Effect.gen(function* () {
       const nodeModules = path.join(root, "node_modules");
       const text = yield* fs.readFileString(path.join(nodeModules, ".modules.yaml"));
       const manifest = yield* decodePnpmModulesManifest(yield* Effect.try(() => parseYaml(text)));
+      // An agent can write this manifest, and statting a network path makes
+      // Windows sign in to its host with the user's NTLM credentials.
+      if (isNetworkPath(manifest.storeDir) || isNetworkPath(manifest.virtualStoreDir ?? "")) {
+        return null;
+      }
       const virtualStore = path.resolve(nodeModules, manifest.virtualStoreDir ?? ".pnpm");
       const [store, virtual] = yield* Effect.all([
         fs.stat(manifest.storeDir),

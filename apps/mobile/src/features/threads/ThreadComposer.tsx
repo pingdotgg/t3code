@@ -349,6 +349,9 @@ export function ComposerSurface(props: {
   );
 }
 
+/** Space below the composer pill, inside the bottom inset it is given. */
+export const THREAD_COMPOSER_BOTTOM_GUTTER = 6;
+
 export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps) {
   const project = useProject(scopeProjectRef(props.environmentId, props.selectedThread.projectId));
   const { themeVariables: materialTheme } = useAppearancePreferences();
@@ -804,7 +807,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       className="px-[12px]"
       style={{
         paddingTop: usesCard ? 8 : 6,
-        paddingBottom: (props.bottomInset ?? 0) + (usesCard ? 8 : 6),
+        paddingBottom: (props.bottomInset ?? 0) + (usesCard ? 8 : THREAD_COMPOSER_BOTTOM_GUTTER),
         backgroundColor:
           Platform.OS === "android" ? themeColorWithAlpha(composerPanel, 1) : undefined,
       }}

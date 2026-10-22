@@ -63,6 +63,18 @@ export const serverEventLoopDelayMax = Metric.gauge("t3_server_event_loop_delay_
   attributes: { unit: "ms" },
 });
 
+export const runsTotal = Metric.counter("t3_runs_total", {
+  description: "Runs that finished, by outcome. A later rollback does not count again.",
+});
+
+export const runDuration = Metric.timer("t3_run_duration", {
+  description: "Wall time of a run, from when it started to its terminal status.",
+});
+
+export const runQueueWait = Metric.timer("t3_run_queue_wait", {
+  description: "Time a run waited between being requested and starting.",
+});
+
 export const gitCommandsTotal = Metric.counter("t3_git_commands_total", {
   description: "Total git commands executed by the server runtime.",
 });

@@ -6,6 +6,15 @@ export function isUncPath(value: string): boolean {
   return value.startsWith("\\\\");
 }
 
+/**
+ * Windows treats `/` and `\` alike, so any two leading separators name a UNC
+ * or device path. Touching one makes Windows sign in to that host with the
+ * user's NTLM credentials, so agent-authored paths must not reach one.
+ */
+export function isNetworkPath(value: string): boolean {
+  return /^[\\/]{2}/.test(value);
+}
+
 export function isWindowsAbsolutePath(value: string): boolean {
   return isUncPath(value) || isWindowsDrivePath(value);
 }

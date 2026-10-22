@@ -3,22 +3,34 @@ import { act, createContext, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 
+type HeaderOptions = {
+  unstable_headerLeftItems?: () => NativeStackHeaderItem[];
+  unstable_headerRightItems?: () => NativeStackHeaderItem[];
+  unstable_headerToolbarItems?: () => NativeStackHeaderItem[];
+};
+
 const harness = vi.hoisted(() => ({
   params: { path: ["first", "guide.pdf"] },
+  appliedOptions: {} as HeaderOptions,
   renderedItems: [] as NativeStackHeaderItem[],
   setOptionsCalls: 0,
   openedDocuments: [] as string[],
 }));
 
-// Native headers retain the actions materialized when navigation applies options.
+// Native headers retain the actions materialized when navigation applies options. Like React
+// Navigation, the header renders again only when the options are no longer shallowly equal.
 vi.mock("@react-navigation/native", () => {
   const navigation = {
-    setOptions(options: {
-      unstable_headerLeftItems?: () => NativeStackHeaderItem[];
-      unstable_headerRightItems?: () => NativeStackHeaderItem[];
-      unstable_headerToolbarItems?: () => NativeStackHeaderItem[];
-    }) {
+    setOptions(options: HeaderOptions) {
       harness.setOptionsCalls += 1;
+      const previous: Record<string, unknown> = harness.appliedOptions;
+      const next: Record<string, unknown> = { ...previous, ...options };
+      harness.appliedOptions = next;
+      if (
+        Object.keys(next).length === Object.keys(previous).length &&
+        Object.keys(next).every((key) => next[key] === previous[key])
+      )
+        return;
       harness.renderedItems =
         options.unstable_headerLeftItems?.() ??
         options.unstable_headerRightItems?.() ??
@@ -104,6 +116,7 @@ function openRenderedDocument() {
 afterEach(() => {
   act(() => root?.unmount());
   root = null;
+  harness.appliedOptions = {};
   harness.renderedItems = [];
   harness.setOptionsCalls = 0;
   harness.openedDocuments = [];

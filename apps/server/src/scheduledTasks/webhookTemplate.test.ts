@@ -165,6 +165,23 @@ describe("renderWebhookPrompt", () => {
     );
   });
 
+  it("renders a [] wildcard as the list of matching values", () => {
+    const rendered = renderWebhookPrompt(
+      "Labels: {{body.pull_request.labels[]}} Names: {{body.reviewers[].login}}",
+      {
+        ...githubPullRequest,
+        bodyText: JSON.stringify({
+          pull_request: { labels: ["bug", "ui"] },
+          reviewers: [{ login: "ada" }, { name: "no login" }, { login: "bob" }],
+        }),
+      },
+      "id",
+      true,
+    );
+    assert.equal(rendered.prompt, 'Labels: [\n  "bug",\n  "ui"\n] Names: [\n  "ada",\n  "bob"\n]');
+    assert.deepEqual(rendered.missing, []);
+  });
+
   it("does not resolve inherited object properties", () => {
     const rendered = renderWebhookPrompt(
       "{{body.constructor}}{{body.__proto__}}{{headers.constructor}}{{headers.__proto__}}",

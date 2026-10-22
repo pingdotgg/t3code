@@ -11,6 +11,11 @@ import {
   type ScopedProjectRef,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
+import {
+  type CloneProtocol,
+  cloneUrlForProtocol,
+  cloneUrlProtocol,
+} from "@t3tools/shared/cloneUrl";
 import { ArrowRightIcon } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { create } from "zustand";
@@ -21,10 +26,7 @@ import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useLogicalProjectEnvironments } from "../hooks/useLogicalProjectEnvironments";
 import {
   COPYABLE_FILE_MAX_BYTES,
-  type CloneProtocol,
   addProjectToMachine,
-  cloneUrlForProtocol,
-  cloneUrlProtocol,
   isDefaultCopiedFile,
 } from "../lib/addProjectToMachine";
 import { formatBytes } from "../lib/formatBytes";

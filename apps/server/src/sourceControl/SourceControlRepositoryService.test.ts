@@ -9,7 +9,11 @@ import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/process";
 
-import { GitCommandError, SourceControlProviderError } from "@t3tools/contracts";
+import {
+  GitCommandError,
+  SourceControlProviderError,
+  type SourceControlCloneRepositoryInput,
+} from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -240,6 +244,98 @@ it.effect("reports clone progress from git's stderr and keeps its error text on 
       "fatal: early EOF fatal: unable to access 'https://github.com/octocat/t3code.git/': could not resolve host",
     );
   }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+function rejectingSsh(
+  urls: Array<string>,
+  httpsFails: boolean,
+  reason: GitCommandError["reason"] = "authentication_failed",
+) {
+  return {
+    execute: (input: GitVcsDriver.ExecuteGitInput) =>
+      Effect.gen(function* () {
+        const url = input.args.at(-2)!;
+        urls.push(url);
+        if (url.startsWith("https://") && !httpsFails) return processOutput();
+        yield* (
+          input.progress?.onStderrLine?.(
+            url.startsWith("https://")
+              ? "fatal: could not read Username for 'https://github.com': terminal prompts disabled"
+              : "git@github.com: Permission denied (publickey).",
+          ) ?? Effect.void
+        );
+        return yield* new GitCommandError({
+          operation: input.operation,
+          command: "git",
+          cwd: input.cwd,
+          reason,
+          detail: "Git command exited with a non-zero status.",
+        });
+      }),
+  } satisfies Partial<GitVcsDriver.GitVcsDriver["Service"]>;
+}
+
+const cloneInTemporaryDirectory = (
+  git: Partial<GitVcsDriver.GitVcsDriver["Service"]>,
+  input: Omit<SourceControlCloneRepositoryInput, "destinationPath">,
+) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const parent = yield* fs
+      .makeTempDirectoryScoped({ prefix: "t3-clone-fallback-" })
+      .pipe(Effect.orDie);
+    return yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      return yield* service.cloneRepository({
+        ...input,
+        destinationPath: path.join(parent, "t3code"),
+      });
+    }).pipe(Effect.provide(layer({ git }).pipe(Layer.orDie)));
+  }).pipe(Effect.provide(NodeServices.layer));
+
+it.effect("retries a clone over HTTPS when the SSH login is refused", () =>
+  Effect.gen(function* () {
+    const urls: Array<string> = [];
+    const result = yield* cloneInTemporaryDirectory(rejectingSsh(urls, false), {
+      remoteUrl: CLONE_URLS.sshUrl,
+    });
+
+    assert.deepStrictEqual(urls, [CLONE_URLS.sshUrl, "https://github.com/octocat/t3code.git"]);
+    assert.strictEqual(result.remoteUrl, "https://github.com/octocat/t3code.git");
+  }),
+);
+
+it.effect("reports both failures when the HTTPS retry fails too", () =>
+  Effect.gen(function* () {
+    const urls: Array<string> = [];
+    const error = yield* Effect.flip(
+      cloneInTemporaryDirectory(rejectingSsh(urls, true), { remoteUrl: CLONE_URLS.sshUrl }),
+    );
+
+    assert.strictEqual(urls.length, 2);
+    assert.strictEqual(
+      error.detail,
+      "git@github.com: Permission denied (publickey). Cloning over HTTPS instead also failed: fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+    );
+  }),
+);
+
+it.effect.each([
+  ["the caller asked for SSH", "ssh", "authentication_failed"],
+  ["git failed for another reason", undefined, "remote_unreachable"],
+] as const)("does not retry over HTTPS when %s", ([, protocol, reason]) =>
+  Effect.gen(function* () {
+    const urls: Array<string> = [];
+    yield* Effect.flip(
+      cloneInTemporaryDirectory(rejectingSsh(urls, false, reason), {
+        remoteUrl: CLONE_URLS.sshUrl,
+        ...(protocol === undefined ? {} : { protocol }),
+      }),
+    );
+
+    assert.deepStrictEqual(urls, [CLONE_URLS.sshUrl]);
+  }),
 );
 
 it.effect("strips embedded credentials from the remote URL it reports", () =>

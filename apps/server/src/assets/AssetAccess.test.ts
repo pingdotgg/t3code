@@ -17,6 +17,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientResponse, HttpServerResponse } from "effect/http";
 import { vi } from "vite-plus/test";
@@ -356,6 +357,47 @@ describe("AssetAccess", () => {
           }
         }
       }).pipe(Effect.provideService(HostProcess.HomeDirectory, home));
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  // Resolving `file://attacker.test/share/cat.jpg` from an agent's markdown sent the
+  // Windows user's NTLM credentials to attacker.test.
+  it.effect("never resolves a network media path outside the thread's project", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const resolved: Array<string> = [];
+      const recordingFileSystem = FileSystem.FileSystem.of({
+        ...fs,
+        realPath: (requestedPath) => {
+          resolved.push(requestedPath);
+          return Effect.fail(
+            PlatformError.systemError({
+              _tag: "NotFound",
+              module: "FileSystem",
+              method: "realPath",
+              pathOrDescriptor: requestedPath,
+            }),
+          );
+        },
+      });
+      const share = "//nas.test/share/project";
+      for (const resource of [
+        {
+          _tag: "media-file",
+          threadId: ThreadId.make("thread-1"),
+          path: "//attacker.test/s/a.png",
+        },
+        { _tag: "draft-workspace-file", cwd: share, path: "//attacker.test/s/a.png" },
+        { _tag: "media-file", threadId: ThreadId.make("thread-1"), path: `${share}/a.png` },
+      ] as const) {
+        const error = yield* issueAssetUrl({ resource, workspaceRoot: share }).pipe(
+          Effect.provideService(FileSystem.FileSystem, recordingFileSystem),
+          Effect.flip,
+        );
+        expect(error._tag).toBe("AssetWorkspaceAssetNotFoundError");
+      }
+      expect(resolved).toEqual([path.resolve(`${share}/a.png`)]);
     }).pipe(Effect.provide(layerTest)),
   );
 

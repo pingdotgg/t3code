@@ -126,10 +126,15 @@ describe("resolveMarkdownFileLinkTarget", () => {
     );
   });
 
-  it("resolves file uri authorities as windows UNC paths", () => {
-    expect(resolveMarkdownFileLinkTarget("file://server/share/workspace-image.svg")).toBe(
+  it("links a network path only inside the project's share", () => {
+    const cwd = "\\\\server\\share";
+    expect(resolveMarkdownFileLinkTarget("file://server/share/workspace-image.svg", cwd)).toBe(
       "\\\\server\\share\\workspace-image.svg",
     );
+    // Opening these sent the Windows user's NTLM credentials to attacker.test.
+    for (const href of ["file://attacker.test/s/x.ts", "\\\\attacker.test\\s\\x.ts"]) {
+      expect(resolveMarkdownFileLinkTarget(href, cwd)).toBeNull();
+    }
   });
 
   it("keeps an encoded final space in the absolute target", () => {
