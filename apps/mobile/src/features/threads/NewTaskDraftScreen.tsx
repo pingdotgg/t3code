@@ -21,7 +21,8 @@ import {
   usePreventRemove,
   type NavigationAction,
 } from "@react-navigation/native";
-import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
+import { HeaderHeightContext } from "@react-navigation/elements";
+import { useContext, useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import { Platform, Pressable, ScrollView, View } from "react-native";
 import {
   KeyboardController,
@@ -214,6 +215,9 @@ export function NewTaskDraftScreen(props: {
     reserveShare,
   } = useIncomingShare();
   const insets = useSafeAreaInsets();
+  // The iOS glass header floats over the hero, and its height differs between an
+  // iPhone sheet and an iPad column that also carries the status bar.
+  const navigationHeaderHeight = useContext(HeaderHeightContext) ?? insets.top + 56;
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
   const controlsBottomPadding = Math.max(insets.bottom, 10);
   const keyboardOpenedOffset = Math.max(0, controlsBottomPadding - 8);
@@ -1550,7 +1554,10 @@ export function NewTaskDraftScreen(props: {
         alwaysBounceVertical={isKeyboardVisible}
         className="flex-1"
         contentInsetAdjustmentBehavior="never"
-        contentContainerClassName="grow items-center pb-[236px] pt-12 ios:pt-[72px]"
+        contentContainerClassName="grow items-center pb-[236px] pt-12"
+        contentContainerStyle={
+          Platform.OS === "ios" ? { paddingTop: navigationHeaderHeight + 16 } : undefined
+        }
         keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
