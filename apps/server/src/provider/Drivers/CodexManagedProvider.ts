@@ -1,4 +1,9 @@
-import { ProviderDriverKind, TextGenerationError, type CodexSettings } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  ProviderSetupError,
+  TextGenerationError,
+  type CodexSettings,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -128,10 +133,21 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
             effective.environment,
             managedAuth,
           );
-          const models = yield* chatGptModels(
-            effective.environment.ACCESS_TOKEN!,
-            draft.models,
-          ).pipe(Effect.provideService(HttpClient.HttpClient, http));
+          const credentials = yield* runtime.auth.access;
+          // Another server can replace the saved profile while the native probe runs.
+          // Never send that account's token with the launch profile's catalog labels.
+          if (
+            (yield* runtime.auth.profileKey(credentials)) !== effective.revision ||
+            (yield* runtime.auth.profileKey(saved.value)) !== effective.revision
+          )
+            return yield* new ProviderSetupError({
+              instanceId,
+              operation: "models",
+              detail: "The ChatGPT connection changed while checking Codex. Retry.",
+            });
+          const models = yield* chatGptModels(credentials.accessToken, draft.models).pipe(
+            Effect.provideService(HttpClient.HttpClient, http),
+          );
           return { ...draft, models };
         }),
       ),
@@ -225,7 +241,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
     Effect.forkScoped,
   );
   const resolveRuntime = runtime.auth.controller.withAccess!(runtime.resolve);
-  // Launch settings resolve per session from the signed-in token. The registry
+  // Launch settings bind the refresh command to the signed-in profile. The registry
   // already wraps openSession in withAccess, so resolve without re-entering it.
   const orchestrationAdapter = yield* createCodexAdapterV2(input, {
     onUsageLimits: (update) => snapshot.applyUsageLimits(update),
