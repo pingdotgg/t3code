@@ -21,6 +21,7 @@ import {
 import type { AuthEnvironmentScope, DpopFailureReason } from "@t3tools/contracts";
 import { parseOAuthScope } from "@t3tools/shared/oauthScope";
 import { causeErrorTag } from "@t3tools/shared/observability";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -75,22 +76,28 @@ export const annotateEnvironmentRequest =
     const request = yield* HttpServerRequest.HttpServerRequest;
     const url = requestUrl(request);
     const traceId = yield* currentEnvironmentTraceId;
+    const attributes = {
+      endpoint,
+      traceId,
+      method: request.method,
+      path: url._tag === "Some" ? url.value.pathname : "unknown",
+    };
 
-    yield* Effect.addFinalizer((exit) =>
-      exit._tag === "Failure"
-        ? Effect.logWarning("environment api request failed", {
-            endpoint,
-            traceId,
+    yield* Effect.addFinalizer((exit) => {
+      if (exit._tag !== "Failure") return Effect.void;
+      return Cause.hasInterruptsOnly(exit.cause)
+        ? Effect.logDebug("environment api request cancelled", attributes)
+        : Effect.logWarning("environment api request failed", {
+            ...attributes,
             errorTag: causeErrorTag(exit.cause),
-            cause: exit.cause,
-          })
-        : Effect.void,
-    );
+            cause: Cause.pretty(exit.cause),
+          });
+    });
     yield* Effect.annotateLogsScoped({ "environment.endpoint": endpoint, traceId });
     yield* Effect.annotateCurrentSpan({
       "environment.endpoint": endpoint,
       "http.request.method": request.method,
-      "url.path": url._tag === "Some" ? url.value.pathname : "unknown",
+      "url.path": attributes.path,
     });
   });
 
