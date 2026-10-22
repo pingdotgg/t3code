@@ -281,7 +281,7 @@ function ConnectAgentHeading({
   );
 }
 
-export function AccessOption({
+function AccessOption({
   access,
   selected,
 }: {

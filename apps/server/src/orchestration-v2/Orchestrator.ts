@@ -500,6 +500,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.created.record":
       return command.parentThreadId;
     case "secret_request.record":
+    case "link_request.record":
       return command.threadId;
     case "thread.fork":
     case "thread.merge_back":
@@ -3665,6 +3666,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         now,
         cancelQueuedDelivery: false,
       });
+      yield* closePendingLinkRequests({ command, events, threadId: command.threadId, now });
     }
 
     // Settle joins archive here: both mean "done with this
@@ -8008,6 +8010,201 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
+  /**
+   * Records or updates the card for a link an agent asked the user to make.
+   * The pairing code goes straight to the link and never through orchestration.
+   */
+  const dispatchLinkRequestRecord = Effect.fn("orchestrationV2.dispatch.linkRequestRecord")(
+    function* (
+      command: Extract<OrchestrationV2InternalCommand, { readonly type: "link_request.record" }>,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+      effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+    ) {
+      const projection = yield* projectionStore
+        .getThreadRecords(
+          command.threadId,
+          ["runs", "nodes", "turnItems", "attempts", "providerTurns"],
+          { turnItemTypes: ["link_request"], messageRoles: [] },
+        )
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+          ),
+        );
+      const run = projection.runs.find((candidate) => candidate.id === command.runId);
+      if (run === undefined) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Run ${command.runId} was not found.`,
+        });
+      }
+      const existing = projection.turnItems.find((item) => item.id === command.turnItemId);
+      if (existing !== undefined && existing.type !== "link_request") {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Turn item ${command.turnItemId} is not a link request.`,
+        });
+      }
+      if (existing !== undefined && existing.runId !== command.runId) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Link request ${command.turnItemId} belongs to another run.`,
+        });
+      }
+      // Only a new card needs its run's current root and a live run. An answer
+      // may land long after a steer restarted the run or the run ended, and the
+      // link it reports is already made.
+      if (existing === undefined && run.rootNodeId !== command.nodeId) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Node ${command.nodeId} is not the root of run ${command.runId}.`,
+        });
+      }
+      if (
+        existing === undefined &&
+        (!isBlockingRun(run) || (yield* stopReachedRun(command, command.threadId, run.id)))
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Run ${command.runId} is not active.`,
+        });
+      }
+      const nodeId = existing?.nodeId ?? command.nodeId;
+      const now = yield* DateTime.now;
+      // A request is answered once, and a retry finds its card as it was
+      // asked: either one records the card unchanged.
+      const unchanged =
+        existing !== undefined &&
+        (existing.linkStatus !== "pending" || command.linkStatus === "pending");
+      const pending = command.linkStatus === "pending";
+      const {
+        type: _type,
+        commandId: _commandId,
+        turnItemId: _turnItemId,
+        wake,
+        ...fields
+      } = command;
+      const turnItem: OrchestrationV2TurnItem = unchanged
+        ? existing
+        : {
+            ...fields,
+            id: command.turnItemId,
+            // An update keeps where the card was asked, even after a restart.
+            ...(existing === undefined
+              ? {
+                  providerThreadId: run.providerThreadId,
+                  providerTurnId: providerTurnForRun(projection, run)?.id ?? null,
+                }
+              : {
+                  nodeId: existing.nodeId,
+                  providerThreadId: existing.providerThreadId,
+                  providerTurnId: existing.providerTurnId,
+                }),
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: existing?.ordinal ?? (yield* nextTurnItemOrdinal(projection)),
+            status: pending
+              ? "waiting"
+              : command.linkStatus === "linked"
+                ? "completed"
+                : command.linkStatus === "failed"
+                  ? "failed"
+                  : "cancelled",
+            title: command.label ?? command.url ?? "Link an environment",
+            startedAt: existing?.startedAt ?? now,
+            completedAt: pending ? null : now,
+            updatedAt: now,
+            type: "link_request",
+          };
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "turn-item.updated",
+        threadId: command.threadId,
+        runId: command.runId,
+        nodeId,
+        providerInstanceId: run.providerInstanceId,
+        occurredAt: now,
+        payload: turnItem,
+      });
+      // The agent asked without waiting, so the answer reaches it as a
+      // notification: it starts a turn, or follows the one running. Only the
+      // answer that closes the card wakes it, and never a closed thread.
+      if (
+        wake === undefined ||
+        unchanged ||
+        projection.thread.archivedAt !== null ||
+        projection.thread.deletedAt !== null
+      ) {
+        return;
+      }
+      yield* dispatchMessage(
+        {
+          type: "message.dispatch",
+          commandId: command.commandId,
+          threadId: command.threadId,
+          messageId: wake.messageId,
+          text: wake.text,
+          notification: wake.notification,
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "agent",
+          creationSource: "server",
+        },
+        events,
+        effects,
+      );
+    },
+  );
+
+  /**
+   * Closes the link cards still waiting for the user. Their agent stopped
+   * waiting long ago, so nobody is woken: stopping or archiving the thread
+   * means the user is done with it.
+   */
+  const closePendingLinkRequests = Effect.fn("orchestrationV2.closePendingLinkRequests")(
+    function* (input: {
+      readonly command: OrchestrationV2ServerCommand;
+      readonly events: Ref.Ref<Array<OrchestrationV2DomainEvent>>;
+      readonly threadId: ThreadId;
+      readonly now: DateTime.Utc;
+    }) {
+      const { turnItems } = yield* projectionStore
+        .getThreadRecords(input.threadId, ["turnItems"], {
+          turnItemTypes: ["link_request"],
+          turnItemStatuses: ["waiting"],
+          messageRoles: [],
+        })
+        .pipe(mapDispatchError(input.command));
+      for (const item of turnItems) {
+        if (item.type !== "link_request" || item.linkStatus !== "pending") continue;
+        yield* emit(
+          input.events,
+          input.command,
+        )({
+          type: "turn-item.updated",
+          threadId: input.threadId,
+          ...(item.runId === null ? {} : { runId: item.runId }),
+          ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
+          occurredAt: input.now,
+          payload: {
+            ...item,
+            status: "cancelled",
+            linkStatus: "cancelled",
+            completedAt: input.now,
+            updatedAt: input.now,
+          },
+        });
+      }
+    },
+  );
+
   const dispatchRuntimeRequestRespond = Effect.fn("Orchestrator.dispatchRuntimeRequestRespond")(
     function* (
       command: Extract<OrchestrationV2Command, { readonly type: "runtime-request.respond" }>,
@@ -9643,6 +9840,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         now: input.now,
       });
     }
+    yield* closePendingLinkRequests({ ...input, threadId: thread.id });
   });
 
   const dispatchBackgroundWorkSettle = Effect.fn("Orchestrator.dispatchBackgroundWorkSettle")(
@@ -11941,6 +12139,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "secret_request.record":
         yield* dispatchSecretRequestRecord(command, events);
+        break;
+      case "link_request.record":
+        yield* dispatchLinkRequestRecord(command, events, effects);
         break;
       default:
         return yield* dispatchUnsupported(command);
