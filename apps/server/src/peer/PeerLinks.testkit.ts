@@ -43,7 +43,12 @@ export const descriptorOf = (
   label,
   platform: { os: "linux", arch: "x64" },
   serverVersion: "0.0.0-test",
-  capabilities: { repositoryIdentity: true, mcpModeLimitHeader: true, ...capabilities },
+  capabilities: {
+    repositoryIdentity: true,
+    mcpModeLimitHeader: true,
+    linkFence: true,
+    ...capabilities,
+  },
 });
 
 /**
@@ -145,9 +150,9 @@ export type ServedPeer = Effect.Success<ReturnType<typeof servePeer>>;
 export const layerLinkingEnvironment = (descriptor: ExecutionEnvironmentDescriptor) =>
   PeerMcpClient.layer.pipe(
     Layer.provideMerge(PeerLinks.layer),
+    Layer.provideMerge(Sqlite.layerMemory),
     Layer.provide(
       Layer.mergeAll(
-        Sqlite.layerMemory,
         ServerSecretStore.layer,
         FetchHttpClient.layer,
         Layer.succeed(ServerEnvironment.ServerEnvironment, {

@@ -1,5 +1,6 @@
 import {
   type EnvironmentId,
+  type OrchestrationV2LinkOrigin,
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpFailure,
   type ProviderInteractionMode,
@@ -20,6 +21,7 @@ import {
   type DispatchModeRefusal,
 } from "../orchestration-v2/DispatchModeLimit.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
+import { assertNotLinked, assertSameLink, callerLinkOrigin } from "./linkOrigin.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import { resolveInteractionMode, resolveRuntimeMode } from "./OrchestratorMcpService.ts";
 import {
@@ -142,19 +144,42 @@ export const actsAsCaller = <P, A, E, R>(handle: (params: P) => Effect.Effect<A,
     undefined,
   );
 
-export const writes = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>) =>
+/**
+ * Changes something that belongs to no thread, such as a pending upload or a
+ * scheduled task. Work a linked environment started may not: none of it
+ * carries the link's origin, so none of it is that link's.
+ */
+export const writes = <P, A, E, R>(
+  handle: (params: P) => Effect.Effect<A, E, R>,
+  options?: {
+    /** Whether a linked caller may make it, as for uploads its own sends need. */
+    readonly linkedCallers?: "allowed";
+  },
+) =>
   declare(
-    (params: P) => orchestratingCaller.pipe(Effect.flatMap(() => handle(params))),
+    (params: P) =>
+      orchestratingCaller.pipe(
+        Effect.tap((caller) =>
+          options?.linkedCallers === "allowed"
+            ? Effect.void
+            : assertNotLinked(caller, "change this environment's scheduled tasks"),
+        ),
+        Effect.flatMap(() => handle(params)),
+      ),
     () => orchestratingCaller,
   );
 
 /**
  * Unlike `writes` it does not need thread control; the handler checks its
- * capability, as the capability toolkits do.
+ * capability, as the capability toolkits do. Linked work is refused the same way.
  */
 export const writesWithCapability = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>) =>
   declare(
-    (params: P) => writingCaller.pipe(Effect.flatMap(() => handle(params))),
+    (params: P) =>
+      writingCaller.pipe(
+        Effect.tap((caller) => assertNotLinked(caller, "start work here that is not its link's")),
+        Effect.flatMap(() => handle(params)),
+      ),
     () => writingCaller,
   );
 
@@ -173,6 +198,7 @@ export const writesThreads = <P, A, E, R>(
             .pipe(Effect.mapError(unavailable));
           if (target !== null && target.deletedAt === null) {
             yield* assertTargetWithinLimits(caller.limits, target);
+            yield* assertSameLink(caller, target);
           }
         }
         // The target's user can raise its modes after the check above; the
@@ -205,29 +231,42 @@ const escalationDenied = (refusal: DispatchModeRefusal) =>
 export interface StartedModes {
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
+  /** The linked environment the caller acts for. The thread must carry it. */
+  readonly linkOrigin: OrchestrationV2LinkOrigin | undefined;
 }
 
+/**
+ * Starts threads with the modes `modes` requests, which may not be broader
+ * than the caller's. `linked` says what a linked caller gets: threads stamped
+ * with its `linkOrigin`, or a refusal where the tool cannot carry one.
+ */
 export const startsThreads = <P, A, E, R>(
   modes: (params: P) => {
     readonly runtimeMode?: RuntimeMode | undefined;
     readonly interactionMode?: ProviderInteractionMode | undefined;
   },
   handle: (params: P, modes: StartedModes) => Effect.Effect<A, E, R>,
+  linked: "stamped" | { readonly refused: string },
 ) => {
-  const started = Effect.fn("McpToolAccess.started")(function* (params: P) {
-    const { limits } = yield* writingCaller;
+  const started = Effect.fn("McpToolAccess.started")(function* (caller: Caller, params: P) {
     const requested = modes(params);
     return {
-      runtimeMode: yield* resolveRuntimeMode(limits.runtimeMode, requested.runtimeMode),
+      runtimeMode: yield* resolveRuntimeMode(caller.limits.runtimeMode, requested.runtimeMode),
       interactionMode: yield* resolveInteractionMode(
-        limits.interactionMode,
+        caller.limits.interactionMode,
         requested.interactionMode,
       ),
+      linkOrigin: callerLinkOrigin(caller),
     } satisfies StartedModes;
   });
   return declare(
-    (params: P) => Effect.flatMap(started(params), (modes) => handle(params, modes)),
-    started,
+    (params: P) =>
+      Effect.gen(function* () {
+        const caller = yield* writingCaller;
+        if (linked !== "stamped") yield* assertNotLinked(caller, linked.refused);
+        return yield* handle(params, yield* started(caller, params));
+      }),
+    (params: P) => Effect.flatMap(writingCaller, (caller) => started(caller, params)),
   );
 };
 
@@ -243,13 +282,29 @@ export const writesEnvironment = <P, A, E, R>(
     params: P,
     check: Effect.Effect<Caller, OrchestratorMcpFailure, CheckServices>,
   ) => Effect.Effect<A, E, R>,
+  options?: {
+    /**
+     * Whether a linked caller may make it, as for adding a project: it leaves
+     * everything already here as it was.
+     */
+    readonly linkedCallers?: "allowed";
+  },
 ) => {
   const check = orchestratingCaller.pipe(
+    Effect.tap((caller) =>
+      options?.linkedCallers === "allowed"
+        ? Effect.void
+        : assertNotLinked(caller, "change projects or environment settings"),
+    ),
     Effect.tap((caller) => assertFullAccess(caller, fullAccessRequired)),
   );
   return declare(
     (params: P) => check.pipe(Effect.flatMap(() => handle(params, check))),
-    () => check,
+    // Linked work never reaches a link at all; that is checked as the call goes.
+    () =>
+      orchestratingCaller.pipe(
+        Effect.tap((caller) => assertFullAccess(caller, fullAccessRequired)),
+      ),
   );
 };
 

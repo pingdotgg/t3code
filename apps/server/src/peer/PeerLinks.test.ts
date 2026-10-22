@@ -8,6 +8,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import { Tool, Toolkit } from "effect/ai";
 import {
@@ -78,6 +79,7 @@ const makeA = (descriptor: ExecutionEnvironmentDescriptor) =>
     Effect.map((context) => ({
       links: Context.get(context, PeerLinks.PeerLinks),
       peer: Context.get(context, PeerMcpClient.PeerMcpClient),
+      sql: Context.get(context, SqlClient.SqlClient),
     })),
   );
 
@@ -280,6 +282,35 @@ it.effect("tells the agent to link again once the peer revokes the link or it ex
       expect(revoked.code).toBe("capability_denied");
       expect(revoked.message).toContain("revoked there");
 
+      yield* a.links.link({
+        url: b.url,
+        pairingCode: (yield* b.auth.issuePairingCredential()).credential,
+        access: "auto",
+      });
+      // A link made with a peer that later answers without the fence, as
+      // one made before the fence or a peer moved back to such a version.
+      yield* Ref.set(b.descriptor, descriptorOf("environment-box", "Box", { linkFence: false }));
+      yield* Ref.set(b.bearers, []);
+      const unfenced = yield* probe(a).pipe(Effect.flip);
+      expect(unfenced.code).toBe("capability_denied");
+      expect(unfenced.message).toContain("cannot keep a linked agent's limits");
+      expect(yield* Ref.get(b.bearers)).toEqual([]);
+      yield* Ref.set(b.descriptor, box);
+
+      // A link stored before links were marked: its session there is not a
+      // link's, so the peer would not fence its work even though it can.
+      yield* a.sql`UPDATE peer_environment_links SET fenced = 0`;
+      const legacy = yield* probe(a).pipe(Effect.flip);
+      expect(legacy.code).toBe("capability_denied");
+      expect(legacy.message).toContain("Link it again");
+      expect(yield* Ref.get(b.bearers)).toEqual([]);
+      yield* a.links.link({
+        url: b.url,
+        pairingCode: (yield* b.auth.issuePairingCredential()).credential,
+        access: "auto",
+      });
+      yield* probe(a);
+
       yield* TestClock.adjust(Duration.days(31));
       expect((yield* a.links.list).map((link) => link.status)).toEqual(["expired"]);
       yield* Ref.set(b.bearers, []);
@@ -305,6 +336,12 @@ it.effect(
           .link({ url: b.url, pairingCode: pairing.credential, access: "auto" })
           .pipe(Effect.flip);
         expect(older.reason).toBe("incompatible");
+        // Nor one whose link's work could reach the user's own threads there.
+        yield* Ref.set(b.descriptor, descriptorOf("environment-box", "Box", { linkFence: false }));
+        const unfenced = yield* a.links
+          .link({ url: b.url, pairingCode: pairing.credential, access: "auto" })
+          .pipe(Effect.flip);
+        expect(unfenced.reason).toBe("incompatible");
 
         // Plain http to a LAN address would carry the code and token in clear.
         const lan = yield* a.links

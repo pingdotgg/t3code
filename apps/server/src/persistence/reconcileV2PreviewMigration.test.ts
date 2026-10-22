@@ -48,6 +48,7 @@ describe("V2 preview upgrade", () => {
         [66, "RepairClientSettlementTimestamps"],
         [67, "WebhookDedupe"],
         [68, "PeerLinks"],
+        [69, "PeerLinkFence"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -139,6 +140,7 @@ describe("V2 preview upgrade", () => {
         [66, "RepairClientSettlementTimestamps"],
         [67, "WebhookDedupe"],
         [68, "PeerLinks"],
+        [69, "PeerLinkFence"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
