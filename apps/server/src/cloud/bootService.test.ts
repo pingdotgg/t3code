@@ -612,7 +612,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
 
   it.effect("restart leaves a service that serves another T3 home alone", () =>
     Effect.gen(function* () {
-      const { service, fs, commands, makeService } = yield* makeHarness();
+      const { service, fs, baseDir, commands, makeService } = yield* makeHarness();
       yield* service.install();
       commands.length = 0;
       const path = yield* Path.Path;
@@ -621,6 +621,11 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       const other = yield* makeService(undefined, "1.2.3", path.join(otherHome, ".t3"));
       expect(yield* other.restart).toBe("skipped");
       expect(commands.filter((command) => command.startsWith("systemctl "))).toEqual([]);
+
+      const alias = path.join(otherHome, "alias");
+      yield* fs.symlink(baseDir, alias);
+      const sameHome = yield* makeService(undefined, "1.2.3", alias);
+      expect(yield* sameHome.restart).toBe("restarted");
     }),
   );
 

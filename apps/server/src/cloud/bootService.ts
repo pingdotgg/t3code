@@ -955,10 +955,9 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     const manager = yield* requireManager;
     const unit = yield* fs.readFileString(unitPath).pipe(Effect.option);
     if (Option.isNone(unit)) return "skipped" as const;
-    const installedBaseDir = bootServiceBaseDirOf(unit.value);
     if (
-      installedBaseDir === undefined ||
-      path.resolve(installedBaseDir) !== path.resolve(input.baseDir)
+      bootServiceBaseDirOf(unit.value) === undefined ||
+      (yield* otherBaseDirOf(unit.value)) !== undefined
     ) {
       return "skipped" as const;
     }
@@ -988,10 +987,9 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     const manager = detectedManager;
     const unit = yield* fs.readFileString(unitPath).pipe(Effect.option);
     if (Option.isNone(unit)) return yield* operation;
-    const installedBaseDir = bootServiceBaseDirOf(unit.value);
     if (
-      installedBaseDir === undefined ||
-      path.resolve(installedBaseDir) !== path.resolve(input.baseDir)
+      bootServiceBaseDirOf(unit.value) === undefined ||
+      (yield* otherBaseDirOf(unit.value)) !== undefined
     ) {
       return yield* operation;
     }
