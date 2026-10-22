@@ -40,12 +40,15 @@ import * as Ref from "effect/Ref";
 import * as Scheduler from "effect/Scheduler";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Statement from "effect/sql/Statement";
 
 import { LIVE_STREAM_MAX_ITEMS, LiveStreamBufferError } from "./LiveStreamBudget.ts";
+import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import { subscribeOrchestrationV2Thread } from "../ws.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
@@ -55,6 +58,7 @@ import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
@@ -217,6 +221,223 @@ it.effect("rebuilds event history one bounded page at a time", () =>
     const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
     assert.isTrue((yield* maintenance.verify).valid);
   }).pipe(Effect.provide(layerTest)),
+);
+
+// Own database: advancing the clock would also expire other tests' history.
+it.effect(
+  "retention prunes expired history to anchors and old cursors resume from a snapshot",
+  () =>
+    Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const createdAt = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:retention");
+      const thread = makeThread(threadId, createdAt);
+      const run: OrchestrationV2Run = {
+        id: RunId.make("run:retention"),
+        threadId,
+        ordinal: 1,
+        providerInstanceId,
+        modelSelection,
+        providerThreadId: null,
+        userMessageId: MessageId.make("message:retention-1"),
+        rootNodeId: null,
+        activeAttemptId: RunAttemptId.make("run-attempt:retention"),
+        status: "running",
+        queuePosition: null,
+        requestedAt: createdAt,
+        startedAt: createdAt,
+        completedAt: null,
+        checkpointId: null,
+        contextHandoffId: null,
+      };
+      const runEvent = (suffix: string): OrchestrationV2DomainEvent => ({
+        id: EventId.make(`event:retention:${suffix}`),
+        type: "run.updated",
+        threadId,
+        runId: run.id,
+        occurredAt: createdAt,
+        payload: run,
+      });
+      const messageEvent = (
+        suffix: string,
+        occurredAt: DateTime.Utc = createdAt,
+      ): OrchestrationV2DomainEvent => ({
+        id: EventId.make(`event:retention:${suffix}`),
+        type: "message.updated",
+        threadId,
+        occurredAt,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: MessageId.make(`message:retention-${suffix}`),
+          threadId,
+          runId: null,
+          nodeId: null,
+          role: "user",
+          text: suffix,
+          attachments: [],
+          streaming: false,
+          createdAt: occurredAt,
+          updatedAt: occurredAt,
+        },
+      });
+
+      // Raw rows keep these fixtures out of projections: retention never decodes them.
+      const insertRaw = (streamId: string, version: number, payload: object) => sql`
+      INSERT INTO orchestration_events (
+        event_id, aggregate_kind, stream_id, stream_version, event_type,
+        occurred_at, actor_kind, payload_json, metadata_json, application_event_version
+      ) VALUES (
+        ${`event:${streamId}:${version}`}, 'thread', ${streamId}, ${version}, 'turn-item.updated',
+        ${DateTime.formatIso(createdAt)}, 'server', ${JSON.stringify(payload)}, '{}', 2
+      )
+    `;
+      // Slimmed payloads restore their prompt from this row.
+      yield* insertRaw("thread:retention-prompt", 0, { id: "item", prompt: "full prompt" });
+      yield* insertRaw("thread:retention-prompt", 1, { id: "item", prompt: "", promptSequence: 1 });
+      yield* insertRaw("thread:retention-prompt", 2, { id: "item", prompt: "", promptSequence: 1 });
+      // The transcript import still reads its imported event IDs.
+      yield* insertRaw("thread:retention-importing", 0, { id: "imported-1" });
+      yield* insertRaw("thread:retention-importing", 1, { id: "imported-2" });
+      yield* sql`
+      INSERT INTO orchestration_v2_legacy_imports (
+        thread_id, source_updated_at, shell_imported_at, transcript_imported_at,
+        imported_message_count, last_error
+      ) VALUES (
+        'thread:retention-importing', ${DateTime.formatIso(createdAt)}, ${DateTime.formatIso(createdAt)}, NULL, 0, NULL
+      )
+    `;
+      const deletedThread = makeThread(ThreadId.make("thread:retention-deleted"), createdAt);
+      const deletedCreated = threadCreatedEvent({
+        id: "event:retention:deleted-created",
+        thread: deletedThread,
+        now: createdAt,
+      });
+      yield* eventSink.write({
+        events: [
+          deletedCreated,
+          { ...messageEvent("deleted-thread-message"), threadId: deletedThread.id },
+        ],
+      });
+
+      yield* eventSink.write({
+        events: [
+          threadCreatedEvent({ id: "event:retention:created", thread, now: createdAt }),
+          runEvent("first-running"),
+          messageEvent("expired-1"),
+          runEvent("later-running"),
+          messageEvent("expired-2"),
+        ],
+      });
+      // A retry of this command still reads its result events.
+      yield* eventSink.commitCommand({
+        commandId: CommandId.make("command:retention"),
+        threadId,
+        commandType: "thread.send",
+        acceptedAt: createdAt,
+        events: [messageEvent("receipt")],
+        effects: [],
+      });
+      yield* TestClock.adjust(Duration.hours(25));
+      const recentAt = yield* DateTime.now;
+      yield* eventSink.write({ events: [messageEvent("recent", recentAt)] });
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make("event:retention:deleted"),
+            type: "thread.deleted",
+            threadId: deletedThread.id,
+            providerInstanceId,
+            occurredAt: recentAt,
+            payload: { ...deletedThread, deletedAt: recentAt },
+          },
+        ],
+      });
+      const sequenceOf = (suffix: string) =>
+        sql<{ readonly sequence: number }>`
+        SELECT sequence FROM orchestration_events
+        WHERE event_id = ${`event:retention:${suffix}`}
+      `.pipe(Effect.map((rows) => rows[0]!.sequence));
+      const oldCursor = yield* sequenceOf("first-running");
+      const lastExpired = yield* sequenceOf("expired-2");
+      const beforeRetention = yield* projections.getThreadProjection(threadId);
+
+      assert.equal((yield* maintenance.compactEventStore).deletedEventCount, 5);
+      const survivors = yield* sql<{ readonly event_id: string }>`
+      SELECT event_id FROM orchestration_events
+      WHERE stream_id IN ('thread:retention-prompt', 'thread:retention-importing')
+      ORDER BY sequence
+    `;
+      assert.deepEqual(
+        survivors.map((row) => row.event_id),
+        [
+          "event:thread:retention-prompt:0",
+          "event:thread:retention-prompt:2",
+          "event:thread:retention-importing:0",
+          "event:thread:retention-importing:1",
+        ],
+      );
+      const remaining = yield* sql<{ readonly event_id: string }>`
+      SELECT event_id FROM orchestration_events WHERE stream_id = ${threadId} ORDER BY sequence
+    `;
+      assert.deepEqual(
+        remaining.map((row) => row.event_id),
+        [
+          "event:retention:created",
+          "event:retention:first-running",
+          "event:retention:receipt",
+          "event:retention:recent",
+        ],
+      );
+      const floors = yield* sql<{ readonly replay_floor: number }>`
+      SELECT replay_floor FROM orchestration_v2_event_retention WHERE thread_id = ${threadId}
+    `;
+      assert.deepEqual(
+        floors.map((row) => row.replay_floor),
+        [lastExpired],
+      );
+      assert.deepEqual(yield* projections.getThreadProjection(threadId), beforeRetention);
+      assert.isTrue((yield* maintenance.verify).valid);
+      assert.equal((yield* Effect.exit(maintenance.rebuild))._tag, "Failure");
+      assert.deepEqual(yield* projections.getThreadProjection(threadId), beforeRetention);
+
+      const resume = (afterSequence: number, resumedThreadId = threadId) =>
+        subscribeOrchestrationV2Thread({
+          threadId: resumedThreadId,
+          afterSequence,
+          requestCompletionMarker: true,
+        }).pipe(
+          Effect.flatMap((stream) =>
+            stream.pipe(
+              Stream.takeUntil((item) => item.kind === "synchronized"),
+              Stream.map((item) => (item.kind === "event" ? item.sequence : item.kind)),
+              Stream.runCollect,
+            ),
+          ),
+          Effect.provideService(ThreadManagement.ThreadManagementService, {
+            ensureLegacyTranscript: () => Effect.void,
+            getThreadShell: projections.getThreadShell,
+            getThreadSnapshot: projections.getThreadSnapshot,
+            streamStoredEventsFrom: () => Stream.never,
+          } as unknown as ThreadManagement.ThreadManagementService["Service"]),
+          Effect.provide(OrchestrationEventStore.layer),
+        );
+      // Below the floor the replay would skip deleted events, so the client gets a snapshot.
+      assert.deepEqual(Array.from(yield* resume(oldCursor)), ["snapshot", "synchronized"]);
+      assert.deepEqual(Array.from(yield* resume(lastExpired)), [
+        yield* sequenceOf("receipt"),
+        yield* sequenceOf("recent"),
+        "synchronized",
+      ]);
+      // A deleted thread has no snapshot; the client learns of the deletion from its tombstone.
+      assert.deepEqual(
+        Array.from(yield* resume(yield* sequenceOf("deleted-created"), deletedThread.id)),
+        [yield* sequenceOf("deleted"), "synchronized"],
+      );
+    }).pipe(Effect.provide(layerTest)),
 );
 
 it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
@@ -3187,8 +3408,9 @@ it.effect.each(["events", "receipts"] as const)(
         const discoveryStarted = yield* Deferred.make<Tracer.Span>();
         const observeDiscovery: Statement.Transformer = (statement, _sql, _fiber, span) => {
           const [query] = statement.compile();
+          // Event discovery starts with the retention anchor lookup.
           const pageQuery =
-            kind === "events" ? /^\s*SELECT\s+event\.sequence/ : /^\s*SELECT\s+receipt\.rowid/;
+            kind === "events" ? /^\s*SELECT\s+MIN\(sequence\)/ : /^\s*SELECT\s+receipt\.rowid/;
           return pageQuery.test(query)
             ? Deferred.succeed(discoveryStarted, span).pipe(Effect.as(statement))
             : Effect.succeed(statement);

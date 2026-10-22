@@ -110,7 +110,7 @@ export const runDoctor = Effect.fn("runDoctor")(function* (
         .pipe(
           Effect.tap((result) =>
             Console.log(
-              `Done: ${formatBytes(result.beforeBytes)} -> ${formatBytes(result.afterBytes)}, ${result.deletedEventCount} superseded events removed.`,
+              `Done: ${formatBytes(result.beforeBytes)} -> ${formatBytes(result.afterBytes)}, ${result.deletedEventCount} old history events removed.`,
             ),
           ),
         ),

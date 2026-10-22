@@ -2,6 +2,7 @@ import { ThreadId } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -51,6 +52,9 @@ type ProjectionMetadataRow = {
   readonly schema_version: number;
   readonly last_sequence: number;
 };
+
+/** Thread events older than this are pruned down to anchors. Projections hold their state. */
+const EVENT_HISTORY_RETENTION = Duration.hours(24);
 
 const encodeEntityKey = Schema.encodeSync(
   Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.String, Schema.NullOr(Schema.String)])),
@@ -116,6 +120,25 @@ export const layer: Layer.Layer<
     const rebuild = Effect.gen(function* () {
       yield* sql.withTransaction(
         Effect.gen(function* () {
+          // Retention deleted history that projections alone still hold. A
+          // schema from before retention has no floor table and nothing pruned.
+          const floorTable = yield* sql<{ readonly present: number }>`
+            SELECT EXISTS (
+              SELECT 1 FROM sqlite_master
+              WHERE type = 'table' AND name = 'orchestration_v2_event_retention'
+            ) AS present
+          `;
+          const pruned =
+            floorTable[0]?.present === 1
+              ? yield* sql<{ readonly pruned: number }>`
+                  SELECT EXISTS (SELECT 1 FROM orchestration_v2_event_retention) AS pruned
+                `
+              : [];
+          if (pruned[0]?.pruned === 1) {
+            return yield* new ProjectionMaintenanceError({
+              operation: "rebuild from pruned event history",
+            });
+          }
           const throughSequence = yield* eventStore.latestSequence();
           yield* sql`DELETE FROM orchestration_v2_projection_context_transfers`;
           yield* sql`DELETE FROM orchestration_v2_projection_context_handoffs`;
@@ -231,14 +254,26 @@ export const layer: Layer.Layer<
     const COMPACTION_PAGE_SIZE = 50;
 
     /**
-     * Scan newest first to retain the newest state for each entity. Keyed
-     * entities (messages, nodes, PR links) also keep their oldest event: client
-     * reducers append an entity where they first see it, so a replay from any
-     * cursor must either carry that first event or find the entity already
-     * present. Only the events in between are deleted.
+     * Two rules, in one newest-first scan.
+     *
+     * Supersession keeps the newest state for each entity. Keyed entities
+     * (messages, nodes, PR links) also keep their oldest event: client reducers
+     * append an entity where they first see it, so a replay from any cursor
+     * must either carry that first event or find the entity already present.
+     * Only the events in between are deleted. turn-item.updated stays intact
+     * because replay assigns positions on first write.
+     *
+     * Retention deletes thread events older than EVENT_HISTORY_RETENTION, since
+     * projections already hold their state. It raises the thread's replay floor
+     * in the same transaction, so a cursor below it gets a snapshot. It keeps
+     * the anchors other readers still need: creation and deletion, each
+     * stream's newest event (sequence high waters), the first running
+     * run.updated per attempt (CodexUsageHistory), prompts that slimmed
+     * payloads reference, events behind a command receipt (retry results),
+     * and threads mid legacy import. Project events are never pruned.
+     *
      * Page every event, including non-candidates: filtering before LIMIT could
-     * still scan the entire history when superseded events are sparse.
-     * turn-item.updated stays intact because replay assigns positions on first write.
+     * still scan the entire history when deletable events are sparse.
      */
     const compactEventStore = Effect.gen(function* () {
       const bounds = yield* sql<{
@@ -251,6 +286,34 @@ export const layer: Layer.Layer<
       `;
       let throughSequence = bounds[0]?.event_sequence ?? 0;
       let throughReceiptRowId = bounds[0]?.receipt_row_id ?? 0;
+      const retentionCutoff = DateTime.formatIso(
+        DateTime.subtractDuration(yield* DateTime.now, EVENT_HISTORY_RETENTION),
+      );
+      const firstRunningRows =
+        throughSequence === 0
+          ? []
+          : yield* sql<{ readonly sequence: number }>`
+        SELECT MIN(sequence) AS sequence
+        FROM orchestration_events
+        WHERE application_event_version = 2
+          AND aggregate_kind = 'thread'
+          AND event_type = 'run.updated'
+          AND sequence <= ${throughSequence}
+          AND json_extract(payload_json, '$.status') = 'running'
+        GROUP BY stream_id,
+          json_extract(payload_json, '$.id'),
+          json_extract(payload_json, '$.activeAttemptId')
+      `.pipe(NodeSqliteClient.readOnly);
+      const firstRunningSequences = new Set(firstRunningRows.map((row) => row.sequence));
+      const importingRows =
+        throughSequence === 0
+          ? []
+          : yield* sql<{ readonly thread_id: string }>`
+              SELECT thread_id FROM orchestration_v2_legacy_imports
+              WHERE transcript_imported_at IS NULL
+            `.pipe(NodeSqliteClient.readOnly);
+      const importingThreadIds = new Set(importingRows.map((row) => row.thread_id));
+      const streamsWithNewestSeen = new Set<string>();
       const retainedThreadIds = new Set<string>();
       const retainedReadStateThreadIds = new Set<string>();
       // Per key: the lowest sequence seen so far after the newest. It is
@@ -268,6 +331,8 @@ export const layer: Layer.Layer<
           readonly event_type: string;
           readonly entity_id: string | null;
           readonly imported_legacy_thread: number;
+          readonly expired: number;
+          readonly retention_anchor: number;
         }>`
           SELECT
             event.sequence,
@@ -275,6 +340,19 @@ export const layer: Layer.Layer<
             event.aggregate_kind,
             event.stream_id,
             event.event_type,
+            event.occurred_at < ${retentionCutoff} AS expired,
+            CASE
+              WHEN event.occurred_at >= ${retentionCutoff} THEN 0
+              WHEN event.command_id IS NOT NULL AND EXISTS (
+                SELECT 1 FROM orchestration_command_receipts AS receipt
+                WHERE receipt.command_id = event.command_id
+              ) THEN 1
+              WHEN event.event_type IN ('subagent.updated', 'turn-item.updated')
+                AND json_type(event.payload_json, '$.prompt') = 'text'
+                AND json_type(event.payload_json, '$.promptSequence') IS NULL
+              THEN 1
+              ELSE 0
+            END AS retention_anchor,
             CASE
               WHEN event.application_event_version = 2
                 AND event.event_type IN ('message.updated', 'node.updated')
@@ -300,16 +378,35 @@ export const layer: Layer.Layer<
           ORDER BY event.sequence DESC
           LIMIT ${COMPACTION_PAGE_SIZE}
         `.pipe(NodeSqliteClient.readOnly);
-        const obsolete: number[] = [];
+        const obsolete = new Set<number>();
+        const replayFloors = new Map<string, number>();
         for (const row of rows) {
+          const isNewestInStream = !streamsWithNewestSeen.has(row.stream_id);
+          streamsWithNewestSeen.add(row.stream_id);
+          if (
+            row.expired === 1 &&
+            row.retention_anchor === 0 &&
+            row.application_event_version === 2 &&
+            row.aggregate_kind === "thread" &&
+            !isNewestInStream &&
+            row.event_type !== "thread.created" &&
+            row.event_type !== "thread.deleted" &&
+            !firstRunningSequences.has(row.sequence) &&
+            !importingThreadIds.has(row.stream_id)
+          ) {
+            obsolete.add(row.sequence);
+            // Rows arrive newest first, so the first one is the stream's floor in this page.
+            if (!replayFloors.has(row.stream_id)) replayFloors.set(row.stream_id, row.sequence);
+            continue;
+          }
           if (row.imported_legacy_thread === 1) {
-            obsolete.push(row.sequence);
+            obsolete.add(row.sequence);
           } else if (row.application_event_version === 2) {
             if (
               row.aggregate_kind === "thread" &&
               supersedableThreadEventTypes.has(row.event_type)
             ) {
-              if (retainedThreadIds.has(row.stream_id)) obsolete.push(row.sequence);
+              if (retainedThreadIds.has(row.stream_id)) obsolete.add(row.sequence);
               else retainedThreadIds.add(row.stream_id);
             } else if (
               row.aggregate_kind === "thread" &&
@@ -319,14 +416,14 @@ export const layer: Layer.Layer<
                 retainedThreadIds.has(row.stream_id) ||
                 retainedReadStateThreadIds.has(row.stream_id)
               ) {
-                obsolete.push(row.sequence);
+                obsolete.add(row.sequence);
               } else retainedReadStateThreadIds.add(row.stream_id);
             } else if (
               row.event_type === "thread.pull-request-link-updated" &&
               retainedThreadIds.has(row.stream_id)
             ) {
               // A newer whole-thread payload already carries this link's state.
-              obsolete.push(row.sequence);
+              obsolete.add(row.sequence);
             } else if (
               row.event_type === "thread.pull-request-link-updated" ||
               row.event_type === "message.updated" ||
@@ -336,7 +433,7 @@ export const layer: Layer.Layer<
               const candidate = oldestCandidateByEntityKey.get(key);
               if (candidate === undefined) oldestCandidateByEntityKey.set(key, null);
               else {
-                if (candidate !== null) obsolete.push(candidate);
+                if (candidate !== null) obsolete.add(candidate);
                 oldestCandidateByEntityKey.set(key, row.sequence);
               }
             }
@@ -344,9 +441,21 @@ export const layer: Layer.Layer<
         }
         // Yield even without deletions for clients using the synchronous fallback.
         yield* Effect.yieldNow;
-        if (obsolete.length > 0) {
-          yield* sql`DELETE FROM orchestration_events WHERE sequence IN ${sql.in(obsolete)}`;
-          deletedEventCount += obsolete.length;
+        if (obsolete.size > 0) {
+          yield* sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`DELETE FROM orchestration_events WHERE sequence IN ${sql.in([...obsolete])}`;
+              for (const [threadId, floor] of replayFloors) {
+                yield* sql`
+                  INSERT INTO orchestration_v2_event_retention (thread_id, replay_floor)
+                  VALUES (${threadId}, ${floor})
+                  ON CONFLICT(thread_id) DO UPDATE SET
+                    replay_floor = MAX(replay_floor, excluded.replay_floor)
+                `;
+              }
+            }),
+          );
+          deletedEventCount += obsolete.size;
           yield* Effect.yieldNow;
         }
         throughSequence = (rows.at(-1)?.sequence ?? 1) - 1;

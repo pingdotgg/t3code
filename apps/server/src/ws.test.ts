@@ -288,6 +288,57 @@ it.live.each(["thread", "shell"] as const)(
     }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
 );
 
+it.effect("shell resume below the history replay floor sends a snapshot", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const now = "2026-01-05T00:00:00.000Z";
+    const projectId = ProjectId.make("project:floor");
+    const insert = (version: number) => sql<{ sequence: number }>`
+      INSERT INTO orchestration_events (
+        event_id, aggregate_kind, stream_id, stream_version, event_type,
+        occurred_at, actor_kind, payload_json, metadata_json, application_event_version
+      ) VALUES (
+        ${`floor:${version}`}, 'project', ${projectId}, ${version}, 'project.meta-updated',
+        ${now}, 'server', ${JSON.stringify({ projectId, updatedAt: now })}, '{}', 2
+      ) RETURNING sequence
+    `;
+    const [before] = yield* insert(0);
+    const [after] = yield* insert(1);
+    const resume = subscribeOrchestrationV2Shell({
+      afterSequence: before!.sequence,
+      requestCompletionMarker: true,
+    }).pipe(
+      Effect.flatMap((stream) =>
+        stream.pipe(
+          Stream.takeUntil((item) => item.kind === "synchronized"),
+          Stream.map((item) => item.kind as string),
+          Stream.runCollect,
+        ),
+      ),
+      Effect.provideService(ThreadManagement.ThreadManagementService, {
+        readShellSnapshot: () => Effect.succeed(Effect.succeed({ schemaVersion: 1, threads: [] })),
+        streamStoredEventsFrom: () => Stream.never,
+      } as unknown as ThreadManagement.ThreadManagementService["Service"]),
+      Effect.provideService(ProjectStore.ProjectStoreV2, {
+        listShells: () => Effect.succeed([]),
+      } as unknown as ProjectStore.ProjectStoreV2["Service"]),
+      Effect.provideService(ProjectService.ProjectService, {
+        getShell: () => Effect.succeedNone,
+      } as unknown as ProjectService.ProjectService["Service"]),
+      Effect.provideService(ProjectEnrichment.ProjectEnrichmentService, {
+        subscribeChanges: PubSub.subscribe(yield* PubSub.unbounded()),
+      } as ProjectEnrichment.ProjectEnrichmentService["Service"]),
+    );
+    assert.deepEqual(Array.from(yield* resume), ["project.removed", "synchronized"]);
+    // A thread's history below `after` was pruned, so the replay would be incomplete.
+    yield* sql`
+      INSERT INTO orchestration_v2_event_retention (thread_id, replay_floor)
+      VALUES ('thread:pruned', ${after!.sequence})
+    `;
+    assert.deepEqual(Array.from(yield* resume), ["snapshot", "synchronized"]);
+  }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
+);
+
 // Build the production RPC layer; unrelated capabilities fail if this test calls them.
 const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(ServerSecretStore.ServerSecretStore)({}),

@@ -97,6 +97,15 @@ export class OrchestrationEventStore extends Context.Service<
     readonly latestApplicationSequence: Effect.Effect<number, OrchestrationEventStoreError>;
 
     /**
+     * Highest sequence that history retention deleted from the thread, or from
+     * any thread when `threadId` is omitted. A replay from below it is
+     * incomplete, so the reader must send a snapshot instead.
+     */
+    readonly replayFloor: (
+      threadId?: ThreadId,
+    ) => Effect.Effect<number, OrchestrationEventStoreError>;
+
+    /**
      * A row whose `event_type` this build does not know fails the read unless
      * `skipUnknownEventTypes` is set, which logs and drops it instead. Only
      * client shell replay opts in; anything that builds server state stays strict.
@@ -676,6 +685,16 @@ const makeEventStore = Effect.gen(function* () {
     ),
   );
 
+  const replayFloor: OrchestrationEventStore["Service"]["replayFloor"] = (threadId) =>
+    sql<{ readonly floor: number | null }>`
+      SELECT MAX(replay_floor) AS floor
+      FROM orchestration_v2_event_retention
+      ${threadId === undefined ? sql`` : sql`WHERE thread_id = ${threadId}`}
+    `.pipe(
+      Effect.map((rows) => rows[0]?.floor ?? 0),
+      Effect.mapError(toPersistenceSqlError("OrchestrationEventStore.replayFloor:query")),
+    );
+
   // Advance over raw rows so even a full page of unknown types cannot end replay early.
   const catchUpApplicationEvents = (input: {
     readonly afterSequence: number;
@@ -746,6 +765,7 @@ const makeEventStore = Effect.gen(function* () {
     getReplayStats,
     latestAgentSequence,
     latestApplicationSequence,
+    replayFloor,
     readApplicationEvents: catchUpApplicationEvents,
     publishCommitted: (events) => PubSub.publishAll(committedEvents, events).pipe(Effect.asVoid),
     streamApplicationEvents,
