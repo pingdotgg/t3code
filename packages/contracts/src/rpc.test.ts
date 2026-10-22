@@ -35,6 +35,28 @@ describe("WebSocket RPC contracts", () => {
     ).toBe(true);
   });
 
+  it("drops a client-supplied retry bound from a dispatched Stop", () => {
+    const dispatchCommand = WsRpcGroup.requests.get(ORCHESTRATION_V2_WS_METHODS.dispatchCommand);
+    if (dispatchCommand === undefined) throw new Error("dispatchCommand is not registered");
+    const decode = Schema.decodeUnknownSync(dispatchCommand.payloadSchema);
+
+    const decoded = decode({
+      type: "thread.stop",
+      commandId: "stop-1",
+      threadId: "thread-1",
+      reason: "User stopped the thread.",
+      throughSequence: 0,
+    });
+
+    expect(decoded).not.toHaveProperty("throughSequence");
+    expect(decoded).toStrictEqual({
+      type: "thread.stop",
+      commandId: "stop-1",
+      threadId: "thread-1",
+      reason: "User stopped the thread.",
+    });
+  });
+
   it("lets the server pick a new worktree's folder", () => {
     const createWorktree = WsRpcGroup.requests.get(WS_METHODS.vcsCreateWorktree);
     if (createWorktree === undefined) throw new Error("vcs.createWorktree is not registered");

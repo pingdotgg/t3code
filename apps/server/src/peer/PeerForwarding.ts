@@ -29,6 +29,14 @@ export const FORWARDED_WAIT_CHUNK_MS = 50_000;
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
 const MAX_WAIT_TIMEOUT_MS = 60 * 60 * 1_000;
 
+const hasScheduleSecretRef = Schema.is(
+  Schema.Struct({
+    schedule: Schema.Struct({
+      signature: Schema.Struct({ secretRef: Schema.String }),
+    }),
+  }),
+);
+
 type Scope = McpInvocationContext.McpInvocationScope;
 
 /**
@@ -106,15 +114,26 @@ const make = Effect.gen(function* () {
     params: unknown,
   ) {
     const limits = yield* callerLimits(scope);
-    const encoded = (yield* Schema.encodeUnknownEffect(parameters as Schema.Encoder<unknown>)(
-      params,
-    ).pipe(Effect.mapError(unavailable))) as Record<string, unknown>;
+    const jsonParameters = Schema.toCodecJson(parameters as Schema.Encoder<unknown>);
+    const encoded = (yield* Schema.encodeUnknownEffect(jsonParameters)(params).pipe(
+      Effect.mapError(unavailable),
+    )) as Record<string, unknown>;
     const { environmentId: _target, ...args } = encoded;
     // A pending upload lives here, so it cannot go with the call.
     if (Array.isArray(args.attachments) && args.attachments.length > 0) {
       return yield* new OrchestratorMcpFailure({
         code: "invalid_request",
         message: "A launch in a linked environment cannot carry attachments yet.",
+      });
+    }
+    if (
+      (toolName === "schedule_task" || toolName === "update_scheduled_task") &&
+      hasScheduleSecretRef(args)
+    ) {
+      return yield* new OrchestratorMcpFailure({
+        code: "invalid_request",
+        message:
+          "A schedule in a linked environment cannot use signature.secretRef: secret references are local to this server and work once. Configure the webhook signing secret from a thread in the destination environment instead.",
       });
     }
     if (typeof args.clientRequestId === "string") {
@@ -125,7 +144,7 @@ const make = Effect.gen(function* () {
       tool: toolName,
       arguments: args,
       limits,
-      success: success as Schema.Decoder<A>,
+      success: Schema.toCodecJson(success as Schema.Decoder<A>),
     });
   });
 

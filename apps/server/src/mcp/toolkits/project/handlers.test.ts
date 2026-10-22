@@ -93,6 +93,7 @@ const clientLaunchHarness = (input: {
       },
     }),
     Layer.mock(ThreadLaunch.ThreadLaunchService)({
+      getAcceptedLaunch: () => Effect.succeed(Option.none()),
       checkWorktreeBase: input.checkWorktreeBase ?? (() => Effect.void),
       launch: (launch) => {
         input.launched.push(launch);

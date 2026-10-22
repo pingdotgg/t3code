@@ -107,6 +107,19 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 ),
               )).projectId
             : yield* resolveProjectId(context, input.projectId);
+        // Accepted creates skip mutable base/default-model preflights.
+        // Message intake still handles their replay and preparation.
+        const acceptedLaunch =
+          input.clientRequestId === undefined
+            ? undefined
+            : Option.getOrUndefined(
+                yield* ThreadLaunch.ThreadLaunchService.pipe(
+                  Effect.flatMap((launches) =>
+                    launches.getAcceptedLaunch({ commandId, threadId, projectId }),
+                  ),
+                  Effect.mapError(unavailable),
+                ),
+              );
         const readProject = Project.ProjectService.pipe(
           Effect.flatMap((projects) => projects.getById(projectId)),
           Effect.mapError(unavailable),
@@ -122,7 +135,9 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         const launchedModel =
           launched === null || launched.deletedAt !== null ? undefined : launched.modelSelection;
         const replaying = launchedModel !== undefined;
-        if (!replaying && input.workspaceStrategy?.type === "existing_worktree") {
+        // A retry may bind a workspace to an idle accepted launch, so membership
+        // is checked on every launch, unlike the checks below.
+        if (input.workspaceStrategy?.type === "existing_worktree") {
           const project = yield* readProject;
           if (project === undefined)
             return yield* new OrchestratorMcpFailure({
@@ -134,7 +149,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         // A launch is accepted before its worktree is provisioned, so a base
         // ref that cannot resolve is refused while the agent can still act on it.
         const strategy = input.workspaceStrategy;
-        if (!replaying && strategy?.type === "worktree")
+        if (acceptedLaunch === undefined && !replaying && strategy?.type === "worktree")
           yield* ThreadLaunch.ThreadLaunchService.pipe(
             Effect.flatMap((launches) =>
               launches.checkWorktreeBase({ projectId, workspaceStrategy: strategy }),
@@ -168,6 +183,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               )
             : undefined;
         const modelSelection =
+          acceptedLaunch?.modelSelection ??
           input.modelSelection ??
           launchedModel ??
           caller?.modelSelection ??

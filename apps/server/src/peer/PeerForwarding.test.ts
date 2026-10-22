@@ -5,6 +5,7 @@ import {
   EnvironmentId,
   type OrchestrationV2Run,
   type SourceControlCloneRepositoryInput,
+  type ModelSelection,
   ProjectId,
   ProviderInstanceId,
   RunId,
@@ -53,6 +54,7 @@ interface Seen {
   readonly clones: ReadonlyArray<SourceControlCloneRepositoryInput>;
   /** Commands dispatched and delegated-task stops, as `<type> <threadId>`. */
   readonly stops: ReadonlyArray<string>;
+  readonly selections: ReadonlyArray<ModelSelection>;
 }
 const nothingSeen: Seen = {
   sends: [],
@@ -61,6 +63,7 @@ const nothingSeen: Seen = {
   projects: [],
   clones: [],
   stops: [],
+  selections: [],
 };
 
 /**
@@ -68,7 +71,15 @@ const nothingSeen: Seen = {
  * third wait. Every send and wait is recorded.
  */
 const boxThreads = (seen: Ref.Ref<Seen>) => {
-  const shell = { ...liveThreadShell(boxThread, { runtimeMode: "auto" }), projectId: boxProject };
+  const shell = {
+    ...liveThreadShell(boxThread, { runtimeMode: "auto" }),
+    projectId: boxProject,
+    modelSelection: {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5",
+      options: [{ id: "reasoning", value: "high" }],
+    },
+  };
   const run = (status: OrchestrationV2Run["status"]) =>
     ({ id: boxRun, status }) as unknown as OrchestrationV2Run;
   const projection = { thread: shell, runs: [run("running")], runtimeRequests: [] } as never;
@@ -84,6 +95,10 @@ const boxThreads = (seen: Ref.Ref<Seen>) => {
     dispatch: (command) =>
       Ref.update(seen, (current) => ({
         ...current,
+        selections:
+          command.type === "thread.model-selection.set"
+            ? [...current.selections, command.modelSelection]
+            : current.selections,
         stops: [
           ...current.stops,
           `${command.type} ${"threadId" in command ? command.threadId : ""}`,
@@ -96,7 +111,11 @@ const boxThreads = (seen: Ref.Ref<Seen>) => {
             {
               sequence: 1,
               commandId: command.commandId,
-              event: { type: "run.updated", runId: boxRun },
+              event: {
+                type: "turn-item.updated",
+                runId: boxRun,
+                payload: { type: "run_interrupt_request", providerTurnId: "turn:box" },
+              },
             },
           ],
         } as never),
@@ -120,6 +139,7 @@ const boxThreads = (seen: Ref.Ref<Seen>) => {
 /** B launches whatever it is asked to, and records it. */
 const boxLaunches = (seen: Ref.Ref<Seen>) =>
   Layer.mock(ThreadLaunch.ThreadLaunchService)({
+    getAcceptedLaunch: () => Effect.succeed(Option.none()),
     launch: (input) =>
       Ref.update(seen, (current) => ({ ...current, launches: [...current.launches, input] })).pipe(
         Effect.as({
@@ -551,6 +571,33 @@ it.effect("runs any tool that takes a linked environment there", () =>
       expect(archived.isError).toBe(false);
       expect((yield* Ref.get(seen)).stops).toEqual([`thread.archive ${boxThread}`]);
 
+      const selection = {
+        instanceId: "codex",
+        model: "gpt-5",
+        options: [{ id: "reasoning", value: "high" }],
+      };
+      const configured = yield* a.call("thread:laptop-full", "t3_thread_configure", {
+        environmentId: box.environmentId,
+        threadId: boxThread,
+        modelSelection: { provider: "codex", model: "gpt-5", options: { reasoning: "high" } },
+      });
+      expect(configured.isError).toBe(false);
+      expect((yield* Ref.get(seen)).selections).toEqual([selection]);
+      expect(there.structuredContent).toHaveProperty("modelSelection", selection);
+
+      // The tool's own checks hold here, before anything leaves.
+      yield* Ref.set(b.bearers, []);
+      const mismatched = yield* a
+        .call("thread:laptop-full", "t3_thread_update", {
+          environmentId: box.environmentId,
+          threadId: boxThread,
+          action: "regenerate_title",
+          title: "Requested title",
+        })
+        .pipe(Effect.flip);
+      expect(mismatched.message).toContain("regenerate_title does not accept title");
+      expect(yield* Ref.get(b.bearers)).toEqual([]);
+
       // This environment's own id keeps the call here.
       const own = yield* a.call("thread:laptop-full", "t3_thread_configuration", {
         environmentId: laptop.environmentId,
@@ -571,6 +618,44 @@ it.effect("refuses what a linked environment cannot take before anything leaves"
       const a = yield* makeLaptop;
       yield* linkTo(a.links, b, "auto");
       yield* Ref.set(b.bearers, []);
+
+      const probes = yield* Ref.get(b.probes);
+      for (const name of ["schedule_task", "update_scheduled_task"]) {
+        const args =
+          name === "schedule_task"
+            ? { projectId: boxProject, prompt: "Handle {{body.action}}." }
+            : { scheduledTaskId: "scheduled-task:box" };
+        const signed = yield* a.call("thread:laptop-full", name, {
+          ...args,
+          environmentId: box.environmentId,
+          schedule: {
+            type: "webhook",
+            signature: {
+              header: "x-hub-signature-256",
+              encoding: "hex",
+              prefix: "sha256=",
+              secretRef: "secret:local-only",
+            },
+          },
+        });
+        expect(yield* Ref.get(b.probes)).toBe(probes);
+        expect(yield* Ref.get(b.bearers)).toEqual([]);
+        expect(failureOf(signed)).toMatchObject({
+          code: "invalid_request",
+          message: expect.stringContaining("signature.secretRef"),
+        });
+        expect(failureOf(signed).message).toContain("destination environment");
+
+        const ordinary = yield* a.call("thread:laptop-full", name, {
+          ...args,
+          environmentId: EnvironmentId.make("environment-elsewhere"),
+          schedule: { type: "interval", everyMs: 3_600_000 },
+        });
+        expect(failureOf(ordinary)).toMatchObject({
+          code: "invalid_request",
+          message: expect.stringContaining("not linked"),
+        });
+      }
 
       const unknown = yield* a.call("thread:laptop-full", "t3_thread_read", {
         environmentId: EnvironmentId.make("environment-elsewhere"),

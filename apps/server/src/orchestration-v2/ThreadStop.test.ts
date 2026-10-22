@@ -1,8 +1,13 @@
 import { assert, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import {
   CommandId,
   ContextTransferId,
   EventId,
+  EnvironmentId,
   MessageId,
   NodeId,
   type OrchestrationV2DomainEvent,
@@ -25,13 +30,23 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as EventStore from "./EventStore.ts";
+import * as EventSink from "./EventSink.ts";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as OrchestratorMcpService from "../mcp/OrchestratorMcpService.ts";
+import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
+import * as ThreadLaunch from "./ThreadLaunchService.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
+import * as ProjectService from "../project/ProjectService.ts";
+import * as SecretRequests from "../secrets/SecretRequests.ts";
 import { CLAUDE_PROVIDER } from "./Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
+import { DispatchModeLimit } from "./DispatchModeLimit.ts";
 import { OrchestrationEffectRequestV2 } from "./EffectOutbox.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as EffectWorker from "./EffectWorker.ts";
@@ -51,24 +66,42 @@ const adapter = {
   planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
   openSession: () => Effect.die("Runs here never reach a provider"),
 } as ProviderAdapter.ProviderAdapterV2["Service"];
-const layerDatabase = SqlitePersistence.layerMemory;
-const layerTest = ThreadManagementService.layer.pipe(
-  Layer.provideMerge(
-    Layer.mergeAll(
-      layerDatabase,
-      ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
-      EventStore.layer.pipe(Layer.provide(layerDatabase)),
-      EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
-      ProviderReplayHarness.layerWithRegistry(
-        { name: "thread-stop" },
-        ProviderAdapterRegistry.layerFromAdapters([adapter]),
-        { databaseLayer: layerDatabase, runEffectWorker: false },
+const fileDatabase = (dbPath: string) =>
+  SqlitePersistence.layerFromPath(dbPath).pipe(Layer.provide(NodeServices.layer));
+const makeLayerTest = (
+  layerDatabase: ReturnType<typeof fileDatabase> = SqlitePersistence.layerMemory,
+) =>
+  ThreadManagementService.layer.pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(
+        layerDatabase,
+        ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+        EventStore.layer.pipe(Layer.provide(layerDatabase)),
+        EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
+        ProviderReplayHarness.layerWithRegistry(
+          { name: "thread-stop" },
+          ProviderAdapterRegistry.layerFromAdapters([adapter]),
+          { databaseLayer: layerDatabase, runEffectWorker: false },
+        ),
       ),
     ),
-  ),
-  Layer.provideMerge(ServerSettings.layerTest()),
-  Layer.provideMerge(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
-);
+    Layer.provideMerge(ServerSettings.layerTest()),
+    Layer.provideMerge(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
+  );
+const layerTest = makeLayerTest();
+
+const layerMcp = (layerDatabase: ReturnType<typeof fileDatabase>) =>
+  OrchestratorMcpService.layer.pipe(
+    Layer.provideMerge(makeLayerTest(layerDatabase)),
+    Layer.provide(NodeCrypto.layer),
+    Layer.provide(ProviderAdapterRegistry.layerFromAdapters([adapter])),
+    Layer.provide(Layer.mock(ThreadLaunch.ThreadLaunchService)({})),
+    Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+    Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
+    Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+    Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
+    Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
+  );
 
 const encodeEffectRequest = Schema.encodeSync(Schema.fromJsonString(OrchestrationEffectRequestV2));
 
@@ -533,7 +566,7 @@ it.effect("Stop still stops the thread when a delegated child cannot be read", (
 it.effect("Stop ends watches, holds queues, and stops the delegated tasks under the thread", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
-    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sink = yield* EventSink.EventSinkV2;
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const sql = yield* SqlClient.SqlClient;
     const parentThreadId = ThreadId.make("thread:stop-parent");
@@ -543,16 +576,21 @@ it.effect("Stop ends watches, holds queues, and stops the delegated tasks under 
     assert.isTrue(Exit.isFailure(yield* Effect.exit(watch(childThreadId, 2))));
     const grandchildThreadId = yield* delegate(childThreadId, "grandchild task");
     yield* send(childThreadId, "child follow-up", "queue_after_active");
+    yield* send(childThreadId, "child queued after follow-up", "queue_after_active");
 
     const now = yield* DateTime.now;
     const firstRun = (yield* orchestrator.getThreadProjection(parentThreadId)).runs[0]!;
-    yield* projections.apply({
-      id: EventId.make("event:stop-parent:first-run-completed"),
-      type: "run.updated",
-      threadId: parentThreadId,
-      runId: firstRun.id,
-      occurredAt: now,
-      payload: { ...firstRun, status: "completed", completedAt: now },
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make("event:stop-parent:first-run-completed"),
+          type: "run.updated",
+          threadId: parentThreadId,
+          runId: firstRun.id,
+          occurredAt: now,
+          payload: { ...firstRun, status: "completed", completedAt: now },
+        },
+      ],
     });
     yield* send(parentThreadId, "second", "start_immediately");
     const secondRun = (yield* orchestrator.getThreadProjection(parentThreadId)).runs.at(-1)!;
@@ -580,15 +618,44 @@ it.effect("Stop ends watches, holds queues, and stops the delegated tasks under 
       "delegated-tasks.stop",
     );
 
+    const childRun = (yield* orchestrator.getThreadProjection(childThreadId)).runs[0]!;
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make("event:stop-child:first-run-completed"),
+          type: "run.updated",
+          threadId: childThreadId,
+          runId: childRun.id,
+          occurredAt: now,
+          payload: { ...childRun, status: "completed", completedAt: now },
+        },
+      ],
+    });
+    yield* orchestrator.dispatch({
+      type: "queue.resume",
+      commandId: CommandId.make("resume-child-before-stop-walk"),
+      threadId: childThreadId,
+    });
+    assert.deepEqual((yield* threadState(childThreadId)).runs, ["completed", "starting", "queued"]);
+
     yield* threads.stopDelegatedTasks({ threadId: parentThreadId, commandId: stopCommandId });
     assert.deepEqual(yield* threadState(childThreadId), {
-      runs: ["interrupted", "queued:held"],
+      runs: ["completed", "interrupted", "queued:held"],
       watched: [],
     });
     assert.deepEqual((yield* threadState(grandchildThreadId)).runs, ["interrupted"]);
 
     yield* threads.stopDelegatedTasks({ threadId: parentThreadId, commandId: stopCommandId });
-    assert.deepEqual((yield* threadState(childThreadId)).runs, ["interrupted", "queued:held"]);
+    assert.deepEqual((yield* threadState(childThreadId)).runs, [
+      "completed",
+      "interrupted",
+      "queued:held",
+    ]);
+
+    yield* send(parentThreadId, "new work", "start_immediately");
+    const newChild = yield* delegate(parentThreadId, "new task after Stop");
+    yield* threads.stopDelegatedTasks({ threadId: parentThreadId, commandId: stopCommandId });
+    assert.deepEqual((yield* threadState(newChild)).runs, ["starting"]);
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -1116,40 +1183,266 @@ it.effect.each([
     }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("a delegated task that cannot be stopped fails the walk after its siblings stop", () =>
+it.effect("a partial delegated Stop retries only the original children that failed", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
-    const projections = yield* ProjectionStore.ProjectionStoreV2;
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const parentThreadId = ThreadId.make("thread:stop-partial");
     yield* createWatchingThread(parentThreadId, 6);
     yield* send(parentThreadId, "work", "start_immediately");
-    const childThreadId = yield* delegate(parentThreadId, "stoppable task");
-    const task = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!;
-    yield* projections.apply({
-      id: EventId.make("event:stop-partial:missing-task"),
-      type: "subagent.updated",
-      threadId: parentThreadId,
-      runId: task.runId!,
-      nodeId: NodeId.make("node:stop-partial:missing"),
-      providerInstanceId: instanceId,
-      occurredAt: yield* DateTime.now,
-      payload: {
-        ...task,
-        id: NodeId.make("node:stop-partial:missing"),
-        childThreadId: ThreadId.make("thread:stop-partial:missing"),
-        startedAt: DateTime.subtract(task.startedAt!, { hours: 1 }),
-      },
-    });
-
-    const walked = yield* Effect.exit(
-      threads.stopDelegatedTasks({
+    const rootRefused = yield* threads
+      .dispatch({
+        type: "thread.stop",
+        commandId: CommandId.make("stop-root-above-limit"),
         threadId: parentThreadId,
-        commandId: CommandId.make("stop-partial"),
+      })
+      .pipe(
+        Effect.provideService(DispatchModeLimit, {
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+        }),
+        Effect.exit,
+      );
+    assert.isTrue(Exit.isFailure(rootRefused));
+    assert.deepEqual((yield* threadState(parentThreadId)).runs, ["starting"]);
+    const blockedChild = yield* delegate(parentThreadId, "default task");
+    const advancedChild = yield* delegate(parentThreadId, "default task that advances");
+    const stoppedChild = yield* delegate(parentThreadId, "plan task");
+    const blockedGrandchild = yield* delegate(stoppedChild, "broader grandchild");
+    yield* orchestrator.dispatch({
+      type: "thread.runtime-mode.set",
+      commandId: CommandId.make("approval-child"),
+      threadId: stoppedChild,
+      runtimeMode: "approval-required",
+    });
+    yield* orchestrator.dispatch({
+      type: "thread.interaction-mode.set",
+      commandId: CommandId.make("plan-child"),
+      threadId: stoppedChild,
+      interactionMode: "plan",
+    });
+    const commandId = CommandId.make("stop-partial");
+    yield* orchestrator.dispatch({ type: "thread.stop", commandId, threadId: parentThreadId });
+    const walked = yield* threads.stopDelegatedTasks({ threadId: parentThreadId, commandId }).pipe(
+      Effect.provideService(DispatchModeLimit, {
+        runtimeMode: "approval-required",
+        interactionMode: "plan",
       }),
+      Effect.exit,
     );
     assert.isTrue(Exit.isFailure(walked));
-    assert.deepEqual((yield* threadState(childThreadId)).runs, ["interrupted"]);
+    assert.deepEqual((yield* threadState(stoppedChild)).runs, ["interrupted"]);
+    assert.deepEqual((yield* threadState(blockedChild)).runs, ["starting"]);
+    assert.deepEqual((yield* threadState(blockedGrandchild)).runs, ["starting"]);
+
+    yield* orchestrator.dispatch({
+      type: "thread.stop",
+      commandId: CommandId.make("independent-child-stop"),
+      threadId: advancedChild,
+    });
+    yield* send(advancedChild, "new work before failed Stop retry", "start_immediately");
+    yield* send(stoppedChild, "new child work", "start_immediately");
+    const newGrandchild = yield* delegate(stoppedChild, "new grandchild");
+    yield* send(parentThreadId, "new parent work", "start_immediately");
+    const newChild = yield* delegate(parentThreadId, "new child");
+    yield* threads.stopDelegatedTasks({ threadId: parentThreadId, commandId });
+    assert.deepEqual((yield* threadState(blockedChild)).runs, ["interrupted"]);
+    assert.deepEqual((yield* threadState(blockedGrandchild)).runs, ["interrupted"]);
+    assert.deepEqual((yield* threadState(stoppedChild)).runs, ["interrupted", "starting"]);
+    assert.deepEqual((yield* threadState(advancedChild)).runs, ["interrupted", "starting"]);
+    assert.deepEqual((yield* threadState(newChild)).runs, ["starting"]);
+    assert.deepEqual((yield* threadState(newGrandchild)).runs, ["starting"]);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect.each([
+  {
+    name: "an active run past a queue cancelled since",
+    afterStop: ["queue", "cancel"],
+    expected: { runs: ["interrupted", "cancelled"], watched: [] },
+  },
+  {
+    name: "a finished run past a queue cancelled since",
+    afterStop: ["queue", "cancel", "complete"],
+    expected: { runs: ["completed", "cancelled"], watched: [] },
+  },
+  {
+    name: "a run queued before Stop that started since",
+    beforeStop: ["queue"],
+    afterStop: ["complete", "resume"],
+    expected: { runs: ["completed", "interrupted"], watched: [] },
+  },
+  {
+    name: "a run queued before Stop that started after newer work finished",
+    beforeStop: ["queue"],
+    afterStop: ["complete", "start", "complete", "resume"],
+    expected: { runs: ["completed", "completed", "interrupted"], watched: [] },
+  },
+  {
+    // Partial retries keep queue/watch changes thread-wide while the original run is current.
+    name: "the original run and the queue and watch added since",
+    afterStop: ["queue", "watch"],
+    expected: { runs: ["interrupted", "queued:held"], watched: [] },
+  },
+  {
+    name: "nothing when only newer work started",
+    afterStop: ["complete", "start"],
+    expected: { runs: ["completed", "starting"], watched: [40] },
+  },
+  {
+    name: "nothing when newer work finished past a queue cancelled since",
+    afterStop: ["complete", "start", "queue", "cancel", "complete"],
+    expected: { runs: ["completed", "completed", "cancelled"], watched: [40] },
+  },
+] as const)("a Stop retry reaches $name", ({ beforeStop = [], afterStop, expected }) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make(
+      `thread:stop-retry-bound:${afterStop.join(",")}:${beforeStop.join(",")}`,
+    );
+    let step = 0;
+    const apply = (action: (typeof beforeStop)[number] | (typeof afterStop)[number]) =>
+      Effect.gen(function* () {
+        step++;
+        if (action === "queue")
+          return yield* send(threadId, `queued ${step}`, "queue_after_active");
+        if (action === "start") return yield* send(threadId, `new ${step}`, "start_immediately");
+        if (action === "watch") return yield* watch(threadId, 41);
+        const runs = (yield* orchestrator.getThreadProjection(threadId)).runs;
+        if (action === "resume")
+          return yield* orchestrator.dispatch({
+            type: "queue.resume",
+            commandId: CommandId.make(`resume:${step}`),
+            threadId,
+          });
+        if (action === "cancel")
+          return yield* orchestrator.dispatch({
+            type: "queued-run.cancel",
+            commandId: CommandId.make(`cancel:${step}`),
+            threadId,
+            runId: runs.findLast((run) => run.status === "queued")!.id,
+          });
+        const now = yield* DateTime.now;
+        const run = runs.findLast((candidate) => candidate.status === "starting")!;
+        yield* projections.apply({
+          id: EventId.make(`event:stop-retry-bound:${step}`),
+          type: "run.updated",
+          threadId,
+          runId: run.id,
+          occurredAt: now,
+          payload: { ...run, status: "completed", startedAt: now, completedAt: now },
+        });
+      });
+    yield* createWatchingThread(threadId, 40);
+    yield* send(threadId, "original", "start_immediately");
+    for (const action of beforeStop) yield* apply(action);
+    // The original Stop's receipt bound; its walk failed before reaching this thread.
+    const throughSequence = yield* orchestrator.getThreadEventSequence(threadId);
+    for (const action of afterStop) yield* apply(action);
+    yield* orchestrator.dispatch({
+      type: "thread.stop",
+      commandId: CommandId.make("retry-stop"),
+      threadId,
+      throughSequence,
+    });
+    assert.deepEqual(yield* threadState(threadId), {
+      runs: [...expected.runs],
+      watched: [...expected.watched],
+    });
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("thread.stop interrupts background work past a queue cancelled before it ran", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:stop-background-cancelled-queue");
+    yield* createWatchingThread(threadId, 42);
+    yield* send(threadId, "work", "start_immediately");
+    yield* send(threadId, "queued", "queue_after_active");
+    const [run, queued] = (yield* orchestrator.getThreadProjection(threadId)).runs;
+    yield* orchestrator.dispatch({
+      type: "queued-run.cancel",
+      commandId: CommandId.make("cancel-before-background"),
+      threadId,
+      runId: queued!.id,
+    });
+    const now = yield* DateTime.now;
+    const providerTurnId = ProviderTurnId.make("provider-turn:stop-background");
+    yield* projections.apply({
+      id: EventId.make("event:stop-background:turn"),
+      type: "provider-turn.updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: providerTurnId,
+        providerThreadId: run!.providerThreadId!,
+        nodeId: run!.rootNodeId!,
+        runAttemptId: run!.activeAttemptId!,
+        nativeTurnRef: null,
+        ordinal: 1,
+        status: "completed",
+        startedAt: now,
+        completedAt: now,
+      },
+    });
+    const backgroundId = TurnItemId.make("item:stop-background");
+    yield* projections.apply({
+      id: EventId.make("event:stop-background:item"),
+      type: "turn-item.updated",
+      threadId,
+      runId: run!.id,
+      occurredAt: now,
+      payload: {
+        id: backgroundId,
+        threadId,
+        runId: run!.id,
+        nodeId: run!.rootNodeId!,
+        providerThreadId: run!.providerThreadId!,
+        providerTurnId,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "running",
+        title: "Background command",
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+        type: "command_execution",
+        input: "test background work",
+      },
+    });
+    yield* projections.apply({
+      id: EventId.make("event:stop-background:completed"),
+      type: "run.updated",
+      threadId,
+      runId: run!.id,
+      occurredAt: now,
+      payload: { ...run!, status: "completed", startedAt: now, completedAt: now },
+    });
+
+    yield* orchestrator.dispatch({
+      type: "thread.stop",
+      commandId: CommandId.make("stop-background"),
+      threadId,
+    });
+    const stopped = yield* orchestrator.getThreadProjection(threadId);
+    assert.notInclude(
+      ["pending", "running", "waiting"],
+      stopped.turnItems.find((item) => item.id === backgroundId)?.status,
+    );
+    assert.deepEqual(
+      stopped.turnItems
+        .filter((item) => item.type === "run_interrupt_request")
+        .map((item) => item.runId),
+      [run!.id],
+    );
+    assert.isTrue(Exit.isFailure(yield* Effect.exit(watch(threadId, 43))));
+    assert.deepEqual(yield* threadState(threadId), {
+      runs: ["completed", "cancelled"],
+      watched: [],
+    });
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -1470,4 +1763,120 @@ it.effect.each(["missing session", "completed", "failed", "cancelled"] as const)
         "running",
       );
     }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("an MCP Stop replays its original result after the database and services reopen", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-mcp-stop-replay-" });
+    const database = fileDatabase(path.join(dir, "statev2.sqlite"));
+    const scope: McpInvocationContext.McpInvocationScope = {
+      environmentId: EnvironmentId.make("stop-replay"),
+      requestNamespace: "client:stop-replay",
+      capabilities: new Set(["orchestration"]),
+      issuedAt: 1,
+      thread: undefined,
+      client: { sessionId: "stop-replay", label: "Stop replay", access: "full-access" },
+    };
+    const threadId = ThreadId.make("thread:mcp-stop-replay");
+    const stop = { threadId, stop: true, clientRequestId: "stop" };
+    const first = yield* Effect.gen(function* () {
+      const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+      const idle = ThreadId.make("thread:mcp-stop-idle");
+      yield* createWatchingThread(idle, 102);
+      yield* send(idle, "finished work", "start_immediately");
+      yield* send(idle, "held queue", "queue_after_active");
+      const idleProjection = yield* (yield* Orchestrator.OrchestratorV2).getThreadProjection(idle);
+      const idleRun = idleProjection.runs[0]!;
+      const now = yield* DateTime.now;
+      yield* (yield* EventSink.EventSinkV2).write({
+        events: [
+          {
+            id: EventId.make("event:mcp-stop-idle:completed"),
+            type: "run.updated",
+            threadId: idle,
+            runId: idleRun.id,
+            occurredAt: now,
+            payload: { ...idleRun, status: "completed", completedAt: now },
+          },
+          {
+            id: EventId.make("event:mcp-stop-idle:held"),
+            type: "run.updated",
+            threadId: idle,
+            runId: idleProjection.runs[1]!.id,
+            occurredAt: now,
+            payload: { ...idleProjection.runs[1]!, queueHeld: true },
+          },
+        ],
+      });
+      assert.deepEqual(
+        yield* mcp.interruptThread(scope, {
+          ...stop,
+          threadId: idle,
+          clientRequestId: "idle-stop",
+        }),
+        {
+          threadId: idle,
+          runId: null,
+          status: "no_active_run",
+        },
+      );
+      yield* createWatchingThread(threadId, 101);
+      const sent = yield* mcp.sendToThread(scope, {
+        threadId,
+        message: "first",
+        clientRequestId: "send",
+      });
+      const childThreadId = yield* delegate(threadId, "original child");
+      yield* delegate(childThreadId, "original grandchild");
+      const stopped = yield* mcp.interruptThread(scope, stop);
+      assert.equal(stopped.runId, sent.runId);
+      yield* send(childThreadId, "child work after parent stopped", "start_immediately");
+      const store = yield* EventStore.EventStoreV2;
+      const childSequence = yield* store.latestSequence({ threadId: childThreadId });
+      const noopStop = { ...stop, clientRequestId: "already-stopped-parent" };
+      const noopStopped = yield* mcp.interruptThread(scope, noopStop);
+      assert.deepEqual(noopStopped, { threadId, runId: null, status: "no_active_run" });
+      assert.deepEqual((yield* threadState(childThreadId)).runs, ["interrupted", "interrupted"]);
+      const sql = yield* SqlClient.SqlClient;
+      const [noopReceipt] = yield* sql<{ command_id: string; result_sequence: number }>`
+        SELECT command_id, result_sequence FROM orchestration_command_receipts
+        WHERE aggregate_id = ${threadId} AND command_type = 'thread.stop'
+        ORDER BY result_sequence DESC LIMIT 1
+      `;
+      assert.isAtLeast(noopReceipt!.result_sequence, childSequence);
+      assert.deepEqual(
+        yield* store
+          .readByCommandId({ commandId: CommandId.make(noopReceipt!.command_id) })
+          .pipe(Stream.runCollect),
+        [],
+      );
+      return { sent, stopped, childThreadId, noopStop, noopStopped };
+    }).pipe(Effect.provide(layerMcp(database).pipe(Layer.fresh)));
+
+    yield* Effect.gen(function* () {
+      const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const replay = yield* mcp.sendToThread(scope, {
+        threadId,
+        message: "first",
+        clientRequestId: "send",
+      });
+      assert.equal(replay.runId, first.sent.runId);
+      assert.equal((yield* orchestrator.getThreadProjection(threadId)).runs.length, 1);
+      yield* send(threadId, "after restart", "start_immediately");
+      const newChild = yield* delegate(threadId, "child after restart");
+      yield* send(first.childThreadId, "child work after restart", "start_immediately");
+      assert.deepEqual(yield* mcp.interruptThread(scope, first.noopStop), first.noopStopped);
+      assert.deepEqual((yield* threadState(first.childThreadId)).runs, [
+        "interrupted",
+        "interrupted",
+        "starting",
+      ]);
+      assert.deepEqual(yield* mcp.interruptThread(scope, stop), first.stopped);
+      assert.deepEqual((yield* threadState(threadId)).runs, ["interrupted", "starting"]);
+      assert.deepEqual((yield* threadState(newChild)).runs, ["starting"]);
+    }).pipe(Effect.provide(layerMcp(database).pipe(Layer.fresh)));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

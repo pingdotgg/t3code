@@ -2,8 +2,10 @@ import { NodeHttpServer } from "@effect/platform-node";
 import { type ExecutionEnvironmentDescriptor, OrchestratorMcpFailure } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -21,6 +23,7 @@ import {
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as McpToolAccess from "../mcp/McpToolAccess.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import {
   descriptorOf,
@@ -72,8 +75,11 @@ const serveB = (descriptor: ExecutionEnvironmentDescriptor) =>
   servePeer(descriptor, McpHttpServer.toolkitRegistration(ProbeToolkit, probeHandlers));
 
 /** Environment A, which links to B. */
-const makeA = (descriptor: ExecutionEnvironmentDescriptor) =>
-  layerLinkingEnvironment(descriptor).pipe(
+const makeA = (
+  descriptor: ExecutionEnvironmentDescriptor,
+  beforeSecretRemove?: Effect.Effect<void, ServerSecretStore.SecretStoreError>,
+) =>
+  layerLinkingEnvironment(descriptor, beforeSecretRemove).pipe(
     Layer.build,
     Effect.map((context) => ({
       links: Context.get(context, PeerLinks.PeerLinks),
@@ -334,4 +340,132 @@ it.effect(
         expect(yield* linkedSessions(b)).toEqual([]);
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("reads a tool's answer from an event stream carrying other messages first", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const b = yield* serveB(box);
+      const a = yield* makeA(laptop);
+      const pairing = yield* b.auth.issuePairingCredential();
+      yield* a.links.link({ url: b.url, pairingCode: pairing.credential, access: "auto" });
+      const answered = yield* probe(a);
+
+      yield* Ref.set(b.sse, true);
+      expect(yield* probe(a)).toEqual(answered);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect(
+  "keeps a link and its token when forgetting it fails, and never forgets a newer link",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const b = yield* serveB(box);
+        const removal = yield* Ref.make<"fail" | "pause" | null>(null);
+        const removalEntered = yield* Deferred.make<void>();
+        const allowRemoval = yield* Deferred.make<void>();
+        const a = yield* makeA(
+          laptop,
+          Ref.get(removal).pipe(
+            Effect.flatMap((action) =>
+              action === "fail"
+                ? Effect.fail(
+                    new ServerSecretStore.SecretStoreRemoveError({
+                      resource: "test credential",
+                      cause: new Error("removal failed"),
+                    }),
+                  )
+                : action === "pause"
+                  ? Deferred.succeed(removalEntered, undefined).pipe(
+                      Effect.andThen(Deferred.await(allowRemoval)),
+                    )
+                  : Effect.void,
+            ),
+          ),
+        );
+        const pairing = yield* b.auth.issuePairingCredential();
+        yield* a.links.link({ url: b.url, pairingCode: pairing.credential, access: "auto" });
+        const linked = yield* a.links.get(box.environmentId);
+
+        yield* Ref.set(removal, "fail");
+        expect((yield* a.links.unlink(box.environmentId).pipe(Effect.flip)).reason).toBe("storage");
+        expect(yield* a.links.get(box.environmentId)).toEqual(linked);
+        expect(yield* probe(a)).toEqual({ caller: "T3 Code · Laptop", modes: "auto/default" });
+
+        // Linking again while an unlink is forgetting the old token keeps the new link.
+        yield* Ref.set(removal, "pause");
+        const unlinking = yield* a.links.unlink(box.environmentId).pipe(Effect.forkScoped);
+        yield* Deferred.await(removalEntered);
+        yield* Ref.set(removal, null);
+        const repairing = yield* b.auth.issuePairingCredential();
+        const relinked = yield* a.links.link({
+          url: b.url,
+          pairingCode: repairing.credential,
+          access: "approval-required",
+        });
+        yield* Deferred.succeed(allowRemoval, undefined);
+        expect(yield* Fiber.join(unlinking)).toBe(false);
+        expect(yield* a.links.get(box.environmentId)).toEqual(Option.some(relinked));
+        expect(yield* probe(a)).toEqual({
+          caller: "T3 Code · Laptop",
+          modes: "approval-required/default",
+        });
+        expect(yield* a.links.unlink(box.environmentId)).toBe(true);
+        expect(yield* a.links.get(box.environmentId)).toEqual(Option.none());
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("never repeats an address's credentials or a peer's own text in a link error", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const b = yield* serveB(box);
+      const a = yield* makeA(laptop);
+      for (const url of [
+        "file://username:password@example.test/path?token=private",
+        "http://username:password@192.168.1.20:3773/path?token=private",
+      ]) {
+        const invalid = yield* a.links
+          .link({ url, pairingCode: "unused", access: "auto" })
+          .pipe(Effect.flip);
+        expect(invalid.message).not.toMatch(/username|password|private|example\.test/);
+      }
+      const peerText = "PRIVATE-PEER-RESPONSE\n".repeat(200);
+      for (const [path, body, message] of [
+        [
+          "/oauth/mcp/register",
+          { error: "invalid_client_metadata", error_description: peerText },
+          "The peer refused to register this environment. Check its connection settings.",
+        ],
+        [
+          "/oauth/mcp/decision",
+          { _tag: "AuthMcpApprovalError", message: peerText },
+          "The peer refused link approval. Check the pairing code and try again.",
+        ],
+        [
+          "/oauth/mcp/token",
+          { error: "invalid_grant", error_description: peerText },
+          "The peer refused the sign-in token. Create a new pairing code and try again.",
+        ],
+        [
+          "/oauth/mcp/decision",
+          { redirectTo: "http://localhost/?error_description=" + encodeURIComponent(peerText) },
+          "The peer did not approve the link. Check the pairing code and try again.",
+        ],
+      ] as const) {
+        yield* Ref.set(
+          b.replies,
+          new Map([[path, { status: "redirectTo" in body ? 200 : 400, body }]]),
+        );
+        const code = yield* b.auth.issuePairingCredential();
+        const failed = yield* a.links
+          .link({ url: b.url, pairingCode: code.credential, access: "auto" })
+          .pipe(Effect.flip);
+        expect(failed.reason).toBe("pairing_rejected");
+        expect(failed.message).toBe(message);
+      }
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

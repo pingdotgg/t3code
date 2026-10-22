@@ -2917,15 +2917,24 @@ const make = Effect.gen(function* () {
             ...(input.reason === undefined ? {} : { reason: input.reason }),
           })
           .pipe(Effect.catch(stopFailed));
-        // A retry with the same clientRequestId repeats only the stops that failed.
         yield* threadManagement
           .stopDelegatedTasks({ threadId: input.threadId, commandId, reason: input.reason })
           .pipe(Effect.catch(stopFailed));
-        // The run this stop interrupted, from its own events, so a retry
-        // reports the same run even if another has started since.
-        const interrupted = stopped.storedEvents.find(
-          (stored) => stored.event.type === "run.updated",
-        )?.event.runId;
+        // Queue holds and completion disposal also update runs. Only the
+        // original interrupt request identifies the run Stop reached.
+        const request = stopped.storedEvents.find(
+          (stored) =>
+            stored.event.type === "turn-item.updated" &&
+            stored.event.payload.type === "run_interrupt_request" &&
+            (stored.event.payload.providerTurnId !== null ||
+              stopped.storedEvents.some(
+                (updated) =>
+                  updated.event.type === "run.updated" &&
+                  updated.event.runId === stored.event.runId &&
+                  updated.event.payload.status === "interrupted",
+              )),
+        );
+        const interrupted = request?.event.runId;
         return {
           threadId: input.threadId,
           runId: interrupted ?? null,

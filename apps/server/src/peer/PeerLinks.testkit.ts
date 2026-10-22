@@ -13,6 +13,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
@@ -60,6 +61,12 @@ export const servePeer = <E, R>(
     const descriptor = yield* Ref.make(initial);
     const bearers = yield* Ref.make<ReadonlyArray<string>>([]);
     const probes = yield* Ref.make(0);
+    // Answers tool calls as an event stream with other messages ahead of the answer.
+    const sse = yield* Ref.make(false);
+    // Canned answers by path, standing in for a peer's own refusals.
+    const replies = yield* Ref.make<ReadonlyMap<string, { status: number; body: unknown }>>(
+      new Map(),
+    );
     const layerEnvironment = Layer.succeed(ServerEnvironment.ServerEnvironment, {
       getEnvironmentId: Ref.get(descriptor).pipe(Effect.map((current) => current.environmentId)),
       getDescriptor: Ref.get(descriptor),
@@ -84,7 +91,32 @@ export const servePeer = <E, R>(
           if (authorization !== undefined) {
             yield* Ref.update(bearers, (seen) => [...seen, authorization]);
           }
-          return yield* httpEffect;
+          const reply = (yield* Ref.get(replies)).get(request.url);
+          if (reply !== undefined)
+            return HttpServerResponse.jsonUnsafe(reply.body, { status: reply.status });
+          const response = yield* httpEffect;
+          if (
+            !(yield* Ref.get(sse)) ||
+            request.url !== "/mcp" ||
+            response.status !== 200 ||
+            response.body._tag !== "Uint8Array"
+          )
+            return response;
+          const answer = new TextDecoder().decode(response.body.body);
+          const split = answer.indexOf(",") + 1;
+          return HttpServerResponse.text(
+            [
+              'data: {"jsonrpc":"2.0","method":"notifications/progress","params":{"progress":1}}',
+              "",
+              'data: {"jsonrpc":"2.0","id":999,"error":{"code":-1,"message":"other request"}}',
+              "",
+              `data: ${answer.slice(0, split)}`,
+              `data: ${answer.slice(split)}`,
+              "",
+              "",
+            ].join("\r\n"),
+            { contentType: "text/event-stream" },
+          );
         }),
       { global: true },
     );
@@ -123,6 +155,8 @@ export const servePeer = <E, R>(
       auth,
       descriptor,
       bearers,
+      sse,
+      replies,
       /** How often its descriptor was asked for, as a probe of whether it answers. */
       probes,
       /** The sessions linking created there, which its Connections lists. */
@@ -142,13 +176,24 @@ export type ServedPeer = Effect.Success<ReturnType<typeof servePeer>>;
  * The environment that links: its own database and secret store, reaching
  * peers over plain HTTP. Provide it to anything built on its links.
  */
-export const layerLinkingEnvironment = (descriptor: ExecutionEnvironmentDescriptor) =>
+export const layerLinkingEnvironment = (
+  descriptor: ExecutionEnvironmentDescriptor,
+  beforeSecretRemove: Effect.Effect<void, ServerSecretStore.SecretStoreError> = Effect.void,
+) =>
   PeerMcpClient.layer.pipe(
     Layer.provideMerge(PeerLinks.layer),
     Layer.provide(
       Layer.mergeAll(
         Sqlite.layerMemory,
-        ServerSecretStore.layer,
+        Layer.effect(
+          ServerSecretStore.ServerSecretStore,
+          Effect.map(ServerSecretStore.ServerSecretStore, (secrets) =>
+            ServerSecretStore.ServerSecretStore.of({
+              ...secrets,
+              remove: (name) => beforeSecretRemove.pipe(Effect.andThen(secrets.remove(name))),
+            }),
+          ),
+        ).pipe(Layer.provide(ServerSecretStore.layer)),
         FetchHttpClient.layer,
         Layer.succeed(ServerEnvironment.ServerEnvironment, {
           getEnvironmentId: Effect.succeed(descriptor.environmentId),

@@ -3062,6 +3062,17 @@ const OrchestrationV2InternalCommand = Schema.Union([
     ),
   }),
   /**
+   * Internal so no client can bound a Stop retry to earlier history; client
+   * Stops use the public `OrchestrationV2Command` variant.
+   */
+  Schema.Struct({
+    type: Schema.Literal("thread.stop"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    reason: Schema.optional(Schema.String),
+    throughSequence: Schema.optional(NonNegativeInt),
+  }),
+  /**
    * Internal so no client can mark a request saved without the value being
    * stored.
    */
