@@ -535,6 +535,8 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
   const [endFollowEnabled, setEndFollowEnabled] = useState(true);
   // Android Back hides the keyboard without blurring. Keep its safe-area padding
   // fixed through the animation and cancel it with matching composer/list offsets.
+  // A hardware keyboard can leave the IME visible with no height: nothing lifts the
+  // composer then, so cancelling the padding would drop it under the taskbar.
   const bottomBarInset = useDuoBottomBarInset();
   // The pill already adds its own gutter; iPad and Duo align its edge with the native bar.
   const alignedBottomInset =
@@ -547,7 +549,10 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
       : alignedBottomInset !== undefined
         ? Math.max(0, alignedBottomInset - THREAD_COMPOSER_BOTTOM_GUTTER)
         : Math.max(insets.bottom, 12);
-  const composerKeyboardOffset = Platform.OS === "android" ? composerBottomInset : 0;
+  const composerKeyboardOffset =
+    Platform.OS === "android" && !(isKeyboardVisible && liveKeyboardHeight === 0)
+      ? composerBottomInset
+      : 0;
   const contentPresentationKind = props.contentPresentation.kind;
   const realThreadSyncLabel = (() => {
     switch (props.threadSyncStatus) {

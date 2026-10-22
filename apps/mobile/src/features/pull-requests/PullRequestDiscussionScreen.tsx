@@ -43,8 +43,9 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
   const target = pullRequestTarget(params);
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const keyboardVisible = useKeyboardState((state) => state.isVisible);
-  const bottomInset = keyboardVisible ? 8 : Math.max(insets.bottom, 12);
+  // A hardware keyboard can leave the IME visible with no height, which lifts nothing.
+  const keyboardLiftsComposer = useKeyboardState((state) => state.isVisible && state.height > 0);
+  const bottomInset = keyboardLiftsComposer ? 8 : Math.max(insets.bottom, 12);
   const activity = useEnvironmentQuery(composerPullRequests.activity(target));
   const detail = useEnvironmentQuery(composerPullRequests.detail(target));
   const permissions = usePullRequestPermissions(params, detail.data);
