@@ -505,6 +505,21 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
+  it.effect("install fails without touching the service when the unit cannot be read", () =>
+    Effect.gen(function* () {
+      const { service, fs, statePath, commands } = yield* makeHarness();
+      const plan = yield* service.install();
+      const state = yield* fs.readFileString(statePath);
+      yield* fs.remove(plan.unitPath);
+      yield* fs.makeDirectory(plan.unitPath);
+      commands.length = 0;
+
+      expect((yield* service.install().pipe(Effect.flip))._tag).toBe("BootServiceInstallError");
+      expect(commands).toEqual([]);
+      expect(yield* fs.readFileString(statePath)).toBe(state);
+    }),
+  );
+
   it.effect("install with start=false refuses while a remote update is pending", () =>
     Effect.gen(function* () {
       const { service, fs, statePath } = yield* makeHarness();

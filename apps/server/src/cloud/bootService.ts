@@ -616,16 +616,15 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const statePath = path.join(input.baseDir, "runtime", SERVICE_STATE_FILE);
   const restartPendingPath = path.join(input.baseDir, "runtime", SERVICE_RESTART_PENDING_FILE);
   const runtimePaths = pinnedRuntimePaths(path, input.baseDir, input.cliVersion, platform);
-  // Through realPath, so a home reached by a symlink still counts as this one.
-  const canonicalDir = (dir: string) =>
-    fs.realPath(dir).pipe(Effect.orElseSucceed(() => path.resolve(dir)));
   const otherBaseDirOf = Effect.fn("cloud.boot_service.other_base_dir")(function* (unit: string) {
     const installedBaseDir = bootServiceBaseDirOf(unit);
     if (installedBaseDir === undefined) return undefined;
-    const [installed, own] = yield* Effect.all([
-      canonicalDir(installedBaseDir),
-      canonicalDir(input.baseDir),
-    ]);
+    // Through realPath, so a home reached by a symlink still counts as this one.
+    const [installed, own] = yield* Effect.all(
+      [installedBaseDir, input.baseDir].map((dir) =>
+        fs.realPath(dir).pipe(Effect.orElseSucceed(() => path.resolve(dir))),
+      ),
+    );
     return installed === own ? undefined : installedBaseDir;
   });
   const writeDurably = (filePath: string, contents: string) =>
