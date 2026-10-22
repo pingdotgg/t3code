@@ -6,7 +6,7 @@ import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller
 import Animated, { useAnimatedStyle } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { isDuoDevice } from "../../lib/device-type";
-import { useDeviceType } from "../../native/native-layout-metrics";
+import { useDeviceType, useDuoBottomBarInset } from "../../native/native-layout-metrics";
 import type { SearchBarCommands } from "react-native-screens";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -75,6 +75,7 @@ export function WorkspaceToolbar(props: {
   // each fold replaces the search field.
   const listSearch = isDuoDevice(deviceType);
   const insets = useSafeAreaInsets();
+  const bottomBarInset = useDuoBottomBarInset();
   const { isTabActive } = workspace;
   const tabActive = use(NativeWorkspaceTabActivityContext)?.active ?? true;
   const { panes, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
@@ -216,7 +217,7 @@ export function WorkspaceToolbar(props: {
         ) : null}
       </Toolbar>
       {listSearch ? (
-        <AboveKeyboard bottom={Math.max(insets.bottom, 12)}>
+        <AboveKeyboard bottom={bottomBarInset ?? Math.max(insets.bottom, 12)}>
           <WorkspaceSearchField
             ref={fieldRef}
             tab={selectedTab}

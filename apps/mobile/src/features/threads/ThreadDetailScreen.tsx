@@ -102,7 +102,10 @@ import Animated, {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useWorkspaceContentWidth } from "../layout/workspace-content-width";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
-import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
+import {
+  useDuoBottomBarInset,
+  useNativeColumnLayoutMetrics,
+} from "../../native/native-layout-metrics";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { collectProviderUsageLimits } from "@t3tools/shared/usageLimits";
 import type { ComposerEditorHandle } from "../../components/ComposerEditor";
@@ -159,6 +162,7 @@ import {
   COMPOSER_EXPANDED_CHROME,
   COMPOSER_LAYOUT_TRANSITION,
   COMPOSER_TRANSITION_DURATION_MS,
+  THREAD_COMPOSER_BOTTOM_GUTTER,
   ThreadComposer,
 } from "./ThreadComposer";
 import { ComposerPopoverHost } from "./ComposerPopoverHost";
@@ -536,10 +540,13 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
   const [endFollowEnabled, setEndFollowEnabled] = useState(true);
   // Android Back hides the keyboard without blurring. Keep its safe-area padding
   // fixed through the animation and cancel it with matching composer/list offsets.
+  const bottomBarInset = useDuoBottomBarInset();
   const composerBottomInset =
     Platform.OS === "ios" && (composerExpanded || composerFocused)
       ? 0
-      : Math.max(insets.bottom, 12);
+      : bottomBarInset !== undefined
+        ? bottomBarInset - THREAD_COMPOSER_BOTTOM_GUTTER
+        : Math.max(insets.bottom, 12);
   const composerKeyboardOffset = Platform.OS === "android" ? composerBottomInset : 0;
   const contentPresentationKind = props.contentPresentation.kind;
   const realThreadSyncLabel = (() => {

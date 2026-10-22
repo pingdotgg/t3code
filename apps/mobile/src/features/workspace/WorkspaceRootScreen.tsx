@@ -11,6 +11,7 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { NativePrimaryColumnContext } from "../../native/v5-workspace-context";
 import {
   useDeviceType,
+  useDuoBottomBarInset,
   useNativeColumnLayoutMetrics,
   useNativeLayoutMetrics,
 } from "../../native/native-layout-metrics";
@@ -70,6 +71,7 @@ function WorkspaceRootContent() {
       (nativeMetrics !== null && nativeMetrics.verticalBarEdge !== "none"));
   const width = columnMetrics?.width ?? windowWidth;
   const insets = useSafeAreaInsets();
+  const bottomBarInset = useDuoBottomBarInset();
   const keyboardHeight = useKeyboardState((keyboard) => keyboard.height);
   const workspace = useWorkspaceTabs()!;
   const { state } = workspace;
@@ -90,7 +92,9 @@ function WorkspaceRootContent() {
   const tab = state.tabs[state.selectedTab];
   const bottomClearance =
     Platform.OS === "ios" && isDuoDevice(deviceType)
-      ? Math.max(insets.bottom, 12, keyboardHeight + 8) + WORKSPACE_TOOLBAR.height + 16
+      ? Math.max(bottomBarInset ?? Math.max(insets.bottom, 12), keyboardHeight + 8) +
+        WORKSPACE_TOOLBAR.height +
+        16
       : Platform.OS === "ios"
         ? Math.max(insets.bottom, keyboardHeight) +
           (systemTabBar || sidebarTabs || tab.searchMode !== "resting"
