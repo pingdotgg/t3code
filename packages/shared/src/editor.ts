@@ -47,6 +47,23 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
   const names = installNames[editor.id] ?? [editor.label];
   const command = editor.commands[0];
   const jetbrains = editor.launchStyle === "line-column";
+  // Toolbox names a launch script `idea1`, `idea2`, ... when another installed
+  // version already has `idea`.
+  const numberedScripts = (dir: string, suffix: string) =>
+    fs.readDirectory(dir).pipe(
+      Effect.orElseSucceed(() => []),
+      Effect.map((entries) =>
+        entries
+          .filter(
+            (entry) =>
+              entry.startsWith(command) &&
+              entry.endsWith(suffix) &&
+              /^\d+$/.test(entry.slice(command.length, entry.length - suffix.length)),
+          )
+          .sort()
+          .map((entry) => path.join(dir, entry)),
+      ),
+    );
   const candidates: string[] = [];
 
   if (platform === "darwin") {
@@ -73,9 +90,8 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
       }
     }
     if (home && jetbrains) {
-      candidates.push(
-        path.join(home, "Library/Application Support/JetBrains/Toolbox/scripts", command),
-      );
+      const scripts = path.join(home, "Library/Application Support/JetBrains/Toolbox/scripts");
+      candidates.push(path.join(scripts, command), ...(yield* numberedScripts(scripts, "")));
     }
   } else if (platform === "win32") {
     const roots = [
@@ -86,7 +102,11 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
     ];
     if (jetbrains) {
       if (env.LOCALAPPDATA) {
-        candidates.push(path.join(env.LOCALAPPDATA, "JetBrains/Toolbox/scripts", `${command}.cmd`));
+        const scripts = path.join(env.LOCALAPPDATA, "JetBrains/Toolbox/scripts");
+        candidates.push(
+          path.join(scripts, `${command}.cmd`),
+          ...(yield* numberedScripts(scripts, ".cmd")),
+        );
       }
       for (const directory of roots.flatMap((root) => [root, path.join(root, "JetBrains")])) {
         const entries = yield* fs.readDirectory(directory).pipe(Effect.orElseSucceed(() => []));
@@ -126,10 +146,9 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
       "/usr/bin",
       "/snap/bin",
     ];
-    if (jetbrains) {
-      const dataHome = env.XDG_DATA_HOME || (home ? path.join(home, ".local/share") : undefined);
-      if (dataHome) dirs.push(path.join(dataHome, "JetBrains/Toolbox/scripts"));
-    }
+    const dataHome = env.XDG_DATA_HOME || (home ? path.join(home, ".local/share") : undefined);
+    const scripts = jetbrains && dataHome ? path.join(dataHome, "JetBrains/Toolbox/scripts") : null;
+    if (scripts) dirs.push(scripts);
     if (preferZeditor) {
       // Linux packages use zeditor because OpenZFS owns the zed command.
       for (const name of ["zeditor", "zed"]) {
@@ -140,6 +159,7 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
         for (const name of editor.commands) candidates.push(path.join(dir, name));
       }
     }
+    if (scripts) candidates.push(...(yield* numberedScripts(scripts, "")));
   }
 
   if (preferBundle) candidates.push(...editor.commands);
