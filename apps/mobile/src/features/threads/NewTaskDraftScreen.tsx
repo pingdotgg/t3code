@@ -219,8 +219,12 @@ export function NewTaskDraftScreen(props: {
   // iPhone sheet and an iPad column that also carries the status bar.
   const navigationHeaderHeight = useContext(HeaderHeightContext) ?? insets.top + 56;
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
+  const keyboardHasHeight = useKeyboardState((state) => state.height > 0);
   const controlsBottomPadding = Math.max(insets.bottom, 10);
-  const keyboardOpenedOffset = Math.max(0, controlsBottomPadding - 8);
+  // A hardware keyboard can leave the IME visible with no height: nothing lifts the
+  // composer then, so cancelling the padding would drop it under the taskbar.
+  const keyboardOpenedOffset =
+    isKeyboardVisible && !keyboardHasHeight ? 0 : Math.max(0, controlsBottomPadding - 8);
   const { projectScopes, selectedProject, selectedProjectKey, setProject } = flow;
   const selectedProjectLabel = (() => {
     if (!selectedProject) return null;
