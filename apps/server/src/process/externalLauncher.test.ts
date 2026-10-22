@@ -630,6 +630,56 @@ it.effect("keeps the macOS VS Code Insiders bundle out of stable VS Code", () =>
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+// Toolbox names the script `idea1` when another installed version already has `idea`.
+for (const { platform, installPath } of [
+  {
+    platform: "darwin",
+    installPath: "Library/Application Support/JetBrains/Toolbox/scripts/idea1",
+  },
+  { platform: "linux", installPath: ".local/share/JetBrains/Toolbox/scripts/idea1" },
+  { platform: "win32", installPath: "JetBrains/Toolbox/scripts/idea1.cmd" },
+] as const) {
+  it.effect.skipIf(windowsHost && platform !== "win32")(
+    `discovers a numbered JetBrains Toolbox script on ${platform}`,
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editor-toolbox-" });
+        const executable = path.join(home, installPath);
+        yield* fs.makeDirectory(path.dirname(executable), { recursive: true });
+        yield* fs.writeFileString(executable, "#!/bin/sh\n");
+        yield* fs.chmod(executable, 0o755);
+
+        let spawned: ChildProcess.StandardCommand | undefined;
+        const editors = yield* Effect.gen(function* () {
+          const launcher = yield* ExternalLauncher.ExternalLauncher;
+          const available = yield* launcher.resolveAvailableEditors();
+          yield* launcher.launchEditor({ editor: "idea", cwd: "/workspace/file.ts" });
+          return available;
+        }).pipe(
+          Effect.provide(
+            layerTest({
+              platform,
+              env: {
+                HOME: home,
+                LOCALAPPDATA: home,
+                PATH: path.join(home, "empty"),
+                PATHEXT: ".COM;.EXE;.BAT;.CMD",
+              },
+              onSpawn: (command) => {
+                spawned = command;
+              },
+            }),
+          ),
+        );
+
+        assert.include(editors, "idea");
+        assert.include(spawned?.command, "idea1");
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+}
+
 for (const { platform, installPath, onPath } of [
   { platform: "darwin", installPath: ".local/bin/agy", onPath: true },
   { platform: "linux", installPath: ".local/bin/agy", onPath: false },
