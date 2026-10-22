@@ -7,6 +7,8 @@ import {
 } from "@t3tools/contracts";
 import { useEffect, useEffectEvent, useState } from "react";
 
+import { usePullRequestChecksRefresh } from "~/hooks/usePullRequestChecksRefresh";
+import { useServerConfigs } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
 import { useEnvironmentScope } from "~/state/session";
 import {
@@ -18,6 +20,7 @@ import {
 import {
   readPullRequestDetailSnapshot,
   resolveDisplayedPullRequestDetail,
+  resolvePullRequestDetailChecks,
   writePullRequestDetailSnapshot,
 } from "./pullRequestDetail.logic";
 import { pullRequestChecksState } from "./pullRequestPresentation";
@@ -42,11 +45,35 @@ export function usePullRequestDetail(
   const scopeKey = `${environmentId}:${pullRequestRefKey(reference)}`;
   const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
   const detailQuery = useEnvironmentQuery(
-    pullRequestEnvironment.detail({ environmentId, input: reference }),
+    pullRequestEnvironment.detail({ environmentId, input: { ...reference, allowStale: false } }),
   );
   const activityQuery = useEnvironmentQuery(
     pullRequestEnvironment.activity({ environmentId, input: reference }),
   );
+  const serverConfigs = useServerConfigs();
+  const supportsChecks =
+    serverConfigs.get(environmentId)?.environment.capabilities.pullRequestChecks === true;
+  const checksQuery = useEnvironmentQuery(
+    supportsChecks && detailQuery.data !== null
+      ? pullRequestEnvironment.checks({ environmentId, input: reference })
+      : null,
+  );
+  const liveDetail = resolvePullRequestDetailChecks(
+    detailQuery.data,
+    checksQuery.data,
+    checksQuery.dataUpdatedAt >= detailQuery.dataUpdatedAt,
+  );
+  usePullRequestChecksRefresh({
+    refresh: () => {
+      if (!checksQuery.isPending && !detailQuery.isPending) checksQuery.refresh();
+    },
+    enabled:
+      liveDetail?.state === "open" &&
+      supportsChecks &&
+      !(checksQuery.isSuccess && checksQuery.data === null),
+    key: `workspace-pr-checks:${environmentId}:${reference.projectId}:${reference.host}:${reference.repository}:${reference.number}`,
+    checks: liveDetail?.checks ?? [],
+  });
   const [cachedDetail, setCachedDetail] = useState(() =>
     readPullRequestDetailSnapshot(
       typeof window === "undefined" ? undefined : window.localStorage,
@@ -79,16 +106,16 @@ export function usePullRequestDetail(
   useEffect(() => {
     if (detailQuery.data !== null) saveDetailSnapshot(detailQuery.data);
   }, [detailQuery.data]);
-  const detailSummary = pullRequestDetailSummary(detailQuery.data);
+  const detailSummary = pullRequestDetailSummary(liveDetail);
   const observedSummary = useSharedPullRequestSummary(
     environmentId,
     reference,
     detailSummary,
-    detailQuery.dataUpdatedAt,
+    Math.max(detailQuery.dataUpdatedAt, checksQuery.dataUpdatedAt),
   );
   const activity = activityQuery.data;
   const resolvedCoreDetail = resolveDisplayedPullRequestDetail({
-    live: detailQuery.data,
+    live: liveDetail,
     cached: cachedDetail,
     reference,
   });

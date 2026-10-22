@@ -2748,6 +2748,34 @@ it.effect("deduplicates routed PR reports without dropping draft changes", () =>
   }),
 );
 
+it.effect("preserves check observation time on cache hits and advances it on refresh", () =>
+  Effect.gen(function* () {
+    let reads = 0;
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("github"), {
+          getChangeRequestChecks: () =>
+            Effect.sync(() => {
+              reads += 1;
+              return { state: "open" as const, checks: [] };
+            }),
+        }),
+      ],
+    });
+    yield* TestClock.setTime(1_000);
+    const first = yield* service.checks(reference);
+    expect(first).toMatchObject({ observedAt: 1_000 });
+    yield* TestClock.adjust("1 second");
+    expect(yield* service.checks(reference)).toEqual(first);
+    expect(reads).toBe(1);
+    yield* TestClock.adjust("15 seconds");
+    expect(yield* service.checks(reference)).toMatchObject({ observedAt: 17_000 });
+    expect(reads).toBe(2);
+  }),
+);
+
 it.effect("reuses an observed merged state for strict settlement reads", () =>
   Effect.gen(function* () {
     const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
