@@ -137,10 +137,22 @@ export function getThreadSortTimestamp(
 function activeThreadAnchorTimestampMs(thread: {
   readonly createdAt: string;
   readonly unsettledAt?: string | null | undefined;
+  readonly updatedAt?: string | undefined;
+  readonly latestUserMessageAt?: string | null | undefined;
+  readonly latestRun?: {
+    readonly requestedAt?: string | null | undefined;
+    readonly startedAt?: string | null | undefined;
+    readonly completedAt?: string | null | undefined;
+  } | null | undefined;
 }): number {
   return Math.max(
     toSortableTimestamp(thread.createdAt) ?? 0,
     toSortableTimestamp(thread.unsettledAt ?? undefined) ?? 0,
+    toSortableTimestamp(thread.updatedAt) ?? 0,
+    toSortableTimestamp(thread.latestUserMessageAt ?? undefined) ?? 0,
+    toSortableTimestamp(thread.latestRun?.requestedAt ?? undefined) ?? 0,
+    toSortableTimestamp(thread.latestRun?.startedAt ?? undefined) ?? 0,
+    toSortableTimestamp(thread.latestRun?.completedAt ?? undefined) ?? 0,
   );
 }
 
@@ -256,6 +268,13 @@ export function sortActiveThreadsByOrderKey<
     readonly id: string;
     readonly createdAt: string;
     readonly unsettledAt?: string | null | undefined;
+    readonly updatedAt?: string | undefined;
+    readonly latestUserMessageAt?: string | null | undefined;
+    readonly latestRun?: {
+      readonly requestedAt?: string | null | undefined;
+      readonly startedAt?: string | null | undefined;
+      readonly completedAt?: string | null | undefined;
+    } | null | undefined;
     readonly activeOrderKey?: string | null | undefined;
     readonly environmentId?: string | undefined;
   },
@@ -263,21 +282,25 @@ export function sortActiveThreadsByOrderKey<
   if (threads.length < 2) return [...threads];
   const timestamps = new Map<T, number>();
   for (const thread of threads) {
-    if (thread.activeOrderKey == null) {
-      timestamps.set(thread, activeThreadAnchorTimestampMs(thread));
-    }
+    timestamps.set(thread, activeThreadAnchorTimestampMs(thread));
   }
   return [...threads].sort((left, right) => {
     const leftKey = left.activeOrderKey;
     const rightKey = right.activeOrderKey;
-    if (leftKey == null && rightKey != null) return -1;
-    if (leftKey != null && rightKey == null) return 1;
-    let order = 0;
-    if (leftKey != null && rightKey != null) {
-      order = leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
-    } else {
-      order = timestamps.get(right)! - timestamps.get(left)!;
-    }
+    const activityOrder = timestamps.get(right)! - timestamps.get(left)!;
+    if (activityOrder !== 0) return activityOrder;
+    const order =
+      leftKey != null && rightKey != null
+        ? leftKey < rightKey
+          ? -1
+          : leftKey > rightKey
+            ? 1
+            : 0
+        : leftKey == null && rightKey != null
+          ? -1
+          : leftKey != null && rightKey == null
+            ? 1
+            : 0;
     return (
       order ||
       left.id.localeCompare(right.id) ||
