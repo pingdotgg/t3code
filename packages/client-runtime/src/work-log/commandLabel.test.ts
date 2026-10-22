@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { commandDisplayText, commandProgramName } from "./commandLabel.ts";
+import {
+  approvalCommandDisplayText,
+  commandDisplayText,
+  commandProgramName,
+} from "./commandLabel.ts";
 
 describe("commandProgramName", () => {
   it.each([
@@ -155,6 +159,27 @@ describe("commandProgramName", () => {
     ].join(";");
 
     expect(commandProgramName(command)).toBeNull();
+  });
+});
+
+describe("approvalCommandDisplayText", () => {
+  it("unwraps a literal system-shell script without trimming or truncating it", () => {
+    const script = `\u00a0printf "%s" "${"x".repeat(5_000)}"\\ `;
+    expect(approvalCommandDisplayText(`/bin/bash -lc '${script}'`)).toBe(script);
+    expect(approvalCommandDisplayText(`/bin/bash -lc "printf \\"%s\\" \\$HOME"`)).toBe(
+      `printf "%s" $HOME`,
+    );
+  });
+
+  it("keeps executable paths, expansions, and extra shell operations visible", () => {
+    const invocations = [
+      "/tmp/bash -c 'echo safe'",
+      "bash --rcfile /tmp/init.sh -ic 'pwd'",
+      "bash -c 'echo $1' name value",
+      "bash -c 'pwd' > /tmp/out; rm -rf build",
+      `bash -c "echo $HOME"`,
+    ];
+    expect(invocations.map(approvalCommandDisplayText)).toEqual(invocations);
   });
 });
 

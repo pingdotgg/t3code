@@ -265,6 +265,33 @@ describe("Pi MCP tool schemas", () => {
 });
 
 describe("Pi tool discovery permissions", () => {
+  it("asks to approve the complete bash command instead of a truncated JSON summary", async () => {
+    const bridge = await loadMcpBridge({ modern: true, runtimeMode: "approval-required" });
+    const hook = bridge.handlers.get("tool_call") as unknown as (
+      event: { toolName: string; input: unknown },
+      ctx: {
+        signal: AbortSignal;
+        ui: { confirm: (title: string, detail: string) => Promise<boolean> };
+      },
+    ) => Promise<{ block: true; reason: string } | undefined>;
+    const command = `\u00a0printf '%s' '${"x".repeat(5_000)}'\\ `;
+    const confirmations: Array<{ title: string; detail: string }> = [];
+    const result = await hook(
+      { toolName: "bash", input: { command, timeout: 30 } },
+      {
+        signal: new AbortController().signal,
+        ui: {
+          confirm: async (title: string, detail: string) => {
+            confirmations.push({ title, detail });
+            return false;
+          },
+        },
+      },
+    );
+    assert.deepEqual(confirmations, [{ title: "Allow bash?", detail: command }]);
+    assert.deepInclude(result, { block: true });
+  });
+
   it.each(["approval-required", "auto-accept-edits", "auto"])(
     "allows annotated T3 reads in %s while gating mutations and replacements",
     async (runtimeMode) => {

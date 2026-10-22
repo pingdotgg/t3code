@@ -351,6 +351,8 @@ interface PendingRequest {
         readonly action: string;
         readonly resources: ReadonlyArray<string>;
         readonly save: ReadonlyArray<string>;
+        readonly toolId?: string | undefined;
+        readonly command?: string | undefined;
       }
     | { readonly type: "form"; readonly id: string; readonly form: NativeForm };
 }
@@ -1815,6 +1817,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               { type: "approval_request" }
             >["requestKind"];
             readonly prompt: string;
+            readonly title: string | null;
             readonly options: Extract<
               OrchestrationV2TurnItem,
               { type: "approval_request" }
@@ -1883,7 +1886,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         body.type === "approval_request"
           ? {
               ...base,
-              title: native.type === "permission" ? native.action : null,
+              title: body.title,
               type: "approval_request",
               requestId,
               requestKind: body.requestKind,
@@ -1920,16 +1923,31 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
 
     const onPermissionAsked = Effect.fnUntraced(function* (data: Permission.Request) {
       const turn = threads.get(data.sessionID)?.active;
-      const toolName =
-        data.source === undefined ? undefined : turn?.tools.get(data.source.id)?.name;
+      const tool = data.source === undefined ? undefined : turn?.tools.get(data.source.id);
+      const toolName = tool?.name;
       const save = data.save ?? [];
+      // Resources split pipelines; prefer the full command from permission metadata or tool input.
+      const metadataCommand = stringField(data.metadata, "command");
+      const command =
+        metadataCommand ??
+        (data.action === "shell" ? stringField(tool?.input, "command") : undefined);
       yield* showRequest(
         data.sessionID,
-        { type: "permission", id: data.id, action: data.action, resources: data.resources, save },
+        {
+          type: "permission",
+          id: data.id,
+          action: data.action,
+          resources: data.resources,
+          save,
+          toolId: data.source?.id,
+          command: metadataCommand,
+        },
         {
           type: "approval_request",
           requestKind: openCodePermissionRequestKind(data.action, toolName),
-          prompt: data.resources.length === 0 ? data.action : data.resources.join("\n"),
+          prompt:
+            command ?? (data.resources.length === 0 ? data.action : data.resources.join("\n")),
+          title: command === undefined ? data.action : null,
           options: [
             { decision: "cancel", label: "Cancel" },
             { decision: "decline", label: "Decline" },
@@ -1945,6 +1963,28 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           ],
         },
       );
+    });
+
+    // A shell request listed after a reconnect can arrive before its tool call's input. Tool
+    // ids are only unique per session, and an answer in flight keeps the card it answered.
+    const showShellCommand = Effect.fnUntraced(function* (
+      sessionId: string,
+      toolId: string,
+      input: Record<string, unknown>,
+    ) {
+      const command = stringField(input, "command");
+      if (command === undefined) return;
+      for (const [requestId, entry] of pending) {
+        const { native, item } = entry;
+        if (native.type !== "permission" || native.action !== "shell") continue;
+        if (native.command !== undefined) continue;
+        if (entry.sessionId !== sessionId || native.toolId !== toolId) continue;
+        if (entry.answering || item.type !== "approval_request") continue;
+        if (item.prompt === command && item.title === null) continue;
+        const updated = { ...item, prompt: command, title: null, updatedAt: yield* DateTime.now };
+        pending.set(requestId, { ...entry, item: updated });
+        yield* emit({ type: "turn_item.updated", driver, turnItem: updated });
+      }
     });
 
     const onFormCreated = Effect.fnUntraced(function* (form: NativeForm) {
@@ -2100,7 +2140,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             return yield* emitSubagent(call);
           }
           const tool = turn.tools.get(event.data.id);
-          if (tool !== undefined) tool.input = event.data.input;
+          if (tool !== undefined) {
+            tool.input = event.data.input;
+            yield* showShellCommand(event.data.sessionID, event.data.id, tool.input);
+          }
           return yield* emitTool(state, turn, event.data.id, "running");
         }
         case "session.tool.progress": {
@@ -2576,6 +2619,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           const tool = turn.tools.get(part.id)!;
           if (typeof part.state.input === "object" && part.state.input !== null) {
             tool.input = part.state.input as Record<string, unknown>;
+            yield* showShellCommand(sessionId, part.id, tool.input);
           }
           if (part.state.status === "completed") {
             yield* emitTool(state, turn, part.id, "completed", {

@@ -30,11 +30,24 @@ export async function declinePendingApprovals(
   return true;
 }
 
+const APPROVAL_REQUEST_LABELS: Record<ProviderRequestKind, string> = {
+  command: "Command approval",
+  "file-read": "File read approval",
+  "file-change": "File change approval",
+  "mcp-elicitation": "App access approval",
+  permission: "App permission approval",
+};
+
+export function approvalRequestLabel(requestKind: ProviderRequestKind): string {
+  return APPROVAL_REQUEST_LABELS[requestKind];
+}
+
 export interface ThreadPendingApproval {
   readonly requestId: RuntimeRequestId;
   readonly requestKind: ProviderRequestKind;
   readonly createdAt: string;
   readonly detail?: string;
+  readonly title?: string;
   readonly reason?: string;
   readonly fullAccessOverride?: ProviderApprovalFullAccessOverride;
   readonly appName?: string;
@@ -133,6 +146,7 @@ export function derivePendingThreadRequests(
       requestKind: request.kind,
       createdAt: DateTime.formatIso(request.createdAt),
       ...(item?.type === "approval_request" && item.prompt ? { detail: item.prompt } : {}),
+      ...(item?.type === "approval_request" && item.title ? { title: item.title } : {}),
       ...(item?.type === "approval_request" && item.reason ? { reason: item.reason } : {}),
       ...(item?.type === "approval_request" && item.fullAccessOverride
         ? { fullAccessOverride: item.fullAccessOverride }

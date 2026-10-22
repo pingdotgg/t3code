@@ -26,6 +26,7 @@ import {
 } from "@t3tools/shared/toolActivity";
 import type { HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import { turnItemDetailRevision } from "@t3tools/client-runtime/work-log/item-detail";
+import { approvalCommandDisplayText } from "@t3tools/client-runtime/work-log/command-label";
 import type { McpAppReference } from "@t3tools/shared/mcpApp";
 import { htmlRenderFromToolItem, mcpAppFromToolItem } from "@t3tools/shared/toolOutput";
 import {
@@ -593,7 +594,11 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
       return {
         ...common,
         label: title ?? "Approval requested",
-        detail: item.prompt ?? item.requestKind,
+        detail: item.prompt
+          ? item.requestKind === "command"
+            ? approvalCommandDisplayText(item.prompt)
+            : item.prompt
+          : item.requestKind,
         toolData: item,
       };
     case "user_input_request":

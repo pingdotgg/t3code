@@ -1,15 +1,17 @@
 import { Button } from "../../components/ui/Button";
+import {
+  approvalRequestLabel,
+  FULL_ACCESS_OVERRIDE_QUESTION,
+  fullAccessOverrideExplanation,
+} from "@t3tools/client-runtime/state/thread-requests";
+import { approvalCommandDisplayText } from "@t3tools/client-runtime/work-log/command-label";
 import type {
   ProviderApprovalDecision,
   ProviderApprovalOption,
   RuntimeRequestId,
 } from "@t3tools/contracts";
-import {
-  FULL_ACCESS_OVERRIDE_QUESTION,
-  fullAccessOverrideExplanation,
-} from "@t3tools/client-runtime/state/thread-requests";
 import { useState } from "react";
-import { Pressable, View } from "react-native";
+import { Pressable, ScrollView, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import type { PendingApproval } from "../../lib/threadActivity";
@@ -43,12 +45,28 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
         Approval needed
       </Text>
       <Text className="font-t3-bold text-lg text-foreground">
-        {props.approval.appName ?? props.approval.requestKind}
+        {props.approval.appName ?? approvalRequestLabel(props.approval.requestKind)}
       </Text>
+      {props.approval.title && !props.approval.appName ? (
+        <ScrollView className="max-h-20" nestedScrollEnabled showsVerticalScrollIndicator>
+          <Text className="font-sans text-sm leading-normal text-foreground-secondary" selectable>
+            {props.approval.title}
+          </Text>
+        </ScrollView>
+      ) : null}
       {props.approval.detail ? (
-        <Text className="font-sans text-sm leading-normal text-foreground-secondary">
-          {props.approval.detail}
-        </Text>
+        props.approval.requestKind === "command" ? (
+          // Long commands scroll inside the card so its buttons stay on screen.
+          <ScrollView className="max-h-40" nestedScrollEnabled showsVerticalScrollIndicator>
+            <Text className="font-mono text-sm leading-normal text-foreground" selectable>
+              {approvalCommandDisplayText(props.approval.detail)}
+            </Text>
+          </ScrollView>
+        ) : (
+          <Text className="font-sans text-sm leading-normal text-foreground-secondary">
+            {props.approval.detail}
+          </Text>
+        )
       ) : null}
       {props.approval.reason ? (
         <Text className="font-sans text-xs leading-normal text-warning-foreground">

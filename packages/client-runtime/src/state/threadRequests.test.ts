@@ -151,6 +151,40 @@ const projection: OrchestrationV2ThreadProjection = {
 };
 
 describe("pending v2 questions", () => {
+  it("keeps the approval operation and its explanation separate for both clients", () => {
+    const prompt = "\u00a0printf '%s' 'hello world'\\ ";
+    const title = "Check the output";
+    const approvals = derivePendingThreadRequests({
+      ...projection,
+      runtimeRequests: projection.runtimeRequests.map((request) => ({
+        ...request,
+        kind: "command",
+        responseCapability: { type: "not_resumable", reason: "Provider process exited" },
+      })),
+      turnItems: [
+        {
+          ...projection.turnItems.find((item) => item.type === "user_input_request")!,
+          type: "approval_request",
+          requestKind: "command",
+          requestId,
+          status: "waiting",
+          prompt,
+          title,
+        },
+      ],
+    }).approvals;
+    expect(approvals).toEqual([
+      {
+        requestId,
+        requestKind: "command",
+        createdAt: "2026-06-20T00:00:00.000Z",
+        detail: prompt,
+        title,
+        responseCapability: "not_resumable",
+      },
+    ]);
+  });
+
   it("keeps message responses available after the originating runtime exits", () => {
     expect(projection.providerSessions).toEqual([]);
     expect(derivePendingThreadRequests(projection).userInputs).toEqual([

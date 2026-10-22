@@ -773,16 +773,20 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
         assert.isFunction(canUseTool);
 
         const requestEvent = yield* runtime.events.pipe(
-          Stream.filter((event) => event.type === "runtime_request.updated"),
-          Stream.runHead,
+          Stream.takeUntil(
+            (event) =>
+              event.type === "turn_item.updated" && event.turnItem.type === "approval_request",
+          ),
+          Stream.runCollect,
           Effect.forkScoped,
         );
-        const command = { command: "node -e 'console.log(42)'" };
+        const command = { command: "\u00a0node -e 'console.log(42)'\\ " };
         const decision = yield* Effect.promise(() =>
           canUseTool!("Bash", command, {
             signal: new AbortController().signal,
             toolUseID: "tool-bash-accept-edits",
             requestId: "request-bash-accept-edits",
+            description: "Check the Node runtime",
           }),
         ).pipe(Effect.forkScoped);
         const first = yield* Effect.raceFirst(
@@ -795,12 +799,24 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
         );
         assert.equal(first.type, "request", "the command ran without asking");
         if (first.type !== "request") return;
-        const event = first.event;
-        if (Option.isNone(event) || event.value.type !== "runtime_request.updated") return;
-        assert.equal(event.value.runtimeRequest.kind, "command");
+        const event = first.event.findLast((event) => event.type === "runtime_request.updated");
+        assert.isDefined(event);
+        assert.equal(event!.runtimeRequest.kind, "command");
+        const approval = first.event.findLast(
+          (event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "approval_request",
+        );
+        if (
+          approval?.type !== "turn_item.updated" ||
+          approval.turnItem.type !== "approval_request"
+        ) {
+          return assert.fail("missing approval item");
+        }
+        assert.equal(approval.turnItem.prompt, command.command);
+        assert.equal(approval.turnItem.title, "Check the Node runtime");
 
         yield* runtime.respondToRuntimeRequest({
-          requestId: event.value.runtimeRequest.id,
+          requestId: event!.runtimeRequest.id,
           decision: "accept",
         });
         assert.equal((yield* Fiber.join(decision))?.behavior, "allow");

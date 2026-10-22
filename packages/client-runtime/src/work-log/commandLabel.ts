@@ -1368,6 +1368,21 @@ export function commandDisplayText(command: string): string {
   return withVisibleControlCharacters(withoutShellWrapper(command));
 }
 
+// A system `<shell> -c` or `-lc` with one literal script: single-quoted, double-quoted
+// without expansions (escaped `"`, `\`, `$` and backticks are literal), or a word with
+// nothing to expand. Anything else, such as options or redirects, keeps the whole
+// invocation visible.
+const BARE_SHELL_WRAPPER =
+  /^(?:\/(?:usr\/(?:local\/)?|opt\/homebrew\/)?bin\/)?(?:sh|bash|zsh|dash|ash|ksh|fish) -l?c (?:'([^']*)'|"((?:[^"\\$`]|\\["\\$`])*)"|([\w./:@=+%,-]+))$/u;
+
+/** The command an approval asks about, unwrapped only when nothing else can run. */
+export function approvalCommandDisplayText(command: string): string {
+  const match = BARE_SHELL_WRAPPER.exec(command);
+  const script = match?.[1] ?? match?.[2]?.replace(/\\(["\\$`])/gu, "$1") ?? match?.[3];
+  // Never trimmed: an escaped trailing space or a leading U+00A0 changes what runs.
+  return withVisibleControlCharacters(script?.trim() ? script : command);
+}
+
 export function withVisibleControlCharacters(text: string): string {
   return text.replace(CONTROL_CHARACTERS, (character) =>
     character === "\u007f" ? "␡" : String.fromCharCode(0x2400 + character.charCodeAt(0)),

@@ -1478,6 +1478,136 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect("keeps commands, legacy argv, and network grants distinct from explanations", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const nativeThreadId = "command-approval-thread";
+        const nativeTurnId = "command-approval-turn";
+        const command = "\u00a0printf '%s' 'hello world'\\ ";
+        const approvals = [
+          {
+            method: "item/commandExecution/requestApproval",
+            params: {
+              threadId: nativeThreadId,
+              turnId: nativeTurnId,
+              itemId: "modern",
+              startedAtMs: 1782622441000,
+              command,
+              reason: "Inspect files",
+            },
+            decision: "decline",
+          },
+          {
+            method: "execCommandApproval",
+            params: {
+              conversationId: nativeThreadId,
+              callId: "legacy",
+              cwd: "/workspace",
+              command: ["printf", "%s", "hello world", "", "it's $HOME"],
+              parsedCmd: [],
+              reason: "Print arguments",
+            },
+            decision: { denied: { rejection: "User declined the request." } },
+          },
+          {
+            method: "item/commandExecution/requestApproval",
+            params: {
+              threadId: nativeThreadId,
+              turnId: nativeTurnId,
+              itemId: "network",
+              startedAtMs: 1782622441000,
+              command: "curl -sI https://example.com | head -n 1",
+              reason: "Check response headers",
+              networkApprovalContext: { protocol: "https", host: "example.com" },
+            },
+            decision: "decline",
+          },
+        ];
+        const transcript = makeCodexReplayTranscript({
+          scenario: "command-approval-content",
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Inspect." }),
+            ...approvals.flatMap((approval, index): CodexReplay.CodexAppServerReplayEntry[] => [
+              {
+                type: "emit_inbound",
+                label: approval.method,
+                frame: { id: 100 + index, method: approval.method, params: approval.params },
+              },
+              {
+                type: "expect_outbound",
+                label: "decline approval",
+                frame: { id: 100 + index, result: { decision: approval.decision } },
+              },
+            ]),
+            {
+              type: "emit_inbound",
+              label: "complete",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        });
+        const requests = yield* Effect.forEach(approvals, () =>
+          Deferred.make<
+            Extract<
+              ProviderAdapter.ProviderAdapterV2Event,
+              { type: "runtime_request.updated" }
+            >["runtimeRequest"]
+          >(),
+        );
+        let nextRequest = 0;
+        const harness = yield* makeCodexReplayHarness(transcript, (event) =>
+          event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending"
+            ? Deferred.succeed(requests[nextRequest++]!, event.runtimeRequest)
+            : Effect.void,
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("approval-content"),
+            text: "Inspect.",
+          }),
+        );
+        for (const requested of requests) {
+          const request = yield* Deferred.await(requested);
+          yield* harness.runtime.respondToRuntimeRequest({
+            requestId: request.id,
+            decision: "decline",
+          });
+        }
+        yield* harness.firstTerminal;
+        assert.deepEqual(
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "approval_request" &&
+            event.turnItem.status === "waiting"
+              ? [{ prompt: event.turnItem.prompt, title: event.turnItem.title }]
+              : [],
+          ),
+          [
+            { prompt: command, title: "Inspect files" },
+            { prompt: "printf '%s' 'hello world' '' 'it'\\''s $HOME'", title: "Print arguments" },
+            {
+              prompt: "https example.com\ncurl -sI https://example.com | head -n 1",
+              title: "Check response headers",
+            },
+          ],
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect("stops asking for commands the user allowed for the session", () =>
     Effect.scoped(
       Effect.gen(function* () {

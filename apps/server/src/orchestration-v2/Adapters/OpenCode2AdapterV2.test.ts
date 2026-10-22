@@ -2205,14 +2205,26 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("shows a permission asked while the stream was down, and answers it", () =>
+  it.effect.each([
+    { source: "late tool input", metadata: {} },
+    { source: "permission metadata", metadata: { command: "echo METADATA" } },
+  ])("restores a permission after reconnect and prefers $source before answering", ({ metadata }) =>
     Effect.gen(function* () {
+      const command = "\u00a0curl -sI https://example.com | head -n 1\\ ";
+      const tool = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: "call_1" };
       const { runtime, thread } = yield* resumed(
         [
           out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
           promptAccepted,
           ...reconnected({ [SESSION]: { type: "running" } }),
-          ...openRequests([shellAsk.data]),
+          ...openRequests([{ ...shellAsk.data, metadata }]),
+          event("session.tool.input.started", { ...tool, name: "shell" }),
+          event("session.tool.called", {
+            ...tool,
+            name: "shell",
+            input: { command },
+            executed: false,
+          }),
           out("permission.reply", {
             sessionID: SESSION,
             requestID: shellAsk.data.id,
@@ -2223,11 +2235,44 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         ],
         { supervised: true },
       );
-      const requested = yield* requestOf(runtime).pipe(Effect.forkScoped);
-      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      // The tool artifact is emitted after the input has been handled, even without the approval fix.
+      const inputHandled = yield* runtime.events.pipe(
+        Stream.takeUntil(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "command_execution" &&
+            event.turnItem.input === command,
+        ),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
       yield* runtime.startTurn(turnInput(thread, bigPickle, "approval-required"));
-      const request = yield* Fiber.join(requested);
+      const collected = yield* Fiber.join(inputHandled);
+      const request = collected.findLast(
+        (event) => event.type === "runtime_request.updated",
+      )?.runtimeRequest;
       assert.equal(request?.nativeRequestRef?.nativeId, shellAsk.data.id);
+      const approvals = collected.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "approval_request"
+          ? [
+              {
+                id: event.turnItem.requestId,
+                prompt: event.turnItem.prompt,
+                title: event.turnItem.title,
+              },
+            ]
+          : [],
+      );
+      assert.deepEqual(
+        approvals,
+        metadata.command
+          ? [{ id: request!.id, prompt: metadata.command, title: null }]
+          : [
+              { id: request!.id, prompt: "echo FIRST", title: "shell" },
+              { id: request!.id, prompt: command, title: null },
+            ],
+      );
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
       yield* runtime.respondToRuntimeRequest({ requestId: request!.id, decision: "accept" });
       assert.equal((yield* Fiber.join(terminal))?.status, "completed");
     }).pipe(Effect.scoped),
