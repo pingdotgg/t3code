@@ -20,6 +20,7 @@ import {
 } from "../../threadAccess.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
+import * as ThreadWatchReactor from "../../../orchestration-v2/ThreadWatchReactor.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
 import { ThreadToolkit } from "./tools.ts";
 
@@ -75,11 +76,36 @@ const readQuestion = Effect.fn("mcp.readQuestion")(function* (input: {
     });
   return { ...context, request, item };
 });
+const invalidRequest = (error: { readonly message: string }) =>
+  new OrchestratorMcpFailure({ code: "invalid_request", message: error.message });
 const writesThread = <P extends { readonly threadId?: ThreadId | undefined }, A, E, R>(
   handle: (params: P) => Effect.Effect<A, E, R>,
 ) => McpToolAccess.writesThreads((params: P) => [params.threadId], handle);
 
 export const layer = McpToolAccess.toLayer(ThreadToolkit, {
+  t3_thread_watch: writesThread((input) =>
+    Effect.gen(function* () {
+      const { projection } = yield* readThread(input.threadId);
+      const { id: threadId, projectId } = projection.thread;
+      const reactor = yield* ThreadWatchReactor.ThreadWatchReactor;
+      if (input.action === "unwatch") {
+        const { wasWatching } = yield* reactor
+          .unwatch({ threadId, url: input.delivery.url })
+          .pipe(Effect.mapError(unavailable));
+        return { threadId, watching: false, wasWatching };
+      }
+      const { wasWatching } = yield* reactor
+        .watch({ threadId, projectId, delivery: input.delivery })
+        .pipe(
+          Effect.catchTags({
+            ThreadWatchInvalidError: (error) => Effect.fail(invalidRequest(error)),
+            SecretRequestError: (error) => Effect.fail(invalidRequest(error)),
+            ThreadWatchStoreError: () => Effect.fail(unavailable()),
+          }),
+        );
+      return { threadId, watching: true, wasWatching };
+    }),
+  ),
   run_scheduled_task_now: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
       const scheduler = yield* ScheduledTasks.ScheduledTaskService;

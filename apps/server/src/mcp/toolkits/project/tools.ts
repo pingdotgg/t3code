@@ -30,6 +30,8 @@ import * as ThreadManagementService from "../../../orchestration-v2/ThreadManage
 import * as SourceControlRepositoryService from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as ThreadWatchReactor from "../../../orchestration-v2/ThreadWatchReactor.ts";
+import { ThreadWatchDelivery } from "../thread/tools.ts";
 
 const shared = {
   success: Project,
@@ -130,6 +132,12 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
       }),
     ),
     attachments: Schema.optional(Schema.Array(McpAttachmentInput).check(Schema.isMaxLength(8))),
+    watch: Schema.optional(
+      ThreadWatchDelivery.annotate({
+        description:
+          "Watch the new thread as t3_thread_watch does, from before its first run. A delivery that cannot be used is refused and no thread is created.",
+      }),
+    ),
   }),
   success: Schema.Struct({
     threadId: ThreadId,
@@ -146,6 +154,7 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
     FileSystem.FileSystem,
     ServerConfig.ServerConfig,
     ServerSettings.ServerSettingsService,
+    ThreadWatchReactor.ThreadWatchReactor,
   ],
 })
   .annotate(Tool.Destructive, true)

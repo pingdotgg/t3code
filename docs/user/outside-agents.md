@@ -92,6 +92,34 @@ Any agent that supports remote MCP servers over HTTP with OAuth can connect. Giv
 it the MCP URL and choose OAuth, and the agent finds the sign-in settings itself.
 Agents without OAuth support cannot connect.
 
+## Hear back when a thread needs you
+
+An agent whose turn ends before the thread it started can have T3 Code call it
+back instead of waiting or polling. Pass `watch` to `t3_thread_launch`, or call
+`t3_thread_watch` with `action: "watch"` on an existing thread, with an `https`
+URL and a signing secret. T3 Code then sends that URL a POST when the thread's
+run completes or fails, when it asks a question, or when it waits for an
+approval.
+
+Requests follow [Standard Webhooks](https://www.standardwebhooks.com), the
+format MCP Events uses, so an off-the-shelf verifier can check them. The secret
+is `whsec_` followed by base64 of 24 to 64 random bytes. An agent working inside
+T3 Code can pass a `secretRef` from `request_secret` instead, so the secret
+stays out of its conversation. The body says which thread changed and how, not
+what it produced; read the thread for that.
+
+A watch starts from the thread as it is when you add it, so add it before you
+read the thread and nothing falls in between. After a server restart it picks up
+from the thread as it is then. A failed request is retried a few times with the
+same `webhook-id`, so ignore ids you have seen. A run that someone stops sends
+nothing, as with mobile alerts, so keep a timeout of your own.
+
+Settling, archiving or deleting the thread ends the watch with one last `ended`
+request, including when T3 Code settles an inactive thread on its own. A `410` from your endpoint or `t3_thread_watch` with
+`action: "unwatch"` and the same URL ends it too. Settled, archived and subagent
+threads cannot be watched. Watches are not tied to the agent that made them:
+revoking an agent below does not end them.
+
 ## Scripts on the host
 
 On the machine that runs the environment, `t3 thread` uses the same tools

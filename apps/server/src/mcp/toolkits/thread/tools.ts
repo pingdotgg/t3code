@@ -18,6 +18,7 @@ import {
   RunId,
   NonNegativeInt,
   ProjectId,
+  SecretRef,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Schema from "effect/Schema";
@@ -25,6 +26,7 @@ import { Tool, Toolkit } from "effect/ai";
 
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
+import * as ThreadWatchReactor from "../../../orchestration-v2/ThreadWatchReactor.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
@@ -271,6 +273,50 @@ const ScheduledTaskRunTool = Tool.make("run_scheduled_task_now", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 
+export const ThreadWatchDelivery = Schema.Struct({
+  url: TrimmedNonEmptyString.annotate({
+    description: "https endpoint that receives the signed POSTs. http only for localhost.",
+  }),
+  secret: Schema.optional(
+    Schema.String.annotate({
+      description:
+        "Standard Webhooks signing secret your endpoint verifies with: whsec_ plus base64 of 24 to 64 random bytes.",
+    }),
+  ),
+  secretRef: Schema.optional(
+    SecretRef.annotate({
+      description:
+        "A secret the user entered through request_secret, used instead of secret so it never appears in this conversation. Watching consumes it.",
+    }),
+  ),
+}).annotate({
+  description:
+    "Where to deliver. watch needs exactly one of secret or secretRef; unwatch needs only url.",
+});
+
+const ThreadWatchTool = Tool.make("t3_thread_watch", {
+  ...commandTool,
+  description:
+    'Have T3 Code POST to your endpoint when a thread needs you: its run completes or fails, it asks a question, or it waits for an approval. Use this when you drive T3 Code from outside and your turn ends before the thread does, instead of holding t3_thread_wait open or polling. action watch needs delivery with a secret or secretRef; unwatch needs only delivery.url. Requests follow Standard Webhooks (webhook-id, webhook-timestamp and webhook-signature headers, HMAC-SHA256 with your secret) and carry the MCP Events body {eventId, name:"thread.watch", timestamp, data:{environmentId, threadId, title, kind, runId}, cursor:null}, where kind is completed, failed, question, approval or ended. The body is status only; read the thread for its content. A watch starts from the thread as it is now, so watch before you read the thread and nothing falls in between; a server restart starts it over from the thread as it is then. A failed request is retried a few times with the same webhook-id, so drop ids you have seen. A run the user stops sends nothing, as mobile alerts do. Settling, archiving or deleting the thread ends the watch with an ended request; a 410 from your endpoint ends it too. Settled, archived and subagent threads cannot be watched. Omit threadId for this thread.',
+
+  parameters: Schema.Struct({
+    action: Schema.Literals(["watch", "unwatch"]),
+    threadId: Schema.optional(ThreadId),
+    delivery: ThreadWatchDelivery,
+  }),
+  success: Schema.Struct({
+    threadId: ThreadId,
+    watching: Schema.Boolean.annotate({
+      description: "Whether this endpoint now watches the thread.",
+    }),
+    wasWatching: Schema.Boolean.annotate({ description: "Whether it did before the call." }),
+  }),
+  dependencies: [...commandTool.dependencies, ThreadWatchReactor.ThreadWatchReactor],
+})
+  .annotate(Tool.Title, "Watch a thread")
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.OpenWorld, true);
+
 export const ThreadToolkit = Toolkit.make(
   ScheduledTaskRunTool,
   ThreadSearchTool,
@@ -289,4 +335,5 @@ export const ThreadToolkit = Toolkit.make(
   QueueCancelTool,
   QueueReorderTool,
   QueuePromoteTool,
+  ThreadWatchTool,
 );
