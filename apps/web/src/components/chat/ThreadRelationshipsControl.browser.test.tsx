@@ -1,5 +1,14 @@
 import * as DateTime from "effect/DateTime";
-import { EnvironmentId, NodeId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  NodeId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ThreadId,
+  type ModelSelection,
+  type OrchestrationV2Subagent,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
@@ -11,6 +20,7 @@ const state = vi.hoisted(() => ({
   relatedShells: [] as unknown[],
   threadTitles: {} as Record<string, string>,
   archivedThreads: [] as unknown[],
+  providers: new Map<EnvironmentId, ReadonlyArray<ServerProvider>>(),
 }));
 
 vi.mock(import("../../state/query"), async (original) => ({
@@ -40,7 +50,7 @@ vi.mock(import("../../state/entities"), () => ({
 }));
 vi.mock(import("../../state/environments"), () => ({
   useEnvironment: (() => null) as never,
-  useEnvironmentProviders: (() => new Map()) as never,
+  useEnvironmentProviders: () => state.providers,
 }));
 vi.mock(import("../../lib/archivedThreadsState"), () => ({
   useArchivedThreadSnapshots: (() => ({
@@ -55,7 +65,7 @@ vi.mock(import("../../state/use-atom-command"), () => ({
 }));
 
 import { render } from "../../../test/render";
-import { makeThreadProjectionFixture } from "../../test-fixtures";
+import { makeThreadFixture, makeThreadProjectionFixture } from "../../test-fixtures";
 import { ToastProvider } from "../ui/toast";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
 
@@ -67,6 +77,7 @@ function setup() {
   state.relatedShells = [];
   state.threadTitles = { source: "Source" };
   state.archivedThreads = [];
+  state.providers = new Map();
   state.projection = {
     thread: {
       id: threadId,
@@ -393,3 +404,169 @@ it("hides a deleted fork and keeps unloaded and archived forks with their curren
   await expect.element(screen.getByText("Archived fork", { exact: true })).toBeVisible();
   await expect.element(screen.getByText("deleted-fork", { exact: true })).not.toBeInTheDocument();
 });
+
+const childId = ThreadId.make("thread-child");
+const codexId = ProviderInstanceId.make("codex");
+const claudeId = ProviderInstanceId.make("claudeAgent");
+const launchSelection = {
+  instanceId: codexId,
+  model: "gpt-6-astra",
+  options: [{ id: "reasoningEffort", value: "high" }],
+} satisfies ModelSelection;
+
+function setupModelSelection(origin: OrchestrationV2Subagent["origin"], model: string | null) {
+  setup();
+  const projection = makeThreadProjectionFixture();
+  const child = {
+    ...makeThreadFixture({
+      id: childId,
+      title: "Audit sync",
+      modelSelection: launchSelection,
+      lineage: {
+        parentThreadId: projection.thread.id,
+        relationshipToParent: "subagent",
+        rootThreadId: projection.thread.id,
+      },
+    }).source,
+    status: "running" as const,
+    activityRunStatus: "running" as const,
+  };
+  state.projection = {
+    ...projection,
+    subagents: [
+      {
+        id: NodeId.make("agent"),
+        threadId: projection.thread.id,
+        runId: null,
+        parentNodeId: NodeId.make("parent"),
+        origin,
+        createdBy: "agent",
+        driver: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexId,
+        providerThreadId: null,
+        childThreadId: childId,
+        nativeTaskRef: null,
+        prompt: "Audit sync",
+        title: "Audit sync",
+        model,
+        ...(model === null ? {} : { modelSelection: { ...launchSelection, model } }),
+        status: "completed",
+        result: null,
+        startedAt: projection.thread.createdAt,
+        completedAt: projection.updatedAt,
+        updatedAt: projection.updatedAt,
+      } satisfies OrchestrationV2Subagent,
+    ],
+  };
+  state.relatedShells = [child];
+  state.providers = new Map([
+    [
+      environmentId,
+      [
+        provider(codexId, "codex", ["gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna"]),
+        provider(claudeId, "claudeAgent", ["claude-opus-5-5"]),
+      ],
+    ],
+  ]);
+  return { threadId: projection.thread.id, child };
+}
+
+function provider(
+  instanceId: ProviderInstanceId,
+  driver: string,
+  models: ReadonlyArray<string>,
+): ServerProvider {
+  return {
+    instanceId,
+    driver: ProviderDriverKind.make(driver),
+    displayName: instanceId,
+    accentColor: "#445566",
+    enabled: true,
+    installed: true,
+    version: null,
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-01-01T00:00:00.000Z",
+    models: models.map((slug) => ({
+      slug,
+      name: slug,
+      shortName: slug,
+      isCustom: false,
+      capabilities: {},
+    })),
+    slashCommands: [],
+    skills: [],
+  };
+}
+
+it.each([
+  {
+    instanceId: codexId,
+    model: "gpt-6.1-sol",
+    options: [{ id: "reasoningEffort", value: "xhigh" }],
+  },
+  { instanceId: claudeId, model: "claude-opus-5-5", options: [{ id: "effort", value: "max" }] },
+] satisfies ReadonlyArray<ModelSelection>)(
+  "Lineage follows a delegated child's model selection ($model)",
+  async (selection) => {
+    const { threadId, child } = setupModelSelection("app_owned", "gpt-6-astra");
+    await using screen = await render(
+      <ThreadRelationshipsPanel
+        environmentId={environmentId}
+        threadId={threadId}
+        showLineage
+        showSideChats={false}
+      />,
+    );
+    await userEvent.hover(screen.getByText("Audit sync", { exact: true }));
+    await expect.element(page.getByText("gpt-6-astra · codex", { exact: true })).toBeVisible();
+
+    state.relatedShells = [
+      {
+        ...child,
+        providerInstanceId: selection.instanceId,
+        modelSelection: selection,
+      },
+    ];
+    await screen.rerender(
+      <ThreadRelationshipsPanel
+        environmentId={environmentId}
+        threadId={threadId}
+        showLineage
+        showSideChats={false}
+      />,
+    );
+
+    await expect
+      .element(page.getByText(`${selection.model} · ${selection.instanceId}`, { exact: true }))
+      .toBeVisible();
+    await expect
+      .element(page.getByText("gpt-6-astra · codex", { exact: true }))
+      .not.toBeInTheDocument();
+    await expect
+      .element(page.getByText(selection.options![0]!.value, { exact: false }))
+      .toBeVisible();
+  },
+);
+
+it.each(["gpt-6-luna", null])(
+  "Lineage preserves a native child's reported model (%s)",
+  async (model) => {
+    const { threadId } = setupModelSelection("provider_native", model);
+    await using screen = await render(
+      <ThreadRelationshipsPanel
+        environmentId={environmentId}
+        threadId={threadId}
+        showLineage
+        showSideChats={false}
+      />,
+    );
+    await userEvent.hover(screen.getByText("Audit sync", { exact: true }));
+    await expect
+      .element(page.getByText(`${model ?? "Not reported"} · codex`, { exact: true }))
+      .toBeVisible();
+    await expect
+      .element(page.getByText("gpt-6-astra · codex", { exact: true }))
+      .not.toBeInTheDocument();
+  },
+);
