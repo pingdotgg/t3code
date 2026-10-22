@@ -13,8 +13,8 @@ the same provider settings work for OpenCode 1.x and 2.x. OpenCode 1.x shows
 
 OpenCode 2 is a separate package, `@opencode/cli`. To move from 1.x, install it
 yourself, for example `npm install -g @opencode/cli`. Then refresh provider status.
-T3 Code's update button updates whichever package you have installed. It never
-switches a 1.x install to 2.x.
+When T3 Code manages the local server, its update button updates whichever package
+you have installed. It never switches a 1.x install to 2.x.
 
 OpenCode 2 converts the shared OpenCode database to its own format the first time it
 runs. Don't run OpenCode 1.x and 2.x side by side on the same machine. Threads you
@@ -33,6 +33,12 @@ To use an existing OpenCode server, set **Server URL** and its password in provi
 settings. T3 Code uses only that configured password for an external server; it
 does not forward a local `OPENCODE_SERVER_PASSWORD`. If connection or version checks
 fail, check the URL, credentials, and OpenCode version, then refresh provider status.
+
+With **Server URL** set, update the server through the app or tool that started it,
+then restart it when active sessions can safely be interrupted. This also applies
+to localhost: that server may use a different installation from the local CLI.
+T3 Code reports the running server's version and leaves its updates to you. After
+updating it, refresh provider status to check the new version.
 
 After a lost connection, send another prompt to reconnect to the same OpenCode
 session.
