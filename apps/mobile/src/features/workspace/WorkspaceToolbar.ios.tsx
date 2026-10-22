@@ -1,23 +1,58 @@
 import { Toolbar } from "../../components/ui/Toolbar";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
-import { use, useCallback, useEffect, useRef } from "react";
-import { Platform } from "react-native";
+import { use, useCallback, useEffect, useRef, type ReactNode } from "react";
+import { Platform, Pressable, type TextInputInstance } from "react-native";
+import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
+import Animated, { useAnimatedStyle } from "react-native-reanimated";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { isDuoDevice } from "../../lib/device-type";
 import { useDeviceType } from "../../native/native-layout-metrics";
 import type { SearchBarCommands } from "react-native-screens";
 
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { GlassSurface } from "../../components/ui/GlassSurface";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { NativeWorkspaceTabActivityContext } from "../../native/v5-workspace-context";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
+import { WorkspaceSearchField } from "./WorkspaceSearchField";
+import { WORKSPACE_TOOLBAR } from "./workspace-tabs-state";
 import { useSidebarWorkspaceTabs } from "./useSystemWorkspaceTabBar";
 import { useSelectWorkspaceTab } from "./useSelectWorkspaceTab";
 import { useMobileNavigationTheme } from "../../lib/useMobileNavigationTheme";
 
 // Tabler's git-pull-request geometry, shared with the UIKit tab bar.
 const PULL_REQUEST_ICON = require("../../../assets/icons/pull-request.png");
+
+/**
+ * Rises once the keyboard reaches its content. UIKit also reports keyboards without height, with a
+ * hardware keyboard and around a fold, and those must not move it.
+ */
+function AboveKeyboard(props: { readonly bottom: number; readonly children: ReactNode }) {
+  const keyboard = useReanimatedKeyboardAnimation();
+  const { bottom } = props;
+  const lift = useAnimatedStyle(() => ({
+    transform: [{ translateY: Math.min(0, keyboard.height.value + bottom - 8) }],
+  }));
+  return (
+    <Animated.View
+      pointerEvents="box-none"
+      className="absolute inset-x-0 bottom-0 flex-row items-center"
+      style={[
+        {
+          gap: WORKSPACE_TOOLBAR.gap,
+          paddingHorizontal: WORKSPACE_TOOLBAR.edge,
+          paddingBottom: bottom,
+        },
+        lift,
+      ]}
+    >
+      {props.children}
+    </Animated.View>
+  );
+}
 
 export function WorkspaceToolbar(props: {
   readonly onNewTask: () => void;
@@ -35,16 +70,16 @@ export function WorkspaceToolbar(props: {
     (isDuoDevice(deviceType)
       ? deviceType === "duo-folded" && workspace.state.selectedTab === "threads"
       : deviceType === "pad");
-  // The expanded Duo sidebar keeps a full search field in its bottom toolbar. UIKit holds the
-  // integrated field there, but moves the button form into the detail column's vertical bar.
-  // Folded, the workspace tab bar owns the bottom of the vertical bar, so search keeps UIKit's
-  // own placement.
-  const toolbarSearch =
-    NATIVE_LIQUID_GLASS_SUPPORTED && deviceType === "duo-unfolded" && props.sidebar === true;
+  // The Duo searches from a field at the bottom of the list in every pose. UIKit has no such
+  // placement once the vertical bar holds the toolbar, and re-placing its search controller on
+  // each fold replaces the search field.
+  const listSearch = isDuoDevice(deviceType);
+  const insets = useSafeAreaInsets();
   const { isTabActive } = workspace;
   const tabActive = use(NativeWorkspaceTabActivityContext)?.active ?? true;
   const { panes, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
   const searchRef = useRef<SearchBarCommands>(null);
+  const fieldRef = useRef<TextInputInstance>(null);
   const tab = workspace.state.tabs[workspace.state.selectedTab];
   const selectedTab = workspace.state.selectedTab;
   const enterSearch = useCallback(() => {
@@ -58,10 +93,25 @@ export function WorkspaceToolbar(props: {
   }, [workspace, selectedTab, props.sidebar, panes.primarySidebarVisible, togglePrimarySidebar]);
   const focusSearch = useCallback(() => {
     if (!workspace.isTabActive(selectedTab)) return false;
+    if (listSearch) {
+      fieldRef.current?.focus();
+      return true;
+    }
     if (!NATIVE_LIQUID_GLASS_SUPPORTED) enterSearch();
     searchRef.current?.focus();
     return true;
-  }, [workspace, selectedTab, enterSearch]);
+  }, [workspace, selectedTab, listSearch, enterSearch]);
+  const cancelSearch = useCallback(() => {
+    workspace.recordScrollOffset(selectedTab, tab.searchEntryOffset);
+    workspace.dispatch({ type: "cancel", tab: selectedTab });
+  }, [workspace, selectedTab, tab.searchEntryOffset]);
+  const searchFocused = useCallback(
+    () =>
+      tab.searchMode === "resting"
+        ? enterSearch()
+        : workspace.dispatch({ type: "search", tab: selectedTab }),
+    [tab.searchMode, enterSearch, workspace, selectedTab],
+  );
   useHardwareKeyboardCommand("focusSearch", focusSearch);
   const restoreSearch = useCallback(() => {
     if (isTabActive(selectedTab) && tab.searchMode !== "resting")
@@ -86,7 +136,7 @@ export function WorkspaceToolbar(props: {
           // Liquid Glass keeps search mounted as UIKit's own header button, which
           // morphs into the field; swapping a stacked bar in and out cannot animate.
           headerSearchBarOptions:
-            NATIVE_LIQUID_GLASS_SUPPORTED || tab.searchMode !== "resting"
+            !listSearch && (NATIVE_LIQUID_GLASS_SUPPORTED || tab.searchMode !== "resting")
               ? {
                   ref: searchRef,
                   autoFocus: tab.searchMode === "active",
@@ -94,22 +144,12 @@ export function WorkspaceToolbar(props: {
                   hideNavigationBar: false,
                   hideWhenScrolling: false,
                   obscureBackground: false,
-                  placement: toolbarSearch
-                    ? "integrated"
-                    : NATIVE_LIQUID_GLASS_SUPPORTED
-                      ? "integratedButton"
-                      : "stacked",
-                  // Folded, the tab bar owns the bottom of the vertical bar; refusing toolbar
-                  // integration also makes UIKit re-place a visible search in the navigation bar.
-                  allowToolbarIntegration:
-                    NATIVE_LIQUID_GLASS_SUPPORTED && deviceType !== "duo-folded",
+                  placement: NATIVE_LIQUID_GLASS_SUPPORTED ? "integratedButton" : "stacked",
+                  allowToolbarIntegration: NATIVE_LIQUID_GLASS_SUPPORTED,
                   placeholder:
                     selectedTab === "pullRequests" ? "Search pull requests" : "Search threads",
                   cancelButtonText: "✕",
-                  onFocus: () =>
-                    tab.searchMode === "resting"
-                      ? enterSearch()
-                      : workspace.dispatch({ type: "search", tab: selectedTab }),
+                  onFocus: searchFocused,
                   onBlur: () => workspace.dispatch({ type: "expand", tab: selectedTab }),
                   onSearchButtonPress: () => searchRef.current?.blur(),
                   onChangeText: ({ nativeEvent }) =>
@@ -118,10 +158,7 @@ export function WorkspaceToolbar(props: {
                       query: nativeEvent.text,
                       tab: selectedTab,
                     }),
-                  onCancelButtonPress: () => {
-                    workspace.recordScrollOffset(selectedTab, tab.searchEntryOffset);
-                    workspace.dispatch({ type: "cancel", tab: selectedTab });
-                  },
+                  onCancelButtonPress: cancelSearch,
                 }
               : undefined,
         }}
@@ -168,7 +205,6 @@ export function WorkspaceToolbar(props: {
           />
         ) : null}
         {nativeToolbarCompose ? <Toolbar.Spacer flexible /> : null}
-        {toolbarSearch ? <Toolbar.SearchBarSlot /> : null}
         {nativeToolbarCompose ? (
           <Toolbar.Button
             identifier="workspace-compose"
@@ -179,6 +215,45 @@ export function WorkspaceToolbar(props: {
           />
         ) : null}
       </Toolbar>
+      {listSearch ? (
+        <AboveKeyboard bottom={Math.max(insets.bottom, 12)}>
+          <WorkspaceSearchField
+            ref={fieldRef}
+            tab={selectedTab}
+            query={tab.query}
+            onChangeQuery={(query) =>
+              workspace.dispatch({ type: "query", query, tab: selectedTab })
+            }
+            onFocus={searchFocused}
+            onBlur={() => workspace.dispatch({ type: "expand", tab: selectedTab })}
+            onClear={() => {
+              workspace.dispatch({ type: "query", query: "", tab: selectedTab });
+              fieldRef.current?.focus();
+            }}
+          />
+          {tab.searchMode === "resting" ? null : (
+            <GlassSurface
+              style={{
+                width: WORKSPACE_TOOLBAR.height,
+                height: WORKSPACE_TOOLBAR.height,
+                borderRadius: WORKSPACE_TOOLBAR.height / 2,
+              }}
+            >
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Cancel search"
+                onPress={() => {
+                  cancelSearch();
+                  fieldRef.current?.blur();
+                }}
+                className="flex-1 items-center justify-center"
+              >
+                <SymbolView name="xmark" size={20} tintColorClassName="accent-icon" />
+              </Pressable>
+            </GlassSurface>
+          )}
+        </AboveKeyboard>
+      ) : null}
     </>
   );
 }

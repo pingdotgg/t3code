@@ -3,7 +3,7 @@ import type {
   NativeStackHeaderItemMenu,
   NativeStackNavigationOptions,
 } from "@react-navigation/native-stack";
-import { isValidElement, useEffect, useRef, useState } from "react";
+import { isValidElement, useEffect, useRef } from "react";
 import { StyleSheet } from "react-native";
 import { useMobileNavigationTheme } from "../lib/useMobileNavigationTheme";
 import { useDeviceType, useNativeLayoutMetrics } from "../native/native-layout-metrics";
@@ -145,8 +145,6 @@ export function V5StackHeader(props: {
   readonly column?: "primary" | "detail";
   /** The workspace's compose action, shown as its own group in this column's bar. */
   readonly onCompose?: () => void;
-  /** Whether another column covers this one in a collapsed split. */
-  readonly covered?: boolean;
 }) {
   const { options } = props;
   const theme = useMobileNavigationTheme();
@@ -239,20 +237,6 @@ export function V5StackHeader(props: {
       ? options.headerTitle({ children: title ?? "", tintColor: options.headerTintColor })
       : undefined;
   const searchOptions = options.headerSearchBarOptions;
-  const searchPlacement = bottomSearch ? "integrated" : (searchOptions?.placement ?? "automatic");
-  // UIKit re-places a visible search controller when its placement changes, but not one whose
-  // column is covered; that one needs a new controller to place once the column shows again.
-  // A hidden tab only sees the new placement as it returns, after its detail uncovered the list.
-  const covered = props.covered === true;
-  const [search, setSearch] = useState({ placement: searchPlacement, covered, epoch: 0 });
-  if (search.placement !== searchPlacement || search.covered !== covered)
-    setSearch({
-      placement: searchPlacement,
-      covered,
-      epoch:
-        search.epoch +
-        (search.placement !== searchPlacement && (search.covered || covered) ? 1 : 0),
-    });
   const autofocusRef = searchOptions?.ref ?? searchRef;
   const searchHasFocus = useRef(false);
   useEffect(() => {
@@ -299,13 +283,12 @@ export function V5StackHeader(props: {
         searchBar:
           mailSearch || searchOptions ? (
             <SearchBar
-              key={search.epoch}
               {...searchOptions}
               ref={searchOptions?.ref ?? searchRef}
               hideNavigationBar={false}
               hideWhenScrolling={false}
               allowToolbarIntegration={searchOptions?.allowToolbarIntegration ?? true}
-              placement={searchPlacement}
+              placement={bottomSearch ? "integrated" : (searchOptions?.placement ?? "automatic")}
               placeholder={mailSearch?.placeholder ?? searchOptions?.placeholder ?? "Search"}
               onFocus={(event) => {
                 searchHasFocus.current = true;

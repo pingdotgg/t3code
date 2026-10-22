@@ -199,8 +199,19 @@ export function NativeStackScreenOptions(props: {
       return;
     }
     lastAppliedOptionsSignatureRef.current = signature;
-    navigation.setOptions(stableOptions);
-  }, [navigation, props.optionsVersion, stableOptions, tabActive]);
+    // React Navigation keeps a screen's descriptor while its options are shallowly equal. The
+    // stabilized factories keep their identity, so one whose output changed needs a new wrapper
+    // to reach the header.
+    optionFunctionWrappersRef.current = new Map();
+    navigation.setOptions(
+      stabilizeOptionFunctions(
+        normalizedOptions,
+        "options",
+        latestOptionFunctionsRef.current,
+        optionFunctionWrappersRef.current,
+      ) as NativeStackNavigationOptions,
+    );
+  }, [navigation, normalizedOptions, props.optionsVersion, stableOptions, tabActive]);
 
   useEffect(() => {
     if (!navigation || !props.listeners) {

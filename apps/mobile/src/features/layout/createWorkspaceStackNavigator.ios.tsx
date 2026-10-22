@@ -73,7 +73,6 @@ function ColumnScreen(props: {
   readonly onDismiss: (routeKey: string) => void;
   readonly onAppearance: (type: "willAppear" | "didAppear" | "willDisappear", key: string) => void;
   readonly onCompose?: () => void;
-  readonly covered?: boolean;
   readonly navigation: ViewProps["navigation"];
 }) {
   const { descriptor } = props;
@@ -117,7 +116,6 @@ function ColumnScreen(props: {
             canGoBack={!props.primary}
             column={props.primary ? "primary" : "detail"}
             onCompose={props.onCompose}
-            covered={props.covered}
           />
           <ColumnContent
             primary={props.primary}
@@ -253,7 +251,6 @@ function WorkspaceColumns(
             selectedPullRequestKey={selectedPullRequestKey}
             onDismiss={handleNativeDismiss}
             onAppearance={followCollapsedSplit}
-            covered={!layout.usesSplitView && activeDetailKey !== undefined}
             navigation={props.navigation}
           />
         </Split.Stack>
