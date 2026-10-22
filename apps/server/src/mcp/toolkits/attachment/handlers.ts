@@ -49,31 +49,37 @@ export const layer = McpToolAccess.toLayer(
   Effect.sync(() => {
     const uploadOwners = new Map<string, { readonly owner: string; readonly issuedAt: number }>();
     return {
-      t3_attachment_prepare_upload: McpToolAccess.writes((input) =>
-        Effect.gen(function* () {
-          const result = yield* Upload.issueAttachmentUploadUrl(input.upload).pipe(
-            Effect.mapError(unavailable),
-          );
-          const now = yield* Clock.currentTimeMillis;
-          for (const [id, entry] of uploadOwners) {
-            if (now - entry.issuedAt > UPLOAD_OWNER_TTL_MS) uploadOwners.delete(id);
-          }
-          uploadOwners.set(result.attachmentId, { owner: yield* uploadOwner, issuedAt: now });
-          return result;
-        }),
+      // A pending upload belongs to its caller until a send claims it, so
+      // linked callers may stage the uploads their own sends need.
+      t3_attachment_prepare_upload: McpToolAccess.writes(
+        (input) =>
+          Effect.gen(function* () {
+            const result = yield* Upload.issueAttachmentUploadUrl(input.upload).pipe(
+              Effect.mapError(unavailable),
+            );
+            const now = yield* Clock.currentTimeMillis;
+            for (const [id, entry] of uploadOwners) {
+              if (now - entry.issuedAt > UPLOAD_OWNER_TTL_MS) uploadOwners.delete(id);
+            }
+            uploadOwners.set(result.attachmentId, { owner: yield* uploadOwner, issuedAt: now });
+            return result;
+          }),
+        { linkedCallers: "allowed" },
       ),
-      t3_attachment_discard: McpToolAccess.writes((input) =>
-        Effect.gen(function* () {
-          if (uploadOwners.get(input.attachmentId)?.owner !== (yield* uploadOwner)) {
-            return yield* new OrchestratorMcpFailure({
-              code: "invalid_request",
-              message: "Only the caller that prepared a pending upload can discard it.",
-            });
-          }
-          yield* Upload.deletePendingAttachment(input.attachmentId);
-          uploadOwners.delete(input.attachmentId);
-          return {};
-        }),
+      t3_attachment_discard: McpToolAccess.writes(
+        (input) =>
+          Effect.gen(function* () {
+            if (uploadOwners.get(input.attachmentId)?.owner !== (yield* uploadOwner)) {
+              return yield* new OrchestratorMcpFailure({
+                code: "invalid_request",
+                message: "Only the caller that prepared a pending upload can discard it.",
+              });
+            }
+            yield* Upload.deletePendingAttachment(input.attachmentId);
+            uploadOwners.delete(input.attachmentId);
+            return {};
+          }),
+        { linkedCallers: "allowed" },
       ),
       t3_thread_send_attachments: McpToolAccess.writesThreads(
         (input) => [input.threadId],

@@ -2,6 +2,7 @@ import { expect, it } from "@effect/vitest";
 import {
   CommandId,
   MessageId,
+  type OrchestrationV2Command,
   type OrchestrationV2Run,
   type OrchestrationV2StoredEvent,
   type OrchestrationV2ThreadProjection,
@@ -24,6 +25,38 @@ import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+
+it("stamps authoritative provenance on commands that create threads or messages", () => {
+  const command: OrchestrationV2Command = {
+    type: "thread.create",
+    createdBy: "agent",
+    creationSource: "mcp",
+    commandId: CommandId.make("command:thread-management:create"),
+    threadId: ThreadId.make("thread:thread-management:create"),
+    projectId: ProjectId.make("project:thread-management"),
+    title: "Thread management",
+    modelSelection: {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5-codex",
+    },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    // A client cannot claim a linked environment's origin for its own thread.
+    linkOrigin: { sessionId: "forged", label: "Somewhere else" },
+  };
+
+  const stamped = ThreadManagementService.withCreationProvenance(command, {
+    createdBy: "user",
+    creationSource: "web",
+  });
+  expect(stamped).toMatchObject({
+    createdBy: "user",
+    creationSource: "web",
+  });
+  expect(stamped).not.toHaveProperty("linkOrigin");
+});
 
 const layerReceiptsTest = CommandReceiptStore.layer.pipe(
   Layer.provide(SqlitePersistence.layerMemory),
