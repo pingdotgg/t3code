@@ -2276,7 +2276,7 @@ function renderFeedEntry(
         )}
         {...(enterAnimated ? { entering: FadeIn.duration(220) } : {})}
       >
-        {!isCommentary ? (
+        {assistantLabel === "Incomplete response" ? (
           <Text accessibilityRole="header" className="mb-2 font-t3-medium text-xs text-foreground">
             {assistantLabel}
           </Text>
