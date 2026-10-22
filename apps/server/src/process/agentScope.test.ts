@@ -50,6 +50,7 @@ const withFakeSystemd = <A, E>(
     readonly calls: ReadonlyArray<ReadonlyArray<string>>;
     readonly stateDir: string;
     readonly cgroupRoot: string;
+    readonly manager: { stalled: boolean };
   }) => Effect.Effect<A, E>,
   // A user manager older than systemd 253 rejects OOMPolicy on scopes.
   {
@@ -65,6 +66,7 @@ const withFakeSystemd = <A, E>(
     const cgroupRoot = NodePath.join(bin, "cgroup");
     const units = new Map<string, FakeUnit>();
     const calls: Array<ReadonlyArray<string>> = [];
+    const manager = { stalled: false };
     const output = (stdout: string, code = 0): ProcessRunner.ProcessRunOutput => ({
       stdout,
       stderr: "",
@@ -76,30 +78,38 @@ const withFakeSystemd = <A, E>(
       stderrInvalidUtf8: false,
     });
     const runner = ProcessRunner.ProcessRunner.of({
-      run: ({ args }) =>
-        Effect.sync(() => {
-          calls.push(args);
-          if (!oomPolicy && args.some((arg) => arg.startsWith("--property=OOMPolicy="))) {
-            return output("", 1);
-          }
-          const [, verb, unit = ""] = args;
-          if (stopFails && verb === "stop") {
-            return {
-              ...output(""),
-              stderr: `Failed to stop ${args.at(-1)}: Unit not loaded.`,
-              code: ChildProcessSpawner.ExitCode(5),
-            };
-          }
-          if (verb === "reset-failed") units.delete(unit);
-          if (verb !== "show") return output("");
-          const state = units.get(unit);
-          return output(
-            state === undefined
-              ? "LoadState=not-found\nActiveState=inactive\nResult=success\n"
-              : `LoadState=loaded\nActiveState=${state.activeState}\nResult=${state.result}\n` +
-                  `ControlGroup=${state.controlGroup ?? ""}\n`,
-          );
-        }),
+      run: ({ command, args }) =>
+        manager.stalled
+          ? Effect.fail(
+              new ProcessRunner.ProcessTimeoutError({
+                command,
+                argumentCount: args.length,
+                timeoutMs: 5_000,
+              }),
+            )
+          : Effect.sync(() => {
+              calls.push(args);
+              if (!oomPolicy && args.some((arg) => arg.startsWith("--property=OOMPolicy="))) {
+                return output("", 1);
+              }
+              const [, verb, unit = ""] = args;
+              if (stopFails && verb === "stop") {
+                return {
+                  ...output(""),
+                  stderr: `Failed to stop ${args.at(-1)}: Unit not loaded.`,
+                  code: ChildProcessSpawner.ExitCode(5),
+                };
+              }
+              if (verb === "reset-failed") units.delete(unit);
+              if (verb !== "show") return output("");
+              const state = units.get(unit);
+              return output(
+                state === undefined
+                  ? "LoadState=not-found\nActiveState=inactive\nResult=success\n"
+                  : `LoadState=loaded\nActiveState=${state.activeState}\nResult=${state.result}\n` +
+                      `ControlGroup=${state.controlGroup ?? ""}\n`,
+              );
+            }),
     });
     const fileSystem = yield* FileSystem.FileSystem;
     const scope = yield* make.pipe(
@@ -115,7 +125,7 @@ const withFakeSystemd = <A, E>(
       }),
     );
     const { stateDir } = yield* ServerConfig.ServerConfig;
-    return yield* body({ scope, units, calls, stateDir, cgroupRoot }).pipe(
+    return yield* body({ scope, units, calls, stateDir, cgroupRoot, manager }).pipe(
       Effect.ensuring(Effect.sync(() => NodeFS.rmSync(bin, { recursive: true, force: true }))),
     );
   }).pipe(
@@ -301,6 +311,20 @@ describe("AgentScope service", () => {
             "TasksMax=25%",
           ],
         ]);
+      }),
+    ),
+  );
+
+  it.effect("probes systemd again after its user manager missed the timeout", () =>
+    withFakeSystemd(({ scope, manager }) =>
+      Effect.gen(function* () {
+        manager.stalled = true;
+        const first = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+        expect(unitOf(first)).toBe("");
+        manager.stalled = false;
+        const second = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+        expect(unitOf(second)).not.toBe("");
+        expect(second.args).toContain("--property=OOMPolicy=stop");
       }),
     ),
   );
