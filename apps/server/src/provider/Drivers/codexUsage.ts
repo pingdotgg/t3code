@@ -243,10 +243,15 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord |
   if (cumulative !== null) {
     // A session resumed in a new Codex process restarts its cumulative counters at this request.
     const restarted = CODEX_USAGE_FIELDS.every((key) => cumulative[key] === last[key]);
-    if (
-      !restarted &&
-      !CODEX_USAGE_FIELDS.every((key) => cumulative[key] - (previous?.[key] ?? 0) === last[key])
-    ) {
+    // Forks and paginated continuations can inherit totals without copying a counter snapshot.
+    // Only bill the latest request, and require the unseen prefix to be valid usage too.
+    const reconciled =
+      previous === null
+        ? readCodexTokenUsage(
+            Object.fromEntries(CODEX_USAGE_FIELDS.map((key) => [key, cumulative[key] - last[key]])),
+          ) !== null
+        : CODEX_USAGE_FIELDS.every((key) => cumulative[key] - previous[key] === last[key]);
+    if (!restarted && !reconciled) {
       state.malformedRecords += 1;
       return null;
     }
