@@ -1,7 +1,6 @@
 import { ActiveNewTaskContext } from "../../state/active-new-task";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { useNowMinuteMs } from "../../lib/clock";
-import { deriveLogicalProjectKeyFromSettings } from "@t3tools/client-runtime/state/project-grouping";
 import * as Dialog from "../../components/ui/Dialog";
 import React, { useEffect, useRef, useState } from "react";
 
@@ -93,7 +92,10 @@ import {
   resolveNewTaskBranchWorktreePath,
   resolveNewTaskLocalWorkspaceSelection,
 } from "./new-task-context-presentation";
-import { resolveEnvironmentProjectMatch } from "./new-task-project-selection";
+import {
+  resolveEnvironmentProjectMatch,
+  resolveNewTaskEnvironments,
+} from "./new-task-project-selection";
 import { useNewTaskProjectDefaults } from "./use-new-task-project-defaults";
 import { resolveNewThreadRuntimeMode } from "./thread-settings-options";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
@@ -800,12 +802,6 @@ export function NewTaskFlowProvider(
       ) !== null,
   );
 
-  const selectedRepositoryKey = selectedProject?.repositoryIdentity
-    ? repositoryGroupingKeyOf(selectedProject.repositoryIdentity)
-    : null;
-  // Use || null: placeholder workspaceRoot can be empty, and an empty basename rejects real hosts.
-  const selectedWorkspaceBasename = selectedProject?.workspaceRoot.split("/").at(-1) || null;
-  const selectedProjectTitle = selectedProject?.title ?? null;
   const environments = (() => {
     if (isScratchDraft) {
       return scratchEnvironments.map((environment) => ({
@@ -813,44 +809,13 @@ export function NewTaskFlowProvider(
         environmentLabel: environment.environmentLabel,
       }));
     }
-    const seen = new Set<EnvironmentId>();
-    const result: Array<{
-      readonly environmentId: EnvironmentId;
-      readonly environmentLabel: string;
-    }> = [];
-    const hostsSelectedRepository = (project: EnvironmentProject) => {
-      if (selectedRepositoryKey === null && selectedWorkspaceBasename === null) {
-        return true;
-      }
-      const projectKey = project.repositoryIdentity
-        ? repositoryGroupingKeyOf(project.repositoryIdentity)
-        : null;
-      if (selectedRepositoryKey !== null && projectKey !== null) {
-        return projectKey === selectedRepositoryKey;
-      }
-      return (
-        project.workspaceRoot.split("/").at(-1) === selectedWorkspaceBasename ||
-        (selectedProjectTitle !== null && project.title === selectedProjectTitle)
-      );
-    };
-    for (const project of projects) {
-      if (!hostsSelectedRepository(project)) {
-        continue;
-      }
-      if (seen.has(project.environmentId)) {
-        continue;
-      }
-      const environment = savedConnectionsById[project.environmentId];
-      if (!environment) {
-        continue;
-      }
-      seen.add(project.environmentId);
-      result.push({
-        environmentId: project.environmentId,
-        environmentLabel: environment.environmentLabel,
-      });
-    }
-    return result;
+    return resolveNewTaskEnvironments({
+      projects,
+      selectedProject,
+      settings: groupingSettings,
+      savedConnectionsById,
+      pendingTaskEnvironmentId: editingPendingTask?.environmentId ?? null,
+    });
   })();
 
   const value = {
