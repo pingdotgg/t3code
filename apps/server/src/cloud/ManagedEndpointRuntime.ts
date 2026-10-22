@@ -158,6 +158,15 @@ export function classifyRelayClientOutput(
   if (/\bRegistered tunnel connection\b/iu.test(line)) {
     return "connected";
   }
+  // T3 forwards HTTP/WebSocket traffic; cloudflared's optional ping proxy is unused.
+  if (
+    /\bWRN\b/u.test(line) &&
+    /\b(?:The user running cloudflared process has a GID \(group ID\) that is not within ping_group_range|ICMP proxy feature is disabled)\b/u.test(
+      line,
+    )
+  ) {
+    return "debug";
+  }
   // cloudflared uses zerolog FTL/PNC for fatal/panic; classify them above debug too.
   if (/\b(?:ERR|WRN|FTL|PNC)\b/u.test(line)) {
     return "warning";

@@ -240,6 +240,22 @@ describe("CloudManagedEndpointRuntime", () => {
     ).toBe(false);
   });
 
+  it("keeps optional ICMP permission notices quiet without hiding transport failures", () => {
+    for (const line of [
+      'WRN The user running cloudflared process has a GID (group ID) that is not within ping_group_range. error="Group ID 1000 is not between ping group 1 to 0"',
+      'WRN ICMP proxy feature is disabled error="cannot create ICMPv4 proxy nor ICMPv6 proxy: socket: permission denied"',
+    ]) {
+      expect(ManagedEndpointRuntime.classifyRelayClientOutput(line)).toBe("debug");
+    }
+    for (const line of [
+      'WRN Serve tunnel error error="datagram manager error: timeout: no recent network activity"',
+      'ERR Register tunnel error from server side error="Unauthorized: Tunnel not found"',
+      "FTL ICMP proxy feature is disabled",
+    ]) {
+      expect(ManagedEndpointRuntime.classifyRelayClientOutput(line)).toBe("warning");
+    }
+  });
+
   it.effect("keeps recovery requests sent before the server starts consuming them", () =>
     Effect.gen(function* () {
       const runtime = yield* buildCloudManagedEndpointRuntime(
