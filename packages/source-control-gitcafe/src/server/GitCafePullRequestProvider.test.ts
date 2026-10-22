@@ -271,6 +271,23 @@ describe("GitCafePullRequestProvider", () => {
     }).pipe(Effect.provide(server.layer));
   });
 
+  it.effect("keeps the timeline when GitCafe no longer has the head's commits", () => {
+    const comment = { ...root, id: "c1", threadId: "c1", body: "Looks good", path: null };
+    const server = fakeGitCafe({
+      "GET /repos/owner/repo/pulls/7": { ...pull, state: "closed", closedAt: timestamp },
+      "GET /repos/owner/repo/pulls/7/comments": { items: [comment], next: null },
+      "GET /repos/owner/repo/pulls/7/reviews": { items: [], next: null },
+    });
+    return Effect.gen(function* () {
+      const provider = yield* GitCafePullRequestProvider.make;
+      const activity = yield* provider.getChangeRequestActivity(target);
+      assert.deepStrictEqual(
+        activity.comments.map((entry) => entry.body),
+        ["Looks good"],
+      );
+    }).pipe(Effect.provide(server.layer));
+  });
+
   it.effect("submits a review against the pull request's current head", () => {
     const server = fakeGitCafe({
       "GET /repos/owner/repo/pulls/7": pull,
@@ -381,9 +398,7 @@ describe("GitCafePullRequestProvider", () => {
     ["reviewing", "reviewers"],
   ] as const)("filters %s pull requests by the viewer's actor on GitCafe", ([involvement, key]) => {
     const server = fakeGitCafe({
-      "GET /repos/owner/repo/filter-options": {
-        actors: [{ actorId: "act_one", handle: "Alice" }],
-      },
+      "GET /auth/principal": { actorId: "act_one", handle: "Alice" },
       "GET /repos/owner/repo/pulls": { items: [pull], next: null },
     });
     return Effect.gen(function* () {
@@ -403,9 +418,9 @@ describe("GitCafePullRequestProvider", () => {
     }).pipe(Effect.provide(server.layer));
   });
 
-  it.effect("lists nothing for a viewer GitCafe has no actor for", () => {
+  it.effect("lists nothing for a viewer the token does not belong to", () => {
     const server = fakeGitCafe({
-      "GET /repos/owner/repo/filter-options": { actors: [] },
+      "GET /auth/principal": { actorId: "act_two", handle: "bob" },
     });
     return Effect.gen(function* () {
       const provider = yield* GitCafePullRequestProvider.make;
@@ -419,7 +434,7 @@ describe("GitCafePullRequestProvider", () => {
       assert.deepStrictEqual(page.items, []);
       assert.deepStrictEqual(
         server.sent.map((request) => request.path),
-        ["/repos/owner/repo/filter-options"],
+        ["/auth/principal"],
       );
     }).pipe(Effect.provide(server.layer));
   });
@@ -554,6 +569,59 @@ describe("GitCafePullRequestProvider", () => {
       const provider = yield* GitCafePullRequestProvider.make;
       const result = yield* provider.getChangeRequest(target).pipe(Effect.result);
       assert.strictEqual(result._tag, "Failure");
+    }).pipe(Effect.provide(server.layer));
+  });
+
+  const detailWith = (overrides: Record<string, unknown>, reasons: ReadonlyArray<string> = []) =>
+    fakeGitCafe({
+      "GET /repos/owner/repo/pulls/7": { ...pull, headOid: null, ...overrides },
+      "GET /repos/owner/repo/pulls/7/reviewers": { items: [], next: null },
+      "GET /repos/owner/repo/pulls/7/labels": { items: [], next: null },
+      "GET /repos/owner/repo/pulls/7/status": {
+        merge: { conflicts: "none", fastForward: null, strategies: ["squash"], reasons },
+        checks: { pending: 0, failing: 0, total: 0 },
+      },
+    });
+
+  it.effect("shows a merge GitCafe accepted as armed until it lands", () => {
+    const server = detailWith({}, ["provider-merge-pending"]);
+    return Effect.gen(function* () {
+      const provider = yield* GitCafePullRequestProvider.make;
+      const detail = yield* provider.getChangeRequest(target);
+      assert.strictEqual(detail.autoMergeEnabled, true);
+      assert.notInclude(detail.viewerPermissions?.actions ?? [], "merge");
+    }).pipe(Effect.provide(server.layer));
+  });
+
+  it.effect("reads a pull request GitHub merged as merged before the sync reports it", () => {
+    const mergedAt = "2026-09-12T13:00:00Z";
+    const server = detailWith({ providerMerge: { mergedAt } });
+    return Effect.gen(function* () {
+      const provider = yield* GitCafePullRequestProvider.make;
+      const detail = yield* provider.getChangeRequest(target);
+      assert.strictEqual(detail.state, "merged");
+      assert.strictEqual(detail.mergedAt, mergedAt);
+    }).pipe(Effect.provide(server.layer));
+  });
+
+  it.effect.each([
+    ["their own pull request", actor],
+    [
+      "the pull request GitHub sync opened for them",
+      {
+        kind: "github",
+        actorId: "act_github",
+        login: "alice",
+        avatarUrl: null,
+        linkedProfile: { handle: "alice", actorId: "act_one" },
+      },
+    ],
+  ] as const)("leaves the author only a comment on %s", ([, author]) => {
+    const server = detailWith({ author, viewerActorId: "act_one" });
+    return Effect.gen(function* () {
+      const provider = yield* GitCafePullRequestProvider.make;
+      const detail = yield* provider.getChangeRequest(target);
+      assert.deepStrictEqual(detail.viewerPermissions?.verdicts, ["comment"]);
     }).pipe(Effect.provide(server.layer));
   });
 
