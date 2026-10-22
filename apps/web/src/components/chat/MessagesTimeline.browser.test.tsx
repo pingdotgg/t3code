@@ -1,6 +1,6 @@
 import { EnvironmentId, MessageId, RunId, ScheduledTaskId } from "@t3tools/contracts";
 import type { LegendListRef } from "@legendapp/list/react";
-import { createRef, type ComponentProps, type ReactElement } from "react";
+import { createRef, Profiler, type ComponentProps, type ReactElement } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import "~/index.css";
@@ -129,6 +129,51 @@ const TASK_ID = ScheduledTaskId.make("task-1");
 const AUTOMATION_PROMPT = "Triage the inbox\n\nLabel every new issue and close duplicates.";
 
 describe("MessagesTimeline messages", () => {
+  it("settles when equally long messages have very different rendered heights", async () => {
+    const props = baseProps();
+    const tall = message("a\n\n".repeat(6000), { role: "assistant" }, "tall");
+    const earlier = Array.from({ length: 80 }, (_, index) =>
+      message(
+        `<details><summary>Reply ${index}</summary>${"compact ".repeat(2250)}</details>`,
+        { role: "assistant" },
+        `earlier-${index}`,
+      ),
+    );
+    let nestedCommits = 0;
+    let maxNestedCommits = 0;
+    const onRender = (_id: string, phase: string) => {
+      nestedCommits = phase === "nested-update" ? nestedCommits + 1 : 0;
+      maxNestedCommits = Math.max(maxNestedCommits, nestedCommits);
+    };
+    const timeline = (entries: Entry[]) => (
+      <Profiler id="timeline" onRender={onRender}>
+        <MessagesTimeline {...props} timelineEntries={entries} />
+      </Profiler>
+    );
+    await using screen = await renderElement(timeline([tall]));
+    await vi.waitFor(() =>
+      expect(props.listRef.current?.getState().sizeAtIndex(0)).toBeGreaterThan(100_000),
+    );
+    const viewport = props.listRef.current!.getScrollableNode()!;
+    await act(() => {
+      viewport.scrollTop = 0;
+      viewport.dispatchEvent(new Event("scroll"));
+    });
+    await screen.rerender(timeline([...earlier, tall]));
+    await act(() => {
+      void props.listRef.current!.scrollToIndex({ index: 0, animated: false });
+    });
+    await vi.waitFor(async () => {
+      await act(() => {
+        viewport.scrollTop = 0;
+        viewport.dispatchEvent(new Event("scroll"));
+      });
+      expect(screen.text().includes("Reply 0")).toBe(true);
+      expect(props.listRef.current!.getState().sizeAtIndex(0)).toBeGreaterThan(0);
+    });
+    expect(maxNestedCommits).toBeLessThan(20);
+  });
+
   it("preserves XML-like tags and comparisons in user messages as text", async () => {
     const source = [
       'Without reading a file, do you have <global-agent-instructions scope="workspace">',
