@@ -19,6 +19,7 @@ import * as Redacted from "effect/Redacted";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse, HttpServerResponse } from "effect/http";
 import { vi } from "vite-plus/test";
 
@@ -600,6 +601,43 @@ describe("AssetAccess", () => {
           ),
         ).toBeNull();
       }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("versions media by file changes rather than by re-signing", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-media-revision-" });
+      const filePath = path.join(root, "recording.mp4");
+      yield* fs.writeFileString(filePath, "original");
+      yield* Effect.promise(() => NodeFSP.utimes(filePath, 1_000, 1_000));
+      const input = {
+        resource: {
+          _tag: "media-file" as const,
+          threadId: ThreadId.make("thread-1"),
+          path: filePath,
+        },
+      };
+      const original = yield* issueAssetUrl(input);
+      expect(original.fileRevision).toEqual(expect.any(String));
+
+      yield* TestClock.adjust("1 minute");
+      const renewed = yield* issueAssetUrl(input);
+      expect(renewed.relativeUrl).not.toBe(original.relativeUrl);
+      expect(renewed.fileRevision).toBe(original.fileRevision);
+
+      yield* fs.writeFileString(filePath, "modified");
+      yield* Effect.promise(() => NodeFSP.utimes(filePath, 2_000, 2_000));
+      const edited = yield* issueAssetUrl(input);
+      expect(edited.fileRevision).not.toBe(original.fileRevision);
+
+      const replacement = path.join(root, "replacement.mp4");
+      yield* fs.writeFileString(replacement, "modified");
+      yield* Effect.promise(() => NodeFSP.utimes(replacement, 2_000, 2_000));
+      yield* fs.rename(replacement, filePath);
+      const replaced = yield* issueAssetUrl(input);
+      expect(replaced.fileRevision).not.toBe(edited.fileRevision);
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("keeps in-place edits readable but requires a new URL after atomic replacement", () =>

@@ -60,13 +60,16 @@ export function MediaVideoPlayer({
   const failed = src !== null ? failedSrc === src : sourceFailed;
   const preloaded = preloadedSrc === src || typeof IntersectionObserver === "undefined";
 
-  // Re-signing must not reset the playhead. Changed files refresh once playback pauses.
+  // Re-signing must not reload a loaded source. Changed files load once playback pauses.
   if (
     playbackSource !== null &&
     playbackSource.revision !== revision &&
+    (latestSrc !== null || sourceFailed) &&
     (video === null || playingVideo !== video)
   ) {
-    setPlaybackSource(null);
+    setPlaybackSource(
+      revision !== null && latestSrc !== null ? { src: latestSrc, revision } : null,
+    );
   }
 
   useEffect(() => {
@@ -174,7 +177,10 @@ export function MediaVideoPlayer({
             videoClassName,
           )}
           style={style}
-          onLoadedMetadata={(event) => prepareVideoFirstFrame(event.currentTarget)}
+          onLoadedMetadata={(event) => {
+            prepareVideoFirstFrame(event.currentTarget);
+            if (sourceRevision !== null) setPlaybackSource({ src, revision: sourceRevision });
+          }}
           onPlay={(event) => {
             setPlayingVideo(event.currentTarget);
             setPlaybackSource({ src, revision: sourceRevision });
@@ -183,8 +189,8 @@ export function MediaVideoPlayer({
           onEnded={() => setPlayingVideo(null)}
           onError={() => {
             setPlayingVideo(null);
-            if (latestSrc !== null && src !== latestSrc) setPlaybackSource(null);
-            else setFailedSrc(src);
+            setPlaybackSource(null);
+            if (latestSrc === null || src === latestSrc) setFailedSrc(src);
           }}
         />
       ) : (
