@@ -9,6 +9,7 @@ import * as LiveActivities from "./LiveActivities.ts";
 import * as AgentActivityPublisher from "./AgentActivityPublisher.ts";
 import * as FcmDeliveries from "./FcmDeliveries.ts";
 import * as ApnsDeliveries from "./ApnsDeliveries.ts";
+import { quietRowKey } from "./agentActivityAlerts.ts";
 
 const layerPublisher = AgentActivityPublisher.layer.pipe(
   Layer.provide(
@@ -76,6 +77,7 @@ function makeAgentActivityRows(
     pruneTerminal: () => Effect.void,
     listForUser: () => Effect.succeed([state]),
     getForUserThread: () => Effect.succeed(state),
+    listQuietForUser: () => Effect.succeed(new Set()),
     ...overrides,
   };
 }
@@ -159,7 +161,7 @@ describe("AgentActivityPublisher", () => {
         deviceId: android.device_id,
       });
       expect(fcmCalls).toEqual([
-        { target: android, state, notify: true },
+        { target: android, state },
         { target: android, state: null, replay: true },
       ]);
       expect(appleDevices).toEqual(["ios"]);
@@ -270,7 +272,7 @@ describe("AgentActivityPublisher", () => {
     });
   });
 
-  it.effect("a quiet publish still reaches every device but queues no alert push", () => {
+  it.effect("a quiet publish marks its row quiet and still reaches every device", () => {
     const ios = { ...target("ios"), push_token: "apns-device-token" };
     const android = { ...target("android"), platform: "android" as const, ios_major_version: null };
     const completed: RelayAgentActivityState = { ...state, phase: "completed", headline: "Done" };
@@ -278,6 +280,7 @@ describe("AgentActivityPublisher", () => {
       Parameters<ApnsDeliveries.ApnsDeliveries["Service"]["sendForTarget"]>[0]
     > = [];
     const fcmCalls: Array<Parameters<FcmDeliveries.FcmDeliveries["Service"]["enqueue"]>[0]> = [];
+    const quietRows = new Set<string>();
     let alertPushes = 0;
     return Effect.gen(function* () {
       const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
@@ -289,14 +292,23 @@ describe("AgentActivityPublisher", () => {
         notify: false,
       });
       expect(alertPushes).toBe(0);
-      expect(liveDeliveries).toMatchObject([{ quietEnvironmentId: state.environmentId }]);
-      expect(fcmCalls).toEqual([{ target: android, state: completed, notify: false }]);
+      expect(liveDeliveries[0]?.quiet).toEqual(new Set([quietRowKey(completed)]));
+      expect(fcmCalls).toEqual([{ target: android, state: completed }]);
     }).pipe(
       Effect.provide(
         AgentActivityPublisher.layer.pipe(
           Layer.provide(
             Layer.mergeAll(
-              Layer.succeed(AgentActivityRows.AgentActivityRows, makeAgentActivityRows()),
+              Layer.succeed(
+                AgentActivityRows.AgentActivityRows,
+                makeAgentActivityRows({
+                  upsert: (input) =>
+                    Effect.sync(() => {
+                      if (!input.notify) quietRows.add(quietRowKey(input.state));
+                    }),
+                  listQuietForUser: () => Effect.sync(() => new Set(quietRows)),
+                }),
+              ),
               Layer.succeed(
                 EnvironmentLinks.EnvironmentLinks,
                 makeEnvironmentLinks({

@@ -11,6 +11,7 @@ import { and, desc, eq, isNull, lt, sql } from "drizzle-orm";
 
 import * as RelayDb from "../db.ts";
 import { relayAgentActivityRows, relayEnvironmentLinks } from "../persistence/schema.ts";
+import { quietRowKey, type QuietRows } from "./agentActivityAlerts.ts";
 
 export class AgentActivityRowUpsertPersistenceError extends Schema.TaggedError<AgentActivityRowUpsertPersistenceError>()(
   "AgentActivityRowUpsertPersistenceError",
@@ -68,6 +69,7 @@ export class AgentActivityRows extends Context.Service<
     readonly upsert: (input: {
       readonly environmentPublicKey: string;
       readonly state: RelayAgentActivityState;
+      readonly notify: boolean;
     }) => Effect.Effect<void, AgentActivityRowUpsertPersistenceError>;
     readonly pruneTerminal: (input: {
       readonly updatedBefore: string;
@@ -88,6 +90,10 @@ export class AgentActivityRows extends Context.Service<
       readonly environmentId: string;
       readonly threadId: string;
     }) => Effect.Effect<RelayAgentActivityState | null, AgentActivityRowListPersistenceError>;
+    /** State versions published with `notify: false`, keyed by `quietRowKey`. */
+    readonly listQuietForUser: (input: {
+      readonly userId: string;
+    }) => Effect.Effect<QuietRows, AgentActivityRowListPersistenceError>;
   }
 >()("t3code-relay/agentActivity/AgentActivityRows") {}
 
@@ -128,6 +134,7 @@ export const make = Effect.gen(function* () {
           environmentPublicKey: input.environmentPublicKey,
           threadId: input.state.threadId,
           stateJson,
+          notify: input.notify,
           updatedAt: input.state.updatedAt,
           createdAt: DateTime.formatIso(now),
         })
@@ -139,6 +146,7 @@ export const make = Effect.gen(function* () {
           ],
           set: {
             stateJson,
+            notify: input.notify,
             updatedAt: input.state.updatedAt,
           },
         })
@@ -272,6 +280,43 @@ export const make = Effect.gen(function* () {
             }
             return null;
           }),
+          Effect.mapError(
+            (cause) =>
+              new AgentActivityRowListPersistenceError({
+                userId: input.userId,
+                cause,
+              }),
+          ),
+        );
+    }),
+
+    listQuietForUser: Effect.fn("relay.agent_activity_rows.list_quiet_for_user")(function* (input) {
+      return yield* db
+        .select({
+          environmentId: relayAgentActivityRows.environmentId,
+          threadId: relayAgentActivityRows.threadId,
+          updatedAt: relayAgentActivityRows.updatedAt,
+        })
+        .from(relayAgentActivityRows)
+        .innerJoin(
+          relayEnvironmentLinks,
+          and(
+            eq(relayEnvironmentLinks.environmentId, relayAgentActivityRows.environmentId),
+            eq(
+              relayEnvironmentLinks.environmentPublicKey,
+              relayAgentActivityRows.environmentPublicKey,
+            ),
+          ),
+        )
+        .where(
+          and(
+            eq(relayEnvironmentLinks.userId, input.userId),
+            isNull(relayEnvironmentLinks.revokedAt),
+            eq(relayAgentActivityRows.notify, false),
+          ),
+        )
+        .pipe(
+          Effect.map((rows): QuietRows => new Set(rows.map(quietRowKey))),
           Effect.mapError(
             (cause) =>
               new AgentActivityRowListPersistenceError({

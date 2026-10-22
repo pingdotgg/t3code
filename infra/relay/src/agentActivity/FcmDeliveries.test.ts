@@ -21,6 +21,7 @@ import * as FcmClient from "./FcmClient.ts";
 import * as FcmDeliveries from "./FcmDeliveries.ts";
 import { androidActivityData, fitFcmData } from "./fcmPayloads.ts";
 import { makeAggregateState } from "./agentActivityAggregate.ts";
+import { quietRowKey } from "./agentActivityAlerts.ts";
 
 const aggregateFor = (states: ReadonlyArray<RelayAgentActivityState>) =>
   makeAggregateState({ activeStates: states, terminalState: null, nowMs: 0 })!;
@@ -94,6 +95,7 @@ function harness() {
     mutedEnvironments: [] as string[],
     notificationOnlyEnvironments: [] as string[],
     revokedEnvironments: [] as string[],
+    quietStates: [] as RelayAgentActivityState[],
     linked: true,
     deliveryFailure: null as FcmClient.FcmClientError | null,
   };
@@ -153,6 +155,7 @@ function harness() {
               ) ?? null)
             : null,
         ),
+      listQuietForUser: () => Effect.sync(() => new Set(current.quietStates.map(quietRowKey))),
     }),
     Layer.succeed(EnvironmentLinks.EnvironmentLinks, {
       upsert: () => Effect.void,
@@ -607,16 +610,33 @@ describe("delivery policy regressions", () => {
   });
 });
 
-describe("quiet jobs from an attended environment", () => {
+describe("quietly published states", () => {
+  const publishQuietly = (h: ReturnType<typeof harness>, next: RelayAgentActivityState) => {
+    h.current.state = next;
+    h.current.quietStates = [next];
+  };
+
   it.effect("update the ongoing card silently and never alert for that state later", () => {
     const h = harness();
     return Effect.gen(function* () {
       const d = yield* FcmDeliveries.FcmDeliveries;
       yield* d.process(h.job);
-      h.current.state = { ...state, phase: "completed" };
-      yield* d.process({ ...h.job, state: h.current.state, notify: false });
+      publishQuietly(h, { ...state, phase: "completed" });
+      yield* d.process({ ...h.job, state: h.current.state });
       yield* d.process({ ...h.job, state: h.current.state });
       expect(h.sent.at(-2)).toMatchObject({ alert: false, data: { active: "false" } });
+      expect(h.sent.filter((x) => x.alert)).toHaveLength(0);
+    }).pipe(Effect.provide(h.layer));
+  });
+
+  it.effect("do not alert when an older job is consumed after the quiet publish", () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const d = yield* FcmDeliveries.FcmDeliveries;
+      yield* d.process(h.job);
+      const stale = { ...h.job, state: { ...state } };
+      publishQuietly(h, { ...state, phase: "completed" });
+      yield* d.process(stale);
       expect(h.sent.filter((x) => x.alert)).toHaveLength(0);
     }).pipe(Effect.provide(h.layer));
   });
@@ -630,25 +650,25 @@ describe("quiet jobs from an attended environment", () => {
       threadTitle: "Other thread",
     };
     h.current.target.last_aggregate_json = encodeJson(aggregateFor([state, other]));
-    h.current.state = { ...state, phase: "completed" };
+    publishQuietly(h, { ...state, phase: "completed" });
     h.current.otherStates = [{ ...other, phase: "completed" }];
     return Effect.gen(function* () {
       const d = yield* FcmDeliveries.FcmDeliveries;
-      yield* d.process({ ...h.job, state: h.current.state, notify: false });
+      yield* d.process({ ...h.job, state: h.current.state });
       expect(h.sent[0]).toMatchObject({ alert: true, data: { alert_title: "Other thread" } });
     }).pipe(Effect.provide(h.layer));
   });
 
   it.effect("do not alert with ongoing activity disabled", () => {
     const h = harness();
-    h.current.state = { ...state, phase: "completed" };
+    publishQuietly(h, { ...state, phase: "completed" });
     h.current.target.preferences_json = encodeJson({
       ...preferences,
       liveActivitiesEnabled: false,
     });
     return Effect.gen(function* () {
       const d = yield* FcmDeliveries.FcmDeliveries;
-      yield* d.process({ ...h.job, state: h.current.state, notify: false });
+      yield* d.process({ ...h.job, state: h.current.state });
       expect(h.sent.filter((x) => x.alert)).toHaveLength(0);
     }).pipe(Effect.provide(h.layer));
   });

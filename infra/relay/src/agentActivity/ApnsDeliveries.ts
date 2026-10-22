@@ -50,7 +50,8 @@ import {
   alertForTerminalAggregate,
   rowPhasesChanged,
   shouldAlertForActivity,
-  withoutQuietEnvironment,
+  withoutQuietRows,
+  type QuietRows,
 } from "./agentActivityAlerts.ts";
 export {
   alertForAttentionTransition,
@@ -203,9 +204,9 @@ function notificationForAggregate(input: {
   readonly target: LiveActivities.TargetRow;
   readonly aggregate: RelayAgentActivityAggregateState | null;
   readonly nowMs: number;
-  readonly quietEnvironmentId?: string | undefined;
+  readonly quiet?: QuietRows | undefined;
 }): ApnsNotificationPayload | null {
-  const aggregate = withoutQuietEnvironment(input.aggregate, input.quietEnvironmentId);
+  const aggregate = withoutQuietRows(input.aggregate, input.quiet);
   if (!input.target.push_token || aggregate === null) {
     return null;
   }
@@ -229,7 +230,7 @@ function chooseLiveActivityDelivery(input: {
   readonly aggregate: RelayAgentActivityAggregateState | null;
   readonly nowMs: number;
   readonly replay?: boolean;
-  readonly quietEnvironmentId?: string | undefined;
+  readonly quiet?: QuietRows | undefined;
 }): ChosenLiveActivityDelivery | "suppressed" | null {
   const preferences = parsePreferences(input.target.preferences_json);
   if (preferences?.liveActivitiesEnabled === false) {
@@ -269,8 +270,7 @@ function chooseLiveActivityDelivery(input: {
   }
   const nextAggregate = input.aggregate;
   const previousAggregate = parseAggregate(input.target.last_aggregate_json);
-  const alertableAggregate =
-    withoutQuietEnvironment(nextAggregate, input.quietEnvironmentId) ?? nextAggregate;
+  const alertable = withoutQuietRows(nextAggregate, input.quiet) ?? nextAggregate;
   return shouldUpdateLiveActivity({
     previousAggregate,
     nextAggregate,
@@ -285,12 +285,12 @@ function chooseLiveActivityDelivery(input: {
           ? null
           : (alertForAttentionTransition({
               previousAggregate,
-              nextAggregate: alertableAggregate,
+              nextAggregate: alertable,
               preferences,
             }) ??
             alertForNewlyTerminal({
               previousAggregate,
-              nextAggregate: alertableAggregate,
+              nextAggregate: alertable,
               preferences,
               nowMs: input.nowMs,
               includeUnobserved: true,
@@ -304,7 +304,7 @@ function chooseDelivery(input: {
   readonly aggregate: RelayAgentActivityAggregateState | null;
   readonly nowMs: number;
   readonly replay?: boolean;
-  readonly quietEnvironmentId?: string | undefined;
+  readonly quiet?: QuietRows | undefined;
 }): ChosenDelivery | null {
   const liveActivityDelivery = chooseLiveActivityDelivery(input);
   if (liveActivityDelivery === "suppressed") {
@@ -519,7 +519,7 @@ export class ApnsDeliveries extends Context.Service<
       readonly aggregate: RelayAgentActivityAggregateState | null;
       readonly nowMs: number;
       readonly replay?: boolean;
-      readonly quietEnvironmentId?: string | undefined;
+      readonly quiet?: QuietRows | undefined;
     }) => Effect.Effect<RelayDeliveryResult | null, ApnsDeliveryError>;
     readonly sendPushNotificationForTarget: (input: {
       readonly target: LiveActivities.TargetRow;
@@ -591,6 +591,19 @@ export const make = Effect.gen(function* () {
       ),
     );
   });
+
+  // A queued alert is re-picked at delivery from the current aggregate, which
+  // can hold states published quietly since. Fails open like the rechecks here.
+  const quietRowsFor = (userId: string) =>
+    activityRows
+      .listQuietForUser({ userId })
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("quiet-row recheck failed; alerting without it", { cause }).pipe(
+            Effect.as(undefined),
+          ),
+        ),
+      );
 
   const stateIdentityIsCurrent = Effect.fnUntraced(function* (input: {
     readonly userId: string;
@@ -748,17 +761,18 @@ export const make = Effect.gen(function* () {
       if (alert) {
         const preferences = parsePreferences(currentTarget.preferences_json);
         const previousAggregate = parseAggregate(currentTarget.last_aggregate_json);
+        const alertable = withoutQuietRows(aggregate, yield* quietRowsFor(input.target.user_id));
         alert =
-          !preferences?.notificationsEnabled || !aggregate
+          !preferences?.notificationsEnabled || !alertable
             ? null
             : (alertForAttentionTransition({
                 previousAggregate,
-                nextAggregate: aggregate,
+                nextAggregate: alertable,
                 preferences,
               }) ??
               alertForNewlyTerminal({
                 previousAggregate,
-                nextAggregate: aggregate,
+                nextAggregate: alertable,
                 preferences,
                 nowMs: now.epochMilliseconds,
                 includeUnobserved: true,
@@ -1152,7 +1166,7 @@ export const make = Effect.gen(function* () {
         aggregate: input.aggregate,
         nowMs: input.nowMs,
         replay: input.replay ?? false,
-        quietEnvironmentId: input.quietEnvironmentId,
+        quiet: input.quiet,
       });
       if (!delivery) {
         return null;
@@ -1174,7 +1188,7 @@ export const make = Effect.gen(function* () {
             target: input.target,
             aggregate: input.aggregate,
             nowMs: input.nowMs,
-            quietEnvironmentId: input.quietEnvironmentId,
+            quiet: input.quiet,
           });
       // The end event doubles as the "task finished" moment. When a companion
       // push notification is about to ring the device (below), the activity end
@@ -1186,7 +1200,7 @@ export const make = Effect.gen(function* () {
           ? notification && input.target.push_token
             ? null
             : alertForTerminalAggregate({
-                aggregate: withoutQuietEnvironment(delivery.aggregate, input.quietEnvironmentId),
+                aggregate: withoutQuietRows(delivery.aggregate, input.quiet),
                 preferences: parsePreferences(input.target.preferences_json),
               })
           : delivery.alert;

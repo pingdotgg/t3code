@@ -26,16 +26,27 @@ type TransitionInput = {
   readonly preferences: RelayAgentAwarenessPreferences | null;
 };
 
-// Rows from an environment whose user is already at a computer still update
-// the card, but must not ring the phone. Other environments' rows still can.
-export function withoutQuietEnvironment(
+export type QuietRows = ReadonlySet<string>;
+
+// Keyed by version so a later publish of the same thread can alert again.
+export function quietRowKey(row: {
+  readonly environmentId: string;
+  readonly threadId: string;
+  readonly updatedAt: string;
+}): string {
+  return JSON.stringify([row.environmentId, row.threadId, row.updatedAt]);
+}
+
+// A state published while its user sat at a computer still updates the card,
+// but must not ring the phone. Other rows in the same aggregate still can.
+export function withoutQuietRows(
   aggregate: RelayAgentActivityAggregateState | null,
-  quietEnvironmentId: string | undefined,
+  quiet: QuietRows | undefined,
 ): RelayAgentActivityAggregateState | null {
-  if (aggregate === null || quietEnvironmentId === undefined) return aggregate;
+  if (aggregate === null || !quiet?.size) return aggregate;
   return {
     ...aggregate,
-    activities: aggregate.activities.filter((row) => row.environmentId !== quietEnvironmentId),
+    activities: aggregate.activities.filter((row) => !quiet.has(quietRowKey(row))),
   };
 }
 

@@ -66,7 +66,6 @@ export const make = Effect.gen(function* () {
 
   const publishForDeliveryUser = Effect.fnUntraced(function* (input: {
     readonly deliveryUser: EnvironmentLinks.AgentAwarenessDeliveryUserRecord;
-    readonly environmentId: string;
     readonly state: RelayAgentActivityState | null;
     readonly notify: boolean;
     readonly nowMs: number;
@@ -92,14 +91,15 @@ export const make = Effect.gen(function* () {
             nowMs: input.nowMs,
           })
         : null;
+    const quiet = input.deliveryUser.notificationsEnabled
+      ? yield* rows.listQuietForUser({ userId: input.deliveryUser.userId })
+      : undefined;
     const targets = yield* liveActivities.listTargets({ userId: input.deliveryUser.userId });
     const deliveriesByTarget = yield* Effect.forEach(
       targets,
       Effect.fnUntraced(function* (target) {
         if (target.platform === "android") {
-          return [
-            yield* fcmDeliveries.enqueue({ target, state: input.state, notify: input.notify }),
-          ];
+          return [yield* fcmDeliveries.enqueue({ target, state: input.state })];
         }
         return yield* Effect.all(
           [
@@ -107,7 +107,7 @@ export const make = Effect.gen(function* () {
               target,
               aggregate: liveActivityAggregate,
               nowMs: input.nowMs,
-              quietEnvironmentId: input.notify ? undefined : input.environmentId,
+              quiet,
             }),
             notificationOnlyAggregate === null
               ? Effect.succeed(null)
@@ -227,6 +227,7 @@ export const make = Effect.gen(function* () {
         yield* rows.upsert({
           environmentPublicKey: input.environmentPublicKey,
           state: input.state,
+          notify: input.notify,
         });
       } else {
         yield* rows.remove({
@@ -246,7 +247,6 @@ export const make = Effect.gen(function* () {
         (deliveryUser) =>
           publishForDeliveryUser({
             deliveryUser,
-            environmentId: input.environmentId,
             state: input.state,
             notify: input.notify,
             nowMs: now.epochMilliseconds,

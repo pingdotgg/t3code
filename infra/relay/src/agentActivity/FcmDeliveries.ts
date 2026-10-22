@@ -29,6 +29,7 @@ import {
   alertForActivityRows,
   attentionTransitionRows,
   terminalTransitionRows,
+  quietRowKey,
   shouldAlertForActivity,
 } from "./agentActivityAlerts.ts";
 
@@ -39,7 +40,6 @@ export const FcmDeliveryJob = Schema.Struct({
   state: Schema.NullOr(RelayAgentActivityState),
   queuedAt: Schema.Number,
   replay: Schema.optional(Schema.Boolean),
-  notify: Schema.optional(Schema.Boolean),
 });
 export type FcmDeliveryJob = typeof FcmDeliveryJob.Type;
 const decodeJob = Schema.decodeUnknownEffect(FcmDeliveryJob);
@@ -123,7 +123,6 @@ export class FcmDeliveries extends Context.Service<
       readonly target: LiveActivities.TargetRow;
       readonly state: RelayAgentActivityState | null;
       readonly replay?: boolean;
-      readonly notify?: boolean;
     }) => Effect.Effect<RelayDeliveryResult | null, FcmDeliveryError>;
     readonly process: (
       body: unknown,
@@ -173,7 +172,6 @@ export const make = Effect.gen(function* () {
           token: input.target.push_token,
           state: input.state,
           ...(input.replay ? { replay: true } : {}),
-          ...(input.notify === false ? { notify: false } : {}),
           queuedAt: now.epochMilliseconds,
         })
         .pipe(Effect.mapError((cause) => new FcmDeliveryError({ operation: "enqueue", cause })));
@@ -222,6 +220,8 @@ export const make = Effect.gen(function* () {
       // update the card, but must leave that transition for its own alert job.
       let acknowledgeAggregate = job.state !== null || job.replay === true || aggregate === null;
       if (job.state && preferences.value.notificationsEnabled) {
+        // Read at consume time: any queued job can see a state published quietly since.
+        const quiet = yield* rows.listQuietForUser({ userId: job.userId });
         const state = yield* rows.getForUserThread({
           userId: job.userId,
           environmentId: job.state.environmentId,
@@ -265,10 +265,7 @@ export const make = Effect.gen(function* () {
               environmentId,
               environmentPublicKey: environmentLink.environmentPublicKey,
             });
-            if (
-              users.some((user) => user.userId === job.userId && user.notificationsEnabled) &&
-              !(job.notify === false && environmentId === job.state.environmentId)
-            ) {
+            if (users.some((user) => user.userId === job.userId && user.notificationsEnabled)) {
               allowedEnvironments.add(environmentId);
             }
           }
@@ -276,17 +273,18 @@ export const make = Effect.gen(function* () {
             previousAggregate,
             nextAggregate: {
               ...aggregate,
-              activities: aggregate.activities.filter((row) =>
-                allowedEnvironments.has(row.environmentId),
+              activities: aggregate.activities.filter(
+                (row) => allowedEnvironments.has(row.environmentId) && !quiet.has(quietRowKey(row)),
               ),
             },
             preferences: preferences.value,
             nowMs: now.epochMilliseconds,
           });
         } else if (
-          job.notify !== false &&
           deliveryUser?.notificationsEnabled &&
-          state?.phase === job.state.phase &&
+          state !== null &&
+          !quiet.has(quietRowKey(state)) &&
+          state.phase === job.state.phase &&
           state.updatedAt === job.state.updatedAt &&
           !isExpiredAgentActivityState(state, now.epochMilliseconds)
         ) {

@@ -78,3 +78,17 @@ describe("playNotificationSound", () => {
     expect(audio.started).toBe(1);
   });
 });
+
+describe("canNotifyOutsideWindow", () => {
+  it("counts notification sound only once audio is unlocked", async () => {
+    const notifications = await import("./threadNotifications");
+    notifications.setCoordinatorNotificationMode("sound");
+    expect(notifications.canNotifyOutsideWindow()).toBe(false);
+
+    notifications.unlockNotificationAudio();
+    expect(notifications.canNotifyOutsideWindow()).toBe(true);
+
+    notifications.setCoordinatorNotificationMode("off");
+    expect(notifications.canNotifyOutsideWindow()).toBe(false);
+  });
+});

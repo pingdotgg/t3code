@@ -28,15 +28,6 @@ export function setCoordinatorNotificationMode(mode: NotificationMode) {
   coordinatorNotificationMode = mode;
 }
 
-export function canNotifyOutsideWindow(): boolean {
-  return (
-    hasNotificationSound(coordinatorNotificationMode) ||
-    (hasDesktopNotifications(coordinatorNotificationMode) &&
-      typeof Notification !== "undefined" &&
-      Notification.permission === "granted")
-  );
-}
-
 const TAG_HASH_OFFSET_BASIS = 0xcbf29ce484222325n;
 const TAG_HASH_PRIME = 0x100000001b3n;
 const TAG_HASH_MASK = 0xffffffffffffffffn;
@@ -101,6 +92,16 @@ let audioContext: AudioContext | undefined;
 const buffers = new Map<string, Promise<AudioBuffer>>();
 /** When each sound's current playback ends, on the audio context's clock. */
 const playingUntil = new Map<string, number>();
+
+// Sound counts only once a user gesture has unlocked audio, as playback requires.
+export function canNotifyOutsideWindow(): boolean {
+  return (
+    (hasNotificationSound(coordinatorNotificationMode) && audioContext?.state === "running") ||
+    (hasDesktopNotifications(coordinatorNotificationMode) &&
+      typeof Notification !== "undefined" &&
+      Notification.permission === "granted")
+  );
+}
 
 /** Called from a gesture so browsers allow later background playback. */
 export function unlockNotificationAudio() {

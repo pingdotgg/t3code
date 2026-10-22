@@ -91,11 +91,13 @@ export function resolveUserIdleMs(input: {
   readonly canNotify: boolean;
   /** `undefined` without a desktop shell, `null` while the computer is locked or asleep. */
   readonly systemIdleMs: number | null | undefined;
-  readonly pageIdleMs: number;
+  /** `undefined` until this page has seen input. */
+  readonly pageIdleMs: number | undefined;
 }): number | undefined {
   if (!(input.visible && input.focused) && !input.canNotify) return undefined;
   if (input.systemIdleMs === null) return undefined;
-  return Math.max(0, input.systemIdleMs ?? input.pageIdleMs);
+  const idleMs = input.systemIdleMs ?? input.pageIdleMs;
+  return idleMs === undefined ? undefined : Math.max(0, idleMs);
 }
 
 // Outside the desktop shell this is undefined, and only input in this window counts.
@@ -108,6 +110,7 @@ function createActivityReport(
   lastInteractionAtMs: number,
   observedAtMs: number,
   systemIdleMs: number | null | undefined,
+  lastInputAtMs: number | null,
 ): ClientActivityReportInput {
   const scopes = [...BASELINE_SCOPES];
   for (const entry of retainedScopes.values()) {
@@ -122,7 +125,7 @@ function createActivityReport(
     focused,
     canNotify: canNotifyOutsideWindow(),
     systemIdleMs,
-    pageIdleMs: observedAtMs - lastInteractionAtMs,
+    pageIdleMs: lastInputAtMs === null ? undefined : observedAtMs - lastInputAtMs,
   });
   return {
     environmentId,
@@ -213,10 +216,14 @@ export const layer = Layer.effectDiscard(
     const reportRequests = yield* Queue.sliding<void>(1);
     const requestReport = () => Queue.offerUnsafe(reportRequests, undefined);
     let lastInteractionAtMs = clock.currentTimeMillisUnsafe();
+    // Loading or restoring a tab starts the interaction clock, but it is not
+    // input: presence waits for a real event.
+    let lastInputAtMs: number | null = null;
     const recordInteraction = () => {
       const observedAtMs = clock.currentTimeMillisUnsafe();
       const wasRecent = wasRecentlyInteracted(lastInteractionAtMs, observedAtMs);
       lastInteractionAtMs = observedAtMs;
+      lastInputAtMs = observedAtMs;
       if (!wasRecent) {
         requestReport();
       }
@@ -240,6 +247,7 @@ export const layer = Layer.effectDiscard(
                   lastInteractionAtMs,
                   observedAtMs,
                   systemIdleMs,
+                  lastInputAtMs,
                 ),
               ),
             )

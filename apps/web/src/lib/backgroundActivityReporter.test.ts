@@ -34,6 +34,17 @@ describe("resolveUserIdleMs", () => {
     ).toBe(5_000);
   });
 
+  it("reports no presence from a page that has not seen input", () => {
+    expect(
+      resolveUserIdleMs({
+        ...away,
+        canNotify: true,
+        systemIdleMs: undefined,
+        pageIdleMs: undefined,
+      }),
+    ).toBeUndefined();
+  });
+
   it("prefers the desktop's system idle clock and treats a locked computer as away", () => {
     expect(resolveUserIdleMs({ ...away, canNotify: true, systemIdleMs: 1_000 })).toBe(1_000);
     expect(resolveUserIdleMs({ ...away, canNotify: true, systemIdleMs: null })).toBeUndefined();

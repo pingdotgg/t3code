@@ -25,6 +25,7 @@ import * as AgentActivityRows from "./AgentActivityRows.ts";
 import * as ApnsDeliveries from "./ApnsDeliveries.ts";
 import * as ApnsClient from "./ApnsClient.ts";
 import * as ApnsProviderTokens from "./ApnsProviderTokens.ts";
+import { quietRowKey } from "./agentActivityAlerts.ts";
 
 const config = RelayConfiguration.RelayConfiguration.of({
   relayIssuer: "https://relay.example.test",
@@ -157,6 +158,7 @@ function layerFor(input: {
   readonly config?: RelayConfiguration.RelayConfiguration["Service"];
   readonly activityStates?: ReadonlyArray<RelayAgentActivityState>;
   readonly currentActivityStates?: ReadonlyArray<RelayAgentActivityState>;
+  readonly quietRows?: ReadonlyArray<RelayAgentActivityState>;
   readonly execute?: (
     request: HttpClientRequest.HttpClientRequest,
   ) => Effect.Effect<HttpClientResponse.HttpClientResponse>;
@@ -182,6 +184,7 @@ function layerFor(input: {
                   current.environmentId === environmentId && current.threadId === threadId,
               ) ?? null,
             ),
+          listQuietForUser: () => Effect.succeed(new Set((input.quietRows ?? []).map(quietRowKey))),
         } satisfies AgentActivityRows.AgentActivityRows["Service"]),
         Layer.succeed(ApnsDeliveryQueue.ApnsDeliveryQueueSender, {
           send: (body) =>
@@ -1289,7 +1292,7 @@ describe("fast completion delivery", () => {
   });
 });
 
-describe("quiet environment delivery", () => {
+describe("quiet state delivery", () => {
   const attendedRow = aggregate.activities[0]!;
   const awayRow = {
     ...attendedRow,
@@ -1306,8 +1309,9 @@ describe("quiet environment delivery", () => {
       rows.includes(row) ? { ...row, phase: "completed" as const, status: "Done" } : row,
     ),
   });
+  const quiet = new Set([quietRowKey(attendedRow)]);
 
-  it.effect("updates the card without alerting for the attended environment", () => {
+  it.effect("updates the card without alerting for a quietly published state", () => {
     const queuedJobs: SignedApnsDeliveryJob[] = [];
     return Effect.gen(function* () {
       const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
@@ -1315,14 +1319,14 @@ describe("quiet environment delivery", () => {
         target: device,
         aggregate: finish([attendedRow]),
         nowMs: 0,
-        quietEnvironmentId: attendedRow.environmentId,
+        quiet,
       });
       expect(queuedJobs).toHaveLength(1);
       expect(queuedJobs[0]?.payload.alert).toBeUndefined();
     }).pipe(Effect.provide(layerFor({ attempts: [], queuedJobs })));
   });
 
-  it.effect("still alerts for another environment finishing in the same aggregate", () => {
+  it.effect("still alerts for another state finishing in the same aggregate", () => {
     const queuedJobs: SignedApnsDeliveryJob[] = [];
     return Effect.gen(function* () {
       const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
@@ -1330,10 +1334,62 @@ describe("quiet environment delivery", () => {
         target: device,
         aggregate: finish([attendedRow, awayRow]),
         nowMs: 0,
-        quietEnvironmentId: attendedRow.environmentId,
+        quiet,
       });
       expect(queuedJobs[0]?.payload.alert).toMatchObject({ title: awayRow.threadTitle });
     }).pipe(Effect.provide(layerFor({ attempts: [], queuedJobs })));
+  });
+
+  it.effect("re-picks a queued alert at delivery without states published quietly since", () => {
+    const requests: HttpClientRequest.HttpClientRequest[] = [];
+    const done = finish([attendedRow, awayRow]);
+    const signed = signApnsDeliveryJob({
+      secret: config.apnsDeliveryJobSigningSecret,
+      payload: makeApnsDeliveryJobPayload({
+        kind: "live_activity_update",
+        userId: target.user_id,
+        deviceId: target.device_id,
+        token: "activity-token",
+        aggregate: done,
+        alert: { title: "2 agents finished", body: "Thread, Away thread" },
+        createdAt: state.updatedAt,
+        expiresAt: "1970-01-01T00:10:00.000Z",
+        jobId: "job-quiet-recheck",
+      }),
+    });
+    const currentStates = done.activities.map((row) => ({
+      ...state,
+      environmentId: row.environmentId,
+      threadId: row.threadId,
+      threadTitle: row.threadTitle,
+      phase: row.phase,
+      updatedAt: row.updatedAt,
+    }));
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      yield* deliveries.processSignedJob(signed);
+      const request = requests[0]!;
+      expect(request.body._tag).toBe("Uint8Array");
+      if (request.body._tag === "Uint8Array") {
+        const { aps } = JSON.parse(new TextDecoder().decode(request.body.body));
+        expect(aps.alert).toMatchObject({ title: awayRow.threadTitle });
+      }
+    }).pipe(
+      Effect.provide(
+        layerFor({
+          attempts: [],
+          config: signingConfig,
+          currentTargets: [device],
+          activityStates: currentStates,
+          quietRows: [currentStates[0]!],
+          execute: (request) =>
+            Effect.sync(() => {
+              requests.push(request);
+              return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
+            }),
+        }),
+      ),
+    );
   });
 });
 

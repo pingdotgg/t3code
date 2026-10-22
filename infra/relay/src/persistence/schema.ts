@@ -155,6 +155,9 @@ export const relayAgentActivityRows = pgTable(
     environmentPublicKey: text("environment_public_key").notNull(),
     threadId: varchar("thread_id", { length: 512 }).notNull(),
     stateJson: jsonb("state_json").notNull().$type<RelayAgentActivityState>(),
+    // False when this state version was published while the user sat at a
+    // computer: it still updates cards, but no delivery path may alert for it.
+    notify: boolean("notify").default(true).notNull(),
     updatedAt: varchar("updated_at", { length: 64 }).notNull(),
     createdAt: varchar("created_at", { length: 64 }).notNull(),
   },
