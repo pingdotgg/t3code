@@ -171,6 +171,31 @@ describe("usage pricing", () => {
     });
   });
 
+  it("prices one-hour cache writes at the one-hour write rate", () => {
+    const table = parseRateTable({
+      "claude-opus-5-5": {
+        ...rate(4e-6, 4e-7),
+        cache_creation_input_token_cost: 5e-6,
+        cache_creation_input_token_cost_above_1hr: 8e-6,
+        input_cost_per_token_priority: 8e-6,
+        output_cost_per_token_priority: 40e-6,
+        cache_creation_input_token_cost_priority: 12e-6,
+      },
+    });
+    const writes = (speed: UsageSpeed) => ({
+      ...record("claude-opus-5-5", null, speed),
+      oneHourCacheCreationTokens: 600_000,
+    });
+
+    expect(priceUsage(table, writes("standard"))).toMatchObject({
+      categoryCostUsd: { cacheWrite: expect.closeTo(0.4 * 5 + 0.6 * 8) },
+    });
+    // The priority tier publishes no one-hour rate, so it keeps the standard 8/5 premium.
+    expect(priceUsage(table, writes("fast"))).toMatchObject({
+      categoryCostUsd: { cacheWrite: expect.closeTo(0.4 * 12 + 0.6 * 12 * 1.6) },
+    });
+  });
+
   it("prices Codex priority and ultrafast requests at their published tier rates", () => {
     const table = parseRateTable({
       "gpt-6-astra": {

@@ -22,6 +22,7 @@ function claudeLine(overrides: {
       usage: {
         input_tokens: 2,
         cache_creation_input_tokens: 66818,
+        cache_creation: { ephemeral_5m_input_tokens: 818, ephemeral_1h_input_tokens: 66000 },
         cache_read_input_tokens: 1000,
         output_tokens: overrides.outputTokens ?? 286,
         ...(overrides.speed === undefined ? {} : { speed: overrides.speed }),
@@ -44,6 +45,7 @@ describe("parseClaudeLine", () => {
       outputTokens: 286,
       reasoningTokens: 0,
     });
+    expect(record?.oneHourCacheCreationTokens).toBe(66000);
     expect(record?.dedupeKey).toBe("msg_1:");
     expect(record?.speed).toBe("standard");
   });

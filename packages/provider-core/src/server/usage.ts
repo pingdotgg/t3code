@@ -18,6 +18,8 @@ export interface UsageRecord {
   readonly rateModel?: string;
   readonly sessionId: string;
   readonly totals: UsageTokenTotals;
+  /** Part of `totals.cacheCreationTokens` written with Anthropic's one-hour TTL, billed higher. */
+  readonly oneHourCacheCreationTokens?: number;
   readonly reportedCostUsd: number | null;
   readonly speed: UsageSpeed;
   readonly unresolvedServiceTierTurnId?: string;

@@ -56,6 +56,15 @@ function parseClaudeRecord(parsed: unknown): UsageRecord | null {
     messageId === null && requestId === null ? null : `${messageId ?? ""}:${requestId ?? ""}`;
 
   const cost = record["costUSD"];
+  const cacheCreationTokens = tokenCount(usageRecord["cache_creation_input_tokens"]);
+  const cacheCreation = usageRecord["cache_creation"];
+  const oneHourCacheCreationTokens =
+    typeof cacheCreation === "object" && cacheCreation !== null
+      ? Math.min(
+          tokenCount((cacheCreation as Record<string, unknown>)["ephemeral_1h_input_tokens"]),
+          cacheCreationTokens,
+        )
+      : 0;
 
   return {
     provider: "claude",
@@ -65,11 +74,12 @@ function parseClaudeRecord(parsed: unknown): UsageRecord | null {
     totals: {
       uncachedInputTokens: tokenCount(usageRecord["input_tokens"]),
       cachedInputTokens: tokenCount(usageRecord["cache_read_input_tokens"]),
-      cacheCreationTokens: tokenCount(usageRecord["cache_creation_input_tokens"]),
+      cacheCreationTokens,
       outputTokens: tokenCount(usageRecord["output_tokens"]),
       // Anthropic folds thinking tokens into output and does not break them out.
       reasoningTokens: 0,
     },
+    ...(oneHourCacheCreationTokens > 0 ? { oneHourCacheCreationTokens } : {}),
     reportedCostUsd: typeof cost === "number" && Number.isFinite(cost) ? cost : null,
     speed: usageRecord["speed"] === "fast" ? "fast" : "standard",
     dedupeKey,
