@@ -11,25 +11,30 @@ type PullRequestContext = { readonly environmentId: string; readonly projectId: 
 
 // Route-free so navigator layouts such as the workspace sidebar, which have no
 // route context for useRoute, can open pull requests for any thread.
-export function useNavigateToPullRequest(options?: { readonly replace?: boolean }) {
+export function useNavigateToPullRequest(options?: {
+  readonly replace?: boolean;
+  readonly mode?: "contextual" | "workspace";
+}) {
   const navigation = useNavigation();
   const replace = options?.replace;
+  const mode = options?.mode ?? "workspace";
   return useCallback(
     async (url: string, context: PullRequestContext | null) => {
       const params = nativePullRequestDestination(url, context);
       if (!params) return tryOpenExternalUrl(url, "pull-request");
-      if (Platform.OS === "android")
+      if (Platform.OS === "android" && mode === "workspace")
         resetAndroidWorkspace(navigation, { name: "PullRequest", params });
       else if (replace) navigation.dispatch(StackActions.replace("PullRequest", params));
       else navigation.navigate("PullRequest", params);
       return true;
     },
-    [navigation, replace],
+    [navigation, replace, mode],
   );
 }
 
 export function useOpenPullRequest(options?: {
   readonly replace?: boolean;
+  readonly mode?: "contextual" | "workspace";
   readonly context?: PullRequestContext;
 }) {
   const route = useRoute();
@@ -53,7 +58,10 @@ export function useOpenPullRequest(options?: {
   );
   const projectId =
     options?.context?.projectId ?? first(routeContext?.projectId) ?? thread?.projectId;
-  const navigateToPullRequest = useNavigateToPullRequest({ replace: options?.replace });
+  const navigateToPullRequest = useNavigateToPullRequest({
+    replace: options?.replace,
+    mode: options?.mode ?? "contextual",
+  });
   return useCallback(
     (url: string) =>
       navigateToPullRequest(

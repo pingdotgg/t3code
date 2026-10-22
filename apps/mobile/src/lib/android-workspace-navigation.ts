@@ -16,14 +16,23 @@ interface WorkspaceNavigation {
   readonly getRootState?: () => NavigationState | undefined;
 }
 
-function androidWorkspaceBackReturnsToThread(state: NavigationState) {
+const detailIdentity = {
+  Thread: ["environmentId", "threadId"],
+  PullRequest: ["environmentId", "projectId", "repository", "number", "host"],
+} as const;
+
+// Back returns to the detail a chat, PR, or subagent was opened from. A copy of the current
+// detail directly below it, which confirming a Git action from the inline inspector can leave,
+// is not a destination, so Back returns to the list instead.
+function androidWorkspaceBackReturnsToDetail(state: NavigationState) {
   const current = state.routes[state.index];
-  const params = current?.params as ReactNavigation.RootParamList["Thread"] | undefined;
-  return (
-    current?.name === "Thread" &&
-    state.routes[state.index - 1]?.name === "Thread" &&
-    params !== undefined &&
-    !parentThreadIsBelow(state, params)
+  const previous = state.routes[state.index - 1];
+  if (!current || (previous?.name !== "Thread" && previous?.name !== "PullRequest")) return false;
+  if (current.name !== previous.name) return true;
+  const currentParams = current.params as Readonly<Record<string, unknown>> | undefined;
+  const previousParams = previous.params as Readonly<Record<string, unknown>> | undefined;
+  return detailIdentity[previous.name].some(
+    (key) => currentParams?.[key] !== previousParams?.[key],
   );
 }
 
@@ -34,10 +43,7 @@ export function androidWorkspaceNavigationState(
 ) {
   const home = state.routes.find((route) => route.name === "Home") ?? { name: "Home" };
   if (!destination) return { ...state, index: 0, routes: [home] };
-  const identity =
-    destination.name === "Thread"
-      ? ["environmentId", "threadId"]
-      : ["environmentId", "projectId", "repository", "number", "host"];
+  const identity = detailIdentity[destination.name];
   const params = destination.params as Readonly<Record<string, unknown>>;
   const existing = state.routes.findLast((route) => {
     if (route.name !== destination.name) return false;
@@ -55,6 +61,14 @@ export function androidWorkspaceNavigationState(
   };
 }
 
+export function androidWorkspaceRootState(
+  navigation: Pick<WorkspaceNavigation, "getParent" | "getState" | "getRootState">,
+) {
+  let root = navigation;
+  for (let parent = root.getParent(); parent; parent = root.getParent()) root = parent;
+  return root.getRootState?.() ?? root.getState();
+}
+
 /**
  * Resets the root stack to a workspace list or detail. Always reads and targets the root
  * navigator: the sidebar and rail render in the root layout, where `useNavigation()` is the
@@ -66,9 +80,7 @@ export function resetAndroidWorkspace(
   destination?: AndroidWorkspaceDestination,
   reviewers?: ReactNavigation.RootParamList["PullRequestReviewers"],
 ) {
-  let root = navigation;
-  for (let parent = root.getParent(); parent; parent = root.getParent()) root = parent;
-  const state = root.getRootState?.() ?? root.getState();
+  const state = androidWorkspaceRootState(navigation);
   if (!state) return;
   // Same shape as `CommonActions.reset`, which would pull React Native into node tests.
   navigation.dispatch({
@@ -96,7 +108,7 @@ export function returnToAndroidWorkspaceList(
   selectTab: () => void,
 ) {
   const state = navigation.getState();
-  if (state && androidWorkspaceBackReturnsToThread(state)) return navigation.goBack();
+  if (state && androidWorkspaceBackReturnsToDetail(state)) return navigation.goBack();
   selectTab();
   resetAndroidWorkspace(navigation);
 }

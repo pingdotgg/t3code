@@ -32,19 +32,21 @@ export function useWorkspaceBackNavigation(tab: WorkspaceTab) {
 }
 
 export function useAndroidWorkspaceBack(tab: WorkspaceTab) {
+  const navigation = useNavigation();
   const dispatch = useWorkspaceTabs()?.dispatch;
   const goBack = useWorkspaceBackNavigation(tab);
   useFocusEffect(
     useCallback(() => {
       if (Platform.OS !== "android") return;
-      dispatch?.({ type: "select", tab });
+      // A chat opened from a PR, or a PR from a chat, keeps the tab it was opened from.
+      if ((navigation.getState()?.index ?? 0) <= 1) dispatch?.({ type: "select", tab });
       const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
         if (Keyboard.isVisible()) Keyboard.dismiss();
         else goBack();
         return true;
       });
       return () => subscription.remove();
-    }, [goBack, dispatch, tab]),
+    }, [navigation, goBack, dispatch, tab]),
   );
   return goBack;
 }

@@ -39,6 +39,7 @@ export function ThreadPullRequestsSheet(
   );
   const openPullRequest = useOpenPullRequest({
     replace: true,
+    mode: "workspace",
     context: selectedThread ?? undefined,
   });
   const actions = useLinkedPullRequestActions({
