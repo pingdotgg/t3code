@@ -97,6 +97,7 @@ const layerWithPolicy = (policy?: ManagedPolicySummary) =>
             projectId,
             title: "Project",
             workspaceRoot: "/project-root",
+            groupingIdentity: null,
             defaultModelSelection: null,
             defaultThreadEnvMode: null,
             hasCustomTitle: false,
