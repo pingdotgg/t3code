@@ -1,12 +1,15 @@
-import { HStack, Image, Spacer, Text, VStack, ZStack } from "@expo/ui/swift-ui";
+import { Circle, HStack, Image, Spacer, Text, VStack, ZStack } from "@expo/ui/swift-ui";
 import type { ComponentProps } from "react";
 import {
+  accessibilityElement,
+  accessibilityLabel,
   activityBackgroundTint,
   font,
   foregroundStyle,
   frame,
   layoutPriority,
   lineLimit,
+  minimumScaleFactor,
   padding,
   resizable,
   widgetURL,
@@ -149,6 +152,8 @@ export function AgentActivity(
     : environment.isStale
       ? "Out of date"
       : `${props.activeCount} active`;
+  const showCompactCount = !attentionRow && !allDone && !environment.isStale;
+  const compactCountLabel = props.activeCount > 99 ? "99+" : `${props.activeCount}`;
   const summary = attentionSuffix || activeLabel;
 
   // Any registered scheme variant routes back to this app; taps are delivered
@@ -326,11 +331,35 @@ export function AgentActivity(
       </VStack>
     ),
     compactLeading: renderLogo(14, tint, linkModifiers),
-    compactTrailing: (
+    compactTrailing: showCompactCount ? (
+      <ZStack
+        modifiers={[
+          frame({ width: 28, height: 28 }),
+          accessibilityElement("ignore"),
+          accessibilityLabel(agentsLabel),
+          ...linkModifiers,
+        ]}
+      >
+        <Circle modifiers={[foregroundStyle(tint)]} />
+        <Text
+          modifiers={[
+            font({ weight: "bold", size: 14 }),
+            foregroundStyle("#000000"),
+            lineLimit(1),
+            minimumScaleFactor(0.75),
+            frame({ width: 24, height: 28 }),
+          ]}
+        >
+          {compactCountLabel}
+        </Text>
+      </ZStack>
+    ) : (
       <Text
         modifiers={[
           font({ weight: "semibold", size: 11 }),
           foregroundStyle(tint),
+          lineLimit(1),
+          minimumScaleFactor(0.5),
           ...linkModifiers,
         ]}
       >
