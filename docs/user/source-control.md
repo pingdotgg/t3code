@@ -267,6 +267,8 @@ A thread can hold several pull requests, including reviews from another reposito
 Use **Link pull request** in the command palette or **Linked pull requests** panel, or right-click a
 pull request link in the conversation. Creating a pull request from Git actions links it automatically.
 Agents can link their pull requests with the `link_pull_request` tool.
+For a custom review URL, give the agent the full URL, repository path, and numeric review ID.
+Without a supported hosting integration, the link is saved but its status cannot be tracked.
 
 Use **Link this PR** in a branch-detected badge's tooltip to keep it with the thread. From a review
 on the Pull Requests page, **Link to thread** lets you search for an active thread. The review header

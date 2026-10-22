@@ -43,24 +43,25 @@ export const PullRequestTargetInput = Schema.Struct({
   url: Schema.optional(
     TrimmedNonEmptyString.annotate({
       description:
-        "The pull request's web URL, for example https://github.com/owner/repo/pull/123. Preferred when you have it; host, repository and number are read from it.",
+        "The pull request's HTTP(S) web URL, for example https://github.com/owner/repo/pull/123. Known formats supply host, repository and number. For other URL formats, also pass repository and number; the host comes from the URL and the URL is preserved.",
     }),
   ),
   repository: Schema.optional(
     TrimmedNonEmptyString.annotate({
       description:
-        "Repository path below the host, for example owner/repo. Required with number when url is omitted.",
+        "Repository path below the host, for example owner/repo. Required with number when url is omitted or its format is not recognised.",
     }),
   ),
   number: Schema.optional(
     PositiveInt.annotate({
-      description: "Pull request number. Required with repository when url is omitted.",
+      description:
+        "Pull request number. Required with repository when url is omitted or its format is not recognised.",
     }),
   ),
   host: Schema.optional(
     TrimmedNonEmptyString.annotate({
       description:
-        "Host the repository lives on, for example github.com. Defaults to the host of this thread's project.",
+        "Host the repository lives on, for example github.com. Read from url when supplied; otherwise defaults to the host of this thread's project.",
     }),
   ),
 });
@@ -71,7 +72,7 @@ export class PullRequestUrlInvalidError extends Schema.TaggedError<PullRequestUr
   {},
 ) {
   override get message(): string {
-    return "This is not a recognised pull request URL. Pass repository and number instead.";
+    return "This is not a recognised pull request URL. For other HTTP(S) URLs, also pass repository and number.";
   }
 }
 

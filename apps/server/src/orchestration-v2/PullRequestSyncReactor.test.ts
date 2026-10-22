@@ -6,6 +6,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   PullRequestOperationError,
+  PullRequestUnavailableError,
   RunId,
   ThreadId,
   TurnItemId,
@@ -165,7 +166,7 @@ interface HarnessOptions {
   readonly snapshot: TestShellSnapshot;
   readonly summary?: (
     input: PullRequestRef,
-  ) => Effect.Effect<PullRequestSummary, PullRequestOperationError>;
+  ) => Effect.Effect<PullRequestSummary, PullRequestService.PullRequestError>;
   readonly stack?: (
     input: PullRequestRef,
   ) => Effect.Effect<PullRequestStack | null, PullRequestOperationError>;
@@ -467,6 +468,64 @@ const requestAndApply = Effect.fn("requestPullRequestSyncHarness")(function* (
 });
 
 describe("PullRequestSyncReactor", () => {
+  it.effect("leaves unsupported links intact without polling until a refresh is requested", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const link = makeLink(123456, null, {
+          host: "vcs.example.com",
+          repository: "team/project",
+          url: "https://vcs.example.com/review/123456",
+        });
+        let supported = false;
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([
+            makeThread("unsupported", { pullRequests: [link] }),
+            makeThread("supported", { pullRequests: [makeLink(7)] }),
+          ]),
+          summary: (input) =>
+            input.host === link.host && !supported
+              ? Effect.fail(new PullRequestUnavailableError({ reason: "provider-unsupported" }))
+              : Effect.succeed(makeSummary(input)),
+        });
+        yield* Effect.gen(function* () {
+          const reactor = yield* startAndSweep(fixture);
+          yield* sweepAgain(fixture, reactor);
+          yield* sweepAgain(fixture, reactor);
+          const calls = yield* Ref.get(fixture.summaryCalls);
+          assert.strictEqual(calls.filter((call) => call.host === link.host).length, 1);
+          assert.strictEqual(calls.filter((call) => call.host === "github.com").length, 3);
+          assert.isTrue(
+            (yield* Ref.get(fixture.syncCommands)).every(
+              (command) => command.threadId === ThreadId.make("supported"),
+            ),
+          );
+          assert.deepStrictEqual((yield* Ref.get(fixture.snapshots)).threads[0]!.pullRequests, [
+            link,
+          ]);
+
+          supported = true;
+          yield* reactor.requestSync(link);
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          assert.strictEqual(
+            (yield* Ref.get(fixture.summaryCalls)).filter((call) => call.host === link.host).length,
+            2,
+          );
+          assert.isTrue(
+            (yield* Ref.get(fixture.syncCommands)).some(
+              (command) => command.threadId === ThreadId.make("unsupported"),
+            ),
+          );
+          yield* sweepAgain(fixture, reactor);
+          assert.strictEqual(
+            (yield* Ref.get(fixture.summaryCalls)).filter((call) => call.host === link.host).length,
+            3,
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("retries a failed stack read after the summary becomes terminal", () =>
     Effect.scoped(
       Effect.gen(function* () {

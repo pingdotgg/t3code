@@ -181,6 +181,8 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
 
   const lastSyncedAt = new Map<string, number>();
+  // Unsupported hosts have no status to poll. An explicit refresh or state change retries them.
+  const unsupported = new Set<string>();
   const requested = new Set<string>();
   // Requests arriving during a host read wait for the next sweep.
   const pendingRequests = new Set<string>();
@@ -195,6 +197,7 @@ export const make = Effect.gen(function* () {
 
   const isDue = (key: string, entries: ReadonlyArray<LinkEntry>, nowMs: number): boolean => {
     if (requested.has(key) || retryStacks.has(key)) return true;
+    if (unsupported.has(key)) return false;
     if (entries.some((entry) => entry.link.snapshot === null)) return true;
     const active = entries.filter((entry) => isUnsettled(entry.thread));
     // A merged snapshot without its merge time cannot settle the thread, so it keeps the slow
@@ -248,6 +251,7 @@ export const make = Effect.gen(function* () {
     pendingRequests.clear();
 
     for (const key of lastSyncedAt.keys()) if (!groups.has(key)) lastSyncedAt.delete(key);
+    for (const key of unsupported) if (!groups.has(key)) unsupported.delete(key);
     for (const key of retryStacks) if (!groups.has(key)) retryStacks.delete(key);
     for (const key of requested.keys()) if (!groups.has(key)) requested.delete(key);
 
@@ -336,6 +340,7 @@ export const make = Effect.gen(function* () {
       const invalidated = refreshRequested || missingMergedAt || retryStacks.has(key);
       if (invalidated) yield* pullRequests.invalidate({ reference: ref });
       const summary = yield* pullRequests.summary(ref, { recoverTransientFailure: false });
+      unsupported.delete(key);
       const fields = snapshotFieldsOf(summary);
       const needsStack =
         refreshRequested ||
@@ -429,6 +434,16 @@ export const make = Effect.gen(function* () {
     const skips = new Map<string, { count: number; readonly key: string }>();
     const readGroup = (key: string, entries: ReadonlyArray<LinkEntry>, pauseKey: string) =>
       syncGroup(key, entries).pipe(
+        Effect.catchTags({
+          PullRequestUnavailableError: (error) =>
+            error.reason === "provider-unsupported"
+              ? Effect.sync(() => {
+                  unsupported.add(key);
+                  requested.delete(key);
+                  retryStacks.delete(key);
+                })
+              : Effect.fail(error),
+        }),
         Effect.catchCause((cause) => {
           if (Cause.hasInterruptsOnly(cause)) return Effect.failCause(cause);
           const retryAt = rateLimitRetryAt(cause);
