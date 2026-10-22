@@ -4,6 +4,7 @@ import {
   ComposerContextId,
   EnvironmentId,
   MessageId,
+  ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
 import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
@@ -20,6 +21,24 @@ const pending = (id: string): QueuedThreadMessage => ({
 });
 
 describe("pending timeline messages", () => {
+  it("marks the synthetic creation prompt pending without duplicating it", () => {
+    const queued = {
+      ...pending("creation"),
+      creation: {
+        projectId: ProjectId.make("project"),
+        workspaceMode: "local" as const,
+        branch: "main",
+        worktreePath: null,
+      },
+    };
+    const prompt = appendPendingThreadMessages([], [], [queued])[0]!;
+    const synthetic = { ...prompt, pendingMessage: undefined };
+    const result = appendPendingThreadMessages([synthetic], [synthetic], [queued]);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.pendingMessage).toEqual(queued);
+    expect(result[0]?.acknowledged).toBe(false);
+  });
+
   it("retains context records while a message is waiting for delivery", () => {
     const record = {
       version: 1 as const,

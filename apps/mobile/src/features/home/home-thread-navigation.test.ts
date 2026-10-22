@@ -26,7 +26,10 @@ vi.mock("@react-navigation/native", () => {
   return { CommonActions, StackActions };
 });
 
-import { createHomeThreadNavigationAction } from "./home-thread-navigation";
+import {
+  createHomeThreadRouteAction,
+  createHomeThreadNavigationAction,
+} from "./home-thread-navigation";
 
 const { StackActions, StackRouter } = loadRouters();
 const routeNames = ["Home", "Thread"];
@@ -194,5 +197,38 @@ describe("createHomeThreadNavigationAction", () => {
       name: "Thread",
       params: { environmentId: "environment-1", threadId: "thread-b" },
     });
+  });
+});
+
+describe("draft and live thread selection", () => {
+  it("keeps the screen key and clears old identity when switching both ways", () => {
+    const live = selectThread(initialState(), thread("thread-a"));
+    const key = live.routes[live.index]!.key;
+    const draft = apply(
+      live,
+      createHomeThreadRouteAction({
+        state: live,
+        dismissingRouteKey: null,
+        params: { draft: { draftId: "new-task:draft-a" } },
+      }),
+    );
+    expect(draft.routes[draft.index]).toMatchObject({
+      key,
+      params: {
+        environmentId: undefined,
+        threadId: undefined,
+        draft: { draftId: "new-task:draft-a" },
+      },
+    });
+    const restored = selectThread(draft, thread("thread-b"));
+    expect(restored.routes[restored.index]).toMatchObject({
+      key,
+      params: {
+        environmentId: "environment-1",
+        threadId: "thread-b",
+        draft: undefined,
+      },
+    });
+    expect(restored.routes).toHaveLength(live.routes.length);
   });
 });

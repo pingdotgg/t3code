@@ -55,8 +55,9 @@ export function resolveThreadFeedSubmissionAnchor<AnchorId>(input: {
   readonly hasStartedTurn: boolean;
   readonly hasUserMessage: boolean;
   readonly queuedMessageCount: number;
+  readonly deliveryDeferred: boolean;
 }): AnchorId | null {
-  if (input.hasStartedTurn || input.hasUserMessage) {
+  if (input.deliveryDeferred || input.hasStartedTurn || input.hasUserMessage) {
     return null;
   }
 

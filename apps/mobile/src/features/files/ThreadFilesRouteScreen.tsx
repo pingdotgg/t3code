@@ -337,7 +337,9 @@ function FileContent(props: {
 
 type ThreadFilesRouteScreenProps = StaticScreenProps<{
   readonly environmentId: string;
-  readonly threadId: string;
+  readonly threadId?: string;
+  readonly cwd?: string;
+  readonly projectName?: string;
 }>;
 
 type ThreadFileRouteScreenProps = StaticScreenProps<{
@@ -430,6 +432,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
   const { cwd, environmentId, projectName, selectedThread, threadId } = useThreadFilesWorkspace(
     props.route.params,
   );
+  const hasFileInspector = fileInspector.supported && threadId !== null;
   const revealedInspectorRef = useRef(false);
   const fileAccessSession = useEnvironmentQuery(
     environmentId !== null ? environmentSession.sessionStateAtom(environmentId) : null,
@@ -444,7 +447,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
   const { canReadFiles } = fileAccess;
   const entriesQuery = useFileTreeEntries({
     environmentId,
-    cwd: !canReadFiles || fileInspector.supported ? null : cwd,
+    cwd: !canReadFiles || hasFileInspector ? null : cwd,
     searchQuery,
   });
   const handleReturnToThread = () => {
@@ -463,16 +466,20 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
   };
 
   const handleSelectFile = (path: string) => {
-    if (environmentId === null || threadId === null) {
+    if (environmentId === null || cwd === null) {
       return;
     }
     const params = {
       environmentId: String(environmentId),
-      threadId: String(threadId),
+      ...(threadId === null ? { cwd, projectName } : { threadId: String(threadId) }),
       path: path.split("/").filter((segment) => segment.length > 0),
     };
+    if (threadId === null) {
+      navigation.navigate("NewTaskFile", params);
+      return;
+    }
     const navigationAction = resolveFileSelectionNavigationAction({
-      hasPersistentFileInspector: fileInspector.supported,
+      hasPersistentFileInspector: hasFileInspector,
     });
     if (navigationAction === "replace") {
       navigation.dispatch(StackActions.replace("ThreadFile", params));
@@ -503,14 +510,14 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
     });
   };
   useEffect(() => {
-    if (fileInspector.supported && cwd !== null && !revealedInspectorRef.current) {
+    if (hasFileInspector && cwd !== null && !revealedInspectorRef.current) {
       revealedInspectorRef.current = true;
       showAuxiliaryPane("inspector");
     }
-  }, [cwd, fileInspector.supported, showAuxiliaryPane]);
+  }, [cwd, hasFileInspector, showAuxiliaryPane]);
 
-  if (selectedThread === null || environmentId === null || threadId === null) {
-    if (fileInspector.supported) {
+  if (environmentId === null || (threadId !== null && selectedThread === null)) {
+    if (hasFileInspector) {
       return (
         <ThreadRouteScreen
           onReturnToThread={handleReturnToThread}
@@ -534,7 +541,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
     return <FilesUnavailable />;
   }
 
-  if (fileInspector.supported) {
+  if (hasFileInspector) {
     return (
       <ThreadRouteScreen
         onReturnToThread={handleReturnToThread}

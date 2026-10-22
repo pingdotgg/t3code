@@ -148,7 +148,7 @@ export function HardwareKeyboardCommandProvider({
       }
 
       if (command === "newTask") {
-        navigation.navigate("NewTaskSheet", { screen: "NewTask" });
+        navigation.navigate("Thread", { draft: {} });
         return;
       }
       if (command === "back") {

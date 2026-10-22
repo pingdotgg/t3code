@@ -157,13 +157,11 @@ function useResolvedThreadSelection(params: ThreadSelectionRouteParams | undefin
     const message = queued ?? outcome?.message ?? null;
     return message === null ? null : { message, outcome };
   })();
-  // Until the creation is delivered the server has no thread to subscribe
-  // to. Every detail reader must use this ref, not the route id: an earlier
-  // read gets a definitive not-found, which the thread state keeps as deleted.
+  // The shell can arrive before creation is acknowledged. Wait for delivery
+  // before subscribing: an early not-found is cached as a deleted thread.
+  // Every detail reader must use this ref, not the route id.
   const selectedThreadDetailRef =
-    selectedThreadShell !== null ||
-    pendingCreation === null ||
-    pendingCreation.outcome?.kind === "delivered"
+    pendingCreation === null || pendingCreation.outcome?.kind === "delivered"
       ? selectedThreadRef
       : null;
   const [previousCreation, setPreviousCreation] = useState<PendingThreadCreation | null>(null);

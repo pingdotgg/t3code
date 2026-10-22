@@ -6,7 +6,7 @@ import { AndroidWorkspaceNavigation } from "./AndroidWorkspaceNavigation";
 
 /** Settings keeps its existing stack inside the full workspace, above compact navigation. */
 export function AndroidWorkspaceSettings(props: { readonly children: ReactNode }) {
-  const { layout } = useAdaptiveWorkspaceLayout();
+  const { layout, startNewTask } = useAdaptiveWorkspaceLayout();
   const insets = useSafeAreaInsets();
   if (Platform.OS !== "android") return props.children;
   return (
@@ -14,7 +14,7 @@ export function AndroidWorkspaceSettings(props: { readonly children: ReactNode }
       <SafeAreaInsetsContext value={layout.usesSplitView ? insets : { ...insets, bottom: 0 }}>
         <View className="flex-1">{props.children}</View>
       </SafeAreaInsetsContext>
-      {layout.usesSplitView ? null : <AndroidWorkspaceNavigation />}
+      {layout.usesSplitView ? null : <AndroidWorkspaceNavigation onNewThread={startNewTask} />}
     </View>
   );
 }

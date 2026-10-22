@@ -1,11 +1,9 @@
+import { isDraftThreadRoute } from "./features/threads/thread-route-state";
 import { ComponentCatalogScreen } from "./features/development/ComponentCatalogScreen";
 import { PullRequestGuideStopScreen } from "./features/pull-requests/guide/PullRequestGuideScreen";
 import { PullRequestInlineCommentScreen } from "./features/pull-requests/PullRequestInlineCommentScreen";
 import { PullRequestDiscussionScreen } from "./features/pull-requests/PullRequestDiscussionScreen";
-import {
-  createV5StackNavigator as createNativeStackNavigator,
-  createV5SheetStackNavigator,
-} from "./native/createV5StackNavigator";
+import { createV5SheetStackNavigator } from "./native/createV5StackNavigator";
 import { createWorkspaceStackNavigator } from "./features/layout/createWorkspaceStackNavigator";
 import {
   createPathConfigForStaticNavigation,
@@ -19,14 +17,7 @@ import {
   type NativeStackNavigationOptions,
 } from "@react-navigation/native-stack";
 import { useEffect, useRef, type ReactNode } from "react";
-import {
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  View,
-  useWindowDimensions,
-} from "react-native";
+import { Platform, Pressable, ScrollView, StyleSheet, useWindowDimensions } from "react-native";
 import { useResolveClassNames } from "uniwind";
 
 import { AppText as Text } from "./components/ui/AppText";
@@ -82,7 +73,6 @@ import { AddProjectLocalRoute } from "./features/projects/AddProjectLocalRoute";
 import { AddProjectNewRoute } from "./features/projects/AddProjectNewRoute";
 import { AddProjectRepositoryRoute } from "./features/projects/AddProjectRepositoryRoute";
 import { AddProjectSourceRoute } from "./features/projects/AddProjectSourceRoute";
-import { NewTaskDraftRouteScreen } from "./features/threads/NewTaskDraftRouteScreen";
 import {
   NewTaskBranchPickerRouteScreen,
   NewTaskEnvironmentPickerRouteScreen,
@@ -461,95 +451,6 @@ const SettingsSheetStack = createV5SheetStackNavigator({
 // across two bars the whole screen slides).
 const THREAD_LINKING_PREFIX = "threads/:environmentId/:threadId";
 
-const NewTaskSheetStack = createNativeStackNavigator({
-  initialRouteName: "NewTask",
-  screenOptions: {
-    ...SHEET_GLASS_HEADER_OPTIONS,
-    contentStyle: Platform.OS === "ios" ? { backgroundColor: "transparent" } : undefined,
-    // UIKit's default push adds a dimming shadow and independently transitions
-    // the navigation bar. Both read as mismatched sheet backgrounds here.
-    animation: Platform.OS === "ios" ? "simple_push" : undefined,
-    animationDuration: Platform.OS === "ios" ? 350 : undefined,
-  },
-  screens: {
-    NewTask: createNativeStackScreen({
-      screen: NewTaskRouteScreen,
-      linking: "",
-      options: {
-        title: "Choose project",
-      },
-    }),
-    NewTaskDraft: createNativeStackScreen({
-      screen: NewTaskDraftRouteScreen,
-      linking: "draft",
-      options: {
-        headerBackVisible: false,
-        title: "",
-      },
-    }),
-    NewTaskEnvironment: createNativeStackScreen({
-      screen: NewTaskEnvironmentPickerRouteScreen,
-      linking: "draft/environment",
-      options: {
-        title: "Environment",
-      },
-    }),
-    NewTaskBranch: createNativeStackScreen({
-      screen: NewTaskBranchPickerRouteScreen,
-      linking: "draft/branch",
-      options: {
-        title: "Branch",
-      },
-    }),
-    NewTaskFile: createNativeStackScreen({
-      screen: ThreadFileScreen,
-      linking: "draft/files/:path*",
-      options: SOLID_HEADER_OPTIONS,
-    }),
-    NewTaskAttachment: createNativeStackScreen({
-      screen: AttachmentFileScreen,
-      linking: "draft/attachments/:attachmentId",
-      options: SOLID_HEADER_OPTIONS,
-    }),
-    ThreadSettings: createNativeStackScreen({
-      screen: NewTaskThreadSettingsRouteScreen,
-      linking: "draft/settings",
-      options: {
-        gestureEnabled: true,
-        headerShown: false,
-        ...(Platform.OS === "android"
-          ? { presentation: "card" as const }
-          : {
-              ...THREAD_SETTINGS_SHEET_OPTIONS,
-            }),
-      },
-    }),
-    AddProject: createNativeStackScreen({
-      screen: AddProjectSourceRoute,
-      linking: "add-project",
-      options: {
-        title: "Add Project",
-      },
-    }),
-    AddProjectRepository: createNativeStackScreen({
-      screen: AddProjectRepositoryRoute,
-      linking: "add-project/repository",
-    }),
-    AddProjectDestination: createNativeStackScreen({
-      screen: AddProjectDestinationRoute,
-      linking: "add-project/destination",
-    }),
-    AddProjectLocal: createNativeStackScreen({
-      screen: AddProjectLocalRoute,
-      linking: "add-project/local",
-    }),
-    AddProjectNew: createNativeStackScreen({
-      screen: AddProjectNewRoute,
-      linking: "add-project/new",
-    }),
-  },
-});
-
 const WORKSPACE_OVERLAY_ROUTES = new Set([
   "PullRequestReview",
   "PullRequestInlineComment",
@@ -560,7 +461,18 @@ const WORKSPACE_OVERLAY_ROUTES = new Set([
   "GitCommit",
   "GitConfirm",
   "GitOverview",
-  "NewTaskSheet",
+  "NewTaskProject",
+  "NewTaskFiles",
+  "NewTaskFile",
+  "NewTaskAttachment",
+  "NewTaskThreadSettings",
+  "AddProject",
+  "AddProjectRepository",
+  "AddProjectDestination",
+  "AddProjectLocal",
+  "AddProjectNew",
+  "NewTaskEnvironment",
+  "NewTaskBranch",
   "SettingsLegal",
   "SettingsSheet",
   "ThreadAgents",
@@ -611,44 +523,58 @@ function RootStackLayout(props: {
   const path = getPathFromState(props.state, navigationPathConfig);
   const pathname = path.startsWith("/") ? path : `/${path}`;
   const workspaceLocation = workspaceLocationFromState(props.state);
+  const draftRoute = props.state.routes.findLast((route) => route.name === "Thread");
+  const draftParams = (
+    draftRoute?.params as
+      | { draft?: { draftId?: string | string[]; pendingTaskId?: string | string[] } }
+      | undefined
+  )?.draft;
+  const routeDraftId = Array.isArray(draftParams?.draftId)
+    ? draftParams.draftId[0]
+    : draftParams?.draftId;
+  const routePendingTaskId = Array.isArray(draftParams?.pendingTaskId)
+    ? draftParams.pendingTaskId[0]
+    : draftParams?.pendingTaskId;
   useAgentNotificationNavigation(workspaceLocation.pathname);
   useConnectOnboardingNavigation();
   useAppShortcuts(props.state);
   useEffect(() => {
-    const topRouteName = props.state.routes[props.state.index]?.name;
     const transition = transitionIncomingSharePresentation(sharePresentationRef.current, {
-      isShareSheetPresented: topRouteName === "NewTaskSheet",
+      isShareSheetPresented: isDraftThreadRoute(props.state.routes[props.state.index]),
       pendingShareId: pendingShare?.id ?? null,
     });
     sharePresentationRef.current = transition.state;
     if (!transition.shareIdToPresent) {
       return;
     }
-    navigation.navigate("NewTaskSheet", {
-      screen: "NewTask",
-      params: { incomingShareId: transition.shareIdToPresent },
-    });
+    navigation.navigate("Thread", { draft: { incomingShareId: transition.shareIdToPresent } });
   }, [navigation, pendingShare, props.state]);
 
   return (
-    <HardwareKeyboardCommandProvider pathname={pathname}>
-      <ThreadOutboxDrainWorker />
-      <ShowcaseCaptureCoordinator pathname={pathname} />
-      <ExistingThreadSettingsRouteProvider>
-        <WorkspaceConnectionStatusProvider>
-          <AndroidWorkspaceTabsProvider state={props.state}>
-            <AdaptiveWorkspaceLayout
-              pathname={workspaceLocation.pathname}
-              workspaceRouteKey={workspaceLocation.routeKey}
-              selectedPullRequestKey={selectedPullRequestKey(props.state)}
-            >
-              {props.children}
-              <HardwareKeyboardCommandOverlay />
-            </AdaptiveWorkspaceLayout>
-          </AndroidWorkspaceTabsProvider>
-        </WorkspaceConnectionStatusProvider>
-      </ExistingThreadSettingsRouteProvider>
-    </HardwareKeyboardCommandProvider>
+    <NewTaskFlowProvider
+      active={isDraftThreadRoute(draftRoute)}
+      routeDraftId={routeDraftId}
+      routePendingTaskId={routePendingTaskId}
+    >
+      <HardwareKeyboardCommandProvider pathname={pathname}>
+        <ThreadOutboxDrainWorker />
+        <ShowcaseCaptureCoordinator pathname={pathname} />
+        <ExistingThreadSettingsRouteProvider>
+          <WorkspaceConnectionStatusProvider>
+            <AndroidWorkspaceTabsProvider state={props.state}>
+              <AdaptiveWorkspaceLayout
+                pathname={workspaceLocation.pathname}
+                workspaceRouteKey={workspaceLocation.routeKey}
+                selectedPullRequestKey={selectedPullRequestKey(props.state)}
+              >
+                {props.children}
+                <HardwareKeyboardCommandOverlay />
+              </AdaptiveWorkspaceLayout>
+            </AndroidWorkspaceTabsProvider>
+          </WorkspaceConnectionStatusProvider>
+        </ExistingThreadSettingsRouteProvider>
+      </HardwareKeyboardCommandProvider>
+    </NewTaskFlowProvider>
   );
 }
 
@@ -780,8 +706,78 @@ const RootStackConfig = createWorkspaceStackNavigator({
     }),
     Thread: createNativeStackScreen({
       screen: ThreadRouteScreen,
-      linking: THREAD_LINKING_PREFIX,
+      linking: { path: "threads/:environmentId?/:threadId?", alias: ["new/draft"] },
       options: DETAIL_HEADER_OPTIONS,
+    }),
+    NewTaskProject: createNativeStackScreen({
+      screen: NewTaskRouteScreen,
+      linking: { path: "new", alias: ["new/project"] },
+      options: { ...GLASS_HEADER_OPTIONS, title: "Choose project" },
+    }),
+    NewTaskEnvironment: createNativeStackScreen({
+      linking: "new/draft/environment",
+      screen: NewTaskEnvironmentPickerRouteScreen,
+      options: { ...GLASS_HEADER_OPTIONS, title: "Environment" },
+    }),
+    NewTaskBranch: createNativeStackScreen({
+      linking: "new/draft/branch",
+      screen: NewTaskBranchPickerRouteScreen,
+      options: { ...GLASS_HEADER_OPTIONS, title: "Branch" },
+    }),
+    AddProject: createNativeStackScreen({
+      linking: "new/add-project",
+      screen: AddProjectSourceRoute,
+
+      options: {
+        ...GLASS_HEADER_OPTIONS,
+        title: "Add project",
+      },
+    }),
+    AddProjectRepository: createNativeStackScreen({
+      linking: "new/add-project/repository",
+      screen: AddProjectRepositoryRoute,
+      options: GLASS_HEADER_OPTIONS,
+    }),
+    AddProjectDestination: createNativeStackScreen({
+      linking: "new/add-project/destination",
+      screen: AddProjectDestinationRoute,
+      options: GLASS_HEADER_OPTIONS,
+    }),
+    AddProjectLocal: createNativeStackScreen({
+      linking: "new/add-project/local",
+      screen: AddProjectLocalRoute,
+      options: GLASS_HEADER_OPTIONS,
+    }),
+    AddProjectNew: createNativeStackScreen({
+      linking: "new/add-project/new",
+      screen: AddProjectNewRoute,
+      options: GLASS_HEADER_OPTIONS,
+    }),
+    NewTaskFiles: createNativeStackScreen({
+      linking: "new/draft/files",
+      screen: ThreadFilesTreeScreen,
+      options: SOLID_HEADER_OPTIONS,
+    }),
+    NewTaskFile: createNativeStackScreen({
+      linking: "new/draft/files/:path*",
+      screen: ThreadFileScreen,
+      options: SOLID_HEADER_OPTIONS,
+    }),
+    NewTaskAttachment: createNativeStackScreen({
+      screen: AttachmentFileScreen,
+      linking: "new/draft/attachments/:attachmentId",
+      options: SOLID_HEADER_OPTIONS,
+    }),
+    NewTaskThreadSettings: createNativeStackScreen({
+      screen: NewTaskThreadSettingsRouteScreen,
+      linking: "new/draft/settings",
+      options: {
+        gestureEnabled: true,
+        headerShown: false,
+        ...(Platform.OS === "android"
+          ? { presentation: "card" as const }
+          : THREAD_SETTINGS_SHEET_OPTIONS),
+      },
     }),
     ThreadTerminal: createNativeStackScreen({
       screen: ThreadTerminalRouteScreen,
@@ -1002,24 +998,6 @@ const RootStackConfig = createWorkspaceStackNavigator({
         sheetGrabberVisible: true,
       },
     }),
-    NewTaskSheet: createNativeStackScreen({
-      screen: NewTaskSheetStack,
-      linking: "new",
-      // A screen's layout replaces the navigator's screenLayout.
-      layout: ({ children, route }) => (
-        <GuardedScreenLayout route={route}>
-          <NewTaskFlowProvider>
-            <View className="flex-1 bg-sheet-solid">{children}</View>
-          </NewTaskFlowProvider>
-        </GuardedScreenLayout>
-      ),
-      options: {
-        ...NESTED_NAVIGATOR_OPTIONS,
-        sheetPrefersHorizontalBars: true,
-        gestureEnabled: true,
-        headerShown: false,
-      },
-    }),
     NotFound: createNativeStackScreen({
       screen: NotFoundScreen,
       linking: "*",
@@ -1073,14 +1051,14 @@ export const RootStack = RootStackConfig.with(function AdaptiveRootStack({ Navig
         },
       }}
       screenOptions={({ route }) => {
-        if (route.name !== "SettingsSheet" && route.name !== "NewTaskSheet") {
+        if (route.name !== "SettingsSheet") {
           return Platform.OS === "android"
             ? { animation: androidWorkspaceDestinationAnimation(route.name, usesSplitView) }
             : {};
         }
 
         // Moving an open flow between a sheet and a split column remounts its nested
-        // navigator. Keep its presentation until dismissal so folding preserves the draft.
+        // navigator. Keep its presentation until dismissal so folding preserves the settings flow.
         let usesCard = flowPresentations.current.get(route.key);
         if (usesCard === undefined) {
           usesCard = usesWorkspaceFlowScreens;
