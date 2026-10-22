@@ -95,6 +95,11 @@ export const ThreadPullRequestWatch = Schema.Struct({
   conflicting: Schema.Boolean,
   /** Comment-only wakes in a row. Watching stops at a limit, so bots cannot loop it. */
   wakes: NonNegativeInt,
+  /**
+   * What is already on the pull request is recorded, not reported: conflicts on the first read, and
+   * checks on the first read that lists any, since an empty list can be a failed check read.
+   */
+  awaitingBaseline: Schema.optional(Schema.Literals(["all", "checks"])),
 });
 export type ThreadPullRequestWatch = typeof ThreadPullRequestWatch.Type;
 
