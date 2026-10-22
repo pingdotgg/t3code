@@ -1610,14 +1610,17 @@ function ToolActivityImage(props: {
         <View
           style={[
             StyleSheet.absoluteFill,
-            props.themeAppearance === "light" ? { filter: [{ brightness: 0.6 }] } : undefined,
+            props.themeAppearance === "light" ? { filter: [{ brightness: 0.7 }] } : undefined,
           ]}
         >
           <Image
             source={props.source}
             cachePolicy="memory-disk"
             contentFit="contain"
-            style={[StyleSheet.absoluteFill, { opacity: loaded ? 0.7 : 0 }]}
+            style={[
+              StyleSheet.absoluteFill,
+              { opacity: loaded ? (props.themeAppearance === "dark" ? 0.7 : 1) : 0 },
+            ]}
             onLoad={() => setLoaded(true)}
             onError={() => setFailed(true)}
           />
