@@ -133,6 +133,7 @@ import { ProjectEnvironmentBadge } from "./ProjectEnvironmentBadge";
 import {
   buildDraftActionMenuItems,
   buildThreadActionMenuItems,
+  nativeThreadProviderName,
   threadActionRequiresOperate,
 } from "./threadActionMenu.logic";
 import {
@@ -821,6 +822,27 @@ export default function Sidebar() {
         type: "success",
         title: "Thread ID copied",
         description: threadId,
+      });
+    },
+    onError: (error) => {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to copy thread ID",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    },
+  });
+  const { copyToClipboard: copyNativeThreadIdToClipboard } = useCopyToClipboard<{
+    providerName: string;
+    nativeId: string;
+  }>({
+    onCopy: ({ providerName, nativeId }) => {
+      toastManager.add({
+        type: "success",
+        title: `${providerName} thread ID copied`,
+        description: nativeId,
       });
     },
     onError: (error) => {
@@ -2291,6 +2313,7 @@ export default function Sidebar() {
               canSnoozeNow: canSnooze(thread, { now: new Date().toISOString() }),
               isRegeneratingTitle,
               isRunning: !threadRuntimeCanArchive(thread.runtime),
+              nativeThreadProviderName: nativeThreadProviderName(thread.activeNativeThreadRef),
               supports: {
                 settlement: supportsSettlement,
                 autoSettleOptOut: supportsAutoSettleOptOut,
@@ -2429,6 +2452,14 @@ export default function Sidebar() {
           case "copy-thread-id":
             copyThreadIdToClipboard(thread.id, { threadId: thread.id });
             return;
+          case "copy-native-thread-id": {
+            const providerName = nativeThreadProviderName(thread.activeNativeThreadRef);
+            const nativeId = thread.activeNativeThreadRef?.nativeId;
+            if (providerName !== null && nativeId != null) {
+              copyNativeThreadIdToClipboard(nativeId, { providerName, nativeId });
+            }
+            return;
+          }
           case "archive": {
             if (confirmThreadArchive) {
               const confirmed = await settlePromise(() =>

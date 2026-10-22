@@ -2276,6 +2276,85 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
+  it.effect("shows the native thread ref of the active provider thread on the shell", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:provider-native-ref");
+      yield* projectionStore.apply({
+        id: EventId.make("event:provider-native-ref:thread"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("project:provider-native-ref"),
+          title: "Provider native ref",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      const applyProviderThread = (suffix: string, nativeId: string | null, seconds: number) =>
+        projectionStore.apply({
+          id: EventId.make(`event:provider-native-ref:${suffix}:${seconds}`),
+          type: "provider-thread.updated",
+          threadId,
+          driver,
+          occurredAt: DateTime.add(now, { seconds }),
+          payload: {
+            id: ProviderThreadId.make(`provider-thread:provider-native-ref:${suffix}`),
+            driver,
+            providerInstanceId,
+            providerSessionId: null,
+            appThreadId: threadId,
+            ownerNodeId: null,
+            nativeThreadRef: nativeId === null ? null : { driver, nativeId, strength: "strong" },
+            nativeConversationHeadRef: null,
+            status: "idle",
+            firstRunOrdinal: null,
+            lastRunOrdinal: null,
+            handoffIds: [],
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: DateTime.add(now, { seconds }),
+          },
+        });
+      const shellNativeIds = Effect.gen(function* () {
+        const snapshot = yield* projectionStore.getShellSnapshot();
+        const shell = yield* projectionStore.getThreadShell(threadId);
+        return [
+          snapshot.threads.find((thread) => thread.id === threadId)?.activeNativeThreadRef
+            ?.nativeId,
+          shell?.activeNativeThreadRef?.nativeId,
+        ];
+      });
+
+      // The provider reports its id after the provider thread already exists.
+      yield* applyProviderThread("first", null, 0);
+      assert.deepEqual(yield* shellNativeIds, [undefined, undefined]);
+      yield* applyProviderThread("first", "native-1", 1);
+      assert.deepEqual(yield* shellNativeIds, ["native-1", "native-1"]);
+      yield* applyProviderThread("second", null, 2);
+      assert.deepEqual(yield* shellNativeIds, [undefined, undefined]);
+    }),
+  );
+
   // regression: #17141 shell snapshot decoding blocked other database reads
   it.effect("reads the shell snapshot first and decodes it in a separate step", () =>
     Effect.gen(function* () {

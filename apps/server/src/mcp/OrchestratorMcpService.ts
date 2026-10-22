@@ -38,6 +38,7 @@ import {
   type OrchestratorMcpListScheduledTasksInput,
   type ProjectId,
   type OrchestratorMcpThreadDetail,
+  type OrchestratorMcpNativeThread,
   type OrchestratorMcpThreadPullRequest,
   type OrchestratorMcpThreadInterruptInput,
   type OrchestratorMcpThreadInterruptResult,
@@ -857,6 +858,12 @@ function threadPullRequests(
   }));
 }
 
+function nativeThread(
+  ref: OrchestrationV2ThreadShell["activeNativeThreadRef"],
+): OrchestratorMcpNativeThread | null {
+  return ref?.nativeId == null ? null : { driver: ref.driver, threadId: ref.nativeId };
+}
+
 function listItemFromShell(
   shell: OrchestrationV2ThreadShell,
   nowMs: number,
@@ -874,6 +881,7 @@ function listItemFromShell(
     interactionMode: shell.interactionMode,
     linkedPullRequest: shell.linkedPullRequest ?? null,
     pullRequests: threadPullRequests(shell.pullRequests),
+    nativeThread: nativeThread(shell.activeNativeThreadRef),
     ...threadSettlement(shell),
     ...threadSnooze(shell, nowMs),
     parentThreadId: shell.lineage.parentThreadId,
@@ -907,6 +915,7 @@ function threadDetail(
     interactionMode: projection.thread.interactionMode,
     linkedPullRequest: projection.thread.linkedPullRequest ?? null,
     pullRequests: threadPullRequests(projection.thread.pullRequests),
+    nativeThread: nativeThread(shell.activeNativeThreadRef),
     titleRegeneration:
       projection.thread.titleRegeneration === undefined ||
       projection.thread.titleRegeneration === null

@@ -17,6 +17,7 @@ import { useRouter } from "@tanstack/react-router";
 import { resolveSnoozePresets } from "../components/Sidebar.snooze";
 import {
   buildThreadActionMenuItems,
+  nativeThreadProviderName,
   threadActionRequiresOperate,
   type ThreadActionMenuId,
 } from "../components/threadActionMenu.logic";
@@ -110,6 +111,19 @@ export function useThreadActionMenu(input: {
     },
     onError: (error) => failureToast("Failed to copy thread ID", error),
   });
+  const { copyToClipboard: copyNativeThreadIdToClipboard } = useCopyToClipboard<{
+    providerName: string;
+    nativeId: string;
+  }>({
+    onCopy: ({ providerName, nativeId }) => {
+      toastManager.add({
+        type: "success",
+        title: `${providerName} thread ID copied`,
+        description: nativeId,
+      });
+    },
+    onError: (error) => failureToast("Failed to copy thread ID", error),
+  });
 
   const openMenu = (position: { x: number; y: number }) => {
     if (threadRef === null) return;
@@ -139,6 +153,7 @@ export function useThreadActionMenu(input: {
         canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
         isRegeneratingTitle,
         isRunning: !threadRuntimeCanArchive(thread.runtime),
+        nativeThreadProviderName: nativeThreadProviderName(thread.activeNativeThreadRef),
         supports,
         snoozePresets,
       });
@@ -266,6 +281,14 @@ export function useThreadActionMenu(input: {
         case "copy-thread-id":
           copyThreadIdToClipboard(thread.id, { threadId: thread.id });
           return;
+        case "copy-native-thread-id": {
+          const providerName = nativeThreadProviderName(thread.activeNativeThreadRef);
+          const nativeId = thread.activeNativeThreadRef?.nativeId;
+          if (providerName !== null && nativeId != null) {
+            copyNativeThreadIdToClipboard(nativeId, { providerName, nativeId });
+          }
+          return;
+        }
         case "archive": {
           if (confirmThreadArchive) {
             const confirmed = await settlePromise(() =>

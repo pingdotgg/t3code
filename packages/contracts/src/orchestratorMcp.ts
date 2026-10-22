@@ -328,6 +328,13 @@ export const OrchestratorMcpThreadPullRequest = Schema.Struct({
 });
 export type OrchestratorMcpThreadPullRequest = typeof OrchestratorMcpThreadPullRequest.Type;
 
+/** The active provider's own id for a thread, such as an OpenCode session or Claude Code session id. */
+export const OrchestratorMcpNativeThread = Schema.Struct({
+  driver: ProviderDriverKind,
+  threadId: TrimmedNonEmptyString,
+});
+export type OrchestratorMcpNativeThread = typeof OrchestratorMcpNativeThread.Type;
+
 export const OrchestratorMcpThreadListItem = Schema.Struct({
   threadId: ThreadId,
   title: Schema.String,
@@ -342,6 +349,8 @@ export const OrchestratorMcpThreadListItem = Schema.Struct({
   linkedPullRequest: Schema.NullOr(ThreadLinkedPullRequest),
   /** Missing on older servers. */
   pullRequests: Schema.optional(Schema.Array(OrchestratorMcpThreadPullRequest)),
+  /** Null before the first run. Missing on older servers. */
+  nativeThread: Schema.optional(Schema.NullOr(OrchestratorMcpNativeThread)),
   settled: Schema.Boolean,
   settledAt: Schema.NullOr(IsoDateTime),
   snoozed: Schema.Boolean,
@@ -411,6 +420,8 @@ export const OrchestratorMcpThreadDetail = Schema.Struct({
   linkedPullRequest: Schema.NullOr(ThreadLinkedPullRequest),
   /** Missing on older servers. */
   pullRequests: Schema.optional(Schema.Array(OrchestratorMcpThreadPullRequest)),
+  /** Null before the first run. Missing on older servers. */
+  nativeThread: Schema.optional(Schema.NullOr(OrchestratorMcpNativeThread)),
   titleRegeneration: Schema.NullOr(ThreadTitleRegeneration),
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),

@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildThreadActionMenuItems, type ThreadActionMenuState } from "./threadActionMenu.logic";
+import { ProviderDriverKind } from "@t3tools/contracts";
+
+import {
+  buildThreadActionMenuItems,
+  nativeThreadProviderName,
+  type ThreadActionMenuState,
+} from "./threadActionMenu.logic";
 
 const baseState: ThreadActionMenuState = {
   canOperate: true,
@@ -13,6 +19,7 @@ const baseState: ThreadActionMenuState = {
   canSnoozeNow: true,
   isRegeneratingTitle: false,
   isRunning: false,
+  nativeThreadProviderName: null,
   supports: {
     settlement: true,
     autoSettleOptOut: true,
@@ -70,5 +77,28 @@ describe("buildThreadActionMenuItems", () => {
       (item) => item.id === "archive",
     );
     expect(archiveItem?.disabled).toBe(true);
+  });
+
+  it("offers the provider's own thread id only once the provider reported one", () => {
+    const copyChildren = (state: ThreadActionMenuState) =>
+      buildThreadActionMenuItems(state).find((item) => item.id === "copy")?.children ?? [];
+
+    expect(copyChildren(baseState).map((child) => child.id)).not.toContain("copy-native-thread-id");
+    const item = copyChildren({
+      ...baseState,
+      canOperate: false,
+      nativeThreadProviderName: "OpenCode",
+    }).find((child) => child.id === "copy-native-thread-id");
+    expect(item?.label).toBe("OpenCode Thread ID");
+    expect(item?.disabled).toBeFalsy();
+  });
+});
+
+describe("nativeThreadProviderName", () => {
+  it("names the provider that owns the id, and nothing before the id exists", () => {
+    const ref = { driver: ProviderDriverKind.make("opencode"), strength: "strong" } as const;
+    expect(nativeThreadProviderName({ ...ref, nativeId: "ses_1" })).toBe("OpenCode");
+    expect(nativeThreadProviderName({ ...ref, nativeId: null })).toBeNull();
+    expect(nativeThreadProviderName(null)).toBeNull();
   });
 });

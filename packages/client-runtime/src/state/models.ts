@@ -6,6 +6,7 @@ import type {
   MessageId,
   OrchestrationProjectShell,
   OrchestrationV2ProviderGoal,
+  OrchestrationV2ProviderRef,
   OrchestrationV2RunStatus,
   OrchestrationV2ProviderFailureClass,
   OrchestrationV2ThreadProjection,
@@ -148,6 +149,7 @@ export interface EnvironmentThreadShell {
   readonly lineage: OrchestrationV2ThreadShell["lineage"];
   readonly forkedFrom: OrchestrationV2ThreadShell["forkedFrom"];
   readonly activeProviderThreadId: OrchestrationV2ThreadShell["activeProviderThreadId"];
+  readonly activeNativeThreadRef: OrchestrationV2ProviderRef | null;
   readonly latestRun: ThreadRunSummary | null;
   readonly runtime: ThreadRuntimeSummary | null;
   readonly blockedOnThreadWait?: boolean;
@@ -295,6 +297,7 @@ export function presentThreadShell(
     lineage: thread.lineage,
     forkedFrom: thread.forkedFrom,
     activeProviderThreadId: thread.activeProviderThreadId,
+    activeNativeThreadRef: thread.activeNativeThreadRef ?? null,
     latestRun,
     runtime,
     blockedOnThreadWait: thread.blockedOnThreadWait ?? false,

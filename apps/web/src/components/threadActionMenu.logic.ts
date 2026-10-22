@@ -1,4 +1,8 @@
-import type { ContextMenuItem } from "@t3tools/contracts";
+import {
+  PROVIDER_DISPLAY_NAMES,
+  type ContextMenuItem,
+  type OrchestrationV2ProviderRef,
+} from "@t3tools/contracts";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 
 export type ThreadActionMenuId =
@@ -22,6 +26,7 @@ export type ThreadActionMenuId =
   | "copy-path"
   | "copy-branch"
   | "copy-thread-id"
+  | "copy-native-thread-id"
   | "archive"
   | "delete";
 
@@ -78,6 +83,8 @@ export interface ThreadActionMenuState {
   readonly isRegeneratingTitle: boolean;
   /** Archive rejects a thread with an attached provider, so disable it here rather than let the action fail. */
   readonly isRunning: boolean;
+  /** Names the provider in the copy label; null hides the item until the provider reports its id. */
+  readonly nativeThreadProviderName: string | null;
   readonly supports: {
     readonly settlement: boolean;
     readonly autoSettleOptOut: boolean;
@@ -98,7 +105,12 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
     "copy-path",
     "copy-branch",
     "copy-thread-id",
+    "copy-native-thread-id",
   ].includes(action);
+}
+
+export function nativeThreadProviderName(ref: OrchestrationV2ProviderRef | null): string | null {
+  return ref?.nativeId == null ? null : (PROVIDER_DISPLAY_NAMES[ref.driver] ?? ref.driver);
 }
 
 export function buildThreadActionMenuItems(
@@ -202,6 +214,15 @@ export function buildThreadActionMenuItems(
           ? [{ id: "copy-branch" as const, label: "Branch", icon: "git-branch" }]
           : []),
         { id: "copy-thread-id", label: "Thread ID", icon: "hash" },
+        ...(state.nativeThreadProviderName === null
+          ? []
+          : [
+              {
+                id: "copy-native-thread-id" as const,
+                label: `${state.nativeThreadProviderName} Thread ID`,
+                icon: "hash",
+              },
+            ]),
       ],
     },
     { id: "project-settings", label: "Project settings", icon: "settings" },

@@ -1593,6 +1593,10 @@ export function threadShellFromProjection(
     lineage: projection.thread.lineage,
     forkedFrom: projection.thread.forkedFrom,
     activeProviderThreadId: projection.thread.activeProviderThreadId,
+    activeNativeThreadRef: activeNativeThreadRefForShell(
+      projection.providerThreads,
+      projection.thread.activeProviderThreadId,
+    ),
     ...(projection.thread.historyOrigin === undefined
       ? {}
       : { historyOrigin: projection.thread.historyOrigin }),
@@ -1683,6 +1687,15 @@ function activeProviderGoalForShell(
   return providerThreads.find((thread) => thread.id === activeProviderThreadId)?.goal ?? null;
 }
 
+function activeNativeThreadRefForShell(
+  providerThreads: ReadonlyArray<OrchestrationV2ThreadProjection["providerThreads"][number]>,
+  activeProviderThreadId: OrchestrationV2ThreadProjection["thread"]["activeProviderThreadId"],
+): OrchestrationV2ThreadShell["activeNativeThreadRef"] {
+  return (
+    providerThreads.find((thread) => thread.id === activeProviderThreadId)?.nativeThreadRef ?? null
+  );
+}
+
 function isInterruptibleRunForShell(run: OrchestrationV2ThreadProjection["runs"][number]): boolean {
   return run.status === "preparing" || run.status === "starting" || run.status === "running";
 }
@@ -1720,6 +1733,7 @@ type ShellThreadState = {
   readonly pendingBackgroundTasks: OrchestrationV2ThreadShell["pendingBackgroundTasks"];
   readonly providerInstanceHistory: OrchestrationV2ThreadShell["providerInstanceHistory"];
   readonly goal: OrchestrationV2ThreadShell["goal"];
+  readonly activeNativeThreadRef: OrchestrationV2ThreadShell["activeNativeThreadRef"];
   readonly itemCount: number;
   readonly runlessItemCount: number;
   readonly updatedAt: OrchestrationV2ThreadProjection["updatedAt"];
@@ -1852,6 +1866,7 @@ function shellFromState(input: {
     lineage: input.state.thread.lineage,
     forkedFrom: input.state.thread.forkedFrom,
     activeProviderThreadId: input.state.thread.activeProviderThreadId,
+    activeNativeThreadRef: input.state.activeNativeThreadRef,
     ...(input.state.thread.historyOrigin === undefined
       ? {}
       : { historyOrigin: input.state.thread.historyOrigin }),
@@ -6274,6 +6289,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             providerThreads: providerThreadsByThreadId.get(thread.id) ?? [],
           }),
           goal: activeProviderGoalForShell(
+            providerThreadsByThreadId.get(thread.id) ?? [],
+            thread.activeProviderThreadId,
+          ),
+          activeNativeThreadRef: activeNativeThreadRefForShell(
             providerThreadsByThreadId.get(thread.id) ?? [],
             thread.activeProviderThreadId,
           ),
