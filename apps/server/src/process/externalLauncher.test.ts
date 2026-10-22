@@ -688,6 +688,59 @@ for (const { platform, installPath } of [
   );
 }
 
+for (const { platform, scriptsPath, variable } of [
+  { platform: "linux", scriptsPath: ".local/share/JetBrains/Toolbox/scripts", variable: "$HOME" },
+  {
+    platform: "darwin",
+    scriptsPath: "Library/Application Support/JetBrains/Toolbox/scripts",
+    variable: "${HOME}",
+  },
+] as const) {
+  it.effect.skipIf(windowsHost)(
+    `discovers a numbered Toolbox script with a ${variable} target on ${platform}`,
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-toolbox-home with spaces-" });
+        const scripts = path.join(home, scriptsPath);
+        // Keep the target outside the ordinary Applications and install-directory fallbacks.
+        const target = path.join(home, "apps/IDE with spaces/bin/idea");
+        yield* fs.makeDirectory(scripts, { recursive: true });
+        yield* fs.makeDirectory(path.dirname(target), { recursive: true });
+        yield* fs.writeFileString(target, "");
+        for (const [name, targetPath] of [
+          ["idea1", `${variable}/apps/removed/bin/idea`],
+          ["idea2", `${variable}/apps/IDE with spaces/bin/idea`],
+        ] as const) {
+          const executable = path.join(scripts, name);
+          const launch = platform === "darwin" ? "open -na" : "exec";
+          yield* fs.writeFileString(executable, `#!/bin/sh\n${launch} "${targetPath}" "$@"\n`);
+          yield* fs.chmod(executable, 0o755);
+        }
+
+        let spawned: ChildProcess.StandardCommand | undefined;
+        yield* Effect.gen(function* () {
+          const launcher = yield* ExternalLauncher.ExternalLauncher;
+          assert.include(yield* launcher.resolveAvailableEditors(), "idea");
+          yield* launcher.launchEditor({ editor: "idea", cwd: "/workspace/file.ts" });
+        }).pipe(
+          Effect.provide(
+            layerTest({
+              platform,
+              env: { HOME: home, PATH: path.join(home, "empty") },
+              onSpawn: (command) => {
+                spawned = command;
+              },
+            }),
+          ),
+        );
+
+        assert.equal(spawned?.command, path.join(scripts, "idea2"));
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+}
+
 it.effect.skipIf(windowsHost)(
   "skips a numbered JetBrains Toolbox script whose IDE was removed",
   () =>
