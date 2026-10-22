@@ -3,12 +3,12 @@ import { type EnvironmentId, type MessageId } from "@t3tools/contracts";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { selectHandoffImageResources } from "../../session-logic";
 import { type ChatMessage } from "../../types";
-import type { useThreadVisibleTurnItems } from "../../state/entities";
+import type { useQuietThreadVisibleTurnItems } from "../../state/entities";
 import { revokeBlobPreviewUrl, revokeUserMessagePreviewUrls } from "../ChatView.logic";
 import { useAssetUrls } from "../../assets/assetUrls";
 interface AttachmentPreviewHandoffInput {
   readonly environmentId: EnvironmentId;
-  readonly serverVisibleTurnItems: ReturnType<typeof useThreadVisibleTurnItems>;
+  readonly serverVisibleTurnItems: ReturnType<typeof useQuietThreadVisibleTurnItems>;
   readonly optimisticUserMessages: ReadonlyArray<ChatMessage>;
 }
 

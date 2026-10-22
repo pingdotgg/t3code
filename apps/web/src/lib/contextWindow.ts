@@ -1,9 +1,9 @@
+import type { ThreadStructureTurnItem } from "@t3tools/client-runtime/state/shell";
 import type {
   OrchestrationV2ProviderTurn,
   OrchestrationV2ProviderTurnTokenUsage,
   OrchestrationV2ProviderThread,
   OrchestrationV2ThreadProjection,
-  OrchestrationV2TurnItem,
   ThreadTokenUsageSnapshot,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -58,7 +58,7 @@ export function latestProviderTurnTokenUsage(
 
 export function deriveLatestContextWindowSnapshot(
   entries: ReadonlyArray<{
-    readonly item: OrchestrationV2TurnItem;
+    readonly item: ThreadStructureTurnItem;
   }>,
   liveUsage?: OrchestrationV2ProviderTurnTokenUsage | null,
   providerThread?: Pick<OrchestrationV2ProviderThread, "contextUsage" | "updatedAt"> | null,

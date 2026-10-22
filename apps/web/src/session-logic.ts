@@ -1,3 +1,4 @@
+import type { ThreadStructure, ThreadStructureRuntime } from "@t3tools/client-runtime/state/shell";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import {
   type AssetResource,
@@ -251,7 +252,7 @@ export function derivePendingUserInputs(
 }
 
 export function deriveActivePlanState(
-  projection: OrchestrationV2ThreadProjection | null,
+  projection: ThreadStructure | null,
   latestRunId: RunId | undefined,
 ): ActivePlanState | null {
   if (projection === null) return null;
@@ -273,7 +274,7 @@ export function deriveActivePlanState(
     );
   if (plan === null || plan.steps.length === 0) return null;
   return {
-    createdAt: planItemTime(projection, plan.id),
+    createdAt: planItemTime(projection, plan),
     runId: plan.runId,
     explanation: plan.explanation ?? null,
     steps: plan.steps.map(({ text, status, durationMs }) => ({
@@ -286,7 +287,7 @@ export function deriveActivePlanState(
 
 // Claude's unfinished tasks belong to the provider session, not just the turn.
 export function selectComposerTasksPlan(
-  projection: OrchestrationV2ThreadProjection | null,
+  projection: ThreadStructure | null,
   plan: ActivePlanState | null,
   activeRunId: RunId | null,
   activeRunSettled: boolean,
@@ -315,20 +316,30 @@ export function selectComposerTasksPlan(
   return latestStartedRun?.providerThreadId === planProviderThreadId ? plan : null;
 }
 
-function planItemTime(projection: OrchestrationV2ThreadProjection, planId: PlanId): string {
+function planItemTime(
+  projection: ThreadStructure,
+  plan: Pick<OrchestrationV2PlanArtifact, "id" | "runId">,
+): string {
   const item = projection.turnItems.findLast(
     (candidate) =>
       (candidate.type === "proposed_plan" || candidate.type === "todo_list") &&
-      candidate.planId === planId,
+      candidate.planId === plan.id,
   );
-  return DateTime.formatIso(item?.updatedAt ?? projection.updatedAt);
+  if (item?.type === "proposed_plan" || item?.type === "todo_list") {
+    return DateTime.formatIso(item.updatedAt);
+  }
+  // Without a plan item, the plan's run dates it; the thread's own timestamps move while a reply streams.
+  const run = projection.runs.find((candidate) => candidate.id === plan.runId);
+  return DateTime.formatIso(
+    run?.completedAt ?? run?.startedAt ?? run?.requestedAt ?? projection.thread.createdAt,
+  );
 }
 
 function toLatestProposedPlanState(
-  projection: OrchestrationV2ThreadProjection,
+  projection: ThreadStructure,
   plan: Extract<OrchestrationV2PlanArtifact, { readonly kind: "proposed_plan" }>,
 ): LatestProposedPlanState {
-  const updatedAt = planItemTime(projection, plan.id);
+  const updatedAt = planItemTime(projection, plan);
   return {
     id: plan.id,
     createdAt: updatedAt,
@@ -340,7 +351,7 @@ function toLatestProposedPlanState(
 }
 
 export function findLatestProposedPlan(
-  projection: OrchestrationV2ThreadProjection | null,
+  projection: ThreadStructure | null,
   latestRunId: RunId | string | null | undefined,
 ): LatestProposedPlanState | null {
   if (projection === null) return null;
@@ -349,7 +360,7 @@ export function findLatestProposedPlan(
   const plan = [...(candidates.length > 0 ? candidates : plans)]
     .toSorted(
       (left, right) =>
-        planItemTime(projection, left.id).localeCompare(planItemTime(projection, right.id)) ||
+        planItemTime(projection, left).localeCompare(planItemTime(projection, right)) ||
         left.id.localeCompare(right.id),
     )
     .at(-1);
@@ -1122,7 +1133,7 @@ export function findRevertCheckpoint(
   );
 }
 
-export function derivePhase(runtime: ThreadRuntimeSummary | null): SessionPhase {
+export function derivePhase(runtime: ThreadStructureRuntime | null): SessionPhase {
   if (runtime === null) return "disconnected";
   if (
     runtime.status === "preparing" ||
@@ -1140,7 +1151,7 @@ export function derivePhase(runtime: ThreadRuntimeSummary | null): SessionPhase 
  */
 export function deriveCanInterruptRunningThread(
   hasActiveThread: boolean,
-  runtime: ThreadRuntimeSummary | null,
+  runtime: ThreadStructureRuntime | null,
 ): boolean {
   return (
     hasActiveThread &&
