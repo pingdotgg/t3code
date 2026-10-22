@@ -97,6 +97,35 @@ export function resolveEnvironmentProjectMatch(
   );
 }
 
+/** Keep a queued task's host available even before its project shell loads. */
+export function resolveNewTaskEnvironments(input: {
+  readonly projects: ReadonlyArray<EnvironmentProject>;
+  readonly selectedProject: EnvironmentProject | null;
+  readonly settings: ProjectGroupingSettings;
+  readonly savedConnectionsById: Readonly<
+    Record<string, { readonly environmentLabel: string } | undefined>
+  >;
+  readonly pendingTaskEnvironmentId: EnvironmentId | null;
+}): Array<{ readonly environmentId: EnvironmentId; readonly environmentLabel: string }> {
+  const selectedKey = input.selectedProject
+    ? deriveLogicalProjectKeyFromSettings(input.selectedProject, input.settings)
+    : null;
+  const candidates = input.projects
+    .filter(
+      (project) =>
+        selectedKey === null ||
+        deriveLogicalProjectKeyFromSettings(project, input.settings) === selectedKey,
+    )
+    .map((project) => project.environmentId);
+  if (input.pendingTaskEnvironmentId !== null) {
+    candidates.unshift(input.pendingTaskEnvironmentId);
+  }
+  return [...new Set(candidates)].flatMap((environmentId) => {
+    const environment = input.savedConnectionsById[environmentId];
+    return environment ? [{ environmentId, environmentLabel: environment.environmentLabel }] : [];
+  });
+}
+
 export function resolveDraftProjectSelection(
   selectedProjectKey: string | null,
   projects: ReadonlyArray<EnvironmentProject>,
