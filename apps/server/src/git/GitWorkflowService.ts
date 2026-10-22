@@ -439,6 +439,7 @@ export const make = Effect.gen(function* () {
           host: reference.host,
           repository: reference.repository,
           number: reference.number,
+          title: generated.title,
           body: generated.body,
         })
         .pipe(
@@ -447,13 +448,13 @@ export const make = Effect.gen(function* () {
               new GitManagerError({
                 operation: "regeneratePullRequestDescription",
                 cwd: input.cwd,
-                detail: "Failed to update the change request description.",
+                detail: "Failed to update the change request title and description.",
                 cause,
               }),
           ),
         );
       yield* gitManager.invalidateRemoteStatus(input.cwd);
-      return { pullRequest: generated.pullRequest };
+      return { pullRequest: { ...generated.pullRequest, title: generated.title } };
     }),
     resolvePullRequest: routeGitManager(
       "GitWorkflowService.resolvePullRequest",

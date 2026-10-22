@@ -16,7 +16,7 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("GitWorkflowService", (it) => {
-  it.effect("regenerates and saves only the existing change request description", () => {
+  it.effect("regenerates and saves the selected change request title and description", () => {
     const pullRequest = {
       number: 42,
       title: "Existing title",
@@ -32,13 +32,15 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("GitWorkflowServi
       const result = yield* workflow.regeneratePullRequestDescription({
         cwd: "/repo",
         projectId: ProjectId.make("project"),
+        reference: pullRequest.url,
       });
-      expect(result).toEqual({ pullRequest });
+      expect(result).toEqual({ pullRequest: { ...pullRequest, title: "Fresh title" } });
       expect(update).toHaveBeenCalledExactlyOnceWith({
         projectId: "project",
         host: "gitlab.com",
         repository: "group/subgroup/repo",
         number: 42,
+        title: "Fresh title",
         body: "Fresh description from branch changes",
       });
       expect(invalidate).toHaveBeenCalledExactlyOnceWith("/repo");
@@ -56,6 +58,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("GitWorkflowServi
               generatePullRequestDescription: () =>
                 Effect.succeed({
                   pullRequest,
+                  title: "Fresh title",
                   body: "Fresh description from branch changes",
                 }),
               invalidateRemoteStatus: invalidate,

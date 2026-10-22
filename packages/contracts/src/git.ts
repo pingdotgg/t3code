@@ -156,6 +156,7 @@ export const GitRewriteCommitMessagesInput = Schema.Struct({
 export type GitRewriteCommitMessagesInput = typeof GitRewriteCommitMessagesInput.Type;
 
 export const GitRegeneratePullRequestDescriptionInput = Schema.Struct({
+  reference: Schema.optional(GitPullRequestReference),
   cwd: TrimmedNonEmptyStringSchema,
   projectId: ProjectId,
   threadId: Schema.optional(ThreadId),

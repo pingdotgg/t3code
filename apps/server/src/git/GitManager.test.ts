@@ -5012,9 +5012,9 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       }),
   );
 
-  it.effect(
-    "regenerates a description from local branch commits against the existing PR target",
-    () =>
+  it.effect.each([undefined, "42"])(
+    "regenerates from local branch commits against the existing PR target (reference: %s)",
+    (reference) =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir("t3code-regenerate-pr-");
         yield* initRepo(cwd);
@@ -5056,6 +5056,13 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
             },
           },
           providerScenario: {
+            pullRequest: {
+              number: 42,
+              title: "Existing title",
+              url: "https://github.com/pingdotgg/codething-mvp/pull/42",
+              baseRefName: "release",
+              headRefName: "feature",
+            },
             prListSequence: [
               [
                 {
@@ -5072,7 +5079,9 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         const result = yield* manager.generatePullRequestDescription({
           cwd,
           projectId: ProjectId.make("project"),
+          ...(reference === undefined ? {} : { reference }),
         });
+        expect(result.title).toBe("New title");
         expect(result.body).toBe("Fresh description");
         expect(result.pullRequest).toMatchObject({
           number: 42,
@@ -5087,6 +5096,113 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         expect(generated?.changeRequestTemplate).toBe("## Summary\n\n## Testing");
         expect(generated?.policy?.changeRequestInstructions).toContain("Explain the user impact.");
         expect(created(providerCalls).length > 0).toBe(false);
+      }),
+  );
+
+  it.effect.each([false, true])(
+    "regenerates a selected request from its own remote diff (fork: %s)",
+    (isFork) =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir("t3code-regenerate-selected-pr-");
+        yield* initRepo(cwd);
+        const remote = yield* createBareRemote();
+        yield* runGit(cwd, ["remote", "add", "origin", remote]);
+        yield* runGit(cwd, ["push", "-u", "origin", "main"]);
+        yield* runGit(cwd, ["checkout", "-b", "selected"]);
+        NodeFS.writeFileSync(NodePath.join(cwd, "selected.txt"), "selected request change\n");
+        yield* runGit(cwd, ["add", "."]);
+        yield* runGit(cwd, ["commit", "-m", "Selected request commit"]);
+        yield* runGit(cwd, ["push", "-u", "origin", "selected"]);
+        yield* runGit(cwd, ["checkout", "-b", "current", "main"]);
+        NodeFS.writeFileSync(NodePath.join(cwd, "current.txt"), "current branch change\n");
+        yield* runGit(cwd, ["add", "."]);
+        yield* runGit(cwd, ["commit", "-m", "Current branch commit"]);
+        NodeFS.writeFileSync(NodePath.join(cwd, "current.txt"), "uncommitted\n");
+        const headBefore = yield* runGit(cwd, ["rev-parse", "HEAD"]);
+        const statusBefore = yield* runGit(cwd, ["status", "--porcelain=v1"]);
+        const selectedUrl = "https://github.com/pingdotgg/codething-mvp/pull/42";
+        let generated: TextGeneration.PrContentGenerationInput | undefined;
+        const { manager, providerCalls } = yield* makeManager({
+          providerScenario: {
+            pullRequest: {
+              number: 42,
+              title: "Old title",
+              url: selectedUrl,
+              baseRefName: "main",
+              headRefName: "selected",
+              isCrossRepository: isFork,
+              headRepositoryNameWithOwner: isFork ? "contributor/fork" : "pingdotgg/codething-mvp",
+            },
+            repositoryCloneUrls: {
+              "pingdotgg/codething-mvp": { url: remote, sshUrl: remote },
+              "contributor/fork": { url: remote, sshUrl: remote },
+            },
+          },
+          textGeneration: {
+            generatePrContent: (input) => {
+              generated = input;
+              return Effect.succeed({ title: "Selected title", body: "Selected description" });
+            },
+          },
+        });
+        const result = yield* manager.generatePullRequestDescription({
+          cwd,
+          projectId: ProjectId.make("project"),
+          reference: selectedUrl,
+        });
+        expect(result.title).toBe("Selected title");
+        expect(result.body).toBe("Selected description");
+        expect(result.pullRequest.number).toBe(42);
+        expect(generated?.headBranch).toBe("selected");
+        expect(generated?.commitSummary).toContain("Selected request commit");
+        expect(generated?.commitSummary).not.toContain("Current branch commit");
+        expect(generated?.diffPatch).toContain("+selected request change");
+        expect(generated?.diffPatch).not.toContain("current branch change");
+        expect(generated?.diffPatch).not.toContain("uncommitted");
+        expect(yield* runGit(cwd, ["rev-parse", "HEAD"])).toEqual(headBefore);
+        expect(yield* runGit(cwd, ["status", "--porcelain=v1"])).toEqual(statusBefore);
+        expect(
+          providerCalls.some(
+            (call) => call.operation === "getChangeRequest" && call.reference === selectedUrl,
+          ),
+        ).toBe(true);
+      }),
+  );
+
+  it.effect.each(["closed", "merged"] as const)(
+    "refuses to regenerate a selected %s request",
+    (state) =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir("t3code-regenerate-closed-pr-");
+        yield* initRepo(cwd);
+        let generated = false;
+        const { manager } = yield* makeManager({
+          providerScenario: {
+            pullRequest: {
+              number: 42,
+              title: "Closed",
+              url: "https://github.com/pingdotgg/codething-mvp/pull/42",
+              baseRefName: "main",
+              headRefName: "feature",
+              state,
+            },
+          },
+          textGeneration: {
+            generatePrContent: () => {
+              generated = true;
+              return Effect.succeed({ title: "Unused", body: "Unused" });
+            },
+          },
+        });
+        const failure = yield* manager
+          .generatePullRequestDescription({
+            cwd,
+            projectId: ProjectId.make("project"),
+            reference: "42",
+          })
+          .pipe(Effect.flip);
+        expect(failure._tag).toBe("GitManagerError");
+        expect(generated).toBe(false);
       }),
   );
 
@@ -5296,7 +5412,10 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
               },
             }),
             Layer.mock(SourceControlRateLimit.SourceControlRateLimit)({}),
-            Layer.succeed(HttpClient.HttpClient, HttpClient.make(() => Effect.die("Unexpected HTTP request"))),
+            Layer.succeed(
+              HttpClient.HttpClient,
+              HttpClient.make(() => Effect.die("Unexpected HTTP request")),
+            ),
           ),
         ),
       );
