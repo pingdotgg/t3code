@@ -192,6 +192,32 @@ describe("buildProjectGroups", () => {
   });
 
   it.each(["repository", "repository_path", "separate"] as const)(
+    "migrates an explicitly grouped scratch selection in %s mode without stealing an ordinary group",
+    (mode) => {
+      const project = makeProject("sdk", "/sdk", {
+        repositoryIdentity: null,
+        groupingIdentity: "39c61a1b-8a64-43a6-9da5-65c15da93d52",
+      });
+      const groupingSettings = settings(mode);
+      const key = deriveLogicalProjectKeyFromSettings(project, groupingSettings);
+      const scratch = { ...project, isScratch: true as const };
+      expect(resolveScratchProjectScopeKey(key, [scratch], groupingSettings)).toBe("\0no-project");
+      const ordinary = { ...project, workspaceRoot: "/ordinary" };
+      if (mode !== "separate") {
+        expect(resolveScratchProjectScopeKey(key, [scratch, ordinary], groupingSettings)).toBe(key);
+      } else {
+        expect(
+          resolveScratchProjectScopeKey(
+            `explicit:${project.groupingIdentity}`,
+            [scratch],
+            groupingSettings,
+          ),
+        ).toBe(`explicit:${project.groupingIdentity}`);
+      }
+    },
+  );
+
+  it.each(["repository", "repository_path", "separate"] as const)(
     "coalesces scratch homes in %s mode without merging ordinary same-title projects",
     (mode) => {
       const remoteEnvironmentId = EnvironmentId.make("remote");

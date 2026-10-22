@@ -204,10 +204,9 @@ export function resolveScratchProjectScopeKey(
   }
   return projects.some((project) => {
     if (!project.isScratch) return false;
-    const mode = resolveProjectGroupingMode(project, settings);
     return (
       derivePhysicalProjectKey(project) === key ||
-      (mode !== "separate" && deriveRepositoryScopedKey(project, mode) === key)
+      deriveLogicalProjectKeyFromSettings(project, settings) === key
     );
   })
     ? SCRATCH_PROJECT_SCOPE_KEY
