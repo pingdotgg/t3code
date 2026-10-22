@@ -1333,6 +1333,11 @@ export const layer: Layer.Layer<
                   (current) =>
                     new Set([...current].filter((id) => routing.ownedProviderTurns.has(id))),
                 );
+                for (const id of pendingBackgroundProviderTurns) {
+                  if (!routing.ownedProviderTurns.has(id)) {
+                    pendingBackgroundProviderTurns.delete(id);
+                  }
+                }
                 yield* Ref.update(
                   activeBackgroundTurnItems,
                   (current) => new Set([...current].filter((id) => !detached.itemIds.has(id))),

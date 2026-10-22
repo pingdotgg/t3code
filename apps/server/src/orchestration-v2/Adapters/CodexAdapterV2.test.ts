@@ -2677,9 +2677,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         { savedPath: "/tmp/new#image?100%25.png" },
         { savedPath: "/tmp/a&copy;.png" },
         { savedPath: "C:\\Users\\Me#100%25\\new.png" },
+        { savedPath: "/tmp/a\\!b.png" },
+        { savedPath: "/tmp/line\nbreak.png" },
       ],
       expected:
-        "![raw](</tmp/a%23b.png>) ![encoded](/tmp/a%23b.png) ![percent](</tmp/100%2525.png>) ![percent encoded](/tmp/100%2525.png) ![query][generated]\n\n[generated]: </tmp/q%3Fx.png>\n\n![unc](<file://host/share/a%23b%2525.png>) ![unc encoded](file://HOST/SHARE/a%23b%2525.png)\n\n![](</tmp/new%23image%3F100%2525.png>)\n\n![](</tmp/a%26copy;.png>)\n\n![](<C:/Users/Me%23100%2525/new.png>)",
+        "![raw](</tmp/a%23b.png>) ![encoded](/tmp/a%23b.png) ![percent](</tmp/100%2525.png>) ![percent encoded](/tmp/100%2525.png) ![query][generated]\n\n[generated]: </tmp/q%3Fx.png>\n\n![unc](<file://host/share/a%23b%2525.png>) ![unc encoded](file://HOST/SHARE/a%23b%2525.png)\n\n![](</tmp/new%23image%3F100%2525.png>)\n\n![](</tmp/a%26copy;.png>)\n\n![](<C:/Users/Me%23100%2525/new.png>)\n\n![](</tmp/a%5C!b.png>)\n\n![](</tmp/line%0Abreak.png>)",
     },
     {
       name: "an image-only UNC result produces a filesystem media message",

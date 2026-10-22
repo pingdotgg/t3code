@@ -38,8 +38,10 @@ function imageDestination(path: string): string {
       : path;
 }
 
+// Backslashes left after Windows conversion belong to POSIX names, where Markdown would read them
+// as escapes; line breaks end an angle destination.
 function angleDestination(path: string): string {
-  return `<${path.replace(/[%?#&]/g, encodeURIComponent).replace(/[<>]/g, "\\$&")}>`;
+  return `<${path.replace(/[%?#&\\\r\n]/g, encodeURIComponent).replace(/[<>]/g, "\\$&")}>`;
 }
 
 export function appendGeneratedImageEmbeds(text: string, savedPaths: Iterable<string>): string {

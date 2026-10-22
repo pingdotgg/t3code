@@ -164,7 +164,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
 
 export const CHAT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
   remarkGfm,
-  remarkKeepWindowsPaths,
+  keepWindowsPaths,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkCodexDirectives,
@@ -175,7 +175,7 @@ export const CHAT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
 
 export const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS: PluggableList = [
   remarkGfm,
-  remarkKeepWindowsPaths,
+  keepWindowsPaths,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkCodexDirectives,
@@ -342,7 +342,7 @@ function keepWindowsPathEscape(this: EscapeCompileContext) {
  * Prose paths end at whitespace: past that, nothing tells a path from a sentence, and
  * `C:\x and \*this\*` must still read `*this*`.
  */
-export function remarkKeepWindowsPaths(this: Processor) {
+function keepWindowsPaths(this: Processor) {
   const data = this.data();
   (data.fromMarkdownExtensions ??= []).push({
     exit: {
@@ -352,6 +352,8 @@ export function remarkKeepWindowsPaths(this: Processor) {
     },
   });
 }
+
+export const remarkKeepWindowsPaths = keepWindowsPaths;
 
 export function shouldPreserveAssistantLineBreaks(text: string): boolean {
   return /^★ Insight(?:\s|─)/mu.test(text);
