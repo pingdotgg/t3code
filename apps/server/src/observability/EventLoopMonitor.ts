@@ -203,6 +203,7 @@ const layerWith = (
           rssMb: Math.round(rssBytes / 1024 / 1024),
         };
         yield* Effect.logWarning(`event loop stalled for ${delayMaxMs} ms`).pipe(
+          Effect.annotateLogs(attributes),
           Effect.withSpan("server.eventLoop.stall", { root: true, level: "Warn", attributes }),
         );
         if (stallSink !== undefined) {
