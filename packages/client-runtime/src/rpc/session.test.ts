@@ -8,6 +8,7 @@ import {
   WS_METHODS,
   UsageLimitSourceId,
 } from "@t3tools/contracts";
+import { splitSocketFrame } from "@t3tools/shared/socketFrameParts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
@@ -21,6 +22,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as Socket from "effect/socket/Socket";
+import * as TestClock from "effect/testing/TestClock";
 
 import {
   AVAILABLE_CONNECTION_STATE,
@@ -275,6 +277,38 @@ const publishConfigEvents = Effect.fn("TestRpcSessionFactory.publishConfigEvents
 });
 
 describe("RpcSessionFactory", () => {
+  it.effect(
+    "connects while a config snapshot arrives in parts for longer than the ping timeout",
+    () =>
+      Effect.gen(function* () {
+        const { factory, sockets } = yield* makeFactory();
+        const session = yield* factory.connect(PREPARED);
+        const readyFiber = yield* Effect.forkChild(session.ready);
+        const socket = yield* awaitSocket(sockets);
+        socket.open();
+        const request = yield* awaitRequest(socket);
+        const parts = splitSocketFrame(
+          encodeJson({
+            _tag: "Chunk",
+            requestId: request.id,
+            values: [{ version: 1, type: "snapshot", config: ENCODED_SERVER_CONFIG }],
+          }),
+          512,
+        );
+        expect(parts.length).toBeGreaterThan(2);
+
+        for (const part of parts) {
+          socket.serverMessage(part);
+          yield* TestClock.adjust("10 seconds");
+        }
+        yield* Fiber.join(readyFiber);
+
+        const config = yield* session.initialConfig;
+        expect(config).toEqual(SERVER_CONFIG);
+        expect(socket.readyState).toBe(TestWebSocket.OPEN);
+      }),
+  );
+
   it.effect("owns one scoped websocket attempt and exposes readiness and closure", () =>
     Effect.gen(function* () {
       const { factory, sockets } = yield* makeFactory();
@@ -282,7 +316,7 @@ describe("RpcSessionFactory", () => {
       const readyFiber = yield* Effect.forkChild(session.ready);
       const socket = yield* awaitSocket(sockets);
 
-      expect(socket.url).toBe(PREPARED.socketUrl);
+      expect(socket.url).toBe(`${PREPARED.socketUrl}&frameParts=1`);
       socket.open();
       yield* completeInitialConfig(socket);
       yield* Fiber.join(readyFiber);
