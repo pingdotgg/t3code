@@ -86,6 +86,18 @@ Add the environment as a custom MCP app in ChatGPT's apps settings:
    need a client ID or secret.
 4. Create the app, then approve the sign-in page that opens.
 
+To keep the environment private, ChatGPT can instead reach it through an
+[OpenAI secure MCP tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels).
+The tunnel presents its own address to ChatGPT, so sign-in fails with
+`invalid_target` until the environment accepts that address. Add the tunnel's
+MCP URL, `<tunnel-service-address>/v1/mcp/<tunnel-id>`, exactly as ChatGPT
+shows it, to `T3CODE_MCP_RESOURCE_ALIASES` in the
+[service environment](./background-service.md#configure-the-service-environment).
+Separate several URLs with commas. Only list addresses that lead to this
+environment: a sign-in through any of them can use the whole environment. The
+browser that approves the sign-in must still reach the environment's own
+address.
+
 ## Other agents and bots
 
 Any agent that supports remote MCP servers over HTTP with OAuth can connect. Give
