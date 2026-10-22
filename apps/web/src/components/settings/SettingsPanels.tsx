@@ -2084,12 +2084,19 @@ export function GeneralSettingsPanel() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const navigate = useNavigate();
-  const { scope, environment, connectedEnvironments, target } = useSettingsScope();
+  const { scope, environment, connectedEnvironments, target, targets } = useSettingsScope();
   const environmentId = environment?.environmentId ?? null;
   const isEnvironmentScope = scope.environmentIds.length === 1 && environmentId !== null;
   const hasServerTargets = connectedEnvironments.length > 0;
   const [backgroundActivityDialogOpen, setBackgroundActivityDialogOpen] = useState(false);
   const mixedResponseStreamingMode = useScopedSettingsMixed(["responseStreamingMode"]);
+  // Compared by effective value: an unset switch follows Provider update checks.
+  const modelCatalogUpdates = targets.map((candidate) =>
+    resolveModelCatalogUpdatesEnabled(candidate.settings),
+  );
+  const mixedModelCatalogUpdates = modelCatalogUpdates.some(
+    (enabled) => enabled !== modelCatalogUpdates[0],
+  );
   const lastEnabledProjectGroupingMode = useRef<SidebarProjectGroupingMode>(
     readLastEnabledProjectGroupingMode(),
   );
@@ -2869,6 +2876,7 @@ export function GeneralSettingsPanel() {
         <SettingsRow
           serverScoped
           settingKeys={["enableModelCatalogUpdates"]}
+          mixed={mixedModelCatalogUpdates}
           {...searchableSetting("download-new-models")}
           description="Download the latest T3 Code model catalog so new models appear between releases. Follows Provider update checks until you change it."
           resetAction={
@@ -2885,9 +2893,11 @@ export function GeneralSettingsPanel() {
             ) : null
           }
           control={
-            <ScopedSwitch
-              settingKeys={["enableModelCatalogUpdates", "enableProviderUpdateChecks"]}
-              checked={resolveModelCatalogUpdatesEnabled(settings)}
+            <Switch
+              mixed={mixedModelCatalogUpdates}
+              checked={
+                mixedModelCatalogUpdates ? false : resolveModelCatalogUpdatesEnabled(settings)
+              }
               onCheckedChange={(checked) =>
                 updateSettings({ enableModelCatalogUpdates: Boolean(checked) })
               }
