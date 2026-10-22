@@ -4,7 +4,7 @@ import * as Socket from "effect/socket/Socket";
 
 import {
   joinSocketFrameParts,
-  SOCKET_FRAME_PART_LENGTH,
+  SOCKET_FRAME_PART_BYTES,
   splitLargeSocketFrames,
 } from "./socketFrameParts.ts";
 
@@ -38,10 +38,11 @@ function replayingSocket(batches: ReadonlyArray<readonly [string, ...Array<strin
 
 it.effect("a large message reaches the client whole, with a frame for every part on the way", () =>
   Effect.gen(function* () {
-    // Emoji put surrogate pairs across part boundaries.
+    // Two-, three- and four-byte characters, the last as surrogate pairs that
+    // fall across part boundaries.
     const message = JSON.stringify({
       _tag: "Chunk",
-      values: ["😀".repeat(SOCKET_FRAME_PART_LENGTH), "x".repeat(SOCKET_FRAME_PART_LENGTH)],
+      values: ["é€😀x".repeat(SOCKET_FRAME_PART_BYTES / 4)],
     });
     const sent: Array<string | Uint8Array> = [];
     const serverWriter = yield* splitLargeSocketFrames(recordingSocket(sent)).writer;
@@ -50,9 +51,10 @@ it.effect("a large message reaches the client whole, with a frame for every part
 
     const parts = sent.filter((frame) => typeof frame === "string");
     assert.isAbove(parts.length, 3);
-    assert.isTrue(parts.every((part) => part.length <= SOCKET_FRAME_PART_LENGTH + 1));
+    const encoded = parts.map((part) => new TextEncoder().encode(part));
+    assert.isTrue(encoded.every((bytes) => bytes.length <= SOCKET_FRAME_PART_BYTES));
     assert.isTrue(
-      parts.every((part) => new TextDecoder().decode(new TextEncoder().encode(part)) === part),
+      encoded.every((bytes, index) => new TextDecoder().decode(bytes) === parts[index]),
     );
 
     const [first, ...rest] = parts;
@@ -71,7 +73,7 @@ it.effect("a server that predates parts still reaches the client whole", () =>
   Effect.gen(function* () {
     const message = JSON.stringify({
       _tag: "Chunk",
-      values: ["x".repeat(3 * SOCKET_FRAME_PART_LENGTH)],
+      values: ["x".repeat(3 * SOCKET_FRAME_PART_BYTES)],
     });
     const reader = yield* joinSocketFrameParts(replayingSocket([[message]])).reader;
     assert.deepStrictEqual(yield* reader.pull, [message]);
