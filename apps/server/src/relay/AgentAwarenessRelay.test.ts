@@ -379,7 +379,7 @@ describe("AgentAwarenessRelay", () => {
     }),
   );
 
-  it.effect("signs whether the phone should alert from computer presence at publish time", () =>
+  it.effect("signs quietness and keeps it until the published phase changes", () =>
     Effect.gen(function* () {
       const attended = yield* Ref.make(true);
       const { relay, currentShell, publications } = yield* makeTestRelay({ attended });
@@ -387,9 +387,12 @@ describe("AgentAwarenessRelay", () => {
       yield* Ref.set(attended, false);
       yield* Ref.set(currentShell, shell({ title: "Renamed thread" }));
       yield* relay.publishThread(THREAD_ID);
+      yield* Ref.set(currentShell, shell({ title: "Renamed thread", status: "failed" }));
+      yield* relay.publishThread(THREAD_ID);
       assert.deepStrictEqual(
         publications.map(({ notify, signedNotify }) => ({ notify, signedNotify })),
         [
+          { notify: false, signedNotify: false },
           { notify: false, signedNotify: false },
           { notify: undefined, signedNotify: undefined },
         ],

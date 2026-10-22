@@ -20,14 +20,6 @@ export function hasDesktopNotifications(mode: NotificationMode) {
   return mode === "notifications" || mode === "notifications-and-sound";
 }
 
-// Mirrored by the mounted coordinator: the activity reporter sits below the
-// settings store in the import graph, and nothing alerts without a coordinator.
-let coordinatorNotificationMode: NotificationMode = "off";
-
-export function setCoordinatorNotificationMode(mode: NotificationMode) {
-  coordinatorNotificationMode = mode;
-}
-
 const TAG_HASH_OFFSET_BASIS = 0xcbf29ce484222325n;
 const TAG_HASH_PRIME = 0x100000001b3n;
 const TAG_HASH_MASK = 0xffffffffffffffffn;
@@ -94,10 +86,10 @@ const buffers = new Map<string, Promise<AudioBuffer>>();
 const playingUntil = new Map<string, number>();
 
 // Sound counts only once a user gesture has unlocked audio, as playback requires.
-export function canNotifyOutsideWindow(): boolean {
+export function canNotifyOutsideWindow(mode: NotificationMode): boolean {
   return (
-    (hasNotificationSound(coordinatorNotificationMode) && audioContext?.state === "running") ||
-    (hasDesktopNotifications(coordinatorNotificationMode) &&
+    (hasNotificationSound(mode) && audioContext?.state === "running") ||
+    (hasDesktopNotifications(mode) &&
       typeof Notification !== "undefined" &&
       Notification.permission === "granted")
   );

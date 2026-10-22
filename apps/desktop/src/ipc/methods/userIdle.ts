@@ -1,32 +1,50 @@
 import * as Electron from "electron";
 import * as Effect from "effect/Effect";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
 import * as ElectronPowerMonitor from "../../electron/ElectronPowerMonitor.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 import { GET_USER_IDLE_MS_CHANNEL, USER_AWAY_CHANGED_CHANNEL } from "../channels.ts";
 
+// Input in other apps reaches no renderer, so sample the idle clock here and
+// tell windows the moment someone comes back, not on their next heartbeat.
+const AWAY_SECONDS = 60;
+
 // The renderer only sees input aimed at its own window; the OS idle clock also
 // covers time spent in other apps, which is still time at this computer.
-export const installUserIdle = Effect.fn("desktop.ipc.installUserIdle")(function* () {
+export const installUserPresence = Effect.fn("desktop.ipc.installUserPresence")(function* () {
   const ipc = yield* DesktopIpc.DesktopIpc;
   const powerMonitor = yield* ElectronPowerMonitor.ElectronPowerMonitor;
   let suspended = false;
-  const announce = () => {
+  const broadcastAwayChange = () => {
     for (const window of Electron.BrowserWindow.getAllWindows()) {
       if (!window.isDestroyed()) window.webContents.send(USER_AWAY_CHANGED_CHANNEL);
     }
   };
   yield* powerMonitor.onSimpleEvent("suspend", () => {
     suspended = true;
-    announce();
+    broadcastAwayChange();
   });
   yield* powerMonitor.onSimpleEvent("resume", () => {
     suspended = false;
-    announce();
+    broadcastAwayChange();
   });
-  yield* powerMonitor.onSimpleEvent("lock-screen", announce);
-  yield* powerMonitor.onSimpleEvent("unlock-screen", announce);
+  yield* powerMonitor.onSimpleEvent("lock-screen", broadcastAwayChange);
+  yield* powerMonitor.onSimpleEvent("unlock-screen", broadcastAwayChange);
+  let lastIdleSeconds = 0;
+  yield* powerMonitor.getSystemIdleTime.pipe(
+    Effect.tap((idleSeconds) =>
+      Effect.sync(() => {
+        if (lastIdleSeconds >= AWAY_SECONDS && idleSeconds < lastIdleSeconds) {
+          broadcastAwayChange();
+        }
+        lastIdleSeconds = idleSeconds;
+      }),
+    ),
+    Effect.repeat(Schedule.spaced("5 seconds")),
+    Effect.forkScoped,
+  );
   yield* ipc.handle(
     DesktopIpc.makeIpcMethod({
       channel: GET_USER_IDLE_MS_CHANNEL,

@@ -19,7 +19,6 @@ import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
-import { canNotifyOutsideWindow } from "../threadNotifications";
 import { randomUUID } from "./utils";
 
 const CLIENT_ID_STORAGE_KEY = "t3.backgroundActivity.clientId";
@@ -83,6 +82,17 @@ function wasRecentlyInteracted(lastInteractionAtMs: number, observedAtMs: number
   );
 }
 
+// Registered by the mounted notification coordinator; nothing alerts outside
+// the window without it.
+let canNotifyOutsideWindow = () => false;
+
+export function registerCanNotifyOutsideWindow(check: () => boolean): () => void {
+  canNotifyOutsideWindow = check;
+  return () => {
+    if (canNotifyOutsideWindow === check) canNotifyOutsideWindow = () => false;
+  };
+}
+
 // The server silences phone pushes while someone is at a computer, so presence
 // only counts from a client that can itself tell them about agent work: a
 // focused window, or one able to alert outside it.
@@ -110,7 +120,11 @@ function createActivityReport(
   environmentId: EnvironmentId,
   lastInteractionAtMs: number,
   observedAtMs: number,
-  userIdleMs: number | undefined,
+  presence: {
+    readonly visible: boolean;
+    readonly focused: boolean;
+    readonly userIdleMs: number | undefined;
+  },
 ): ClientActivityReportInput {
   const scopes = [...BASELINE_SCOPES];
   for (const entry of retainedScopes.values()) {
@@ -122,11 +136,11 @@ function createActivityReport(
     environmentId,
     clientId: getClientId(),
     clientKind: resolveClientKind(),
-    visible: document.visibilityState === "visible",
-    focused: document.hasFocus(),
+    visible: presence.visible,
+    focused: presence.focused,
     recentlyInteracted: wasRecentlyInteracted(lastInteractionAtMs, observedAtMs),
-    ...(userIdleMs !== undefined ? { userIdleMs } : {}),
-    appState: document.visibilityState === "visible" ? "active" : "background",
+    ...(presence.userIdleMs !== undefined ? { userIdleMs: presence.userIdleMs } : {}),
+    appState: presence.visible ? "active" : "background",
     scopes,
     ttlMs: LEASE_TTL_MS,
     observedAt: DateTime.makeUnsafe(observedAtMs),
@@ -219,13 +233,20 @@ export const layer = Layer.effectDiscard(
         requestReport();
       }
     };
+    // Chromium fires motionless pointermoves when layout shifts under a resting
+    // cursor, as on load or tab restore; only real movement is input.
+    const recordPointerMove = (event: PointerEvent) => {
+      if (event.movementX !== 0 || event.movementY !== 0) recordInteraction();
+    };
     const passiveListenerOptions = { passive: true } as const;
 
     const report = Effect.gen(function* () {
       const observedAtMs = yield* Clock.currentTimeMillis;
+      const visible = document.visibilityState === "visible";
+      const focused = document.hasFocus();
       const userIdleMs = resolveUserIdleMs({
-        visible: document.visibilityState === "visible",
-        focused: document.hasFocus(),
+        visible,
+        focused,
         canNotify: canNotifyOutsideWindow(),
         systemIdleMs: yield* readSystemIdleMs,
         pageIdleMs: lastInputAtMs === null ? undefined : observedAtMs - lastInputAtMs,
@@ -239,7 +260,11 @@ export const layer = Layer.effectDiscard(
               environmentId,
               request(
                 WS_METHODS.serverReportClientActivity,
-                createActivityReport(environmentId, lastInteractionAtMs, observedAtMs, userIdleMs),
+                createActivityReport(environmentId, lastInteractionAtMs, observedAtMs, {
+                  visible,
+                  focused,
+                  userIdleMs,
+                }),
               ),
             )
             // Not `ignore`: tearing down an environment mid-request interrupts its report,
@@ -260,7 +285,7 @@ export const layer = Layer.effectDiscard(
         window.addEventListener("focus", requestReport);
         window.addEventListener("blur", requestReport);
         window.addEventListener("online", requestReport);
-        window.addEventListener("pointermove", recordInteraction);
+        window.addEventListener("pointermove", recordPointerMove);
         window.addEventListener("keydown", recordInteraction);
         window.addEventListener("wheel", recordInteraction, passiveListenerOptions);
         window.addEventListener("touchstart", recordInteraction, passiveListenerOptions);
@@ -272,7 +297,7 @@ export const layer = Layer.effectDiscard(
           window.removeEventListener("focus", requestReport);
           window.removeEventListener("blur", requestReport);
           window.removeEventListener("online", requestReport);
-          window.removeEventListener("pointermove", recordInteraction);
+          window.removeEventListener("pointermove", recordPointerMove);
           window.removeEventListener("keydown", recordInteraction);
           window.removeEventListener("wheel", recordInteraction);
           window.removeEventListener("touchstart", recordInteraction);

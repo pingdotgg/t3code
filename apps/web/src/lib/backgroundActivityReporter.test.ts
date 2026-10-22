@@ -8,6 +8,16 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
 
+const reports = vi.hoisted((): Array<{ readonly userIdleMs?: number }> => []);
+vi.mock("@t3tools/client-runtime/rpc", async (importOriginal) => {
+  const Effect = await import("effect/Effect");
+  return {
+    ...(await importOriginal<typeof import("@t3tools/client-runtime/rpc")>()),
+    request: (_tag: string, input: { readonly userIdleMs?: number }) =>
+      Effect.sync(() => void reports.push(input)),
+  };
+});
+
 import {
   layer,
   observeBackgroundActivitySubscription,
@@ -111,6 +121,7 @@ describe("layer", () => {
     const listeners = {
       addEventListener: target.addEventListener.bind(target),
       removeEventListener: target.removeEventListener.bind(target),
+      dispatchEvent: target.dispatchEvent.bind(target),
     };
     vi.stubGlobal("window", {
       ...listeners,
@@ -146,6 +157,32 @@ describe("layer", () => {
 
       yield* TestClock.adjust("25 seconds");
       expect(calls).toBe(2);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("counts a moving pointer as presence, but not a motionless pointermove", () =>
+    Effect.gen(function* () {
+      reports.length = 0;
+      const entries = yield* SubscriptionRef.make(
+        new Map([[EnvironmentId.make("environment-reporter-test"), {}]]),
+      );
+      const registry = EnvironmentRegistry.EnvironmentRegistry.of({
+        entries,
+        run: (_environmentId: EnvironmentId, effect: Effect.Effect<void>) => effect,
+      } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+      const pointerMove = (movementX: number) =>
+        window.dispatchEvent(Object.assign(new Event("pointermove"), { movementX, movementY: 0 }));
+
+      yield* Layer.build(
+        layer.pipe(Layer.provide(Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, registry))),
+      );
+      pointerMove(0);
+      yield* TestClock.adjust("25 seconds");
+      expect(reports.at(-1)?.userIdleMs).toBeUndefined();
+
+      pointerMove(4);
+      yield* TestClock.adjust("25 seconds");
+      expect(reports.at(-1)?.userIdleMs).toBeDefined();
     }).pipe(Effect.scoped),
   );
 });

@@ -48,7 +48,7 @@ import {
   alertForAttentionTransition,
   alertForNewlyTerminal,
   alertForTerminalAggregate,
-  isAlertableRow,
+  allowsAlert,
   rowPhasesChanged,
   shouldAlertForActivity,
 } from "./agentActivityAlerts.ts";
@@ -606,7 +606,7 @@ export const make = Effect.gen(function* () {
             current !== null &&
             current.phase === input.phase &&
             current.updatedAt === input.updatedAt &&
-            isAlertableRow(current),
+            allowsAlert(current),
         ),
         Effect.catchCause((cause) =>
           Effect.logWarning("agent-activity state recheck failed; allowing queued delivery", {
@@ -638,7 +638,7 @@ export const make = Effect.gen(function* () {
             current !== undefined &&
             current.phase === row.phase &&
             current.updatedAt === row.updatedAt &&
-            isAlertableRow(current) === isAlertableRow(row)
+            allowsAlert(current) === allowsAlert(row)
           );
         });
       }),

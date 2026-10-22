@@ -28,8 +28,8 @@ type TransitionInput = {
 
 // A version published while its user sat at a computer still updates the
 // card, but must not ring the phone. Other rows in the same aggregate still can.
-export function isAlertableRow(row: { readonly notify?: boolean | undefined }): boolean {
-  return row.notify !== false;
+export function allowsAlert(activity: { readonly notify?: boolean | undefined }): boolean {
+  return activity.notify !== false;
 }
 
 function rowKey(row: RelayAgentActivityAggregateRow): string {
@@ -51,12 +51,13 @@ function isAttentionPhase(phase: string): boolean {
   return phase === "waiting_for_approval" || phase === "waiting_for_input";
 }
 
-export function alertAllowedForPhase(
+export function alertAllowedFor(
   preferences: RelayAgentAwarenessPreferences | null,
-  phase: string,
+  activity: { readonly phase: string; readonly notify?: boolean | undefined },
 ): boolean {
+  if (!allowsAlert(activity)) return false;
   if (preferences === null) return true;
-  switch (phase) {
+  switch (activity.phase) {
     case "waiting_for_approval":
       return preferences.notifyOnApproval;
     case "waiting_for_input":
@@ -80,8 +81,7 @@ export function attentionTransitionRows(input: TransitionInput) {
     (row) =>
       isAttentionPhase(row.phase) &&
       !previouslyAttention.has(rowKey(row)) &&
-      isAlertableRow(row) &&
-      alertAllowedForPhase(input.preferences, row.phase),
+      alertAllowedFor(input.preferences, row),
   );
 }
 
@@ -114,8 +114,7 @@ export function terminalTransitionRows(
     input.includeUnobserved,
   ).filter((row) => {
     return (
-      isAlertableRow(row) &&
-      alertAllowedForPhase(input.preferences, row.phase) &&
+      alertAllowedFor(input.preferences, row) &&
       isFreshTerminalNotification(row.updatedAt, input.nowMs)
     );
   });
@@ -151,9 +150,7 @@ export function alertForTerminalAggregate(input: {
 }): AgentActivityAlert | null {
   const row = input.aggregate?.activities[0];
   if (!row || (row.phase !== "completed" && row.phase !== "failed")) return null;
-  return isAlertableRow(row) && alertAllowedForPhase(input.preferences, row.phase)
-    ? alertForActivityRows([row])
-    : null;
+  return alertAllowedFor(input.preferences, row) ? alertForActivityRows([row]) : null;
 }
 
 export function shouldAlertForActivity(input: {
@@ -164,9 +161,8 @@ export function shouldAlertForActivity(input: {
   readonly nowMs: number;
 }): boolean {
   return (
-    isAlertableRow(input) &&
     input.preferences?.notificationsEnabled === true &&
-    alertAllowedForPhase(input.preferences, input.phase) &&
+    alertAllowedFor(input.preferences, input) &&
     ((input.phase !== "completed" && input.phase !== "failed") ||
       isFreshTerminalNotification(input.updatedAt, input.nowMs))
   );
