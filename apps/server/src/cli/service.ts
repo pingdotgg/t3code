@@ -12,6 +12,7 @@ import { compareExactServiceVersions } from "../cloud/serviceProtocol.ts";
 import type * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
+import { resolveEntryPath } from "./invocation.ts";
 
 export const layer = (config: ServerConfig.ServerConfig["Service"]) =>
   BootService.layer({
@@ -102,9 +103,9 @@ function formatServiceStatus(status: BootService.BootServiceStatus, cliVersion: 
   ].join("\n");
 }
 
-const runServiceCommand = Effect.fn("cli.service.run")(function* <A, E>(
+const runServiceCommand = Effect.fn("cli.service.run")(function* <A, E, R>(
   flags: { readonly baseDir: Parameters<typeof resolveCliAuthConfig>[0]["baseDir"] },
-  run: Effect.Effect<A, E, BootService.BootService>,
+  run: Effect.Effect<A, E, R>,
 ) {
   const logLevel = yield* GlobalFlag.LogLevel;
   const config = yield* resolveCliAuthConfig(flags, logLevel);
@@ -128,7 +129,7 @@ const serviceInstallCommand = Command.make("install", serviceReconcileFlags).pip
         const result = yield* reconcileService({ allowDowngrade: flags.allowDowngrade });
         if (!result.changed) {
           yield* Console.log(
-            `T3 Code service is already installed with t3@${packageJson.version}.`,
+            `T3 Code service is already installed with t3@${packageJson.version} (${yield* resolveEntryPath}).`,
           );
           return;
         }
@@ -150,7 +151,9 @@ const serviceUpdateCommand = Command.make("update", serviceReconcileFlags).pipe(
         );
         const result = yield* reconcileService({ allowDowngrade: flags.allowDowngrade });
         if (!result.changed) {
-          yield* Console.log(`T3 Code service is already using t3@${packageJson.version}.`);
+          yield* Console.log(
+            `T3 Code service is already using t3@${packageJson.version} (${yield* resolveEntryPath}).`,
+          );
           return;
         }
         yield* Console.log(formatServiceChange(result));
