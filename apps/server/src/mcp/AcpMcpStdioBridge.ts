@@ -378,5 +378,34 @@ export async function runAcpMcpCliFastPath(
       arguments: parsed as Record<string, unknown>,
     }),
   );
-  process.stdout.write(`${JSON.stringify(result)}\n`);
+  // Terminal callers see the whole envelope; native MCP clients choose a field.
+  // Keep distinct content, but avoid printing the JSON fallback a second time.
+  if (
+    typeof result === "object" &&
+    result !== null &&
+    "structuredContent" in result &&
+    result.structuredContent !== undefined &&
+    "content" in result &&
+    Array.isArray(result.content)
+  ) {
+    const encoded = JSON.stringify(result.structuredContent);
+    process.stdout.write(
+      `${JSON.stringify({
+        ...result,
+        content: result.content.filter(
+          (part: unknown) =>
+            !(
+              typeof part === "object" &&
+              part !== null &&
+              "type" in part &&
+              part.type === "text" &&
+              "text" in part &&
+              part.text === encoded
+            ),
+        ),
+      })}\n`,
+    );
+  } else {
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+  }
 }
