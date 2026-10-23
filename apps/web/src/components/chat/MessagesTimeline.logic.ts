@@ -2157,7 +2157,8 @@ function replaceStreamingMessageRows(
     return null;
   }
   const replacements = new Map<ChatMessage, Extract<TimelineEntry, { kind: "message" }>>();
-  for (const [index, entry] of timelineEntries.entries()) {
+  for (let index = 0; index < timelineEntries.length; index += 1) {
+    const entry = timelineEntries[index]!;
     const previousEntry = previousEntries[index]!;
     if (entry === previousEntry) continue;
     if (

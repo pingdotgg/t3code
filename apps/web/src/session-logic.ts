@@ -1005,7 +1005,8 @@ function reuseTimelineEntries(
     OrchestrationV2ProjectedTurnItem,
     OrchestrationV2ProjectedTurnItem
   >();
-  for (const [index, previousItem] of before.visibleTurnItems.entries()) {
+  for (let index = 0; index < before.visibleTurnItems.length; index += 1) {
+    const previousItem = before.visibleTurnItems[index]!;
     const item = input.visibleTurnItems[index]!;
     if (item === previousItem) continue;
     if (!isStreamingTurnItemTextUpdate(previousItem, item)) return null;
