@@ -2,6 +2,7 @@ import { useNavigation, useNavigationState, useRoute } from "@react-navigation/n
 import type { ReactNode } from "react";
 import { Platform, View } from "react-native";
 
+import { AndroidSheetHeader } from "../../../components/ui/AndroidScreenHeader";
 import type { AppBarProps } from "../../../components/ui/AppBar.types";
 import { AppBar } from "../../../components/ui/AppBar";
 import { ScreenContent as SettingsScreenContent } from "../../../components/ui/ScreenContent";
@@ -25,15 +26,25 @@ export function SettingsScreen(
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
-      <AppBar
-        title={props.title}
-        actions={props.actions}
-        trailing={Platform.OS === "android" ? props.trailing : undefined}
-        sidebar={false}
-        onBack={workspaceRoot ? undefined : () => navigation.goBack()}
-        hideBottomBorder={!props.formSheet}
-      />
-      {props.formSheet ? (
+      {Platform.OS === "android" && props.formSheet ? (
+        <AndroidSheetHeader
+          title={props.title}
+          actions={props.actions}
+          trailing={props.trailing}
+          onBack={() => navigation.goBack()}
+          hideBottomBorder
+        />
+      ) : (
+        <AppBar
+          title={props.title}
+          actions={props.actions}
+          trailing={Platform.OS === "android" ? props.trailing : undefined}
+          sidebar={false}
+          onBack={workspaceRoot ? undefined : () => navigation.goBack()}
+          hideBottomBorder={!props.formSheet}
+        />
+      )}
+      {props.formSheet && Platform.OS !== "android" ? (
         props.children
       ) : (
         <SettingsScreenContent>{props.children}</SettingsScreenContent>
