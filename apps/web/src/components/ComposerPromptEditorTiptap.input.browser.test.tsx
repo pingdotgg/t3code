@@ -148,6 +148,22 @@ it.each([
   expect(textWithMark(editor, "code")).toEqual(code);
 });
 
+it.each([true, false])("styles bare URLs as links (rich text: %s)", async (richTextEnabled) => {
+  await using screen = await mountEditor(
+    "see https://github.com/pingdotgg/t3code/pull/1. and `https://example.com`",
+    richTextEnabled,
+  );
+  const links = Array.from(
+    screen.container.querySelectorAll(".composer-link"),
+    (link) => link.textContent,
+  );
+  expect(links).toEqual(richTextEnabled ? ["https://github.com/pingdotgg/t3code/pull/1"] : []);
+  // github.com gets the brand icon rather than a fetched favicon.
+  expect(screen.container.querySelectorAll(".ProseMirror-widget svg")).toHaveLength(
+    richTextEnabled ? 1 : 0,
+  );
+});
+
 it.each([false, true])(
   "composes an umlaut without wrapping the preedit text (rich text: %s)",
   async (richTextEnabled) => {
