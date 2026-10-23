@@ -26,6 +26,22 @@ export interface SignalExport {
   readonly exportIntervalMs: number;
 }
 
+let serviceInstanceId: string | undefined;
+
+/**
+ * `service.instance.id` for this process. Every resource the process exports
+ * shares it, so a restart reads as a new instance and two resources of one
+ * process can be joined. An operator's value in `OTEL_RESOURCE_ATTRIBUTES`
+ * wins, but Effect lets explicit attributes beat it, so callers pass it in.
+ */
+export const processServiceInstanceId = (
+  operatorAttributes: Readonly<Record<string, unknown>> = {},
+): string =>
+  typeof operatorAttributes["service.instance.id"] === "string"
+    ? operatorAttributes["service.instance.id"]
+    : // @effect-diagnostics-next-line cryptoRandomUUID:off -- Resource attributes are built synchronously, before any Crypto service exists.
+      (serviceInstanceId ??= crypto.randomUUID());
+
 export const DEFAULT_SIGNAL_EXPORT: SignalExport = {
   protocol: "http/json",
   headers: undefined,

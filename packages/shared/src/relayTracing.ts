@@ -18,6 +18,7 @@ export interface RelayClientTracingResource {
   readonly serviceName: string;
   readonly serviceVersion?: string;
   readonly runtime: string;
+  readonly serviceInstanceId: string;
   readonly client: string;
   readonly component?: string;
 }
@@ -172,6 +173,7 @@ export function layer(
       serviceVersion: resource.serviceVersion,
       attributes: {
         "service.namespace": "t3code",
+        "service.instance.id": resource.serviceInstanceId,
         "service.runtime": resource.runtime,
         "service.component": resource.component ?? "relay-client",
         "t3.client.surface": resource.client,

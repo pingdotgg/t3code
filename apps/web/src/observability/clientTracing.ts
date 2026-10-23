@@ -9,6 +9,7 @@ import { settleAsyncResult, squashAtomCommandFailure } from "@t3tools/client-run
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import { resolvePrimaryEnvironmentHttpUrl } from "../environments/primary";
 import * as ClientTracer from "./clientTracer";
+import { serviceInstanceId } from "./serviceInstance";
 import * as PrimaryEnvironmentHttpLayer from "../environments/primary/httpLayer";
 import { isElectron } from "../env";
 import { APP_VERSION } from "~/branding";
@@ -18,6 +19,7 @@ const CLIENT_TRACING_RESOURCE = {
   serviceName: "t3code-web",
   attributes: {
     "service.namespace": "t3code",
+    "service.instance.id": serviceInstanceId,
     "service.runtime": "t3-web",
     "service.mode": isElectron ? "electron" : "browser",
     "service.version": APP_VERSION,

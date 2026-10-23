@@ -626,6 +626,9 @@ Service names are fixed: `t3code-server` for the backend and `t3code-desktop` fo
 process, both in `service.namespace` `t3code`. `OTEL_SERVICE_NAME` and a `service.name` or
 `service.namespace` in `OTEL_RESOURCE_ATTRIBUTES` are ignored. Tell installations apart with other
 resource attributes, such as `OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=development`.
+Every resource also carries a `service.instance.id`: a random id per process for the server and the
+desktop main process, per page load for the UI. For the server and the desktop main process, a value
+in `OTEL_RESOURCE_ATTRIBUTES` replaces it.
 
 If the OTLP URLs are unset, local tracing still works, metrics stay in-process only, and logs stay
 on stdout only.

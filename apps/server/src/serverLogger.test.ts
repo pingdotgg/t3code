@@ -152,6 +152,32 @@ const printThroughConsole = (fields: object) =>
   });
 
 describe("ServerLoggerLive", () => {
+  it.effect("exports a resource that names its service instance", () =>
+    Effect.gen(function* () {
+      const { requests } = yield* logInSpanThrough({
+        otlpLogsUrl: "https://collector.example.com/v1/logs",
+      });
+
+      const body = requests.map((request) => request.body).join("\n");
+      assert.include(body, '"key":"service.instance.id"');
+    }),
+  );
+
+  it.effect("exports the operator's service instance id instead of a generated one", () =>
+    Effect.gen(function* () {
+      const { requests } = yield* logInSpanThrough({
+        otlpLogsUrl: "https://collector.example.com/v1/logs",
+        otelEnvironment: {
+          ...OtelEnvironment.none,
+          resourceAttributes: { "service.instance.id": "pod-7" },
+        },
+      });
+
+      const body = requests.map((request) => request.body).join("\n");
+      assert.include(body, '"key":"service.instance.id","value":{"stringValue":"pod-7"}');
+    }),
+  );
+
   it.effect("prints a cause passed as a log field instead of collapsing it", () =>
     Effect.gen(function* () {
       const output = yield* printThroughConsole({

@@ -24,7 +24,18 @@ import {
   type TraceRecord,
   OtlpHeadersFromString,
   truncateTraceAttributes,
+  processServiceInstanceId,
 } from "./observability.ts";
+
+describe("processServiceInstanceId", () => {
+  it("stays the same for the life of the process", () => {
+    expect(processServiceInstanceId()).toBe(processServiceInstanceId({}));
+  });
+
+  it("keeps a value the operator set in OTEL_RESOURCE_ATTRIBUTES", () => {
+    expect(processServiceInstanceId({ "service.instance.id": "pod-7" })).toBe("pod-7");
+  });
+});
 
 describe("errorTag", () => {
   it("reports structural tags without retaining arbitrary values", () => {
