@@ -8,7 +8,7 @@ struct NativeWorkspacePermissionTests {
     @Test func revokedFileAccessDoesNotBorrowAnotherEnvironmentGrant() async throws {
         let fixture = try await WorkspacePermissionFixture.make()
         defer { fixture.cleanUp() }
-        let snapshot = try await fixture.client.initialSnapshot()
+        let snapshot = try await fixture.client.hydratedInitialSnapshot()
         let thread = try #require(snapshot.threads.first { $0.environmentID == "two" })
         let project = try #require(snapshot.projects.first { $0.environmentID == "two" })
         _ = try await fixture.client.listFiles(threadID: thread.id, path: nil)
@@ -36,7 +36,7 @@ struct NativeWorkspacePermissionTests {
     @Test func attachmentReadUsesOrchestrationPermissionEvenWithCachedURL() async throws {
         let fixture = try await WorkspacePermissionFixture.make()
         defer { fixture.cleanUp() }
-        let snapshot = try await fixture.client.initialSnapshot()
+        let snapshot = try await fixture.client.hydratedInitialSnapshot()
         let thread = try #require(snapshot.threads.first { $0.environmentID == "two" })
         await fixture.server.setPermissions(["orchestration:read"], host: "two.example")
         let attachment = FeatureMessageAttachment(id: "attachment", name: "image.png", mimeType: "image/png", sizeBytes: 1)
@@ -56,7 +56,7 @@ struct NativeWorkspacePermissionTests {
     func branchSwitchRechecksBothGrantsAfterListingRefs(revokedScope: String) async throws {
         let fixture = try await WorkspacePermissionFixture.make()
         defer { fixture.cleanUp() }
-        let snapshot = try await fixture.client.initialSnapshot()
+        let snapshot = try await fixture.client.hydratedInitialSnapshot()
         let thread = try #require(snapshot.threads.first { $0.environmentID == "two" })
         await fixture.server.revoke(revokedScope, after: "vcs.listRefs")
         do {
@@ -74,7 +74,7 @@ struct NativeWorkspacePermissionTests {
     @Test func scriptRechecksOperateAfterOpeningBeforeSendingInput() async throws {
         let fixture = try await WorkspacePermissionFixture.make()
         defer { fixture.cleanUp() }
-        let snapshot = try await fixture.client.initialSnapshot()
+        let snapshot = try await fixture.client.hydratedInitialSnapshot()
         let thread = try #require(snapshot.threads.first { $0.environmentID == "two" })
         await fixture.server.revoke("terminal:operate", after: "terminal.open")
         await #expect(throws: EnvironmentPermissionDeniedError.self) {
@@ -94,7 +94,7 @@ struct NativeWorkspacePermissionTests {
     func pullRequestPreparationRequiresBothGrants(revokedScope: String) async throws {
         let fixture = try await WorkspacePermissionFixture.make()
         defer { fixture.cleanUp() }
-        let snapshot = try await fixture.client.initialSnapshot()
+        let snapshot = try await fixture.client.hydratedInitialSnapshot()
         let project = try #require(snapshot.projects.first { $0.environmentID == "two" })
         let permissions = ["orchestration:read", "source-control:write", "orchestration:operate"]
         await fixture.server.setPermissions(permissions.filter { $0 != revokedScope }, host: "two.example")
@@ -115,7 +115,7 @@ struct NativeWorkspacePermissionTests {
     @Test func pullRequestPreparationRechecksOperateBeforeLaunch() async throws {
         let fixture = try await WorkspacePermissionFixture.make()
         defer { fixture.cleanUp() }
-        let snapshot = try await fixture.client.initialSnapshot()
+        let snapshot = try await fixture.client.hydratedInitialSnapshot()
         let project = try #require(snapshot.projects.first { $0.environmentID == "two" })
         await fixture.server.revoke("orchestration:operate", after: "git.preparePullRequestThread")
         await #expect(throws: EnvironmentPermissionDeniedError.self) {

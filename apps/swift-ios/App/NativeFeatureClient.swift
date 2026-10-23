@@ -273,8 +273,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             cacheStartupRefreshTask = Task { [weak self] in
                 guard let self else { return }
                 self.routeSnapshotLoads += 1
-                defer { self.routeSnapshotLoads -= 1 }
-                let loads = await self.loadEnvironmentShells(environments.filter(\.isEnabled), loadGenerations: loadGenerations)
+                let loads = await self.loadEnvironmentShells(
+                    environments.filter { $0.isEnabled && $0.id == environment.id }, loadGenerations: loadGenerations
+                )
+                self.routeSnapshotLoads -= 1
                 guard !Task.isCancelled, self.isCurrentSession(client: activeClient, generation: generation) else { return }
                 self.reconcileEnvironmentLoads(loads, savedEnvironments: environments)
                 self.latestShell = self.shellsByEnvironmentID[environment.id]
@@ -283,20 +285,26 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                     connectionState: self.environmentConnectionStates[environment.id] ?? .disconnected,
                     connectionDetail: self.environmentConnectionDetails[environment.id]
                 ))
-                if loads.first(where: { $0.environment.id == environment.id })?.shell != nil {
+                if loads.first?.shell != nil {
                     self.scheduleArchivedRefresh(client: activeClient, environment: environment)
                 }
+                await self.loadPassiveStartupShells(
+                    environments, activeEnvironment: environment, client: activeClient,
+                    generation: generation, loadGenerations: loadGenerations
+                )
             }
             return snapshot
         }
-        let loads = await loadEnvironmentShells(environments.filter(\.isEnabled), loadGenerations: loadGenerations)
+        let loads = await loadEnvironmentShells(
+            environments.filter { $0.isEnabled && $0.id == environment.id }, loadGenerations: loadGenerations
+        )
         guard isCurrentSession(client: activeClient, generation: generation) else {
             throw CancellationError()
         }
         reconcileEnvironmentLoads(loads, savedEnvironments: environments)
         latestShell = shellsByEnvironmentID[environment.id]
         startPolling(activeClient)
-        let activeLoad = loads.first { $0.environment.id == environment.id }
+        let activeLoad = loads.first
         let activeIsReachable = activeLoad?.shell != nil
         if activeIsReachable {
             scheduleArchivedRefresh(client: activeClient, environment: environment)
@@ -311,7 +319,35 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             connectionDetail: environmentConnectionDetails[environment.id]
         )
         latestSnapshot = snapshot
+        cacheStartupRefreshTask?.cancel()
+        cacheStartupRefreshTask = Task { [weak self] in
+            await self?.loadPassiveStartupShells(
+                environments, activeEnvironment: environment, client: activeClient,
+                generation: generation, loadGenerations: loadGenerations
+            )
+        }
         return snapshot
+    }
+
+    /// Passive computers never gate the first home snapshot: one hung host
+    /// would otherwise hold the whole home for its shell timeout. Like the
+    /// aggregate refresh, this does not count as a route snapshot load, so it
+    /// cannot defer active route recovery either.
+    private func loadPassiveStartupShells(
+        _ environments: [Environment], activeEnvironment: Environment, client: T3Client,
+        generation: Int, loadGenerations: [String: Int]
+    ) async {
+        let passiveEnvironments = environments.filter { $0.isEnabled && $0.id != activeEnvironment.id }
+        guard !passiveEnvironments.isEmpty, !Task.isCancelled else { return }
+        let loads = await loadEnvironmentShells(passiveEnvironments, loadGenerations: loadGenerations)
+        guard !Task.isCancelled, isCurrentSession(client: client, generation: generation) else { return }
+        reconcileEnvironmentLoads(loads, savedEnvironments: environments)
+        let connection = latestSnapshot?.connection
+        publish(makeSnapshot(
+            environments: environments, activeEnvironment: activeEnvironment,
+            connectionState: connection?.state ?? environmentConnectionStates[activeEnvironment.id] ?? .disconnected,
+            connectionDetail: connection.map(\.detail) ?? environmentConnectionDetails[activeEnvironment.id]
+        ))
     }
 
     func resumeAfterBackground(reconnect: Bool) async {
