@@ -101,8 +101,13 @@ export function markdownHtmlContent(content: string): string {
     codeRanges.push({ start: opening.index, end: closing.index + closing[0].length });
     index = closingIndex;
   }
+  let codeRangeIndex = 0;
   return content.replace(HTML_TAG, (tag, offset: number) => {
-    if (codeRanges.some((range) => offset >= range.start && offset < range.end)) return tag;
+    while (codeRanges[codeRangeIndex] && offset >= codeRanges[codeRangeIndex]!.end) {
+      codeRangeIndex += 1;
+    }
+    const range = codeRanges[codeRangeIndex];
+    if (range && offset >= range.start) return tag;
     if (tag.startsWith("<!--")) return "";
     if (/^<img\b/i.test(tag)) {
       const src = attribute(tag, "src");
