@@ -2,7 +2,8 @@
 // Runs CI's fast checks for this branch's changes: format and lint of the
 // changed files, knip, generated GraphQL operations, typecheck of the affected
 // packages and their dependents, and the test files beside the changed files.
-// CI still runs the full test suites and the jobs listed in the summary.
+// A dependency change also gets the unused-patch install check below. CI still
+// runs the full test suites and the jobs listed in the summary.
 //
 //   vp run check:changed          compare against the merge base with origin/main
 //   vp run check:changed <ref>    compare against the merge base with <ref>
@@ -11,6 +12,7 @@
 // .github/scripts/ci-changes.cjs, the same mapping CI uses to gate its jobs.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { decide, readWorkspace } from "../.github/scripts/ci-changes.cjs";
 
@@ -71,6 +73,72 @@ const runKnip = files.some(
   (file) => CODE.test(file) || NodePath.basename(file) === "package.json" || file === "knip.jsonc",
 );
 
+// A version bump can strand a patch in pnpm-workspace.yaml: no resolved
+// version uses it and pnpm rejects the install with ERR_PNPM_UNUSED_PATCH.
+// CI catches that before merge through Release Smoke, because ci-changes.cjs
+// runs everything for any package.json and for root paths it does not map to
+// a package (pnpm-workspace.yaml, pnpm-lock.yaml, patches/). The local run
+// had no such check, so a stranded patch passed here and failed after push.
+const runPatchCheck = files.some(
+  (file) =>
+    file === "pnpm-workspace.yaml" ||
+    file === "pnpm-lock.yaml" ||
+    file === ".pnpmfile.cjs" ||
+    file.startsWith("patches/") ||
+    file.startsWith("apps/mobile/deps/") ||
+    NodePath.basename(file) === "package.json",
+);
+
+// Mirror Release Smoke's temp-copy install: copy the workspace manifests to
+// a temp dir, omit the lockfile, and install with --lockfile-only, so the
+// working tree and its lockfile stay untouched (the mobile modules are
+// mobile file: dependencies, not workspace packages). Local pnpm may resolve
+// from cached registry metadata, so this catches patches stranded by your
+// own change, not registry drift.
+const checkPatches = (): boolean => {
+  const temp = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-patch-check-"));
+  try {
+    const copy = (relative: string) => {
+      const dest = NodePath.join(temp, relative);
+      NodeFS.mkdirSync(NodePath.dirname(dest), { recursive: true });
+      NodeFS.cpSync(NodePath.join(root, relative), dest, { recursive: true });
+    };
+    copy("package.json");
+    copy("pnpm-workspace.yaml");
+    for (const pkg of packages) copy(`${pkg.dir}/package.json`);
+    const modulesDir = NodePath.join(root, "apps/mobile/modules");
+    if (NodeFS.existsSync(modulesDir)) {
+      for (const entry of NodeFS.readdirSync(modulesDir)) {
+        const manifest = `apps/mobile/modules/${entry}/package.json`;
+        if (NodeFS.existsSync(NodePath.join(root, manifest))) copy(manifest);
+      }
+    }
+    for (const extra of ["apps/mobile/deps", "patches", ".pnpmfile.cjs"]) {
+      if (NodeFS.existsSync(NodePath.join(root, extra))) copy(extra);
+    }
+    const { status, stdout, stderr, error } = NodeChildProcess.spawnSync(
+      "vp",
+      ["install", "--lockfile-only", "--ignore-scripts"],
+      { cwd: temp, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+    );
+    if (status === 0) return true;
+    if (stdout) console.log(stdout);
+    if (stderr) console.error(stderr);
+    if (error) console.error(error.message);
+    if (`${stdout ?? ""}${stderr ?? ""}`.includes("ERR_PNPM_UNUSED_PATCH")) {
+      console.error(
+        "Unused dependency patches: remove each patch named above from " +
+          "patchedDependencies in pnpm-workspace.yaml and from patches/, " +
+          "update it to the version the install resolves, " +
+          "or pin the dependency that pulls it in to the patched version.",
+      );
+    }
+    return false;
+  } finally {
+    NodeFS.rmSync(temp, { recursive: true, force: true });
+  }
+};
+
 // CI's Lint job checks that generated GraphQL operations match their sources.
 const graphql = ["apps/server", "packages/source-control-github"].filter((dir) =>
   files.some((file) => file.startsWith(`${dir}/`)),
@@ -78,6 +146,8 @@ const graphql = ["apps/server", "packages/source-control-github"].filter((dir) =
 
 const filters = (names: ReadonlyArray<string>) => names.flatMap((name) => ["--filter", name]);
 const steps = [
+  // Runs first; it takes about a second.
+  runPatchCheck && { name: "unused patches", run: checkPatches },
   present.length > 0 && {
     name: "format",
     args: ["fmt", "--check", "--no-error-on-unmatched-pattern", ...present],
@@ -103,7 +173,12 @@ console.log(`check:changed: ${files.length} files since ${base.slice(0, 12)}`);
 const results = steps.map((step) => {
   console.log(`\n> vp ${step.name}`);
   const started = performance.now();
-  const { status } = NodeChildProcess.spawnSync("vp", step.args, { cwd: root, stdio: "inherit" });
+  const status =
+    "args" in step
+      ? NodeChildProcess.spawnSync("vp", step.args, { cwd: root, stdio: "inherit" }).status
+      : step.run()
+        ? 0
+        : 1;
   const seconds = ((performance.now() - started) / 1000).toFixed(1);
   return { name: step.name, ok: status === 0, seconds };
 });
@@ -120,5 +195,6 @@ const ciOnly = Object.entries({
   "release smoke": outputs.release_smoke,
 }).flatMap(([job, runs]) => (runs ? [job] : []));
 if (ciOnly.length > 0) console.log(`  CI also runs: ${ciOnly.join(", ")}`);
+if (!runPatchCheck) console.log("  unused patch check skipped: no dependency files changed");
 if (!runKnip) console.log("  knip skipped: no code or manifest changed");
 if (results.some((result) => !result.ok)) process.exit(1);
