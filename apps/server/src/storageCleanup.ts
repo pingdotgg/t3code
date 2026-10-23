@@ -146,7 +146,9 @@ export function storageCleanupActivityAt(thread: OrchestrationV2ThreadShell): nu
 }
 
 /** Only a complete subagent chain within this worktree shares ownership. */
-function worktreeOwner(threads: ReadonlyArray<OrchestrationV2ThreadShell>) {
+function worktreeOwner<T extends Pick<OrchestrationV2ThreadShell, "id" | "lineage">>(
+  threads: ReadonlyArray<T>,
+) {
   if (threads.length === 1) return threads[0];
   const byId = new Map(threads.map((thread) => [thread.id, thread]));
   const tops = threads.filter((thread) => !byId.has(thread.lineage.parentThreadId!));
@@ -750,8 +752,24 @@ const make = Effect.gen(function* () {
       snapshot.threads.filter((thread) => thread.worktreePath !== null),
       (thread) => path.resolve(thread.worktreePath!),
     );
+    const deletedByPath = Map.groupBy(deletedThreads, (thread) =>
+      path.resolve(thread.worktreePath!),
+    );
     const candidates = [
-      ...[...groups.values()].map((group) => worktreeOwner(group) ?? group[0]!),
+      ...[...groups].map(
+        ([worktreePath, group]) =>
+          // A deleted thread still owns the worktree its remaining subagents share,
+          // but only deletion cleanup acts on it; otherwise the live rules apply.
+          deletedByPath
+            .get(worktreePath)
+            ?.find(
+              (deleted) =>
+                resolveWorktreeCleanup(serverSettings, deleted.projectId).worktreeOnDelete &&
+                worktreeOwner([deleted, ...group]) === deleted,
+            ) ??
+          worktreeOwner(group) ??
+          group[0]!,
+      ),
       ...deletedThreads.filter((thread) => !groups.has(path.resolve(thread.worktreePath!))),
     ];
     for (const thread of candidates) {
@@ -761,6 +779,7 @@ const make = Effect.gen(function* () {
       const group = groups.get(worktreePath) ?? [];
       const activityAt = Math.max(...group.map(storageCleanupActivityAt));
       const deleted = "workspaceRoot" in thread;
+      const members = deleted ? [thread, ...group] : group;
       const project = deleted
         ? { workspaceRoot: thread.workspaceRoot }
         : snapshot.projects.find((entry) => entry.id === thread.projectId);
@@ -779,12 +798,12 @@ const make = Effect.gen(function* () {
       yield* Effect.gen(function* () {
         if (!(yield* fs.exists(worktreePath))) return;
         if (deleted && !settings.worktreeOnDelete) return keep("no rules apply");
-        if (group.length > 1 && worktreeOwner(group) === undefined)
-          return keep(`shared by ${group.length} threads`);
+        if (members.length > 1 && worktreeOwner(members) === undefined)
+          return keep(`shared by ${members.length} threads`);
         if (project === undefined) return keep("project is unavailable");
         if (
           thread.branch === null ||
-          (!deleted && !group.every((member) => storageCleanupThreadIdle(member, now)))
+          !group.every((member) => storageCleanupThreadIdle(member, now))
         )
           return keep("thread is running or has pending work");
         if (group.some((member) => member.branch !== thread.branch))
@@ -807,7 +826,6 @@ const make = Effect.gen(function* () {
         const changes = yield* localChangesReason(worktreePath, settings);
         if (changes !== null) return keep(changes);
         if (
-          !deleted &&
           group.some(
             (member) =>
               member.settledAt !== null &&
@@ -928,7 +946,6 @@ const make = Effect.gen(function* () {
           if (hasTerminal(worktreePath)) return "open terminal";
           if (deleted) {
             if (
-              latest.length > 0 ||
               !resolveWorktreeCleanup(yield* settingsService.getSettings, thread.projectId)
                 .worktreeOnDelete
             )
@@ -940,32 +957,30 @@ const make = Effect.gen(function* () {
               WHERE thread_id = ${thread.id} AND status NOT IN ('succeeded', 'cancelled') LIMIT 1
             `.pipe(NodeSqliteClient.readOnly);
             if (pendingCleanup.length > 0) return "thread deletion is still pending";
-          } else {
-            const latestShells = yield* Effect.forEach(latest, (entry) =>
-              projections.getThreadShell(entry.threadId),
-            );
-            const latestGroup = latestShells.filter((shell) => shell !== null);
-            const latestOwner = worktreeOwner(latestGroup);
-            if (
-              latestGroup.length !== group.length ||
-              latestOwner?.id !== thread.id ||
-              latestOwner?.branch !== thread.branch ||
-              latestGroup.some((shell) => {
-                const previous = group.find((member) => member.id === shell.id);
-                return (
-                  previous === undefined ||
-                  shell.branch !== thread.branch ||
-                  !Equal.equals(shell.settledAt, previous.settledAt) ||
-                  (shell.settledAt !== null &&
-                    !Equal.equals(shell.updatedAt, previous.updatedAt)) ||
-                  !storageCleanupThreadIdle(shell, now) ||
-                  path.resolve(shell.worktreePath!) !== worktreePath ||
-                  storageCleanupActivityAt(shell) !== storageCleanupActivityAt(previous)
-                );
-              })
-            )
-              return "thread activity or shared worktree changed since check";
           }
+          const latestShells = yield* Effect.forEach(latest, (entry) =>
+            projections.getThreadShell(entry.threadId),
+          );
+          const latestGroup = latestShells.filter((shell) => shell !== null);
+          const latestOwner = worktreeOwner(deleted ? [thread, ...latestGroup] : latestGroup);
+          if (
+            latestGroup.length !== group.length ||
+            latestOwner?.id !== thread.id ||
+            latestOwner?.branch !== thread.branch ||
+            latestGroup.some((shell) => {
+              const previous = group.find((member) => member.id === shell.id);
+              return (
+                previous === undefined ||
+                shell.branch !== thread.branch ||
+                !Equal.equals(shell.settledAt, previous.settledAt) ||
+                (shell.settledAt !== null && !Equal.equals(shell.updatedAt, previous.updatedAt)) ||
+                !storageCleanupThreadIdle(shell, now) ||
+                path.resolve(shell.worktreePath!) !== worktreePath ||
+                storageCleanupActivityAt(shell) !== storageCleanupActivityAt(previous)
+              );
+            })
+          )
+            return "thread activity or shared worktree changed since check";
           // Sessions can outlive their run and can be shared across app threads.
           const sessionRows = yield* sql<{ payload_json: string }>`
             SELECT payload_json FROM orchestration_v2_projection_provider_sessions
