@@ -70,15 +70,53 @@ interface Acquired {
   readonly lockWaitMs: number;
 }
 
-const annotateAcquired = (fiber: Fiber.Fiber<unknown, unknown>, acquired: Acquired | undefined) => {
+interface ConnectionOwner {
+  readonly fiberId: number;
+  readonly name: string;
+  readonly traceId?: string;
+  readonly spanId?: string;
+}
+
+const connectionOwner = (fiber: Fiber.Fiber<unknown, unknown>): ConnectionOwner => {
+  const current = Context.getOrUndefined(fiber.context, Tracer.ParentSpan);
+  if (current?._tag !== "Span") return { fiberId: fiber.id, name: "untraced" };
+  let span: Tracer.Span = current;
+  while (span.name === "sqlite" || span.name === "sql.transaction") {
+    const parent: Tracer.AnySpan | undefined = Option.getOrUndefined(span.parent);
+    if (parent?._tag !== "Span") break;
+    span = parent;
+  }
+  return { fiberId: fiber.id, name: span.name, traceId: span.traceId, spanId: span.spanId };
+};
+
+const annotateAcquired = (
+  fiber: Fiber.Fiber<unknown, unknown>,
+  acquired: Acquired | undefined,
+  ownerAtWaitStart?: ConnectionOwner,
+) => {
   const span = Context.getOrUndefined(fiber.context, Tracer.ParentSpan);
   if (span?._tag !== "Span" || acquired === undefined) return;
   span.attribute("db.connection", acquired.connection);
   span.attribute("db.lock_wait_ms", acquired.lockWaitMs);
+  if (ownerAtWaitStart !== undefined) {
+    span.attribute("db.lock_owner_at_start.fiber_id", ownerAtWaitStart.fiberId);
+    span.attribute("db.lock_owner_at_start.name", ownerAtWaitStart.name);
+    if (ownerAtWaitStart.traceId !== undefined) {
+      span.attribute("db.lock_owner_at_start.trace_id", ownerAtWaitStart.traceId);
+    }
+    if (ownerAtWaitStart.spanId !== undefined) {
+      span.attribute("db.lock_owner_at_start.span_id", ownerAtWaitStart.spanId);
+    }
+  }
 };
 
 const TransactionAcquire = Context.Reference<
-  { acquired?: Acquired; restore: typeof Effect.interruptible | undefined } | undefined
+  | {
+      acquired?: Acquired;
+      ownerAtWaitStart: ConnectionOwner | undefined;
+      restore: typeof Effect.interruptible | undefined;
+    }
+  | undefined
 >("@t3tools/shared/nodeSqliteClient/TransactionAcquire", { defaultValue: () => undefined });
 
 export class UnsupportedNodeSqliteVersionError extends Schema.TaggedError<UnsupportedNodeSqliteVersionError>()(
@@ -1070,6 +1108,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
   const readerSemaphore = yield* Semaphore.make(1);
 
   const writer = { name: "writer" as const, lock: semaphore, connection };
+  let activeWriter: ConnectionOwner | undefined;
   const route = Effect.withFiber((fiber) =>
     acquireReader !== undefined && Context.get(fiber.context, ReadOnly)
       ? Effect.map(acquireReader, (readerConnection) =>
@@ -1096,19 +1135,30 @@ const make = Effect.fn("makeWithDatabase")(function* (
       Effect.withFiber((fiber) => {
         const clock = fiber.getRef(Clock.Clock);
         const start = clock.monotonicTimeNanosUnsafe();
+        const ownerAtWaitStart = target.name === "writer" ? activeWriter : undefined;
+        const owner = target.name === "writer" ? connectionOwner(fiber) : undefined;
         const useConnection = Effect.suspend(() => {
+          if (target.name === "writer") activeWriter = owner;
           if (
             fiber.getRef(References.TracerEnabled) &&
             fiber.getRef(Statement.SpanPropagationEnabled)
           ) {
-            annotateAcquired(fiber, acquired(target, clock, start));
+            annotateAcquired(fiber, acquired(target, clock, start), ownerAtWaitStart);
           }
           return use(target.connection);
         });
+        const useOwnedConnection =
+          target.name === "writer"
+            ? Effect.onExit(useConnection, () =>
+                Effect.sync(() => {
+                  if (activeWriter === owner) activeWriter = undefined;
+                }),
+              )
+            : useConnection;
         if (!options.checkpointWorker || target.name !== "writer") {
-          return target.lock.withPermits(1)(useConnection);
+          return target.lock.withPermits(1)(useOwnedConnection);
         }
-        const writerUse = Effect.onExit(useConnection, (exit) =>
+        const writerUse = Effect.onExit(useOwnedConnection, (exit) =>
           Effect.sync(() => {
             writerBorrowsSinceYield = Exit.hasInterrupts(exit)
               ? 0
@@ -1142,9 +1192,20 @@ const make = Effect.fn("makeWithDatabase")(function* (
       const clock = fiber.getRef(Clock.Clock);
       const start = clock.monotonicTimeNanosUnsafe();
       const pending = fiber.getRef(TransactionAcquire);
+      const ownerAtWaitStart = target.name === "writer" ? activeWriter : undefined;
+      const owner = target.name === "writer" ? connectionOwner(fiber) : undefined;
       const acquire = Effect.tap((pending?.restore ?? restore)(target.lock.take(1)), () => {
-        if (pending !== undefined) pending.acquired = acquired(target, clock, start);
-        return Scope.addFinalizer(scope, target.lock.release(1));
+        if (target.name === "writer") activeWriter = owner;
+        if (pending !== undefined) {
+          pending.acquired = acquired(target, clock, start);
+          pending.ownerAtWaitStart = ownerAtWaitStart;
+        }
+        return Scope.addFinalizer(
+          scope,
+          Effect.sync(() => {
+            if (target.name === "writer" && activeWriter === owner) activeWriter = undefined;
+          }).pipe(Effect.andThen(target.lock.release(1))),
+        );
       });
       return Effect.as(
         // A scheduler yield after taking the permit must not precede its release finalizer.
@@ -1174,11 +1235,16 @@ const make = Effect.fn("makeWithDatabase")(function* (
     withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       Effect.uninterruptibleMask((restore) => {
         // SqlClient masks setup; acquisition must preserve the caller's interruptibility.
-        const pending: { acquired?: Acquired; restore: typeof Effect.interruptible | undefined } = {
+        const pending: {
+          acquired?: Acquired;
+          ownerAtWaitStart: ConnectionOwner | undefined;
+          restore: typeof Effect.interruptible | undefined;
+        } = {
+          ownerAtWaitStart: undefined,
           restore,
         };
         const body = Effect.withFiber<A, E, R>((fiber) => {
-          annotateAcquired(fiber, pending.acquired);
+          annotateAcquired(fiber, pending.acquired, pending.ownerAtWaitStart);
           pending.restore = undefined;
           return effect;
         });
