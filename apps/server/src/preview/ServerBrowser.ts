@@ -1260,10 +1260,12 @@ const make = Effect.gen(function* () {
     });
   });
 
-  const atTabLimit = (agentSessionId: string) =>
-    tabs.size + pendingTabs.size >= SERVER_TAB_LIMIT ||
+  const serverAtTabLimit = () => tabs.size + pendingTabs.size >= SERVER_TAB_LIMIT;
+  const agentAtTabLimit = (agentSessionId: string) =>
     [...tabs.values()].filter((tab) => tab.control.agentId === agentSessionId).length >=
-      AGENT_TAB_LIMIT;
+    AGENT_TAB_LIMIT;
+  const atTabLimit = (agentSessionId: string) =>
+    serverAtTabLimit() || agentAtTabLimit(agentSessionId);
 
   const assertTabCapacity = (agentSessionId: string) => {
     if (atTabLimit(agentSessionId))
@@ -1289,9 +1291,9 @@ const make = Effect.gen(function* () {
   // The server can't see whether someone is looking at a desktop tab, but the
   // desktop app renders every server tab, so idle desktop agent tabs would
   // otherwise hold the server's budget forever. They give up their slots,
-  // longest idle first, only when an agent needs one.
-  const freeIdleAgentSlot = () => {
-    if (tabs.size + pendingTabs.size < SERVER_TAB_LIMIT) return;
+  // longest idle first, only when an agent needs one and has room for it.
+  const freeIdleAgentSlot = (agentSessionId: string) => {
+    if (!serverAtTabLimit() || agentAtTabLimit(agentSessionId)) return;
     const longestIdle = idleAgentTabs().sort((left, right) => left.usedAt - right.usedAt)[0];
     if (longestIdle) dropTab(longestIdle, true);
   };
@@ -1789,7 +1791,7 @@ const make = Effect.gen(function* () {
         const profileId = existing ? undefined : resolveOpenProfile(open.profileId);
         if (!existing) {
           closeIdleAgentTabs();
-          freeIdleAgentSlot();
+          freeIdleAgentSlot(request.agentSessionId);
           assertTabCapacity(request.agentSessionId);
         }
         const tab =

@@ -1178,6 +1178,9 @@ it.live("a full server takes back the slot of the longest idle agent tab, even a
       expect(releasedDesktopTabs).toEqual([]);
 
       now.mockReturnValue(31 * 60 * 1000);
+      // A session at its own limit couldn't use a freed slot, so nothing closes for it.
+      expect(yield* open("agent-3").pipe(Effect.flip)).toMatchObject({ reason: "tabLimit" });
+      expect(releasedDesktopTabs).toEqual([]);
       const fresh = yield* open("agent-new");
       expect(fresh.tabId).toBeDefined();
       expect(releasedDesktopTabs).toEqual([opened[0]]);
