@@ -51,6 +51,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private let aggregateIdleRefreshInterval: Duration
     private let aggregateFailureRefreshInterval: Duration
     private let aggregateRefreshSleep: @Sendable (Duration) async throws -> Void
+    private let aggregateRefreshNow: @Sendable () -> ContinuousClock.Instant
     private let environmentShellTimeoutInterval: TimeInterval
     private let threadSnapshotTimeoutInterval: TimeInterval
     private let catchUpDelay: @Sendable () async throws -> Void
@@ -165,6 +166,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         aggregateRefreshSleep: @escaping @Sendable (Duration) async throws -> Void = {
             try await Task.sleep(for: $0)
         },
+        aggregateRefreshNow: @escaping @Sendable () -> ContinuousClock.Instant = {
+            ContinuousClock.now
+        },
         environmentShellTimeoutInterval: TimeInterval = 6,
         threadSnapshotTimeoutInterval: TimeInterval = 8,
         catchUpDelay: @escaping @Sendable () async throws -> Void = {
@@ -214,6 +218,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         self.aggregateIdleRefreshInterval = aggregateIdleRefreshInterval
         self.aggregateFailureRefreshInterval = aggregateFailureRefreshInterval
         self.aggregateRefreshSleep = aggregateRefreshSleep
+        self.aggregateRefreshNow = aggregateRefreshNow
         self.environmentShellTimeoutInterval = environmentShellTimeoutInterval
         self.threadSnapshotTimeoutInterval = threadSnapshotTimeoutInterval
         self.catchUpDelay = catchUpDelay
@@ -4998,6 +5003,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     /// Non-active environments do not hold WebSocket subscriptions. A quiet
     /// HTTP refresh keeps their home rows and reachability useful without
     /// multiplying live streams or creating a high-frequency battery cost.
+    /// Each environment's load reports back on its own, so a slow computer
+    /// cannot hold back a peer's rows or its next refresh.
     private func startAggregateRefresh(_ activeClient: T3Client) {
         aggregateRefreshTask?.cancel()
         let generation = environmentGeneration
@@ -5006,18 +5013,43 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         let idleInterval = aggregateIdleRefreshInterval
         let failureInterval = aggregateFailureRefreshInterval
         let sleep = aggregateRefreshSleep
+        let now = aggregateRefreshNow
         let loadEnvironments = aggregateEnvironmentLoader
         aggregateRefreshID = refreshID
         aggregateRefreshTask = Task { [weak self] in
-            var nextInterval = fastInterval
-            var failureBackoffs: [String: Duration] = [:]
-            while !Task.isCancelled {
-                let elapsedInterval = nextInterval
-                do {
-                    try await sleep(nextInterval)
-                } catch {
-                    return
+            let (events, eventSink) = AsyncStream.makeStream(of: AggregateRefreshEvent.self)
+            var tickID = 0
+            var tickTask: Task<Void, Never>?
+            var tickDeadline = now() + fastInterval
+            var loadTasks: [String: Task<Void, Never>] = [:]
+            var cycleEnvironmentIDs: Set<String> = []
+            var cycleNeedsFastRefresh = false
+            var environments: [Environment] = []
+            // Measured from when each failure was answered, not from ticks,
+            // because a tick can be pulled earlier or land mid-load.
+            var retryDeadlines: [String: ContinuousClock.Instant] = [:]
+            defer {
+                tickTask?.cancel()
+                loadTasks.values.forEach { $0.cancel() }
+                eventSink.finish()
+            }
+            func scheduleTick(after interval: Duration) {
+                tickTask?.cancel()
+                tickID &+= 1
+                tickDeadline = now() + interval
+                let id = tickID
+                tickTask = Task {
+                    do {
+                        try await sleep(interval)
+                    } catch {
+                        return
+                    }
+                    eventSink.yield(.tick(id: id))
                 }
+            }
+
+            scheduleTick(after: fastInterval)
+            for await event in events {
                 guard let self,
                       self.aggregateRefreshID == refreshID,
                       self.isCurrentSession(
@@ -5027,91 +5059,109 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                       let activeEnvironment = self.activeEnvironment else {
                     return
                 }
-                let environments: [Environment]
-                let loadGenerations = self.environmentLoadGenerations
-                do {
-                    environments = try await loadEnvironments(self.runtime)
-                } catch is CancellationError where Task.isCancelled {
-                    return
-                } catch {
-                    // Persistence can be briefly unavailable while another
-                    // actor atomically replaces the environment document.
-                    // Back off while keeping the loop alive for recovery.
-                    nextInterval = failureInterval
-                    continue
-                }
-                guard !Task.isCancelled,
-                      self.aggregateRefreshID == refreshID,
-                      self.isCurrentSession(
-                          client: activeClient,
-                          generation: generation
-                      ) else {
-                    return
-                }
-                let passiveEnvironments = environments.filter {
-                    $0.isEnabled && $0.id != activeEnvironment.id
-                }
-                guard !passiveEnvironments.isEmpty else {
-                    nextInterval = idleInterval
-                    continue
-                }
-                let passiveIDs = Set(passiveEnvironments.map(\.id))
-                failureBackoffs = failureBackoffs.reduce(into: [:]) { result, entry in
-                    guard passiveIDs.contains(entry.key) else { return }
-                    result[entry.key] = max(.zero, entry.value - elapsedInterval)
-                }
-                let refreshableEnvironments = passiveEnvironments.filter {
-                    failureBackoffs[$0.id, default: .zero] <= .zero
-                }
-                guard !refreshableEnvironments.isEmpty else {
-                    nextInterval = fastInterval
-                    continue
-                }
-                let loads = await self.loadEnvironmentShells(refreshableEnvironments, loadGenerations: loadGenerations)
-                guard !Task.isCancelled,
-                      self.aggregateRefreshID == refreshID,
-                      self.isCurrentSession(
-                          client: activeClient,
-                          generation: generation
-                      ) else {
-                    return
-                }
-                let shellsChanged = loads.contains { load in
-                    guard let shell = load.shell else { return false }
-                    return shell != self.shellsByEnvironmentID[load.environment.id]
-                }
-                let hasActiveWork = loads.contains { load in
-                    load.shell.map(Self.shellNeedsFrequentAggregateRefresh) == true
-                }
-                for load in loads {
-                    if load.credentialRejected {
-                        // Only re-pairing changes this. Re-pairing replaces
-                        // the runtime client and restarts this loop.
-                        failureBackoffs[load.environment.id] = .seconds(24 * 60 * 60)
-                    } else if load.shell == nil {
-                        failureBackoffs[load.environment.id] = failureInterval
-                    } else {
-                        failureBackoffs[load.environment.id] = nil
+                switch event {
+                case let .tick(id):
+                    guard id == tickID else { continue }
+                    tickTask = nil
+                    let loadGenerations = self.environmentLoadGenerations
+                    do {
+                        environments = try await loadEnvironments(self.runtime)
+                    } catch is CancellationError where Task.isCancelled {
+                        return
+                    } catch {
+                        // Persistence can be briefly unavailable while another
+                        // actor atomically replaces the environment document.
+                        // Back off while keeping the loop alive for recovery.
+                        scheduleTick(after: failureInterval)
+                        continue
                     }
-                }
-                self.reconcileEnvironmentLoads(loads, savedEnvironments: environments)
-                let currentConnection = self.latestSnapshot?.connection
-                    ?? FeatureConnection(
-                        state: .disconnected,
-                        environmentName: activeEnvironment.label,
-                        endpoint: activeEnvironment.httpBaseURL.absoluteString
+                    guard !Task.isCancelled,
+                          self.aggregateRefreshID == refreshID,
+                          self.isCurrentSession(
+                              client: activeClient,
+                              generation: generation
+                          ) else {
+                        return
+                    }
+                    let passiveEnvironments = environments.filter {
+                        $0.isEnabled && $0.id != activeEnvironment.id
+                    }
+                    guard !passiveEnvironments.isEmpty else {
+                        scheduleTick(after: idleInterval)
+                        continue
+                    }
+                    let passiveIDs = Set(passiveEnvironments.map(\.id))
+                    retryDeadlines = retryDeadlines.filter { passiveIDs.contains($0.key) }
+                    let tickInstant = now()
+                    // A load still running from an earlier tick keeps its
+                    // place; it is neither restarted nor waited for.
+                    let refreshableEnvironments = passiveEnvironments.filter {
+                        (retryDeadlines[$0.id] ?? tickInstant) <= tickInstant && loadTasks[$0.id] == nil
+                    }
+                    guard !refreshableEnvironments.isEmpty else {
+                        scheduleTick(after: fastInterval)
+                        continue
+                    }
+                    cycleEnvironmentIDs = Set(refreshableEnvironments.map(\.id))
+                    cycleNeedsFastRefresh = false
+                    for environment in refreshableEnvironments {
+                        loadTasks[environment.id] = Task { [weak self] in
+                            let loads = await self?.loadEnvironmentShells(
+                                [environment], loadGenerations: loadGenerations
+                            ) ?? []
+                            eventSink.yield(.loaded(environmentID: environment.id, loads: loads))
+                        }
+                    }
+                case let .loaded(environmentID, loads):
+                    loadTasks[environmentID] = nil
+                    let shellsChanged = loads.contains { load in
+                        guard let shell = load.shell else { return false }
+                        return shell != self.shellsByEnvironmentID[load.environment.id]
+                    }
+                    let hasActiveWork = loads.contains { load in
+                        load.shell.map(Self.shellNeedsFrequentAggregateRefresh) == true
+                    }
+                    for load in loads {
+                        if load.credentialRejected {
+                            // Only re-pairing changes this. Re-pairing replaces
+                            // the runtime client and restarts this loop.
+                            retryDeadlines[load.environment.id] = now() + .seconds(24 * 60 * 60)
+                        } else if load.shell == nil {
+                            retryDeadlines[load.environment.id] = now() + failureInterval
+                        } else {
+                            retryDeadlines[load.environment.id] = nil
+                        }
+                    }
+                    self.reconcileEnvironmentLoads(loads, savedEnvironments: environments)
+                    let currentConnection = self.latestSnapshot?.connection
+                        ?? FeatureConnection(
+                            state: .disconnected,
+                            environmentName: activeEnvironment.label,
+                            endpoint: activeEnvironment.httpBaseURL.absoluteString
+                        )
+                    let snapshot = self.makeSnapshot(
+                        environments: environments,
+                        activeEnvironment: activeEnvironment,
+                        connectionState: currentConnection.state,
+                        connectionDetail: currentConnection.detail
                     )
-                let snapshot = self.makeSnapshot(
-                    environments: environments,
-                    activeEnvironment: activeEnvironment,
-                    connectionState: currentConnection.state,
-                    connectionDetail: currentConnection.detail
-                )
-                self.publish(snapshot)
-                if shellsChanged || hasActiveWork {
-                    nextInterval = fastInterval
-                } else {
-                    nextInterval = idleInterval
+                    self.publish(snapshot)
+
+                    let needsFastRefresh = shellsChanged || hasActiveWork
+                    cycleNeedsFastRefresh = cycleNeedsFastRefresh || needsFastRefresh
+                    cycleEnvironmentIDs.remove(environmentID)
+                    if tickTask == nil {
+                        // The first answer sets the cadence; a peer that is
+                        // still loading reports back whenever it finishes.
+                        let succeeded = loads.contains { $0.shell != nil }
+                        if succeeded || cycleEnvironmentIDs.isEmpty {
+                            scheduleTick(after: cycleNeedsFastRefresh ? fastInterval : idleInterval)
+                        }
+                    } else if needsFastRefresh, now() + fastInterval < tickDeadline {
+                        // Only ever pull the pending refresh earlier, never
+                        // push it past the deadline it already has.
+                        scheduleTick(after: fastInterval)
+                    }
                 }
             }
         }
@@ -8929,6 +8979,11 @@ private struct AttachmentCacheKey: Hashable {
 private struct CachedAttachmentURL {
     let url: URL
     let expiresAt: Date
+}
+
+private enum AggregateRefreshEvent: Sendable {
+    case tick(id: Int)
+    case loaded(environmentID: String, loads: [EnvironmentShellLoad])
 }
 
 private struct EnvironmentShellLoad: Sendable {
