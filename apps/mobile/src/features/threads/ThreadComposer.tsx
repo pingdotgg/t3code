@@ -147,7 +147,8 @@ export function useCompactComposerEditor(text: ScaledTextRole, value: string) {
   const rowWidth = useSharedValue(0);
   const editorX = useSharedValue(0);
   const editorWidth = useSharedValue(0);
-  const inset = Platform.OS === "android" ? 0 : collapsedEditorInset(text);
+  const inset =
+    Platform.OS === "android" ? COLLAPSED_EDITOR_DEFAULT_INSET : collapsedEditorInset(text);
   const minimum = Math.max(INLINE_EDITOR_HEIGHT, Math.ceil(text.lineHeight) + 2 * inset);
   const height = Math.max(
     minimum,
@@ -216,7 +217,7 @@ export function useCompactComposerEditor(text: ScaledTextRole, value: string) {
       }
     },
     editorProps: {
-      singleLineCentered: false,
+      singleLineCentered: !isExpanded,
       scrollEnabled: Platform.OS === "android" || contentHeight >= text.lineHeight * 4,
       contentInsetVertical: inset,
       onContentSizeChange: (size: { width: number; height: number }) => {
