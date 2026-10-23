@@ -3,10 +3,12 @@ import { RegistryProvider } from "@effect/atom-react";
 import { DEFAULT_SERVER_SETTINGS, type StorageCleanupReport } from "@t3tools/contracts";
 import { type ReactNode } from "react";
 import { expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
 const state = vi.hoisted(() => ({
   settings: {} as typeof DEFAULT_SERVER_SETTINGS,
   run: vi.fn(),
+  update: vi.fn(),
   report: null as StorageCleanupReport | null,
 }));
 
@@ -61,7 +63,7 @@ vi.mock(import("./useScopedSettings"), async (original) => ({
   ...(await original()),
   useScopedSettings: (() => state.settings) as never,
   useScopedSettingsMixed: () => false,
-  useUpdateScopedSettings: () => vi.fn(),
+  useUpdateScopedSettings: () => state.update,
   useClearScopedSettings: () => vi.fn(),
 }));
 // The real page container needs a router and the real row reads write permission and
@@ -103,6 +105,7 @@ function setup() {
   };
   state.report = null;
   state.run.mockReset();
+  state.update.mockReset();
 }
 
 const panel = () => (
@@ -123,4 +126,155 @@ it("keeps cleanup disabled when settled retention and all other rules are off", 
   expect(button.disabled).toBe(true);
   await act(async () => button.click());
   expect(state.run).not.toHaveBeenCalled();
+});
+
+it("saves a newly enabled retention rule only once its visible age is committed", async () => {
+  const label = "Delete inactive worktrees";
+  setup();
+  await using screen = await render(panel());
+  await act(async () =>
+    screen.container.querySelector<HTMLElement>(`[role="switch"][aria-label="${label}"]`)!.click(),
+  );
+  expect(state.update).not.toHaveBeenCalled();
+
+  const input = screen.container.querySelector<HTMLInputElement>(
+    `input[aria-label="${label} in days"]`,
+  )!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "30");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.blur();
+  });
+  expect(state.update).toHaveBeenCalledExactlyOnceWith({
+    storageCleanup: { worktreeAfterDays: 30 },
+  });
+});
+
+const inactive = "Delete inactive worktrees";
+const ruleSwitch = (root: ParentNode, label: string) =>
+  root.querySelector<HTMLElement>(`[role="switch"][aria-label="${label}"]`)!;
+const daysInput = (root: ParentNode, label: string) =>
+  root.querySelector<HTMLInputElement>(`input[aria-label="${label} in days"]`);
+function setInputValue(input: HTMLInputElement, value: string) {
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+const pressKey = (input: HTMLInputElement, key: string) =>
+  input.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+async function openDraft(label: string) {
+  await using stack = new AsyncDisposableStack();
+  const screen = stack.use(await render(panel()));
+  await act(async () => ruleSwitch(screen.container, label).click());
+  stack.move();
+  return screen;
+}
+
+it("saves the visible default when Enter commits an untouched retention draft", async () => {
+  setup();
+  await using screen = await openDraft(inactive);
+  await act(async () => pressKey(daysInput(screen.container, inactive)!, "Enter"));
+  expect(state.update).toHaveBeenCalledExactlyOnceWith({
+    storageCleanup: { worktreeAfterDays: 8 },
+  });
+});
+
+it("does not save a retention draft whose visible text is not a number", async () => {
+  setup();
+  await using screen = await openDraft(inactive);
+  const input = daysInput(screen.container, inactive)!;
+  for (const text of ["+", "."]) {
+    input.select();
+    await userEvent.keyboard(`${text}{Enter}`);
+    expect(input.value).toBe(text);
+  }
+  expect(state.update).not.toHaveBeenCalled();
+  input.select();
+  await userEvent.keyboard("30{Enter}");
+  expect(state.update).toHaveBeenCalledExactlyOnceWith({
+    storageCleanup: { worktreeAfterDays: 30 },
+  });
+});
+
+it("still cancels a retention draft left after clicking its days label", async () => {
+  setup();
+  await using screen = await openDraft(inactive);
+  const input = daysInput(screen.container, inactive)!;
+  await userEvent.click(input.parentElement!.querySelector("span[aria-hidden]")!);
+  const outside = document.createElement("button");
+  document.body.append(outside);
+  await userEvent.click(outside);
+  outside.remove();
+  expect(daysInput(screen.container, inactive)).toBeNull();
+  expect(state.update).not.toHaveBeenCalled();
+});
+
+it("saves a retention step from the drafted age", async () => {
+  const label = "Delete old rotated logs";
+  setup();
+  await using screen = await openDraft(label);
+  const step = screen.container.querySelector<HTMLElement>(`[aria-label="Increase ${label}"]`)!;
+  await act(async () => step.click());
+  expect(state.update).toHaveBeenCalledExactlyOnceWith({ storageCleanup: { logsAfterDays: 9 } });
+});
+
+it("returns a retention rule to off when saving its age fails", async () => {
+  setup();
+  state.update.mockResolvedValue(false);
+  await using screen = await openDraft(inactive);
+  await act(async () => pressKey(daysInput(screen.container, inactive)!, "Enter"));
+  expect(state.update).toHaveBeenCalledOnce();
+  expect(daysInput(screen.container, inactive)).toBeNull();
+});
+
+it("saves an age edited while an earlier enabling save is pending", async () => {
+  setup();
+  let failFirst!: (saved: boolean) => void;
+  state.update
+    .mockReturnValueOnce(new Promise<boolean>((resolve) => (failFirst = resolve)))
+    .mockReturnValueOnce(new Promise<boolean>(() => {}));
+  await using screen = await openDraft(inactive);
+  const input = daysInput(screen.container, inactive)!;
+  await act(async () => pressKey(input, "Enter"));
+  await act(async () => {
+    setInputValue(input, "30");
+    input.blur();
+  });
+  expect(state.update).toHaveBeenNthCalledWith(2, { storageCleanup: { worktreeAfterDays: 30 } });
+
+  await act(async () => failFirst(false));
+  await vi.waitFor(() => expect(daysInput(screen.container, inactive)?.value).toBe("30"));
+});
+
+it("keeps a retention rule off when its draft is left, cancelled, or switched off", async () => {
+  setup();
+  await using screen = await openDraft(inactive);
+  const outside = document.createElement("button");
+  document.body.append(outside);
+  await act(async () => outside.focus());
+  outside.remove();
+  expect(daysInput(screen.container, inactive)).toBeNull();
+
+  await act(async () => ruleSwitch(screen.container, inactive).click());
+  await act(async () => pressKey(daysInput(screen.container, inactive)!, "Escape"));
+  expect(daysInput(screen.container, inactive)).toBeNull();
+
+  await act(async () => ruleSwitch(screen.container, inactive).click());
+  await act(async () => setInputValue(daysInput(screen.container, inactive)!, "30"));
+  await act(async () => {
+    ruleSwitch(screen.container, inactive).focus();
+    ruleSwitch(screen.container, inactive).click();
+  });
+  expect(daysInput(screen.container, inactive)).toBeNull();
+  expect(state.update).not.toHaveBeenCalled();
+});
+
+it("turns an enabled retention rule off immediately", async () => {
+  const label = "Delete old browser artifacts";
+  setup();
+  Object.assign(state.settings.storageCleanup, { browserArtifactsAfterDays: 30 });
+  await using screen = await render(panel());
+  await act(async () => ruleSwitch(screen.container, label).click());
+  expect(state.update).toHaveBeenCalledExactlyOnceWith({
+    storageCleanup: { browserArtifactsAfterDays: null },
+  });
 });

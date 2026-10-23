@@ -61,9 +61,9 @@ function useRunScopedPlan() {
         title: "Setting not saved",
         description: plan.unavailableReason,
       });
-      return;
+      return Promise.resolve(false);
     }
-    void persistScopedSettingsPatch(
+    return persistScopedSettingsPatch(
       plan,
       async (request) => {
         const missing = requiredScopesForServerSettingsPatch(request.input.patch).find(
@@ -82,7 +82,7 @@ function useRunScopedPlan() {
       },
       persistClientSettingsPatch,
     ).then(({ failedEnvironments, savedEnvironments, savedEnvironmentCount }) => {
-      if (failedEnvironments.length === 0) return;
+      if (failedEnvironments.length === 0) return true;
       toastManager.add({
         type: "error",
         title:
@@ -96,6 +96,7 @@ function useRunScopedPlan() {
             : []),
         ].join("\n"),
       });
+      return false;
     });
   };
 }
@@ -103,7 +104,8 @@ function useRunScopedPlan() {
 export function useUpdateScopedSettings() {
   const { scope, environments } = useSettingsScope();
   const run = useRunScopedPlan();
-  return (patch: ScopedSettingsPatch) => run(planScopedSettingsPatch(scope, environments, patch));
+  return (patch: ScopedSettingsPatch): Promise<boolean> | void =>
+    run(planScopedSettingsPatch(scope, environments, patch));
 }
 
 export function useClearScopedSettings() {
@@ -111,7 +113,7 @@ export function useClearScopedSettings() {
   const run = useRunScopedPlan();
   return (keys: readonly ProjectScopedServerSettingKey[]) => {
     if (context === null) return;
-    run(planScopedSettingsClear(context.scope, context.environments, keys));
+    void run(planScopedSettingsClear(context.scope, context.environments, keys));
   };
 }
 
