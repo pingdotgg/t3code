@@ -147,6 +147,7 @@ const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Pl
 
 type AppScreenOptions = NativeStackNavigationOptions & {
   readonly unstable_navigationItemStyle?: "editor";
+  readonly unstable_headerMinimizationBehavior?: "onScrollUp";
 };
 
 const GLASS_HEADER_OPTIONS: AppScreenOptions = {
@@ -167,6 +168,13 @@ const GLASS_HEADER_OPTIONS: AppScreenOptions = {
 const DETAIL_HEADER_OPTIONS: AppScreenOptions = {
   ...GLASS_HEADER_OPTIONS,
   headerShown: Platform.OS !== "android",
+};
+
+// Like Messages on the Duo: reading back through history (scrolling up) minimizes the
+// header, and reversing toward the latest message restores it. Other devices ignore it.
+const THREAD_HEADER_OPTIONS: AppScreenOptions = {
+  ...DETAIL_HEADER_OPTIONS,
+  unstable_headerMinimizationBehavior: "onScrollUp",
 };
 
 const SOLID_HEADER_OPTIONS: AppScreenOptions = {
@@ -707,7 +715,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
     Thread: createNativeStackScreen({
       screen: ThreadRouteScreen,
       linking: { path: "threads/:environmentId?/:threadId?", alias: ["new/draft"] },
-      options: DETAIL_HEADER_OPTIONS,
+      options: THREAD_HEADER_OPTIONS,
     }),
     NewTaskProject: createNativeStackScreen({
       screen: NewTaskRouteScreen,
