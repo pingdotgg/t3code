@@ -11,7 +11,8 @@ const BACKGROUND_TAB_HEIGHT = 800;
 /**
  * An agent tab's never-shown window. A panel `<webview>` that attaches while
  * the app window is hidden or minimized never paints, so its screenshots never
- * return; a window of its own paints in every app window state.
+ * return. Offscreen rendering also avoids dependence on a mapped Wayland
+ * surface: a regular never-shown BrowserWindow can still stall captures there.
  */
 export function backgroundTabWindowOptions(input: {
   readonly partition: string;
@@ -34,6 +35,7 @@ export function backgroundTabWindowOptions(input: {
       contextIsolation: false,
       disableHtmlFullscreenWindowResize: true,
       backgroundThrottling: false,
+      offscreen: true,
       ...(input.passkeyBridgeArgument === undefined
         ? {}
         : { additionalArguments: [input.passkeyBridgeArgument] }),

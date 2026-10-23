@@ -600,9 +600,9 @@ describe("PreviewManager", () => {
       ),
   );
 
-  effectIt.effect(
-    "hosts an agent tab in a never-shown window that paints and closes with the tab",
-    () =>
+  effectIt.effect.each([undefined, "https://example.com/agent"])(
+    "hosts an agent tab in a never-shown window that initializes before attaching (%s)",
+    (url) =>
       withManager((manager) =>
         Effect.gen(function* () {
           const tab = makeTestPreviewWebContents(
@@ -613,8 +613,20 @@ describe("PreviewManager", () => {
             55,
             null as unknown as TestHostWebContents,
           );
-          const loadURL = vi.fn(async () => undefined);
-          Object.assign(tab, { getType: () => "window", once: vi.fn(), loadURL, reload: vi.fn() });
+          const firstDocument = Promise.withResolvers<void>();
+          const debuggerStarted = Promise.withResolvers<void>();
+          const loadURL = vi.fn(async () => firstDocument.resolve());
+          tab.debugger.sendCommand = vi.fn(async () => {
+            debuggerStarted.resolve();
+            await firstDocument.promise;
+          });
+          Object.assign(tab, {
+            getType: () => "window",
+            isDevToolsOpened: () => false,
+            once: vi.fn(),
+            loadURL,
+            reload: vi.fn(),
+          });
           const window = {
             webContents: tab,
             once: vi.fn(),
@@ -630,11 +642,18 @@ describe("PreviewManager", () => {
           });
           fromId.mockReturnValue(tab);
 
-          const state = yield* manager.createTab(
-            "tab_agent",
-            { serverTab: { threadId: "thread", tabId: "agent" } },
-            { partition: "persist:t3code-preview-test", url: "https://example.com/agent" },
-          );
+          const opening = yield* manager
+            .createTab(
+              "tab_agent",
+              { serverTab: { threadId: "thread", tabId: "agent" } },
+              { partition: "persist:t3code-preview-test", ...(url === undefined ? {} : { url }) },
+            )
+            .pipe(Effect.forkScoped);
+          yield* Effect.promise(() => debuggerStarted.promise);
+          const loadedBeforeDebugger = loadURL.mock.calls.length > 0;
+          firstDocument.resolve();
+          expect(loadedBeforeDebugger).toBe(true);
+          const state = yield* Fiber.join(opening);
 
           expect(options).toMatchObject({
             show: false,
@@ -642,10 +661,11 @@ describe("PreviewManager", () => {
             webPreferences: {
               partition: "persist:t3code-preview-test",
               backgroundThrottling: false,
+              offscreen: true,
             },
           });
           expect(state.webContentsId).toBe(55);
-          expect(loadURL).toHaveBeenCalledWith("https://example.com/agent");
+          expect(loadURL).toHaveBeenCalledWith(url ?? "about:blank");
           yield* manager.closeTab("tab_agent");
           expect(window.destroy).toHaveBeenCalledOnce();
         }),

@@ -1775,6 +1775,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     wc.on("render-process-gone", () => {
       if (!wc.isDestroyed()) wc.reload();
     });
+    // A new BrowserWindow has no document. Its debugger's background-color
+    // command waits for one, so initialize a local page before attaching.
+    yield* attemptPromise(
+      { operation: "backgroundWindow.initialize", tabId, webContentsId: wc.id },
+      () => wc.loadURL("about:blank"),
+    );
     yield* prepareWebview(wc);
     yield* registerWebviewUnlocked(tabId, wc.id, tabLifecycleGenerations.get(tabId));
     if (background.url !== undefined) {

@@ -6,6 +6,10 @@ const NodePath = require("node:path");
 const NodeURL = require("node:url");
 const { app, BrowserWindow, nativeImage } = require("electron");
 
+const testHome = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-background-preview-"));
+app.setPath("userData", NodePath.join(testHome, "userdata"));
+app.on("quit", () => NodeFS.rmSync(testHome, { recursive: true, force: true }));
+
 const CAPTURE_TIMEOUT_MS = 5_000;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const withTimeout = (promise, ms) =>
@@ -36,10 +40,7 @@ async function main() {
   const { backgroundTabWindowOptions } = await import(
     NodeURL.pathToFileURL(NodePath.join(__dirname, "../src/preview/BackgroundTabWindow.ts")).href
   );
-  const preload = NodePath.join(
-    NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-background-preview-")),
-    "preload.cjs",
-  );
+  const preload = NodePath.join(testHome, "preload.cjs");
   NodeFS.writeFileSync(preload, "");
   // Each state closes its windows, which would otherwise quit the app.
   app.on("window-all-closed", () => {});
@@ -47,6 +48,7 @@ async function main() {
 
   const failures = [];
   for (const state of ["hidden", "minimized"]) {
+    console.log(`Checking app window ${state}`);
     const appWindow = new BrowserWindow({ width: 480, height: 320, show: true });
     await appWindow.loadURL(page("<body>T3 Code</body>"));
     await sleep(500);
@@ -63,6 +65,7 @@ async function main() {
       }),
     );
     await tabWindow.loadURL(page("<body style='margin:0'></body>"));
+    console.log(`Background tab loaded (${state})`);
     const tab = tabWindow.webContents;
     tab.debugger.attach("1.3");
     for (const [step, rgb] of [
@@ -71,6 +74,7 @@ async function main() {
       [3, [0, 200, 200]],
     ]) {
       const failure = await captureColor(tab, rgb);
+      console.log(`App window ${state}, capture ${step}: ${failure ?? "fresh"}`);
       if (failure) failures.push(`app window ${state}, capture ${step}: ${failure}`);
       await sleep(1_000);
     }
