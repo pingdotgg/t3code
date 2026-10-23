@@ -103,7 +103,7 @@ export function loadRepoEnv({
   };
 }
 
-export function resolvePublicConfig(...sources: readonly Environment[]): T3CodePublicConfig {
+function resolvePublicConfig(...sources: readonly Environment[]): T3CodePublicConfig {
   return {
     clerkPublishableKey: firstNonEmpty(
       sources,

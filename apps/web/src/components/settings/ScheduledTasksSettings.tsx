@@ -417,7 +417,6 @@ export function ScheduledTasksSettings(target: {
               <ScheduledTaskEnvironmentSection
                 key={`${entry.environmentId}:${target.taskId ?? ""}`}
                 environment={entry}
-                showEnvironmentHeading={environments.length > 1}
                 taskId={
                   (target.environmentId ?? defaultEnvironment?.environmentId) ===
                   entry.environmentId
@@ -584,12 +583,10 @@ function ScheduledTaskEnvironmentList({
 
 function ScheduledTaskEnvironmentSection({
   environment,
-  showEnvironmentHeading,
   taskId,
   onEdit,
 }: {
   readonly environment: EnvironmentPresentation;
-  readonly showEnvironmentHeading: boolean;
   readonly taskId?: ScheduledTaskId | undefined;
   readonly onEdit: (environmentId: EnvironmentId, task: ScheduledTask) => void;
 }) {
@@ -618,7 +615,7 @@ function ScheduledTaskEnvironmentSection({
   return (
     <SettingsSection
       title={environment.label}
-      hideTitle={!showEnvironmentHeading}
+      hideTitle
       icon={
         <EnvironmentMachineIcon
           kind={resolveEnvironmentMachineKind(environment.serverConfig)}

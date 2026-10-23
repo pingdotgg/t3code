@@ -88,7 +88,7 @@ const fetchFollowingRedirects = Effect.fn("GitHubMediaFetch.fetchFollowingRedire
 });
 
 export const githubMediaResponse = Effect.fn("GitHubMediaFetch.githubMediaResponse")(function* (
-  asset: { readonly url: string; readonly cwd: string; readonly expiresAt: number },
+  asset: { readonly url: string; readonly expiresAt: number },
   requestHeaders: Record<string, string | undefined>,
 ) {
   // Both media hosts are served by github.com's account, which is the host `gh` stores it under.

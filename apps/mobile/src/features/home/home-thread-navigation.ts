@@ -6,7 +6,7 @@ import {
   type NavigationState,
 } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import { useCallback, useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { Platform } from "react-native";
 import { useAndroidWorkspaceSelection } from "../workspace/useAndroidWorkspaceSelection";
 
@@ -33,20 +33,6 @@ export function createHomeThreadRouteAction(input: {
     };
   }
   return CommonActions.navigate("Thread", input.params);
-}
-
-export function createHomeThreadNavigationAction(input: {
-  readonly state: Pick<NavigationState, "index" | "routes">;
-  readonly dismissingRouteKey: string | null;
-  readonly thread: ThreadSelection;
-}) {
-  return createHomeThreadRouteAction({
-    ...input,
-    params: {
-      environmentId: input.thread.environmentId,
-      threadId: input.thread.id,
-    },
-  });
 }
 
 export function useHomeThreadRouteSelection() {
@@ -76,32 +62,26 @@ export function useHomeThreadRouteSelection() {
     };
   }, [navigation]);
 
-  return useCallback(
-    (params: ReactNavigation.RootParamList["Thread"]) => {
-      if (Platform.OS === "android") {
-        selectAndroidWorkspace({
-          name: "Thread",
-          params,
-        });
-        return;
-      }
-      navigation.dispatch((state) =>
-        createHomeThreadRouteAction({
-          state,
-          dismissingRouteKey: dismissingRouteKey.current,
-          params,
-        }),
-      );
-    },
-    [navigation, selectAndroidWorkspace],
-  );
+  return (params: ReactNavigation.RootParamList["Thread"]) => {
+    if (Platform.OS === "android") {
+      selectAndroidWorkspace({
+        name: "Thread",
+        params,
+      });
+      return;
+    }
+    navigation.dispatch((state) =>
+      createHomeThreadRouteAction({
+        state,
+        dismissingRouteKey: dismissingRouteKey.current,
+        params,
+      }),
+    );
+  };
 }
 
 export function useHomeThreadSelection() {
   const selectRoute = useHomeThreadRouteSelection();
-  return useCallback(
-    (thread: ThreadSelection) =>
-      selectRoute({ environmentId: thread.environmentId, threadId: thread.id }),
-    [selectRoute],
-  );
+  return (thread: ThreadSelection) =>
+    selectRoute({ environmentId: thread.environmentId, threadId: thread.id });
 }

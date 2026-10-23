@@ -195,16 +195,6 @@ const SOURCE_EVENT: ServerConfigStreamEventType = {
   },
 };
 
-const LEGACY_SERVER_CONFIG = {
-  ...ENCODED_SERVER_CONFIG,
-  environment: {
-    ...ENCODED_SERVER_CONFIG.environment,
-    capabilities: {
-      repositoryIdentity: true,
-    },
-  },
-};
-
 const makeFactory = Effect.fn("TestRpcSessionFactory.make")(function* (
   options: RpcSession.RpcSessionOptions = {},
 ) {
@@ -329,7 +319,7 @@ describe("RpcSessionFactory", () => {
       socket.close(1012, "service restart");
       const error = yield* Effect.flip(session.closed);
       const configStreamError = yield* session
-        .subscribeServerConfig({})
+        .subscribeServerConfig({ usageLimitSources: true, usageLimitsCommand: true })
         .pipe(Stream.runDrain, Effect.flip);
 
       expect(error).toBeInstanceOf(ConnectionTransientError);
@@ -374,7 +364,7 @@ describe("RpcSessionFactory", () => {
         yield* Fiber.join(readyFiber);
 
         const collectTwo = session
-          .subscribeServerConfig({})
+          .subscribeServerConfig({ usageLimitSources: true, usageLimitsCommand: true })
           .pipe(Stream.take(2), Stream.runCollect);
         const firstSubscriber = yield* Effect.forkChild(collectTwo);
         const secondSubscriber = yield* Effect.forkChild(collectTwo);
@@ -411,7 +401,9 @@ describe("RpcSessionFactory", () => {
         expect(firstEvents.map((event) => event.type)).toEqual(["snapshot", "keybindingsUpdated"]);
         expect(secondEvents).toEqual(firstEvents);
 
-        const replay = yield* session.subscribeServerConfig({}).pipe(Stream.runHead);
+        const replay = yield* session
+          .subscribeServerConfig({ usageLimitSources: true, usageLimitsCommand: true })
+          .pipe(Stream.runHead);
         expect(replay).toMatchObject({
           _tag: "Some",
           value: {
@@ -426,7 +418,7 @@ describe("RpcSessionFactory", () => {
   it.effect.each([
     { usageLimitSources: true },
     { environmentThemes: true, usageLimitSources: true },
-  ])("replays usage sources, removal, and capability downgrade with %j", (options) =>
+  ])("replays usage sources and removal with %j", (options) =>
     Effect.scoped(
       Effect.gen(function* () {
         const { factory, sockets } = yield* makeFactory(options);
@@ -437,7 +429,7 @@ describe("RpcSessionFactory", () => {
         yield* completeInitialConfig(socket, encodeServerConfig(SOURCE_SERVER_CONFIG), options);
         yield* Fiber.join(ready);
         const observed = yield* Queue.unbounded<ServerConfigStreamEventType>();
-        yield* session.subscribeServerConfig(options).pipe(
+        yield* session.subscribeServerConfig({ usageLimitsCommand: true, ...options }).pipe(
           Stream.runForEach((event) => Queue.offer(observed, event)),
           Effect.forkChild,
         );
@@ -453,18 +445,22 @@ describe("RpcSessionFactory", () => {
           SOURCE_EVENT,
           { version: 1, type: "usageLimitSourcesUpdated", payload: { sources: [] } },
           SOURCE_EVENT,
-          { version: 1, type: "snapshot", config: THEME_SERVER_CONFIG },
         ];
         for (const event of events) {
           yield* publishConfigEvents(socket, [event]);
           expect(yield* Queue.take(observed)).toEqual(event);
           const started = yield* Deferred.make<void>();
-          const replay = yield* session.subscribeServerConfig(options).pipe(
-            Stream.tap(() => Deferred.succeed(started, undefined)),
-            Stream.takeUntil((item) => item.type === "keybindingsUpdated"),
-            Stream.runCollect,
-            Effect.forkChild,
-          );
+          const replay = yield* session
+            .subscribeServerConfig({
+              usageLimitsCommand: true,
+              ...options,
+            })
+            .pipe(
+              Stream.tap(() => Deferred.succeed(started, undefined)),
+              Stream.takeUntil((item) => item.type === "keybindingsUpdated"),
+              Stream.runCollect,
+              Effect.forkChild,
+            );
           yield* Deferred.await(started);
           const marker: ServerConfigStreamEventType = {
             version: 1,
@@ -474,11 +470,7 @@ describe("RpcSessionFactory", () => {
           yield* publishConfigEvents(socket, [marker]);
           expect(yield* Queue.take(observed)).toEqual(marker);
           const replayed = Array.from(yield* Fiber.join(replay));
-          expect(replayed.slice(1)).toEqual([
-            ...themes,
-            ...(event.type === "snapshot" ? [] : [event]),
-            marker,
-          ]);
+          expect(replayed.slice(1)).toEqual([...themes, event, marker]);
           let projection = applyServerConfigProjection(Option.none(), {
             version: 1,
             type: "snapshot",
@@ -531,14 +523,20 @@ describe("RpcSessionFactory", () => {
           },
         ];
         const subscriberStarted = yield* Deferred.make<void>();
-        const subscriber = yield* session.subscribeServerConfig({ environmentThemes: true }).pipe(
-          Stream.mapEffect((event) =>
-            Deferred.succeed(subscriberStarted, undefined).pipe(Effect.as(event)),
-          ),
-          Stream.take(4),
-          Stream.runCollect,
-          Effect.forkChild,
-        );
+        const subscriber = yield* session
+          .subscribeServerConfig({
+            usageLimitSources: true,
+            usageLimitsCommand: true,
+            environmentThemes: true,
+          })
+          .pipe(
+            Stream.mapEffect((event) =>
+              Deferred.succeed(subscriberStarted, undefined).pipe(Effect.as(event)),
+            ),
+            Stream.take(4),
+            Stream.runCollect,
+            Effect.forkChild,
+          );
         yield* Deferred.await(subscriberStarted);
         yield* publishConfigEvents(socket, [
           {
@@ -569,7 +567,11 @@ describe("RpcSessionFactory", () => {
 
         const replay = Array.from(
           yield* session
-            .subscribeServerConfig({ environmentThemes: true })
+            .subscribeServerConfig({
+              usageLimitSources: true,
+              usageLimitsCommand: true,
+              environmentThemes: true,
+            })
             .pipe(Stream.take(2), Stream.runCollect),
         );
         expect(replay.map((event) => event.type)).toEqual(["snapshot", "environmentThemesUpdated"]);
@@ -598,7 +600,6 @@ describe("RpcSessionFactory", () => {
       Effect.gen(function* () {
         const { factory, sockets } = yield* makeFactory({
           environmentThemes: true,
-          usageLimitSources: true,
         });
         const session = yield* factory.connect(PREPARED);
         const readyFiber = yield* Effect.forkChild(session.ready);
@@ -614,7 +615,11 @@ describe("RpcSessionFactory", () => {
         const releaseSlowSubscriber = yield* Deferred.make<void>();
         let firstEvent = true;
         const slowSubscriber = yield* session
-          .subscribeServerConfig({ environmentThemes: true, usageLimitSources: true })
+          .subscribeServerConfig({
+            usageLimitsCommand: true,
+            environmentThemes: true,
+            usageLimitSources: true,
+          })
           .pipe(
             Stream.mapEffect((event) => {
               if (!firstEvent) return Effect.succeed(event);
@@ -670,7 +675,11 @@ describe("RpcSessionFactory", () => {
         const allEvents = [...themeEvents, ...sourceEvents, ...settingsEvents];
         const observedByFastSubscriber = yield* Queue.unbounded<ServerConfigStreamEventType>();
         yield* session
-          .subscribeServerConfig({ environmentThemes: true, usageLimitSources: true })
+          .subscribeServerConfig({
+            usageLimitsCommand: true,
+            environmentThemes: true,
+            usageLimitSources: true,
+          })
           .pipe(
             Stream.runForEach((event) => Queue.offer(observedByFastSubscriber, event)),
             Effect.forkChild,
@@ -776,6 +785,8 @@ describe("RpcSessionFactory", () => {
             clear: () => Effect.void,
           });
           const configState = yield* makeEnvironmentServerConfigState({
+            usageLimitSources: true,
+            usageLimitsCommand: true,
             environmentThemes: true,
           }).pipe(
             Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
@@ -899,10 +910,14 @@ describe("RpcSessionFactory", () => {
       const session = yield* factory.connect(PREPARED);
       const readyFiber = yield* Effect.forkChild(Effect.flip(session.ready));
       const configFiber = yield* session
-        .subscribeServerConfig({})
+        .subscribeServerConfig({ usageLimitSources: true, usageLimitsCommand: true })
         .pipe(Stream.runHead, Effect.flip, Effect.forkChild);
       const customConfigFiber = yield* session
-        .subscribeServerConfig({ environmentThemes: true })
+        .subscribeServerConfig({
+          usageLimitSources: true,
+          usageLimitsCommand: true,
+          environmentThemes: true,
+        })
         .pipe(Stream.runHead, Effect.flip, Effect.forkChild);
       const socket = yield* awaitSocket(sockets);
       socket.open();
@@ -999,46 +1014,5 @@ describe("RpcSessionFactory", () => {
       expect(config.issues).toEqual([]);
       expect(config.availableEditors).toEqual(["zed"]);
     }),
-  );
-
-  it.effect("uses the legacy config RPC for probes when the server lacks the capability", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const { factory, sockets } = yield* makeFactory();
-        const session = yield* factory.connect(PREPARED);
-        const readyFiber = yield* Effect.forkChild(session.ready);
-        const socket = yield* awaitSocket(sockets);
-
-        socket.open();
-        yield* completeInitialConfig(socket, LEGACY_SERVER_CONFIG);
-        yield* Fiber.join(readyFiber);
-
-        const probeFiber = yield* Effect.forkChild(session.probe);
-        const probeRequest = yield* awaitRequest(socket, 1);
-        expect(probeRequest).toMatchObject({
-          _tag: "Request",
-          tag: WS_METHODS.serverGetConfig,
-          payload: {},
-        });
-        socket.serverMessage(
-          encodeJson({
-            _tag: "Exit",
-            requestId: probeRequest.id,
-            exit: {
-              _tag: "Success",
-              value: LEGACY_SERVER_CONFIG,
-            },
-          }),
-        );
-        yield* Fiber.join(probeFiber);
-
-        expect(
-          socket.sent
-            .map((message) => decodeJson(message))
-            .filter(isRpcRequest)
-            .map((request) => request.tag),
-        ).toEqual([WS_METHODS.subscribeServerConfig, WS_METHODS.serverGetConfig]);
-      }),
-    ),
   );
 });

@@ -2509,14 +2509,9 @@ export const make = Effect.gen(function* () {
           },
         }),
       );
-    const serveHeld = (
-      key: string,
-      effect: Effect.Effect<A, PullRequestError>,
-      mode: "reuse" | "revalidate",
-    ) => {
+    const serveHeld = (key: string, effect: Effect.Effect<A, PullRequestError>) => {
       const snapshot = held.get(key);
       if (snapshot === undefined) return read(key, effect);
-      if (mode === "reuse") return Effect.succeed(snapshot.value);
       return revalidate(read(key, effect)).pipe(Effect.as(snapshot.value));
     };
     return { peek: (key: string) => held.get(key)?.value, read, record, serveHeld };
@@ -2973,7 +2968,7 @@ export const make = Effect.gen(function* () {
     );
     return input.allowStale === false
       ? read.pipe(Effect.tap((value) => lastGoodDetail.record(key, value)))
-      : lastGoodDetail.serveHeld(key, read, "revalidate");
+      : lastGoodDetail.serveHeld(key, read);
   };
 
   const activityCache = yield* Cache.makeWith(

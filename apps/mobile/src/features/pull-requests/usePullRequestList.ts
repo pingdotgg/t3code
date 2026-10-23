@@ -4,7 +4,7 @@ import type { EnvironmentId, PullRequestDiffStat, PullRequestListInput } from "@
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { use, useCallback, useEffect, useMemo, useRef, useState, useLayoutEffect } from "react";
+import { use, useEffect, useMemo, useRef, useState, useLayoutEffect } from "react";
 import { composerPullRequests } from "../../state/pull-requests";
 import {
   appendPullRequestListPage,
@@ -70,55 +70,52 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
       if (pages) registry.set(pagesFamily(JSON.stringify(target)), pages);
   }, [registry, sources]);
 
-  const loadMore = useCallback(
-    async (retry = false) => {
-      if (requests.current.page || requests.current.refresh || (!retry && state.error)) return;
-      const continuations = targets.flatMap((target) => {
-        const pagesAtom = pagesFamily(JSON.stringify(target));
-        const pages = registry.get(pagesAtom);
-        const input = pages && nextPullRequestListInput(pages, target.input);
-        return pages && input ? [{ target, pagesAtom, pages, input }] : [];
-      });
-      if (!continuations.length) return;
-      const controller = new AbortController();
-      requests.current.page = controller;
-      setLoading({ key: scopeKey, page: true, refresh: false, error: null });
-      const responses = await Promise.allSettled(
-        continuations.map(async ({ target, pagesAtom, pages, input }) => {
-          const response = await executeAtomQuery(
-            registry,
-            composerPullRequests.list({ ...target, input }),
-            {
-              signal: controller.signal,
-              refresh: retry,
-              reportFailure: false,
-            },
-          );
-          if (controller.signal.aborted || activeScope.current !== scopeKey) return;
-          if (response._tag === "Failure") throw squashAtomCommandFailure(response);
-          if (response.value.errors.length)
-            throw new Error(response.value.errors.map((error) => error.message).join("\n"));
-          const next = appendPullRequestListPage(
-            registry.get(pagesAtom) ?? pages,
-            response.value,
-            input,
-          );
-          registry.set(pagesAtom, next);
-          if (
-            input.cursors &&
-            Object.keys(next.nextCursors).length &&
-            JSON.stringify(Object.entries(input.cursors).sort()) ===
-              JSON.stringify(Object.entries(next.nextCursors).sort())
-          )
-            throw new Error("Couldn't advance the list. Try again.");
-        }),
-      );
-      if (requests.current.page === controller) delete requests.current.page;
-      if (!controller.signal.aborted && activeScope.current === scopeKey)
-        setLoading({ key: scopeKey, page: false, refresh: false, error: requestErrors(responses) });
-    },
-    [targets, registry, scopeKey, state.error, activeScope],
-  );
+  const loadMore = async (retry = false) => {
+    if (requests.current.page || requests.current.refresh || (!retry && state.error)) return;
+    const continuations = targets.flatMap((target) => {
+      const pagesAtom = pagesFamily(JSON.stringify(target));
+      const pages = registry.get(pagesAtom);
+      const input = pages && nextPullRequestListInput(pages, target.input);
+      return pages && input ? [{ target, pagesAtom, pages, input }] : [];
+    });
+    if (!continuations.length) return;
+    const controller = new AbortController();
+    requests.current.page = controller;
+    setLoading({ key: scopeKey, page: true, refresh: false, error: null });
+    const responses = await Promise.allSettled(
+      continuations.map(async ({ target, pagesAtom, pages, input }) => {
+        const response = await executeAtomQuery(
+          registry,
+          composerPullRequests.list({ ...target, input }),
+          {
+            signal: controller.signal,
+            refresh: retry,
+            reportFailure: false,
+          },
+        );
+        if (controller.signal.aborted || activeScope.current !== scopeKey) return;
+        if (response._tag === "Failure") throw squashAtomCommandFailure(response);
+        if (response.value.errors.length)
+          throw new Error(response.value.errors.map((error) => error.message).join("\n"));
+        const next = appendPullRequestListPage(
+          registry.get(pagesAtom) ?? pages,
+          response.value,
+          input,
+        );
+        registry.set(pagesAtom, next);
+        if (
+          input.cursors &&
+          Object.keys(next.nextCursors).length &&
+          JSON.stringify(Object.entries(input.cursors).sort()) ===
+            JSON.stringify(Object.entries(next.nextCursors).sort())
+        )
+          throw new Error("Couldn't advance the list. Try again.");
+      }),
+    );
+    if (requests.current.page === controller) delete requests.current.page;
+    if (!controller.signal.aborted && activeScope.current === scopeKey)
+      setLoading({ key: scopeKey, page: false, refresh: false, error: requestErrors(responses) });
+  };
 
   const onRefresh = async () => {
     if (!targets.length || requests.current.refresh) return;
@@ -180,23 +177,20 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
     key: string;
     rows: readonly EnvironmentPullRequestListEntry[];
   }>({ key: scopeKey, rows: [] });
-  const onViewableItemsChanged = useCallback(
-    ({
-      viewableItems,
-    }: {
-      viewableItems: readonly { item: EnvironmentPullRequestListEntry; isViewable: boolean }[];
-    }) => {
-      const rows = viewableItems.filter((token) => token.isViewable).map((token) => token.item);
-      setVisible((previous) =>
-        previous.key === scopeKey &&
-        previous.rows.map(scopedPullRequestListKey).join() ===
-          rows.map(scopedPullRequestListKey).join()
-          ? previous
-          : { key: scopeKey, rows },
-      );
-    },
-    [scopeKey],
-  );
+  const onViewableItemsChanged = ({
+    viewableItems,
+  }: {
+    viewableItems: readonly { item: EnvironmentPullRequestListEntry; isViewable: boolean }[];
+  }) => {
+    const rows = viewableItems.filter((token) => token.isViewable).map((token) => token.item);
+    setVisible((previous) =>
+      previous.key === scopeKey &&
+      previous.rows.map(scopedPullRequestListKey).join() ===
+        rows.map(scopedPullRequestListKey).join()
+        ? previous
+        : { key: scopeKey, rows },
+    );
+  };
   const visibleRows =
     visible.key === scopeKey && visible.rows.length ? visible.rows : data.entries.slice(0, 8);
   const statsKey = JSON.stringify(
@@ -239,26 +233,26 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
     }
   }, [registry, counts]);
 
-  const updateEntry = useCallback(
-    (entry: EnvironmentPullRequestListEntry, patch: Partial<EnvironmentPullRequestListEntry>) => {
-      const target = targets.find((target) => target.environmentId === entry.environmentId);
-      if (!target) return;
-      registry.update(pagesFamily(JSON.stringify(target)), (previous) =>
-        previous
-          ? {
-              ...previous,
-              entries: previous.entries.map((row) =>
-                pullRequestListKey(row) === pullRequestListKey(entry)
-                  ? { ...row, ...patch, observedAt: Date.now() }
-                  : row,
-              ),
-            }
-          : previous,
-      );
-      registry.refresh(composerPullRequests.list(target));
-    },
-    [registry, targets],
-  );
+  const updateEntry = (
+    entry: EnvironmentPullRequestListEntry,
+    patch: Partial<EnvironmentPullRequestListEntry>,
+  ) => {
+    const target = targets.find((target) => target.environmentId === entry.environmentId);
+    if (!target) return;
+    registry.update(pagesFamily(JSON.stringify(target)), (previous) =>
+      previous
+        ? {
+            ...previous,
+            entries: previous.entries.map((row) =>
+              pullRequestListKey(row) === pullRequestListKey(entry)
+                ? { ...row, ...patch, observedAt: Date.now() }
+                : row,
+            ),
+          }
+        : previous,
+    );
+    registry.refresh(composerPullRequests.list(target));
+  };
   const errors = useMemo(
     () =>
       sources.flatMap(({ target, result }) => {

@@ -67,6 +67,8 @@ function makeBridge(
   },
 ): DesktopBridge {
   return {
+    getClientPlatform: () => "linux",
+    getLocalEnvironmentEnabled: () => true,
     ensureSshEnvironment: async (
       target: DesktopSshEnvironmentTarget,
       ensureOptions?: { issuePairingToken?: boolean },

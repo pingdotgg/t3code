@@ -91,8 +91,9 @@ transcript renderer moves to records.
 
 ## Editor model (web and desktop)
 
-`ComposerContextReferenceNode` (`apps/web/src/components/ComposerContextReferenceNode.tsx`) is
-the one inline Lexical node for every context kind. It stores `kind`, `contextId`, `label`, and a
+`ComposerContextReferenceExtension` in
+[`ComposerPromptEditorTiptap.tsx`](../../apps/web/src/components/ComposerPromptEditorTiptap.tsx) is
+the inline Tiptap node for every context kind. It stores `kind`, `contextId`, `label`, and a
 per-occurrence `referenceId`, and its text content is the canonical link. The prompt string carries
 payload identity and position, so rebuilding the editor restores equivalent chips; it does not
 preserve the editor-local occurrence ids. Old drafts that used the U+FFFC ordinal placeholder
@@ -144,8 +145,7 @@ Pull-request summaries currently travel as review-comment records with optional 
 `pullRequest` metadata. The metadata is a snapshot of the number, title, URL, branches, state, and
 draft flag at attachment time. Web and desktop render the compact `#number` label and derive its
 status tone from that snapshot. Hover shows the snapshot details; activation resolves the URL
-against the current environment and opens the pull request in the thread's right panel. Records
-written before the metadata was added retain their legacy details and neutral pull-request tone.
+against the current environment and opens the pull request in the thread's right panel.
 
 ## Attachments
 

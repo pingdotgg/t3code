@@ -13,8 +13,8 @@ import {
   updateOutdatedServer,
 } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { SettingsActionRow } from "./components/SettingsActionRow";
-import { SettingsSection } from "./components/SettingsSection";
+import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
+import { ListSection as SettingsSection } from "../../components/ui/ListSection";
 import { findEnvironmentUpdate } from "./environment-maintenance";
 
 export function OutdatedServerUpdateSection({

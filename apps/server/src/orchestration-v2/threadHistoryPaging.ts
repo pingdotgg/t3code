@@ -158,21 +158,21 @@ export function decodeThreadHistoryCursor(cursor: string): ThreadHistoryCursorPa
     typeof parsed !== "object" ||
     parsed === null ||
     !("v" in parsed) ||
-    (parsed as { v: unknown }).v !== 1 ||
+    parsed.v !== 1 ||
     !("seq" in parsed) ||
-    typeof (parsed as { seq: unknown }).seq !== "number" ||
-    !Number.isInteger((parsed as { seq: number }).seq) ||
-    (parsed as { seq: number }).seq < 0 ||
+    typeof parsed.seq !== "number" ||
+    !Number.isInteger(parsed.seq) ||
+    parsed.seq < 0 ||
     !("st" in parsed) ||
-    typeof (parsed as { st: unknown }).st !== "string" ||
-    (parsed as { st: string }).st.length === 0 ||
+    typeof parsed.st !== "string" ||
+    parsed.st.length === 0 ||
     !("si" in parsed) ||
-    typeof (parsed as { si: unknown }).si !== "string" ||
-    (parsed as { si: string }).si.length === 0 ||
+    typeof parsed.si !== "string" ||
+    parsed.si.length === 0 ||
     !("p" in parsed) ||
-    typeof (parsed as { p: unknown }).p !== "number" ||
-    !Number.isInteger((parsed as { p: number }).p) ||
-    (parsed as { p: number }).p < 0
+    typeof parsed.p !== "number" ||
+    !Number.isInteger(parsed.p) ||
+    parsed.p < 0
   ) {
     throw new InvalidThreadHistoryCursorError();
   }
@@ -191,9 +191,7 @@ function isThreadHistoryTurnStart(item: HistoryRow["item"]): boolean {
  * notification starts a turn when it is its run's first input. ProjectionStore's `run_starts` window query
  * applies the same rule.
  */
-export function threadHistoryTurnStarts(
-  items: ReadonlyArray<HistoryRow["item"]>,
-): ReadonlyArray<boolean> {
+function threadHistoryTurnStarts(items: ReadonlyArray<HistoryRow["item"]>): ReadonlyArray<boolean> {
   const startedRuns = new Set<string>();
   return items.map((item) => {
     if (item.type !== "user_message" && item.type !== "notification") return false;
@@ -459,20 +457,6 @@ export function computeLatestLocalTurnOrdinal(
     }
   }
   return latest;
-}
-
-export function boundedTimelineEncodedBytes(input: {
-  readonly visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
-  readonly turnItems: ReadonlyArray<OrchestrationV2TurnItem>;
-}): number {
-  let total = 0;
-  for (const row of input.visibleTurnItems) {
-    total += projectedRowEncodedBytes(row);
-  }
-  for (const item of input.turnItems) {
-    total += bytesOfJson(item);
-  }
-  return total;
 }
 
 export function buildBoundedThreadProjection(input: {

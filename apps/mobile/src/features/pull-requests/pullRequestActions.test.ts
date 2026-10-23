@@ -2,10 +2,24 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   allowedMergeMethods,
   canPerformPullRequestAction,
-  mergeSummary,
   mergeUnavailableReason,
-  ALL_PR_ACTIONS,
 } from "./pullRequestActions";
+
+import type { PullRequestAction } from "@t3tools/contracts";
+
+const ALL_PR_ACTIONS: readonly PullRequestAction[] = [
+  "merge",
+  "ready",
+  "draft",
+  "update-branch",
+  "enable-auto-merge",
+  "disable-auto-merge",
+  "approve-workflows",
+  "close",
+  "reopen",
+  "revert",
+  "delete-branch",
+];
 
 type Detail = Parameters<typeof allowedMergeMethods>[0];
 
@@ -44,6 +58,5 @@ describe("mobile pull request actions", () => {
     const pr = detail({ mergeability: "conflicting" });
     expect(canPerformPullRequestAction(pr, "merge")).toBe(false);
     expect(mergeUnavailableReason(pr, true)).toContain("conflicts");
-    expect(mergeSummary(pr, true)).toBe("Has conflicts");
   });
 });

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ComponentProps } from "react";
+import { useEffect, useRef, useState, type ComponentProps } from "react";
 import { useNavigation, useNavigationState } from "@react-navigation/native";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import {
@@ -43,19 +43,19 @@ export function ThreadListToolbar(props: {
   const searchRef = useRef<TextInputInstance>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const searching = searchOpen || props.searchQuery.length > 0;
-  const openSearch = useCallback(() => {
+  const openSearch = () => {
     onRequestVisibility?.();
     setSearchOpen(true);
     searchRef.current?.focus();
     return true;
-  }, [onRequestVisibility]);
+  };
   useHardwareKeyboardCommand("focusSearch", openSearch);
 
-  const closeSearch = useCallback(() => {
+  const closeSearch = () => {
     onSearchQueryChange("");
     setSearchOpen(false);
     Keyboard.dismiss();
-  }, [onSearchQueryChange]);
+  };
 
   useEffect(() => {
     if (!searching || !listFocused) return;

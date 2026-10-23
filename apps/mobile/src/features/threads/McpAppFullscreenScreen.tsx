@@ -3,7 +3,7 @@ import { EnvironmentId, ThreadId, TurnItemId } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { turnItemDetailRevision } from "@t3tools/client-runtime/work-log/item-detail";
 import { mcpAppFromToolItem } from "@t3tools/shared/toolOutput";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -29,13 +29,9 @@ function useConversationThreadId(
   requested: string | undefined,
 ): ThreadId {
   const shells = useThreadShells();
-  return useMemo(
-    () =>
-      requested !== undefined && descendsFrom(shells, environmentId, requested, threadId)
-        ? ThreadId.make(requested)
-        : threadId,
-    [shells, environmentId, threadId, requested],
-  );
+  return requested !== undefined && descendsFrom(shells, environmentId, requested, threadId)
+    ? ThreadId.make(requested)
+    : threadId;
 }
 
 function descendsFrom(
@@ -71,10 +67,10 @@ export function McpAppFullscreenScreen({ route }: McpAppFullscreenScreenProps) {
   // screen or being lost.
   const focused = useIsFocused();
   const [exitRequested, setExitRequested] = useState(false);
-  const onClose = useCallback(() => {
+  const onClose = () => {
     if (navigation.isFocused()) navigation.goBack();
     else setExitRequested(true);
-  }, [navigation]);
+  };
   const [size, setSize] = useState({ width: 0, height: 0 });
   const params = route.params;
   const environmentId = EnvironmentId.make(params.environmentId);

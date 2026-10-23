@@ -8,7 +8,7 @@ import {
   usePreventRemoveContext,
   type StaticScreenProps,
 } from "@react-navigation/native";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { View } from "react-native";
 import {
   isAtomCommandInterrupted,
@@ -31,7 +31,7 @@ export type { NewTaskDraftRouteParams } from "./thread-route-state";
 
 export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraftRouteParams>) {
   const currentRoute = useRoute();
-  const params = useMemo(() => route.params ?? {}, [route.params]);
+  const params = route.params ?? {};
   const { reset } = useNewTaskFlow();
   const { deferThreadSelectionUntil } = useAdaptiveWorkspaceLayout();
   const [initialized, setInitialized] = useState(false);
@@ -49,18 +49,15 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
   const readRefs = useAtomCommand(vcsEnvironment.readRefs, { reportFailure: false });
   const switchRef = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
 
-  const initialProjectRef = useMemo(
-    () => ({
-      environmentId: Array.isArray(params.environmentId)
-        ? params.environmentId[0]
-        : params.environmentId,
-      projectId: Array.isArray(params.projectId) ? params.projectId[0] : params.projectId,
-      branch: params.branch,
-      worktreePath: params.worktreePath,
-      cloning: (Array.isArray(params.cloning) ? params.cloning[0] : params.cloning) === "1",
-    }),
-    [params],
-  );
+  const initialProjectRef = {
+    environmentId: Array.isArray(params.environmentId)
+      ? params.environmentId[0]
+      : params.environmentId,
+    projectId: Array.isArray(params.projectId) ? params.projectId[0] : params.projectId,
+    branch: params.branch,
+    worktreePath: params.worktreePath,
+    cloning: (Array.isArray(params.cloning) ? params.cloning[0] : params.cloning) === "1",
+  };
 
   const [preparation, setPreparation] = useState<{
     request: typeof initialProjectRef;
@@ -164,21 +161,18 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
     navigation.goBack();
   }, [checkoutPending, result, navigation]);
 
-  const preparedProjectRef = useMemo(
-    () =>
-      result?._tag === "Success" && workspaceRoot
-        ? {
-            ...initialProjectRef,
-            branch: result.value.name,
-            worktreePath: resolveNewTaskBranchWorktreePath({
-              workspaceMode: "local",
-              projectCwd: workspaceRoot,
-              branchWorktreePath: result.value.worktreePath,
-            }),
-          }
-        : initialProjectRef,
-    [initialProjectRef, result, workspaceRoot],
-  );
+  const preparedProjectRef =
+    result?._tag === "Success" && workspaceRoot
+      ? {
+          ...initialProjectRef,
+          branch: result.value.name,
+          worktreePath: resolveNewTaskBranchWorktreePath({
+            workspaceMode: "local",
+            projectCwd: workspaceRoot,
+            branchWorktreePath: result.value.worktreePath,
+          }),
+        }
+      : initialProjectRef;
   const preparingBranch = checkoutPending || (needsPreparation && result?._tag !== "Success");
 
   if (!initialized) return null;

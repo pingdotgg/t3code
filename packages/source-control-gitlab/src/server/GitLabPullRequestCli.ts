@@ -1,3 +1,4 @@
+import { isCommitSha } from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -421,10 +422,6 @@ function involvementParams(input: {
 
 function diffCursorPage(cursor: string): number | null {
   return /^[1-9][0-9]{0,6}$/.test(cursor) ? Number(cursor) : null;
-}
-
-function isCommitSha(value: string): boolean {
-  return /^[0-9a-f]{7,64}$/i.test(value);
 }
 
 function searchParams(search: string | undefined): ReadonlyArray<readonly [string, string]> {

@@ -1,4 +1,4 @@
-import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
+import { joinPath, resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import {
   isWorkspaceAudioPreviewPath,
   isWorkspaceVideoPreviewPath,
@@ -25,14 +25,6 @@ export function fileRoutePathSegments(path: string): string[] {
 
 function isWindowsPathStyle(value: string): boolean {
   return isWindowsAbsolutePath(value) || /^[A-Za-z]:\\/.test(value);
-}
-
-function joinPath(base: string, next: string, separator: "/" | "\\"): string {
-  const cleanBase = base.replace(/[\\/]+$/, "");
-  if (separator === "\\") {
-    return `${cleanBase}\\${next.replaceAll("/", "\\")}`;
-  }
-  return `${cleanBase}/${next.replace(/^\/+/, "")}`;
 }
 
 export function basename(path: string): string {
@@ -121,18 +113,6 @@ export function isSvgImagePreviewFile(path: string): boolean {
 
 export function isMarkdownPreviewFile(path: string): boolean {
   return /\.(?:md|mdx)$/i.test(path.split(/[?#]/, 1)[0] ?? "");
-}
-
-export function fileBreadcrumbs(projectName: string, relativePath: string): FileBreadcrumb[] {
-  const parts = relativePath.split("/").filter(Boolean);
-  return [
-    { label: projectName, path: "", kind: "project" },
-    ...parts.map((part, index) => ({
-      label: part,
-      path: parts.slice(0, index + 1).join("/"),
-      kind: index === parts.length - 1 ? ("file" as const) : ("directory" as const),
-    })),
-  ];
 }
 
 export function fileHeaderSubtitle(projectName: string, relativePath: string): string {

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type ComponentProps } from "react";
+import { useRef, useState, type ComponentProps } from "react";
 import {
   useWindowDimensions,
   View,
@@ -24,7 +24,7 @@ export function AndroidHomeFabLayout(props: ComponentProps<typeof SharedAndroidH
   const { state } = useWorkspaceState();
   const [expanded, setExpanded] = useState(true);
   const scrollState = useRef({ anchor: 0, expanded: true });
-  const onScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+  const onScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
     const next = updateFabScroll(
       scrollState.current,
@@ -33,7 +33,7 @@ export function AndroidHomeFabLayout(props: ComponentProps<typeof SharedAndroidH
     );
     if (next.expanded !== scrollState.current.expanded) setExpanded(next.expanded);
     scrollState.current = next;
-  }, []);
+  };
 
   // Remount only the FAB when its font or pane changes to clear the cached expanded width.
   // The split-view sidebar has no FAB: the navigation rail carries New thread. On phones it

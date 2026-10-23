@@ -13,7 +13,7 @@ export type ModifiedTerminalInput =
 // eslint-disable-next-line no-control-regex -- Pasted text must not carry raw terminal controls.
 const UNSAFE_PASTE_BYTES = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g;
 
-export function applyCtrlModifier(input: string): string {
+function applyCtrlModifier(input: string): string {
   const firstCharacter = input[0];
   if (!firstCharacter) {
     return input;

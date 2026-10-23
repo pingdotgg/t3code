@@ -1,7 +1,7 @@
 import { RegistryContext } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import { useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useContext, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { Atom } from "effect/reactivity";
 
 /**
@@ -36,10 +36,8 @@ export function useHomeRouteVisible(): boolean {
 export function useAtomValueWhileVisible<A>(atom: Atom.Atom<A>, visible: boolean): A {
   const registry = useContext(RegistryContext);
   const held = useRef<{ readonly value: A } | null>(null);
-  const subscribe = useCallback(
-    (onChange: () => void) => (visible ? registry.subscribe(atom, onChange) : () => undefined),
-    [registry, atom, visible],
-  );
+  const subscribe = (onChange: () => void) =>
+    visible ? registry.subscribe(atom, onChange) : () => undefined;
   return useSyncExternalStore(subscribe, () => {
     if (visible || held.current === null) held.current = { value: registry.get(atom) };
     return held.current.value;

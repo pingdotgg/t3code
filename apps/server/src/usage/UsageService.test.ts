@@ -48,7 +48,7 @@ import * as AntigravityUsage from "../provider/Drivers/AntigravityUsage.ts";
 import * as ProviderHostLive from "../provider/ProviderHostLive.ts";
 import { totalTokens, type UsageRecord } from "@t3tools/provider-core/server/usage";
 import * as UsageService from "./UsageService.ts";
-import { encodeScanCache, SCAN_CACHE_FILE_NAME } from "./usageScanCache.ts";
+import { makeScanCacheWriter, SCAN_CACHE_FILE_NAME } from "./usageScanCache.ts";
 
 vi.mock("node:fs/promises", { spy: true });
 
@@ -2185,7 +2185,7 @@ describe("UsageService", () => {
       yield* Effect.gen(function* () {
         const { stateDir } = yield* ServerConfig.ServerConfig;
         const mtimeMs = yield* Clock.currentTimeMillis;
-        const cache = encodeScanCache(
+        const cache = makeScanCacheWriter()(
           new Map([
             [
               transcript,
@@ -2200,13 +2200,11 @@ describe("UsageService", () => {
               },
             ],
           ]),
+          {},
         );
         yield* Effect.promise(async () => {
           await NodeFSP.mkdir(stateDir, { recursive: true });
-          await NodeFSP.writeFile(
-            NodePath.join(stateDir, SCAN_CACHE_FILE_NAME),
-            encodeUnknownJsonString(cache),
-          );
+          await NodeFSP.writeFile(NodePath.join(stateDir, SCAN_CACHE_FILE_NAME), cache);
         });
         const summary = yield* (yield* UsageService.make).readSummary(WINDOW);
         const source = summary.sources.find((source) => source.fingerprint.provider === "claude");

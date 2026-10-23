@@ -8,7 +8,7 @@ import {
 } from "@t3tools/contracts";
 import type { Thread } from "../types";
 import { makeThreadFixture, type ThreadFixtureOverrides } from "../test-fixtures";
-import { sortThreads } from "./threadSort";
+import { sortThreads } from "@t3tools/client-runtime/state/thread-sort";
 
 const LOCAL_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const PROJECT_ID = ProjectId.make("project-1");

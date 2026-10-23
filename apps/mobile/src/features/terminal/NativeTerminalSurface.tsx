@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import {
   Pressable,
   ScrollView,
@@ -13,16 +13,12 @@ import {
 import { AppText as Text } from "../../components/ui/AppText";
 import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
-import {
-  getNativeTerminalHardwareKeyRevision,
-  resolveNativeTerminalSurfaceView,
-} from "./nativeTerminalModule";
+import { resolveNativeTerminalSurfaceView } from "./nativeTerminalModule";
 import {
   buildGhosttyThemeConfig,
   getMobileTerminalTheme,
   type TerminalTheme,
 } from "./terminalTheme";
-import { terminalDebugLog } from "./terminalDebugLog";
 import { useTerminalSurfaceBuffer } from "./useTerminalSurfaceBuffer";
 
 interface TerminalInputEvent {
@@ -195,38 +191,19 @@ const ReadyTerminalSurface = memo(function ReadyTerminalSurface(props: ReadyTerm
   const theme = props.theme ?? getMobileTerminalTheme(themeId, themeAppearance);
   const { onInput, onResize } = props;
   const NativeTerminalSurfaceView = resolveNativeTerminalSurfaceView();
-  const hasNativeSurface = Boolean(NativeTerminalSurfaceView);
 
-  useEffect(() => {
-    terminalDebugLog("native:surface", {
-      terminalKey: props.terminalKey,
-      native: hasNativeSurface,
-      hardwareKeyRevision: getNativeTerminalHardwareKeyRevision(),
-      bufferLen: props.buffer.length,
-      isRunning: props.isRunning,
+  const handleNativeInput = (event: NativeSyntheticEvent<TerminalInputEvent>) => {
+    if (!props.isRunning || props.readOnly) {
+      return;
+    }
+    onInput(event.nativeEvent.data);
+  };
+  const handleNativeResize = (event: NativeSyntheticEvent<TerminalResizeEvent>) => {
+    onResize({
+      cols: event.nativeEvent.cols,
+      rows: event.nativeEvent.rows,
     });
-  }, [hasNativeSurface, props.buffer.length, props.isRunning, props.terminalKey]);
-  const handleNativeInput = useCallback(
-    (event: NativeSyntheticEvent<TerminalInputEvent>) => {
-      if (!props.isRunning || props.readOnly) {
-        return;
-      }
-      terminalDebugLog("native:onInput", {
-        codes: Array.from(event.nativeEvent.data, (char) => char.codePointAt(0)),
-      });
-      onInput(event.nativeEvent.data);
-    },
-    [onInput, props.isRunning, props.readOnly],
-  );
-  const handleNativeResize = useCallback(
-    (event: NativeSyntheticEvent<TerminalResizeEvent>) => {
-      onResize({
-        cols: event.nativeEvent.cols,
-        rows: event.nativeEvent.rows,
-      });
-    },
-    [onResize],
-  );
+  };
 
   if (NativeTerminalSurfaceView) {
     return (

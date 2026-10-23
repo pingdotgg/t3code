@@ -5,8 +5,8 @@ import { copyTextWithHaptic } from "../../../lib/copyTextWithHaptic";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../../state/preferences";
 import { serverEnvironment } from "../../../state/server";
 import type { SettingsTarget } from "../settings-environment-filter";
-import { SettingsActionRow } from "./SettingsActionRow";
-import { SettingsSection } from "./SettingsSection";
+import { ListActionRow as SettingsActionRow } from "../../../components/ui/ListActionRow";
+import { ListSection as SettingsSection } from "../../../components/ui/ListSection";
 
 /** Suggests `t3 doctor` on every machine whose database still holds at least 1 GiB of freed pages. */
 export function DatabaseStorageNotice({

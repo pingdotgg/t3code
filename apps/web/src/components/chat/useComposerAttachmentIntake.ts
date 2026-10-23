@@ -17,7 +17,7 @@ import {
   composerFileMatchesReattachMarker,
   composerFileNeedsReattach,
 } from "../../composerDraftStore";
-import { type ComposerPromptEditorHandle } from "../ComposerPromptEditor";
+import { type ComposerPromptEditorHandle } from "../ComposerPromptEditorTiptap";
 import { type PendingUserInput } from "../../session-logic";
 import {
   changeQuestionAttachmentPreparation,
@@ -55,7 +55,6 @@ export function useComposerAttachmentIntake(input: {
   readonly pendingUserInputs: ReadonlyArray<PendingUserInput>;
   readonly supportsQuestionAttachments: boolean;
   readonly isLiteralPendingAnswer: boolean;
-  readonly isConnecting: boolean;
   readonly projectSelectionRequired: boolean;
   readonly questionAttachmentTarget: DraftId | null;
   readonly attachmentTargetKey: string;
@@ -84,7 +83,6 @@ export function useComposerAttachmentIntake(input: {
     pendingUserInputs,
     supportsQuestionAttachments,
     isLiteralPendingAnswer,
-    isConnecting,
     projectSelectionRequired,
     questionAttachmentTarget,
     attachmentTargetKey,
@@ -136,7 +134,6 @@ export function useComposerAttachmentIntake(input: {
     const imageAttachmentsGetChips =
       !options?.skipImageInlineChip &&
       (options?.selection !== undefined ||
-        isConnecting ||
         pendingUserInputs.length > 0 ||
         projectSelectionRequired ||
         stripInlineContextReferences(promptRef.current).trim().length > 0);

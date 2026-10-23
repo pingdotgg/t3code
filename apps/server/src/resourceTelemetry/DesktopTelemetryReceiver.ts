@@ -26,6 +26,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Ndjson from "effect/encoding/Ndjson";
 
+import { eventVersion as messageVersion } from "./NativeTelemetryClient.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { subscribeBeforeSnapshotWithoutMutex } from "../utils/subscribeBeforeSnapshot.ts";
@@ -255,12 +256,6 @@ function normalizeReceiverError(error: unknown): DesktopTelemetryReceiverError {
     return error;
   }
   return new DesktopTelemetryDecodeFailed({ cause: error });
-}
-
-function messageVersion(value: unknown): number | undefined {
-  if (typeof value !== "object" || value === null) return undefined;
-  const version = Reflect.get(value, "version");
-  return typeof version === "number" ? version : undefined;
 }
 
 export const writeAllToFileDescriptor = Effect.fn(

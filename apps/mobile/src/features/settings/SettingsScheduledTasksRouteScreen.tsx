@@ -68,7 +68,7 @@ import {
   SettingsEnvironmentFilterHeader,
 } from "./components/SettingsEnvironmentFilterHeader";
 import { SettingsScreen } from "./components/SettingsScreen";
-import { SettingsSection } from "./components/SettingsSection";
+import { ListSection as SettingsSection } from "../../components/ui/ListSection";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 import {
   editDraft,

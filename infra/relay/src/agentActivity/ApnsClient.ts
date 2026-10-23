@@ -26,7 +26,7 @@ const DISMISS_AFTER_SECONDS = 5 * 60;
 // parading stale state for the full window.
 const CONTENTLESS_DISMISS_AFTER_SECONDS = 15;
 
-const ApnsLiveActivityEventSchema = Schema.Literals(["start", "update", "end"]);
+const ApnsLiveActivityEventSchema = Schema.Literals(["update", "end"]);
 export type ApnsLiveActivityEvent = typeof ApnsLiveActivityEventSchema.Type;
 
 const ApnsRequestKindSchema = Schema.Literals(["live-activity", "push-notification"]);
@@ -98,7 +98,7 @@ type MakeLiveActivityRequestInput =
       readonly alert?: ApnsLiveActivityAlert | null;
     })
   | (LiveActivityRequestBase & {
-      readonly event: "start" | "update";
+      readonly event: "update";
       readonly state: RelayAgentActivityAggregateState;
       readonly alert?: ApnsLiveActivityAlert | null;
     });
@@ -145,17 +145,6 @@ function makeLiveActivityRequest(input: MakeLiveActivityRequestInput): ApnsLiveA
       aps: {
         timestamp,
         event: input.event,
-        ...(input.event === "start"
-          ? {
-              "attributes-type": "LiveActivityAttributes",
-              attributes: {},
-              "input-push-token": 1,
-              alert: {
-                title: state.title,
-                body: state.subtitle,
-              },
-            }
-          : {}),
         ...(input.event === "update" && input.alert ? liveActivityAlertPayload(input.alert) : {}),
         "content-state": contentState(state),
         "stale-date": timestamp + STALE_AFTER_SECONDS,
@@ -224,7 +213,7 @@ export class ApnsClient extends Context.Service<
   }
 >()("t3code-relay/agentActivity/ApnsClient") {}
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const providerTokens = yield* ApnsProviderTokens.ApnsProviderTokens;
 

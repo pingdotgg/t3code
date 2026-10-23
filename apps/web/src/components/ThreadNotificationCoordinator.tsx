@@ -63,7 +63,7 @@ export function ThreadNotificationCoordinator() {
     };
     clear();
     if (!hasDesktopNotifications(mode)) return;
-    const unsubscribe = window.desktopBridge?.onNotificationBadgeClear?.(clear);
+    const unsubscribe = window.desktopBridge?.onNotificationBadgeClear(clear);
     window.addEventListener("focus", clear);
     return () => {
       unsubscribe?.();
@@ -228,7 +228,7 @@ function EnvironmentNotifications({
         notification.addEventListener("click", () => {
           notification.close();
           window.focus();
-          void window.desktopBridge?.revealWindow?.().catch(() => undefined);
+          void window.desktopBridge?.revealWindow().catch(() => undefined);
           void navigate({
             to: "/$environmentId/$threadId",
             params: { environmentId, threadId: thread.id },

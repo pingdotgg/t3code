@@ -18,7 +18,7 @@ export class DeviceRegistrationPersistenceError extends Schema.TaggedError<Devic
   {
     userId: Schema.String,
     deviceId: Schema.String,
-    stage: Schema.Literals(["claim-push-token", "claim-push-to-start-token", "upsert-device"]),
+    stage: Schema.Literals(["claim-push-token", "upsert-device"]),
     cause: Schema.Defect(),
   },
 ) {
@@ -70,7 +70,7 @@ export class Devices extends Context.Service<
   }
 >()("t3code-relay/agentActivity/Devices") {}
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const db = yield* RelayDb.RelayDb;
 
   return Devices.of({
@@ -103,24 +103,6 @@ export const make = Effect.gen(function* () {
             ),
           );
       }
-      if (registration.pushToStartToken) {
-        yield* db
-          .update(relayMobileDevices)
-          .set({ pushToStartToken: null, updatedAt })
-          .where(eq(relayMobileDevices.pushToStartToken, registration.pushToStartToken))
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new DeviceRegistrationPersistenceError({
-                  userId: input.userId,
-                  deviceId: registration.deviceId,
-                  stage: "claim-push-to-start-token",
-                  cause,
-                }),
-            ),
-          );
-      }
-
       yield* db
         .insert(relayMobileDevices)
         .values({

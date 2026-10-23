@@ -27,7 +27,6 @@ import {
   type TerminalObserveInput,
   type TerminalResizeInput,
   type ResourceMonitorProcessTableEntry,
-  type TerminalRestartInput,
   type TerminalSessionSnapshot,
   type TerminalSessionStatus,
   type TerminalSummary,
@@ -66,11 +65,7 @@ import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
 import { deriveProviderInstanceConfigMap } from "../provider/ProviderInstanceRegistryHydration.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import {
-  increment,
-  terminalRestartsTotal,
-  terminalSessionsTotal,
-} from "../observability/Metrics.ts";
+import { increment, terminalSessionsTotal } from "../observability/Metrics.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as ProcessRunner from "../processRunner.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
@@ -190,13 +185,6 @@ export class TerminalManager extends Context.Service<
     readonly clear: (input: TerminalClearInput) => Effect.Effect<void, TerminalError>;
 
     /**
-     * Always resets history before spawning the new process.
-     */
-    readonly restart: (
-      input: TerminalRestartInput,
-    ) => Effect.Effect<TerminalSessionSnapshot, TerminalError>;
-
-    /**
      * When `terminalId` is omitted, closes all sessions for the thread.
      */
     readonly close: (input: TerminalCloseInput) => Effect.Effect<void, TerminalError>;
@@ -253,9 +241,11 @@ export interface ShellCandidate {
   args?: string[];
 }
 
-export interface TerminalStartInput extends TerminalOpenInput {
-  cols: number;
-  rows: number;
+interface TerminalStartInput {
+  readonly cwd: string;
+  readonly worktreePath?: string | null;
+  readonly cols: number;
+  readonly rows: number;
 }
 
 interface TerminalSessionState {
@@ -400,7 +390,7 @@ function shouldPublishTerminalMetadataEvent(event: TerminalEvent): boolean {
   }
 }
 
-function terminalEventToAttachEvent(event: TerminalEvent): TerminalAttachStreamEvent | null {
+function terminalEventToAttachEvent(event: TerminalEvent): TerminalAttachStreamEvent {
   switch (event.type) {
     case "started":
       return {
@@ -1523,7 +1513,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const shellResolver = options.shellResolver ?? (() => defaultShellResolver(platform, baseEnv));
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const resolveLaunchInputEnvironment = Effect.fn("terminal.resolveLaunchInputEnvironment")(
-    function* <Input extends TerminalOpenInput | TerminalAttachInput | TerminalRestartInput>(
+    function* <Input extends TerminalOpenInput | TerminalAttachInput>(
       input: Input,
     ): Effect.fn.Return<
       Input,
@@ -2236,17 +2226,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       });
     }
 
-    const candidate = shellCandidates[index];
-    if (!candidate) {
-      return yield* (
-        lastError ??
-          new PtyAdapter.PtySpawnError({
-            adapter: "terminal-manager",
-            attemptedShells: [],
-          })
-      );
-    }
-
+    const candidate = shellCandidates[index]!;
     const launch = yield* agentScope.wrap({
       command: candidate.shell,
       args: candidate.args ?? [],
@@ -2775,13 +2755,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       yield* startSession(
         session,
         {
-          threadId: input.threadId,
-          terminalId,
           cwd: input.cwd,
           ...(input.worktreePath !== undefined ? { worktreePath: input.worktreePath } : {}),
           cols,
           rows,
-          ...(input.env ? { env: input.env } : {}),
         },
         "started",
       );
@@ -2827,13 +2804,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       yield* startSession(
         liveSession,
         {
-          threadId: input.threadId,
-          terminalId,
           cwd: input.cwd,
           worktreePath: liveSession.worktreePath,
           cols: targetCols,
           rows: targetRows,
-          ...(input.env ? { env: input.env } : {}),
         },
         "started",
       );
@@ -2992,7 +2966,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           }
 
           const attachEvent = terminalEventToAttachEvent(event);
-          return attachEvent ? listener(attachEvent) : Effect.void;
+          return listener(attachEvent);
         },
         (cleanup) => {
           unsubscribe = cleanup;
@@ -3014,9 +2988,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         }
 
         const attachEvent = terminalEventToAttachEvent(event);
-        if (attachEvent) {
-          yield* listener(attachEvent);
-        }
+        yield* listener(attachEvent);
       }
       // The live listener keeps this closure, so release replayed output.
       bufferedEvents.length = 0;
@@ -3208,99 +3180,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       }),
     );
 
-  const restartResolved = Effect.fn("Manager.restartResolved")(function* (
-    input: TerminalRestartInput,
-  ) {
-    yield* increment(terminalRestartsTotal, { scope: "thread" });
-    const terminalId = input.terminalId;
-    yield* assertValidCwd(input.cwd);
-
-    const sessionKey = toSessionKey(input.threadId, terminalId);
-    const existingSession = yield* getSession(input.threadId, terminalId);
-    let session: TerminalSessionState;
-    if (Option.isNone(existingSession)) {
-      const cols = input.cols ?? DEFAULT_OPEN_COLS;
-      const rows = input.rows ?? DEFAULT_OPEN_ROWS;
-      session = {
-        threadId: input.threadId,
-        terminalId,
-        cwd: input.cwd,
-        worktreePath: input.worktreePath ?? null,
-        status: "starting",
-        pid: null,
-        history: new BoundedTerminalHistory(historyLineLimit, "", historyByteLimit),
-        pendingHistoryControlSequence: "",
-        pendingProcessEvents: [],
-        pendingProcessEventIndex: 0,
-        processEventDrainRunning: false,
-        exitCode: null,
-        exitSignal: null,
-        updatedAt: yield* nowIso,
-        eventSequence: 0,
-        inputCount: 0,
-        cols,
-        rows,
-        process: null,
-        unsubscribeData: null,
-        unsubscribeExit: null,
-        hasRunningSubprocess: false,
-        childCommandLabel: null,
-        runtimeEnv: normalizedRuntimeEnv(input.env),
-      };
-      const createdSession = session;
-      yield* modifyManagerState((state) => {
-        const sessions = new Map(state.sessions);
-        sessions.set(sessionKey, createdSession);
-        closedSessionKeys.delete(sessionKey);
-        return [undefined, { ...state, sessions }] as const;
-      });
-      yield* evictInactiveSessionsIfNeeded();
-    } else {
-      session = existingSession.value;
-      yield* stopProcess(session);
-      session.cwd = input.cwd;
-      session.worktreePath = input.worktreePath ?? null;
-      session.runtimeEnv = normalizedRuntimeEnv(input.env);
-    }
-
-    const cols = input.cols ?? session.cols;
-    const rows = input.rows ?? session.rows;
-
-    session.history.clear();
-    session.pendingHistoryControlSequence = "";
-    session.pendingProcessEvents = [];
-    session.pendingProcessEventIndex = 0;
-    session.processEventDrainRunning = false;
-    yield* persistHistory(input.threadId, terminalId, session.history);
-    yield* startSession(
-      session,
-      {
-        threadId: input.threadId,
-        terminalId,
-        cwd: input.cwd,
-        ...(input.worktreePath !== undefined ? { worktreePath: input.worktreePath } : {}),
-        cols,
-        rows,
-        ...(input.env ? { env: input.env } : {}),
-      },
-      "restarted",
-    );
-    return snapshot(session);
-  });
-
-  const restart: TerminalManager["Service"]["restart"] = (input) =>
-    withThreadLock(
-      input.threadId,
-      resolveLaunchInputEnvironment(input).pipe(
-        Effect.flatMap((resolved) =>
-          withWorkspaceLease(
-            path.resolve(resolved.worktreePath ?? resolved.cwd),
-            restartResolved(resolved),
-          ),
-        ),
-      ),
-    );
-
   const close: TerminalManager["Service"]["close"] = (input) =>
     withThreadLock(
       input.threadId,
@@ -3371,7 +3250,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     write,
     resize,
     clear,
-    restart,
     close,
     closeIdle,
     subscribe,

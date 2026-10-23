@@ -435,7 +435,7 @@ function defaultOnNextBackground(apply: () => void, includeCurrent: boolean): vo
   }
 }
 
-export const DEFERRED_INSTALL_PROMPT_AFTER_MS = 30 * 60 * 1000;
+const DEFERRED_INSTALL_PROMPT_AFTER_MS = 30 * 60 * 1000;
 
 /**
  * iOS "inactive" blips (app switcher, a pulled-down notification shade) leave
@@ -502,9 +502,9 @@ export function createAppUpdateLaunchCheck(
 
 export const checkForAppUpdateOnLaunch = createAppUpdateLaunchCheck();
 
-export const FOREGROUND_APP_UPDATE_RECHECK_AFTER_MS = 15 * 60 * 1000;
+const FOREGROUND_APP_UPDATE_RECHECK_AFTER_MS = 15 * 60 * 1000;
 
-export function shouldRecheckAppUpdateOnForeground(
+function shouldRecheckAppUpdateOnForeground(
   backgroundedAtMs: number | null,
   activeAtMs: number,
   pendingInstall: boolean,
@@ -516,7 +516,7 @@ export function shouldRecheckAppUpdateOnForeground(
   );
 }
 
-export function createAppUpdateForegroundRecheck(
+function createAppUpdateForegroundRecheck(
   client: AppUpdateClient = Updates,
   deferral: AppUpdateDeferral = appUpdateDeferral,
 ): () => void {

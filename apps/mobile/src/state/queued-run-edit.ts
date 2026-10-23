@@ -31,12 +31,12 @@ export interface QueuedRunEdit {
   readonly context?: OrchestrationMessageContext;
 }
 
-export const queuedRunEditsAtom = Atom.make<Readonly<Record<string, QueuedRunEdit>>>({}).pipe(
+const queuedRunEditsAtom = Atom.make<Readonly<Record<string, QueuedRunEdit>>>({}).pipe(
   Atom.keepAlive,
   Atom.withLabel("mobile-queued-run-edits"),
 );
 
-export { isQueuedEditDraftKey, queuedEditDraftKey } from "./queued-edit-draft-key";
+export { queuedEditDraftKey } from "./queued-edit-draft-key";
 
 export function getQueuedRunEdit(threadKey: string | null): QueuedRunEdit | null {
   if (threadKey === null) return null;

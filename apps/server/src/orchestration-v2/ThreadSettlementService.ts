@@ -1,3 +1,4 @@
+import { canonicalRepositoryKey } from "@t3tools/shared/sourceControl";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
@@ -14,7 +15,6 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -49,18 +49,6 @@ function latestMillis(values: ReadonlyArray<number | null>): number | null {
     if (latest === null || value > latest) latest = value;
   }
   return latest;
-}
-
-function canonicalRepositoryKey(key: string): string {
-  return key
-    .replace(
-      /^(?:ssh\.dev\.azure\.com|vs-ssh\.visualstudio\.com)\/v3\/([^/]+)\/([^/]+)\/([^/]+)$/u,
-      "dev.azure.com/$1/$2/_git/$3",
-    )
-    .replace(
-      /^([^.]+)\.visualstudio\.com\/(?:defaultcollection\/)?([^/]+)\/_git\/([^/]+)$/u,
-      "dev.azure.com/$1/$2/_git/$3",
-    );
 }
 
 function pullRequestMatchesProject(
@@ -643,5 +631,3 @@ export const make = Effect.gen(function* () {
 
   return { start, drain: worker.drain } satisfies ThreadSettlementServiceV2["Service"];
 });
-
-export const layer = Layer.effect(ThreadSettlementServiceV2, make);

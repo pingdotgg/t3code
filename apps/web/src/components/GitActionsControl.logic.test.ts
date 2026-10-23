@@ -1,9 +1,9 @@
 import type { VcsStatusResult } from "@t3tools/contracts";
+import { resolveAutoFeatureBranchName } from "@t3tools/shared/git";
 import { assert, describe, it } from "vite-plus/test";
 import {
   buildMenuItems,
   requiresDefaultBranchConfirmation,
-  resolveAutoFeatureBranchName,
   resolveLiveThreadBranchUpdate,
   resolveQuickAction,
 } from "./GitActionsControl.logic";

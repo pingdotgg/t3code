@@ -1,5 +1,4 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useMemo } from "react";
 import { Atom } from "effect/reactivity";
 
 import { environmentShell, environmentShellSummaryAtom } from "./shell";
@@ -8,7 +7,7 @@ import { environmentCatalog } from "../connection/catalog";
 import { environmentPresentations } from "./presentation";
 import { createWorkspaceConnectionAtoms } from "./workspace-connection-atoms";
 
-export const workspaceConnections = createWorkspaceConnectionAtoms({
+const workspaceConnections = createWorkspaceConnectionAtoms({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
   networkStatusValueAtom: environmentCatalog.networkStatusValueAtom,
   presentationAtom: environmentPresentations.presentationAtom,
@@ -42,17 +41,13 @@ export function useWorkspaceState() {
   const projectedEnvironments = useWorkspaceEnvironments();
   const shellSummary = useAtomValue(environmentShellSummaryAtom);
   const hasSyncingConnectedEnvironment = useAtomValue(hasSyncingConnectedEnvironmentAtom);
-  const state = useMemo(
-    () =>
-      projectWorkspaceState({
-        isReady,
-        networkStatus,
-        environments: projectedEnvironments,
-        shellSummary,
-        hasSyncingConnectedEnvironment,
-      }),
-    [isReady, networkStatus, projectedEnvironments, shellSummary, hasSyncingConnectedEnvironment],
-  );
+  const state = projectWorkspaceState({
+    isReady,
+    networkStatus,
+    environments: projectedEnvironments,
+    shellSummary,
+    hasSyncingConnectedEnvironment,
+  });
 
   return {
     environments: projectedEnvironments,

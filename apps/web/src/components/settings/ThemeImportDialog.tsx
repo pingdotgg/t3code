@@ -266,7 +266,7 @@ export function ThemeImportDialog({
 
   const openFilePicker = () => {
     const bridge = window.desktopBridge;
-    if (bridge?.pickThemeFiles) {
+    if (bridge) {
       void bridge.pickThemeFiles().then((picked) => {
         if (!picked || picked.length === 0) return;
         readThemeFiles(

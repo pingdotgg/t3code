@@ -16,7 +16,6 @@ import type {
 } from "@t3tools/contracts";
 import { hasThreadLinks, relabelThreadLinks } from "@t3tools/shared/threadLinks";
 import { Atom } from "effect/reactivity";
-import { useMemo } from "react";
 
 import { environmentProjects } from "./projects";
 import { environmentServerConfigsAtom, serverEnvironment } from "./server";
@@ -114,13 +113,9 @@ export function useLiveThreadLinkLabels(markdown: string, environmentId: Environ
   const titles = useAtomValue(
     hasThreadLinks(markdown) ? threadTitlesAtom(environmentId) : EMPTY_THREAD_TITLES_ATOM,
   );
-  return useMemo(
-    () =>
-      titles.size === 0
-        ? markdown
-        : relabelThreadLinks(markdown, (threadId) => titles.get(threadId)),
-    [markdown, titles],
-  );
+  return titles.size === 0
+    ? markdown
+    : relabelThreadLinks(markdown, (threadId) => titles.get(threadId));
 }
 
 export function useEnvironmentServerConfig(

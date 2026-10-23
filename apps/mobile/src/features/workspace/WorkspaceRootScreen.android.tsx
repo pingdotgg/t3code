@@ -1,4 +1,3 @@
-import { useMemo } from "react";
 import { View } from "react-native";
 import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
@@ -23,13 +22,10 @@ export function WorkspaceRootScreen() {
   const workspace = useWorkspaceTabs()!;
   const insets = useSafeAreaInsets();
   const { fabClearance } = useAndroidControlSizing();
-  const context = useMemo(
-    () => ({
-      ...workspace,
-      bottomClearance: workspace.state.selectedTab === "threads" ? fabClearance + 16 : 16,
-    }),
-    [workspace, fabClearance],
-  );
+  const context = {
+    ...workspace,
+    bottomClearance: workspace.state.selectedTab === "threads" ? fabClearance + 16 : 16,
+  };
   const tab = workspace.state.selectedTab;
 
   if (layout.usesSplitView) {

@@ -37,11 +37,3 @@ export function androidWorkspaceSettingsOpen(state: NavigationState): boolean {
     .findLast((route) => WORKSPACE_ROUTES.has(route.name));
   return top?.name === "SettingsSheet";
 }
-
-export function androidWorkspaceTabFromNavigationState(
-  state: NavigationState,
-  selected: AndroidWorkspaceNavigationTab,
-): AndroidWorkspaceNavigationTab {
-  if (androidWorkspaceSettingsOpen(state)) return "settings";
-  return selected === "settings" ? "threads" : selected;
-}

@@ -231,7 +231,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --color-error-surface: var(--error-surface);
   --color-update-foreground: var(--update-foreground);
   --color-update: var(--update);
-  --color-update-surface: var(--update-surface);
   --color-success-foreground: var(--success-foreground);
   --color-success: var(--success);
   --color-diff-addition: var(--diff-addition);
@@ -261,10 +260,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --color-card-foreground: var(--contrast-card-foreground);
   --color-card: var(--card);
   --color-code: var(--code-background);
-  --color-code-foreground: var(--code-foreground);
   --color-foreground: var(--contrast-foreground);
   --color-background: var(--background);
-  --color-surface-raised: var(--surface-raised);
   --color-message: var(--message-surface);
   --color-message-foreground: var(--contrast-message-foreground);
   --color-message-action: var(--message-action);
@@ -916,10 +913,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     outline: none;
   }
 
-  .surface-subheader {
-    @apply flex h-10 min-h-10 shrink-0 items-center border-b border-border/60 bg-background;
-  }
-
   [data-preview-panel-mode="inline"] [data-right-panel-surface-content] [data-surface-subheader] {
     height: calc(var(--spacing) * 7);
     min-height: calc(var(--spacing) * 7);
@@ -1139,7 +1132,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --warning-surface: color-mix(in srgb, var(--warning) 8%, transparent);
   --update: var(--primary);
   --update-foreground: var(--primary);
-  --update-surface: color-mix(in srgb, var(--update) 12%, transparent);
   /* Keep every sidebar primitive on the same light surface hierarchy, including
      portaled mobile sheets and settings navigation outside the app sidebar. */
   --sidebar: var(--color-zinc-50);
@@ -1187,7 +1179,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --warning-foreground: var(--color-amber-400);
     --warning-surface: color-mix(in srgb, var(--warning) 16%, transparent);
     --update-foreground: var(--color-blue-400);
-    --update-surface: color-mix(in srgb, var(--update) 18%, transparent);
     --sidebar: var(--card);
     --sidebar-control-surface: var(--muted);
     --sidebar-row-hover: var(--accent);
@@ -1299,7 +1290,6 @@ html[data-theme-id]:not([data-theme-id=""]) {
   --warning-surface: var(--app-theme-warning-surface);
   --update: var(--app-theme-update);
   --update-foreground: var(--app-theme-update-foreground);
-  --update-surface: var(--app-theme-update-surface);
   --border: var(--app-theme-border);
   --input: var(--app-theme-input);
   --ring: var(--app-theme-focus);

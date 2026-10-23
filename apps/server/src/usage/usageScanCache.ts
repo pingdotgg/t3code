@@ -136,18 +136,6 @@ function serializeFile(entry: CachedFile, tables: InternTables): SerializedFile 
   };
 }
 
-export function encodeScanCache(cache: ScanCache): SerializedCache {
-  const tables = makeInternTables();
-  const files: Record<string, SerializedFile> = {};
-  for (const [path, entry] of cache) files[path] = serializeFile(entry, tables);
-  return {
-    version: USAGE_SCAN_CACHE_VERSION,
-    models: tables.models,
-    sessions: tables.sessions,
-    files,
-  };
-}
-
 /**
  * Entries are replaced, never mutated, when their file changes, so an entry's JSON is memoised by
  * identity. The intern tables only grow, so a memoised entry's indexes stay valid; a pruned entry

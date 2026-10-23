@@ -3,7 +3,7 @@ import * as Dialog from "../../components/ui/Dialog";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { environmentSession } from "../../state/session";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 
 import type {
   EnvironmentId,
@@ -302,7 +302,7 @@ export function NewTaskFlowProvider(
   const editingPendingTaskRef = useRef<QueuedThreadMessage | null>(null);
   const editingRevisionRef = useRef(Promise.resolve(0));
 
-  const reset = useCallback(() => {
+  const reset = () => {
     setSelectedEnvironmentId(null);
     setSelectedProjectKey(null);
     setActiveDraftKey(null);
@@ -319,7 +319,7 @@ export function NewTaskFlowProvider(
       }
       releaseEditingQueuedMessage(editing.messageId);
     }
-  }, []);
+  };
 
   const projectsForEnvironment = pipe(
     projects,
@@ -460,10 +460,7 @@ export function NewTaskFlowProvider(
             : selectedProjectDraftKey
               ? `draft-task:${selectedProjectDraftKey}`
               : null;
-  const activeNewTask = React.useMemo(
-    () => (props.active === false ? null : { pendingKey: activePendingKey }),
-    [props.active, activePendingKey],
-  );
+  const activeNewTask = props.active === false ? null : { pendingKey: activePendingKey };
   const selectedProjectDraft = useComposerDraft(selectedProjectDraftKey);
   const prompt = selectedProjectDraft.text;
   const attachments = selectedProjectDraft.attachments;

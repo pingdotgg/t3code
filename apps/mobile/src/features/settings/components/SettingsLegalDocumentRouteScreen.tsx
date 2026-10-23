@@ -1,6 +1,6 @@
 import { SheetCloseButton } from "../../../components/ui/SheetHeader";
 import { type NavigationProp, type ParamListBase, useNavigation } from "@react-navigation/native";
-import { useCallback, useLayoutEffect, useState } from "react";
+import { useLayoutEffect, useState } from "react";
 import { Linking, Pressable, View } from "react-native";
 import { WebView } from "react-native-webview";
 
@@ -53,9 +53,8 @@ export function SettingsLegalDocumentRouteScreen({
   const [loadProgress, setLoadProgress] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [externalUrl, setExternalUrl] = useState(documentUrl);
-  const renderExternalHeaderButton = useCallback(
-    () => <SettingsLegalDocumentExternalHeaderButton externalUrl={externalUrl} />,
-    [externalUrl],
+  const renderExternalHeaderButton = () => (
+    <SettingsLegalDocumentExternalHeaderButton externalUrl={externalUrl} />
   );
 
   useLayoutEffect(() => {
@@ -64,9 +63,9 @@ export function SettingsLegalDocumentRouteScreen({
     });
   }, [navigation, renderExternalHeaderButton]);
 
-  const openExternalUrl = useCallback((url: string) => {
+  const openExternalUrl = (url: string) => {
     void Linking.openURL(url).catch(() => undefined);
-  }, []);
+  };
   if (loadError) {
     return (
       <View className="flex-1 items-center justify-center gap-4 bg-sheet px-8">

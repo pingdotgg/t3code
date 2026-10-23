@@ -77,17 +77,6 @@ export type TerminalResizeInput = Schema.Codec.Encoded<typeof TerminalResizeInpu
 export const TerminalClearInput = TerminalSessionInput;
 export type TerminalClearInput = Schema.Codec.Encoded<typeof TerminalClearInput>;
 
-export const TerminalRestartInput = Schema.Struct({
-  ...TerminalSessionInput.fields,
-  cwd: TrimmedNonEmptyStringSchema,
-  worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyStringSchema)),
-  cols: TerminalColsSchema,
-  rows: TerminalRowsSchema,
-  env: Schema.optional(TerminalEnvSchema),
-  providerInstanceId: Schema.optional(ProviderInstanceId),
-});
-export type TerminalRestartInput = typeof TerminalRestartInput.Type;
-
 export const TerminalCloseInput = Schema.Struct({
   ...TerminalThreadInput.fields,
   terminalId: Schema.optional(TerminalIdSchema),

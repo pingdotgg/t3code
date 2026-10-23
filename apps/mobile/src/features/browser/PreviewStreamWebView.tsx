@@ -16,7 +16,6 @@ import {
   useEffectEvent,
   useImperativeHandle,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
   type Ref,
@@ -297,13 +296,10 @@ function PreviewStreamDocumentView({
     const timer = setTimeout(bootstrapTimedOut, 15_000);
     return () => clearTimeout(timer);
   }, [started]);
-  const source = useMemo(
-    () => ({
-      html: previewStreamDocument(configuration, previewStreamScript),
-      baseUrl: Platform.OS === "android" ? "https://localhost/" : "file:///",
-    }),
-    [configuration],
-  );
+  const source = {
+    html: previewStreamDocument(configuration, previewStreamScript),
+    baseUrl: Platform.OS === "android" ? "https://localhost/" : "file:///",
+  };
   useImperativeHandle(ref, () => ({
     command,
     paste,

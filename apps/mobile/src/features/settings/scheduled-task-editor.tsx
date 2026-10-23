@@ -90,40 +90,22 @@ export function ScheduledTaskEditorProvider({ children }: { readonly children: R
     (initial.environmentId !== editor.environmentId ||
       hasScheduledTaskDraftChanges(initial.draft, editor.draft)),
   );
-  const setEditor = useCallback<Dispatch<SetStateAction<ScheduledTaskEditor | null>>>(
-    (update) => {
-      updateScheduledTaskEditor(update, defaultEditor);
-    },
-    [defaultEditor],
-  );
+  const setEditor: Dispatch<SetStateAction<ScheduledTaskEditor | null>> = (update) => {
+    updateScheduledTaskEditor(update, defaultEditor);
+  };
   const startEditor = startScheduledTaskEditor;
-  const resetEditor = useCallback(() => startEditor(defaultEditor), [defaultEditor, startEditor]);
-  const readEditor = useCallback(
-    () => readScheduledTaskEditor(voiceOwnerKey, defaultEditor),
-    [defaultEditor, voiceOwnerKey],
-  );
-  const value = useMemo(
-    () => ({
-      editor,
-      voiceOwnerKey,
-      readEditor,
-      setEditor,
-      startEditor,
-      hasChanges,
-      resetEditor,
-      draftForEnvironment,
-    }),
-    [
-      editor,
-      voiceOwnerKey,
-      readEditor,
-      setEditor,
-      startEditor,
-      hasChanges,
-      resetEditor,
-      draftForEnvironment,
-    ],
-  );
+  const resetEditor = () => startEditor(defaultEditor);
+  const readEditor = () => readScheduledTaskEditor(voiceOwnerKey, defaultEditor);
+  const value = {
+    editor,
+    voiceOwnerKey,
+    readEditor,
+    setEditor,
+    startEditor,
+    hasChanges,
+    resetEditor,
+    draftForEnvironment,
+  };
   return <ScheduledTaskEditorContext value={value}>{children}</ScheduledTaskEditorContext>;
 }
 

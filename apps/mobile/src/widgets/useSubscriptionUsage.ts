@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useEffect, useMemo } from "react";
+import { useEffect } from "react";
 import { AppState } from "react-native";
 
 import { environmentPresentations } from "../state/presentation";
@@ -12,13 +12,9 @@ export function useSubscriptionUsage(enabled = true) {
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
-  const refresh = useMemo(
-    () =>
-      createWidgetRefresher(
-        (environmentId: Parameters<typeof refreshProviders>[0]["environmentId"]) =>
-          refreshProviders({ environmentId, input: {} }),
-      ),
-    [refreshProviders],
+  const refresh = createWidgetRefresher(
+    (environmentId: Parameters<typeof refreshProviders>[0]["environmentId"]) =>
+      refreshProviders({ environmentId, input: {} }),
   );
 
   useEffect(() => {

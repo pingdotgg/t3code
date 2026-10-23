@@ -8,7 +8,6 @@
  */
 import type { OrchestrationV2DomainEvent } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -27,11 +26,6 @@ const FINAL_STATUSES: ReadonlySet<string> = new Set([
   "cancelled",
   "interrupted",
 ]);
-
-export class DelegatedTaskAnalytics extends Context.Service<
-  DelegatedTaskAnalytics,
-  { readonly onSubagent: (event: SubagentEvent) => Effect.Effect<void> }
->()("t3/telemetry/DelegatedTaskAnalytics") {}
 
 const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -89,8 +83,6 @@ const make = Effect.gen(function* () {
       event.type === "subagent.updated" ? onSubagent(event) : Effect.void,
     ),
   );
-
-  return DelegatedTaskAnalytics.of({ onSubagent });
 });
 
-export const layer = Layer.effect(DelegatedTaskAnalytics, make);
+export const layer = Layer.effectDiscard(make);

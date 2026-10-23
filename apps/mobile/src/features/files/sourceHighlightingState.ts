@@ -26,7 +26,7 @@ class SourceHighlightError extends Data.TaggedError("SourceHighlightError")<{
   readonly cause: unknown;
 }> {}
 
-export function createSourceHighlightAtomFamily(options?: {
+function createSourceHighlightAtomFamily(options?: {
   readonly highlight?: SourceHighlighter;
   readonly idleTtlMs?: number;
 }) {

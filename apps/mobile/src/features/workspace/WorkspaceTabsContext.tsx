@@ -1,9 +1,7 @@
 import {
   createContext,
   use,
-  useCallback,
   useLayoutEffect,
-  useMemo,
   useReducer,
   useRef,
   type Dispatch,
@@ -36,22 +34,19 @@ export function WorkspaceTabsProvider(props: { readonly children: ReactNode }) {
   useLayoutEffect(() => {
     activeTab.current = state.selectedTab;
   }, [state.selectedTab]);
-  const isTabActive = useCallback((tab: WorkspaceTab) => activeTab.current === tab, []);
+  const isTabActive = (tab: WorkspaceTab) => activeTab.current === tab;
   const scrollOffsets = useRef({ threads: 0, pullRequests: 0 });
-  const getScrollOffset = useCallback((tab: WorkspaceTab) => scrollOffsets.current[tab], []);
-  const recordScrollOffset = useCallback((tab: WorkspaceTab, offset: number) => {
+  const getScrollOffset = (tab: WorkspaceTab) => scrollOffsets.current[tab];
+  const recordScrollOffset = (tab: WorkspaceTab, offset: number) => {
     scrollOffsets.current[tab] = offset;
-  }, []);
-  const context = useMemo(
-    () => ({
-      state,
-      dispatch,
-      isTabActive,
-      bottomClearance: 0,
-      getScrollOffset,
-      recordScrollOffset,
-    }),
-    [state, isTabActive, getScrollOffset, recordScrollOffset],
-  );
+  };
+  const context = {
+    state,
+    dispatch,
+    isTabActive,
+    bottomClearance: 0,
+    getScrollOffset,
+    recordScrollOffset,
+  };
   return <WorkspaceTabsContext value={context}>{props.children}</WorkspaceTabsContext>;
 }

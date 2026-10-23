@@ -94,7 +94,7 @@ export function WorkspaceToolbar(props: {
     workspace.dispatch({ type: "search", tab: selectedTab });
     if (props.sidebar && !panes.primarySidebarVisible) togglePrimarySidebar();
   }, [workspace, selectedTab, props.sidebar, panes.primarySidebarVisible, togglePrimarySidebar]);
-  const focusSearch = useCallback(() => {
+  const focusSearch = () => {
     if (!workspace.isTabActive(selectedTab)) return false;
     if (listSearch) {
       fieldRef.current?.focus();
@@ -103,23 +103,20 @@ export function WorkspaceToolbar(props: {
     if (!NATIVE_LIQUID_GLASS_SUPPORTED) enterSearch();
     searchRef.current?.focus();
     return true;
-  }, [workspace, selectedTab, listSearch, enterSearch]);
-  const cancelSearch = useCallback(() => {
+  };
+  const cancelSearch = () => {
     workspace.recordScrollOffset(selectedTab, tab.searchEntryOffset);
     workspace.dispatch({ type: "cancel", tab: selectedTab });
-  }, [workspace, selectedTab, tab.searchEntryOffset]);
-  const searchFocused = useCallback(
-    () =>
-      tab.searchMode === "resting"
-        ? enterSearch()
-        : workspace.dispatch({ type: "search", tab: selectedTab }),
-    [tab.searchMode, enterSearch, workspace, selectedTab],
-  );
+  };
+  const searchFocused = () =>
+    tab.searchMode === "resting"
+      ? enterSearch()
+      : workspace.dispatch({ type: "search", tab: selectedTab });
   useHardwareKeyboardCommand("focusSearch", focusSearch);
-  const restoreSearch = useCallback(() => {
+  const restoreSearch = () => {
     if (isTabActive(selectedTab) && tab.searchMode !== "resting")
       searchRef.current?.setText(tab.query);
-  }, [isTabActive, selectedTab, tab.searchMode, tab.query]);
+  };
   useFocusEffect(
     useCallback(() => {
       const frame = requestAnimationFrame(restoreSearch);

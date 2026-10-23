@@ -1,6 +1,6 @@
 import type { Wakeups } from "@t3tools/client-runtime/connection";
 
-export const MOBILE_BACKGROUND_RECONNECT_AFTER_MS = 10_000;
+const MOBILE_BACKGROUND_RECONNECT_AFTER_MS = 10_000;
 
 export type MobileApplicationActiveWakeup = Extract<
   Wakeups.ConnectionWakeup,

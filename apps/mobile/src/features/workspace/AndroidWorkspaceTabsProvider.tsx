@@ -1,13 +1,5 @@
 import type { NavigationState } from "@react-navigation/native";
-import {
-  createContext,
-  use,
-  useCallback,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  type ReactNode,
-} from "react";
+import { createContext, use, useLayoutEffect, useRef, type ReactNode } from "react";
 import { Platform } from "react-native";
 import { androidWorkspaceSettingsOpen } from "./android-workspace-tabs";
 import { WorkspaceTabsProvider } from "./WorkspaceTabsContext";
@@ -41,10 +33,10 @@ export function AndroidWorkspaceTabsProvider(props: {
   useLayoutEffect(() => {
     stateRef.current = props.state;
   }, [props.state]);
-  const getState = useCallback(() => stateRef.current, []);
+  const getState = () => stateRef.current;
   const key = props.state.key;
   const settingsOpen = Platform.OS === "android" && androidWorkspaceSettingsOpen(props.state);
-  const root = useMemo(() => ({ key, getState, settingsOpen }), [key, getState, settingsOpen]);
+  const root = { key, getState, settingsOpen };
   return Platform.OS === "android" ? (
     <WorkspaceTabsProvider>
       <AndroidWorkspaceRootContext value={root}>{props.children}</AndroidWorkspaceRootContext>

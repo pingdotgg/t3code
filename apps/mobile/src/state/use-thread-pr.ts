@@ -33,16 +33,12 @@ const threadPrSnapshotsAtom = Atom.make<ReadonlyMap<string, ThreadPrSnapshot>>(n
   Atom.withLabel("mobile:thread-pr-snapshots"),
 );
 
-export {
-  presentThreadPr,
-  type ThreadPr,
-  type ThreadPrPresentation,
-} from "./thread-pr-presentation";
+export { type ThreadPr, type ThreadPrPresentation } from "./thread-pr-presentation";
 
 export function useThreadPr(thread: EnvironmentThreadShell): ThreadPrPresentation | null {
   const supportsLinks = useAtomValue(
     serverEnvironment.configValueAtom(thread.environmentId),
-    (config) => config?.environment.capabilities.threadPullRequests === true,
+    (config) => config !== null,
   );
   const { linkedPresentation, pullRequestRef } = useMemo(
     () =>
@@ -52,7 +48,7 @@ export function useThreadPr(thread: EnvironmentThreadShell): ThreadPrPresentatio
           linkedPullRequest: thread.linkedPullRequest,
           branchPullRequest: thread.branchPullRequest,
         },
-        { threadPullRequests: supportsLinks },
+        supportsLinks,
       ),
     [thread.pullRequests, thread.linkedPullRequest, thread.branchPullRequest, supportsLinks],
   );

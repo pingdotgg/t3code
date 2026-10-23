@@ -1,6 +1,5 @@
 import { useNavigation, useRoute, StackActions } from "@react-navigation/native";
 import { nativePullRequestDestination } from "../lib/pullRequestNavigation";
-import { useCallback } from "react";
 import { Platform } from "react-native";
 import { resetAndroidWorkspace } from "../lib/android-workspace-navigation";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
@@ -14,18 +13,15 @@ type PullRequestContext = { readonly environmentId: string; readonly projectId: 
 export function useNavigateToPullRequest(options?: { readonly replace?: boolean }) {
   const navigation = useNavigation();
   const replace = options?.replace;
-  return useCallback(
-    async (url: string, context: PullRequestContext | null) => {
-      const params = nativePullRequestDestination(url, context);
-      if (!params) return tryOpenExternalUrl(url, "pull-request");
-      if (Platform.OS === "android")
-        resetAndroidWorkspace(navigation, { name: "PullRequest", params });
-      else if (replace) navigation.dispatch(StackActions.replace("PullRequest", params));
-      else navigation.navigate("PullRequest", params);
-      return true;
-    },
-    [navigation, replace],
-  );
+  return async (url: string, context: PullRequestContext | null) => {
+    const params = nativePullRequestDestination(url, context);
+    if (!params) return tryOpenExternalUrl(url, "pull-request");
+    if (Platform.OS === "android")
+      resetAndroidWorkspace(navigation, { name: "PullRequest", params });
+    else if (replace) navigation.dispatch(StackActions.replace("PullRequest", params));
+    else navigation.navigate("PullRequest", params);
+    return true;
+  };
 }
 
 export function useOpenPullRequest(options?: {
@@ -54,14 +50,11 @@ export function useOpenPullRequest(options?: {
   const projectId =
     options?.context?.projectId ?? first(routeContext?.projectId) ?? thread?.projectId;
   const navigateToPullRequest = useNavigateToPullRequest({ replace: options?.replace });
-  return useCallback(
-    (url: string) =>
-      navigateToPullRequest(
-        url,
-        environmentId && projectId
-          ? { environmentId: String(environmentId), projectId: String(projectId) }
-          : null,
-      ),
-    [environmentId, projectId, navigateToPullRequest],
-  );
+  return (url: string) =>
+    navigateToPullRequest(
+      url,
+      environmentId && projectId
+        ? { environmentId: String(environmentId), projectId: String(projectId) }
+        : null,
+    );
 }

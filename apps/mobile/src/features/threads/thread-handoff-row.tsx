@@ -14,7 +14,6 @@ import type {
   ServerProvider,
 } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
-import { useMemo } from "react";
 import { Pressable, View, type ColorValue } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -51,10 +50,7 @@ export function ThreadHandoffRow(props: {
   surfaceColor: string;
 }) {
   const { item } = props.projectedItem;
-  const endpointsAtom = useMemo(
-    () => handoffEndpointsAtom(props.environmentId, props.projectedItem),
-    [props.environmentId, props.projectedItem],
-  );
+  const endpointsAtom = handoffEndpointsAtom(props.environmentId, props.projectedItem);
   const endpoints = useAtomValue(endpointsAtom);
   if (item.type !== "handoff" || endpoints === null) return null;
   const color = item.status === "failed" ? "#e11d48" : props.iconColor;

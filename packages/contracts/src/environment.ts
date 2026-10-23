@@ -83,8 +83,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   ),
   pullRequests: Schema.optionalKey(Schema.Boolean),
   pullRequestChecks: Schema.optionalKey(Schema.Boolean),
-  /** Absent on servers from before inline context shipped, which drop the records and forward
-      the links as literal text -- so a client must serialize context the legacy way for them. */
+  /** Every protocol-2 server sends this. Older mobile builds still read it to choose the legacy
+      text serializer, so servers must keep sending it. */
   inlineMessageContext: Schema.optionalKey(Schema.Boolean),
   requiredWorktreeBootstrap: Schema.optionalKey(Schema.Boolean),
   threadSettlement: Schema.optionalKey(Schema.Boolean),
@@ -109,10 +109,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
    */
   projectProviderInstanceOverrides: Schema.optionalKey(Schema.Boolean),
   threadSnooze: Schema.optionalKey(Schema.Boolean),
-  /** Absent on servers from
-      before environment themes shipped, which never emit the events -- so a
-      client reconnecting to one must drop published themes rather than keep
-      showing a set nothing will ever update. */
+  /** Every protocol-2 server sends this. Older mobile builds still read it to
+      decide whether to keep published themes, so servers must keep sending it. */
   environmentThemes: Schema.optionalKey(Schema.Boolean),
   usageLimitSources: Schema.optionalKey(Schema.Boolean),
   usagePriceOverrides: Schema.optionalKey(Schema.Boolean),

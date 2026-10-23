@@ -10,8 +10,8 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { DEFAULT_FOLLOW_UP_BEHAVIOR, type FollowUpBehavior } from "../../lib/followUpBehavior";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
-import { SettingsChoiceRow } from "./components/SettingsChoiceRow";
-import { SettingsSection } from "./components/SettingsSection";
+import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoiceRow";
+import { ListSection as SettingsSection } from "../../components/ui/ListSection";
 
 const FOLLOW_UP_OPTIONS: ReadonlyArray<{
   readonly behavior: FollowUpBehavior;

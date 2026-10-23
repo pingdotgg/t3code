@@ -102,14 +102,6 @@ describe("pending context handoff", () => {
       resolvePendingHandoff(toolRowsOnly, { instanceId: to, model: "first" }, [])?.to.model,
     ).toBe("first");
   });
-  it("only previews a same-provider model change when it needs a fresh native thread", () => {
-    const providers = [
-      { instanceId: from, requiresNewThreadForModelChange: true },
-    ] as unknown as ServerProvider[];
-    expect(
-      resolvePendingHandoff(projection, { instanceId: from, model: "other" }, providers)?.to.model,
-    ).toBe("other");
-  });
   it("resumes compatible account overlays without showing a handoff", () => {
     const providers = [from, to].map((instanceId) => ({
       instanceId,

@@ -6,7 +6,6 @@ import {
   resolveServerSelfUpdateCapability,
   resolveVersionMismatch,
   supportsDesktopAppUpdate,
-  supportsServerUpdateThreadContinuation,
 } from "~/versionSkew";
 import type { ServerUpdateOutcome, ServerUpdateTarget } from "../ServerUpdateAction";
 
@@ -46,9 +45,7 @@ export function collectRestartingMachines(
     return [
       {
         environmentId: machine.environmentId,
-        continuesThreads:
-          config.environment.capabilities.threadRestartContinuation === true &&
-          config.settings.continueThreadsAfterServerUpdate === true,
+        continuesThreads: config.settings.continueThreadsAfterServerUpdate === true,
       },
     ];
   });
@@ -119,8 +116,6 @@ export function collectServerUpdateTargets(
       selfUpdate,
       installation: config.environment.capabilities.serverInstallation,
       desktopAppUpdate,
-      threadContinuation: supportsServerUpdateThreadContinuation(config),
-      continueThreadsAfterServerUpdate: config.settings.continueThreadsAfterServerUpdate ?? false,
       targetVersion,
     });
   }

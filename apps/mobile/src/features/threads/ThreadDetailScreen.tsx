@@ -524,7 +524,6 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
   const windowMetrics = useNativeLayoutMetrics();
   const nativeMetrics = usesNativeWorkspaceColumns ? columnMetrics : screenMetrics;
   const controlInsets = deriveBottomControlInsets(nativeMetrics);
-  const agentLabel = `${props.selectedThread.modelSelection.instanceId} agent`;
   const selectedThreadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
   const childThreadInputs = useChildThreadInputs({
     environmentId: props.environmentId,
@@ -604,8 +603,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
     }, []),
   );
   const snoozed =
-    props.serverConfig?.environment.capabilities.threadSnooze === true &&
-    effectiveSnoozed(props.selectedThread, { now: lifecycleNow });
+    props.serverConfig !== null && effectiveSnoozed(props.selectedThread, { now: lifecycleNow });
   const snoozedUntil = props.selectedThread.snoozedUntil;
   useEffect(() => {
     if (!snoozed || snoozedUntil === null) return;
@@ -616,13 +614,9 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
     return () => clearTimeout(timer);
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Re-arm if timer clamping fires before the wake time.
   }, [snoozed, snoozedUntil, lifecycleNow]);
-  const settled =
-    props.serverConfig?.environment.capabilities.threadSettlement === true &&
-    props.selectedThread.settledOverride === "settled";
+  const settled = props.serverConfig !== null && props.selectedThread.settledOverride === "settled";
   const wokeAt =
-    props.serverConfig?.environment.capabilities.threadSnooze === true
-      ? threadWokeAt(props.selectedThread, { now: lifecycleNow })
-      : null;
+    props.serverConfig !== null ? threadWokeAt(props.selectedThread, { now: lifecycleNow }) : null;
   const woke = isThreadWokeUnseen({
     wokeAt,
     settled,
@@ -902,30 +896,27 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
   // Android lays the screen out below its opaque header and reports a zero
   // header height, so the window height overstates the room by the header.
   const [screenHeight, setScreenHeight] = useState<number | null>(null);
-  const handleScreenLayout = useCallback((event: LayoutChangeEvent) => {
+  const handleScreenLayout = (event: LayoutChangeEvent) => {
     setScreenHeight(event.nativeEvent.layout.height);
-  }, []);
+  };
   const screenAreaHeight = screenHeight ?? windowHeight;
   // The usage panel stacks with the composer and any approval card, so it gets
   // whatever room they leave below the header. Measured only while it is open
   // so typing in the composer does not re-render the screen.
   const usageLimitsOpen = usageLimitsReport !== null && activeUserInputRequestId === null;
   const [usageLimitsLayout, setUsageLimitsLayout] = useState({ overlay: 0, panel: 0 });
-  const handleComposerOverlayLayout = useCallback(
-    (event: LayoutChangeEvent) => {
-      onComposerLayout(event);
-      if (!usageLimitsOpen) return;
-      const overlay = event.nativeEvent.layout.height;
-      setUsageLimitsLayout((current) =>
-        current.overlay === overlay ? current : { ...current, overlay },
-      );
-    },
-    [onComposerLayout, usageLimitsOpen],
-  );
-  const handleUsageLimitsLayout = useCallback((event: LayoutChangeEvent) => {
+  const handleComposerOverlayLayout = (event: LayoutChangeEvent) => {
+    onComposerLayout(event);
+    if (!usageLimitsOpen) return;
+    const overlay = event.nativeEvent.layout.height;
+    setUsageLimitsLayout((current) =>
+      current.overlay === overlay ? current : { ...current, overlay },
+    );
+  };
+  const handleUsageLimitsLayout = (event: LayoutChangeEvent) => {
     const panel = event.nativeEvent.layout.height;
     setUsageLimitsLayout((current) => (current.panel === panel ? current : { ...current, panel }));
-  }, []);
+  };
   const overlayBesideUsageLimits =
     usageLimitsLayout.overlay > 0
       ? usageLimitsLayout.overlay - usageLimitsLayout.panel
@@ -1394,7 +1385,6 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
               // Cancel on the edit banner would discard it.
               onEditPendingMessage={isProviderSubagent ? null : handleEditPendingMessage}
               contentPresentation={props.contentPresentation}
-              agentLabel={agentLabel}
               threadTitle={props.selectedThread.title}
               latestRun={props.activityRun}
               activeWorkStartedAt={props.activeWorkStartedAt}

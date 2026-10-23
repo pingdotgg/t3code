@@ -13,13 +13,13 @@ import {
 import * as ManagedEndpointAllocations from "./ManagedEndpointAllocations.ts";
 import * as ManagedEndpointProvider from "./ManagedEndpointProvider.ts";
 
-export const MANAGED_ENDPOINT_GRACE_PERIOD_MINUTES = 5;
+const MANAGED_ENDPOINT_GRACE_PERIOD_MINUTES = 5;
 // A tunnel that never connected is usually a link still being set up: a slow
 // cloudflared download or a user who walked away mid-pairing. Give it an hour.
-export const MANAGED_ENDPOINT_INACTIVE_GRACE_PERIOD_MINUTES = 60;
-export const MANAGED_ENDPOINT_SWEEP_PAGE_SIZE = 100;
-export const MANAGED_ENDPOINT_SWEEP_ATTEMPT_LIMIT = 100;
-export const MANAGED_ENDPOINT_SWEEP_LIST_REQUEST_LIMIT = 10;
+const MANAGED_ENDPOINT_INACTIVE_GRACE_PERIOD_MINUTES = 60;
+const MANAGED_ENDPOINT_SWEEP_PAGE_SIZE = 100;
+const MANAGED_ENDPOINT_SWEEP_ATTEMPT_LIMIT = 100;
+const MANAGED_ENDPOINT_SWEEP_LIST_REQUEST_LIMIT = 10;
 const MANAGED_ENDPOINT_LEGACY_AGE_BUCKET_DAYS = [7, 30, 90] as const;
 // A host that never registered recovery cannot replace a deleted tunnel on
 // its own build. Only delete its tunnel after it has been gone this long. A
@@ -29,7 +29,7 @@ const MANAGED_ENDPOINT_LEGACY_GRACE_PERIOD_DAYS = 7;
 // full attempt budget inside the cron's timeout. Each holds a Hyperdrive
 // connection while it runs; keep this well under the 20-connection origin
 // limit that request handlers share.
-export const MANAGED_ENDPOINT_SWEEP_DELETE_CONCURRENCY = 4;
+const MANAGED_ENDPOINT_SWEEP_DELETE_CONCURRENCY = 4;
 // Stop starting deletions this long after the sweep starts, leaving room under
 // the cron's two-minute timeout to finish in-flight ones and record the
 // counters.
@@ -155,7 +155,7 @@ const emptyResult = (
   truncated: false,
 });
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const config = yield* RelayConfiguration.RelayConfiguration;
   const tunnels = yield* ManagedEndpointProvider.ManagedEndpointTunnelClient;
   const allocations = yield* ManagedEndpointAllocations.ManagedEndpointAllocations;

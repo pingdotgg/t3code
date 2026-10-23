@@ -35,9 +35,7 @@ type ConnectionLayerSource =
   | typeof BackgroundActivity.layerReporter;
 
 const layerProvidedClientConnection = layerSnapshotLoader.pipe(
-  Layer.provideMerge(
-    Connection.layerWithOptions({ usageLimitSources: true, usageLimitsCommand: true }),
-  ),
+  Layer.provideMerge(Connection.layer),
   Layer.provideMerge(
     Layer.mergeAll(
       Runtime.layer,

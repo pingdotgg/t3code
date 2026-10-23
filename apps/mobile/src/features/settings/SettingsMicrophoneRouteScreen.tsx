@@ -3,7 +3,7 @@ import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScroll
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { getRecordingPermissionsAsync, requestRecordingPermissionsAsync } from "expo-audio";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { AppState, Linking, Pressable, View } from "react-native";
 import Reanimated, { ReduceMotion, useAnimatedStyle, withTiming } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -19,9 +19,9 @@ import {
   microphoneOrder,
 } from "../../lib/microphonePriority";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
-import { SettingsActionRow } from "./components/SettingsActionRow";
+import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
 import { SettingsDragHandle } from "./components/SettingsDragHandle";
-import { SettingsSection } from "./components/SettingsSection";
+import { ListSection as SettingsSection } from "../../components/ui/ListSection";
 
 const REMOVE_SIZE = 20;
 
@@ -29,15 +29,9 @@ type MicrophonePermission = "checking" | "granted" | "ask" | "denied";
 
 function useMicrophonePermission() {
   const [permission, setPermission] = useState<MicrophonePermission>("checking");
-  const apply = useCallback(
-    (response: { readonly granted: boolean; readonly canAskAgain: boolean }) =>
-      setPermission(response.granted ? "granted" : response.canAskAgain ? "ask" : "denied"),
-    [],
-  );
-  const refresh = useCallback(
-    () => void getRecordingPermissionsAsync().then(apply, () => setPermission("ask")),
-    [apply],
-  );
+  const apply = (response: { readonly granted: boolean; readonly canAskAgain: boolean }) =>
+    setPermission(response.granted ? "granted" : response.canAskAgain ? "ask" : "denied");
+  const refresh = () => void getRecordingPermissionsAsync().then(apply, () => setPermission("ask"));
   useEffect(() => {
     refresh();
     const subscription = AppState.addEventListener("change", (state) => {
@@ -45,10 +39,7 @@ function useMicrophonePermission() {
     });
     return () => subscription.remove();
   }, [refresh]);
-  const request = useCallback(
-    () => void requestRecordingPermissionsAsync().then(apply, refresh),
-    [apply, refresh],
-  );
+  const request = () => void requestRecordingPermissionsAsync().then(apply, refresh);
   return { permission, request };
 }
 

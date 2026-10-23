@@ -14,7 +14,7 @@ import {
 import { useAppearancePreferences } from "../../features/settings/appearance/AppearancePreferencesProvider";
 import { useScaledTextRole } from "../../features/settings/appearance/useScaledTextRole";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { themeColorWithContrast } from "../../lib/mobileTheme";
 import type { Alert, AlertButton } from "react-native";
 import type { ConfirmDialogRequest, TextInputDialogRequest } from "./Dialog.types";
@@ -74,23 +74,20 @@ export function Host() {
     };
   }, []);
 
-  const handleCancel = useCallback(() => {
+  const handleCancel = () => {
     setPresented(null);
     if (presented?.kind === "alert") presented.request.options?.onDismiss?.();
     else presented?.request.onCancel?.();
-  }, [presented]);
+  };
 
-  const handleConfirm = useCallback(
-    (nativeInputValue?: string) => {
-      setPresented(null);
-      if (presented?.kind === "confirm") {
-        presented.request.onConfirm();
-      } else if (presented?.kind === "text-input") {
-        presented.request.onConfirm(nativeInputValue ?? inputValue);
-      }
-    },
-    [inputValue, presented],
-  );
+  const handleConfirm = (nativeInputValue?: string) => {
+    setPresented(null);
+    if (presented?.kind === "confirm") {
+      presented.request.onConfirm();
+    } else if (presented?.kind === "text-input") {
+      presented.request.onConfirm(nativeInputValue ?? inputValue);
+    }
+  };
 
   if (presented?.kind === "alert") {
     return (

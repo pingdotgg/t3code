@@ -268,7 +268,7 @@ Use **Link pull request** in the command palette or **Linked pull requests** pan
 pull request link in the conversation. Creating a pull request from Git actions links it automatically.
 Agents can link their pull requests with the `link_pull_request` tool.
 
-Use **Link this PR** in a branch-detected badge's tooltip to keep it with the thread. From a review
+Use **Link pull request to thread** in the command palette to keep a pull request with the thread. From a review
 on the Pull Requests page, **Link to thread** lets you search for an active thread. The review header
 also lists the threads that link to it, including archived threads, so you can return to their context.
 

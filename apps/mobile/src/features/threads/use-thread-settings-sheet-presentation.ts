@@ -44,12 +44,12 @@ export function useThreadSettingsSheetPresentation(input: {
   const restorePendingRef = useRef(false);
   const lastStackTransitionFinishedAtRef = useRef(0);
   const dismissRestoreTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const clearDismissRestoreTimer = useCallback(() => {
+  const clearDismissRestoreTimer = () => {
     if (dismissRestoreTimerRef.current !== null) {
       clearTimeout(dismissRestoreTimerRef.current);
       dismissRestoreTimerRef.current = null;
     }
-  }, []);
+  };
 
   useEffect(() => {
     isEditorFocusedRef.current = input.isEditorFocused;
@@ -68,7 +68,7 @@ export function useThreadSettingsSheetPresentation(input: {
     };
   }, [clearDismissRestoreTimer]);
 
-  const open = useCallback(() => {
+  const open = () => {
     if (isActiveRef.current) {
       return;
     }
@@ -96,7 +96,7 @@ export function useThreadSettingsSheetPresentation(input: {
       }
       setPhase("visible");
     });
-  }, [clearDismissRestoreTimer, input.editorRef, input.isEditorFocused, phase]);
+  };
 
   const restoreEditorFocus = useCallback(() => {
     const focusRestoreId = focusRestoreIdRef.current + 1;
@@ -134,7 +134,7 @@ export function useThreadSettingsSheetPresentation(input: {
     restoreEditorFocus();
   }, [clearDismissRestoreTimer, restoreEditorFocus]);
 
-  const onDismissed = useCallback(() => {
+  const onDismissed = () => {
     isActiveRef.current = false;
 
     if (!restoreFocusAfterDismissRef.current) {
@@ -156,12 +156,12 @@ export function useThreadSettingsSheetPresentation(input: {
       dismissRestoreTimerRef.current = null;
       runPendingDismissalRestore();
     }, SHEET_DISMISSAL_KEYBOARD_OVERLAP_MS);
-  }, [clearDismissRestoreTimer, runPendingDismissalRestore]);
+  };
 
-  const onStackTransitionsFinished = useCallback(() => {
+  const onStackTransitionsFinished = () => {
     lastStackTransitionFinishedAtRef.current = Date.now();
     runPendingDismissalRestore();
-  }, [runPendingDismissalRestore]);
+  };
 
   return {
     isActive: phase === "opening" || phase === "visible",

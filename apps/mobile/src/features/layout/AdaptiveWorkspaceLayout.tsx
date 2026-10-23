@@ -498,7 +498,7 @@ function AdaptiveWorkspaceLayoutContent(
   };
 
   const selectAndroidWorkspace = useAndroidWorkspaceSelection();
-  const deferredThreadSelection = useMemo(() => createDeferredNavigation(), []);
+  const deferredThreadSelection = createDeferredNavigation();
   function handleSelectThreadRoute(params: ReactNavigation.RootParamList["Thread"]) {
     deferredThreadSelection.run(() => applyThreadRouteSelection(params));
   }

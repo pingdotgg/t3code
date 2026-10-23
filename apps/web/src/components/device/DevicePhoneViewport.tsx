@@ -96,7 +96,7 @@ export function DevicePhoneViewport(props: {
           onInteractionActive: viewer.setInteractionActive,
         });
         trackpad = bindPhoneTrackpad(canvas, interactionRef.current);
-        stopTrackpadEnd = window.desktopBridge?.onTrackpadScrollEnd?.(() => trackpad?.endOrbit());
+        stopTrackpadEnd = window.desktopBridge?.onTrackpadScrollEnd(() => trackpad?.endOrbit());
         resize();
         viewer.frameUpdated();
       })

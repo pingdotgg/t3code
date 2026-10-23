@@ -106,16 +106,7 @@ export class AnalyticsService extends Context.Service<
       observedBy: "server" | "client",
     ) => Effect.Effect<void>;
   }
->()("t3/telemetry/AnalyticsService") {
-  static readonly layerTest = Layer.succeed(
-    AnalyticsService,
-    AnalyticsService.of({
-      record: () => Effect.void,
-      flush: Effect.void,
-      recordOwners: () => Effect.void,
-    }),
-  );
-}
+>()("t3/telemetry/AnalyticsService") {}
 
 function serverOsFromNodePlatform(platform: string): ClientOs {
   switch (platform) {
@@ -336,5 +327,3 @@ export const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(AnalyticsService, make);
-
-const layerTest = AnalyticsService.layerTest;

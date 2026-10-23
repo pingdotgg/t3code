@@ -184,200 +184,195 @@ const addRolledBackRecoveryCandidate = Effect.fn("addRolledBackRecoveryCandidate
   return threadId;
 });
 
-it.effect.each([
-  ["memory", ProjectionStore.layerMemory],
-  ["SQL", layerTest],
-] as const)("%s shells flag only an active turn blocked solely on T3 thread waits", ([, layer]) =>
-  Effect.gen(function* () {
-    const store = yield* ProjectionStore.ProjectionStoreV2;
-    const threadId = yield* addRolledBackRecoveryCandidate("thread-wait");
-    const initial = yield* store.getThreadProjection(threadId);
-    const at = initial.updatedAt;
-    const previousCommand = initial.turnItems.find((item) => item.type === "command_execution")!;
-    const itemBase = {
-      ...previousCommand,
-      providerThreadId: previousCommand.providerThreadId ?? null,
-      providerTurnId: previousCommand.providerTurnId ?? null,
-      nativeItemRef: previousCommand.nativeItemRef ?? null,
-      parentItemId: previousCommand.parentItemId ?? null,
-    };
-    yield* store.apply({
-      id: EventId.make("event:thread-wait:previous-completed"),
-      type: "run.updated",
-      threadId,
-      occurredAt: at,
-      payload: { ...initial.runs[0]!, status: "completed", completedAt: at },
-    });
-    const run = {
-      ...initial.runs[0]!,
-      id: RunId.make("run:thread-wait:active"),
-      ordinal: 2,
-      status: "running" as const,
-      completedAt: null,
-    };
-    yield* store.apply({
-      id: EventId.make("event:thread-wait:active"),
-      type: "run.created",
-      threadId,
-      occurredAt: at,
-      payload: run,
-    });
-    let sequence = 0;
-    const updateItem = (payload: OrchestrationV2TurnItem) =>
-      store.apply({
-        id: EventId.make(`event:thread-wait:item:${sequence++}`),
-        type: "turn-item.updated",
+it.layer(layerTest)("SQL projections", (it) => {
+  it.effect("SQL shells flag only an active turn blocked solely on T3 thread waits", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = yield* addRolledBackRecoveryCandidate("thread-wait");
+      const initial = yield* store.getThreadProjection(threadId);
+      const at = initial.updatedAt;
+      const previousCommand = initial.turnItems.find((item) => item.type === "command_execution")!;
+      const itemBase = {
+        ...previousCommand,
+        providerThreadId: previousCommand.providerThreadId ?? null,
+        providerTurnId: previousCommand.providerTurnId ?? null,
+        nativeItemRef: previousCommand.nativeItemRef ?? null,
+        parentItemId: previousCommand.parentItemId ?? null,
+      };
+      yield* store.apply({
+        id: EventId.make("event:thread-wait:previous-completed"),
+        type: "run.updated",
         threadId,
-        runId: payload.runId ?? undefined,
-        driver,
         occurredAt: at,
-        payload,
+        payload: { ...initial.runs[0]!, status: "completed", completedAt: at },
       });
-    const assertBlocked = Effect.fnUntraced(function* (expected: boolean) {
-      const listed = (yield* store.getShellSnapshot()).threads.find((row) => row.id === threadId);
-      for (const shell of [yield* store.getThreadShell(threadId), listed]) {
-        assert.equal(shell?.activeRunId, run.id);
-        assert.equal(shell?.status, "running");
-        assert.equal(shell?.blockedOnThreadWait ?? false, expected);
-      }
-    });
-    const wait = {
-      ...itemBase,
-      id: TurnItemId.make("item:thread-wait:active"),
-      runId: run.id,
-      type: "dynamic_tool" as const,
-      toolName: "mcp__t3_code__t3_thread_wait",
-      input: { threadId: "child-thread" },
-      status: "running" as const,
-    };
+      const run = {
+        ...initial.runs[0]!,
+        id: RunId.make("run:thread-wait:active"),
+        ordinal: 2,
+        status: "running" as const,
+        completedAt: null,
+      };
+      yield* store.apply({
+        id: EventId.make("event:thread-wait:active"),
+        type: "run.created",
+        threadId,
+        occurredAt: at,
+        payload: run,
+      });
+      let sequence = 0;
+      const updateItem = (payload: OrchestrationV2TurnItem) =>
+        store.apply({
+          id: EventId.make(`event:thread-wait:item:${sequence++}`),
+          type: "turn-item.updated",
+          threadId,
+          runId: payload.runId ?? undefined,
+          driver,
+          occurredAt: at,
+          payload,
+        });
+      const assertBlocked = Effect.fnUntraced(function* (expected: boolean) {
+        const listed = (yield* store.getShellSnapshot()).threads.find((row) => row.id === threadId);
+        for (const shell of [yield* store.getThreadShell(threadId), listed]) {
+          assert.equal(shell?.activeRunId, run.id);
+          assert.equal(shell?.status, "running");
+          assert.equal(shell?.blockedOnThreadWait ?? false, expected);
+        }
+      });
+      const wait = {
+        ...itemBase,
+        id: TurnItemId.make("item:thread-wait:active"),
+        runId: run.id,
+        type: "dynamic_tool" as const,
+        toolName: "mcp__t3_code__t3_thread_wait",
+        input: { threadId: "child-thread" },
+        status: "running" as const,
+      };
 
-    yield* updateItem({
-      ...wait,
-      id: TurnItemId.make("item:thread-wait:stale"),
-      runId: initial.runs[0]!.id,
-    });
-    yield* assertBlocked(false);
-    const foreign = {
-      ...wait,
-      id: TurnItemId.make("item:thread-wait:foreign"),
-      toolName: "weather.t3_thread_wait",
-    };
-    yield* updateItem(foreign);
-    yield* assertBlocked(false);
-    yield* updateItem({ ...foreign, status: "completed", completedAt: at });
-    yield* updateItem({ ...wait, status: "pending", startedAt: null });
-    yield* assertBlocked(false);
-    yield* updateItem(wait);
-    yield* assertBlocked(true);
+      yield* updateItem({
+        ...wait,
+        id: TurnItemId.make("item:thread-wait:stale"),
+        runId: initial.runs[0]!.id,
+      });
+      yield* assertBlocked(false);
+      const foreign = {
+        ...wait,
+        id: TurnItemId.make("item:thread-wait:foreign"),
+        toolName: "weather.t3_thread_wait",
+      };
+      yield* updateItem(foreign);
+      yield* assertBlocked(false);
+      yield* updateItem({ ...foreign, status: "completed", completedAt: at });
+      yield* updateItem({ ...wait, status: "pending", startedAt: null });
+      yield* assertBlocked(false);
+      yield* updateItem(wait);
+      yield* assertBlocked(true);
 
-    yield* updateItem({
-      ...wait,
-      id: TurnItemId.make("item:thread-wait:plan"),
-      type: "todo_list",
-      planId: PlanId.make("plan:thread-wait"),
-      steps: [{ id: "review", text: "Review the child result", status: "running" }],
-    });
-    yield* assertBlocked(true);
-    yield* updateItem({
-      ...wait,
-      id: TurnItemId.make("item:thread-wait:proposed-plan"),
-      type: "proposed_plan",
-      planId: PlanId.make("plan:thread-wait:proposed"),
-      markdown: "Review the child result",
-      streaming: true,
-    });
-    yield* updateItem({
-      ...wait,
-      id: TurnItemId.make("item:thread-wait:named-message"),
-      nativeItemRef: { driver, nativeId: "named-message", strength: "weak" },
-      type: "assistant_message",
-      messageId: MessageId.make("message:thread-wait:named"),
-      text: "Waiting for the child result",
-      streaming: true,
-    });
-    yield* updateItem({
-      ...wait,
-      id: TurnItemId.make("item:thread-wait:named-thought"),
-      nativeItemRef: { driver, nativeId: "named-thought", strength: "weak" },
-      type: "reasoning",
-      text: "I need the child result",
-      streaming: true,
-    });
-    yield* assertBlocked(true);
+      yield* updateItem({
+        ...wait,
+        id: TurnItemId.make("item:thread-wait:plan"),
+        type: "todo_list",
+        planId: PlanId.make("plan:thread-wait"),
+        steps: [{ id: "review", text: "Review the child result", status: "running" }],
+      });
+      yield* assertBlocked(true);
+      yield* updateItem({
+        ...wait,
+        id: TurnItemId.make("item:thread-wait:proposed-plan"),
+        type: "proposed_plan",
+        planId: PlanId.make("plan:thread-wait:proposed"),
+        markdown: "Review the child result",
+        streaming: true,
+      });
+      yield* updateItem({
+        ...wait,
+        id: TurnItemId.make("item:thread-wait:named-message"),
+        nativeItemRef: { driver, nativeId: "named-message", strength: "weak" },
+        type: "assistant_message",
+        messageId: MessageId.make("message:thread-wait:named"),
+        text: "Waiting for the child result",
+        streaming: true,
+      });
+      yield* updateItem({
+        ...wait,
+        id: TurnItemId.make("item:thread-wait:named-thought"),
+        nativeItemRef: { driver, nativeId: "named-thought", strength: "weak" },
+        type: "reasoning",
+        text: "I need the child result",
+        streaming: true,
+      });
+      yield* assertBlocked(true);
 
-    const command = {
-      ...itemBase,
-      id: TurnItemId.make("item:thread-wait:concurrent"),
-      runId: run.id,
-    };
-    yield* updateItem(command);
-    yield* assertBlocked(false);
-    yield* updateItem({ ...wait, status: "waiting" });
-    yield* assertBlocked(false);
-    yield* updateItem({ ...command, status: "completed", completedAt: at });
-    yield* assertBlocked(true);
-    const fileChange = {
-      ...command,
-      id: TurnItemId.make("item:thread-wait:concurrent-edit"),
-      type: "file_change" as const,
-      fileName: "example.ts",
-    };
-    yield* updateItem(fileChange);
-    yield* assertBlocked(false);
-    yield* updateItem({ ...fileChange, status: "completed", completedAt: at });
-    yield* assertBlocked(true);
-    const compaction = {
-      ...command,
-      id: TurnItemId.make("item:thread-wait:compaction"),
-      type: "compaction" as const,
-      driver,
-    };
-    yield* updateItem(compaction);
-    yield* assertBlocked(false);
-    yield* updateItem({ ...compaction, status: "completed", completedAt: at });
-    yield* assertBlocked(true);
-    yield* updateItem({ ...wait, status: "completed", completedAt: at });
-    yield* assertBlocked(false);
+      const command = {
+        ...itemBase,
+        id: TurnItemId.make("item:thread-wait:concurrent"),
+        runId: run.id,
+      };
+      yield* updateItem(command);
+      yield* assertBlocked(false);
+      yield* updateItem({ ...wait, status: "waiting" });
+      yield* assertBlocked(false);
+      yield* updateItem({ ...command, status: "completed", completedAt: at });
+      yield* assertBlocked(true);
+      const fileChange = {
+        ...command,
+        id: TurnItemId.make("item:thread-wait:concurrent-edit"),
+        type: "file_change" as const,
+        fileName: "example.ts",
+      };
+      yield* updateItem(fileChange);
+      yield* assertBlocked(false);
+      yield* updateItem({ ...fileChange, status: "completed", completedAt: at });
+      yield* assertBlocked(true);
+      const compaction = {
+        ...command,
+        id: TurnItemId.make("item:thread-wait:compaction"),
+        type: "compaction" as const,
+        driver,
+      };
+      yield* updateItem(compaction);
+      yield* assertBlocked(false);
+      yield* updateItem({ ...compaction, status: "completed", completedAt: at });
+      yield* assertBlocked(true);
+      yield* updateItem({ ...wait, status: "completed", completedAt: at });
+      yield* assertBlocked(false);
 
-    const delegation = {
-      ...wait,
-      id: TurnItemId.make("item:thread-wait:delegation"),
-      toolName: "t3-code-thread_opencode2-adapter_delegate_task",
-      input: { task: "Review", mode: "async" },
-    };
-    yield* updateItem(delegation);
-    yield* assertBlocked(false);
-    yield* updateItem({ ...delegation, status: "completed", completedAt: at });
-    const blockingDelegation = {
-      ...delegation,
-      id: TurnItemId.make("item:thread-wait:blocking-delegation"),
-      input: { task: "Review", mode: "wait" },
-    };
-    yield* updateItem({
-      ...command,
-      id: TurnItemId.make("item:thread-wait:child"),
-      type: "subagent",
-      subagentId: NodeId.make("node:thread-wait:child"),
-      origin: "app_owned",
-      driver,
-      providerInstanceId,
-      childThreadId: ThreadId.make("child-thread"),
-      prompt: "Review",
-      result: null,
-    });
-    yield* updateItem(blockingDelegation);
-    yield* assertBlocked(true);
-    yield* updateItem({ ...blockingDelegation, status: "completed", completedAt: at });
-    yield* assertBlocked(false);
-  }).pipe(Effect.provide(layer)),
-);
+      const delegation = {
+        ...wait,
+        id: TurnItemId.make("item:thread-wait:delegation"),
+        toolName: "t3-code-thread_opencode2-adapter_delegate_task",
+        input: { task: "Review", mode: "async" },
+      };
+      yield* updateItem(delegation);
+      yield* assertBlocked(false);
+      yield* updateItem({ ...delegation, status: "completed", completedAt: at });
+      const blockingDelegation = {
+        ...delegation,
+        id: TurnItemId.make("item:thread-wait:blocking-delegation"),
+        input: { task: "Review", mode: "wait" },
+      };
+      yield* updateItem({
+        ...command,
+        id: TurnItemId.make("item:thread-wait:child"),
+        type: "subagent",
+        subagentId: NodeId.make("node:thread-wait:child"),
+        origin: "app_owned",
+        driver,
+        providerInstanceId,
+        childThreadId: ThreadId.make("child-thread"),
+        prompt: "Review",
+        result: null,
+      });
+      yield* updateItem(blockingDelegation);
+      yield* assertBlocked(true);
+      yield* updateItem({ ...blockingDelegation, status: "completed", completedAt: at });
+      yield* assertBlocked(false);
+    }),
+  );
+});
 
-it.effect.each([
-  ["memory", ProjectionStore.layerMemory],
-  ["SQL", layerTest],
-] as const)(
-  "%s shells use the latest subagent owner for duplicate provider-thread ids",
-  ([, layer]) =>
+it.layer(layerTest)("SQL projections", (it) => {
+  it.effect("SQL shells use the latest subagent owner for duplicate provider-thread ids", () =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;
       const threadId = yield* addRolledBackRecoveryCandidate("duplicate-provider-thread-owner");
@@ -554,8 +549,9 @@ it.effect.each([
         ProjectionStore.threadShellFromProjection(rolledBack).pendingBackgroundTasks,
         [],
       );
-    }).pipe(Effect.provide(layer)),
-);
+    }),
+  );
+});
 
 const addOrphanedRecoveryCandidate = Effect.fn("addOrphanedRecoveryCandidate")(function* (
   suffix: string,
@@ -911,14 +907,16 @@ it.effect("SQL projection keeps background thread updates out of updatedAt", () 
   backgroundThreadUpdatesKeepTimestamp.pipe(Effect.provide(layerTest)),
 );
 
-it.effect("memory recovery selection includes unfinished items from missing runs", () =>
-  Effect.gen(function* () {
-    const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
-    const threadId = yield* addOrphanedRecoveryCandidate("memory-recovery-candidates");
+it.layer(layerTest)("SQL recovery selection", (it) => {
+  it.effect("includes unfinished items from missing runs", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = yield* addOrphanedRecoveryCandidate("sql-recovery-candidates");
 
-    assert.include(yield* projectionStore.getRecoveryThreadIds("runtime"), threadId);
-  }).pipe(Effect.provide(ProjectionStore.layerMemory)),
-);
+      assert.include(yield* projectionStore.getRecoveryThreadIds("runtime"), threadId);
+    }),
+  );
+});
 
 const runlessNativeSubagentNeedsRecovery = Effect.gen(function* () {
   const store = yield* ProjectionStore.ProjectionStoreV2;

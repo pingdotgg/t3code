@@ -248,19 +248,6 @@ export interface ThreadFeedLatestRun {
   readonly turnEnded?: boolean;
 }
 
-export interface AgentSpawnSummary {
-  readonly title: string;
-  readonly status: string;
-  readonly tone: "working" | "completed" | "failed" | "stopped";
-  readonly members: ReadonlyArray<{
-    readonly title: string;
-    readonly status: string;
-    readonly tone: "working" | "completed" | "failed" | "stopped";
-    readonly detail: string | undefined;
-    readonly updatedAt: string;
-  }>;
-}
-
 /**
  * Work-log headers render one line, but Android still lays out and hit-tests
  * the whole string, so a multi-kilobyte heredoc stalls touch dispatch until
@@ -1022,7 +1009,7 @@ export function threadFeedRunIsUnsettled(
   );
 }
 
-export function threadFeedActivityIsVisible(
+function threadFeedActivityIsVisible(
   activity: Pick<ThreadFeedActivity, "prominent" | "status" | "toolLike"> &
     Partial<Pick<ThreadFeedActivity, "lifecycleStatus">>,
 ): boolean {
@@ -1575,7 +1562,7 @@ function isWorkLogFeedRow(row: ThreadFeedEntry | undefined): boolean {
   );
 }
 
-export const LIVE_ACTIVITY_ROW_ID = "live-activity-row";
+const LIVE_ACTIVITY_ROW_ID = "live-activity-row";
 
 function thinkingRow(createdAt: string, runId: RunId | null) {
   if (cachedThinkingRow?.createdAt !== createdAt || cachedThinkingRow.runId !== runId) {

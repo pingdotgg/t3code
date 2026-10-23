@@ -1,6 +1,6 @@
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import { environmentSession } from "../../state/session";
-import { useCallback, useEffect, useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import * as DateTime from "effect/DateTime";
 
 import {
@@ -183,7 +183,7 @@ export function useReviewSections(input: {
     }
   }, [activeTurnDiff.error, reviewCache.threadKey]);
 
-  const refreshSelectedSection = useCallback(async () => {
+  const refreshSelectedSection = async () => {
     if (!enabled) {
       return;
     }
@@ -192,16 +192,13 @@ export function useReviewSections(input: {
       return;
     }
     diffPreview.refresh();
-  }, [activeTurnDiff, diffPreview, enabled, selectedSection?.kind]);
+  };
 
-  const selectSection = useCallback(
-    (sectionId: string) => {
-      if (reviewCache.threadKey) {
-        setReviewSelectedSectionId(reviewCache.threadKey, sectionId);
-      }
-    },
-    [reviewCache.threadKey],
-  );
+  const selectSection = (sectionId: string) => {
+    if (reviewCache.threadKey) {
+      setReviewSelectedSectionId(reviewCache.threadKey, sectionId);
+    }
+  };
 
   return {
     error:

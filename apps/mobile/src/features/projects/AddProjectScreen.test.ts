@@ -88,9 +88,9 @@ vi.mock("../../state/presentation", () => ({
 vi.mock("../../state/filesystem", () => ({ filesystemEnvironment: {} }));
 vi.mock("../../state/sourceControl", () => ({
   sourceControlEnvironment: {
-    cloneRepository: async ({ input }: { input: { destinationPath: string } }) => {
+    startProjectClone: async ({ input }: { input: { destinationPath: string } }) => {
       NodeFS.mkdirSync(input.destinationPath);
-      return AsyncResult.success({ cwd: input.destinationPath });
+      return AsyncResult.success(undefined);
     },
   },
 }));

@@ -18,6 +18,8 @@ import { RelayAgentActivityState } from "@t3tools/contracts/relay";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -203,7 +205,6 @@ const makeTestRelay = Effect.fnUntraced(function* (
     getThreadTranscript: unused,
     getThreadSnapshotWindow: unused,
     getProjectThreadRecords: () => Effect.die("unused project record read"),
-    getProjectThread: unused,
     listProjectThreads: unused,
     sendToThread: unused,
     assertProviderInstanceEnabled: unused,
@@ -597,6 +598,9 @@ describe("AgentAwarenessRelay", () => {
         publications.map((publication) => publication.state?.phase),
         ["running", "completed"],
       );
-    }).pipe(Effect.scoped, Effect.provide(ProjectionStore.layerMemory)),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(ProjectionStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+    ),
   );
 });

@@ -53,7 +53,7 @@ interface EditingQueuedRun {
 }
 
 /** What the composer holds when the user saves a queued-message edit. */
-export interface QueuedRunEditContent {
+interface QueuedRunEditContent {
   readonly prompt: string;
   readonly images: ReadonlyArray<ComposerImageAttachment>;
   readonly files: ReadonlyArray<ComposerFileAttachment>;
@@ -85,7 +85,7 @@ async function submitQueuedRunEdit(input: {
       const reason = fileAttachmentCapabilityBlockReason({
         files,
         attachmentUploadsCapabilityKnown: config !== null,
-        supportsAttachmentUploads: config?.environment.capabilities.attachmentUploads === true,
+        supportsAttachmentUploads: config !== null,
         maxFileAttachmentBytes:
           config?.environment.capabilities.fileAttachments?.maxUploadBytes ?? null,
       });

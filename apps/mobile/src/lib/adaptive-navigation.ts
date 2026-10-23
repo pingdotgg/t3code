@@ -4,7 +4,7 @@ export type AdaptiveNavigationAction = "push" | "replace" | "set-params";
 
 const BASE_THREAD_ROUTE_PATTERN = /^\/threads\/[^/]+\/[^/]+\/?$/;
 
-export function isBaseThreadRoute(pathname: string): boolean {
+function isBaseThreadRoute(pathname: string): boolean {
   return BASE_THREAD_ROUTE_PATTERN.test(pathname) || /^\/new\/draft\/?$/.test(pathname);
 }
 

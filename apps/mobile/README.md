@@ -102,7 +102,7 @@ Force the review diff highlighter engine:
 EXPO_PUBLIC_REVIEW_HIGHLIGHTER_ENGINE=javascript vp run ios:dev
 ```
 
-`javascript` is the default and recommended setting for the review diff screen. Set `EXPO_PUBLIC_REVIEW_HIGHLIGHTER_ENGINE=native` only when you explicitly want to test the native Shiki engine.
+`native` is the default for the review diff screen. Set `EXPO_PUBLIC_REVIEW_HIGHLIGHTER_ENGINE=javascript` to use the JavaScript engine.
 
 Inspect the resolved Expo config for a variant:
 

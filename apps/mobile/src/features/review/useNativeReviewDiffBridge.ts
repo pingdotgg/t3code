@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import type { NativeSyntheticEvent } from "react-native";
 
 import { createNativeReviewDiffTheme, type NativeReviewDiffData } from "./nativeReviewDiffAdapter";
@@ -7,8 +7,6 @@ import { useAppearancePreferences } from "../settings/appearance/AppearancePrefe
 import { useNativeReviewDiffHighlighting } from "./useNativeReviewDiffHighlighting";
 import { buildNativeReviewTokensResetKey } from "./reviewDiffBridgeKeys";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
-
-export { buildNativeReviewTokensResetKey } from "./reviewDiffBridgeKeys";
 
 export function useNativeReviewDiffBridge(input: {
   readonly threadKey: string | null;
@@ -50,19 +48,15 @@ export function useNativeReviewDiffBridge(input: {
     [collapsedCommentIds],
   );
   const themeJson = useMemo(() => JSON.stringify(theme), [theme]);
-  const styleJson = useMemo(() => JSON.stringify(nativeReviewDiffStyle), [nativeReviewDiffStyle]);
-  const tokensResetKey = useMemo(
-    () =>
-      buildNativeReviewTokensResetKey({
-        threadKey,
-        sectionId,
-        scheme,
-        diff,
-        fileCount: data.files.length,
-        rowCount: data.rows.length,
-      }),
-    [data.files.length, data.rows.length, diff, scheme, sectionId, threadKey],
-  );
+  const styleJson = JSON.stringify(nativeReviewDiffStyle);
+  const tokensResetKey = buildNativeReviewTokensResetKey({
+    threadKey,
+    sectionId,
+    scheme,
+    diff,
+    fileCount: data.files.length,
+    rowCount: data.rows.length,
+  });
   const { tokensPatchJson, updateVisibleRange } = useNativeReviewDiffHighlighting({
     files: data.files,
     rows: data.rows,
@@ -71,43 +65,37 @@ export function useNativeReviewDiffBridge(input: {
     enabled: canHighlight,
   });
 
-  const onDebug = useCallback(
-    (event: NativeSyntheticEvent<Record<string, unknown>>) => {
-      const payload = event.nativeEvent;
-      const message = payload.message;
-      if (
-        (message === "draw-metrics" || message === "visible-range") &&
-        typeof payload.firstRowIndex === "number" &&
-        typeof payload.lastRowIndex === "number"
-      ) {
-        updateVisibleRange({
-          firstRowIndex: payload.firstRowIndex,
-          lastRowIndex: payload.lastRowIndex,
-        });
-      }
-    },
-    [updateVisibleRange],
-  );
-
-  const onToggleComment = useCallback(
-    (event: NativeSyntheticEvent<{ readonly commentId?: string }>) => {
-      const { commentId } = event.nativeEvent;
-      if (!commentId) {
-        return;
-      }
-
-      setCollapsedCommentIds((current) => {
-        const next = new Set(current);
-        if (next.has(commentId)) {
-          next.delete(commentId);
-        } else {
-          next.add(commentId);
-        }
-        return next;
+  const onDebug = (event: NativeSyntheticEvent<Record<string, unknown>>) => {
+    const payload = event.nativeEvent;
+    const message = payload.message;
+    if (
+      (message === "draw-metrics" || message === "visible-range") &&
+      typeof payload.firstRowIndex === "number" &&
+      typeof payload.lastRowIndex === "number"
+    ) {
+      updateVisibleRange({
+        firstRowIndex: payload.firstRowIndex,
+        lastRowIndex: payload.lastRowIndex,
       });
-    },
-    [],
-  );
+    }
+  };
+
+  const onToggleComment = (event: NativeSyntheticEvent<{ readonly commentId?: string }>) => {
+    const { commentId } = event.nativeEvent;
+    if (!commentId) {
+      return;
+    }
+
+    setCollapsedCommentIds((current) => {
+      const next = new Set(current);
+      if (next.has(commentId)) {
+        next.delete(commentId);
+      } else {
+        next.add(commentId);
+      }
+      return next;
+    });
+  };
 
   return {
     themeId,

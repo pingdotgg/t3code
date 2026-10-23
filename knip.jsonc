@@ -23,7 +23,6 @@
       // electron-builder loads the macOS signer by path.
       "entry": [
         // These fixture scripts are injected into a browser page by path.
-        "fixtures/issue-16534/*.js",
         "knip-schemas.ts",
         "mobile-native-client.ts",
         "setup-worktree.ts",
@@ -121,13 +120,11 @@
       "includeEntryExports": true,
     },
     "packages/effect-acp": {
-      "includeEntryExports": true,
       "entry": ["test/fixtures/*.ts"],
       // Generated upstream protocol definitions are retained as a complete set.
       "ignoreIssues": { "src/_generated/**": ["exports", "types"] },
     },
     "packages/effect-codex-app-server": {
-      "includeEntryExports": true,
       "entry": ["test/fixtures/*.ts"],
       "ignoreIssues": { "src/_generated/**": ["exports", "types"] },
     },

@@ -44,7 +44,6 @@ export function CaptureShortcutConfig({
   const [keys, setKeys] = useState<string | null>(null);
   const [customFile, setCustomFile] = useState(false);
   const busy = disabled || working !== null;
-  const supported = Boolean(bridge?.previewSnapShotConfig && bridge.applySnapShotConfig);
   const changed = preview !== null && preview.before !== preview.after;
   const niri = state.linuxBackend === "niri";
   const desktop = niri ? "Niri" : "Hyprland";
@@ -88,13 +87,13 @@ export function CaptureShortcutConfig({
     onBusyChange?.(false);
   };
   const read = async (chooseFile = customFile, operation: "install" | "remove" = "install") => {
-    if (actionBusy || !bridge?.previewSnapShotConfig) return;
+    if (actionBusy || !bridge) return;
     begin("reading");
     setPreview(null);
     setResult(null);
     setCustomFile(chooseFile);
     const previewed = await settlePromise(() =>
-      bridge.previewSnapShotConfig!({
+      bridge.previewSnapShotConfig({
         operation,
         chooseFile,
         ...(keys?.trim() ? { shortcut: keys.trim() } : {}),
@@ -112,10 +111,10 @@ export function CaptureShortcutConfig({
     end();
   };
   const apply = async () => {
-    if (actionBusy || !preview || !bridge?.applySnapShotConfig) return;
+    if (actionBusy || !preview || !bridge) return;
     begin("writing");
     const saved = await settlePromise(async () => {
-      const applied = await bridge.applySnapShotConfig!(preview.id);
+      const applied = await bridge.applySnapShotConfig(preview.id);
       setResult(applied);
       await onSaved?.();
       if (!applied.warning && preview.operation === "install" && onComplete) {
@@ -221,17 +220,12 @@ export function CaptureShortcutConfig({
             saving.
           </p>
           <Button
-            disabled={actionBusy || !supported}
+            disabled={actionBusy || !bridge}
             aria-busy={working === "reading"}
             onClick={() => void read()}
           >
             {working === "reading" ? "Preparing changes…" : "Review changes"}
           </Button>
-          {!supported ? (
-            <p className="text-xs text-muted-foreground">
-              Update T3 Code to finish setting up your shortcut.
-            </p>
-          ) : null}
         </>
       )}
       {error ? (
@@ -271,7 +265,7 @@ export function CaptureShortcutConfig({
             <Button
               size="sm"
               variant="outline"
-              disabled={actionBusy || !supported}
+              disabled={actionBusy || !bridge}
               onClick={() => void read(true)}
             >
               Choose a different file…
@@ -279,7 +273,7 @@ export function CaptureShortcutConfig({
             <Button
               size="sm"
               variant="ghost"
-              disabled={actionBusy || !supported}
+              disabled={actionBusy || !bridge}
               onClick={() => void read(customFile, "remove")}
             >
               Remove shortcut…
@@ -288,7 +282,7 @@ export function CaptureShortcutConfig({
               <Button
                 size="sm"
                 variant="outline"
-                disabled={actionBusy || !supported}
+                disabled={actionBusy || !bridge}
                 onClick={() => void read()}
               >
                 Review changes

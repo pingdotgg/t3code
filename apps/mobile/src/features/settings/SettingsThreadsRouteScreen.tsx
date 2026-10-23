@@ -13,7 +13,7 @@ import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
 import { AppText as Text } from "../../components/ui/AppText";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
-import { SettingsSection } from "./components/SettingsSection";
+import { ListSection as SettingsSection } from "../../components/ui/ListSection";
 import { SettingsProjectOverridesSection } from "./components/SettingsProjectOverridesSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { SettingsScreen } from "./components/SettingsScreen";
@@ -125,12 +125,7 @@ function AutoSettleSettingsRows() {
     })),
   );
 
-  const supportsProjectOverrides = syncTargets.every(
-    (target) =>
-      target.environment.serverConfig.environment.capabilities.projectSettingsOverrides === true,
-  );
-  const disabled =
-    !canWriteSettings || pendingWrites > 0 || (projectSelected && !supportsProjectOverrides);
+  const disabled = !canWriteSettings || pendingWrites > 0;
   const hasProjectOverrides =
     projectSelected &&
     syncTargets.some(
@@ -169,7 +164,6 @@ function AutoSettleSettingsRows() {
         <SettingsProjectOverridesSection
           projectLabel={selectedProject?.label ?? "Unavailable project"}
           hasOverrides={hasProjectOverrides}
-          supportsOverrides={supportsProjectOverrides}
           pending={pendingWrites > 0}
           disabled={!canWriteSettings}
           onClear={clearProjectOverrides}

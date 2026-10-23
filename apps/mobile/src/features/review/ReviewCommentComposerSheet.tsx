@@ -1,7 +1,7 @@
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { TextInputWrapper } from "expo-paste-input";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Platform, Pressable, ScrollView, View, useWindowDimensions } from "react-native";
 import { KeyboardAvoidingView, KeyboardStickyView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -55,10 +55,7 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
   const [attachments, setAttachments] = useState<ReadonlyArray<DraftComposerImageAttachment>>([]);
   const [previewFile, setPreviewFile] = useState<FilePreviewSource | null>(null);
 
-  const selectedLines = useMemo(
-    () => (target ? getSelectedReviewCommentLines(target) : []),
-    [target],
-  );
+  const selectedLines = target ? getSelectedReviewCommentLines(target) : [];
   const firstLine = selectedLines[0] ?? null;
   const lastLine = selectedLines[selectedLines.length - 1] ?? null;
   const firstNumber = firstLine ? getReviewUnifiedLineNumber(firstLine) : null;
@@ -78,10 +75,10 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
     codeSurface.rowHeight,
   );
   const previewViewportWidth = Math.max(width - 40, 280);
-  const dismissComposer = useCallback(() => {
+  const dismissComposer = () => {
     clearReviewCommentTarget();
     navigation.goBack();
-  }, [navigation]);
+  };
   const handleNativePaste = useNativePaste((uris) => {
     void (async () => {
       try {
@@ -136,7 +133,7 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
     }
   }
 
-  const handleSubmit = useCallback(() => {
+  const handleSubmit = () => {
     if (!target || !environmentId || !threadId || commentText.trim().length === 0) {
       return;
     }
@@ -149,7 +146,7 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
     });
     setAttachments([]);
     dismissComposer();
-  }, [attachments, commentText, dismissComposer, environmentId, target, threadId]);
+  };
 
   return (
     <View className="flex-1 bg-sheet">

@@ -3,7 +3,7 @@ import {
   buildProjectGroups,
   derivePhysicalProjectKey,
   type ProjectGroupingSettings,
-} from "./logicalProject";
+} from "@t3tools/client-runtime/state/project-grouping";
 import { resolveScratchProjectScopeKey } from "@t3tools/client-runtime/state/project-grouping";
 import type { Project } from "./types";
 

@@ -11,7 +11,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import { AVAILABLE_CONNECTION_STATE, type SupervisorConnectionState } from "../connection/model.ts";
 import {
   connectionCatalogDisplayUrl,
-  presentEnvironmentConnection,
+  presentConnectionState,
   type EnvironmentConnectionPhase,
   type EnvironmentConnectionPresentation,
   type EnvironmentPresentation,
@@ -84,7 +84,7 @@ export function createEnvironmentPresentationAtoms<E>(input: {
       const previous = Option.getOrNull(get.self<EnvironmentPresentation | null>());
       const connection: EnvironmentConnectionPresentation =
         entry.unsupportedReason === undefined
-          ? presentEnvironmentConnection(state)
+          ? presentConnectionState(state)
           : { phase: "unsupported", error: entry.unsupportedReason, traceId: null };
       const next = {
         entry,
@@ -312,8 +312,7 @@ export function createEnvironmentSummaryAtoms(input: {
   const pullRequestsSupportedAtom = Atom.make((get) =>
     get(environmentIdsAtom).some(
       (environmentId) =>
-        get(input.presentationAtom(environmentId))?.serverConfig?.environment.capabilities
-          .pullRequests === true,
+        (get(input.presentationAtom(environmentId))?.serverConfig ?? null) !== null,
     ),
   );
   return {

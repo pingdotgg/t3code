@@ -42,7 +42,7 @@ export function usePendingTaskListActions(
     [selectThreadRoute],
   );
 
-  const confirmDeletePendingTask = useCallback((pendingTask: PendingNewTask) => {
+  const confirmDeletePendingTask = (pendingTask: PendingNewTask) => {
     if (pendingTask.kind === "draft") {
       Dialog.alert("Discard draft?", `“${pendingTask.title}” will be removed.`, [
         { text: "Cancel", style: "cancel" },
@@ -104,7 +104,7 @@ export function usePendingTaskListActions(
         },
       ],
     );
-  }, []);
+  };
 
   return { openPendingTask, confirmDeletePendingTask };
 }

@@ -73,7 +73,7 @@ import {
 import { useBrowserDefaults } from "~/browser/browserDefaults";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
-import { faviconUrlForOrigin } from "~/lib/favicon";
+import { faviconUrlForOrigin } from "@t3tools/shared/favicon";
 import { useTheme } from "~/hooks/useTheme";
 import { useDeviceState } from "~/state/device";
 import type { PreviewPanelInlineSize } from "~/hooks/usePreviewPanelInlineSize";
@@ -723,17 +723,17 @@ function PullRequestSurfaceIcon({
       ? undefined
       : configs.get(resolvedEnvironmentId)?.environment.capabilities;
   const linkedSnapshot =
-    capabilities?.threadPullRequests === true
+    capabilities !== undefined
       ? (resolvePullRequestTabLink(threads, resolvedEnvironmentId, host, surface)?.snapshot ?? null)
       : null;
   const detail = useEnvironmentQuery(
-    resolvedEnvironmentId === null || capabilities?.pullRequests !== true || linkedSnapshot !== null
+    resolvedEnvironmentId === null || capabilities === undefined || linkedSnapshot !== null
       ? null
       : pullRequestEnvironment.detail({
           environmentId: resolvedEnvironmentId,
           input: {
             projectId: surface.projectId as ProjectId,
-            ...(capabilities?.threadPullRequests === true && surface.host !== undefined
+            ...(capabilities !== undefined && surface.host !== undefined
               ? { host: surface.host }
               : {}),
             repository: surface.repository,

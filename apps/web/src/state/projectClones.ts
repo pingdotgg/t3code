@@ -14,10 +14,7 @@ const EMPTY_CLONE_ATOM = Atom.make<ProjectCloneSnapshot | null>(null).pipe(
 
 export const environmentProjectClonesAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get): ReadonlyArray<ProjectCloneSnapshot> => {
-    const supported =
-      get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
-        .projectCloneTracking === true;
-    if (!supported) return EMPTY_CLONES;
+    if (!get(environmentServerConfigsAtom).has(environmentId)) return EMPTY_CLONES;
     const result = get(sourceControlEnvironment.projectClones({ environmentId, input: {} }));
     return Option.getOrElse(AsyncResult.value(result), () => EMPTY_CLONES);
   }).pipe(Atom.withLabel(`web-project-clones:${environmentId}`)),

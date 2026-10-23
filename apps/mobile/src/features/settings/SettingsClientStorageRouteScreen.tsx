@@ -18,8 +18,8 @@ import {
 } from "../../state/client-cache-state";
 import { useServerConfigs } from "../../state/entities";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
-import { SettingsActionRow } from "./components/SettingsActionRow";
-import { SettingsSection } from "./components/SettingsSection";
+import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
+import { ListSection as SettingsSection } from "../../components/ui/ListSection";
 import { SettingsScreen } from "./components/SettingsScreen";
 
 export function SettingsClientStorageRouteScreen() {

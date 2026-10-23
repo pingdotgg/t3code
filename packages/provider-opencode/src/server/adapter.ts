@@ -44,7 +44,6 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Random from "effect/Random";
@@ -273,9 +272,7 @@ interface ActiveOpenCodeTurn {
   readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
   readonly providerThreadId: OrchestrationV2ProviderTurn["providerThreadId"];
-  readonly providerTurnOrdinal: number;
   readonly runOrdinal: number;
-  readonly runAttemptId: OrchestrationV2ProviderTurn["runAttemptId"];
   readonly startedAt: DateTime.Utc;
   readonly itemOrdinals: Map<string, number>;
   readonly parts: Map<string, Exclude<OpenCodePart, ToolPart>>;
@@ -2231,9 +2228,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             runtimePolicy: state.parentSubagent.parentTurn.runtimePolicy,
             providerTurnId,
             providerThreadId: providerTurn.providerThreadId,
-            providerTurnOrdinal: providerTurn.ordinal,
             runOrdinal: state.parentSubagent.parentTurn.runOrdinal,
-            runAttemptId: null,
             startedAt,
             itemOrdinals: new Map(),
             usage: makeOpenCodeTurnTokenUsageAccumulator(),
@@ -3168,9 +3163,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 runtimePolicy: turnInput.runtimePolicy,
                 providerTurnId,
                 providerThreadId: turnInput.providerThread.id,
-                providerTurnOrdinal: turnInput.providerTurnOrdinal,
                 runOrdinal: turnInput.runOrdinal,
-                runAttemptId: turnInput.attemptId,
                 startedAt,
                 itemOrdinals: new Map(),
                 usage: makeOpenCodeTurnTokenUsageAccumulator(),
@@ -3751,20 +3744,3 @@ export const OpenCodeAdapterV2Driver: ProviderAdapterDriver<
       ),
   ),
 };
-
-const layer: Layer.Layer<ProviderAdapter.ProviderAdapterV2, never, OpenCodeAdapterV2DriverEnv> =
-  Layer.effect(
-    ProviderAdapter.ProviderAdapterV2,
-    Effect.gen(function* () {
-      const hostEnvironment = yield* HostProcess.Environment;
-      const providerEventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
-      return yield* makeOpenCodeAdapterV2({
-        instanceId: OPENCODE_DEFAULT_INSTANCE_ID,
-        settings: DEFAULT_OPENCODE_SETTINGS,
-        environment: hostEnvironment,
-        ...(providerEventLoggers.native === undefined
-          ? {}
-          : { nativeEventLogger: providerEventLoggers.native }),
-      });
-    }),
-  );

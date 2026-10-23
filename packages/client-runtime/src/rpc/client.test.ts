@@ -113,13 +113,13 @@ describe("environment RPC", () => {
     Effect.gen(function* () {
       const subscriptions: string[] = [];
       const firstClient = {
-        [WS_METHODS.subscribeTerminalEvents]: () => {
+        [WS_METHODS.subscribeTerminalMetadata]: () => {
           subscriptions.push("first");
           return Stream.never;
         },
       } as unknown as WsRpcProtocolClient;
       const secondClient = {
-        [WS_METHODS.subscribeTerminalEvents]: () => {
+        [WS_METHODS.subscribeTerminalMetadata]: () => {
           subscriptions.push("second");
           return Stream.never;
         },
@@ -137,7 +137,7 @@ describe("environment RPC", () => {
         return yield* Effect.die(new Error(`Expected ${count} durable subscriptions.`));
       });
 
-      const subscriptionFiber = yield* subscribe(WS_METHODS.subscribeTerminalEvents, {}).pipe(
+      const subscriptionFiber = yield* subscribe(WS_METHODS.subscribeTerminalMetadata, {}).pipe(
         Stream.runDrain,
         Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
         Effect.forkChild,
@@ -223,7 +223,7 @@ describe("environment RPC", () => {
     Effect.gen(function* () {
       const subscriptions: string[] = [];
       const firstClient = {
-        [WS_METHODS.subscribeTerminalEvents]: () => {
+        [WS_METHODS.subscribeTerminalMetadata]: () => {
           subscriptions.push("first");
           return Stream.fail(
             new RpcClientError.RpcClientError({
@@ -236,14 +236,14 @@ describe("environment RPC", () => {
         },
       } as unknown as WsRpcProtocolClient;
       const secondClient = {
-        [WS_METHODS.subscribeTerminalEvents]: () => {
+        [WS_METHODS.subscribeTerminalMetadata]: () => {
           subscriptions.push("second");
           return Stream.never;
         },
       } as unknown as WsRpcProtocolClient;
       const { activeSession, retryCount, supervisor } = yield* makeHarness();
 
-      const subscriptionFiber = yield* subscribe(WS_METHODS.subscribeTerminalEvents, {}).pipe(
+      const subscriptionFiber = yield* subscribe(WS_METHODS.subscribeTerminalMetadata, {}).pipe(
         Stream.runDrain,
         Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
         Effect.forkChild,
@@ -269,12 +269,12 @@ describe("environment RPC", () => {
     Effect.gen(function* () {
       const domainError = new Error("terminal subscription rejected");
       const client = {
-        [WS_METHODS.subscribeTerminalEvents]: () => Stream.fail(domainError),
+        [WS_METHODS.subscribeTerminalMetadata]: () => Stream.fail(domainError),
       } as unknown as WsRpcProtocolClient;
       const { activeSession, retryCount, supervisor } = yield* makeHarness();
 
       yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
-      const error = yield* subscribe(WS_METHODS.subscribeTerminalEvents, {}).pipe(
+      const error = yield* subscribe(WS_METHODS.subscribeTerminalMetadata, {}).pipe(
         Stream.runDrain,
         Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
         Effect.flip,
@@ -291,13 +291,13 @@ describe("environment RPC", () => {
       const subscriptions: string[] = [];
       const observedFailures: Error[] = [];
       const firstClient = {
-        [WS_METHODS.subscribeTerminalEvents]: () => {
+        [WS_METHODS.subscribeTerminalMetadata]: () => {
           subscriptions.push("first");
           return Stream.fail(domainError);
         },
       } as unknown as WsRpcProtocolClient;
       const secondClient = {
-        [WS_METHODS.subscribeTerminalEvents]: () => {
+        [WS_METHODS.subscribeTerminalMetadata]: () => {
           subscriptions.push("second");
           return Stream.never;
         },
@@ -306,7 +306,7 @@ describe("environment RPC", () => {
 
       yield* SubscriptionRef.set(activeSession, Option.some(session(firstClient)));
       const subscriptionFiber = yield* subscribe(
-        WS_METHODS.subscribeTerminalEvents,
+        WS_METHODS.subscribeTerminalMetadata,
         {},
         {
           onExpectedFailure: (cause) =>
@@ -347,7 +347,7 @@ describe("environment RPC", () => {
         let streams = 0;
         const observedDefects: unknown[] = [];
         const client = {
-          [WS_METHODS.subscribeTerminalEvents]: () => {
+          [WS_METHODS.subscribeTerminalMetadata]: () => {
             streams += 1;
             return where === "stream" ? Stream.die(defect) : Stream.never;
           },
@@ -356,7 +356,7 @@ describe("environment RPC", () => {
 
         yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
         const exit = yield* subscribeDynamicWithSession(
-          WS_METHODS.subscribeTerminalEvents,
+          WS_METHODS.subscribeTerminalMetadata,
           () =>
             Effect.sync(() => {
               inputs += 1;

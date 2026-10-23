@@ -192,14 +192,6 @@ export const PreviewOpenInput = Schema.Struct({
 });
 export type PreviewOpenInput = typeof PreviewOpenInput.Type;
 
-export const PreviewNavigateInput = Schema.Struct({
-  threadId: ThreadId,
-  tabId: PreviewTabId,
-  url: Url,
-  resolvedTitle: Schema.optional(Title),
-});
-export type PreviewNavigateInput = typeof PreviewNavigateInput.Type;
-
 export const PreviewReportStatusInput = Schema.Struct({
   threadId: ThreadId,
   tabId: PreviewTabId,
@@ -208,12 +200,6 @@ export const PreviewReportStatusInput = Schema.Struct({
   canGoForward: Schema.Boolean,
 });
 export type PreviewReportStatusInput = typeof PreviewReportStatusInput.Type;
-
-export const PreviewRefreshInput = Schema.Struct({
-  threadId: ThreadId,
-  tabId: PreviewTabId,
-});
-export type PreviewRefreshInput = typeof PreviewRefreshInput.Type;
 
 export const PreviewResizeInput = Schema.Struct({
   threadId: ThreadId,

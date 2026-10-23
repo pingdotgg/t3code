@@ -24,9 +24,8 @@ const layerDatabase = Layer.mergeAll(
   ProjectionStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
 );
 
-it.effect.each(["sqlite", "memory"] as const)(
-  "loads startup state without obsolete transcript payloads in %s",
-  (storage) =>
+it.layer(layerDatabase)("SQL projections", (it) => {
+  it.effect("loads startup state without obsolete transcript payloads in SQLite", () =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;
       const now = yield* DateTime.now;
@@ -188,7 +187,7 @@ it.effect.each(["sqlite", "memory"] as const)(
         occurredAt: now,
         payload: item,
       });
-      if (storage === "sqlite") {
+      {
         const sql = yield* SqlClient.SqlClient;
         yield* sql`INSERT INTO orchestration_v2_projection_messages
           (message_id, thread_id, run_id, node_id, role, streaming, created_at, updated_at, payload_json)
@@ -232,8 +231,8 @@ it.effect.each(["sqlite", "memory"] as const)(
         })).turnItems,
         [],
       );
-      assert.equal(yield* store.getNextTurnItemOrdinal(threadId), storage === "sqlite" ? 3 : 2);
-      assert.equal(yield* store.getMessageCount(threadId), storage === "sqlite" ? 2 : 1);
+      assert.equal(yield* store.getNextTurnItemOrdinal(threadId), 3);
+      assert.equal(yield* store.getMessageCount(threadId), 2);
       assert.deepEqual(
         (yield* store.getThreadRecords(threadId, ["messages"], {
           messageRunIds: [runId],
@@ -256,7 +255,7 @@ it.effect.each(["sqlite", "memory"] as const)(
         [],
       );
       assert.deepEqual(yield* store.getThreadAttachmentIds(threadId), []);
-      if (storage === "sqlite") {
+      {
         const sql = yield* SqlClient.SqlClient;
         yield* sql`UPDATE orchestration_v2_projection_messages SET payload_json = json_object('text', ${"x".repeat(512_000)}, 'attachments', json_array(json_object('id', 'attachment:old'))) WHERE message_id = 'obsolete-history'`;
         assert.deepEqual(yield* store.getThreadAttachmentIds(threadId), ["attachment:old"]);
@@ -266,8 +265,8 @@ it.effect.each(["sqlite", "memory"] as const)(
         page.items.map((row) => row.item),
         [item],
       );
-      assert.equal(page.hasMore, storage === "sqlite");
-      assert.equal(page.totalItems, storage === "sqlite" ? 2 : 1);
+      assert.equal(page.hasMore, true);
+      assert.equal(page.totalItems, 2);
       assert.deepEqual(
         (yield* store.getTimelinePage(threadId, { view: "messages", limit: 1 })).items,
         [],
@@ -304,7 +303,7 @@ it.effect.each(["sqlite", "memory"] as const)(
         payload: { ...item, id: resultId },
       });
       assert.isFalse(yield* store.hasUnpairedRunInterruptRequest(threadId, item.id, resultId));
-      if (storage === "sqlite") {
+      {
         const sql = yield* SqlClient.SqlClient;
         const original = yield* sql<{ payload_json: string }>`SELECT payload_json
           FROM orchestration_v2_projection_turn_items WHERE turn_item_id = ${item.id}`;
@@ -358,11 +357,6 @@ it.effect.each(["sqlite", "memory"] as const)(
         yield* store.getTurnStartContext(ThreadId.make("missing"), runId).pipe(Effect.flip),
         ProjectionStore.ProjectionStoreThreadNotFoundError,
       );
-    }).pipe(
-      Effect.provide(
-        storage === "sqlite"
-          ? layerDatabase
-          : Layer.merge(SqlitePersistence.layerMemory, ProjectionStore.layerMemory),
-      ),
-    ),
-);
+    }),
+  );
+});

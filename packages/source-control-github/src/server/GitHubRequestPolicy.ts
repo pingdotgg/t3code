@@ -1,3 +1,4 @@
+import { normalizeHost } from "@t3tools/source-control-core/server/pullRequestUtils";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -101,10 +102,6 @@ export type GitHubApiError =
   | GitHubApiNotFoundError
   | GitHubApiResponseError
   | SourceControlRateLimit.SourceControlRateLimitPausedError;
-
-export function normalizeHost(host: string): string {
-  return host.trim().toLowerCase();
-}
 
 /**
  * Where the API for a host lives. github.com and GHE.com data residency serve it from an `api.`

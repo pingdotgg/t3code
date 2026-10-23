@@ -5,11 +5,9 @@ import {
   type EnvironmentPresentation as BaseEnvironmentPresentation,
 } from "@t3tools/client-runtime/connection";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useMemo } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
 import { environmentPresentations } from "./presentation";
-import { useEnvironmentQuery } from "./query";
 
 export interface EnvironmentPresentation extends BaseEnvironmentPresentation {
   readonly environmentId: EnvironmentId;
@@ -18,7 +16,7 @@ export interface EnvironmentPresentation extends BaseEnvironmentPresentation {
   readonly relayManaged: boolean;
 }
 
-export function projectEnvironmentPresentation(
+function projectEnvironmentPresentation(
   environmentId: EnvironmentId,
   presentation: BaseEnvironmentPresentation,
 ): EnvironmentPresentation {
@@ -36,12 +34,8 @@ export function useEnvironments() {
   const networkStatus = useAtomValue(environmentCatalog.networkStatusValueAtom);
   const presentationById = useAtomValue(environmentPresentations.presentationsAtom);
 
-  const environments = useMemo(
-    () =>
-      [...presentationById.entries()].map(([environmentId, presentation]) =>
-        projectEnvironmentPresentation(environmentId, presentation),
-      ),
-    [presentationById],
+  const environments = [...presentationById.entries()].map(([environmentId, presentation]) =>
+    projectEnvironmentPresentation(environmentId, presentation),
   );
 
   return {
@@ -50,8 +44,4 @@ export function useEnvironments() {
     environments,
     presentationById,
   };
-}
-
-export function useEnvironmentConnectionState(environmentId: EnvironmentId) {
-  return useEnvironmentQuery(environmentCatalog.stateAtom(environmentId));
 }

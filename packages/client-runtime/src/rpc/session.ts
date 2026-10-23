@@ -58,8 +58,6 @@ export interface RpcSession {
 
 export interface RpcSessionOptions {
   readonly environmentThemes?: boolean;
-  readonly usageLimitSources?: boolean;
-  readonly usageLimitsCommand?: boolean;
 }
 
 export class RpcSessionFactory extends Context.Service<
@@ -167,8 +165,8 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
   const webSocketConstructor = yield* Socket.WebSocketConstructor;
   const serverConfigInput: ServerConfigSubscriptionInput = {
     ...(options.environmentThemes === true ? { environmentThemes: true } : {}),
-    ...(options.usageLimitSources === true ? { usageLimitSources: true } : {}),
-    ...(options.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
+    usageLimitSources: true,
+    usageLimitsCommand: true,
   };
 
   const connect = Effect.fnUntraced(function* (connection: PreparedConnection) {
@@ -269,17 +267,11 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
               themesEvent:
                 event.type === "environmentThemesUpdated"
                   ? event
-                  : event.type === "snapshot" &&
-                      event.config.environment.capabilities.environmentThemes !== true
-                    ? undefined
-                    : Option.getOrUndefined(current)?.themesEvent,
+                  : Option.getOrUndefined(current)?.themesEvent,
               sourcesEvent:
                 event.type === "usageLimitSourcesUpdated"
                   ? event
-                  : event.type === "snapshot" &&
-                      event.config.environment.capabilities.usageLimitSources !== true
-                    ? undefined
-                    : Option.getOrUndefined(current)?.sourcesEvent,
+                  : Option.getOrUndefined(current)?.sourcesEvent,
             } satisfies ServerConfigReplayState;
             return [
               Option.some({ event, replay: next, revision: next.revision }),
@@ -392,11 +384,8 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
         ),
       );
     const probe = initialConfig.pipe(
-      Effect.flatMap((config) =>
-        (config.environment.capabilities.connectionProbe === true
-          ? protocolClient[WS_METHODS.serverProbe]({})
-          : protocolClient[WS_METHODS.serverGetConfig]({})
-        ).pipe(Effect.mapError(mapRpcError)),
+      Effect.flatMap(() =>
+        protocolClient[WS_METHODS.serverProbe]({}).pipe(Effect.mapError(mapRpcError)),
       ),
       Effect.asVoid,
       Effect.withSpan("clientRuntime.connection.rpcSession.probe"),

@@ -249,7 +249,7 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
       ConnectionDriver.ConnectionDriver,
       ConnectionDriver.ConnectionDriver.of({
         connect,
-        checkRoute: (_entry, route) => checkRoute(route),
+
         preflight: (_entry, route) =>
           checkRoute(route).pipe(Effect.map((check) => check === "answered")),
       }),
@@ -938,7 +938,7 @@ describe("EnvironmentSupervisor", () => {
             Layer.succeed(ClientCapabilities.RelayDeviceIdentity, {
               deviceId: Effect.succeedNone,
             }),
-            TokenStore.layer({
+            Layer.succeed(TokenStore.RemoteDpopAccessTokenStore, {
               get: () => Ref.get(token),
               put: (value) => Ref.set(token, Option.some(value)),
               remove: () => Ref.set(token, Option.none()),

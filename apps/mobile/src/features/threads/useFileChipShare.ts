@@ -2,7 +2,7 @@ import * as Dialog from "../../components/ui/Dialog";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
 import { assetEnvironment } from "../../state/assets";
@@ -28,42 +28,39 @@ export function useFileChipShare(
   const requestRef = useRef<AbortController | null>(null);
   useEffect(() => () => requestRef.current?.abort(), []);
 
-  const share = useCallback(
-    (target: FileChipTarget) => {
-      const source = fileChipShareSource(target, threadId);
-      if (!source || requestRef.current) return;
-      const request = new AbortController();
-      requestRef.current = request;
-      const httpBaseUrl = connectionRef.current;
-      void (async () => {
-        if (httpBaseUrl === null) throw new Error("Reconnect to the environment and try again.");
-        const result = await createUrl({ environmentId, input: { resource: source.resource } });
-        if (request.signal.aborted) return;
-        const url =
-          result._tag === "Success" ? resolveAssetUrl(httpBaseUrl, result.value.relativeUrl) : null;
-        if (url === null) throw new Error("The file could not be loaded. Reconnect and try again.");
-        await downloadAndShareAttachment({
-          url,
-          attachment: source,
-          signal: request.signal,
-          sourceIdentifier,
-        });
-      })()
-        .catch((error: unknown) => {
-          if (!request.signal.aborted) {
-            Dialog.alert(
-              "Could not share file",
-              error instanceof Error ? error.message : "Try again.",
-            );
-          }
-        })
-        .finally(() => {
-          if (requestRef.current === request) {
-            requestRef.current = null;
-          }
-        });
-    },
-    [createUrl, environmentId, sourceIdentifier, threadId],
-  );
+  const share = (target: FileChipTarget) => {
+    const source = fileChipShareSource(target, threadId);
+    if (!source || requestRef.current) return;
+    const request = new AbortController();
+    requestRef.current = request;
+    const httpBaseUrl = connectionRef.current;
+    void (async () => {
+      if (httpBaseUrl === null) throw new Error("Reconnect to the environment and try again.");
+      const result = await createUrl({ environmentId, input: { resource: source.resource } });
+      if (request.signal.aborted) return;
+      const url =
+        result._tag === "Success" ? resolveAssetUrl(httpBaseUrl, result.value.relativeUrl) : null;
+      if (url === null) throw new Error("The file could not be loaded. Reconnect and try again.");
+      await downloadAndShareAttachment({
+        url,
+        attachment: source,
+        signal: request.signal,
+        sourceIdentifier,
+      });
+    })()
+      .catch((error: unknown) => {
+        if (!request.signal.aborted) {
+          Dialog.alert(
+            "Could not share file",
+            error instanceof Error ? error.message : "Try again.",
+          );
+        }
+      })
+      .finally(() => {
+        if (requestRef.current === request) {
+          requestRef.current = null;
+        }
+      });
+  };
   return share;
 }

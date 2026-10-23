@@ -23,8 +23,6 @@ export function ThreadTimeline({
   activeThreadKey,
   syncing,
   detailLoading,
-  readyMarkdownCwd,
-  readyWorkspaceRoot,
   ...timelineProps
 }: Omit<ComponentProps<typeof MessagesTimeline>, "timelineEntries"> & {
   /** Null until the thread's detail may load; see resolveThreadDetailRef. */
@@ -35,8 +33,6 @@ export function ThreadTimeline({
   activeThreadKey: string | null;
   syncing: boolean;
   detailLoading: boolean;
-  readyMarkdownCwd: string | null;
-  readyWorkspaceRoot: string | null;
 }) {
   const visibleTurnItems = useThreadVisibleTurnItems(threadDetailRef);
   const serverEntries = useIncrementalTimelineEntries(activeThreadKey, {
@@ -57,9 +53,7 @@ export function ThreadTimeline({
     rememberReadyThreadTimeline({
       threadKey: activeThreadKey,
       entries,
-      markdownCwd: readyMarkdownCwd,
-      workspaceRoot: readyWorkspaceRoot,
     });
-  }, [activeThreadKey, detailLoading, entries, readyMarkdownCwd, readyWorkspaceRoot]);
+  }, [activeThreadKey, detailLoading, entries]);
   return <MessagesTimeline {...timelineProps} timelineEntries={displayed.entries} />;
 }

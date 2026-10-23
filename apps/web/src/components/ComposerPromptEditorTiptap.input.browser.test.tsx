@@ -17,10 +17,10 @@ import { act, render } from "../../test/render";
 
 import { serializeEditorDoc } from "~/composer-rich-text-doc";
 import {
-  ComposerPromptEditor,
+  ComposerPromptEditorTiptap as ComposerPromptEditor,
   type ComposerPromptEditorHandle,
   type ComposerPromptEditorProps,
-} from "./ComposerPromptEditor";
+} from "./ComposerPromptEditorTiptap";
 
 const babysit: ServerProviderSkill = {
   name: "babysit",

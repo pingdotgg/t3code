@@ -12,7 +12,6 @@ import * as DateTime from "effect/DateTime";
 
 import {
   buildBoundedThreadProjection,
-  boundedTimelineEncodedBytes,
   computeLatestLocalTurnOrdinal,
   encodeThreadHistoryCursor,
   projectedRowBoundedSnapshotEncodedBytes,
@@ -434,10 +433,15 @@ describe("threadHistoryPaging", () => {
       policy: { maxItems: 50, maxEncodedBytes },
     });
 
-    const contribution = boundedTimelineEncodedBytes({
-      visibleTurnItems: bounded.projection.visibleTurnItems,
-      turnItems: bounded.projection.turnItems,
-    });
+    const contribution =
+      bounded.projection.visibleTurnItems.reduce(
+        (sum, row) => sum + projectedRowEncodedBytes(row),
+        0,
+      ) +
+      bounded.projection.turnItems.reduce(
+        (sum, item) => sum + Buffer.byteLength(JSON.stringify(item)),
+        0,
+      );
     expect(contribution).toBeLessThanOrEqual(maxEncodedBytes);
     expect(bounded.projection.visibleTurnItems.length).toBeGreaterThan(0);
     expect(bounded.projection.visibleTurnItems.length).toBeLessThan(rows.length);

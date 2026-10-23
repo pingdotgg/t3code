@@ -28,7 +28,7 @@ export class MobileSecureStorage extends Context.Service<
   }
 >()("@t3tools/mobile/persistence/MobileSecureStorage") {}
 
-export const make = MobileSecureStorage.of({
+const make = MobileSecureStorage.of({
   getItem: Effect.fn("MobileSecureStorage.getItem")((key) =>
     Effect.tryPromise({
       try: () => SecureStore.getItemAsync(key),

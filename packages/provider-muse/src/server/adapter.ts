@@ -340,7 +340,6 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         return catalog.find((model) => model.isDefault && !model.isCustom)?.slug;
       });
       const pending = new Map<RuntimeRequestId, PendingRequest>();
-      const seenTerminals = new Set<string>();
       const observedChildren = new Map<string, ActiveTurn>();
       const childrenByItemId = new Map<string, ChildContext>();
       const agentTitles = new Map<string, string>();
@@ -944,8 +943,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         disposition: "reusable" | "broken" = "reusable",
         quota?: { readonly resetsAtMs: number },
       ) {
-        if (active !== turn || seenTerminals.has(turn.nativeId)) return;
-        seenTerminals.add(turn.nativeId);
+        if (active !== turn) return;
         const completedAt = yield* DateTime.now;
         for (const item of turn.items.values()) {
           if (

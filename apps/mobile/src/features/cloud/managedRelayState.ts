@@ -12,18 +12,14 @@ import {
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { RelayClientEnvironmentRecord } from "@t3tools/contracts/relay";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useCallback, useEffect } from "react";
+import { useEffect } from "react";
 
 import * as Runtime from "../../lib/runtime";
 import { appAtomRegistry } from "../../state/atom-registry";
-import { cloudDebugLog } from "./cloudDebugLog";
 
 const managedRelayAtomRuntime = Atom.runtime(Runtime.layer);
 
-export const managedRelayQueryManager = createManagedRelayQueryManager(managedRelayAtomRuntime, {
-  onQueryEvent: (event) =>
-    cloudDebugLog(`query:${event.operation}:${event.stage}:${event.phase}`, { ...event }),
-});
+const managedRelayQueryManager = createManagedRelayQueryManager(managedRelayAtomRuntime);
 
 const managedRelayMutationScheduler = createAtomCommandScheduler();
 
@@ -61,11 +57,11 @@ export function useManagedRelayEnvironments() {
       });
     }
   }, [snapshot.error, snapshot.errorTraceId]);
-  const refresh = useCallback(() => {
+  const refresh = () => {
     if (accountId) {
       managedRelayQueryManager.refreshEnvironments(appAtomRegistry, accountId);
     }
-  }, [accountId]);
+  };
 
   return {
     ...snapshot,

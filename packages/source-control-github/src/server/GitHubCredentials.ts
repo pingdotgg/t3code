@@ -1,3 +1,4 @@
+import { normalizeHost } from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -85,10 +86,6 @@ export class GitHubCredentials extends Context.Service<
     readonly invalidate: (host: string) => Effect.Effect<void>;
   }
 >()("@t3tools/source-control-github/server/GitHubCredentials") {}
-
-function normalizeHost(host: string): string {
-  return host.trim().toLowerCase();
-}
 
 /** Hosts gh treats as GitHub.com-like for `GH_TOKEN`: github.com and GHE.com data residency. */
 function isGitHubDotCom(host: string): boolean {

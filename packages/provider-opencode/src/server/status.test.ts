@@ -292,7 +292,6 @@ const runtimeMock = {
     versionStdout: DEFAULT_VERSION_STDOUT,
     inventoryError: null as Error | null,
     connectionError: null as Error | null,
-    inventoryCwd: null as string | null,
     startCalls: 0,
     closeCalls: 0,
     sdkClientInputs: [] as Array<{
@@ -312,7 +311,6 @@ const runtimeMock = {
     this.state.versionStdout = DEFAULT_VERSION_STDOUT;
     this.state.inventoryError = null;
     this.state.connectionError = null;
-    this.state.inventoryCwd = null;
     this.state.startCalls = 0;
     this.state.closeCalls = 0;
     this.state.sdkClientInputs.length = 0;
@@ -400,20 +398,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntime["Service"] = {
           }),
         )
       : Effect.succeed(runtimeMock.state.inventory as OpenCodeRuntime.OpenCodeInventory),
-  loadInventoryFromCli: ({ cwd }) => {
-    runtimeMock.state.inventoryCwd = cwd;
-    return runtimeMock.state.inventoryError
-      ? Effect.fail(
-          new OpenCodeRuntime.OpenCodeRuntimeError({
-            operation: "loadInventoryFromCli",
-            detail: runtimeMock.state.inventoryError.message,
-            cause: runtimeMock.state.inventoryError,
-          }),
-        )
-      : Effect.succeed(runtimeMock.state.inventory as OpenCodeRuntime.OpenCodeInventory);
-  },
   loadOpenCodeSkills: () => Effect.succeed([]),
-  loadSkillsFromCli: () => Effect.succeed([]),
 };
 
 beforeEach(() => {

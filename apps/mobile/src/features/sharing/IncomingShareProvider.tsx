@@ -9,7 +9,7 @@ import {
   type ResolvedSharePayload,
   type SharePayload,
 } from "expo-sharing";
-import React, { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import React, { useEffect, useEffectEvent, useRef, useState } from "react";
 import { AppState, Platform } from "react-native";
 
 import {
@@ -220,7 +220,7 @@ export function IncomingShareProvider(props: React.PropsWithChildren) {
     };
   }, []);
 
-  const refresh = useCallback(async () => {
+  const refresh = async () => {
     if (refreshPromiseRef.current) {
       return refreshPromiseRef.current;
     }
@@ -249,7 +249,7 @@ export function IncomingShareProvider(props: React.PropsWithChildren) {
 
     refreshPromiseRef.current = operation;
     return operation;
-  }, [enabled]);
+  };
 
   useEffect(() => {
     void refresh().finally(() => {
@@ -291,57 +291,39 @@ export function IncomingShareProvider(props: React.PropsWithChildren) {
     ]);
   }, [error, refresh]);
 
-  const consumeShare = useCallback(async (shareId: string) => {
+  const consumeShare = async (shareId: string) => {
     const snapshot = await incomingShareInbox.consume(shareId);
     if (mountedRef.current) {
       setDrafts(snapshot);
     }
-  }, []);
-  const reserveShare = useCallback(
-    async (shareId: string, destination: IncomingShareDestination) => {
-      const snapshot = await incomingShareInbox.reserve(shareId, destination);
-      if (mountedRef.current) {
-        setDrafts(snapshot);
-      }
-    },
-    [],
-  );
-  const releaseShareReservation = useCallback(
-    async (shareId: string, expectedDestination: IncomingShareDestination) => {
-      const snapshot = await incomingShareInbox.releaseReservation(shareId, expectedDestination);
-      if (mountedRef.current) {
-        setDrafts(snapshot);
-      }
-    },
-    [],
-  );
-  const getShare = useCallback(
-    (shareId: string) => drafts.find((draft) => draft.id === shareId) ?? null,
-    [drafts],
-  );
+  };
+  const reserveShare = async (shareId: string, destination: IncomingShareDestination) => {
+    const snapshot = await incomingShareInbox.reserve(shareId, destination);
+    if (mountedRef.current) {
+      setDrafts(snapshot);
+    }
+  };
+  const releaseShareReservation = async (
+    shareId: string,
+    expectedDestination: IncomingShareDestination,
+  ) => {
+    const snapshot = await incomingShareInbox.releaseReservation(shareId, expectedDestination);
+    if (mountedRef.current) {
+      setDrafts(snapshot);
+    }
+  };
+  const getShare = (shareId: string) => drafts.find((draft) => draft.id === shareId) ?? null;
 
-  const value = useMemo<IncomingShareContextValue>(
-    () => ({
-      pendingShare: drafts[0] ?? null,
-      isLoading,
-      error,
-      getShare,
-      releaseShareReservation,
-      reserveShare,
-      consumeShare,
-      refresh,
-    }),
-    [
-      consumeShare,
-      drafts,
-      error,
-      getShare,
-      isLoading,
-      refresh,
-      releaseShareReservation,
-      reserveShare,
-    ],
-  );
+  const value: IncomingShareContextValue = {
+    pendingShare: drafts[0] ?? null,
+    isLoading,
+    error,
+    getShare,
+    releaseShareReservation,
+    reserveShare,
+    consumeShare,
+    refresh,
+  };
 
   return (
     <IncomingShareContext.Provider value={value}>{props.children}</IncomingShareContext.Provider>

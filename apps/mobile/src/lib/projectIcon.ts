@@ -12,7 +12,7 @@ export function countGlyphs(text: string): number {
   return Array.from(text.replace(/\p{M}/gu, "")).length;
 }
 
-export function projectMonogram(projectName: string): string {
+function projectMonogram(projectName: string): string {
   const words =
     projectName
       .normalize("NFKC")

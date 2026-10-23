@@ -234,7 +234,7 @@ function NativeHeaderToolbarRoot(props: {
   const route = useRoute();
   const tabActivity = use(NativeWorkspaceTabActivityContext);
   const isTabActive = tabActivity?.isActive;
-  const items = useMemo(() => collectToolbarItems(props.children), [props.children]);
+  const items = collectToolbarItems(props.children);
   // UIKit's search placement item belongs to the toolbar, never a header group.
   const headerItems = useMemo(
     () => items.filter((item): item is NativeStackHeaderItem => item.type !== "searchBarPlacement"),

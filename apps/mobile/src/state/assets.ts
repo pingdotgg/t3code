@@ -8,7 +8,6 @@ import {
   EMPTY_ASSET_URL_ATOM,
 } from "@t3tools/client-runtime/state/assets";
 import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
-import { useCallback } from "react";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { projectFaviconDatabaseCache } from "../lib/projectFaviconDatabaseCache";
@@ -83,12 +82,12 @@ export function useRefreshAssetUrl(
     refresh: true,
     reportFailure: false,
   });
-  return useCallback(async () => {
+  return async () => {
     if (environmentId === null || resource === null || httpBaseUrl === null) return null;
     const state = assetUrlStateFromResult(
       await createUrl({ environmentId, input: { resource } }),
       httpBaseUrl,
     );
     return state._tag === "Success" ? state.url : null;
-  }, [createUrl, environmentId, httpBaseUrl, resource]);
+  };
 }

@@ -11,7 +11,7 @@
  * also resolves from the real filesystem; a dependency that was bundled away
  * exists only inside the emitted bundle and is unreachable there.
  */
-export const CLI_RUNTIME_EXTERNAL_PREFIXES = [
+const CLI_RUNTIME_EXTERNAL_PREFIXES = [
   // Cursor ships computed Webpack imports and platform helper packages.
   "@cursor/sdk",
   // Playwright reads package.json and browsers.json beside its runtime modules.

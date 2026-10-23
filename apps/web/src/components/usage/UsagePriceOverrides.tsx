@@ -70,13 +70,11 @@ const priceTargetsAtom = Atom.make((get): readonly UsagePriceTarget[] =>
           ? "Offline"
           : settings === null
             ? "Prices not loaded"
-            : environment.serverConfig?.environment.capabilities.usagePriceOverrides !== true
-              ? "Update server to edit prices"
-              : access === "pending"
-                ? "Checking permissions…"
-                : access === "denied"
-                  ? "Read-only access"
-                  : null,
+            : access === "pending"
+              ? "Checking permissions…"
+              : access === "denied"
+                ? "Read-only access"
+                : null,
     };
   }),
 );

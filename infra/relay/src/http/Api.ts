@@ -66,7 +66,6 @@ import * as DpopProofs from "../auth/DpopProofs.ts";
 import * as RelayTokens from "../auth/RelayTokens.ts";
 import * as EnvironmentCredentials from "../environments/EnvironmentCredentials.ts";
 import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
-import * as HookForwarder from "../hooks/HookForwarder.ts";
 import * as HeldHooks from "../hooks/HeldHooks.ts";
 import * as HookInbox from "../hooks/HookInbox.ts";
 import * as LiveActivities from "../agentActivity/LiveActivities.ts";
@@ -175,13 +174,13 @@ export const layerDocsRedirectRoute = HttpRouter.add(
 // request hangs (e.g. a stuck upstream query), the client would otherwise
 // abort first, the invocation would die with the request span still open, and
 // the batched spans would never export — leaving no server-side trace at all.
-export const RELAY_REQUEST_DEADLINE_MS = 9_000;
+const RELAY_REQUEST_DEADLINE_MS = 9_000;
 /**
  * Webhook forwarding reads a body of up to 1 MiB, waits up to the upstream
  * timeout, and may then hold the request, so it needs more room than an API
  * call; cutting it off before the hold would drop a request it should keep.
  */
-export const RELAY_HOOK_REQUEST_DEADLINE_MS = 25_000;
+const RELAY_HOOK_REQUEST_DEADLINE_MS = 25_000;
 
 const relayRequestDeadline = <E, R>(
   httpEffect: Effect.Effect<
@@ -234,7 +233,7 @@ const annotateRelayEdgeLocation = Effect.gen(function* () {
 });
 
 // The method-named server span is created below; this wrapper must not add another span.
-export const traceRelayHttpRequest = Effect.fnUntraced(function* <E, R>(
+const traceRelayHttpRequest = Effect.fnUntraced(function* <E, R>(
   httpEffect: Effect.Effect<
     HttpServerResponse.HttpServerResponse,
     E,
@@ -491,32 +490,32 @@ export const layerHealthApi = HttpApiBuilder.group(
   }),
 );
 
-export const revokeEnvironmentLinkRecord = Effect.fn(
-  "relay.api.client.revokeEnvironmentLinkRecord",
-)(function* (input: {
-  readonly userId: string;
-  readonly environmentId: string;
-  readonly environmentPublicKey: string;
-}) {
-  const transactions = yield* RelayDb.RelayTransactions;
-  const links = yield* EnvironmentLinks.EnvironmentLinks;
-  const credentials = yield* EnvironmentCredentials.EnvironmentCredentials;
-  return yield* transactions.withTransaction(
-    Effect.gen(function* () {
-      const revoked = yield* links.revokeForUser({
-        userId: input.userId,
-        environmentId: input.environmentId,
-      });
-      if (revoked) {
-        yield* credentials.revokeForEnvironmentPublicKey({
+const revokeEnvironmentLinkRecord = Effect.fn("relay.api.client.revokeEnvironmentLinkRecord")(
+  function* (input: {
+    readonly userId: string;
+    readonly environmentId: string;
+    readonly environmentPublicKey: string;
+  }) {
+    const transactions = yield* RelayDb.RelayTransactions;
+    const links = yield* EnvironmentLinks.EnvironmentLinks;
+    const credentials = yield* EnvironmentCredentials.EnvironmentCredentials;
+    return yield* transactions.withTransaction(
+      Effect.gen(function* () {
+        const revoked = yield* links.revokeForUser({
+          userId: input.userId,
           environmentId: input.environmentId,
-          environmentPublicKey: input.environmentPublicKey,
         });
-      }
-      return revoked;
-    }),
-  );
-});
+        if (revoked) {
+          yield* credentials.revokeForEnvironmentPublicKey({
+            environmentId: input.environmentId,
+            environmentPublicKey: input.environmentPublicKey,
+          });
+        }
+        return revoked;
+      }),
+    );
+  },
+);
 
 export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnvironmentRecord")(
   function* (input: {
@@ -1213,12 +1212,6 @@ export const layerServerApi = HttpApiBuilder.group(
           });
         },
         mapErrorTags({
-          EnvironmentPublishPublicKeyMissing: (_error, traceId) =>
-            new RelayAuthInvalidError({
-              code: "auth_invalid",
-              reason: "not_authorized",
-              traceId,
-            }),
           EnvironmentPublishSignatureExpired: (_error, traceId) =>
             new RelayAgentActivityPublishProofExpiredError({
               code: "agent_activity_publish_proof_expired",

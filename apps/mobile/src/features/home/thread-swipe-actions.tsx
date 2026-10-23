@@ -50,8 +50,8 @@ const ACTION_ICON_SIZE = 15;
 const COMPACT_ACTION_CIRCLE_SIZE = 28;
 const COMPACT_ACTION_ICON_SIZE = 13;
 
-export const THREAD_SWIPE_ACTIONS_WIDTH = ACTION_ITEM_WIDTH * 2;
-export const THREAD_SWIPE_SPRING = {
+const THREAD_SWIPE_ACTIONS_WIDTH = ACTION_ITEM_WIDTH * 2;
+const THREAD_SWIPE_SPRING = {
   damping: 26,
   mass: 0.7,
   overshootClamping: true,
@@ -228,7 +228,7 @@ interface ThreadSwipeableProps {
   readonly enabled?: boolean;
   readonly enableTrackpadSwipe?: boolean;
   /**
-   * Omitted keeps the v1 Delete behavior only when the built-in Delete
+   * Omitted keeps Delete only when the built-in Delete
    * secondary action is in use; custom or absent secondary actions default to
    * the advertised primary action.
    */
@@ -240,7 +240,7 @@ interface ThreadSwipeableProps {
   readonly primaryAction: ThreadSwipeAction;
   readonly threadKey: string;
   /**
-   * Omitted keeps the v1 destructive Delete action. Explicit null opts out of
+   * Omitted keeps the destructive Delete action. Explicit null opts out of
    * a secondary action entirely so a gated Snooze can never fall back to an
    * unadvertised Delete.
    */
@@ -692,7 +692,7 @@ function SwipeActionButton(props: {
   );
 }
 
-export function ThreadSwipeActions(props: {
+function ThreadSwipeActions(props: {
   readonly backgroundColor: ColorValue;
   readonly compact: boolean;
   readonly fullSwipeAction?: "delete" | "primary";

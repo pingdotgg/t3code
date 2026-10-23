@@ -49,7 +49,7 @@ type QueueTarget = { readonly environmentId: EnvironmentId; readonly threadId: T
 type QueueAction = "steer" | "edit" | "up" | "down" | "remove";
 type QueueRowLayout = { readonly id: RunId; readonly y?: number; readonly height?: number };
 
-export function useThreadQueueWorkflow(target: QueueTarget) {
+function useThreadQueueWorkflow(target: QueueTarget) {
   return useAtomValue(environmentThreadDetails.queueWorkflowAtom(target));
 }
 

@@ -1,7 +1,7 @@
 import { SymbolView } from "./ui/AppSymbol";
 import { AppText } from "./ui/AppText";
 import { Image } from "expo-image";
-import { memo, useLayoutEffect, useMemo, useState } from "react";
+import { memo, useLayoutEffect, useState } from "react";
 import { View } from "react-native";
 import type { EnvironmentId, ProjectIconOverride } from "@t3tools/contracts";
 import {
@@ -49,29 +49,15 @@ export const ProjectFavicon = memo(function ProjectFavicon(props: {
           faviconPath: props.faviconPath,
         }),
   );
-  const renderableFaviconUrl = useMemo(
-    () => (isProjectFaviconFallbackUrl(faviconUrl) ? null : faviconUrl),
-    [faviconUrl],
-  );
+  const renderableFaviconUrl = isProjectFaviconFallbackUrl(faviconUrl) ? null : faviconUrl;
   // Inline images are self-contained; remote URLs key on their revision so signed-token
   // rotation reuses the disk cache while a changed icon starts from the loading state.
-  const cacheKey = useMemo(
-    () =>
-      renderableFaviconUrl && props.workspaceRoot
-        ? renderableFaviconUrl.startsWith("data:")
-          ? getProjectFaviconResourceKey(
-              props.environmentId,
-              props.workspaceRoot,
-              props.faviconPath,
-            )
-          : getProjectFaviconCacheKey(
-              props.environmentId,
-              props.workspaceRoot,
-              renderableFaviconUrl,
-            )
-        : null,
-    [renderableFaviconUrl, props.environmentId, props.workspaceRoot, props.faviconPath],
-  );
+  const cacheKey =
+    renderableFaviconUrl && props.workspaceRoot
+      ? renderableFaviconUrl.startsWith("data:")
+        ? getProjectFaviconResourceKey(props.environmentId, props.workspaceRoot, props.faviconPath)
+        : getProjectFaviconCacheKey(props.environmentId, props.workspaceRoot, renderableFaviconUrl)
+      : null;
 
   if (glyph !== null) {
     return <ProjectIconGlyphView glyph={glyph} size={size} />;
@@ -146,10 +132,7 @@ function ProjectFaviconImage(props: {
   readonly projectTitle: string;
   readonly size: number;
 }) {
-  const faviconRequest = useMemo(
-    () => createProjectFaviconRequest(props.cacheKey, props.faviconUrl),
-    [props.cacheKey, props.faviconUrl],
-  );
+  const faviconRequest = createProjectFaviconRequest(props.cacheKey, props.faviconUrl);
   const [activeFaviconRequest, setActiveFaviconRequest] = useState<typeof faviconRequest>(null);
   useLayoutEffect(() => {
     if (faviconRequest === null) return;

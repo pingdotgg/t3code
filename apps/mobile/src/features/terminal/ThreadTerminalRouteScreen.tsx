@@ -63,7 +63,6 @@ import { useSelectedThreadProjection } from "../../state/use-thread-detail";
 import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
 import { TerminalSurface } from "./NativeTerminalSurface";
 import { getMobileTerminalTheme } from "./terminalTheme";
-import { terminalDebugLog } from "./terminalDebugLog";
 import {
   getTerminalBufferReplayKey,
   getTerminalSurfaceReplayBuffer,
@@ -380,7 +379,6 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   const [keyboardFocusRequest, setKeyboardFocusRequest] = useState(0);
   const [isAccessoryDismissed, setIsAccessoryDismissed] = useState(false);
   const bufferReplayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const firstNonEmptyBufferLoggedRef = useRef(false);
   const lastBufferReplayKeyRef = useRef<string | null>(null);
   const sentInitialInputKeyRef = useRef<string | null>(null);
   const [readyBufferReplayKey, setReadyBufferReplayKey] = useState<string | null>(null);
@@ -487,55 +485,6 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
 
   const pendingExitNavigationRef = useRef<string | null>(null);
 
-  useEffect(() => {
-    terminalDebugLog("surface:props", {
-      terminalKey,
-      atomBufferLen: terminal.buffer.length,
-      surfaceBufferLen: terminalSurfaceBuffer.length,
-      replayKey: bufferReplayKey,
-      readyReplayKey: readyBufferReplayKey,
-      status: terminal.status,
-      version: terminal.version,
-    });
-  }, [
-    bufferReplayKey,
-    readyBufferReplayKey,
-    terminal.buffer.length,
-    terminal.status,
-    terminal.version,
-    terminalKey,
-    terminalSurfaceBuffer.length,
-  ]);
-
-  useEffect(() => {
-    terminalDebugLog("session:status", {
-      terminalKey,
-      status: terminal.status,
-      error: terminal.error,
-      summary: terminal.summary?.cwd ?? null,
-      bufferLen: terminal.buffer.length,
-      version: terminal.version,
-    });
-  }, [
-    terminal.buffer.length,
-    terminal.error,
-    terminal.status,
-    terminal.summary?.cwd,
-    terminal.version,
-    terminalKey,
-  ]);
-
-  useEffect(() => {
-    if (terminal.buffer.length === 0 || firstNonEmptyBufferLoggedRef.current) {
-      return;
-    }
-    firstNonEmptyBufferLoggedRef.current = true;
-    terminalDebugLog("session:first-nonempty-buffer", {
-      terminalKey,
-      length: terminal.buffer.length,
-      preview: terminal.buffer.slice(0, 160),
-    });
-  }, [terminal.buffer, terminal.buffer.length, terminalKey]);
   const cwd = terminal.summary?.cwd ?? selectedThreadProject?.workspaceRoot ?? null;
   const serverConfigs = useServerConfigs();
   const hostOs =
@@ -704,7 +653,6 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   ]);
 
   useEffect(() => {
-    firstNonEmptyBufferLoggedRef.current = false;
     sentInitialInputKeyRef.current = null;
   }, [terminalKey]);
 
@@ -718,14 +666,9 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   const scheduleBufferReplayReady = useCallback(() => {
     clearBufferReplayTimer();
     const replayKey = bufferReplayKey;
-    terminalDebugLog("replay:schedule-ready", {
-      replayKey,
-      delayMs: TERMINAL_BUFFER_REPLAY_STABILITY_DELAY_MS,
-    });
     bufferReplayTimerRef.current = setTimeout(() => {
       bufferReplayTimerRef.current = null;
       setReadyBufferReplayKey(replayKey);
-      terminalDebugLog("replay:ready", { replayKey });
     }, TERMINAL_BUFFER_REPLAY_STABILITY_DELAY_MS);
   }, [bufferReplayKey, clearBufferReplayTimer]);
 
@@ -844,11 +787,6 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
 
   const handleResize = useCallback(
     (size: { readonly cols: number; readonly rows: number }) => {
-      terminalDebugLog("native:onResize", {
-        cols: size.cols,
-        rows: size.rows,
-        terminalKey,
-      });
       setHasMeasuredSurface(true);
       if (readyBufferReplayKey !== bufferReplayKey) {
         scheduleBufferReplayReady();

@@ -232,10 +232,6 @@ export function setReviewAsyncError(threadKey: string, error: string | null): vo
   }));
 }
 
-export function getReviewAsyncStateSnapshot(threadKey: string): ReviewAsyncState {
-  return appAtomRegistry.get(reviewAsyncStateByThreadKeyAtom(threadKey));
-}
-
 export function updateReviewExpandedFileIds(
   threadKey: string,
   sectionId: string,

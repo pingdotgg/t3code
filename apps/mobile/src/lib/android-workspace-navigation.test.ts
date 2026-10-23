@@ -1,7 +1,6 @@
 import * as NodeModule from "node:module";
 import { describe, expect, it } from "vite-plus/test";
 import {
-  androidWorkspaceTabFromNavigationState,
   androidWorkspaceTabNavigationState,
   type AndroidWorkspaceNavigationTab,
 } from "../features/workspace/android-workspace-tabs";
@@ -272,19 +271,15 @@ describe("Android Settings tab", () => {
   type Tab = AndroidWorkspaceNavigationTab;
   const openTab = (state: State, tab: Tab) =>
     apply(state, CommonActions.reset(androidWorkspaceTabNavigationState(state, tab)));
-  const selectedTab = (state: State, previous: Tab) =>
-    androidWorkspaceTabFromNavigationState(state, previous);
 
   it("opens over Home alone, dropping chat and PR history, and Back returns to Home", () => {
     const previous = legacyHistory();
     const settings = openTab(previous, "settings");
     expect(names(settings)).toEqual(["Home", "SettingsSheet"]);
     expect(settings.routes[0]?.key).toBe(previous.routes[0]?.key);
-    expect(selectedTab(settings, "threads")).toBe("settings");
     const back = apply(settings, StackActions.pop());
     expect(names(back)).toEqual(["Home"]);
     expect(back.routes[0]?.key).toBe(previous.routes[0]?.key);
-    expect(selectedTab(back, "settings")).not.toBe("settings");
   });
 
   it("stays selected under a nested settings page until a list tab returns to Home", () => {
@@ -309,10 +304,8 @@ describe("Android Settings tab", () => {
           : route,
       ),
     };
-    expect(selectedTab(usage, "threads")).toBe("settings");
     const list = openTab(usage, "pullRequests");
     expect(names(list)).toEqual(["Home"]);
     expect(list.routes[0]?.key).toBe(previous.routes[0]?.key);
-    expect(selectedTab(list, "pullRequests")).toBe("pullRequests");
   });
 });

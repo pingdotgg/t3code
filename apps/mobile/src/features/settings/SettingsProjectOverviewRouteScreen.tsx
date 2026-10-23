@@ -32,8 +32,8 @@ import {
 } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsScreen } from "./components/SettingsScreen";
-import { SettingsSection } from "./components/SettingsSection";
-import { SettingsActionRow } from "./components/SettingsActionRow";
+import { ListSection as SettingsSection } from "../../components/ui/ListSection";
+import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
 import {
   AndroidSettingsEnvironmentFilter,
   SettingsEnvironmentFilterHeader,

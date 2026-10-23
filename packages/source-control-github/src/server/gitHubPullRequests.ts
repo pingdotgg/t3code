@@ -1,11 +1,8 @@
-import * as Cause from "effect/Cause";
+import { trimOptionalString } from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as DateTime from "effect/DateTime";
-import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
-import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { PositiveInt, TrimmedNonEmptyString } from "@t3tools/contracts";
-import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 
 export interface NormalizedGitHubPullRequestRecord {
   readonly number: number;
@@ -56,11 +53,6 @@ const GitHubPullRequestSchema = Schema.Struct({
     ),
   ),
 });
-
-function trimOptionalString(value: string | null | undefined): string | null {
-  const trimmed = value?.trim() ?? "";
-  return trimmed.length > 0 ? trimmed : null;
-}
 
 function normalizeGitHubPullRequestState(input: {
   state?: string | null | undefined;
@@ -113,33 +105,4 @@ export function normalizeGitHubPullRequestRecord(
     ...(headRepositoryNameWithOwner ? { headRepositoryNameWithOwner } : {}),
     ...(headRepositoryOwnerLogin ? { headRepositoryOwnerLogin } : {}),
   };
-}
-
-const decodeGitHubPullRequestList = decodeJsonResult(Schema.Array(Schema.Unknown));
-const decodeGitHubPullRequestEntry = Schema.decodeUnknownExit(GitHubPullRequestSchema);
-
-/**
- * Pull request rows in `gh --json` or GraphQL node shape. A row that does not decode is
- * skipped, so one malformed pull request cannot hide the rest.
- */
-function decodeGitHubPullRequestEntries(
-  entries: ReadonlyArray<unknown>,
-): ReadonlyArray<NormalizedGitHubPullRequestRecord> {
-  const pullRequests: NormalizedGitHubPullRequestRecord[] = [];
-  for (const entry of entries) {
-    const decodedEntry = decodeGitHubPullRequestEntry(entry);
-    if (Exit.isSuccess(decodedEntry)) {
-      pullRequests.push(normalizeGitHubPullRequestRecord(decodedEntry.value));
-    }
-  }
-  return pullRequests;
-}
-
-export function decodeGitHubPullRequestListJson(
-  raw: string,
-): Result.Result<
-  ReadonlyArray<NormalizedGitHubPullRequestRecord>,
-  Cause.Cause<Schema.SchemaError>
-> {
-  return Result.map(decodeGitHubPullRequestList(raw), decodeGitHubPullRequestEntries);
 }

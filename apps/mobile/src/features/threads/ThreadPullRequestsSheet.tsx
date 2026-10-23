@@ -46,7 +46,7 @@ export function ThreadPullRequestsSheet(
     project: selectedThreadProject,
     runtime: selectedEnvironmentRuntime,
   });
-  const rowInputs = useMemo(() => ({ lines, actions }), [lines, actions]);
+  const rowInputs = { lines, actions };
 
   const content = (
     <View className="flex-1 android:bg-sheet-solid ios:bg-screen">

@@ -180,7 +180,7 @@ export function ReopenClosedViewShortcut() {
 
   useEffect(() => {
     const preview = window.desktopBridge?.preview;
-    if (!preview?.setForwardedShortcuts) return;
+    if (!preview) return;
     const options = {
       context: {
         previewFocus: true,
@@ -211,7 +211,7 @@ export function ReopenClosedViewShortcut() {
       )
       .catch(() => undefined);
     return () => {
-      void preview.setForwardedShortcuts?.([]).catch(() => undefined);
+      void preview.setForwardedShortcuts([]).catch(() => undefined);
     };
   }, [hasHistory, keybindings, terminalOpen]);
 

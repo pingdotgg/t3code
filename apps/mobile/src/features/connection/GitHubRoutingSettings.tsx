@@ -14,7 +14,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { environmentCatalog } from "../../connection/catalog";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { SettingsSection } from "../settings/components/SettingsSection";
+import { ListSection as SettingsSection } from "../../components/ui/ListSection";
 
 const options: ReadonlyArray<{
   value: GitHubRoutingPermission;

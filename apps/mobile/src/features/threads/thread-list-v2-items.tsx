@@ -28,7 +28,7 @@ import {
 import { AuthOrchestrationOperateScope, type EnvironmentMachineKind } from "@t3tools/contracts";
 import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
 import type { MenuAction } from "@react-native-menu/menu";
-import { memo, useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
+import { memo, useEffect, useMemo, useState, type ComponentProps } from "react";
 import { Pressable, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 
@@ -223,7 +223,7 @@ function ThreadListV2Section(props: {
   );
 }
 
-export const ThreadListV2SectionDivider = memo(function ThreadListV2SectionDivider(props: {
+const ThreadListV2SectionDivider = memo(function ThreadListV2SectionDivider(props: {
   readonly label: string;
   readonly pane?: "screen" | "sidebar";
 }) {
@@ -338,29 +338,24 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
   const rowAppearance = getThreadListV2RowAppearance(theme, sidebarPane, props.selected ?? false);
   const isDraft = pendingTask.kind === "draft";
   const deleteLabel = isDraft ? "Discard" : "Delete";
-  const handleDelete = useCallback(
-    () => onDeletePendingTask(pendingTask),
-    [onDeletePendingTask, pendingTask],
-  );
-  const deleteAction = useMemo(
-    () => ({
-      accessibilityLabel: `${deleteLabel} ${pendingTask.title}`,
-      destructive: true,
-      icon: "trash" as const,
-      label: deleteLabel,
-      onPress: handleDelete,
-    }),
-    [deleteLabel, handleDelete, pendingTask.title],
-  );
+  const handleDelete = () => onDeletePendingTask(pendingTask);
+  const deleteAction = {
+    accessibilityLabel: `${deleteLabel} ${pendingTask.title}`,
+    destructive: true,
+    icon: "trash" as const,
+    label: deleteLabel,
+    onPress: handleDelete,
+  };
   const projectTitle = props.projectTitle ?? props.project?.title ?? pendingTask.projectTitle ?? "";
   const branch = pendingTask.branch;
 
-  const handleMenuAction = useCallback(
-    ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
-      if (nativeEvent.event === "delete") onDeletePendingTask(pendingTask);
-    },
-    [onDeletePendingTask, pendingTask],
-  );
+  const handleMenuAction = ({
+    nativeEvent,
+  }: {
+    readonly nativeEvent: { readonly event: string };
+  }) => {
+    if (nativeEvent.event === "delete") onDeletePendingTask(pendingTask);
+  };
 
   const rowContent = (
     <>
@@ -617,9 +612,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const providerInstance = props.providerInstance;
   const pr = useThreadPr(thread);
   const prBadgeLabel = pr ? resolveThreadPrBadgeAction(pr).accessibilityLabel : null;
-  const handleOpenPullRequests = useCallback(() => {
+  const handleOpenPullRequests = () => {
     if (pr) onOpenThreadPullRequests(thread, pr);
-  }, [onOpenThreadPullRequests, pr, thread]);
+  };
 
   const theme = useUniwindTheme();
   const sidebarPane = props.pane === "sidebar";
@@ -638,13 +633,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const timeLabel = props.timeLabel;
 
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
-  const handleAcknowledgeWoke = useCallback(() => {
+  const handleAcknowledgeWoke = () => {
     if (props.wokeAt === null) return;
     void visitThread({
       environmentId: thread.environmentId,
       input: { threadId: thread.id, visitedAt: props.wokeAt },
     });
-  }, [props.wokeAt, thread.environmentId, thread.id, visitThread]);
+  };
   // VoiceOver cannot focus buttons inside the accessible row.
   const rowAccessibilityActions = useMemo(
     () => [
@@ -654,14 +649,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     [prBadgeLabel, showsWoke],
   );
 
-  const handleDelete = useCallback(() => onDeleteThread(thread), [onDeleteThread, thread]);
-  const handleRename = useCallback(() => onRenameThread(thread), [onRenameThread, thread]);
+  const handleDelete = () => onDeleteThread(thread);
+  const handleRename = () => onRenameThread(thread);
   const canOperateThread = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
-  const handleRegenerateTitle = useCallback(
-    () => onRegenerateThreadTitle(thread),
-    [onRegenerateThreadTitle, thread],
-  );
-  const handleSettle = useCallback(() => onSettleThread(thread), [onSettleThread, thread]);
+  const handleRegenerateTitle = () => onRegenerateThreadTitle(thread);
+  const handleSettle = () => onSettleThread(thread);
   const [customSnoozeOpen, setCustomSnoozeOpen] = useState(false);
   // A recycled cell reassigns this mounted row to a different thread without
   // remounting it, and the render closure stops running while list equality
@@ -673,21 +665,15 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     setBoundIdentity(rowIdentity);
     setCustomSnoozeOpen(false);
   }
-  const handleSnooze = useCallback(
-    (snoozedUntil: string) => onSnoozeThread(thread, snoozedUntil),
-    [onSnoozeThread, thread],
-  );
-  const handleUnsnooze = useCallback(() => onUnsnoozeThread(thread), [onUnsnoozeThread, thread]);
-  const handleUnsettle = useCallback(() => onUnsettleThread(thread), [onUnsettleThread, thread]);
-  const handlePin = useCallback(() => onPinThread(thread), [onPinThread, thread]);
-  const handleUnpin = useCallback(() => onUnpinThread(thread), [onUnpinThread, thread]);
-  const handleSetAutoSettle = useCallback(
-    (enabled: boolean) => onSetThreadAutoSettle(thread, enabled),
-    [onSetThreadAutoSettle, thread],
-  );
-  const handleMoveUp = useCallback(() => onMoveThread?.(thread, "up"), [onMoveThread, thread]);
-  const handleMoveDown = useCallback(() => onMoveThread?.(thread, "down"), [onMoveThread, thread]);
-  const handleArchive = useCallback(() => onArchiveThread(thread), [onArchiveThread, thread]);
+  const handleSnooze = (snoozedUntil: string) => onSnoozeThread(thread, snoozedUntil);
+  const handleUnsnooze = () => onUnsnoozeThread(thread);
+  const handleUnsettle = () => onUnsettleThread(thread);
+  const handlePin = () => onPinThread(thread);
+  const handleUnpin = () => onUnpinThread(thread);
+  const handleSetAutoSettle = (enabled: boolean) => onSetThreadAutoSettle(thread, enabled);
+  const handleMoveUp = () => onMoveThread?.(thread, "up");
+  const handleMoveDown = () => onMoveThread?.(thread, "down");
+  const handleArchive = () => onArchiveThread(thread);
 
   const canUnsettle = variant === "slim";
   // The React Compiler caches render results on props and state, so a clock read
@@ -714,10 +700,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     snoozable: canSnooze(thread, { now: snoozeGateNow }),
     snoozed: snoozedRow,
   });
-  const snoozePresets = useMemo(
-    () => (swipeActions.secondary === "snooze" ? resolveSnoozePresets(new Date()) : ([] as const)),
-    [props.snoozePresetMinute, swipeActions.secondary],
-  );
+  const snoozePresets =
+    swipeActions.secondary === "snooze" ? resolveSnoozePresets(new Date()) : ([] as const);
   const snoozePresetActions = useMemo<MenuAction[]>(
     () => [
       ...snoozePresets.map((preset) => ({
@@ -765,41 +749,34 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       variant,
     ],
   );
-  const autoSettleMenuItems = useMemo<MenuAction[]>(
-    () =>
-      props.autoSettleOptOutSupported
-        ? [
+  const autoSettleMenuItems: MenuAction[] = props.autoSettleOptOutSupported
+    ? [
+        {
+          id: "auto-settle",
+          title: "Auto-settle behavior",
+          image: "timer",
+          subactions: [
             {
-              id: "auto-settle",
-              title: "Auto-settle behavior",
-              image: "timer",
-              subactions: [
-                {
-                  id: "auto-settle:enabled",
-                  title: "Enabled",
-                  state: thread.autoSettleDisabledAt == null ? "on" : "off",
-                },
-                {
-                  id: "auto-settle:disabled",
-                  title: "Disabled",
-                  state: thread.autoSettleDisabledAt == null ? "off" : "on",
-                },
-              ],
-            } satisfies MenuAction,
-          ]
-        : [],
-    [props.autoSettleOptOutSupported, thread.autoSettleDisabledAt],
-  );
-  const titleMenuItems = useMemo<MenuAction[]>(
-    () => [
-      { id: "rename", title: "Rename", image: "square.and.pencil" },
-      ...buildThreadTitleRegenerationMenuItems({
-        supported: props.titleRegenerationSupported,
-        isRegenerating: thread.titleRegeneration != null,
-      }),
-    ],
-    [props.titleRegenerationSupported, thread.titleRegeneration],
-  );
+              id: "auto-settle:enabled",
+              title: "Enabled",
+              state: thread.autoSettleDisabledAt == null ? "on" : "off",
+            },
+            {
+              id: "auto-settle:disabled",
+              title: "Disabled",
+              state: thread.autoSettleDisabledAt == null ? "off" : "on",
+            },
+          ],
+        } satisfies MenuAction,
+      ]
+    : [];
+  const titleMenuItems: MenuAction[] = [
+    { id: "rename", title: "Rename", image: "square.and.pencil" },
+    ...buildThreadTitleRegenerationMenuItems({
+      supported: props.titleRegenerationSupported,
+      isRegenerating: thread.titleRegeneration != null,
+    }),
+  ];
   const snoozableCardMenuActions = useMemo<MenuAction[]>(
     () => [
       { id: "settle", title: "Settle", image: "checkmark" },
@@ -817,17 +794,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     ],
     [arrangementMenuItems, autoSettleMenuItems, snoozePresetActions, titleMenuItems],
   );
-  const cardMenuActions = useMemo<MenuAction[]>(
-    () => [
-      CARD_MENU_ACTIONS[0]!,
-      ...arrangementMenuItems,
-      ...titleMenuItems,
-      ...autoSettleMenuItems,
-      LEGACY_MENU_ACTIONS[0]!,
-      ...CARD_MENU_ACTIONS.slice(1),
-    ],
-    [arrangementMenuItems, autoSettleMenuItems, titleMenuItems],
-  );
+  const cardMenuActions: MenuAction[] = [
+    CARD_MENU_ACTIONS[0]!,
+    ...arrangementMenuItems,
+    ...titleMenuItems,
+    ...autoSettleMenuItems,
+    LEGACY_MENU_ACTIONS[0]!,
+    ...CARD_MENU_ACTIONS.slice(1),
+  ];
   const slimMenuActions = useMemo<MenuAction[]>(
     () => [
       SLIM_MENU_ACTIONS[0]!,
@@ -841,83 +815,57 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     ],
     [arrangementMenuItems, autoSettleMenuItems, titleMenuItems],
   );
-  const snoozedMenuActions = useMemo<MenuAction[]>(
-    () => [
-      SNOOZED_MENU_ACTIONS[0]!,
-      ...titleMenuItems,
-      ...autoSettleMenuItems,
-      LEGACY_MENU_ACTIONS[0]!,
-      SNOOZED_MENU_ACTIONS[1]!,
-    ],
-    [autoSettleMenuItems, titleMenuItems],
-  );
-  const legacyMenuActions = useMemo<MenuAction[]>(
-    () => [
-      LEGACY_MENU_ACTIONS[0]!,
-      ...arrangementMenuItems,
-      ...titleMenuItems,
-      LEGACY_MENU_ACTIONS[1]!,
-    ],
-    [arrangementMenuItems, titleMenuItems],
-  );
-  const handleMenuAction = useCallback(
-    ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
-      if (nativeEvent.event === "new-thread-on-branch") onNewThreadOnBranch(thread);
-      if (nativeEvent.event === "settle") handleSettle();
-      if (nativeEvent.event === "unsettle") handleUnsettle();
-      if (nativeEvent.event === "unsnooze") handleUnsnooze();
-      if (nativeEvent.event === "pin") handlePin();
-      if (nativeEvent.event === "unpin") handleUnpin();
-      if (nativeEvent.event === "auto-settle:enabled") handleSetAutoSettle(true);
-      if (nativeEvent.event === "auto-settle:disabled") handleSetAutoSettle(false);
-      if (nativeEvent.event === "arrange") appAtomRegistry.set(threadArrangementOpenAtom, true);
-      if (nativeEvent.event === "move-up") handleMoveUp();
-      if (nativeEvent.event === "move-down") handleMoveDown();
-      if (nativeEvent.event === "archive") handleArchive();
-      if (nativeEvent.event === "rename") handleRename();
-      if (nativeEvent.event === "regenerate-title") handleRegenerateTitle();
-      if (nativeEvent.event === "copy-thread-id") {
-        copyTextWithHaptic(thread.id, { target: "thread-id" });
-      }
-      if (nativeEvent.event === "delete") handleDelete();
-      if (nativeEvent.event === "snooze:custom") {
-        setCustomSnoozeOpen(true);
-        return;
-      }
-      const snoozeSelection = resolveThreadListV2SnoozeMenuSelection({
-        event: nativeEvent.event,
-        displayedPresets: snoozePresets,
-        now: new Date(),
-      });
-      if (snoozeSelection._tag === "selected") {
-        handleSnooze(snoozeSelection.preset.snoozedUntil);
-      } else if (snoozeSelection._tag === "expired") {
-        Dialog.alert(
-          "Could not snooze thread",
-          "That snooze time has passed. Choose another time.",
-        );
-      }
-    },
-    [
-      onNewThreadOnBranch,
-      thread,
-      handleArchive,
-      handleDelete,
-      handleRegenerateTitle,
-      handleRename,
-      handleMoveDown,
-      handleMoveUp,
-      handlePin,
-      handleSettle,
-      handleSnooze,
-      handleSetAutoSettle,
-      handleUnpin,
-      handleUnsettle,
-      handleUnsnooze,
-      setCustomSnoozeOpen,
-      snoozePresets,
-    ],
-  );
+  const snoozedMenuActions: MenuAction[] = [
+    SNOOZED_MENU_ACTIONS[0]!,
+    ...titleMenuItems,
+    ...autoSettleMenuItems,
+    LEGACY_MENU_ACTIONS[0]!,
+    SNOOZED_MENU_ACTIONS[1]!,
+  ];
+  const legacyMenuActions: MenuAction[] = [
+    LEGACY_MENU_ACTIONS[0]!,
+    ...arrangementMenuItems,
+    ...titleMenuItems,
+    LEGACY_MENU_ACTIONS[1]!,
+  ];
+  const handleMenuAction = ({
+    nativeEvent,
+  }: {
+    readonly nativeEvent: { readonly event: string };
+  }) => {
+    if (nativeEvent.event === "new-thread-on-branch") onNewThreadOnBranch(thread);
+    if (nativeEvent.event === "settle") handleSettle();
+    if (nativeEvent.event === "unsettle") handleUnsettle();
+    if (nativeEvent.event === "unsnooze") handleUnsnooze();
+    if (nativeEvent.event === "pin") handlePin();
+    if (nativeEvent.event === "unpin") handleUnpin();
+    if (nativeEvent.event === "auto-settle:enabled") handleSetAutoSettle(true);
+    if (nativeEvent.event === "auto-settle:disabled") handleSetAutoSettle(false);
+    if (nativeEvent.event === "arrange") appAtomRegistry.set(threadArrangementOpenAtom, true);
+    if (nativeEvent.event === "move-up") handleMoveUp();
+    if (nativeEvent.event === "move-down") handleMoveDown();
+    if (nativeEvent.event === "archive") handleArchive();
+    if (nativeEvent.event === "rename") handleRename();
+    if (nativeEvent.event === "regenerate-title") handleRegenerateTitle();
+    if (nativeEvent.event === "copy-thread-id") {
+      copyTextWithHaptic(thread.id, { target: "thread-id" });
+    }
+    if (nativeEvent.event === "delete") handleDelete();
+    if (nativeEvent.event === "snooze:custom") {
+      setCustomSnoozeOpen(true);
+      return;
+    }
+    const snoozeSelection = resolveThreadListV2SnoozeMenuSelection({
+      event: nativeEvent.event,
+      displayedPresets: snoozePresets,
+      now: new Date(),
+    });
+    if (snoozeSelection._tag === "selected") {
+      handleSnooze(snoozeSelection.preset.snoozedUntil);
+    } else if (snoozeSelection._tag === "expired") {
+      Dialog.alert("Could not snooze thread", "That snooze time has passed. Choose another time.");
+    }
+  };
   const primaryAction = useMemo(() => {
     if (swipeActions.primary === "archive") {
       return {
@@ -956,23 +904,20 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     swipeActions.primary,
     thread.title,
   ]);
-  const secondaryAction = useMemo(
-    () =>
-      swipeActions.secondary === "snooze"
-        ? {
-            accessibilityLabel: `Choose when to snooze ${thread.title}`,
-            icon: "clock" as const,
-            label: "Snooze",
-            menu: {
-              actions: snoozePresetActions,
-              onPressAction: handleMenuAction,
-              title: "Snooze until",
-            },
-            onPress: () => undefined,
-          }
-        : null,
-    [handleMenuAction, snoozePresetActions, swipeActions.secondary, thread.title],
-  );
+  const secondaryAction =
+    swipeActions.secondary === "snooze"
+      ? {
+          accessibilityLabel: `Choose when to snooze ${thread.title}`,
+          icon: "clock" as const,
+          label: "Snooze",
+          menu: {
+            actions: snoozePresetActions,
+            onPressAction: handleMenuAction,
+            title: "Snooze until",
+          },
+          onPress: () => undefined,
+        }
+      : null;
   const swipeAccessibilityHint = !canOperateThread
     ? "Opens the thread"
     : secondaryAction === null

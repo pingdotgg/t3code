@@ -59,7 +59,7 @@ describe("resolvePendingThreadCreation", () => {
       threadKey,
       pending,
       previous,
-      detail: { messages: [], latestTurn: null, session: null },
+      detail: { messages: [], runs: [] },
     });
     expect(previous).toBe(pending);
 
@@ -67,7 +67,7 @@ describe("resolvePendingThreadCreation", () => {
       threadKey,
       pending,
       previous,
-      detail: { messages: [prompt], latestTurn: null, session: { status: "starting" } },
+      detail: { messages: [prompt], runs: [] },
     });
     expect(previous).toBe(pending);
 
@@ -75,7 +75,7 @@ describe("resolvePendingThreadCreation", () => {
       threadKey,
       pending: null,
       previous,
-      detail: { messages: [prompt], latestTurn: null, session: { status: "starting" } },
+      detail: { messages: [prompt], runs: [] },
     });
     expect(previous).toBe(pending);
 
@@ -86,8 +86,7 @@ describe("resolvePendingThreadCreation", () => {
         previous,
         detail: {
           messages: [prompt],
-          latestTurn: { turnId: "turn-1" },
-          session: { status: "running" },
+          runs: [{ status: "running" }],
         },
       }),
     ).toBeNull();
@@ -99,7 +98,7 @@ describe("resolvePendingThreadCreation", () => {
         threadKey,
         pending,
         previous: null,
-        detail: { messages: [], latestTurn: { turnId: "turn-1" }, session: { status: "running" } },
+        detail: { messages: [], runs: [{ status: "running" }] },
       }),
     ).toBe(pending);
   });
@@ -114,7 +113,7 @@ describe("resolvePendingThreadCreation", () => {
         threadKey,
         pending: failed,
         previous: pending,
-        detail: { messages: [], latestTurn: null, session: { status: "error" } },
+        detail: { messages: [], runs: [] },
       }),
     ).toBe(failed);
   });

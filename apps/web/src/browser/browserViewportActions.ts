@@ -2,7 +2,7 @@ import type { PreviewViewportSetting } from "@t3tools/contracts";
 
 type BrowserViewportHandler = (setting: PreviewViewportSetting) => Promise<void>;
 
-export const BROWSER_VIEWPORT_COMMIT_TIMEOUT_MS = 15_000;
+const BROWSER_VIEWPORT_COMMIT_TIMEOUT_MS = 15_000;
 
 class BrowserViewportCommitTimeoutError extends Error {
   override readonly name = "BrowserViewportCommitTimeoutError";
@@ -15,6 +15,10 @@ class BrowserViewportCommitTimeoutError extends Error {
 const handlers = new Map<string, BrowserViewportHandler>();
 const commitTails = new Map<string, Promise<void>>();
 
+/**
+ * Serializes every server-side viewport mutation for one desktop runtime tab so
+ * a compensating rollback cannot overtake a newer resize.
+ */
 const queueBrowserViewportMutation = <A>(
   tabId: string,
   start: () => Promise<A>,
@@ -37,18 +41,6 @@ const queueBrowserViewportMutation = <A>(
   void tail.then(clear, clear);
   return { started, execution };
 };
-
-/**
- * Serializes every server-side viewport mutation for one desktop runtime tab.
- * Both visible UI commits and background automation use this queue so a
- * compensating rollback cannot overtake a newer resize.
- */
-export function runBrowserViewportMutation<A>(
-  tabId: string,
-  mutation: () => Promise<A>,
-): Promise<A> {
-  return queueBrowserViewportMutation(tabId, mutation).execution;
-}
 
 const runHandlerWithTimeout = (tabId: string, operation: Promise<void>): Promise<void> => {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;

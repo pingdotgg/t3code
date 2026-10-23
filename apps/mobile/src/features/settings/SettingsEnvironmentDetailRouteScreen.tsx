@@ -25,9 +25,9 @@ import { useRemoteConnections } from "../../state/use-remote-environment-registr
 import { ConnectionEnvironmentRow } from "../connection/ConnectionEnvironmentRow";
 import { EnvironmentRoutesSection } from "./EnvironmentRoutesSection";
 import { OutdatedServerUpdateSection } from "./OutdatedServerUpdateSection";
-import { SettingsActionRow } from "./components/SettingsActionRow";
+import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
 import { SettingsScreen } from "./components/SettingsScreen";
-import { SettingsSection } from "./components/SettingsSection";
+import { ListSection as SettingsSection } from "../../components/ui/ListSection";
 import {
   canMaintainEnvironment,
   canUpdateEnvironmentProvider,
@@ -137,13 +137,7 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                 return;
               const result = await updateServer({
                 environmentId,
-                input: {
-                  targetVersion,
-                  ...(capabilities.serverUpdateThreadContinuation &&
-                  config?.settings.continueThreadsAfterServerUpdate
-                    ? { continueRunningThreads: true }
-                    : {}),
-                },
+                input: { targetVersion },
               });
               if (AsyncResult.isFailure(result)) throw squashAtomCommandFailure(result);
               setRelease(null);

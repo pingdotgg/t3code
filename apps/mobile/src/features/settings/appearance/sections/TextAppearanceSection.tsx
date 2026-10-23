@@ -3,7 +3,7 @@ import {
   MAX_BASE_FONT_SIZE,
   MIN_BASE_FONT_SIZE,
 } from "../../../../lib/appearancePreferences";
-import { SettingsSection } from "../../components/SettingsSection";
+import { ListSection as SettingsSection } from "../../../../components/ui/ListSection";
 import { useAppearancePreferences } from "../AppearancePreferencesProvider";
 import {
   AppearancePreviewSeparator,

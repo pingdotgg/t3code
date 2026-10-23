@@ -9,7 +9,7 @@ import {
   usePullRequestMediaUrl,
 } from "./PullRequestMedia";
 import { videoMimeType } from "@t3tools/shared/video";
-import { createContext, useContext, useCallback, useMemo, useState } from "react";
+import { createContext, useContext, useMemo, useState } from "react";
 import { githubMarkdownLinks } from "@t3tools/shared/githubMarkdownLinks";
 
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
@@ -39,10 +39,7 @@ export function PullRequestMarkdownRepository(props: {
     projectId: target.input.projectId,
   });
   const cwd = project?.workspaceRoot;
-  const media = useMemo(
-    () => (cwd ? { environmentId: target.environmentId, cwd } : null),
-    [target.environmentId, cwd],
-  );
+  const media = cwd ? { environmentId: target.environmentId, cwd } : null;
   return (
     <RepositoryContext value={props.value}>
       <PullRequestMediaContext value={media}>{props.children}</PullRequestMediaContext>
@@ -105,32 +102,23 @@ function PullRequestMarkdownContent(props: {
 }) {
   const repositoryUrl = useContext(RepositoryContext);
   const mediaContext = useContext(PullRequestMediaContext);
-  const markdown = useMemo(
-    () => githubMarkdownLinks(props.markdown, repositoryUrl),
-    [props.markdown, repositoryUrl],
-  );
+  const markdown = githubMarkdownLinks(props.markdown, repositoryUrl);
   const openPullRequest = useOpenPullRequest();
-  const openLink = useCallback(
-    (href: string) => {
-      void openPullRequest(href);
-    },
-    [openPullRequest],
-  );
-  const gallery = useMemo<FilePreviewItem[]>(
-    () =>
-      markdownImageSources(props.imageGroupMarkdown ?? props.markdown)
-        .filter(
-          (uri) =>
-            /^https?:\/\//i.test(uri) &&
-            videoMimeType({ name: uri.split(/[?#]/)[0] ?? uri, mimeType: "" }) === null,
-        )
-        .map((uri) => pullRequestImageSource(uri, mediaContext)),
-    [props.markdown, props.imageGroupMarkdown, mediaContext],
-  );
+  const openLink = (href: string) => {
+    void openPullRequest(href);
+  };
+  const gallery: FilePreviewItem[] = markdownImageSources(
+    props.imageGroupMarkdown ?? props.markdown,
+  )
+    .filter(
+      (uri) =>
+        /^https?:\/\//i.test(uri) &&
+        videoMimeType({ name: uri.split(/[?#]/)[0] ?? uri, mimeType: "" }) === null,
+    )
+    .map((uri) => pullRequestImageSource(uri, mediaContext));
   const [preview, setPreview] = useState<FilePreviewSource | null>(null);
-  const renderImage = useCallback<MarkdownImageRenderer>(
-    (image) => <MarkdownImage href={image.href} alt={image.alt} onPreview={setPreview} />,
-    [],
+  const renderImage: MarkdownImageRenderer = (image) => (
+    <MarkdownImage href={image.href} alt={image.alt} onPreview={setPreview} />
   );
   const styles = useMarkdownPreviewStyles();
   return (

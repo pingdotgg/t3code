@@ -140,7 +140,7 @@ export function DeviceDuoViewport(props: {
           end: pinch.end,
         });
         trackpadRef.current = trackpad;
-        stopTrackpadEnd = window.desktopBridge?.onTrackpadScrollEnd?.(() => trackpad?.endOrbit());
+        stopTrackpadEnd = window.desktopBridge?.onTrackpadScrollEnd(() => trackpad?.endOrbit());
         resize();
       })
       .catch(() => {

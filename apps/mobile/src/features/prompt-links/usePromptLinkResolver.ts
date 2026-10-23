@@ -193,8 +193,7 @@ export function usePromptLinkResolver(params: Readonly<Record<string, unknown>> 
       return;
     }
     const prompt =
-      request.pullRequest === null &&
-      serverConfigs.get(environmentId)?.environment.capabilities.projectCloneTracking === true
+      request.pullRequest === null && serverConfigs.get(environmentId) !== undefined
         ? request.prompt
         : null;
     const name = promptLinkRepositoryName(repository);

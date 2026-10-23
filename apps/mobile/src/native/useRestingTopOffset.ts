@@ -8,7 +8,7 @@ import type { NativeScrollEvent, NativeSyntheticEvent, ScrollViewProps } from "r
  * inset; once scrolled away it holds the last resting offset, because RN re-applies a changed
  * `contentOffset` prop and would move the reader.
  */
-export function holdRestingTopOffset(held: number | null, scrollY: number, topInset: number) {
+function holdRestingTopOffset(held: number | null, scrollY: number, topInset: number) {
   return Math.abs(scrollY + topInset) <= 1 ? null : (held ?? -topInset);
 }
 

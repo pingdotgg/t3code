@@ -4,7 +4,6 @@ import { useNavigation } from "@react-navigation/native";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useCallback } from "react";
 
 import { useConnectionController } from "../features/connection/useConnectionController";
 import { environmentPresentations } from "./presentation";
@@ -105,92 +104,78 @@ export function useRemoteConnections() {
   const pendingConnectionError = useAtomValue(pendingConnectionErrorAtom);
   const { connectedEnvironments, connectionError, connectionState } = useRemoteConnectionStatus();
 
-  const onChangeConnectionPairingUrl = useCallback((pairingUrl: string) => {
+  const onChangeConnectionPairingUrl = (pairingUrl: string) => {
     appAtomRegistry.set(connectionPairingUrlAtom, pairingUrl);
-  }, []);
+  };
 
-  const onConnectPress = useCallback(
-    async (pairingUrl?: string, expectedEnvironmentId?: EnvironmentId) => {
-      const nextPairingUrl = pairingUrl ?? connectionPairingUrl;
-      setPendingConnectionError(null);
-      const result = await controller.connectPairingUrl(nextPairingUrl, expectedEnvironmentId);
-      if (AsyncResult.isFailure(result)) {
-        const error = Cause.squash(result.cause);
-        const message =
-          error instanceof Error ? error.message : "Failed to pair with the environment.";
-        if (
-          error !== null &&
-          typeof error === "object" &&
-          "reason" in error &&
-          error.reason === "unsupported"
-        ) {
-          Dialog.alert("Client not supported", message);
-        } else {
-          setPendingConnectionError(message);
-        }
+  const onConnectPress = async (pairingUrl?: string, expectedEnvironmentId?: EnvironmentId) => {
+    const nextPairingUrl = pairingUrl ?? connectionPairingUrl;
+    setPendingConnectionError(null);
+    const result = await controller.connectPairingUrl(nextPairingUrl, expectedEnvironmentId);
+    if (AsyncResult.isFailure(result)) {
+      const error = Cause.squash(result.cause);
+      const message =
+        error instanceof Error ? error.message : "Failed to pair with the environment.";
+      if (
+        error !== null &&
+        typeof error === "object" &&
+        "reason" in error &&
+        error.reason === "unsupported"
+      ) {
+        Dialog.alert("Client not supported", message);
       } else {
-        appAtomRegistry.set(connectionPairingUrlAtom, "");
+        setPendingConnectionError(message);
       }
-      return result;
-    },
-    [connectionPairingUrl, controller],
-  );
+    } else {
+      appAtomRegistry.set(connectionPairingUrlAtom, "");
+    }
+    return result;
+  };
 
-  const onReconnectEnvironment = useCallback(
-    (environmentId: EnvironmentId) => controller.retryEnvironment(environmentId),
-    [controller],
-  );
-  const onSetEnvironmentEnabled = useCallback(
-    (environmentId: EnvironmentId, enabled: boolean) =>
-      controller.setEnvironmentEnabled(environmentId, enabled),
-    [controller],
-  );
-  const onUpdateEnvironment = useCallback(
-    (
-      environmentId: EnvironmentId,
-      updates: { readonly label: string; readonly displayUrl: string },
-    ) => controller.updateEnvironment(environmentId, updates),
-    [controller],
-  );
+  const onReconnectEnvironment = (environmentId: EnvironmentId) =>
+    controller.retryEnvironment(environmentId);
+  const onSetEnvironmentEnabled = (environmentId: EnvironmentId, enabled: boolean) =>
+    controller.setEnvironmentEnabled(environmentId, enabled);
+  const onUpdateEnvironment = (
+    environmentId: EnvironmentId,
+    updates: { readonly label: string; readonly displayUrl: string },
+  ) => controller.updateEnvironment(environmentId, updates);
 
-  const onRemoveEnvironmentPress = useCallback(
-    (environmentId: EnvironmentId) => {
-      const environment = connectedEnvironments.find(
-        (candidate) => candidate.environmentId === environmentId,
-      );
-      if (!environment) {
-        return;
-      }
-      const remove = {
-        text: "Remove",
-        style: "destructive",
-        onPress: () => {
-          void controller.removeEnvironment(environmentId);
-        },
-      } as const;
-      if (environment.isRelayManaged) {
-        Dialog.alert(
-          "Remove from this device?",
-          `Forget ${environment.environmentLabel} and its cached threads on this device.\n\nIt stays on your T3 Connect account and keeps its host space. Deregister it under T3 Account → T3 Connect to free it.`,
-          [
-            { text: "Cancel", style: "cancel" },
-            {
-              text: "Open T3 Account",
-              onPress: () => navigation.navigate("SettingsSheet", { screen: "SettingsAuth" }),
-            },
-            remove,
-          ],
-        );
-        return;
-      }
+  const onRemoveEnvironmentPress = (environmentId: EnvironmentId) => {
+    const environment = connectedEnvironments.find(
+      (candidate) => candidate.environmentId === environmentId,
+    );
+    if (!environment) {
+      return;
+    }
+    const remove = {
+      text: "Remove",
+      style: "destructive",
+      onPress: () => {
+        void controller.removeEnvironment(environmentId);
+      },
+    } as const;
+    if (environment.isRelayManaged) {
       Dialog.alert(
         "Remove from this device?",
-        `Forget ${environment.environmentLabel} and its cached threads on this device. Switch it off instead to keep it saved.`,
-        [{ text: "Cancel", style: "cancel" }, remove],
+        `Forget ${environment.environmentLabel} and its cached threads on this device.\n\nIt stays on your T3 Connect account and keeps its host space. Deregister it under T3 Account → T3 Connect to free it.`,
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Open T3 Account",
+            onPress: () => navigation.navigate("SettingsSheet", { screen: "SettingsAuth" }),
+          },
+          remove,
+        ],
       );
-    },
-    [connectedEnvironments, controller, navigation],
-  );
+      return;
+    }
+    Dialog.alert(
+      "Remove from this device?",
+      `Forget ${environment.environmentLabel} and its cached threads on this device. Switch it off instead to keep it saved.`,
+      [{ text: "Cancel", style: "cancel" }, remove],
+    );
+  };
 
   return {
     connectionPairingUrl,

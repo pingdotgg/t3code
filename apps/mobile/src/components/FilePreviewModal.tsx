@@ -1,7 +1,6 @@
 import * as Dialog from "./ui/Dialog";
 import { useNavigation } from "@react-navigation/native";
 import {
-  useCallback,
   useContext,
   useEffect,
   useEffectEvent,
@@ -110,18 +109,14 @@ function ResolvedFilePreview(props: {
   // Freeze the group at opening; streaming messages and URL refreshes must not reopen the viewer.
   const [items] = useState(() => filePreviewGallery(props.source, []));
   const [resolved, setResolved] = useState<Record<string, ResolvedFilePreviewSource>>({});
-  const onResolved = useCallback((item: ResolvedFilePreviewSource, key: string) => {
+  const onResolved = (item: ResolvedFilePreviewSource, key: string) => {
     setResolved((current) => ({ ...current, [key]: item }));
-  }, []);
+  };
   const selected = resolved[filePreviewKey(props.source)];
-  const gallery = useMemo(
-    () =>
-      items.flatMap((item) => {
-        const value = resolved[filePreviewKey(item)];
-        return value ? [value] : [];
-      }),
-    [items, resolved],
-  );
+  const gallery = items.flatMap((item) => {
+    const value = resolved[filePreviewKey(item)];
+    return value ? [value] : [];
+  });
   const ready = selected && gallery.length === items.length;
   return (
     <>
@@ -163,17 +158,14 @@ export function FilePreviewModal(props: {
     [props.source, group],
   );
   const navigation = useNavigation();
-  const subscribeToFocus = useCallback(
-    (listener: () => void) => {
-      const offFocus = navigation.addListener("focus", listener);
-      const offBlur = navigation.addListener("blur", listener);
-      return () => {
-        offFocus();
-        offBlur();
-      };
-    },
-    [navigation],
-  );
+  const subscribeToFocus = (listener: () => void) => {
+    const offFocus = navigation.addListener("focus", listener);
+    const offBlur = navigation.addListener("blur", listener);
+    return () => {
+      offFocus();
+      offBlur();
+    };
+  };
   // The v5 card host sits inside a legacy presentation envelope whose focus context
   // can describe a different route. The preview belongs to this navigation route.
   const isFocused = useSyncExternalStore(

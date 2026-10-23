@@ -60,6 +60,7 @@ import {
   useSettingsSearchTargetId,
 } from "./settingsLayout";
 import { searchableSetting, sourceControlHostSettingsSearchId } from "./settingsSearch";
+import { durationToSeconds, normalizeIntervalSeconds } from "./SettingsPanels.logic";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { sourceControlIcon } from "~/sourceControlPresentation";
@@ -81,17 +82,6 @@ type BackgroundActivityOverridePatch = Partial<{
     | BackgroundActivitySettings["overrides"][K]
     | undefined;
 }>;
-
-function durationToSeconds(duration: Duration.Duration): number {
-  return Math.round(Duration.toMillis(duration) / 1_000);
-}
-
-function normalizeFetchIntervalSeconds(value: number | null): number {
-  if (value === null || !Number.isFinite(value)) {
-    return 0;
-  }
-  return Math.max(0, Math.round(value));
-}
 
 function backgroundActivityOverrideSettings(
   current: BackgroundActivitySettings,
@@ -410,7 +400,7 @@ function GitFetchIntervalSettings() {
             onValueChange={(value) =>
               updateSettings(
                 backgroundActivityOverrideSettings(settings.backgroundActivity, {
-                  automaticGitFetchInterval: Duration.seconds(normalizeFetchIntervalSeconds(value)),
+                  automaticGitFetchInterval: Duration.seconds(normalizeIntervalSeconds(value)),
                 }),
               )
             }

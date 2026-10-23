@@ -46,23 +46,6 @@ export interface ProviderInstanceEntry {
   readonly models: ReadonlyArray<ServerProviderModel>;
 }
 
-export type ProviderCatalogAvailability = "loading" | "ready" | "unavailable" | "unconfigured";
-
-/**
- * Environment config streams are reactive: treating their initial `null` as a
- * final empty list strands otherwise recoverable threads behind a misleading
- * "no providers" state.
- */
-export function resolveProviderCatalogAvailability(input: {
-  readonly catalogLoaded: boolean;
-  readonly entries: ReadonlyArray<ProviderInstanceEntry>;
-  readonly selectedEntry: ProviderInstanceEntry | undefined;
-}): ProviderCatalogAvailability {
-  if (!input.catalogLoaded) return "loading";
-  if (input.selectedEntry !== undefined) return "ready";
-  return input.entries.length === 0 ? "unconfigured" : "unavailable";
-}
-
 /**
  * Disabling an instance updates `enabled` independently, while its previous `ready` probe
  * status can remain in the streamed snapshot until reconciliation.

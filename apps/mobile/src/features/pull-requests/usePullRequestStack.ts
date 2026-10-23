@@ -40,10 +40,7 @@ export function usePullRequestStack(params: PullRequestParams, pr: PullRequestDe
     ...query,
     stack,
     isFresh: supported && query.isSuccess && !query.isPending,
-    supportsStackActions:
-      supported &&
-      pr?.capabilities.stackActions === true &&
-      config?.environment.capabilities.pullRequestStackActions === true,
+    supportsStackActions: supported && pr?.capabilities.stackActions === true,
   };
 }
 

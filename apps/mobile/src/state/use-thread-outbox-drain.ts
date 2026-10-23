@@ -1,7 +1,6 @@
 import * as Dialog from "../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import {
-  threadRuntimeIsActive,
   type EnvironmentProject,
   type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
@@ -18,7 +17,7 @@ import {
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { createDebugLogger } from "../lib/debugLog";
 import { scopedThreadKey } from "../lib/scopedEntities";
@@ -186,10 +185,7 @@ function settingsCommandId(message: QueuedThreadMessage, setting: string): Comma
   return CommandId.make(`${message.commandId}:${setting}`);
 }
 
-export async function prepareQueuedMessageAttachments(
-  queuedMessage: QueuedThreadMessage,
-  supportsImageUploads = false,
-): Promise<
+export async function prepareQueuedMessageAttachments(queuedMessage: QueuedThreadMessage): Promise<
   | {
       readonly status: "ready";
       readonly prepared: PreparedTurnAttachments;
@@ -213,7 +209,7 @@ export async function prepareQueuedMessageAttachments(
   const result = await prepareTurnAttachments({
     environmentId: queuedMessage.environmentId,
     attachments: queuedMessage.attachments,
-    supportsImageUploads,
+    supportsImageUploads: true,
     persistUploadedReferences: async (draftAttachments) => {
       if (appAtomRegistry.get(editingQueuedMessageIdsAtom)[queuedMessage.messageId]) {
         return "abandon";
@@ -620,7 +616,7 @@ export function useThreadOutboxDrain(): void {
     >(),
   );
 
-  const scheduleQueuedMessageRetry = useCallback((messageId: MessageId) => {
+  const scheduleQueuedMessageRetry = (messageId: MessageId) => {
     const retryAttempt = (retryAttemptRef.current.get(messageId) ?? 0) + 1;
     retryAttemptRef.current.set(messageId, retryAttempt);
     const retryDelayMs = threadOutboxRetryDelayMs(retryAttempt);
@@ -634,48 +630,48 @@ export function useThreadOutboxDrain(): void {
       setRetryTick((current) => current + 1);
     }, retryDelayMs);
     retryTimersRef.current.set(messageId, retryTimer);
-  }, []);
+  };
 
-  const restoreQueuedMessage = useCallback(
-    async (queuedMessage: QueuedThreadMessage, message: string): Promise<boolean> => {
-      const result = await restoreRejectedQueuedMessage(queuedMessage, message);
-      if (result !== "blocked") {
-        return result !== "retry";
-      }
+  const restoreQueuedMessage = async (
+    queuedMessage: QueuedThreadMessage,
+    message: string,
+  ): Promise<boolean> => {
+    const result = await restoreRejectedQueuedMessage(queuedMessage, message);
+    if (result !== "blocked") {
+      return result !== "retry";
+    }
 
-      if (!blockedRecoverySubscriptionsRef.current.has(queuedMessage.messageId)) {
-        const draftKey = recoveryDraftKey(queuedMessage);
-        const editorDraftKey = queuedMessage.creation
-          ? `pending-task:${queuedMessage.messageId}`
-          : null;
-        const currentDrafts = appAtomRegistry.get(composerDraftsAtom);
-        const blockedAttachments = currentDrafts[draftKey]?.attachments;
-        const editorAttachments =
-          editorDraftKey === null ? undefined : currentDrafts[editorDraftKey]?.attachments;
-        const unsubscribe = appAtomRegistry.subscribe(composerDraftsAtom, (drafts) => {
-          if (
-            drafts[draftKey]?.attachments === blockedAttachments &&
-            (editorDraftKey === null || drafts[editorDraftKey]?.attachments === editorAttachments)
-          ) {
-            return;
-          }
-          const active = blockedRecoverySubscriptionsRef.current.get(queuedMessage.messageId);
-          if (!active) {
-            return;
-          }
-          blockedRecoverySubscriptionsRef.current.delete(queuedMessage.messageId);
-          active.unsubscribe();
-          setRetryTick((current) => current + 1);
-        });
-        blockedRecoverySubscriptionsRef.current.set(queuedMessage.messageId, {
-          message: queuedMessage,
-          unsubscribe,
-        });
-      }
-      return true;
-    },
-    [],
-  );
+    if (!blockedRecoverySubscriptionsRef.current.has(queuedMessage.messageId)) {
+      const draftKey = recoveryDraftKey(queuedMessage);
+      const editorDraftKey = queuedMessage.creation
+        ? `pending-task:${queuedMessage.messageId}`
+        : null;
+      const currentDrafts = appAtomRegistry.get(composerDraftsAtom);
+      const blockedAttachments = currentDrafts[draftKey]?.attachments;
+      const editorAttachments =
+        editorDraftKey === null ? undefined : currentDrafts[editorDraftKey]?.attachments;
+      const unsubscribe = appAtomRegistry.subscribe(composerDraftsAtom, (drafts) => {
+        if (
+          drafts[draftKey]?.attachments === blockedAttachments &&
+          (editorDraftKey === null || drafts[editorDraftKey]?.attachments === editorAttachments)
+        ) {
+          return;
+        }
+        const active = blockedRecoverySubscriptionsRef.current.get(queuedMessage.messageId);
+        if (!active) {
+          return;
+        }
+        blockedRecoverySubscriptionsRef.current.delete(queuedMessage.messageId);
+        active.unsubscribe();
+        setRetryTick((current) => current + 1);
+      });
+      blockedRecoverySubscriptionsRef.current.set(queuedMessage.messageId, {
+        message: queuedMessage,
+        unsubscribe,
+      });
+    }
+    return true;
+  };
 
   useEffect(() => {
     let mounted = true;
@@ -704,7 +700,7 @@ export function useThreadOutboxDrain(): void {
     };
   }, []);
 
-  const makeDeliveryHelpers = useCallback((queuedMessage: QueuedThreadMessage) => {
+  const makeDeliveryHelpers = (queuedMessage: QueuedThreadMessage) => {
     const reportFailure = (
       commandResult: AtomCommandResult<unknown, unknown>,
       stage: ThreadOutboxCommandStage,
@@ -730,336 +726,313 @@ export function useThreadOutboxDrain(): void {
       };
     };
     return { reportFailure };
-  }, []);
+  };
 
-  const sendQueuedMessage = useCallback(
-    async (queuedMessage: QueuedThreadMessage, thread: EnvironmentThreadShell) => {
-      const hasAccess = () =>
-        readEnvironmentScope(queuedMessage.environmentId, AuthOrchestrationOperateScope);
-      if (!hasAccess()) return true;
-      const serverConfig = appAtomRegistry.get(
-        serverEnvironment.configValueAtom(queuedMessage.environmentId),
+  const sendQueuedMessage = async (
+    queuedMessage: QueuedThreadMessage,
+    thread: EnvironmentThreadShell,
+  ) => {
+    const hasAccess = () =>
+      readEnvironmentScope(queuedMessage.environmentId, AuthOrchestrationOperateScope);
+    if (!hasAccess()) return true;
+    const serverConfig = appAtomRegistry.get(
+      serverEnvironment.configValueAtom(queuedMessage.environmentId),
+    );
+    if (!serverConfig) return false;
+    const settings = resolveQueuedThreadSettings(queuedMessage, thread, serverConfig.providers);
+    if (isModelSelectionUnavailable(serverConfig, settings.modelSelection, thread.projectId)) {
+      const { title, detail } = describeUnavailableModelSelection(
+        serverConfig,
+        settings.modelSelection,
+        thread.projectId,
       );
-      if (!serverConfig) return false;
-      const settings = resolveQueuedThreadSettings(queuedMessage, thread, serverConfig.providers);
-      if (isModelSelectionUnavailable(serverConfig, settings.modelSelection, thread.projectId)) {
-        const { title, detail } = describeUnavailableModelSelection(
-          serverConfig,
-          settings.modelSelection,
-          thread.projectId,
-        );
-        return restoreQueuedMessage(queuedMessage, `${title}. ${detail}`);
-      }
-      const { reportFailure } = makeDeliveryHelpers(queuedMessage);
+      return restoreQueuedMessage(queuedMessage, `${title}. ${detail}`);
+    }
+    const { reportFailure } = makeDeliveryHelpers(queuedMessage);
 
-      if (settings.runtimeMode !== thread.runtimeMode) {
-        if (!hasAccess()) return true;
-        const runtimeResult = await setThreadRuntimeMode({
-          environmentId: queuedMessage.environmentId,
-          input: {
-            commandId: settingsCommandId(queuedMessage, "runtime-mode"),
-            threadId: queuedMessage.threadId,
-            runtimeMode: settings.runtimeMode,
-            createdAt: queuedMessage.createdAt,
-          },
-        });
-        if (AsyncResult.isFailure(runtimeResult)) {
-          reportFailure(runtimeResult, "settings-sync");
-          return false;
-        }
-      }
-
-      if (settings.interactionMode !== thread.interactionMode) {
-        if (!hasAccess()) return true;
-        const interactionResult = await setThreadInteractionMode({
-          environmentId: queuedMessage.environmentId,
-          input: {
-            commandId: settingsCommandId(queuedMessage, "interaction-mode"),
-            threadId: queuedMessage.threadId,
-            interactionMode: settings.interactionMode,
-            createdAt: queuedMessage.createdAt,
-          },
-        });
-        if (AsyncResult.isFailure(interactionResult)) {
-          reportFailure(interactionResult, "settings-sync");
-          return false;
-        }
-      }
-
-      let prepared: PreparedTurnAttachments;
-      let persistedMessage: QueuedThreadMessage;
-      let deliveryRevision: number;
+    if (settings.runtimeMode !== thread.runtimeMode) {
       if (!hasAccess()) return true;
-      try {
-        const preparedResult = await prepareQueuedMessageAttachments(
-          queuedMessage,
-          serverConfig.environment.capabilities.attachmentUploads === true,
-        );
-        if (preparedResult.status === "abandoned") {
-          return true;
-        }
-        prepared = preparedResult.prepared;
-        persistedMessage = preparedResult.persistedMessage;
-        deliveryRevision = preparedResult.deliveryRevision;
-        if (appAtomRegistry.get(editingQueuedMessageIdsAtom)[queuedMessage.messageId]) {
-          await preserveUploadedAttachmentsForEditor(
-            queuedMessage,
-            preparedResult.persistedMessage,
-          );
-          return true;
-        }
-      } catch (error) {
-        if (!hasAccess()) return true;
-        logThreadOutboxUploadFailure(queuedMessage, error);
-        if (!shouldRetryThreadOutboxDelivery(error)) {
-          return restoreQueuedMessage(
-            queuedMessage,
-            error instanceof Error ? error.message : "An attachment could not upload.",
-          );
-        }
-        return false;
-      }
-      if (!isQueuedMessagePayloadCurrent(persistedMessage, deliveryRevision)) {
-        return true;
-      }
-      const currentConfig = appAtomRegistry.get(
-        serverEnvironment.configValueAtom(queuedMessage.environmentId),
-      );
-      if (!currentConfig) return false;
-      if (isModelSelectionUnavailable(currentConfig, settings.modelSelection, thread.projectId)) {
-        const { title, detail } = describeUnavailableModelSelection(
-          currentConfig,
-          settings.modelSelection,
-          thread.projectId,
-        );
-        return restoreQueuedMessage(persistedMessage, `${title}. ${detail}`);
-      }
-      const sendSettings = resolveQueuedThreadSettings(
-        queuedMessage,
-        settings,
-        currentConfig.providers,
-      );
-      if (!hasAccess()) return true;
-      const deliveryResult = await startTurn({
+      const runtimeResult = await setThreadRuntimeMode({
         environmentId: queuedMessage.environmentId,
         input: {
-          commandId: queuedMessage.commandId,
-          creationSource: "mobile",
+          commandId: settingsCommandId(queuedMessage, "runtime-mode"),
           threadId: queuedMessage.threadId,
-          message: {
-            messageId: queuedMessage.messageId,
-            role: "user",
-            ...serializeComposerMessageForServer(
-              queuedMessage.text,
-              uploadedComposerContext(
-                queuedMessage.context,
-                queuedMessage.attachments,
-                prepared.attachments,
-              ),
-              currentConfig.environment.capabilities.inlineMessageContext === true,
-            ),
-            attachments: prepared.attachments,
-          },
-          modelSelection: sendSettings.modelSelection,
-          titleSeed: deriveThreadTitleSeed({
-            text: queuedMessage.text,
-            attachments: queuedMessage.attachments,
-          }),
-          runtimeMode: sendSettings.runtimeMode,
-          interactionMode: sendSettings.interactionMode,
+          runtimeMode: settings.runtimeMode,
           createdAt: queuedMessage.createdAt,
-          dispatchMode: queuedMessage.dispatchMode ?? "start",
         },
       });
-      if (AsyncResult.isFailure(deliveryResult) && !hasAccess()) return true;
-      const failure = reportFailure(deliveryResult, "start-turn");
-      if (failure?.action === "retry") {
+      if (AsyncResult.isFailure(runtimeResult)) {
+        reportFailure(runtimeResult, "settings-sync");
         return false;
       }
-      if (failure?.action === "restore") {
-        return restoreQueuedMessage(persistedMessage, failure.message);
-      }
-      acknowledgedExistingThreadMessageIdsRef.current.add(persistedMessage.messageId);
-      const delivered =
-        (await completeQueuedMessageDelivery(persistedMessage, deliveryRevision)) === "removed";
-      if (delivered) {
-        acknowledgedExistingThreadMessageIdsRef.current.delete(persistedMessage.messageId);
-      }
-      return delivered;
-    },
-    [
-      makeDeliveryHelpers,
-      setThreadInteractionMode,
-      setThreadRuntimeMode,
-      startTurn,
-      restoreQueuedMessage,
-    ],
-  );
+    }
 
-  const sendQueuedCreation = useCallback(
-    async (
-      queuedMessage: QueuedThreadMessage,
-      creation: QueuedThreadCreation,
-      projectCwd: string,
-    ) => {
-      const hasAccess = () =>
-        readEnvironmentScope(queuedMessage.environmentId, AuthOrchestrationOperateScope);
+    if (settings.interactionMode !== thread.interactionMode) {
       if (!hasAccess()) return true;
-      const modelSelection = queuedMessage.modelSelection;
-      if (modelSelection === undefined) {
-        return false;
-      }
-      const serverConfig = appAtomRegistry.get(
-        serverEnvironment.configValueAtom(queuedMessage.environmentId),
-      );
-      if (!serverConfig) return false;
-      const settings = resolveQueuedThreadSettings(
-        queuedMessage,
-        {
-          modelSelection,
-          runtimeMode: DEFAULT_RUNTIME_MODE,
-          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      const interactionResult = await setThreadInteractionMode({
+        environmentId: queuedMessage.environmentId,
+        input: {
+          commandId: settingsCommandId(queuedMessage, "interaction-mode"),
+          threadId: queuedMessage.threadId,
+          interactionMode: settings.interactionMode,
+          createdAt: queuedMessage.createdAt,
         },
-        serverConfig.providers,
-      );
-      if (isModelSelectionUnavailable(serverConfig, settings.modelSelection, creation.projectId)) {
-        const { title, detail } = describeUnavailableModelSelection(
-          serverConfig,
-          settings.modelSelection,
-          creation.projectId,
-        );
-        return restoreQueuedMessage(queuedMessage, `${title}. ${detail}`);
-      }
-      let prepared: PreparedTurnAttachments;
-      let persistedMessage: QueuedThreadMessage;
-      let deliveryRevision: number;
-      try {
-        const preparedResult = await prepareQueuedMessageAttachments(
-          queuedMessage,
-          serverConfig.environment.capabilities.attachmentUploads === true,
-        );
-        if (preparedResult.status === "abandoned") {
-          return true;
-        }
-        prepared = preparedResult.prepared;
-        persistedMessage = preparedResult.persistedMessage;
-        deliveryRevision = preparedResult.deliveryRevision;
-        if (appAtomRegistry.get(editingQueuedMessageIdsAtom)[queuedMessage.messageId]) {
-          await preserveUploadedAttachmentsForEditor(
-            queuedMessage,
-            preparedResult.persistedMessage,
-          );
-          return true;
-        }
-      } catch (error) {
-        if (!hasAccess()) return true;
-        logThreadOutboxUploadFailure(queuedMessage, error);
-        if (!shouldRetryThreadOutboxDelivery(error)) {
-          return restoreQueuedMessage(
-            queuedMessage,
-            error instanceof Error ? error.message : "An attachment could not upload.",
-          );
-        }
+      });
+      if (AsyncResult.isFailure(interactionResult)) {
+        reportFailure(interactionResult, "settings-sync");
         return false;
       }
-      if (!isQueuedMessagePayloadCurrent(persistedMessage, deliveryRevision)) {
+    }
+
+    let prepared: PreparedTurnAttachments;
+    let persistedMessage: QueuedThreadMessage;
+    let deliveryRevision: number;
+    if (!hasAccess()) return true;
+    try {
+      const preparedResult = await prepareQueuedMessageAttachments(queuedMessage);
+      if (preparedResult.status === "abandoned") {
         return true;
       }
-      const currentConfig = appAtomRegistry.get(
-        serverEnvironment.configValueAtom(queuedMessage.environmentId),
-      );
-      if (!currentConfig) return false;
-      if (isModelSelectionUnavailable(currentConfig, settings.modelSelection, creation.projectId)) {
-        const { title, detail } = describeUnavailableModelSelection(
-          currentConfig,
-          settings.modelSelection,
-          creation.projectId,
-        );
-        return restoreQueuedMessage(persistedMessage, `${title}. ${detail}`);
+      prepared = preparedResult.prepared;
+      persistedMessage = preparedResult.persistedMessage;
+      deliveryRevision = preparedResult.deliveryRevision;
+      if (appAtomRegistry.get(editingQueuedMessageIdsAtom)[queuedMessage.messageId]) {
+        await preserveUploadedAttachmentsForEditor(queuedMessage, preparedResult.persistedMessage);
+        return true;
       }
-      const sendSettings = resolveQueuedThreadSettings(
-        queuedMessage,
-        settings,
-        currentConfig.providers,
-      );
+    } catch (error) {
       if (!hasAccess()) return true;
-      const { reportFailure } = makeDeliveryHelpers(queuedMessage);
-      let workspace = creation;
-      if (creation.pullRequestReference) {
-        const checkout = await preparePullRequest({
-          environmentId: queuedMessage.environmentId,
-          input: { cwd: projectCwd, reference: creation.pullRequestReference, mode: "worktree" },
-        });
-        if (!isQueuedMessagePayloadCurrent(persistedMessage, deliveryRevision) || !hasAccess())
-          return true;
-        const failure = reportFailure(checkout, "start-turn");
-        if (failure?.action === "retry") return false;
-        if (failure?.action === "restore")
-          return restoreQueuedMessage(persistedMessage, failure.message);
-        if (!AsyncResult.isSuccess(checkout)) return false;
-        if (!checkout.value.worktreePath || !checkout.value.isOnPullRequestHead)
-          return restoreQueuedMessage(
-            persistedMessage,
-            "The PR worktree has local changes and could not update to the PR head. Resolve them before trying again.",
-          );
-        workspace = {
-          ...creation,
-          workspaceMode: "local",
-          branch: checkout.value.branch,
-          worktreePath: checkout.value.worktreePath,
-          startFromOrigin: false,
-        };
+      logThreadOutboxUploadFailure(queuedMessage, error);
+      if (!shouldRetryThreadOutboxDelivery(error)) {
+        return restoreQueuedMessage(
+          queuedMessage,
+          error instanceof Error ? error.message : "An attachment could not upload.",
+        );
       }
-      const deliveryResult = await startTurn({
-        environmentId: queuedMessage.environmentId,
-        input: buildProjectThreadStartTurnInput({
-          projectId: creation.projectId,
-          projectCwd,
-          threadId: queuedMessage.threadId,
-          commandId: queuedMessage.commandId,
+      return false;
+    }
+    if (!isQueuedMessagePayloadCurrent(persistedMessage, deliveryRevision)) {
+      return true;
+    }
+    const currentConfig = appAtomRegistry.get(
+      serverEnvironment.configValueAtom(queuedMessage.environmentId),
+    );
+    if (!currentConfig) return false;
+    if (isModelSelectionUnavailable(currentConfig, settings.modelSelection, thread.projectId)) {
+      const { title, detail } = describeUnavailableModelSelection(
+        currentConfig,
+        settings.modelSelection,
+        thread.projectId,
+      );
+      return restoreQueuedMessage(persistedMessage, `${title}. ${detail}`);
+    }
+    const sendSettings = resolveQueuedThreadSettings(
+      queuedMessage,
+      settings,
+      currentConfig.providers,
+    );
+    if (!hasAccess()) return true;
+    const deliveryResult = await startTurn({
+      environmentId: queuedMessage.environmentId,
+      input: {
+        commandId: queuedMessage.commandId,
+        creationSource: "mobile",
+        threadId: queuedMessage.threadId,
+        message: {
           messageId: queuedMessage.messageId,
-          createdAt: queuedMessage.createdAt,
-          titleText: queuedMessage.text,
+          role: "user",
           ...serializeComposerMessageForServer(
-            queuedMessage.text.trim(),
+            queuedMessage.text,
             uploadedComposerContext(
               queuedMessage.context,
               queuedMessage.attachments,
               prepared.attachments,
             ),
-            currentConfig.environment.capabilities.inlineMessageContext === true,
           ),
-          uploadedAttachments: prepared.attachments,
-          modelSelection: sendSettings.modelSelection,
-          runtimeMode: sendSettings.runtimeMode,
-          interactionMode: sendSettings.interactionMode,
-          workspaceMode: workspace.workspaceMode,
-          branch: workspace.branch,
-          worktreePath: workspace.worktreePath,
-          startFromOrigin: workspace.startFromOrigin ?? false,
-          worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
+          attachments: prepared.attachments,
+        },
+        modelSelection: sendSettings.modelSelection,
+        titleSeed: deriveThreadTitleSeed({
+          text: queuedMessage.text,
+          attachments: queuedMessage.attachments,
         }),
+        runtimeMode: sendSettings.runtimeMode,
+        interactionMode: sendSettings.interactionMode,
+        createdAt: queuedMessage.createdAt,
+        dispatchMode: queuedMessage.dispatchMode ?? "start",
+      },
+    });
+    if (AsyncResult.isFailure(deliveryResult) && !hasAccess()) return true;
+    const failure = reportFailure(deliveryResult, "start-turn");
+    if (failure?.action === "retry") {
+      return false;
+    }
+    if (failure?.action === "restore") {
+      return restoreQueuedMessage(persistedMessage, failure.message);
+    }
+    acknowledgedExistingThreadMessageIdsRef.current.add(persistedMessage.messageId);
+    const delivered =
+      (await completeQueuedMessageDelivery(persistedMessage, deliveryRevision)) === "removed";
+    if (delivered) {
+      acknowledgedExistingThreadMessageIdsRef.current.delete(persistedMessage.messageId);
+    }
+    return delivered;
+  };
+
+  const sendQueuedCreation = async (
+    queuedMessage: QueuedThreadMessage,
+    creation: QueuedThreadCreation,
+    projectCwd: string,
+  ) => {
+    const hasAccess = () =>
+      readEnvironmentScope(queuedMessage.environmentId, AuthOrchestrationOperateScope);
+    if (!hasAccess()) return true;
+    const modelSelection = queuedMessage.modelSelection;
+    if (modelSelection === undefined) {
+      return false;
+    }
+    const serverConfig = appAtomRegistry.get(
+      serverEnvironment.configValueAtom(queuedMessage.environmentId),
+    );
+    if (!serverConfig) return false;
+    const settings = resolveQueuedThreadSettings(
+      queuedMessage,
+      {
+        modelSelection,
+        runtimeMode: DEFAULT_RUNTIME_MODE,
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      },
+      serverConfig.providers,
+    );
+    if (isModelSelectionUnavailable(serverConfig, settings.modelSelection, creation.projectId)) {
+      const { title, detail } = describeUnavailableModelSelection(
+        serverConfig,
+        settings.modelSelection,
+        creation.projectId,
+      );
+      return restoreQueuedMessage(queuedMessage, `${title}. ${detail}`);
+    }
+    let prepared: PreparedTurnAttachments;
+    let persistedMessage: QueuedThreadMessage;
+    let deliveryRevision: number;
+    try {
+      const preparedResult = await prepareQueuedMessageAttachments(queuedMessage);
+      if (preparedResult.status === "abandoned") {
+        return true;
+      }
+      prepared = preparedResult.prepared;
+      persistedMessage = preparedResult.persistedMessage;
+      deliveryRevision = preparedResult.deliveryRevision;
+      if (appAtomRegistry.get(editingQueuedMessageIdsAtom)[queuedMessage.messageId]) {
+        await preserveUploadedAttachmentsForEditor(queuedMessage, preparedResult.persistedMessage);
+        return true;
+      }
+    } catch (error) {
+      if (!hasAccess()) return true;
+      logThreadOutboxUploadFailure(queuedMessage, error);
+      if (!shouldRetryThreadOutboxDelivery(error)) {
+        return restoreQueuedMessage(
+          queuedMessage,
+          error instanceof Error ? error.message : "An attachment could not upload.",
+        );
+      }
+      return false;
+    }
+    if (!isQueuedMessagePayloadCurrent(persistedMessage, deliveryRevision)) {
+      return true;
+    }
+    const currentConfig = appAtomRegistry.get(
+      serverEnvironment.configValueAtom(queuedMessage.environmentId),
+    );
+    if (!currentConfig) return false;
+    if (isModelSelectionUnavailable(currentConfig, settings.modelSelection, creation.projectId)) {
+      const { title, detail } = describeUnavailableModelSelection(
+        currentConfig,
+        settings.modelSelection,
+        creation.projectId,
+      );
+      return restoreQueuedMessage(persistedMessage, `${title}. ${detail}`);
+    }
+    const sendSettings = resolveQueuedThreadSettings(
+      queuedMessage,
+      settings,
+      currentConfig.providers,
+    );
+    if (!hasAccess()) return true;
+    const { reportFailure } = makeDeliveryHelpers(queuedMessage);
+    let workspace = creation;
+    if (creation.pullRequestReference) {
+      const checkout = await preparePullRequest({
+        environmentId: queuedMessage.environmentId,
+        input: { cwd: projectCwd, reference: creation.pullRequestReference, mode: "worktree" },
       });
-      if (AsyncResult.isFailure(deliveryResult) && !hasAccess()) return true;
-      const failure = reportFailure(deliveryResult, "start-turn");
-      if (failure?.action === "retry") {
-        return false;
-      }
-      if (failure?.action === "restore") {
+      if (!isQueuedMessagePayloadCurrent(persistedMessage, deliveryRevision) || !hasAccess())
+        return true;
+      const failure = reportFailure(checkout, "start-turn");
+      if (failure?.action === "retry") return false;
+      if (failure?.action === "restore")
         return restoreQueuedMessage(persistedMessage, failure.message);
+      if (!AsyncResult.isSuccess(checkout)) return false;
+      if (!checkout.value.worktreePath || !checkout.value.isOnPullRequestHead)
+        return restoreQueuedMessage(
+          persistedMessage,
+          "The PR worktree has local changes and could not update to the PR head. Resolve them before trying again.",
+        );
+      workspace = {
+        ...creation,
+        workspaceMode: "local",
+        branch: checkout.value.branch,
+        worktreePath: checkout.value.worktreePath,
+        startFromOrigin: false,
+      };
+    }
+    const deliveryResult = await startTurn({
+      environmentId: queuedMessage.environmentId,
+      input: buildProjectThreadStartTurnInput({
+        projectId: creation.projectId,
+        projectCwd,
+        threadId: queuedMessage.threadId,
+        commandId: queuedMessage.commandId,
+        messageId: queuedMessage.messageId,
+        createdAt: queuedMessage.createdAt,
+        titleText: queuedMessage.text,
+        ...serializeComposerMessageForServer(
+          queuedMessage.text.trim(),
+          uploadedComposerContext(
+            queuedMessage.context,
+            queuedMessage.attachments,
+            prepared.attachments,
+          ),
+        ),
+        uploadedAttachments: prepared.attachments,
+        modelSelection: sendSettings.modelSelection,
+        runtimeMode: sendSettings.runtimeMode,
+        interactionMode: sendSettings.interactionMode,
+        workspaceMode: workspace.workspaceMode,
+        branch: workspace.branch,
+        worktreePath: workspace.worktreePath,
+        startFromOrigin: workspace.startFromOrigin ?? false,
+        worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
+      }),
+    });
+    if (AsyncResult.isFailure(deliveryResult) && !hasAccess()) return true;
+    const failure = reportFailure(deliveryResult, "start-turn");
+    if (failure?.action === "retry") {
+      return false;
+    }
+    if (failure?.action === "restore") {
+      return restoreQueuedMessage(persistedMessage, failure.message);
+    }
+    recordPendingThreadCreationOutcome({ kind: "delivered", message: persistedMessage });
+    const outcome = await completeQueuedMessageDelivery(persistedMessage, deliveryRevision);
+    if (outcome === "edited") {
+      if (appAtomRegistry.get(editingQueuedMessageIdsAtom)[queuedMessage.messageId]) {
+        return true;
       }
-      recordPendingThreadCreationOutcome({ kind: "delivered", message: persistedMessage });
-      const outcome = await completeQueuedMessageDelivery(persistedMessage, deliveryRevision);
-      if (outcome === "edited") {
-        if (appAtomRegistry.get(editingQueuedMessageIdsAtom)[queuedMessage.messageId]) {
-          return true;
-        }
-        return recoverEditedCreationAfterDelivery(persistedMessage);
-      }
-      return outcome === "removed";
-    },
-    [makeDeliveryHelpers, preparePullRequest, restoreQueuedMessage, startTurn],
-  );
+      return recoverEditedCreationAfterDelivery(persistedMessage);
+    }
+    return outcome === "removed";
+  };
 
   // Subscribed, not read once: the shell often lands before the outcome is recorded, and a
   // non-reactive read would leave that entry uncollected because `threads` never changes again.
@@ -1162,7 +1135,6 @@ export function useThreadOutboxDrain(): void {
         threadExists: thread !== undefined,
         shellStatus,
         environmentConnected: environment?.connectionState === "connected",
-        threadBusy: threadRuntimeIsActive(thread?.runtime),
       });
       if (deliveryAction === "send" && !operableEnvironments.has(nextQueuedMessage.environmentId)) {
         continue;
@@ -1256,13 +1228,11 @@ export function useThreadOutboxDrain(): void {
             appAtomRegistry.get(environmentThreadShells.threadShellsAtom),
             nextQueuedMessage,
           );
-          const liveThreadBusy = threadRuntimeIsActive(liveThread?.runtime);
           const liveDeliveryAction = resolveThreadOutboxDeliveryAction({
             isCreation: creation !== undefined,
             threadExists: liveThread !== undefined,
             shellStatus,
             environmentConnected: environment?.connectionState === "connected",
-            threadBusy: liveThreadBusy,
           });
           if (liveDeliveryAction !== "send") {
             return true;

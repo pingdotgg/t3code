@@ -336,19 +336,6 @@ export function resolveQuickAction(
   };
 }
 
-export function requiresDefaultBranchConfirmation(
-  action: GitStackedAction,
-  isDefaultRef: boolean,
-): boolean {
-  if (!isDefaultRef) return false;
-  return (
-    action === "push" ||
-    action === "create_pr" ||
-    action === "commit_push" ||
-    action === "commit_push_pr"
-  );
-}
-
 export function resolveDefaultBranchActionDialogCopy(input: {
   action: DefaultBranchConfirmableAction;
   branchName: string;
@@ -452,4 +439,4 @@ export function resolveLiveThreadBranchUpdate(input: {
   };
 }
 
-export { resolveAutoFeatureBranchName } from "@t3tools/shared/git";
+export { requiresDefaultBranchConfirmation } from "@t3tools/client-runtime/state/vcs";

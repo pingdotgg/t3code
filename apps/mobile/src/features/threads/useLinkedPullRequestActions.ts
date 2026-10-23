@@ -14,7 +14,6 @@ import {
 import { planThreadPullRequestMutation } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { AuthOrchestrationOperateScope, type ThreadPullRequestLink } from "@t3tools/contracts";
 import * as Clipboard from "expo-clipboard";
-import { useCallback, useMemo } from "react";
 
 import * as Dialog from "../../components/ui/Dialog";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
@@ -37,7 +36,7 @@ export function useLinkedPullRequestActions(input: {
     thread?.environmentId ?? null,
     AuthOrchestrationOperateScope,
   );
-  const canEdit = canOperate && capabilities?.threadPullRequests === true;
+  const canEdit = canOperate && capabilities !== undefined;
   const canWatch = canOperate && capabilities?.threadPullRequestWatch === true;
   const canStartWatch =
     canWatch &&
@@ -50,42 +49,38 @@ export function useLinkedPullRequestActions(input: {
   const unlink = useAtomCommand(threadEnvironment.unlinkPullRequest, { reportFailure: false });
   const watch = useAtomCommand(threadEnvironment.watchPullRequest, { reportFailure: false });
 
-  const run = useCallback(
-    async (failureTitle: string, pending: Promise<AtomCommandResult<unknown, unknown>>) => {
-      const result = await pending;
-      if (result._tag === "Success" || isAtomCommandInterrupted(result)) return;
-      const cause = squashAtomCommandFailure(result);
-      Dialog.alert(failureTitle, cause instanceof Error ? cause.message : "Try again.");
-    },
-    [],
-  );
+  const run = async (
+    failureTitle: string,
+    pending: Promise<AtomCommandResult<unknown, unknown>>,
+  ) => {
+    const result = await pending;
+    if (result._tag === "Success" || isAtomCommandInterrupted(result)) return;
+    const cause = squashAtomCommandFailure(result);
+    Dialog.alert(failureTitle, cause instanceof Error ? cause.message : "Try again.");
+  };
 
-  const setLinked = useCallback(
-    (
-      reference: { host: string; repository: string; number: number; url: string },
-      linked: boolean,
-    ) => {
-      if (thread === null) return;
-      const mutation = planThreadPullRequestMutation({
-        capabilities,
-        threadId: thread.id,
-        reference,
-        legacyProjectId: null,
-        linked,
-      });
-      if (mutation === null || mutation.type === "thread.meta.update") return;
-      const environmentId = thread.environmentId;
-      void run(
-        linked ? "Couldn't link this pull request" : "Couldn't unlink this pull request",
-        mutation.type === "thread.pull-request.link"
-          ? link({ environmentId, input: mutation.input })
-          : unlink({ environmentId, input: mutation.input }),
-      );
-    },
-    [capabilities, link, run, thread, unlink],
-  );
+  const setLinked = (
+    reference: { host: string; repository: string; number: number; url: string },
+    linked: boolean,
+  ) => {
+    if (thread === null) return;
+    const mutation = planThreadPullRequestMutation({
+      capabilities,
+      threadId: thread.id,
+      reference,
+      linked,
+    });
+    if (mutation === null) return;
+    const environmentId = thread.environmentId;
+    void run(
+      linked ? "Couldn't link this pull request" : "Couldn't unlink this pull request",
+      mutation.type === "thread.pull-request.link"
+        ? link({ environmentId, input: mutation.input })
+        : unlink({ environmentId, input: mutation.input }),
+    );
+  };
 
-  const promptLink = useCallback(() => {
+  const promptLink = () => {
     Dialog.prompt({
       title: "Link pull request",
       message: "Paste a pull request URL, or enter 123 / #123 for this thread's repository.",
@@ -109,69 +104,60 @@ export function useLinkedPullRequestActions(input: {
         setLinked(resolved.link, true);
       },
     });
-  }, [project, setLinked]);
+  };
 
-  const menuActions = useCallback(
-    (link: ThreadPullRequestLink): MenuAction[] => {
-      const open = link.snapshot === null || link.snapshot.state === "open";
-      const watching = link.watch !== undefined;
-      return [
-        { id: "copy", title: "Copy link", image: "link" },
-        { id: "browser", title: "Open in browser", image: "safari" },
-        ...((watching ? canWatch : canStartWatch) && open
-          ? [
-              {
-                id: "watch",
-                title: watching ? "Stop watching" : "Watch for changes",
-                image: watching ? "eye.slash" : "eye",
-              },
-            ]
-          : []),
-        ...(canEdit
-          ? [
-              {
-                id: "unlink",
-                title: link.source === "stack" ? "Dismiss from thread" : "Unlink from thread",
-                image: "xmark",
-                attributes: { destructive: true },
-              },
-            ]
-          : []),
-      ];
-    },
-    [canEdit, canStartWatch, canWatch],
-  );
-
-  const onMenuAction = useCallback(
-    (link: ThreadPullRequestLink, action: string) => {
-      if (action === "copy") void Clipboard.setStringAsync(link.url);
-      else if (action === "browser")
-        void tryOpenExternalUrl(link.url, "pull-request").then((opened) => {
-          if (!opened) Dialog.alert("Unable to open PR", "The pull request could not be opened.");
-        });
-      else if (action === "watch" && thread !== null)
-        void run(
-          "Couldn't change watching",
-          watch({
-            environmentId: thread.environmentId,
-            input: {
-              threadId: thread.id,
-              host: link.host,
-              repository: link.repository,
-              number: link.number,
-              watching: link.watch === undefined,
+  const menuActions = (link: ThreadPullRequestLink): MenuAction[] => {
+    const open = link.snapshot === null || link.snapshot.state === "open";
+    const watching = link.watch !== undefined;
+    return [
+      { id: "copy", title: "Copy link", image: "link" },
+      { id: "browser", title: "Open in browser", image: "safari" },
+      ...((watching ? canWatch : canStartWatch) && open
+        ? [
+            {
+              id: "watch",
+              title: watching ? "Stop watching" : "Watch for changes",
+              image: watching ? "eye.slash" : "eye",
             },
-          }),
-        );
-      else if (action === "unlink") setLinked(link, false);
-    },
-    [run, setLinked, thread, watch],
-  );
+          ]
+        : []),
+      ...(canEdit
+        ? [
+            {
+              id: "unlink",
+              title: link.source === "stack" ? "Dismiss from thread" : "Unlink from thread",
+              image: "xmark",
+              attributes: { destructive: true },
+            },
+          ]
+        : []),
+    ];
+  };
 
-  return useMemo(
-    () => ({ canLink: canEdit, promptLink, menuActions, onMenuAction }),
-    [canEdit, promptLink, menuActions, onMenuAction],
-  );
+  const onMenuAction = (link: ThreadPullRequestLink, action: string) => {
+    if (action === "copy") void Clipboard.setStringAsync(link.url);
+    else if (action === "browser")
+      void tryOpenExternalUrl(link.url, "pull-request").then((opened) => {
+        if (!opened) Dialog.alert("Unable to open PR", "The pull request could not be opened.");
+      });
+    else if (action === "watch" && thread !== null)
+      void run(
+        "Couldn't change watching",
+        watch({
+          environmentId: thread.environmentId,
+          input: {
+            threadId: thread.id,
+            host: link.host,
+            repository: link.repository,
+            number: link.number,
+            watching: link.watch === undefined,
+          },
+        }),
+      );
+    else if (action === "unlink") setLinked(link, false);
+  };
+
+  return { canLink: canEdit, promptLink, menuActions, onMenuAction };
 }
 
 export type LinkedPullRequestActions = ReturnType<typeof useLinkedPullRequestActions>;

@@ -251,9 +251,8 @@ function ManagedCodexSetup({
   const cancelInstall = useAtomCommand(serverEnvironment.cancelProviderInstall, options);
   const reconnectProfile = useAtomCommand(serverEnvironment.chatGptReconnectProfile, options);
   const importProfile = useAtomCommand(serverEnvironment.chatGptImportProfile, options);
-  const clientCallback =
-    !handoff && (!local || window.desktopBridge?.receiveProviderAuthCallback !== undefined);
-  const remoteWeb = clientCallback && !window.desktopBridge?.receiveProviderAuthCallback;
+  const clientCallback = !handoff && (!local || window.desktopBridge !== undefined);
+  const remoteWeb = clientCallback && !window.desktopBridge;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const primaryEnvironment = useEnvironment(primaryEnvironmentId);
   const primaryHttpBaseUrl = useEnvironmentHttpBaseUrl(primaryEnvironmentId);
@@ -519,10 +518,10 @@ function ManagedCodexSetup({
   });
 
   useEffect(() => {
-    if (!clientCallback || !url || !window.desktopBridge?.cancelProviderAuthCallback) return;
+    if (!clientCallback || !url || !window.desktopBridge) return;
     return () => {
       if (receivingCallback.current === url) receivingCallback.current = null;
-      void window.desktopBridge?.cancelProviderAuthCallback?.(url).catch(() => undefined);
+      void window.desktopBridge?.cancelProviderAuthCallback(url).catch(() => undefined);
     };
   }, [clientCallback, url]);
 

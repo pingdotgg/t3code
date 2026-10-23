@@ -270,28 +270,7 @@ export const make = Effect.gen(function* () {
           cursor: input.cursor,
           filters: input.filters,
         })
-        .pipe(
-          Effect.mapError(fail("listChangeRequests")),
-          Effect.flatMap((page) =>
-            cli
-              .listActorAvatars({
-                cwd: input.cwd,
-                repository: input.repository,
-                host: input.host,
-                ids: [...new Set(page.items.flatMap((item) => item.authorId ?? []))],
-              })
-              .pipe(
-                Effect.orElseSucceed(() => new Map<string, string>()),
-                Effect.map((avatarsByLogin) => ({
-                  ...page,
-                  items: page.items.map((item) => ({
-                    ...item,
-                    author: withAvatar(item.author, avatarsByLogin, input.host),
-                  })),
-                })),
-              ),
-          ),
-        ),
+        .pipe(Effect.mapError(fail("listChangeRequests"))),
 
     listChangeRequestsAcross: (input) =>
       cli

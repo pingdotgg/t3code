@@ -83,7 +83,6 @@ export function coalesceLiveToolUpdatedEvents(
 export const makeThreadLiveEventCoalescer = Effect.fn(
   "ThreadLiveEventCoalescer.makeThreadLiveEventCoalescer",
 )(function* <E = never>(options?: {
-  readonly coalesceWindow?: Duration.Input;
   readonly maxItems?: number;
   readonly maxSerializedBytes?: number;
 }) {
@@ -95,7 +94,6 @@ export const makeThreadLiveEventCoalescer = Effect.fn(
     E | LiveStreamBufferError | Cause.Done
   >();
   const mutex = yield* Semaphore.make(1);
-  const coalesceWindow = options?.coalesceWindow ?? COALESCE_WINDOW;
   let pendingUpdates: Array<RetainedLiveItem<ThreadLiveEvent>> = [];
   let windowGeneration = 0;
   let windowFiber: Fiber.Fiber<void, never> | null = null;
@@ -123,7 +121,7 @@ export const makeThreadLiveEventCoalescer = Effect.fn(
   }, Effect.uninterruptible);
 
   const flushWindow = (generation: number) =>
-    Effect.sleep(coalesceWindow).pipe(
+    Effect.sleep(COALESCE_WINDOW).pipe(
       Effect.andThen(
         mutex.withPermits(1)(
           Effect.suspend(() => (generation === windowGeneration ? flushPending() : Effect.void)),

@@ -3,8 +3,8 @@ import { useEffect, useEffectEvent, useRef } from "react";
 import { View } from "react-native";
 
 import { AppText as Text, AppTextInput } from "../../../components/ui/AppText";
-import { SettingsChoiceRow } from "./SettingsChoiceRow";
-import { SettingsSection } from "./SettingsSection";
+import { ListChoiceRow as SettingsChoiceRow } from "../../../components/ui/ListChoiceRow";
+import { ListSection as SettingsSection } from "../../../components/ui/ListSection";
 
 const MODES = {
   static: { label: "Static prefix", description: "Add your prefix to the generated branch name." },

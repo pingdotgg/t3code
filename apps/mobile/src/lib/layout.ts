@@ -6,13 +6,13 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
-export const SPLIT_LAYOUT_MIN_WIDTH = 720;
-export const SPLIT_LAYOUT_MIN_HEIGHT = 600;
+const SPLIT_LAYOUT_MIN_WIDTH = 720;
+const SPLIT_LAYOUT_MIN_HEIGHT = 600;
 
-export const SPLIT_SIDEBAR_MIN_WIDTH = 280;
+const SPLIT_SIDEBAR_MIN_WIDTH = 280;
 const SPLIT_SIDEBAR_DEFAULT_MAX_WIDTH = 380;
 
-export const AUXILIARY_PANE_MIN_CONTENT_WIDTH = 960;
+const AUXILIARY_PANE_MIN_CONTENT_WIDTH = 960;
 export const CHAT_CONTENT_MAX_WIDTH = 960;
 // Android reading width for the thread feed, composer, and full-width thread list.
 // Phones are narrower; foldables in portrait and the keyboard-open split view are not.
@@ -40,8 +40,8 @@ export function deriveThreadWorkLogSizing(input: {
   };
 }
 
-export const AUXILIARY_PANE_MIN_WIDTH = 260;
-export const AUXILIARY_PANE_MAX_WIDTH = 480;
+const AUXILIARY_PANE_MIN_WIDTH = 260;
+const AUXILIARY_PANE_MAX_WIDTH = 480;
 const AUXILIARY_PANE_DEFAULT_MAX_WIDTH = 320;
 const FILE_INSPECTOR_MIN_VIEWPORT_WIDTH = 820;
 const FILE_INSPECTOR_MIN_MAIN_WIDTH = 560;

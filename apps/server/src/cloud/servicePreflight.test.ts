@@ -2,7 +2,7 @@ import { expect, it } from "@effect/vitest";
 
 import { runServicePreflight } from "./servicePreflight.ts";
 
-it.each([1, 2])("blocks legacy launcher protocol %i", (launcherProtocol) => {
+it.each([1])("blocks legacy launcher protocol %i", (launcherProtocol) => {
   expect(
     runServicePreflight({
       databasePath: "/missing/state.sqlite",

@@ -2,7 +2,7 @@ import { usePullRequestConnected } from "./usePullRequestConnected";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { PullRequestDetail } from "@t3tools/contracts";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -28,15 +28,12 @@ export function usePullRequestFilesViewed(params: PullRequestParams, pr: PullReq
   }>({ key: scopeKey, overlay: {}, error: null });
   const overlay = state.key === scopeKey ? state.overlay : {};
   const error = state.key === scopeKey ? state.error : null;
-  const setOverlay = useCallback(
-    (overlay: Record<string, boolean>) =>
-      setState((current) => ({
-        key: scopeKey,
-        overlay,
-        error: current.key === scopeKey ? current.error : null,
-      })),
-    [scopeKey],
-  );
+  const setOverlay = (overlay: Record<string, boolean>) =>
+    setState((current) => ({
+      key: scopeKey,
+      overlay,
+      error: current.key === scopeKey ? current.error : null,
+    }));
   const setError = (error: string | null) =>
     setState((current) => ({
       key: scopeKey,

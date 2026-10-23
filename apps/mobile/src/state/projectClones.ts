@@ -22,7 +22,7 @@ const EMPTY_CLONE_ATOM = Atom.make<ProjectCloneState>(null).pipe(
 const environmentProjectClonesAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get): ReadonlyArray<ProjectCloneSnapshot> | "pending" => {
     const config = get(serverEnvironment.configValueAtom(environmentId));
-    if (config?.environment.capabilities.projectCloneTracking !== true) return EMPTY_CLONES;
+    if (!config) return EMPTY_CLONES;
     const result = get(sourceControlEnvironment.projectClones({ environmentId, input: {} }));
     // A failed subscription must not hold Start forever. Treating it as
     // "no clone tracked" lets the server's own dispatch guard decide; the

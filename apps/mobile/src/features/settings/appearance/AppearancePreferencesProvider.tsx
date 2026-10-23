@@ -133,14 +133,11 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
     [baseFontSize, codeFontSize, codeWordBreak, terminalFontSize],
   );
   const isReady = AsyncResult.isSuccess(preferencesResult);
-  const runtimeState = useMemo<MobileThemeRuntimeState>(
-    () => ({
-      baseFontSize,
-      themeAppearance,
-      themeMode,
-    }),
-    [baseFontSize, themeAppearance, themeMode],
-  );
+  const runtimeState: MobileThemeRuntimeState = {
+    baseFontSize,
+    themeAppearance,
+    themeMode,
+  };
   const appliedRuntimeStateRef = useRef<MobileThemeRuntimeState | null>(null);
   const selectedThemeIdsRef = useRef(themeIds);
 
@@ -160,117 +157,85 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
     appliedRuntimeStateRef.current = next;
   }, []);
 
-  const syncThemeRuntime = useCallback(
-    (next: MobileThemeRuntimeState) => applyThemeRuntime(next),
-    [applyThemeRuntime],
-  );
+  const syncThemeRuntime = (next: MobileThemeRuntimeState) => applyThemeRuntime(next);
 
-  const updatePreferences = useCallback(
-    (patch: Partial<Preferences>) => {
-      startTransition(() => savePreferences(patch));
-    },
-    [savePreferences],
-  );
+  const updatePreferences = (patch: Partial<Preferences>) => {
+    startTransition(() => savePreferences(patch));
+  };
 
-  const updateThemePreferences = useCallback(
-    (patch: Partial<Preferences>) => {
-      savePreferences(patch);
-    },
-    [savePreferences],
-  );
+  const updateThemePreferences = (patch: Partial<Preferences>) => {
+    savePreferences(patch);
+  };
 
   useLayoutEffect(() => {
     selectedThemeIdsRef.current = themeIds;
     syncThemeRuntime(runtimeState);
   }, [runtimeState, syncThemeRuntime, themeIds]);
 
-  const setThemeIdForAppearance = useCallback(
-    (appearance: MobileThemeAppearance, value: MobileThemeId) => {
-      const patch = createMobileThemeSelectionPatch(
-        selectedThemeIdsRef.current,
-        themeAppearance,
-        appearance,
-        value,
-      );
-      selectedThemeIdsRef.current = resolveMobileThemeIds(patch);
-      updateThemePreferences(patch);
-    },
-    [themeAppearance, updateThemePreferences],
-  );
+  const setThemeIdForAppearance = (appearance: MobileThemeAppearance, value: MobileThemeId) => {
+    const patch = createMobileThemeSelectionPatch(
+      selectedThemeIdsRef.current,
+      themeAppearance,
+      appearance,
+      value,
+    );
+    selectedThemeIdsRef.current = resolveMobileThemeIds(patch);
+    updateThemePreferences(patch);
+  };
 
-  const setThemeIdForBothAppearances = useCallback(
-    (value: MobileThemeId) => {
-      const patch = createMobileThemePairPatch(value);
-      selectedThemeIdsRef.current = resolveMobileThemeIds(patch);
-      updateThemePreferences(patch);
-    },
-    [updateThemePreferences],
-  );
+  const setThemeIdForBothAppearances = (value: MobileThemeId) => {
+    const patch = createMobileThemePairPatch(value);
+    selectedThemeIdsRef.current = resolveMobileThemeIds(patch);
+    updateThemePreferences(patch);
+  };
 
-  const setThemeMode = useCallback(
-    (value: MobileThemeMode) => {
-      const current = appliedRuntimeStateRef.current ?? runtimeState;
+  const setThemeMode = (value: MobileThemeMode) => {
+    const current = appliedRuntimeStateRef.current ?? runtimeState;
 
-      // Clear a forced native appearance before publishing System. The
-      // resulting useColorScheme notification still sees the previous forced
-      // preference, so React batches the actual system palette into the one
-      // urgent preference commit below.
-      if (value === "system") {
-        Appearance.setColorScheme("unspecified");
-      }
-      const nextAppearance =
-        value === "system" ? (Appearance.getColorScheme() === "dark" ? "dark" : "light") : value;
-      const next = {
-        ...current,
-        themeAppearance: nextAppearance,
-        themeMode: value,
-      };
+    // Clear a forced native appearance before publishing System. The
+    // resulting useColorScheme notification still sees the previous forced
+    // preference, so React batches the actual system palette into the one
+    // urgent preference commit below.
+    if (value === "system") {
+      Appearance.setColorScheme("unspecified");
+    }
+    const nextAppearance =
+      value === "system" ? (Appearance.getColorScheme() === "dark" ? "dark" : "light") : value;
+    const next = {
+      ...current,
+      themeAppearance: nextAppearance,
+      themeMode: value,
+    };
 
-      updateThemePreferences({ themeMode: value });
-      if (value === "system") {
-        appliedRuntimeStateRef.current = next;
-      } else {
-        syncThemeRuntime(next);
-      }
-    },
-    [runtimeState, syncThemeRuntime, updateThemePreferences],
-  );
+    updateThemePreferences({ themeMode: value });
+    if (value === "system") {
+      appliedRuntimeStateRef.current = next;
+    } else {
+      syncThemeRuntime(next);
+    }
+  };
 
-  const setBaseFontSize = useCallback(
-    (value: number) => {
-      const current = appliedRuntimeStateRef.current ?? runtimeState;
-      syncThemeRuntime({ ...current, baseFontSize: value });
-      updatePreferences({ baseFontSize: value });
-    },
-    [runtimeState, syncThemeRuntime, updatePreferences],
-  );
+  const setBaseFontSize = (value: number) => {
+    const current = appliedRuntimeStateRef.current ?? runtimeState;
+    syncThemeRuntime({ ...current, baseFontSize: value });
+    updatePreferences({ baseFontSize: value });
+  };
 
-  const setTerminalFontSize = useCallback(
-    (value: number | null) => {
-      updatePreferences({ terminalFontSize: value });
-    },
-    [updatePreferences],
-  );
+  const setTerminalFontSize = (value: number | null) => {
+    updatePreferences({ terminalFontSize: value });
+  };
 
-  const setCodeFontSize = useCallback(
-    (value: number | null) => {
-      updatePreferences({ codeFontSize: value });
-    },
-    [updatePreferences],
-  );
+  const setCodeFontSize = (value: number | null) => {
+    updatePreferences({ codeFontSize: value });
+  };
 
-  const setCodeWordBreak = useCallback(
-    (value: boolean) => {
-      updatePreferences({ codeWordBreak: value });
-    },
-    [updatePreferences],
-  );
+  const setCodeWordBreak = (value: boolean) => {
+    updatePreferences({ codeWordBreak: value });
+  };
 
   const mathRenderingEnabled = storedPreferences?.mathRenderingEnabled === true;
-  const setMathRenderingEnabled = useCallback(
-    (value: boolean) => updatePreferences({ mathRenderingEnabled: value }),
-    [updatePreferences],
-  );
+  const setMathRenderingEnabled = (value: boolean) =>
+    updatePreferences({ mathRenderingEnabled: value });
 
   const value = useMemo(
     (): AppearancePreferencesContextValue => ({

@@ -3,7 +3,7 @@ import { useNavigation } from "@react-navigation/native";
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
 import { THREAD_JUMP_KEYBINDING_COMMANDS } from "@t3tools/contracts";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   FlatList,
   KeyboardAvoidingView,
@@ -147,7 +147,7 @@ export function CommandPalette(props: {
   const runCommand = props.onCommand;
   const projects = useProjects();
   const threads = useThreadShells();
-  const activeThreadRef = useMemo(() => parseActiveThreadPath(props.pathname), [props.pathname]);
+  const activeThreadRef = parseActiveThreadPath(props.pathname);
   const activeThread = useThreadShell(activeThreadRef);
   const environments = useWorkspaceEnvironments();
   const { savedConnectionsById } = useSavedRemoteConnections();
@@ -162,204 +162,182 @@ export function CommandPalette(props: {
   // The palette floats above every column, so it keeps itself inside the window's side insets
   // and to one side of a book fold.
   const bounds = deriveBottomControlInsets(useNativeLayoutMetrics());
-  const searchEnvironmentIds = useMemo(
-    () =>
-      environments
-        .filter((environment) => environment.connectionState === "connected")
-        .map((environment) => environment.environmentId),
-    [environments],
-  );
+  const searchEnvironmentIds = environments
+    .filter((environment) => environment.connectionState === "connected")
+    .map((environment) => environment.environmentId);
   const search = useThreadSearch(searchEnvironmentIds, query.startsWith(">") ? "" : query);
-  const matchedThreadKeys = useMemo(
-    () =>
-      new Set(search.matches.map((match) => scopedThreadKey(match.environmentId, match.threadId))),
-    [search.matches],
+  const matchedThreadKeys = new Set(
+    search.matches.map((match) => scopedThreadKey(match.environmentId, match.threadId)),
   );
-  const contentMatchByKey = useMemo(
-    () =>
-      new Map(
-        search.matches
-          .filter((match) => match.source === "user" || match.source === "assistant")
-          .map((match) => [scopedThreadKey(match.environmentId, match.threadId), match]),
-      ),
-    [search.matches],
+  const contentMatchByKey = new Map(
+    search.matches
+      .filter((match) => match.source === "user" || match.source === "assistant")
+      .map((match) => [scopedThreadKey(match.environmentId, match.threadId), match]),
   );
-  const items = useMemo(() => {
-    const actions: CommandPaletteItem[] = [
-      {
-        key: "newTask",
-        kind: "action",
-        title: "New thread in…",
-        searchTerms: ["new task", "chat", "create", "project"],
-        run: () => runCommand("newTask"),
-      },
-      {
-        key: "addProject",
-        kind: "action",
-        title: "Add project",
-        searchTerms: ["folder", "clone", "repository", "git"],
-        run: () => navigation.navigate("AddProject"),
-      },
-      {
-        key: "settings",
-        kind: "action",
-        title: "Open settings",
-        searchTerms: ["preferences", "configuration"],
-        run: () =>
-          navigation.navigate("SettingsSheet", {
-            screen: "SettingsContent",
-            params: { screen: "Settings" },
-          }),
-      },
-      {
-        key: "appearance",
-        kind: "action",
-        title: "Appearance",
-        searchTerms: ["theme", "colors", "dark", "light"],
-        run: () =>
-          navigation.navigate("SettingsSheet", {
-            screen: "SettingsContent",
-            params: { screen: "SettingsAppearance" },
-          }),
-      },
-      {
-        key: "environments",
-        kind: "action",
-        title: "Manage environments",
-        searchTerms: ["connections", "server", "remote"],
-        run: () =>
-          navigation.navigate("SettingsSheet", {
-            screen: "SettingsContent",
-            params: { screen: "SettingsEnvironments" },
-          }),
-      },
-      {
-        key: "scheduledTasks",
-        kind: "action",
-        title: "Scheduled tasks",
-        searchTerms: ["schedule", "automations", "recurring"],
-        run: () =>
-          navigation.navigate("SettingsSheet", {
-            screen: "SettingsContent",
-            params: { screen: "SettingsScheduledTasks" },
-          }),
-      },
-      {
-        key: "usage",
-        kind: "action",
-        title: "Usage",
-        searchTerms: ["limits", "accounts", "quota"],
-        run: () =>
-          navigation.navigate("SettingsSheet", {
-            screen: "SettingsContent",
-            params: { screen: "SettingsUsage" },
-          }),
-      },
-      {
-        key: "archive",
-        kind: "action",
-        title: "Archived threads",
-        searchTerms: ["restore", "history"],
-        run: () =>
-          navigation.navigate("SettingsSheet", {
-            screen: "SettingsContent",
-            params: { screen: "SettingsArchive" },
-          }),
-      },
-    ];
-    const projectByKey = new Map(
-      projects.map((project) => [scopedProjectKey(project.environmentId, project.id), project]),
-    );
-    const activeProject = activeThread
-      ? projectByKey.get(scopedProjectKey(activeThread.environmentId, activeThread.projectId))
-      : null;
-    if (activeProject) {
-      actions.unshift({
-        key: "newThread",
-        kind: "action",
-        title: `New thread in ${activeProject.title}`,
-        searchTerms: ["new task", "chat", "create"],
-        run: () =>
-          selectThreadRoute({
-            draft: {
-              requestId: uuidv4(),
-              environmentId: activeProject.environmentId,
-              projectId: activeProject.id,
-              title: activeProject.title,
-            },
-          }),
-      });
-    }
-    if (activeThreadRef) {
-      const threadActions = [
-        ["files", "Go to file", ["open", "files", "browse", "search"]],
-        ["terminal", "Open terminal", ["shell", "console"]],
-        ["review", "Review changes", ["diff", "git", "pull request"]],
-        ["copyThreadReference", "Copy PR link or thread ID", ["reference", "clipboard"]],
-      ] as const;
-      actions.push(
-        ...threadActions.map(([command, title, searchTerms]) => ({
-          key: command,
-          kind: "action" as const,
-          title,
-          searchTerms,
-          run: () => runCommand(command),
-        })),
-      );
-    }
-    const projectItems: CommandPaletteItem[] = projects.map((project) => ({
-      key: `project:${scopedProjectKey(project.environmentId, project.id)}`,
-      kind: "project",
-      title: project.title,
-      detail: `New thread · ${savedConnectionsById[project.environmentId]?.environmentLabel ?? project.environmentId}`,
-      searchTerms: [project.workspaceRoot, "new thread", "project"],
+  const actions: CommandPaletteItem[] = [
+    {
+      key: "newTask",
+      kind: "action",
+      title: "New thread in…",
+      searchTerms: ["new task", "chat", "create", "project"],
+      run: () => runCommand("newTask"),
+    },
+    {
+      key: "addProject",
+      kind: "action",
+      title: "Add project",
+      searchTerms: ["folder", "clone", "repository", "git"],
+      run: () => navigation.navigate("AddProject"),
+    },
+    {
+      key: "settings",
+      kind: "action",
+      title: "Open settings",
+      searchTerms: ["preferences", "configuration"],
+      run: () =>
+        navigation.navigate("SettingsSheet", {
+          screen: "SettingsContent",
+          params: { screen: "Settings" },
+        }),
+    },
+    {
+      key: "appearance",
+      kind: "action",
+      title: "Appearance",
+      searchTerms: ["theme", "colors", "dark", "light"],
+      run: () =>
+        navigation.navigate("SettingsSheet", {
+          screen: "SettingsContent",
+          params: { screen: "SettingsAppearance" },
+        }),
+    },
+    {
+      key: "environments",
+      kind: "action",
+      title: "Manage environments",
+      searchTerms: ["connections", "server", "remote"],
+      run: () =>
+        navigation.navigate("SettingsSheet", {
+          screen: "SettingsContent",
+          params: { screen: "SettingsEnvironments" },
+        }),
+    },
+    {
+      key: "scheduledTasks",
+      kind: "action",
+      title: "Scheduled tasks",
+      searchTerms: ["schedule", "automations", "recurring"],
+      run: () =>
+        navigation.navigate("SettingsSheet", {
+          screen: "SettingsContent",
+          params: { screen: "SettingsScheduledTasks" },
+        }),
+    },
+    {
+      key: "usage",
+      kind: "action",
+      title: "Usage",
+      searchTerms: ["limits", "accounts", "quota"],
+      run: () =>
+        navigation.navigate("SettingsSheet", {
+          screen: "SettingsContent",
+          params: { screen: "SettingsUsage" },
+        }),
+    },
+    {
+      key: "archive",
+      kind: "action",
+      title: "Archived threads",
+      searchTerms: ["restore", "history"],
+      run: () =>
+        navigation.navigate("SettingsSheet", {
+          screen: "SettingsContent",
+          params: { screen: "SettingsArchive" },
+        }),
+    },
+  ];
+  const projectByKey = new Map(
+    projects.map((project) => [scopedProjectKey(project.environmentId, project.id), project]),
+  );
+  const activeProject = activeThread
+    ? projectByKey.get(scopedProjectKey(activeThread.environmentId, activeThread.projectId))
+    : null;
+  if (activeProject) {
+    actions.unshift({
+      key: "newThread",
+      kind: "action",
+      title: `New thread in ${activeProject.title}`,
+      searchTerms: ["new task", "chat", "create"],
       run: () =>
         selectThreadRoute({
           draft: {
             requestId: uuidv4(),
-            environmentId: project.environmentId,
-            projectId: project.id,
-            title: project.title,
+            environmentId: activeProject.environmentId,
+            projectId: activeProject.id,
+            title: activeProject.title,
           },
         }),
-    }));
-    const threadItems: CommandPaletteItem[] = threads
-      .filter((thread) => thread.archivedAt === null)
-      .sort((left, right) =>
-        (right.latestUserMessageAt ?? right.updatedAt).localeCompare(
-          left.latestUserMessageAt ?? left.updatedAt,
-        ),
-      )
-      .map((thread) => {
-        const project = projectByKey.get(scopedProjectKey(thread.environmentId, thread.projectId));
-        const environment =
-          savedConnectionsById[thread.environmentId]?.environmentLabel ?? thread.environmentId;
-        return {
-          key: scopedThreadKey(thread.environmentId, thread.id),
-          kind: "thread",
-          title: thread.title || "Untitled thread",
-          detail: [project?.title, environment].filter(Boolean).join(" · "),
-          searchTerms: [
-            project?.title ?? "",
-            environment,
-            thread.branch ?? "",
-            ...threadPullRequestSearchTerms(thread),
-          ],
-          run: () => selectThread(thread),
-        };
-      });
-    return [...actions, ...projectItems, ...threadItems];
-  }, [
-    activeThread,
-    activeThreadRef,
-    navigation,
-    projects,
-    runCommand,
-    savedConnectionsById,
-    selectThread,
-    selectThreadRoute,
-    threads,
-  ]);
+    });
+  }
+  if (activeThreadRef) {
+    const threadActions = [
+      ["files", "Go to file", ["open", "files", "browse", "search"]],
+      ["terminal", "Open terminal", ["shell", "console"]],
+      ["review", "Review changes", ["diff", "git", "pull request"]],
+      ["copyThreadReference", "Copy PR link or thread ID", ["reference", "clipboard"]],
+    ] as const;
+    actions.push(
+      ...threadActions.map(([command, title, searchTerms]) => ({
+        key: command,
+        kind: "action" as const,
+        title,
+        searchTerms,
+        run: () => runCommand(command),
+      })),
+    );
+  }
+  const projectItems: CommandPaletteItem[] = projects.map((project) => ({
+    key: `project:${scopedProjectKey(project.environmentId, project.id)}`,
+    kind: "project",
+    title: project.title,
+    detail: `New thread · ${savedConnectionsById[project.environmentId]?.environmentLabel ?? project.environmentId}`,
+    searchTerms: [project.workspaceRoot, "new thread", "project"],
+    run: () =>
+      selectThreadRoute({
+        draft: {
+          requestId: uuidv4(),
+          environmentId: project.environmentId,
+          projectId: project.id,
+          title: project.title,
+        },
+      }),
+  }));
+  const threadItems: CommandPaletteItem[] = threads
+    .filter((thread) => thread.archivedAt === null)
+    .sort((left, right) =>
+      (right.latestUserMessageAt ?? right.updatedAt).localeCompare(
+        left.latestUserMessageAt ?? left.updatedAt,
+      ),
+    )
+    .map((thread) => {
+      const project = projectByKey.get(scopedProjectKey(thread.environmentId, thread.projectId));
+      const environment =
+        savedConnectionsById[thread.environmentId]?.environmentLabel ?? thread.environmentId;
+      return {
+        key: scopedThreadKey(thread.environmentId, thread.id),
+        kind: "thread",
+        title: thread.title || "Untitled thread",
+        detail: [project?.title, environment].filter(Boolean).join(" · "),
+        searchTerms: [
+          project?.title ?? "",
+          environment,
+          thread.branch ?? "",
+          ...threadPullRequestSearchTerms(thread),
+        ],
+        run: () => selectThread(thread),
+      };
+    });
+  const items = [...actions, ...projectItems, ...threadItems];
   const results = useMemo(
     () => filterCommandPaletteItems(items, query, matchedThreadKeys),
     [items, matchedThreadKeys, query],
@@ -379,13 +357,13 @@ export function CommandPalette(props: {
   }, [selectedIndex, selectedKey]);
 
   const dismissed = useRef(false);
-  const handleDismissed = useCallback(() => {
+  const handleDismissed = () => {
     if (dismissed.current) return;
     dismissed.current = true;
     // Present navigation sheets only after UIKit has dismissed this modal.
     props.onClose();
     pendingAction.current?.();
-  }, [props]);
+  };
 
   // iOS drops Modal onDismiss when the VC is dismissed mid-presentation (e.g.
   // ⌘K during the fade-in) or raced by another sheet — without a fallback the

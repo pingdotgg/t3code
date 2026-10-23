@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import { View } from "react-native";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { PullRequestFilterMenuProvider } from "../pull-requests/PullRequestFilterMenuContext";
@@ -13,7 +13,7 @@ export function AndroidWorkspaceSidebar(props: {
   readonly selectedPullRequestKey: string | null;
 }) {
   const workspace = useWorkspaceTabs()!;
-  const context = useMemo(() => ({ ...workspace, bottomClearance: 16 }), [workspace]);
+  const context = { ...workspace, bottomClearance: 16 };
   return (
     <WorkspaceTabPanes
       tabs={["threads", "pullRequests"]}

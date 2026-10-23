@@ -128,7 +128,7 @@ export function fileAttachmentCapabilityBlockReason(
 }
 
 /**
- * When `capabilities.attachmentUploads` flips off (reconnect, version skew),
+ * When uploads become unavailable (the server config is gone),
  * tear down only uploads that have not been persisted onto a draft file.
  * Once `uploadedAttachmentId` is stamped, the draft references that server
  * copy after reload even if its local `File` is still available in memory.

@@ -9,7 +9,6 @@ import type { ColorValue } from "react-native";
 
 export {
   nativeHeaderScrollEdgeEffects,
-  nativeTopScrollEdgeEffect,
   type NativeHeaderScrollEdgeEffects,
   type NativeTopScrollEdgeEffect,
 } from "./scrollEdgeEffects";

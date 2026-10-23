@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   BackHandler,
   Keyboard,
@@ -29,11 +29,11 @@ export function AppBar(props: AppBarProps) {
   const [searchOpen, setSearchOpen] = useState(false);
   const searching = search !== undefined && (searchOpen || search.value.length > 0);
   const onSearchChange = search?.onChangeText;
-  const closeSearch = useCallback(() => {
+  const closeSearch = () => {
     onSearchChange?.("");
     setSearchOpen(false);
     Keyboard.dismiss();
-  }, [onSearchChange]);
+  };
   useEffect(() => {
     if (!searching || search?.mode === "inline") return;
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {

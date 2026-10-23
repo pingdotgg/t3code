@@ -234,8 +234,7 @@ export function derivePendingBackgroundWork(input: {
   readonly activeProviderThreadId?: string | null;
   readonly hasActiveRun?: boolean;
   /**
-   * Run rows used to exclude items owned by rolled_back runs. Optional for
-   * callers that already filtered (SQL shell path); in-memory callers should
+   * Optional for callers that already filtered (SQL shell path); in-memory callers should
    * pass projection runs so policy cannot drift.
    */
   readonly runs?: ReadonlyArray<PendingBackgroundWorkRun>;

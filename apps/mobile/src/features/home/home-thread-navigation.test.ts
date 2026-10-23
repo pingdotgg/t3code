@@ -1,3 +1,5 @@
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type { NavigationState } from "@react-navigation/native";
 import * as NodeModule from "node:module";
 import type {
   StackNavigationState,
@@ -26,10 +28,7 @@ vi.mock("@react-navigation/native", () => {
   return { CommonActions, StackActions };
 });
 
-import {
-  createHomeThreadRouteAction,
-  createHomeThreadNavigationAction,
-} from "./home-thread-navigation";
+import { createHomeThreadRouteAction } from "./home-thread-navigation";
 
 const { StackActions, StackRouter } = loadRouters();
 const routeNames = ["Home", "Thread"];
@@ -44,7 +43,21 @@ const routerOptions = {
   routeGetIdList: {},
 };
 
-type ThreadSelection = Parameters<typeof createHomeThreadNavigationAction>[0]["thread"];
+type ThreadSelection = Pick<EnvironmentThreadShell, "environmentId" | "id">;
+
+function createHomeThreadNavigationAction(input: {
+  readonly state: Pick<NavigationState, "index" | "routes">;
+  readonly dismissingRouteKey: string | null;
+  readonly thread: ThreadSelection;
+}) {
+  return createHomeThreadRouteAction({
+    ...input,
+    params: {
+      environmentId: input.thread.environmentId,
+      threadId: input.thread.id,
+    },
+  });
+}
 
 function thread(id: string): ThreadSelection {
   return {

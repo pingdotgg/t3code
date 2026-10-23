@@ -54,7 +54,7 @@ export interface AgentActivityProps {
 // This function is serialized into the widget extension's JS bundle, so it
 // must stay self-contained: no references to module-scope helpers, only the
 // imported view/modifier factories.
-export function AgentActivity(
+function AgentActivity(
   props: AgentActivityProps,
   environment: LiveActivityEnvironment,
 ): LiveActivityLayout {

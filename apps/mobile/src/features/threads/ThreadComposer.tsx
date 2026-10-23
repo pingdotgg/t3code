@@ -140,7 +140,7 @@ function collapsedEditorInset(text: ScaledTextRole): number {
   return Math.max(0, Math.round(COLLAPSED_EDITOR_DEFAULT_INSET - shift));
 }
 
-export function useCompactComposerEditor(text: ScaledTextRole, value: string) {
+function useCompactComposerEditor(text: ScaledTextRole, value: string) {
   const [contentSize, setContentSize] = useState({ width: 0, height: 0 });
   const [compactWidth, setCompactWidth] = useState(0);
   const contentHeight = contentSize.height;
@@ -236,7 +236,6 @@ export interface ThreadComposerProps {
   readonly bottomInset?: number;
   readonly connectionState: RemoteClientConnectionState;
   readonly environmentLabel: string | null;
-  readonly threadSyncPhase?: "loading" | "syncing" | null;
   readonly selectedThread: EnvironmentThreadShell;
   readonly reportedModelSelection?: ModelSelection | null;
   readonly hasCompactableConversation: boolean;
@@ -284,7 +283,7 @@ export interface ThreadComposerProps {
 // Android gets NO layout transition: the composer rides the keyboard via KeyboardStickyView
 // (frame-synced to the IME), and a time-based morph running alongside that translate reads as
 // jitter.
-export const COMPOSER_TRANSITION_DURATION_MS = 220;
+const COMPOSER_TRANSITION_DURATION_MS = 220;
 // Side panes already animate the dock's width. Nested horizontal layout
 // transitions would leave the surface trailing its toolbar's new position.
 const composerHeightTransition: LayoutAnimationFunction = (values) => {
@@ -308,8 +307,7 @@ const composerHeightTransition: LayoutAnimationFunction = (values) => {
     },
   };
 };
-export const COMPOSER_LAYOUT_TRANSITION =
-  Platform.OS === "android" ? undefined : composerHeightTransition;
+const COMPOSER_LAYOUT_TRANSITION = Platform.OS === "android" ? undefined : composerHeightTransition;
 // Share of the one-row composer the draft keeps; a long model name truncates first.
 const INLINE_EDITOR_MIN_WIDTH = "40%";
 const INLINE_EDITOR_HEIGHT = 36;
@@ -376,7 +374,7 @@ function SendActionButton(props: {
   );
 }
 
-export function ComposerSurface(props: {
+function ComposerSurface(props: {
   readonly children: ReactNode;
   readonly style: ViewStyle;
   readonly animateLayout?: boolean;
@@ -563,9 +561,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     threadShells: useThreadShells(),
     currentThreadId: props.selectedThread.id,
     projectCwd: props.projectCwd,
-    pullRequestProjectId: props.serverConfig?.environment.capabilities.pullRequests
-      ? (project?.id ?? null)
-      : null,
+    pullRequestProjectId: props.serverConfig ? (project?.id ?? null) : null,
     pullRequestRepository: project?.repositoryIdentity?.displayName ?? null,
     threadPullRequests: props.selectedThread.pullRequests,
     selectedProviderStatus,
@@ -958,9 +954,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
               <ComposerAttachmentButton
                 size={hasSidebarTabBar ? "large" : "regular"}
                 disabled={isSubmissionLocked}
-                supportsFiles={Boolean(
-                  props.serverConfig?.environment.capabilities.fileAttachments,
-                )}
+                supportsFiles={props.serverConfig !== null}
                 onPickMedia={props.onPickDraftMedia}
                 onPickFiles={props.onPickDraftFiles}
               />
@@ -1104,10 +1098,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                     composerMenu.onSelectionChange(selection);
                   };
                   const capabilities = props.serverConfig?.environment.capabilities;
-                  const advertisedMax =
-                    capabilities?.attachmentUploads === true
-                      ? capabilities.fileAttachments?.maxUploadBytes
-                      : undefined;
+                  const advertisedMax = capabilities?.fileAttachments?.maxUploadBytes;
                   const maxBytes =
                     advertisedMax === undefined
                       ? null
@@ -1150,12 +1141,8 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                       insertPaste();
                     } else {
                       Dialog.alert(
-                        wouldExceedInputLimit
-                          ? "Pasted text is too large for this message"
-                          : "Could not attach pasted text",
-                        wouldExceedInputLimit
-                          ? "Remove some text or an attachment, then paste again."
-                          : "Remove an attachment or use a smaller paste, then try again.",
+                        "Pasted text is too large for this message",
+                        "Remove some text or an attachment, then paste again.",
                       );
                     }
                     return;
@@ -1208,28 +1195,13 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   presentation={voicePresentation}
                   onCancel={voiceInput.cancel}
                 />
-                {isVoiceInputPresented ? (
-                  <ComposerDictationStatus
-                    audioLevels={voiceInput.audioLevels}
-                    elapsedSeconds={voiceInput.elapsedSeconds}
-                    phase={voiceInput.state.phase}
-                    presentation={voicePresentation}
-                    onDismissError={voiceInput.cancel}
-                  />
-                ) : (
-                  <View className="min-w-0 flex-1 flex-row items-center justify-between">
-                    <ComposerAttachmentButton
-                      size={hasSidebarTabBar ? "large" : "regular"}
-                      disabled={isSubmissionLocked}
-                      supportsFiles={Boolean(
-                        props.serverConfig?.environment.capabilities.fileAttachments,
-                      )}
-                      onPickMedia={props.onPickDraftMedia}
-                      onPickFiles={props.onPickDraftFiles}
-                    />
-                    {modelControl}
-                  </View>
-                )}
+                <ComposerDictationStatus
+                  audioLevels={voiceInput.audioLevels}
+                  elapsedSeconds={voiceInput.elapsedSeconds}
+                  phase={voiceInput.state.phase}
+                  presentation={voicePresentation}
+                  onDismissError={voiceInput.cancel}
+                />
                 <View className="shrink-0 flex-row items-center">
                   <ComposerDictationPrimaryAction
                     size={hasSidebarTabBar ? "large" : "regular"}

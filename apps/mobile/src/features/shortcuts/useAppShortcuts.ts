@@ -1,5 +1,5 @@
 import * as QuickActions from "expo-quick-actions";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Platform } from "react-native";
 import { useLinkTo, type NavigationState } from "@react-navigation/native";
 
@@ -52,10 +52,7 @@ function useRecentThreadShortcutSync(state: NavigationState): void {
   // (mounted in the root stack layout) from subscribing the root to the
   // active thread's shell, which would re-render every screen on each
   // title/status/session change.
-  const threadRef = useMemo(
-    () => (Platform.OS === "android" ? activeThreadRef(state) : null),
-    [state],
-  );
+  const threadRef = Platform.OS === "android" ? activeThreadRef(state) : null;
   const threadShell = useThreadShell(threadRef);
   // null until the persisted list loads; recording waits on it so the first
   // thread opened after a cold start cannot clobber older entries.

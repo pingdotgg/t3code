@@ -123,28 +123,21 @@ export function ThreadMcpApp(props: {
 
   const { themeId, themeAppearance, themeVariables, systemColorsActive } =
     useAppearancePreferences();
-  const theme = useMemo(
-    () =>
-      mobileHtmlRenderTheme({
-        themeId,
-        appearance: themeAppearance,
-        variables: themeVariables,
-        systemColors: systemColorsActive,
-        platform: Platform.OS,
-      }),
-    [themeId, themeAppearance, themeVariables, systemColorsActive],
-  );
-  const resource = useMemo(
-    () => ({
-      _tag: "attachment" as const,
-      attachmentId: app.attachmentId,
-      fileName: mcpAppFileName(app),
-      mimeType: "text/html",
-      disposition: "inline" as const,
-      renderIntent: "mcp-app" as const,
-    }),
-    [app],
-  );
+  const theme = mobileHtmlRenderTheme({
+    themeId,
+    appearance: themeAppearance,
+    variables: themeVariables,
+    systemColors: systemColorsActive,
+    platform: Platform.OS,
+  });
+  const resource = {
+    _tag: "attachment" as const,
+    attachmentId: app.attachmentId,
+    fileName: mcpAppFileName(app),
+    mimeType: "text/html",
+    disposition: "inline" as const,
+    renderIntent: "mcp-app" as const,
+  };
   const asset = useAssetUrlState(props.environmentId, resource);
   // The view keeps its first URL: a re-minted one would reload the app.
   const [uri, setUri] = useState<string | null>(null);
@@ -463,13 +456,10 @@ export function ThreadMcpApp(props: {
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Each new document needs the call.
   }, [toolCall, uri, generation, documentKey]);
 
-  const source = useMemo(
-    () =>
-      uri === null
-        ? null
-        : { html: outerDocument(uri, mcpAppAllowAttribute(app.permissions), secret) },
-    [uri, app.permissions, secret],
-  );
+  const source =
+    uri === null
+      ? null
+      : { html: outerDocument(uri, mcpAppAllowAttribute(app.permissions), secret) };
 
   if (presentedFullscreen) {
     return (

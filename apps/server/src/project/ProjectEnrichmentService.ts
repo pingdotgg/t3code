@@ -41,9 +41,6 @@ export interface ProjectEnrichmentServiceOptions {
   readonly cacheCapacity?: number;
   readonly maxPending?: number;
   readonly concurrency?: number;
-  readonly successTtl?: Duration.Input;
-  readonly faviconTtl?: Duration.Input;
-  readonly failureTtl?: Duration.Input;
 }
 
 export class ProjectEnrichmentService extends Context.Service<
@@ -92,17 +89,14 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
   const cacheCapacity = Math.max(1, options.cacheCapacity ?? DEFAULT_CACHE_CAPACITY);
   const maxPending = Math.max(1, options.maxPending ?? DEFAULT_MAX_PENDING);
   const concurrency = Math.max(1, options.concurrency ?? DEFAULT_CONCURRENCY);
-  const successTtl = options.successTtl ?? DEFAULT_SUCCESS_TTL;
-  const failureTtl = options.failureTtl ?? DEFAULT_FAILURE_TTL;
-  const faviconTtl = options.faviconTtl ?? DEFAULT_FAVICON_TTL;
 
   const repositoryIdentityCache = yield* Cache.makeWith(
     (workspaceRoot: string) => Effect.exit(repositoryIdentityResolver.resolve(workspaceRoot)),
     {
       capacity: cacheCapacity,
       timeToLive: Exit.match({
-        onFailure: () => failureTtl,
-        onSuccess: (result) => (Exit.isSuccess(result) ? successTtl : failureTtl),
+        onFailure: () => DEFAULT_FAILURE_TTL,
+        onSuccess: (result) => (Exit.isSuccess(result) ? DEFAULT_SUCCESS_TTL : DEFAULT_FAILURE_TTL),
       }),
     },
   );
@@ -111,8 +105,8 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
     {
       capacity: cacheCapacity,
       timeToLive: Exit.match({
-        onFailure: () => failureTtl,
-        onSuccess: (result) => (Exit.isSuccess(result) ? faviconTtl : failureTtl),
+        onFailure: () => DEFAULT_FAILURE_TTL,
+        onSuccess: (result) => (Exit.isSuccess(result) ? DEFAULT_FAVICON_TTL : DEFAULT_FAILURE_TTL),
       }),
     },
   );

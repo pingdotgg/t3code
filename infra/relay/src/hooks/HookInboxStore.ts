@@ -34,7 +34,7 @@ const MAX_COUNTED_FAILURES = 25;
  * 10 s. After that the environment is likely gone again: 30 s, 1 min, 2 min,
  * ... up to 10 min.
  */
-export const retrySchedule = Schedule.spaced("10 seconds").pipe(
+const retrySchedule = Schedule.spaced("10 seconds").pipe(
   Schedule.upTo({ times: 18 }),
   Schedule.concat(
     Schedule.exponential("30 seconds").pipe(
@@ -62,7 +62,7 @@ export interface HeldHook {
 
 export type DeliveryOutcome = "delivered" | "busy" | "unreachable";
 
-export const retryDelayMs = Effect.fn("HookInboxStore.retryDelayMs")(function* (failures: number) {
+const retryDelayMs = Effect.fn("HookInboxStore.retryDelayMs")(function* (failures: number) {
   const step = yield* Schedule.toStep(retrySchedule);
   let delay = MAX_RETRY_DELAY;
   for (

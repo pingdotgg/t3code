@@ -15,18 +15,10 @@ const slugSchema = TrimmedNonEmptyString.check(
 export const ProviderDriverKind = slugSchema.pipe(Schema.brand("ProviderDriverKind"));
 export type ProviderDriverKind = typeof ProviderDriverKind.Type;
 
-const isProviderDriverKindValue = Schema.is(ProviderDriverKind);
-export const isProviderDriverKind = (value: unknown): value is ProviderDriverKind =>
-  isProviderDriverKindValue(value);
+export const isProviderDriverKind = Schema.is(ProviderDriverKind);
 
 export const ProviderInstanceId = slugSchema.pipe(Schema.brand("ProviderInstanceId"));
 export type ProviderInstanceId = typeof ProviderInstanceId.Type;
-
-export const ProviderInstanceRef = Schema.Struct({
-  instanceId: ProviderInstanceId,
-  driver: ProviderDriverKind,
-});
-export type ProviderInstanceRef = typeof ProviderInstanceRef.Type;
 
 export const ProviderInstanceEnvironmentVariableName = TrimmedNonEmptyString.check(
   Schema.isMaxLength(ENVIRONMENT_VARIABLE_NAME_MAX_CHARS),

@@ -1,5 +1,5 @@
 import type { NativeStackNavigationOptions } from "@react-navigation/native-stack";
-import { createContext, use, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, use, useEffect, useState, type ReactNode } from "react";
 import { Animated, Platform, Pressable, View } from "react-native";
 
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
@@ -53,13 +53,10 @@ export function WorkspaceConnectionStatusProvider(props: { readonly children: Re
 
   const label = presentation?.label;
   const showsProgress = presentation?.showsProgress ?? false;
-  const status = useMemo(
-    () =>
-      label === undefined || phase === "waiting"
-        ? null
-        : { label, showsProgress, fadeIn: phase === "fading" },
-    [label, showsProgress, phase],
-  );
+  const status =
+    label === undefined || phase === "waiting"
+      ? null
+      : { label, showsProgress, fadeIn: phase === "fading" };
   return <ConnectionStatusContext value={status}>{props.children}</ConnectionStatusContext>;
 }
 

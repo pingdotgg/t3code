@@ -42,7 +42,6 @@ import {
   TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import { decodeGitHubPullRequestListJson } from "@t3tools/source-control-github/server/gitHubPullRequests";
 import * as GitHubChangeRequestTemplate from "@t3tools/source-control-github/server/gitHubChangeRequestTemplate";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
@@ -131,10 +130,12 @@ function normalizeFakePullRequestSummary(raw: unknown): FakePullRequestSummary |
 
   const record = raw as Record<string, unknown>;
   const number = record.number;
-  const title = record.title;
-  const url = record.url;
-  const baseRefName = record.baseRefName;
-  const headRefName = record.headRefName;
+  const title = typeof record.title === "string" ? record.title.trim() : undefined;
+  const url = typeof record.url === "string" ? record.url.trim() : undefined;
+  const baseRefName =
+    typeof record.baseRefName === "string" ? record.baseRefName.trim() : undefined;
+  const headRefName =
+    typeof record.headRefName === "string" ? record.headRefName.trim() : undefined;
   const headRepository =
     typeof record.headRepository === "object" && record.headRepository !== null
       ? (record.headRepository as Record<string, unknown>)
@@ -146,10 +147,15 @@ function normalizeFakePullRequestSummary(raw: unknown): FakePullRequestSummary |
 
   if (
     typeof number !== "number" ||
+    number <= 0 ||
     typeof title !== "string" ||
+    title.length === 0 ||
     typeof url !== "string" ||
+    url.length === 0 ||
     typeof baseRefName !== "string" ||
-    typeof headRefName !== "string"
+    baseRefName.length === 0 ||
+    typeof headRefName !== "string" ||
+    headRefName.length === 0
   ) {
     return null;
   }
@@ -167,15 +173,15 @@ function normalizeFakePullRequestSummary(raw: unknown): FakePullRequestSummary |
     typeof record.isCrossRepository === "boolean" ? record.isCrossRepository : undefined;
   const headRepositoryNameWithOwner =
     typeof record.headRepositoryNameWithOwner === "string"
-      ? record.headRepositoryNameWithOwner
+      ? record.headRepositoryNameWithOwner.trim()
       : typeof headRepository?.nameWithOwner === "string"
-        ? headRepository.nameWithOwner
+        ? headRepository.nameWithOwner.trim()
         : undefined;
   const headRepositoryOwnerLogin =
     typeof record.headRepositoryOwnerLogin === "string"
-      ? record.headRepositoryOwnerLogin
+      ? record.headRepositoryOwnerLogin.trim()
       : typeof headRepositoryOwner?.login === "string"
-        ? headRepositoryOwner.login
+        ? headRepositoryOwner.login.trim()
         : undefined;
 
   return {
@@ -185,6 +191,10 @@ function normalizeFakePullRequestSummary(raw: unknown): FakePullRequestSummary |
     baseRefName,
     headRefName,
     ...(state ? { state } : {}),
+    ...(typeof record.updatedAt === "string" ? { updatedAt: record.updatedAt } : {}),
+    closedAt: typeof record.closedAt === "string" ? record.closedAt : null,
+    mergedAt: typeof record.mergedAt === "string" ? record.mergedAt : null,
+    ...(typeof record.headRefOid === "string" ? { headSha: record.headRefOid } : {}),
     ...(isDraft === true ? { isDraft: true } : {}),
     ...(isCrossRepository !== undefined ? { isCrossRepository } : {}),
     ...(headRepositoryNameWithOwner ? { headRepositoryNameWithOwner } : {}),
@@ -637,17 +647,13 @@ function createGitHubProviderWithFakeGh(scenario: FakeGhScenario = {}): {
                 "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
               ],
             }).pipe(
-              Effect.map((result) => {
-                const raw = result.stdout.trim();
-                if (raw.length === 0) return [];
-                const decoded = decodeGitHubPullRequestListJson(raw);
-                return Result.isSuccess(decoded)
-                  ? decoded.success.map((record) => ({
-                      provider: SourceControlProviderKind.make("github"),
-                      ...record,
-                    }))
-                  : [];
-              }),
+              Effect.map((result) => JSON.parse(result.stdout) as unknown[]),
+              Effect.map((raw) =>
+                raw.flatMap((entry) => {
+                  const summary = normalizeFakePullRequestSummary(entry);
+                  return summary === null ? [] : [toChangeRequest(summary)];
+                }),
+              ),
             ),
       createChangeRequest: (input) =>
         execute({

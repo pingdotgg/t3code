@@ -1,8 +1,4 @@
-import {
-  type SourceControlDiscoveryResult,
-  type VcsDiscoveryItem,
-  type VcsDriverKind,
-} from "@t3tools/contracts";
+import { type SourceControlDiscoveryResult, type VcsDriverKind } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -71,22 +67,10 @@ export const make = Effect.gen(function* () {
   const sourceControlProviders = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
 
   const probe = <Kind extends VcsDriverKind>(
-    input: DiscoveryProbe & { readonly kind: Kind },
+    input: VcsProbe & { readonly kind: Kind },
   ): Effect.Effect<DiscoveryProbeResult<Kind>> => {
     const executable = input.executable;
     const versionArgs = input.versionArgs;
-
-    if (!executable || !versionArgs) {
-      return Effect.succeed({
-        kind: input.kind,
-        label: input.label,
-        implemented: input.implemented,
-        status: "missing" as const,
-        version: Option.none<string>(),
-        installHint: input.installHint,
-        detail: Option.some(input.installHint),
-      } satisfies DiscoveryProbeResult<Kind>);
-    }
 
     return process
       .run({
@@ -132,7 +116,7 @@ export const make = Effect.gen(function* () {
   return SourceControlDiscovery.of({
     discover: Effect.all({
       versionControlSystems: Effect.all(
-        VCS_PROBES.map((entry) => probe(entry)) as ReadonlyArray<Effect.Effect<VcsDiscoveryItem>>,
+        VCS_PROBES.map((entry) => probe(entry)),
         { concurrency: "unbounded" },
       ),
       sourceControlProviders: sourceControlProviders.discover,

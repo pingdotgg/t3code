@@ -186,7 +186,6 @@ function harness(input?: {
     claimRelease: () => Effect.die("unused"),
     withClaimedTunnel: () => Effect.die("unused"),
     claimDeprovision: () => Effect.die("unused"),
-    remove: () => Effect.die("unused"),
     removeClaimed: () => Effect.die("unused"),
   });
   const provider = ManagedEndpointProvider.ManagedEndpointProvider.of({

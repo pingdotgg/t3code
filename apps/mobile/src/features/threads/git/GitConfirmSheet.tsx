@@ -3,7 +3,7 @@ import { resolveAutoFeatureBranchName } from "@t3tools/shared/git";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { useCallback, useMemo } from "react";
+import { useCallback } from "react";
 import { Platform, ScrollView, useWindowDimensions, View } from "react-native";
 
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -47,19 +47,15 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
   const environmentId = params.environmentId ?? "";
   const threadId = params.threadId ?? "";
 
-  const copy = useMemo(
-    () =>
-      confirmAction
-        ? resolveDefaultBranchActionDialogCopy({
-            action: confirmAction,
-            branchName,
-            includesCommit,
-          })
-        : null,
-    [branchName, confirmAction, includesCommit],
-  );
+  const copy = confirmAction
+    ? resolveDefaultBranchActionDialogCopy({
+        action: confirmAction,
+        branchName,
+        includesCommit,
+      })
+    : null;
 
-  const continuePendingAction = useCallback(async () => {
+  const continuePendingAction = async () => {
     if (!canWriteSourceControl || !confirmAction) return;
     navigation.dispatch(StackActions.replace("Thread", { environmentId, threadId }));
     await gitActions.onRunSelectedThreadGitAction({
@@ -67,15 +63,7 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
       ...(params.commitMessage ? { commitMessage: params.commitMessage } : {}),
       ...(params.filePaths ? { filePaths: params.filePaths.split(",") } : {}),
     });
-  }, [
-    canWriteSourceControl,
-    confirmAction,
-    environmentId,
-    gitActions,
-    params,
-    navigation,
-    threadId,
-  ]);
+  };
 
   const movePendingActionToFeatureBranch = useCallback(async () => {
     if (!canChangeThreadBranch || !confirmAction) return;

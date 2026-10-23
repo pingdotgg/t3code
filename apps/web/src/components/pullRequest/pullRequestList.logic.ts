@@ -25,7 +25,7 @@ import type {
 
 import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 
-import { toSortableTimestamp } from "../../lib/threadSort";
+import { toSortableTimestamp } from "@t3tools/client-runtime/state/thread-sort";
 import type { PullRequestListSort } from "./pullRequestListPreferences";
 
 export interface EnvironmentPullRequestEntry extends PullRequestListEntry {

@@ -1,5 +1,5 @@
 import { useNavigation, useNavigationState } from "@react-navigation/native";
-import { useCallback, useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { BackHandler, Keyboard, View, type TextInputInstance } from "react-native";
 import { AndroidHeaderIconButton } from "../../components/ui/AndroidScreenHeader";
 import { AndroidAnchoredMenu } from "../../components/ui/AndroidAnchoredMenu";
@@ -22,7 +22,7 @@ export function PullRequestToolbar(props: { readonly onRequestVisibility?: () =>
   const tab = workspace.state.tabs.pullRequests;
   const input = useRef<TextInputInstance>(null);
   const searching = tab.searchMode !== "resting";
-  const openSearch = useCallback(() => {
+  const openSearch = () => {
     onRequestVisibility?.();
     dispatch({
       type: "scroll",
@@ -32,13 +32,13 @@ export function PullRequestToolbar(props: { readonly onRequestVisibility?: () =>
     dispatch({ type: "search", tab: "pullRequests" });
     input.current?.focus();
     return true;
-  }, [dispatch, getScrollOffset, onRequestVisibility]);
+  };
   useHardwareKeyboardCommand("focusSearch", openSearch);
-  const closeSearch = useCallback(() => {
+  const closeSearch = () => {
     Keyboard.dismiss();
     recordScrollOffset("pullRequests", tab.searchEntryOffset);
     dispatch({ type: "cancel", tab: "pullRequests" });
-  }, [dispatch, recordScrollOffset, tab.searchEntryOffset]);
+  };
   useEffect(() => {
     if (!searching || !listFocused) return;
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {

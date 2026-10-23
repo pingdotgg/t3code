@@ -23,9 +23,9 @@ vi.mock("../../../components/ui/AppText", () => ({
     return null;
   },
 }));
-vi.mock("./SettingsChoiceRow", () => ({ SettingsChoiceRow: () => null }));
-vi.mock("./SettingsSection", () => ({
-  SettingsSection: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+vi.mock("../../../components/ui/ListChoiceRow", () => ({ ListChoiceRow: () => null }));
+vi.mock("../../../components/ui/ListSection", () => ({
+  ListSection: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
 
 import { BranchNamingSettings } from "./BranchNamingSettings";

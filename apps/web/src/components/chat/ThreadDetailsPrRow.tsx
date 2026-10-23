@@ -104,8 +104,7 @@ export function ThreadDetailsPrRow({
   onStopWatching?: (() => void) | undefined;
 }) {
   const serverConfigs = useServerConfigs();
-  const supportsPullRequests =
-    serverConfigs.get(environmentId)?.environment.capabilities.pullRequests === true;
+  const supportsPullRequests = serverConfigs.get(environmentId) !== undefined;
   const repository = sourceControlRepositorySelector(project?.repositoryIdentity);
   const reference: PullRequestRef | null =
     supportsPullRequests && project !== null

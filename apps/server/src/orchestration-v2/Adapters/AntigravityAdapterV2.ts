@@ -160,7 +160,6 @@ export function makeAntigravityAcpAdapterFlavor(
     makeRuntime,
     // Loading history replays every tool call; resume restores the session
     // without the replay and is what the official client does.
-    preferResumeSession: true,
     subagentsIdleOnTurnCompletion: true,
     ...(options.onSessionEvent === undefined ? {} : { onSessionEvent: options.onSessionEvent }),
     applyModelSelection: Effect.fn("AntigravityAdapterV2.applyModelSelection")(function* ({
