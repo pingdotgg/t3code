@@ -400,6 +400,10 @@ it.layer(
           status.message,
           "Codex CLI is not authenticated. Run `codex login` and try again.",
         );
+        assert.deepStrictEqual(status.usageLimits?.unavailable, {
+          reason: "probeFailed",
+          message: "Codex CLI is not authenticated. Run `codex login` and try again.",
+        });
       }),
     );
 
