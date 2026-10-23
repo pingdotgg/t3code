@@ -187,6 +187,7 @@ export function useAttachmentDocument(input: {
     uri,
     /** Native viewers resolve their own fresh URL from this instead of reusing `uri`. */
     resource,
+    refresh,
     content,
     table,
     error: error ?? (needsText ? contentError : null),

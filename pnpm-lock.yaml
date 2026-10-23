@@ -1363,6 +1363,12 @@ importers:
       effect:
         specifier: 4.0.5
         version: 4.0.5
+      jszip:
+        specifier: 3.10.1
+        version: 3.10.1
+      pako:
+        specifier: 1.0.11
+        version: 1.0.11
       three:
         specifier: 0.180.0
         version: 0.180.0

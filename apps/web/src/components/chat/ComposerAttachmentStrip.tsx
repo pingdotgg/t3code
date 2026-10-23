@@ -27,13 +27,10 @@ import {
 import { cn } from "~/lib/utils";
 import { getRestingComposerImagePreviewCounts } from "../composerFooterLayout";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
-import { AttachmentFilePreview } from "../files/AttachmentFilePreview";
 import { AttachmentImage } from "../media/AttachmentImage";
 import { Button } from "../ui/button";
-import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ComposerImageThumbnail } from "./ComposerImageThumbnail";
-import { composerFloatingLayerProps } from "./composerEventScope";
 import {
   attachVideoThumbnail,
   buildExpandedImagePreview,
@@ -484,55 +481,6 @@ export function ComposerAttachmentFileList({
         );
       })}
     </div>
-  );
-}
-
-export function ComposerFilePreviewDialog({
-  file,
-  onRemove,
-  onPreviewFileIdChange,
-}: {
-  readonly file: ComposerFileAttachment;
-  readonly onRemove: (fileId: string) => void;
-  readonly onPreviewFileIdChange: (fileId: string | null) => void;
-}) {
-  const onClose = () => onPreviewFileIdChange(null);
-  return (
-    <Dialog
-      open
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
-    >
-      <DialogPopup
-        {...composerFloatingLayerProps}
-        className="h-[min(85vh,52rem)] max-w-4xl overflow-hidden"
-        showCloseButton={false}
-      >
-        <DialogTitle className="sr-only">{file.name}</DialogTitle>
-        <AttachmentFilePreview
-          key={file.id}
-          name={file.name}
-          mimeType={file.mimeType}
-          sizeBytes={file.sizeBytes}
-          file={file.file}
-          origin="Draft"
-          {...(file.uploadedAttachmentId && file.uploadEnvironmentId
-            ? {
-                asset: {
-                  environmentId: file.uploadEnvironmentId,
-                  attachmentId: file.uploadedAttachmentId,
-                },
-              }
-            : {})}
-          onRemove={() => {
-            onRemove(file.id);
-            onClose();
-          }}
-          onClose={onClose}
-        />
-      </DialogPopup>
-    </Dialog>
   );
 }
 

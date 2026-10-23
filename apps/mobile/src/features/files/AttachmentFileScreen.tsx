@@ -4,7 +4,7 @@ import * as Dialog from "../../components/ui/Dialog";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import type { MenuAction } from "@react-native-menu/menu";
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { useEffect, useRef, useState } from "react";
 import { Platform, ScrollView, View } from "react-native";
@@ -30,6 +30,11 @@ import { useAppearancePreferences } from "../settings/appearance/AppearancePrefe
 import { SourceFileSurface } from "./SourceFileSurface";
 import { WorkspaceFileWebPreview } from "./WorkspaceFileWebPreview";
 import { HtmlRenderWebView } from "../threads/HtmlRenderWebView";
+import { useEnvironmentServerConfig } from "../../state/entities";
+import { scopedThreadKey } from "../../lib/scopedEntities";
+import { questionAttachmentDraftPrefix } from "../../state/question-attachments";
+import { ZipArchiveView } from "./ZipArchiveView";
+import { isZipAttachment } from "./zipTree";
 
 export type AttachmentFileRouteParams = {
   readonly environmentId?: string;
@@ -190,7 +195,9 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     attachment: localAttachment,
   });
   const [nativeOpen, setNativeOpen] = useState(false);
-  const nativeKind = nativeViewerKind(document.kind);
+  const isZip = isZipAttachment(params);
+  const serverConfig = useEnvironmentServerConfig(environmentId);
+  const nativeKind = isZip ? null : nativeViewerKind(document.kind);
   const [nativeViewer, setNativeViewer] = useState<"pending" | "open" | "unavailable" | null>(
     nativeKind ? "pending" : null,
   );
@@ -322,6 +329,36 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     menuActions.find(({ id }) => id === event.nativeEvent.event)?.onPress();
   };
   const subtitle = `${draftKey ? "Draft attachment" : "Attachment"}${sizeBytes > 0 ? ` · ${formatAttachmentSize(sizeBytes)}` : ""}`;
+
+  if (isZip && !document.error) {
+    const fileAttachments = serverConfig?.environment.capabilities.fileAttachments;
+    const threadId = params.threadId ? ThreadId.make(params.threadId) : null;
+    const questionPrefix =
+      environmentId && threadId ? questionAttachmentDraftPrefix(environmentId, threadId) : null;
+    return (
+      <View className="flex-1 bg-sheet">
+        <ZipArchiveView
+          name={params.name}
+          subtitle={subtitle}
+          tintColor={iconColor}
+          sizeBytes={sizeBytes}
+          uri={uri}
+          isLocal={localAttachment !== null}
+          refresh={document.refresh}
+          draftKey={
+            draftKey ??
+            (environmentId && threadId ? scopedThreadKey(environmentId, threadId) : null)
+          }
+          questionPrefix={
+            questionPrefix && draftKey?.startsWith(questionPrefix) ? questionPrefix : null
+          }
+          maxAttachmentBytes={fileAttachments?.maxUploadBytes}
+          onSave={() => void share()}
+          onRemove={draftKey ? removeFromDraft : null}
+        />
+      </View>
+    );
+  }
 
   return (
     <View className="flex-1 bg-sheet">

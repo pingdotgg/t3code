@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./zip-preview": {
+      "types": "./src/zipPreview.ts",
+      "default": "./src/zipPreview.ts"
+    },
     "./workspace-basename-lookup": {
       "types": "./src/workspaceBasenameLookup.ts",
       "default": "./src/workspaceBasenameLookup.ts"
@@ -460,6 +464,8 @@
     "@t3tools/source-control-github": "workspace:*",
     "@t3tools/source-control-gitlab": "workspace:*",
     "effect": "catalog:",
+    "jszip": "3.10.1",
+    "pako": "1.0.11",
     "three": "0.180.0"
   },
   "devDependencies": {

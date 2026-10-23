@@ -191,9 +191,7 @@ export function RightPanelSurfaceContent(props: {
       return (
         <Suspense fallback={null}>
           <FilePreviewPanel
-            key={`${props.environmentId}:${
-              attachment ? `attachment:${attachment.id}` : files.workspaceRoot
-            }`}
+            key={`${props.environmentId}:${attachment ? surface.id : files.workspaceRoot}`}
             environmentId={props.environmentId}
             cwd={files.workspaceRoot ?? ""}
             projectName={files.projectName ?? ""}
@@ -203,7 +201,9 @@ export function RightPanelSurfaceContent(props: {
             availableEditors={files.availableEditors}
             openInShortcutEnabled={visible}
             relativePath={surface.kind === "file" ? surface.relativePath : null}
-            {...(attachment ? { attachment } : {})}
+            {...(attachment
+              ? { attachment, draftKey: surface.kind === "file" ? surface.draftKey : undefined }
+              : {})}
             revealLine={surface.kind === "file" ? (surface.revealLine ?? null) : null}
             revealRequestId={surface.kind === "file" ? surface.revealRequestId : 0}
             onOpenFile={files.onOpenFile}

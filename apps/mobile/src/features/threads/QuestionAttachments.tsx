@@ -5,7 +5,7 @@ import { TextInputWrapper } from "expo-paste-input";
 import { AppTextInput as TextInput } from "../../components/ui/AppText";
 import { useNativePaste } from "../../lib/useNativePaste";
 import { convertPastedImagesToAttachments } from "../../lib/composerImages";
-import { PROVIDER_SEND_TURN_MAX_ATTACHMENTS, type UserInputQuestion } from "@t3tools/contracts";
+import type { UserInputQuestion } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { View } from "react-native";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
@@ -26,14 +26,15 @@ import {
 } from "../../state/use-composer-drafts";
 import {
   changeQuestionAttachmentPreparation,
+  questionAttachmentCapacity,
   questionAttachmentDraftKey,
+  questionAttachmentDraftPrefix,
   questionAttachmentPreparationAtom,
 } from "../../state/question-attachments";
 
 export function QuestionAttachments(props: {
   requestId: string;
   question: UserInputQuestion;
-  questions: ReadonlyArray<UserInputQuestion>;
   disabled: boolean;
   value: string;
   onChangeText: (value: string) => void;
@@ -72,18 +73,12 @@ export function QuestionAttachments(props: {
     attachments: Parameters<typeof appendComposerDraftAttachments>[1],
   ) => {
     if (!selectedThread) return 0;
-    const current = appAtomRegistry.get(composerDraftsAtom);
-    const otherCount = props.questions.reduce((count, question) => {
-      const target = questionAttachmentDraftKey(
-        selectedThread.environmentId,
-        selectedThread.id,
-        props.requestId,
-        question.id,
-      );
-      return target === key ? count : count + (current[target]?.attachments.length ?? 0);
-    }, 0);
     return appendComposerDraftAttachments(key, attachments, {
-      maxAttachments: Math.max(0, PROVIDER_SEND_TURN_MAX_ATTACHMENTS - otherCount),
+      maxAttachments: questionAttachmentCapacity(
+        appAtomRegistry.get(composerDraftsAtom),
+        questionAttachmentDraftPrefix(selectedThread.environmentId, selectedThread.id),
+        key,
+      ),
     });
   };
   const paste = useNativePaste((uris) => {

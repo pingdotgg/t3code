@@ -1,5 +1,12 @@
 import { findRevealRef } from "./markdownFindContext";
-import { type MessageId, type ServerProviderSkill, ThreadId } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  type MessageId,
+  type ScopedThreadRef,
+  type ServerProviderSkill,
+  ThreadId,
+} from "@t3tools/contracts";
+import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { Link } from "@tanstack/react-router";
 import { useQuietThreadShell } from "../../state/entities";
@@ -61,6 +68,8 @@ import {
 import { chatMarkdownClipboardPayload } from "../../markdown-clipboard";
 import type { ChatMarkdownContextReference } from "../ChatMarkdown";
 import { cn } from "~/lib/utils";
+import { selectActiveRightPanelSurface, useRightPanelStore } from "~/rightPanelStore";
+import { isZipPreviewFile, useZipFileCounts } from "../files/filePreviewMode";
 import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
 import { WorkflowOpeningBlock } from "./WorkflowOpeningBlock";
 import { TimelineRowCtx, TimelineRowActivityCtx, type TimelineRow } from "./timelineRowContext";
@@ -71,6 +80,33 @@ import {
 } from "./TimelineRowParts";
 import { UserMessageContextReferenceChip } from "./UserMessageContextChips";
 import { resolvePreviewAnnotationImage } from "./TimelineUserMessageRow.logic";
+
+function ZipAttachmentStatus(props: {
+  readonly file: ChatFileAttachment;
+  readonly environmentId: EnvironmentId;
+  readonly threadRef: ScopedThreadRef | null;
+}) {
+  const fileCount = useZipFileCounts((counts) => counts[`${props.environmentId}:${props.file.id}`]);
+  const viewing = useRightPanelStore(
+    (state) =>
+      selectActiveRightPanelSurface(state.byThreadKey, props.threadRef)?.id ===
+      `attachment:${props.file.id}`,
+  );
+  return (
+    <span className="flex shrink-0 items-center gap-2 text-xs">
+      <span className="text-muted-foreground">
+        {fileCount === undefined
+          ? formatAttachmentSize(props.file.sizeBytes)
+          : `${fileCount.toLocaleString()} ${fileCount === 1 ? "file" : "files"} · ${formatAttachmentSize(props.file.sizeBytes)}`}
+      </span>
+      {viewing ? (
+        <span className="font-medium text-primary">Viewing</span>
+      ) : (
+        <EyeIcon className="size-4" />
+      )}
+    </span>
+  );
+}
 
 function UserVideoAttachment({ file }: { readonly file: ChatFileAttachment }) {
   const ctx = use(TimelineRowCtx);
@@ -528,7 +564,15 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                           className="focus-visible:ring-ring/70 flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md py-1 text-left text-sm hover:underline focus-visible:ring-2 focus-visible:ring-inset focus-visible:outline-none"
                         >
                           {fileIdentity}
-                          <EyeIcon className="size-4 shrink-0" />
+                          {isZipPreviewFile(file) ? (
+                            <ZipAttachmentStatus
+                              file={file}
+                              environmentId={ctx.activeThreadEnvironmentId}
+                              threadRef={ctx.threadRef}
+                            />
+                          ) : (
+                            <EyeIcon className="size-4 shrink-0" />
+                          )}
                         </button>
                         <Tooltip>
                           <TooltipTrigger

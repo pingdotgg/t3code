@@ -6,6 +6,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { remapFileCommentAnnotations } from "./fileCommentAnnotations";
 import {
   filePreviewReadErrorMessage,
+  isZipPreviewFile,
   resolveFilePreviewPath,
   setMarkdownTaskChecked,
   shouldShowFileExplorer,
@@ -60,6 +61,26 @@ describe("file comment annotations", () => {
         },
       },
     ]);
+  });
+});
+
+describe("isZipPreviewFile", () => {
+  it("recognizes ZIP archives by MIME type or extension", () => {
+    expect(isZipPreviewFile({ name: "photos", mimeType: "application/zip; charset=binary" })).toBe(
+      true,
+    );
+    expect(isZipPreviewFile({ name: "photos", mimeType: "application/x-zip-compressed" })).toBe(
+      true,
+    );
+    expect(isZipPreviewFile({ name: "Photos.ZIP", mimeType: "application/octet-stream" })).toBe(
+      true,
+    );
+    expect(isZipPreviewFile({ name: "photos.zip", mimeType: "text/plain" })).toBe(true);
+  });
+
+  it("does not treat other archives or ZIP-based documents as ZIP previews", () => {
+    expect(isZipPreviewFile({ name: "photos.tar.gz", mimeType: "application/gzip" })).toBe(false);
+    expect(isZipPreviewFile({ name: "report.docx", mimeType: "" })).toBe(false);
   });
 });
 

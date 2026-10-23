@@ -210,6 +210,7 @@ import {
   type DraftThreadEnvMode,
   useComposerDraftStore,
   DraftId,
+  composerFileNeedsReattach,
 } from "../composerDraftStore";
 import { type TerminalContextDraft } from "../lib/terminalContext";
 import { collectInlineContextIds } from "../lib/composerContextReferences";
@@ -1108,6 +1109,19 @@ export default function ChatView(props: ChatViewProps) {
     if (!activeThreadRef || !activeEnvironmentBootstrapComplete) return;
     useRightPanelStore.getState().reconcileFileSurfaces(activeThreadRef, activeProject !== null);
   }, [activeEnvironmentBootstrapComplete, activeProject, activeThreadRef]);
+
+  useEffect(() => {
+    if (!activeThreadRef) return;
+    const reconcile = () =>
+      useRightPanelStore.getState().reconcileDraftSurfaces(activeThreadRef, (draftKey, fileId) => {
+        const file = useComposerDraftStore
+          .getState()
+          .draftsByThreadKey[draftKey]?.files.find((entry) => entry.id === fileId);
+        return file !== undefined && !composerFileNeedsReattach(file);
+      });
+    reconcile();
+    return useComposerDraftStore.subscribe(reconcile);
+  }, [activeThreadRef]);
 
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
   useEffect(() => {

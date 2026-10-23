@@ -6,9 +6,9 @@ import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
 import { filePreviewKind, FILE_TEXT_PREVIEW_MAX_BYTES } from "@t3tools/shared/filePreview";
-import { ChevronRightIcon, DownloadIcon, Trash2Icon, WrapTextIcon, XIcon } from "lucide-react";
+import { ChevronRightIcon, DownloadIcon, Trash2Icon, WrapTextIcon } from "lucide-react";
 import { Check, Code2, Copy, Eye, Table2 } from "lucide";
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { useAssetUrlRefresh } from "~/assets/assetUrls";
 import ChatMarkdown from "~/components/ChatMarkdown";
@@ -29,8 +29,10 @@ import {
   FileSurfaceLoading,
   FileSurfaceNotice,
 } from "./fileSurfaceChrome";
+import { isZipPreviewFile } from "./filePreviewMode";
 
 const SourcePreview = lazy(() => import("./ReadOnlySourcePreview"));
+const ZipArchivePreview = lazy(() => import("./ZipArchivePreview"));
 
 const STALE_URL_MS = 5 * 60_000;
 
@@ -57,11 +59,12 @@ export function AttachmentFilePreview(props: {
   htmlRender?: boolean;
   threadRef?: ScopedThreadRef;
   origin?: string;
+  header?: ReactNode;
   onRemove?: () => void;
-  onClose?: () => void;
 }) {
-  const kind = filePreviewKind(props);
-  const delimiter = filePreviewDelimiter(props);
+  const isZip = isZipPreviewFile(props);
+  const kind = isZip ? "unsupported" : filePreviewKind(props);
+  const delimiter = isZip ? null : filePreviewDelimiter(props);
   const renderedMode =
     kind === "markdown" ? "markdown" : kind === "html" ? "html" : delimiter ? "table" : null;
   const attachmentId = props.asset?.attachmentId;
@@ -250,6 +253,21 @@ export function AttachmentFilePreview(props: {
         onError={() => setError("Unable to load image.")}
       />
     </div>
+  ) : isZip ? (
+    <Suspense fallback={<FileSurfaceLoading />}>
+      <ZipArchivePreview
+        key={`${url}:${revision}`}
+        name={props.name}
+        file={props.file ?? null}
+        url={url}
+        sizeBytes={props.sizeBytes}
+        origin={props.origin ?? (props.asset ? "Sent" : "Attachment")}
+        countKey={props.asset ? `${props.asset.environmentId}:${props.asset.attachmentId}` : null}
+        onRetry={() => setRevision((value) => value + 1)}
+        onSaveZip={save}
+        {...(props.onRemove ? { onRemove: props.onRemove } : {})}
+      />
+    </Suspense>
   ) : (
     <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1 px-6 text-center">
       <p className="text-sm font-medium">No preview for this file</p>
@@ -260,23 +278,39 @@ export function AttachmentFilePreview(props: {
     </div>
   );
 
+  if (isZip && !failure && url)
+    return (
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
+        {props.header ? (
+          <div className={FILE_SURFACE_SUBHEADER_CLASS} data-surface-subheader>
+            {props.header}
+          </div>
+        ) : null}
+        {body}
+      </div>
+    );
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       <div className={cn(FILE_SURFACE_SUBHEADER_CLASS)} data-surface-subheader>
-        <div className="flex min-w-0 flex-1 items-center text-xs">
-          <span className="shrink-0 px-0.5 text-muted-foreground">
-            {props.origin ?? "Attachment"}
-          </span>
-          <ChevronRightIcon className="mx-1 size-3.5 shrink-0 text-muted-foreground/60" />
-          <span aria-current="page" className="min-w-0 truncate px-0.5 font-medium text-foreground">
-            {props.name}
-          </span>
-          {props.sizeBytes > 0 ? (
-            <span className="ml-2 shrink-0 text-muted-foreground">
-              {formatAttachmentSize(props.sizeBytes)}
+        {props.header ?? (
+          <div className="flex min-w-0 flex-1 items-center text-xs">
+            <span className="shrink-0 px-0.5 text-muted-foreground">
+              {props.origin ?? "Attachment"}
             </span>
-          ) : null}
-        </div>
+            <ChevronRightIcon className="mx-1 size-3.5 shrink-0 text-muted-foreground/60" />
+            <span
+              aria-current="page"
+              className="min-w-0 truncate px-0.5 font-medium text-foreground"
+            >
+              {props.name}
+            </span>
+            {props.sizeBytes > 0 ? (
+              <span className="ml-2 shrink-0 text-muted-foreground">
+                {formatAttachmentSize(props.sizeBytes)}
+              </span>
+            ) : null}
+          </div>
+        )}
         {renderedMode ? (
           <FileSurfaceAction
             label={renderedToggleLabel(renderedMode, rendered)}
@@ -318,11 +352,6 @@ export function AttachmentFilePreview(props: {
         {props.onRemove ? (
           <FileSurfaceAction label="Remove from draft" onPress={props.onRemove}>
             <Trash2Icon className="size-3.5" />
-          </FileSurfaceAction>
-        ) : null}
-        {props.onClose ? (
-          <FileSurfaceAction label="Close" onPress={props.onClose}>
-            <XIcon className="size-3.5" />
           </FileSurfaceAction>
         ) : null}
       </div>

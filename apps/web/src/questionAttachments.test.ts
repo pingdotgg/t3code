@@ -7,6 +7,7 @@ import {
   questionAttachmentDraftPrefix,
   changeQuestionAttachmentPreparation,
   clearQuestionAttachmentDraft,
+  isQuestionAttachmentRemovalBlocked,
   useQuestionAttachmentPreparation,
 } from "./questionAttachments";
 
@@ -57,6 +58,18 @@ it("keeps question files separate from the normal draft and other questions", ()
   expect(release).toHaveBeenCalledWith([image]);
   expect(revoke).toHaveBeenCalledWith(image.previewUrl);
   revoke.mockRestore();
+});
+it("blocks removing question files only while that thread's answer is in flight", () => {
+  const target = questionAttachmentDraftId(environmentId, threadId, requestId, "q");
+  const input = { target, environmentId, threadId, responding: true };
+  expect(isQuestionAttachmentRemovalBlocked(input)).toBe(true);
+  expect(isQuestionAttachmentRemovalBlocked({ ...input, responding: false })).toBe(false);
+  expect(
+    isQuestionAttachmentRemovalBlocked({ ...input, target: { environmentId, threadId } }),
+  ).toBe(false);
+  expect(
+    isQuestionAttachmentRemovalBlocked({ ...input, threadId: ThreadId.make("thread-2") }),
+  ).toBe(false);
 });
 it("does not clear another environment whose id contains a question prefix", () => {
   const otherEnvironment = EnvironmentId.make(

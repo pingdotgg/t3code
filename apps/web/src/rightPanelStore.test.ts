@@ -975,6 +975,42 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("drops draft attachment tabs once their draft file is gone, without reopen history", () => {
+    const draftFile = {
+      type: "file" as const,
+      id: "draft-file",
+      name: "archive.zip",
+      mimeType: "application/zip",
+      sizeBytes: 42,
+    };
+    const store = useRightPanelStore.getState();
+    store.open(refA, "diff");
+    store.openAttachment(refA, draftFile, "draft-key");
+    store.openAttachment(refA, { ...draftFile, id: "sent-file" });
+    store.activateSurface(refA, "attachment:draft:draft-file");
+
+    store.reconcileDraftSurfaces(refA, (draftKey) => draftKey === "draft-key");
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces.map(
+        (surface) => surface.id,
+      ),
+    ).toEqual(["diff", "attachment:draft:draft-file", "attachment:sent-file"]);
+
+    store.reconcileDraftSurfaces(refA, () => false);
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "attachment:sent-file",
+      surfaces: [
+        { id: "diff", kind: "diff" },
+        expect.objectContaining({ id: "attachment:sent-file" }),
+      ],
+    });
+
+    store.openAttachment(refA, draftFile, "draft-key");
+    store.closeSurface(refA, "attachment:draft:draft-file");
+    expect(useClosedViewStore.getState().entries).toEqual([]);
+  });
+
   it("tracks one surface per pull request", () => {
     const first = { projectId: "project-a", repository: "pingdotgg/t3code", number: 4909 };
     const second = { projectId: "project-a", repository: "pingdotgg/t3code", number: 4910 };

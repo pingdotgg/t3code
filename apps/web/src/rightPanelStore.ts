@@ -59,6 +59,7 @@ export type RightPanelSurface =
       revealLine: number | null;
       revealRequestId: number;
       attachment?: ChatFileAttachment;
+      draftKey?: string;
       /**
        * Set when breadcrumbs moved a folder browser up from a deeper path: the
        * deepest workspace path the breadcrumbs keep offering on the way back down.
@@ -148,7 +149,7 @@ interface RightPanelStoreState {
     folderTrail: string,
     keepSource?: boolean,
   ) => void;
-  openAttachment: (ref: ScopedThreadRef, attachment: ChatFileAttachment) => void;
+  openAttachment: (ref: ScopedThreadRef, attachment: ChatFileAttachment, draftKey?: string) => void;
   openPullRequest: (
     ref: ScopedThreadRef,
     target: {
@@ -187,6 +188,10 @@ interface RightPanelStoreState {
     hiddenTabIds?: ReadonlySet<string>,
   ) => void;
   reconcileFileSurfaces: (ref: ScopedThreadRef, workspaceAvailable: boolean) => void;
+  reconcileDraftSurfaces: (
+    ref: ScopedThreadRef,
+    isLive: (draftKey: string, fileId: string) => boolean,
+  ) => void;
   show: (ref: ScopedThreadRef) => void;
   close: (ref: ScopedThreadRef) => void;
   setMaximized: (ref: ScopedThreadRef, maximized: boolean) => void;
@@ -247,13 +252,17 @@ const fileSurface = (
   revealRequestId,
 });
 
-const attachmentSurface = (attachment: ChatFileAttachment): RightPanelSurface => ({
-  id: `attachment:${attachment.id}`,
+const attachmentSurface = (
+  attachment: ChatFileAttachment,
+  draftKey: string | undefined,
+): RightPanelSurface => ({
+  id: draftKey === undefined ? `attachment:${attachment.id}` : `attachment:draft:${attachment.id}`,
   kind: "file",
   relativePath: attachment.name,
   revealLine: null,
   revealRequestId: 0,
   attachment,
+  ...(draftKey === undefined ? {} : { draftKey }),
 });
 
 const terminalSurface = (terminalId: string): RightPanelSurface => ({
@@ -803,7 +812,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             return { ...current, isOpen: true, activeSurfaceId: target.id, surfaces };
           }),
         ),
-      openAttachment: (ref, attachment) =>
+      openAttachment: (ref, attachment, draftKey) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {
             const withoutStandaloneExplorer = current.surfaces.filter(
@@ -811,7 +820,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             );
             return upsertSurface(
               { ...current, surfaces: withoutStandaloneExplorer },
-              attachmentSurface(attachment),
+              attachmentSurface(attachment, draftKey),
             );
           }),
         ),
@@ -1020,6 +1029,27 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             };
           }),
         ),
+      reconcileDraftSurfaces: (ref, isLive) => {
+        const threadKey = scopedThreadKey(ref);
+        const current = get().byThreadKey[threadKey];
+        const surfaces = current?.surfaces.filter(
+          (surface) =>
+            surface.kind !== "file" ||
+            surface.draftKey === undefined ||
+            isLive(surface.draftKey, surface.attachment?.id ?? ""),
+        );
+        if (!current || !surfaces || surfaces.length === current.surfaces.length) return;
+        set((state) =>
+          automaticUpdate(state, threadKey, () => ({
+            ...current,
+            isOpen: surfaces.length > 0 && current.isOpen,
+            surfaces,
+            activeSurfaceId: surfaces.some((surface) => surface.id === current.activeSurfaceId)
+              ? current.activeSurfaceId
+              : (surfaces.at(-1)?.id ?? null),
+          })),
+        );
+      },
       show: (ref) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) =>
@@ -1153,7 +1183,8 @@ useRightPanelStore.subscribe((next, previous) => {
     for (const surface of closedInOrder) {
       if (
         surface.kind === "terminal" ||
-        (surface.kind === "preview" && surface.resourceId !== null)
+        (surface.kind === "preview" && surface.resourceId !== null) ||
+        (surface.kind === "file" && surface.draftKey !== undefined)
       )
         continue;
       useClosedViewStore.getState().remember({ kind: "panel-tab", threadRef, surface });

@@ -291,7 +291,6 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                 <QuestionAttachments
                   requestId={props.pendingUserInput.requestId}
                   question={question}
-                  questions={props.pendingUserInput.questions}
                   disabled={responseDisabled}
                   value={draft?.customAnswer ?? ""}
                   onChangeText={(value) =>
