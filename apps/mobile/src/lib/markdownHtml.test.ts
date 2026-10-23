@@ -31,6 +31,21 @@ describe("HTML in native Markdown", () => {
       expect(paragraph.children[0]).toMatchObject({ type: "image", alt: "&lt;" });
   });
 
+  it("preserves literal Windows separators and once-decoded ampersands in image attributes", () => {
+    for (const [src, path] of [
+      [String.raw`C:\me\.t3\a&b.png`, String.raw`C:\me\.t3\a&b.png`],
+      [String.raw`C:\me\.t3\a&amp;copy;.png`, String.raw`C:\me\.t3\a&copy;.png`],
+      [String.raw`C:\me\.t3\&amp;copy;.png`, String.raw`C:\me\.t3\&copy;.png`],
+    ]) {
+      expect(markdownImageSources(`<img src="${src}">`)).toEqual([path]);
+    }
+  });
+
+  it("repairs Windows Markdown destinations exposed by HTML wrappers", () => {
+    const path = String.raw`C:/me\.t3/shot.png`;
+    expect(markdownImageSources(`<details>\n\n![shot](${path})\n\n</details>`)).toEqual([path]);
+  });
+
   it("ignores code delimiters in HTML attributes and comments when collecting screenshots", () => {
     const markdown =
       '<details data-example="`">\n<summary>Proof</summary>\n<img src="https://example.com/shot.png" alt="Screenshot">\n<!-- ` -->\n</details>';

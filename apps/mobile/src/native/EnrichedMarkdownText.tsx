@@ -8,6 +8,7 @@ import {
   markdownWithHtml,
   markdownWithInlineFileLinks,
   markdownWithTableBreaks,
+  markdownWithWindowsPathDestinations,
 } from "../lib/markdownDocument";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { Platform, Share, StyleSheet, View } from "react-native";
@@ -158,7 +159,7 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
     () =>
       markdownWithTableBreaks(
         markdownWithInlineFileLinks(
-          markdownWithHtml(props.markdown),
+          markdownWithWindowsPathDestinations(markdownWithHtml(props.markdown)),
           ENRICHED_INLINE_FILE_LINK_REGEX,
         ),
       ),

@@ -1,7 +1,8 @@
 import type { Root, RootContent } from "mdast";
-import { unified } from "unified";
+import { unified, type Processor } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
+import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 
 const parser = unified().use(remarkParse).use(remarkGfm);
 export type MarkdownNode = Root | RootContent;
@@ -109,7 +110,7 @@ export function markdownHtmlContent(content: string): string {
       if (!src) return "";
       const alt = (attribute(tag, "alt") ?? "").replace(/[\\[\]&]/g, "\\$&");
       const href = src
-        .replace(/&/g, "\\&")
+        .replace(/[\\&]/g, "\\$&")
         .replace(/</g, "%3C")
         .replace(/>/g, "%3E")
         .replace(/\n/g, "");
@@ -233,6 +234,50 @@ export function markdownWithTableBreaks(markdown: string): string {
   return markdown;
 }
 
+interface DestinationToken {
+  readonly start: { readonly offset: number };
+  readonly end: { readonly offset: number };
+}
+
+// Enriched owns its AST, so preserve Windows paths before its native parse (#23722).
+// Only parsed destinations are rewritten; code examples cannot redirect real links.
+// Keep encoded runs and \& escapes. Other singleton punctuation escapes are treated
+// as raw separators: three backslashes preserve both the separator and the escape.
+// Raw \& is ambiguous; encode a separator before & explicitly (\\\&) or use HTML src.
+export function markdownWithWindowsPathDestinations(markdown: string): string {
+  if (!markdown.includes("\\")) return markdown;
+  const edits: Array<{ start: number; end: number; content: string }> = [];
+  function record(
+    this: { resume(): string; sliceSerialize(token: DestinationToken): string },
+    token: DestinationToken,
+  ) {
+    this.resume();
+    const destination = this.sliceSerialize(token);
+    if (!isWindowsAbsolutePath(destination)) return;
+    const content = destination.replace(/\\+/g, (backslashes, offset: number) => {
+      // Two leading backslashes mean raw UNC; four are already encoded.
+      if (offset === 0 && backslashes.length === 2) return backslashes.repeat(2);
+      if (backslashes.length > 1) return backslashes;
+      const next = destination[offset + 1] ?? "";
+      return next !== "&" && /[!-/:-@[-`{-~]/.test(next) ? backslashes.repeat(3) : backslashes;
+    });
+    if (content !== destination)
+      edits.push({ start: token.start.offset, end: token.end.offset, content });
+  }
+  parser()
+    .use(function (this: Processor) {
+      (this.data().fromMarkdownExtensions ??= []).push({
+        exit: { resourceDestinationString: record, definitionDestinationString: record },
+      });
+    })
+    .parse(markdown);
+  for (let index = edits.length - 1; index >= 0; index -= 1) {
+    const { start, end, content } = edits[index]!;
+    markdown = markdown.slice(0, start) + content + markdown.slice(end);
+  }
+  return markdown;
+}
+
 export function parseMarkdownDocument(markdown: string): Root {
-  return parser.parse(markdownWithHtml(markdown));
+  return parser.parse(markdownWithWindowsPathDestinations(markdownWithHtml(markdown)));
 }
