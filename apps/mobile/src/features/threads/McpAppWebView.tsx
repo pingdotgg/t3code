@@ -18,6 +18,7 @@ import {
   mcpAppAllowAttribute,
   mcpAppFileName,
   mcpAppReferencesEqual,
+  mcpAppToolCall,
   type McpAppReference,
 } from "@t3tools/shared/mcpApp";
 import * as Predicate from "effect/Predicate";
@@ -195,10 +196,9 @@ export function ThreadMcpApp(props: {
   const storedItem = detail.data?.item;
   const toolCall = useMemo(() => {
     if (storedItem?.type !== "dynamic_tool") return undefined;
-    const output = storedItem.output as { readonly result?: unknown } | undefined;
-    return {
-      arguments: storedItem.input,
-      result: output?.result as McpAppCallToolResult | undefined,
+    return mcpAppToolCall(storedItem) as {
+      readonly arguments: unknown;
+      readonly result: McpAppCallToolResult | undefined;
     };
   }, [storedItem]);
 

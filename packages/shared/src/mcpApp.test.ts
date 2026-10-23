@@ -6,6 +6,7 @@ import {
   injectMcpAppThemeBootstrap,
   injectMcpAppCookieBootstrap,
   mcpAppContentSecurityPolicy,
+  mcpAppToolCall,
   mcpAppToolCallableByApp,
   readMcpAppCsp,
   readMcpAppReference,
@@ -259,5 +260,26 @@ describe("MCP App cookie bootstrap", () => {
     });
     expect(() => execute(injectMcpAppCookieBootstrap(vendor), document)).toThrow(failure);
     expect(() => Reflect.get(document, "cookie")).toThrow(failure);
+  });
+});
+
+describe("mcpAppToolCall", () => {
+  const deferred = { content: [], isError: true };
+  const submitted = { arguments: { title: "Shipped" }, result: { content: [] } };
+
+  it("opens the app on its recorded write, or else on the call that showed it", () => {
+    expect(
+      mcpAppToolCall({
+        input: { title: "Draft" },
+        output: { result: deferred, t3McpAppCall: submitted },
+      }),
+    ).toEqual(submitted);
+    expect(mcpAppToolCall({ input: { title: "Draft" }, output: { result: deferred } })).toEqual({
+      arguments: { title: "Draft" },
+      result: deferred,
+    });
+    expect(
+      mcpAppToolCall({ input: {}, output: { result: deferred, t3McpAppCall: { arguments: {} } } }),
+    ).toEqual({ arguments: {}, result: deferred });
   });
 });

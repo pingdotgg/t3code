@@ -5,6 +5,7 @@ export const MCP_APP_MIME_TYPE = "text/html;profile=mcp-app";
 export const MCP_APP_EXTENSION_ID = "io.modelcontextprotocol/ui";
 export const MCP_APP_RESOURCE_SCHEME = "ui://";
 export const MCP_APP_OUTPUT_KEY = "t3McpApp";
+export const MCP_APP_CALL_OUTPUT_KEY = "t3McpAppCall";
 
 const MCP_APP_MIN_HEIGHT = 80;
 export const MCP_APP_DEFAULT_HEIGHT = 320;
@@ -122,6 +123,22 @@ export function readMcpAppReference(value: unknown): McpAppReference | undefined
     ...(permissions === undefined ? {} : { permissions }),
     ...(typeof value.prefersBorder === "boolean" ? { prefersBorder: value.prefersBorder } : {}),
   };
+}
+
+/**
+ * The call an app is handed when it opens: its last write through its own
+ * tool, or else the tool call that showed it. A form that deferred a write
+ * then shows what the write did instead of asking again.
+ */
+export function mcpAppToolCall(item: { readonly input: unknown; readonly output?: unknown }): {
+  readonly arguments: unknown;
+  readonly result: unknown;
+} {
+  const output = Predicate.isObject(item.output) ? item.output : undefined;
+  const call = output?.[MCP_APP_CALL_OUTPUT_KEY];
+  return Predicate.isObject(call) && Predicate.isObject(call.result)
+    ? { arguments: call.arguments, result: call.result }
+    : { arguments: item.input, result: output?.result };
 }
 
 export function mcpAppReferencesEqual(left: McpAppReference, right: McpAppReference): boolean {

@@ -16,6 +16,7 @@ import {
   MCP_APP_MAX_HEIGHT,
   mcpAppAllowAttribute,
   mcpAppFileName,
+  mcpAppToolCall,
   type McpAppReference,
 } from "@t3tools/shared/mcpApp";
 import { Minimize2Icon } from "lucide-react";
@@ -135,12 +136,10 @@ export function McpAppFrame(props: {
   // The host gets the tool call pushed by an effect keyed on it, so it must stay cached.
   const toolCall =
     storedItem?.type === "dynamic_tool"
-      ? {
-          arguments: storedItem.input,
-          result: (storedItem.output as { readonly result?: unknown } | undefined)?.result as
-            | McpAppCallToolResult
-            | undefined,
-        }
+      ? (mcpAppToolCall(storedItem) as {
+          readonly arguments: unknown;
+          readonly result: McpAppCallToolResult | undefined;
+        })
       : undefined;
 
   const callTool = useAtomCommand(mcpAppEnvironment.callTool, { reportFailure: false });

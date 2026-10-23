@@ -37,6 +37,7 @@ import {
   TurnItemId,
 } from "./baseSchemas.ts";
 import { ChatAttachment } from "./chatAttachment.ts";
+import { McpAppCallToolResult } from "./mcpApps.ts";
 import {
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetFullThreadDiffResult,
@@ -3077,6 +3078,18 @@ const OrchestrationV2InternalCommand = Schema.Union([
     reason: Schema.String,
     placeholder: Schema.optional(Schema.String),
     secretStatus: OrchestrationV2SecretRequestStatus,
+  }),
+  /**
+   * An MCP App's write through its own tool, kept on the tool call that shows
+   * the app. Internal so no client can rewrite what a tool returned.
+   */
+  Schema.Struct({
+    type: Schema.Literal("mcp_app.call.record"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    turnItemId: TurnItemId,
+    arguments: Schema.Record(Schema.String, Schema.Unknown),
+    result: McpAppCallToolResult,
   }),
 ]);
 export type OrchestrationV2InternalCommand = typeof OrchestrationV2InternalCommand.Type;

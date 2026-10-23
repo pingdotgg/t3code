@@ -163,6 +163,12 @@ function boundDynamicValue(value: unknown): unknown {
  * When the rest is too large to send whole, its truncated text still comes with
  * the image markers, in order, so clients can load each image by index.
  */
+/** Whether a tool's output reaches clients whole when its item's detail is read. */
+export function toolOutputFitsDetail(output: unknown): boolean {
+  const omitted = omitToolOutputImageData(output);
+  return boundDynamicValue(omitted) === omitted;
+}
+
 function boundToolOutput(output: unknown): unknown {
   const omitted = omitToolOutputImageData(output);
   const bounded = boundDynamicValue(omitted);
