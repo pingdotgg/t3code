@@ -16,7 +16,7 @@ export function limitRecoveryCommand(
 ): OrchestrationV2Command | null {
   if (
     thread.status !== "failed" ||
-    thread.lastErrorClass !== "usage_limit" ||
+    (thread.lastErrorClass !== "usage_limit" && thread.lastErrorClass !== "model_capacity") ||
     !thread.latestRunId ||
     !thread.usageLimitResetAt ||
     thread.archivedAt !== null ||
@@ -88,9 +88,9 @@ const makeSweep = Effect.gen(function* () {
     for (const thread of candidates) {
       const command = limitRecoveryCommand(
         thread,
-        preferences.autoResumeLimitedThreads,
+        thread.lastErrorClass === "model_capacity" || preferences.autoResumeLimitedThreads,
         nowMs,
-        preferences.snoozeLimitedThreads,
+        thread.lastErrorClass !== "model_capacity" && preferences.snoozeLimitedThreads,
       );
       if (command === null) continue;
       yield* Effect.gen(function* () {

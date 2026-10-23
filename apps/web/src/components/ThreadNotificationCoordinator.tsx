@@ -166,7 +166,9 @@ function EnvironmentNotifications({
           : status === "approval"
             ? "Approval needed"
             : status === "limited"
-              ? "Usage limit reached"
+              ? rawThread.lastErrorClass === "model_capacity"
+                ? "Model at capacity"
+                : "Usage limit reached"
               : status === "failed"
                 ? "Thread failed"
                 : "Input needed";

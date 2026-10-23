@@ -134,13 +134,18 @@ describe("V2 session presentation", () => {
       },
     } satisfies Extract<OrchestrationV2TurnItem, { readonly type: "error" }>;
 
-    expect(
-      providerErrorPresentation({
-        ...retryItem,
-        status: "failed",
-        failure: { ...retryItem.failure, class: "usage_limit" },
-      }),
-    ).toMatchObject({ label: "Usage limit reached after 2/10 retries" });
+    for (const [failureClass, label] of [
+      ["usage_limit", "Usage limit reached"],
+      ["model_capacity", "Model at capacity"],
+    ] as const) {
+      expect(
+        providerErrorPresentation({
+          ...retryItem,
+          status: "failed",
+          failure: { ...retryItem.failure, class: failureClass },
+        }),
+      ).toMatchObject({ label: `${label} after 2/10 retries` });
+    }
     const recoveredLimit = {
       ...retryItem,
       status: "completed" as const,

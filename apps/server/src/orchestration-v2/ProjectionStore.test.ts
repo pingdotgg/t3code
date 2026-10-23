@@ -3342,15 +3342,18 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
-  it.effect("projects only the latest failed root turn's limit into SQL and memory shells", () =>
+  const limitClasses = ["usage_limit", "model_capacity"] as const;
+  it.effect.each(limitClasses)("projects %s recovery into SQL and memory", (failureClass) =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;
-      const threadId = yield* addRolledBackRecoveryCandidate("limit-shell");
-      const otherThreadId = yield* addRolledBackRecoveryCandidate("other-limit-shell");
+      const threadId = yield* addRolledBackRecoveryCandidate(`${failureClass}:limit-shell`);
+      const otherThreadId = yield* addRolledBackRecoveryCandidate(
+        `${failureClass}:other-limit-shell`,
+      );
       const original = (yield* store.getThreadProjection(threadId)).runs[0]!;
       const now = yield* DateTime.now;
       const limitItem = {
-        id: TurnItemId.make("limit-shell:error"),
+        id: TurnItemId.make(`${failureClass}:limit-shell:error`),
         threadId,
         runId: original.id,
         nodeId: original.rootNodeId,
@@ -3366,7 +3369,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         updatedAt: now,
         type: "error" as const,
         failure: {
-          class: "usage_limit" as const,
+          class: failureClass,
           message: "Plan limit reached.",
           resetAt: "2099-01-01T00:00:00.000Z",
           code: "usageLimitExceeded",
@@ -3375,7 +3378,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       };
       const applyRun = (status: typeof original.status, rootNodeId = original.rootNodeId) =>
         store.apply({
-          id: EventId.make(`event:limit-shell:run:${status}:${rootNodeId}`),
+          id: EventId.make(`${failureClass}:event:limit-shell:run:${status}:${rootNodeId}`),
           type: "run.updated",
           threadId,
           occurredAt: now,
@@ -3394,7 +3397,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           assert.equal(shell.lastErrorClass, lastErrorClass);
           assert.equal(
             shell.usageLimitResetAt,
-            lastErrorClass === "usage_limit" ? "2099-01-01T00:00:00.000Z" : null,
+            lastErrorClass === failureClass ? "2099-01-01T00:00:00.000Z" : null,
           );
         }
         assert.isNull(shells.threads.find((row) => row.id === otherThreadId)!.lastErrorClass);
@@ -3404,7 +3407,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           snooze: false,
         });
         const candidate = candidates.find((row) => row.id === threadId);
-        if (lastErrorClass === "usage_limit") {
+        if (lastErrorClass === failureClass) {
           assert.deepEqual(candidate, {
             id: sqlShell.id,
             status: sqlShell.status,
@@ -3423,21 +3426,21 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         assert.isUndefined(candidates.find((row) => row.id === otherThreadId));
       });
       yield* store.apply({
-        id: EventId.make("event:limit-shell:error"),
+        id: EventId.make(`${failureClass}:event:limit-shell:error`),
         type: "turn-item.updated",
         threadId,
         occurredAt: now,
         payload: limitItem,
       });
       yield* applyRun("failed");
-      yield* assertSummary("Plan limit reached.", "usage_limit");
-      const queuedRunId = RunId.make("run:limit-shell:queued");
+      yield* assertSummary("Plan limit reached.", failureClass);
+      const queuedRunId = RunId.make(`${failureClass}:run:limit-shell:queued`);
       yield* store.apply({
-        id: EventId.make("event:limit-shell:queued"),
+        id: EventId.make(`${failureClass}:event:limit-shell:queued`),
         type: "run.created",
         threadId,
         runId: queuedRunId,
-        nodeId: NodeId.make("node:limit-shell:queued"),
+        nodeId: NodeId.make(`${failureClass}:node:limit-shell:queued`),
         driver,
         providerInstanceId,
         occurredAt: now,
@@ -3445,14 +3448,14 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           ...original,
           id: queuedRunId,
           ordinal: original.ordinal + 1,
-          rootNodeId: NodeId.make("node:limit-shell:queued"),
-          userMessageId: MessageId.make("message:limit-shell:queued"),
+          rootNodeId: NodeId.make(`${failureClass}:node:limit-shell:queued`),
+          userMessageId: MessageId.make(`${failureClass}:message:limit-shell:queued`),
           status: "queued",
           startedAt: null,
           completedAt: null,
         },
       });
-      yield* assertSummary("Plan limit reached.", "usage_limit");
+      yield* assertSummary("Plan limit reached.", failureClass);
       const queuedProjection = yield* store.getThreadProjection(threadId);
       const queuedMemoryShell = ProjectionStore.threadShellFromProjection(queuedProjection);
       const queuedSqlShell = (yield* store.getShellSnapshot()).threads.find(
@@ -3463,13 +3466,13 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       assert.equal(queuedSqlShell.status, "failed");
       assert.equal(queuedSqlShell.latestRunId, original.id);
       assert.equal(queuedProjection.runs.find((run) => run.id === queuedRunId)?.status, "queued");
-      const cancelledRunId = RunId.make("run:limit-shell:cancelled-queued");
+      const cancelledRunId = RunId.make(`${failureClass}:run:limit-shell:cancelled-queued`);
       yield* store.apply({
-        id: EventId.make("event:limit-shell:cancelled-queued"),
+        id: EventId.make(`${failureClass}:event:limit-shell:cancelled-queued`),
         type: "run.created",
         threadId,
         runId: cancelledRunId,
-        nodeId: NodeId.make("node:limit-shell:cancelled-queued"),
+        nodeId: NodeId.make(`${failureClass}:node:limit-shell:cancelled-queued`),
         driver,
         providerInstanceId,
         occurredAt: now,
@@ -3477,28 +3480,28 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           ...original,
           id: cancelledRunId,
           ordinal: original.ordinal + 2,
-          rootNodeId: NodeId.make("node:limit-shell:cancelled-queued"),
-          userMessageId: MessageId.make("message:limit-shell:cancelled-queued"),
+          rootNodeId: NodeId.make(`${failureClass}:node:limit-shell:cancelled-queued`),
+          userMessageId: MessageId.make(`${failureClass}:message:limit-shell:cancelled-queued`),
           status: "cancelled",
           startedAt: null,
           completedAt: now,
         },
       });
       yield* store.apply({
-        id: EventId.make("event:limit-shell:cancelled-queued-message"),
+        id: EventId.make(`${failureClass}:event:limit-shell:cancelled-queued-message`),
         type: "turn-item.updated",
         threadId,
         runId: cancelledRunId,
-        nodeId: NodeId.make("node:limit-shell:cancelled-queued"),
+        nodeId: NodeId.make(`${failureClass}:node:limit-shell:cancelled-queued`),
         driver,
         occurredAt: now,
         payload: {
           createdBy: "user",
           creationSource: "web",
-          id: TurnItemId.make("limit-shell:cancelled-queued-message"),
+          id: TurnItemId.make(`${failureClass}:limit-shell:cancelled-queued-message`),
           threadId,
           runId: cancelledRunId,
-          nodeId: NodeId.make("node:limit-shell:cancelled-queued"),
+          nodeId: NodeId.make(`${failureClass}:node:limit-shell:cancelled-queued`),
           providerThreadId: null,
           providerTurnId: null,
           nativeItemRef: null,
@@ -3510,20 +3513,20 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           completedAt: now,
           updatedAt: now,
           type: "user_message",
-          messageId: MessageId.make("message:limit-shell:cancelled-queued"),
+          messageId: MessageId.make(`${failureClass}:message:limit-shell:cancelled-queued`),
           inputIntent: "turn_start",
           text: "cancelled before the provider started",
           attachments: [],
         },
       });
-      yield* assertSummary("Plan limit reached.", "usage_limit");
-      const aheadRunId = RunId.make("run:limit-shell:ran-ahead");
+      yield* assertSummary("Plan limit reached.", failureClass);
+      const aheadRunId = RunId.make(`${failureClass}:run:limit-shell:ran-ahead`);
       yield* store.apply({
-        id: EventId.make("event:limit-shell:ran-ahead"),
+        id: EventId.make(`${failureClass}:event:limit-shell:ran-ahead`),
         type: "run.created",
         threadId,
         runId: aheadRunId,
-        nodeId: NodeId.make("node:limit-shell:ran-ahead"),
+        nodeId: NodeId.make(`${failureClass}:node:limit-shell:ran-ahead`),
         driver,
         providerInstanceId,
         occurredAt: now,
@@ -3531,18 +3534,18 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           ...original,
           id: aheadRunId,
           ordinal: original.ordinal + 3,
-          rootNodeId: NodeId.make("node:limit-shell:ran-ahead"),
-          userMessageId: MessageId.make("message:limit-shell:ran-ahead"),
+          rootNodeId: NodeId.make(`${failureClass}:node:limit-shell:ran-ahead`),
+          userMessageId: MessageId.make(`${failureClass}:message:limit-shell:ran-ahead`),
           status: "completed",
           startedAt: DateTime.subtract(now, { minutes: 10 }),
           completedAt: DateTime.subtract(now, { minutes: 5 }),
         },
       });
-      yield* assertSummary("Plan limit reached.", "usage_limit");
+      yield* assertSummary("Plan limit reached.", failureClass);
       const sql = yield* SqlClient.SqlClient;
       yield* sql`DELETE FROM orchestration_v2_projection_runs WHERE run_id = ${aheadRunId}`;
       yield* sql`DELETE FROM orchestration_v2_projection_runs WHERE run_id = ${queuedRunId}`;
-      yield* assertSummary("Plan limit reached.", "usage_limit");
+      yield* assertSummary("Plan limit reached.", failureClass);
       yield* sql`DELETE FROM orchestration_v2_projection_runs WHERE run_id = ${cancelledRunId}`;
       const [originalRow] = yield* sql<{
         payload_json: string;
@@ -3555,9 +3558,11 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           SET payload_json = json_set(payload_json, ${`$.${field}`}, ${value})
           WHERE thread_id = ${threadId}`;
         assert.isUndefined(
-          (yield* store.getLimitRecoveryCandidates({ now, autoResume: true, snooze: false })).find(
-            (row) => row.id === threadId,
-          ),
+          (yield* store.getLimitRecoveryCandidates({
+            now,
+            autoResume: true,
+            snooze: false,
+          })).find((row) => row.id === threadId),
         );
         yield* sql`UPDATE orchestration_v2_projection_threads
           SET payload_json = ${originalRow!.payload_json} WHERE thread_id = ${threadId}`;
@@ -3570,17 +3575,17 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       );
       yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = NULL WHERE thread_id = ${threadId}`;
       const recoveryOptions = { now, autoResume: false, snooze: false };
-      assert.isUndefined(
-        (yield* store.getLimitRecoveryCandidates(recoveryOptions)).find(
-          (row) => row.id === threadId,
-        ),
+      const automaticCandidate = (yield* store.getLimitRecoveryCandidates(recoveryOptions)).find(
+        (row) => row.id === threadId,
       );
+      if (failureClass === "model_capacity") assert.isDefined(automaticCandidate);
+      else assert.isUndefined(automaticCandidate);
       const reset = DateTime.makeUnsafe(limitItem.failure.resetAt);
       const recovery = {
         runId: original.id,
         resetAt: limitItem.failure.resetAt,
         autoResume: true,
-        requestId: CommandId.make("recovery:choice"),
+        requestId: CommandId.make(`${failureClass}:recovery:choice`),
       };
       yield* sql`UPDATE orchestration_v2_projection_threads
         SET payload_json = json_set(payload_json, '$.limitRecovery', json(${encodeUnknownJsonString(recovery)}))
@@ -3624,7 +3629,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       );
       yield* sql`UPDATE orchestration_v2_projection_threads SET payload_json = ${originalRow!.payload_json} WHERE thread_id = ${threadId}`;
       const session = {
-        id: ProviderSessionId.make("session:limit-shell:shared"),
+        id: ProviderSessionId.make(`${failureClass}:session:limit-shell:shared`),
         driver,
         providerInstanceId,
         status: "ready" as const,
@@ -3637,7 +3642,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       };
       for (const boundThreadId of [threadId, otherThreadId]) {
         yield* store.apply({
-          id: EventId.make(`event:limit-shell:bind:${boundThreadId}`),
+          id: EventId.make(`${failureClass}:event:limit-shell:bind:${boundThreadId}`),
           type: "provider-session.attached",
           threadId: boundThreadId,
           driver,
@@ -3646,9 +3651,9 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           payload: session,
         });
       }
-      yield* assertSummary("Plan limit reached.", "usage_limit");
+      yield* assertSummary("Plan limit reached.", failureClass);
       yield* store.apply({
-        id: EventId.make("event:limit-shell:session-failed"),
+        id: EventId.make(`${failureClass}:event:limit-shell:session-failed`),
         type: "provider-session.updated",
         threadId,
         occurredAt: now,
@@ -3656,35 +3661,35 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       });
       yield* assertSummary("Provider process exited.", null);
       yield* store.apply({
-        id: EventId.make("event:limit-shell:session-recovered"),
+        id: EventId.make(`${failureClass}:event:limit-shell:session-recovered`),
         type: "provider-session.updated",
         threadId,
         occurredAt: now,
         payload: session,
       });
-      yield* assertSummary("Plan limit reached.", "usage_limit");
+      yield* assertSummary("Plan limit reached.", failureClass);
       yield* store.apply({
-        id: EventId.make("event:limit-shell:child-error"),
+        id: EventId.make(`${failureClass}:event:limit-shell:child-error`),
         type: "turn-item.updated",
         threadId,
         occurredAt: now,
         payload: {
           ...limitItem,
-          id: TurnItemId.make("limit-shell:child-error"),
+          id: TurnItemId.make(`${failureClass}:limit-shell:child-error`),
           nodeId: NodeId.make("child-node"),
           ordinal: 3,
           failure: { ...limitItem.failure, class: "provider_error", message: "Child failed." },
         },
       });
-      yield* assertSummary("Plan limit reached.", "usage_limit");
+      yield* assertSummary("Plan limit reached.", failureClass);
       yield* store.apply({
-        id: EventId.make("event:limit-shell:replacement"),
+        id: EventId.make(`${failureClass}:event:limit-shell:replacement`),
         type: "turn-item.updated",
         threadId,
         occurredAt: now,
         payload: {
           ...limitItem,
-          id: TurnItemId.make("limit-shell:replacement"),
+          id: TurnItemId.make(`${failureClass}:limit-shell:replacement`),
           ordinal: 4,
           failure: { ...limitItem.failure, class: "provider_error", message: "Provider failed." },
         },

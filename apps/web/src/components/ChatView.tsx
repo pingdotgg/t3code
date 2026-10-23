@@ -768,9 +768,11 @@ export default function ChatView(props: ChatViewProps) {
     if (!isServerThread || serverProjection === null) return null;
     const run = latestExecutedRun(serverProjection.runs);
     if (run?.status === "interrupted") return run.id;
+    const failure = latestRootProviderFailure(run, serverProjection.turnItems);
     return run?.status === "failed" &&
-      serverRuntime?.lastErrorClass === "usage_limit" &&
-      latestRootProviderFailure(run, serverProjection.turnItems)?.class === "usage_limit"
+      (serverRuntime?.lastErrorClass === "usage_limit" ||
+        serverRuntime?.lastErrorClass === "model_capacity") &&
+      (failure?.class === "usage_limit" || failure?.class === "model_capacity")
       ? run.id
       : null;
   })();
@@ -881,7 +883,8 @@ export default function ChatView(props: ChatViewProps) {
   const activeThreadShell = serverThread;
   const timelineThreadError =
     serverRuntime?.status === "failed" &&
-    serverRuntime.lastErrorClass === "usage_limit" &&
+    (serverRuntime.lastErrorClass === "usage_limit" ||
+      serverRuntime.lastErrorClass === "model_capacity") &&
     activeThreadShell?.latestRun &&
     visibleThreadError === serverRuntime.lastError
       ? null
@@ -2584,9 +2587,11 @@ export default function ChatView(props: ChatViewProps) {
   });
   const limitRecoveryBanner =
     serverRuntime?.status === "failed" &&
-    serverRuntime.lastErrorClass === "usage_limit" &&
+    (serverRuntime.lastErrorClass === "usage_limit" ||
+      serverRuntime.lastErrorClass === "model_capacity") &&
     activeThreadShell?.latestRun
       ? usageLimitRecoveryBannerItem({
+          modelAtCapacity: serverRuntime.lastErrorClass === "model_capacity",
           runId: activeThreadShell.latestRun.runId,
           resetAt: serverRuntime.usageLimitResetAt ?? null,
           stoppedAt: activeThreadShell.latestRun.completedAt ?? activeThreadShell.updatedAt,

@@ -2998,7 +2998,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         thread.archivedAt !== null ||
         thread.settledOverride === "settled" ||
         run?.id !== command.limitRecovery.runId ||
-        failure?.class !== "usage_limit" ||
+        (failure?.class !== "usage_limit" && failure?.class !== "model_capacity") ||
         failure.resetAt !== command.limitRecovery.resetAt ||
         resetMs <= DateTime.toEpochMillis(run.completedAt ?? run.requestedAt) ||
         projection.runtimeRequests.some((request) => request.status === "pending")
@@ -4839,7 +4839,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         command.dispatchMode.type !== "start_immediately" ||
         source === undefined ||
         (source.status !== "interrupted" &&
-          !(source.status === "failed" && limited?.class === "usage_limit")) ||
+          !(
+            source.status === "failed" &&
+            (limited?.class === "usage_limit" || limited?.class === "model_capacity")
+          )) ||
         latestExecutedRun(projection.runs)?.id !== source.id ||
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||
@@ -4859,8 +4862,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const now = yield* DateTime.now;
       if (
         run?.id !== command.usageLimitContinuationOfRunId ||
-        failure?.class !== "usage_limit" ||
-        threadShellFromProjection(projection).lastErrorClass !== "usage_limit" ||
+        (failure?.class !== "usage_limit" && failure?.class !== "model_capacity") ||
+        !["usage_limit", "model_capacity"].includes(
+          threadShellFromProjection(projection).lastErrorClass ?? "",
+        ) ||
         !recovery?.autoResume ||
         recovery.requestId !== command.usageLimitRecoveryRequestId ||
         recovery.runId !== run.id ||
@@ -9255,7 +9260,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .pipe(mapDispatchError(input.command));
       const failure = latestRootProviderFailure(latest, turnItems);
       if (
-        failure?.class === "usage_limit" &&
+        (failure?.class === "usage_limit" || failure?.class === "model_capacity") &&
         failure.resetAt != null &&
         Number.isFinite(Date.parse(failure.resetAt)) &&
         (recovery?.runId !== latest.id || recovery.resetAt !== failure.resetAt)

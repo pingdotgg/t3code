@@ -442,9 +442,11 @@ export function providerErrorPresentation(
   if (item.retry === undefined) {
     return {
       label:
-        item.failure.class === "usage_limit"
-          ? "Usage limit reached"
-          : item.title?.trim() || "Provider error",
+        item.failure.class === "model_capacity"
+          ? "Model at capacity"
+          : item.failure.class === "usage_limit"
+            ? "Usage limit reached"
+            : item.title?.trim() || "Provider error",
       detail: item.failure.message,
     };
   }
@@ -458,7 +460,7 @@ export function providerErrorPresentation(
       : item.status === "completed"
         ? `Provider recovered (${progress} retries)`
         : item.status === "failed"
-          ? `${item.failure.class === "usage_limit" ? "Usage limit reached" : "Provider error"} after ${progress} retries`
+          ? `${item.failure.class === "model_capacity" ? "Model at capacity" : item.failure.class === "usage_limit" ? "Usage limit reached" : "Provider error"} after ${progress} retries`
           : `Provider retry stopped (${progress})`;
   const retryDelay =
     item.status === "running" && item.retry.retryDelayMs !== null && item.retry.retryDelayMs > 0
@@ -562,7 +564,8 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
       return {
         ...common,
         ...presentation,
-        ...(item.failure.class === "usage_limit" && item.status !== "completed"
+        ...((item.failure.class === "usage_limit" || item.failure.class === "model_capacity") &&
+        item.status !== "completed"
           ? { sourceActivityKind: "runtime.warning" }
           : item.retry === undefined
             ? { sourceActivityKind: "runtime.error" }

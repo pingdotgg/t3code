@@ -45,7 +45,9 @@ export function threadErrorSummary(
     sessionError !== null && sessionError !== failure?.message ? null : failure;
   return {
     usageLimitResetAt:
-      currentFailure?.class === "usage_limit" ? (currentFailure.resetAt ?? null) : null,
+      currentFailure?.class === "usage_limit" || currentFailure?.class === "model_capacity"
+        ? (currentFailure.resetAt ?? null)
+        : null,
     lastError: sessionError ?? failure?.message ?? null,
     lastErrorClass: currentFailure?.class ?? null,
     lastErrorCode: currentFailure?.code ?? null,
@@ -89,7 +91,9 @@ export function usageLimitBlockedRun(
   const executed = latestExecutedRun(runs);
   if (executed?.status !== "failed") return null;
   const summary = threadErrorSummary(latestRootProviderFailure(executed, turnItems), sessionError);
-  return summary.lastErrorClass === "usage_limit" ? executed : null;
+  return summary.lastErrorClass === "usage_limit" || summary.lastErrorClass === "model_capacity"
+    ? executed
+    : null;
 }
 
 /**

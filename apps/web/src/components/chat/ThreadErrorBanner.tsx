@@ -83,7 +83,10 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   if (!error) return null;
   const workspaceLimit = errorCode === CHATGPT_WORKSPACE_USAGE_LIMIT_CODE;
   const chatGptLimit = workspaceLimit || errorCode === CHATGPT_USAGE_LIMIT_CODE;
-  const variant = errorClass === "usage_limit" || chatGptLimit ? "warning" : "error";
+  const variant =
+    errorClass === "usage_limit" || errorClass === "model_capacity" || chatGptLimit
+      ? "warning"
+      : "error";
   return (
     <div className="pointer-events-auto mx-auto w-fit max-w-[min(48rem,calc(100%-2rem))] pt-3">
       <Alert variant={variant} surface="glass" controlAlignment="first-line" data-variant={variant}>

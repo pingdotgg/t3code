@@ -99,6 +99,13 @@ when it resets, when Codex reports them. Send the message again after the reset.
 message also says whether your workspace owner needs to add credits or raise the
 spend limit to continue sooner.
 
+## Codex says the selected model is at capacity
+
+T3 Code automatically retries after 30 seconds when the selected model is at
+capacity. If it is still at capacity, T3 Code waits another 30 seconds before
+trying again. You can cancel the retry, stop the thread, or choose another model.
+The server handles retries even when you close the client.
+
 ## Send feedback to OpenAI
 
 In an existing Codex thread, send `/feedback` with an optional description, for

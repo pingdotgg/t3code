@@ -346,14 +346,19 @@ function SidebarThreadTooltip({
           <div
             className={cn(
               "flex min-w-0 items-center gap-2",
-              thread.runtime.lastErrorClass === "usage_limit" ? "text-warning" : "text-error",
+              thread.runtime.lastErrorClass === "usage_limit" ||
+                thread.runtime.lastErrorClass === "model_capacity"
+                ? "text-warning"
+                : "text-error",
             )}
           >
             <CircleAlertIcon className="size-3 shrink-0 stroke-current" />
             <div className="min-w-0 truncate">
-              {thread.runtime.lastErrorClass === "usage_limit"
-                ? "Usage limit reached"
-                : "Error occurred"}
+              {thread.runtime.lastErrorClass === "model_capacity"
+                ? "Model at capacity"
+                : thread.runtime.lastErrorClass === "usage_limit"
+                  ? "Usage limit reached"
+                  : "Error occurred"}
             </div>
           </div>
         ) : null}

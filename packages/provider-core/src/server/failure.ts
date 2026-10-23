@@ -221,7 +221,7 @@ export function makeProviderFailure(input: {
     message: message || DEFAULT_PROVIDER_FAILURE_MESSAGE,
     code,
     retryable: input.retryable ?? null,
-    ...(input.class === "usage_limit" &&
+    ...((input.class === "usage_limit" || input.class === "model_capacity") &&
     input.resetAt != null &&
     Number.isFinite(Date.parse(input.resetAt))
       ? { resetAt: DateTime.formatIso(DateTime.makeUnsafe(input.resetAt)) }
@@ -256,7 +256,12 @@ export function makeProviderFailureTurnItem(input: {
     parentItemId: null,
     ordinal: input.itemOrdinal,
     status: "failed",
-    title: input.failure.class === "usage_limit" ? "Usage limit reached" : "Provider error",
+    title:
+      input.failure.class === "model_capacity"
+        ? "Model at capacity"
+        : input.failure.class === "usage_limit"
+          ? "Usage limit reached"
+          : "Provider error",
     startedAt: input.retryStartedAt ?? input.occurredAt,
     completedAt: input.occurredAt,
     updatedAt: input.occurredAt,
@@ -288,7 +293,12 @@ export function makeProviderRetryTurnItem(input: {
   if (input.status === "completed") {
     title = "Provider recovered";
   } else if (input.status === "failed") {
-    title = input.failure.class === "usage_limit" ? "Usage limit reached" : "Provider error";
+    title =
+      input.failure.class === "model_capacity"
+        ? "Model at capacity"
+        : input.failure.class === "usage_limit"
+          ? "Usage limit reached"
+          : "Provider error";
   } else if (input.status === "interrupted" || input.status === "cancelled") {
     title = "Provider retry stopped";
   }

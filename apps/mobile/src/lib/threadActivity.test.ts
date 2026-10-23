@@ -1348,7 +1348,7 @@ it("stops stranded thinking after a steer and follows the next thought or tool",
   expect(first.status).toBe("running");
 });
 
-it.each(["provider_error", "usage_limit"] as const)(
+it.each(["provider_error", "usage_limit", "model_capacity"] as const)(
   "keeps a historical %s failure and preceding work visible without disclosures",
   (failureClass) => {
     const at = "2026-06-20T00:00:03.000Z";
@@ -1403,6 +1403,8 @@ it.each(["provider_error", "usage_limit"] as const)(
       createdAt: at,
       canExpand: false,
       prominent: true,
+      status: failureClass === "provider_error" ? "failure" : "neutral",
+      icon: failureClass === "provider_error" ? "alert" : "warning",
     });
   },
 );

@@ -1244,6 +1244,7 @@ export type OrchestrationV2FileChangeDetail = typeof OrchestrationV2FileChangeDe
 
 export const OrchestrationV2ProviderFailureClass = Schema.Literals([
   "usage_limit",
+  "model_capacity",
   "provider_error",
   "transport_error",
   "permission_error",
@@ -1844,6 +1845,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   lastError: Schema.optional(Schema.NullOr(Schema.String)),
   lastErrorClass: Schema.optional(Schema.NullOr(OrchestrationV2ProviderFailureClass)),
   lastErrorCode: Schema.optional(Schema.NullOr(Schema.String)),
+  // Capacity failures use the same recovery deadline as usage-limit resets.
   usageLimitResetAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   pendingRuntimeRequest: Schema.NullOr(OrchestrationV2PendingRuntimeRequestSummary),
   latestVisibleMessage: Schema.NullOr(OrchestrationV2LatestVisibleMessageSummary),

@@ -1,5 +1,6 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
+import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -4257,7 +4258,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
-  it.effect.each(["usage_limit", "provider_error"] as const)(
+  it.effect.each(["usage_limit", "model_capacity", "provider_error"] as const)(
     "handles a queued message after a %s failure",
     (failureClass) =>
       Effect.gen(function* () {
@@ -4350,7 +4351,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                   message: "Provider failed.",
                   code: "provider_failed",
                   retryable: null,
-                  ...(failureClass === "usage_limit"
+                  ...(failureClass !== "provider_error"
                     ? { resetAt: DateTime.formatIso(DateTime.add(now, { hours: 1 })) }
                     : {}),
                 },
@@ -4390,7 +4391,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         );
         assert.equal(shell?.latestRunId, activeRun.id);
         assert.equal(shell?.status, "failed");
-        assert.equal(shell?.lastErrorClass, "usage_limit");
+        assert.equal(shell?.lastErrorClass, failureClass);
       }),
   );
 
@@ -5808,8 +5809,8 @@ it.layer(layerSharedApplicationDataPlaneTest)("shared application data plane", (
   );
 });
 
-it.layer(layerTest)("usage-limit recovery", (it) => {
-  it.effect.each(["interrupted", "usage_limit"] as const)(
+it.layer(layerTest)("provider-limit recovery", (it) => {
+  it.effect.each(["interrupted", "usage_limit", "model_capacity"] as const)(
     "manually resumes an %s run ahead of its queued message only once",
     (reason) =>
       Effect.gen(function* () {
@@ -5892,7 +5893,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           ],
         });
         let scheduledResume: ReturnType<typeof limitRecoveryCommand> = null;
-        if (reason === "usage_limit") {
+        if (reason !== "interrupted") {
           const resetAt = DateTime.formatIso(DateTime.add(now, { minutes: 1 }));
           yield* events.write({
             events: [
@@ -5918,7 +5919,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
                   completedAt: now,
                   updatedAt: now,
                   failure: {
-                    class: "usage_limit",
+                    class: reason,
                     message: "Plan limit reached.",
                     code: "usageLimitExceeded",
                     retryable: null,
@@ -5969,28 +5970,39 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
       }),
   );
 
-  it.effect.each([
-    "resume",
-    "queued-resume",
-    "rearm",
-    "snooze-race",
-    "archive",
-    "replacement",
-    "manual-snooze",
-    "invalid-snooze",
-    "cancel-resume-keep-snooze",
-    "independent-patches",
-    "expired-snooze",
-    "wake",
-    "stop",
-    "stop-before-arm",
-    "stop-before-arm-mismatched-recovery",
-  ] as const)("guards a scheduled usage-limit continuation against %s", (scenario) =>
+  const recoveryCases = (
+    [
+      "resume",
+      "queued-resume",
+      "rearm",
+      "snooze-race",
+      "archive",
+      "replacement",
+      "manual-snooze",
+      "invalid-snooze",
+      "cancel-resume-keep-snooze",
+      "independent-patches",
+      "expired-snooze",
+      "wake",
+      "stop",
+      "stop-before-arm",
+      "stop-before-arm-mismatched-recovery",
+    ] as const
+  ).flatMap((scenario) =>
+    (["usage_limit", "model_capacity"] as const).map((failureClass) => ({
+      scenario,
+      failureClass,
+      name: `${failureClass}: ${scenario}`,
+    })),
+  );
+
+  it.effect.each(recoveryCases)("guards $name", (testCase) =>
     Effect.gen(function* () {
+      const { scenario, failureClass } = testCase;
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const events = yield* EventSink.EventSinkV2;
-      const threadId = ThreadId.make(`recovery:${scenario}`);
-      const projectId = ProjectId.make(`recovery:project:${scenario}`);
+      const threadId = ThreadId.make(`${failureClass}:recovery:${scenario}`);
+      const projectId = ProjectId.make(`${failureClass}:recovery:project:${scenario}`);
       yield* seedProject({
         projectId,
         title: "Recovery project",
@@ -6000,7 +6012,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
       });
       yield* orchestrator.dispatch({
         type: "thread.create",
-        commandId: CommandId.make(`recovery:create:${scenario}`),
+        commandId: CommandId.make(`${failureClass}:recovery:create:${scenario}`),
         threadId,
         projectId,
         title: "Limited thread",
@@ -6014,9 +6026,9 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
       });
       yield* orchestrator.dispatch({
         type: "message.dispatch",
-        commandId: CommandId.make(`recovery:message:${scenario}`),
+        commandId: CommandId.make(`${failureClass}:recovery:message:${scenario}`),
         threadId,
-        messageId: MessageId.make(`recovery:message:${scenario}`),
+        messageId: MessageId.make(`${failureClass}:recovery:message:${scenario}`),
         text: "Work on this.",
         attachments: [],
         dispatchMode: { type: "defer_start" },
@@ -6026,9 +6038,9 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
       if (scenario === "queued-resume") {
         yield* orchestrator.dispatch({
           type: "message.dispatch",
-          commandId: CommandId.make(`recovery:queued:${scenario}`),
+          commandId: CommandId.make(`${failureClass}:recovery:queued:${scenario}`),
           threadId,
-          messageId: MessageId.make(`recovery:queued:${scenario}`),
+          messageId: MessageId.make(`${failureClass}:recovery:queued:${scenario}`),
           text: "Run after recovery.",
           attachments: [],
           dispatchMode: { type: "queue_after_active" },
@@ -6047,22 +6059,22 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
               scenario === "wake" ? "+00:00" : "Z",
             );
       yield* events.write({
-        commandId: CommandId.make(`recovery:failure:${scenario}`),
+        commandId: CommandId.make(`${failureClass}:recovery:failure:${scenario}`),
         events: [
           {
-            id: EventId.make(`recovery:run:${scenario}`),
+            id: EventId.make(`${failureClass}:recovery:run:${scenario}`),
             type: "run.updated",
             threadId,
             occurredAt: now,
             payload: { ...run, status: "failed", completedAt: now },
           },
           {
-            id: EventId.make(`recovery:error:${scenario}`),
+            id: EventId.make(`${failureClass}:recovery:error:${scenario}`),
             type: "turn-item.updated",
             threadId,
             occurredAt: now,
             payload: {
-              id: TurnItemId.make(`recovery:error:${scenario}`),
+              id: TurnItemId.make(`${failureClass}:recovery:error:${scenario}`),
               type: "error",
               threadId,
               runId: run.id,
@@ -6078,7 +6090,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
               completedAt: now,
               updatedAt: now,
               failure: {
-                class: "usage_limit",
+                class: failureClass,
                 message: "Plan limit reached.",
                 code: "usageLimitExceeded",
                 retryable: null,
@@ -6093,7 +6105,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         yield* events.write({
           events: [
             {
-              id: EventId.make("recovery:held:queued-resume"),
+              id: EventId.make(`${failureClass}:recovery:held:queued-resume`),
               type: "run.updated",
               threadId,
               runId: queuedRun.id,
@@ -6105,7 +6117,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         const resumeHeldQueue = yield* orchestrator
           .dispatch({
             type: "queue.resume",
-            commandId: CommandId.make("recovery:resume-held:queued-resume"),
+            commandId: CommandId.make(`${failureClass}:recovery:resume-held:queued-resume`),
             threadId,
           })
           .pipe(Effect.exit);
@@ -6120,7 +6132,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         const result = yield* orchestrator
           .dispatch({
             type: "thread.metadata.update",
-            commandId: CommandId.make("recovery:invalid-snooze"),
+            commandId: CommandId.make(`${failureClass}:recovery:invalid-snooze`),
             threadId,
             limitRecovery: { runId: run.id, resetAt, snooze: true },
           })
@@ -6148,7 +6160,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           yield* events.write({
             events: [
               {
-                id: EventId.make(`recovery:older-window:${scenario}`),
+                id: EventId.make(`${failureClass}:recovery:older-window:${scenario}`),
                 type: "thread.metadata-updated",
                 threadId,
                 occurredAt: now,
@@ -6167,7 +6179,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         }
         yield* orchestrator.dispatch({
           type: "thread.stop",
-          commandId: CommandId.make(`recovery:stop:${scenario}`),
+          commandId: CommandId.make(`${failureClass}:recovery:stop:${scenario}`),
           threadId,
         });
         const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -6188,11 +6200,14 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           resetAt,
           autoResume: false,
           snooze: false,
-          requestId: CommandId.make(`recovery:stop:${scenario}`),
+          requestId: CommandId.make(`${failureClass}:recovery:stop:${scenario}`),
         });
       }
       const armCommand = stopBeforeArm
-        ? { ...arm, commandId: CommandId.make(`recovery:explicit-rearm:${scenario}`) }
+        ? {
+            ...arm,
+            commandId: CommandId.make(`${failureClass}:recovery:explicit-rearm:${scenario}`),
+          }
         : arm;
       if (stopBeforeArm) yield* orchestrator.dispatch(armCommand);
       else yield* orchestrator.autoArmLimitRecovery(automaticArm);
@@ -6212,7 +6227,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         yield* TestClock.adjust("10 seconds");
         yield* orchestrator.dispatch({
           type: "thread.metadata.update",
-          commandId: CommandId.make(`recovery:independent-choice:${scenario}`),
+          commandId: CommandId.make(`${failureClass}:recovery:independent-choice:${scenario}`),
           threadId,
           limitRecovery: {
             runId: run.id,
@@ -6235,7 +6250,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         yield* TestClock.adjust("10 seconds");
         yield* orchestrator.dispatch({
           type: "thread.metadata.update",
-          commandId: CommandId.make("recovery:patch-snooze"),
+          commandId: CommandId.make(`${failureClass}:recovery:patch-snooze`),
           threadId,
           limitRecovery: { runId: run.id, resetAt, snooze: true },
         });
@@ -6245,7 +6260,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         yield* TestClock.adjust("10 seconds");
         yield* orchestrator.dispatch({
           type: "thread.metadata.update",
-          commandId: CommandId.make("recovery:patch-cancel-resume"),
+          commandId: CommandId.make(`${failureClass}:recovery:patch-cancel-resume`),
           threadId,
           limitRecovery: { runId: run.id, resetAt, autoResume: false },
         });
@@ -6259,7 +6274,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         );
         yield* orchestrator.dispatch({
           type: "thread.metadata.update",
-          commandId: CommandId.make("recovery:patch-resume"),
+          commandId: CommandId.make(`${failureClass}:recovery:patch-resume`),
           threadId,
           limitRecovery: { runId: run.id, resetAt, autoResume: true },
         });
@@ -6272,13 +6287,13 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
       if (scenario === "manual-snooze") {
         yield* orchestrator.dispatch({
           type: "thread.snooze",
-          commandId: CommandId.make(`recovery:manual-snooze:${scenario}`),
+          commandId: CommandId.make(`${failureClass}:recovery:manual-snooze:${scenario}`),
           threadId,
           snoozedUntil: resetAt,
         });
         yield* orchestrator.dispatch({
           type: "thread.metadata.update",
-          commandId: CommandId.make(`recovery:manual-cancel:${scenario}`),
+          commandId: CommandId.make(`${failureClass}:recovery:manual-cancel:${scenario}`),
           threadId,
           limitRecovery: { runId: run.id, resetAt, autoResume: false, snooze: false },
         });
@@ -6290,7 +6305,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         );
         yield* orchestrator.dispatch({
           type: "thread.unsnooze",
-          commandId: CommandId.make(`recovery:manual-wake:${scenario}`),
+          commandId: CommandId.make(`${failureClass}:recovery:manual-wake:${scenario}`),
           threadId,
           reason: "user",
         });
@@ -6299,7 +6314,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
       if (scenario === "wake") {
         yield* orchestrator.dispatch({
           type: "thread.metadata.update",
-          commandId: CommandId.make(`recovery:wake:${scenario}`),
+          commandId: CommandId.make(`${failureClass}:recovery:wake:${scenario}`),
           threadId,
           limitRecovery: { runId: run.id, resetAt, autoResume: false, snooze: false },
         });
@@ -6308,8 +6323,8 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
       assert.isNull(limitRecoveryCommand(armedShell, true, DateTime.toEpochMillis(now)));
       yield* orchestrator.dispatch({
         type: "message.dispatch",
-        commandId: CommandId.make(`recovery:early:${scenario}`),
-        messageId: MessageId.make(`recovery:early:${scenario}`),
+        commandId: CommandId.make(`${failureClass}:recovery:early:${scenario}`),
+        messageId: MessageId.make(`${failureClass}:recovery:early:${scenario}`),
         threadId,
         usageLimitContinuationOfRunId: run.id,
         text: "Continue where you left off.",
@@ -6334,7 +6349,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         const wakeAt = DateTime.formatIso(DateTime.add(yield* DateTime.now, { minutes: 1 }));
         yield* orchestrator.dispatch({
           type: "thread.snooze",
-          commandId: CommandId.make("recovery:raced-snooze"),
+          commandId: CommandId.make(`${failureClass}:recovery:raced-snooze`),
           threadId,
           snoozedUntil: wakeAt,
         });
@@ -6359,7 +6374,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         const staleSnooze = yield* orchestrator
           .dispatch({
             type: "thread.metadata.update",
-            commandId: CommandId.make("recovery:expired-snooze"),
+            commandId: CommandId.make(`${failureClass}:recovery:expired-snooze`),
             threadId,
             limitRecovery: { runId: run.id, resetAt, snooze: true },
           })
@@ -6374,20 +6389,20 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
       if (scenario === "rearm")
         yield* orchestrator.dispatch({
           type: "thread.metadata.update",
-          commandId: CommandId.make(`recovery:cancel:${scenario}`),
+          commandId: CommandId.make(`${failureClass}:recovery:cancel:${scenario}`),
           threadId,
           limitRecovery: { runId: run.id, resetAt, autoResume: false },
         });
       if (scenario === "archive")
         yield* orchestrator.dispatch({
           type: "thread.archive",
-          commandId: CommandId.make(`recovery:archive:${scenario}`),
+          commandId: CommandId.make(`${failureClass}:recovery:archive:${scenario}`),
           threadId,
         });
       if (scenario === "stop") {
         yield* orchestrator.dispatch({
           type: "thread.stop",
-          commandId: CommandId.make(`recovery:stop:${scenario}`),
+          commandId: CommandId.make(`${failureClass}:recovery:stop:${scenario}`),
           threadId,
         });
         const stoppedShell = (yield* orchestrator.getShellSnapshot()).threads.find(
@@ -6400,10 +6415,10 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         const error = current.turnItems.find((item) => item.type === "error")!;
         if (error.type !== "error") throw new Error("Expected provider error");
         yield* events.write({
-          commandId: CommandId.make(`recovery:replacement:${scenario}`),
+          commandId: CommandId.make(`${failureClass}:recovery:replacement:${scenario}`),
           events: [
             {
-              id: EventId.make(`recovery:replacement:${scenario}`),
+              id: EventId.make(`${failureClass}:recovery:replacement:${scenario}`),
               type: "turn-item.updated",
               threadId,
               occurredAt: yield* DateTime.now,
@@ -6423,7 +6438,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         yield* orchestrator.dispatch(resume!);
         yield* orchestrator.dispatch({
           type: "thread.metadata.update",
-          commandId: CommandId.make(`recovery:rearm:${scenario}`),
+          commandId: CommandId.make(`${failureClass}:recovery:rearm:${scenario}`),
           threadId,
           limitRecovery: { runId: run.id, resetAt, autoResume: true },
         });
@@ -6480,7 +6495,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         );
         yield* orchestrator.dispatch({
           type: "thread.metadata.update",
-          commandId: CommandId.make("recovery:rearm-after-stop"),
+          commandId: CommandId.make(`${failureClass}:recovery:rearm-after-stop`),
           threadId,
           limitRecovery: { runId: run.id, resetAt, autoResume: true },
         });
@@ -6502,7 +6517,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         yield* events.write({
           events: [
             {
-              id: EventId.make("recovery:continuation-completed:queued-resume"),
+              id: EventId.make(`${failureClass}:recovery:continuation-completed:queued-resume`),
               type: "run.updated",
               threadId,
               runId: continuation.id,
@@ -6513,7 +6528,9 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         });
         yield* orchestrator.dispatch({
           type: "queue.resume",
-          commandId: CommandId.make("recovery:resume-held-after-limit:queued-resume"),
+          commandId: CommandId.make(
+            `${failureClass}:recovery:resume-held-after-limit:queued-resume`,
+          ),
           threadId,
         });
         const resumed = yield* orchestrator.getThreadProjection(threadId);
@@ -6524,6 +6541,63 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         );
         assert.equal(resumed.runs[2]?.status, "starting");
         assert.isFalse(resumed.runs[2]?.queueHeld);
+      }
+      if (scenario === "resume" && failureClass === "model_capacity") {
+        const retryRun = after.runs.at(-1)!;
+        const failedAt = yield* DateTime.now;
+        const retryAt = DateTime.formatIso(DateTime.add(failedAt, { seconds: 30 }));
+        const previousError = after.turnItems.find((item) => item.type === "error")!;
+        assert(previousError.type === "error");
+        yield* events.write({
+          events: [
+            {
+              id: EventId.make("capacity:retry-failed"),
+              type: "run.updated",
+              threadId,
+              occurredAt: failedAt,
+              payload: { ...retryRun, status: "failed", completedAt: failedAt },
+            },
+            {
+              id: EventId.make("capacity:retry-error"),
+              type: "turn-item.updated",
+              threadId,
+              occurredAt: failedAt,
+              payload: {
+                ...previousError,
+                id: TurnItemId.make("capacity:retry-error"),
+                runId: retryRun.id,
+                nodeId: retryRun.rootNodeId,
+                ordinal: previousError.ordinal + 1,
+                completedAt: failedAt,
+                updatedAt: failedAt,
+                failure: { ...previousError.failure, resetAt: retryAt },
+              },
+            },
+          ],
+        });
+        // Run each scheduler tick to completion instead of racing background fibers.
+        const sweep = Layer.build(
+          UsageLimitRecoveryWorker.layer.pipe(
+            Layer.provide(
+              Layer.succeed(Scheduler.Scheduler, {
+                register: (_name, work) => Effect.orDie(work),
+              }),
+            ),
+            Layer.provide(ServerSettings.layerTest()),
+          ),
+        ).pipe(Effect.scoped);
+        yield* sweep;
+        assert.deepInclude(
+          (yield* orchestrator.getThreadProjection(threadId)).thread.limitRecovery,
+          { runId: retryRun.id, resetAt: retryAt, autoResume: true, snooze: false },
+        );
+        yield* TestClock.adjust("29 seconds");
+        yield* sweep;
+        assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 2);
+        yield* TestClock.adjust("1 second");
+        yield* sweep;
+        yield* sweep;
+        assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 3);
       }
     }),
   );

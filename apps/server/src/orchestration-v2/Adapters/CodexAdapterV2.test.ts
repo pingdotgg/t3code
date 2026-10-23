@@ -3878,6 +3878,24 @@ describe("CodexAdapterV2 post-settle continuation", () => {
 
   it.effect.each([
     {
+      name: "capacity",
+      code: "serverOverloaded",
+      notification: false,
+      expectedClass: "model_capacity",
+    },
+    {
+      name: "capacity-notification",
+      code: "serverOverloaded",
+      notification: true,
+      expectedClass: "model_capacity",
+    },
+    {
+      name: "capacity-message",
+      code: "other",
+      notification: false,
+      expectedClass: "model_capacity",
+    },
+    {
       name: "usage",
       code: "usageLimitExceeded",
       notification: false,
@@ -3934,7 +3952,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       Effect.gen(function* () {
         const nativeThreadId = `native-limit-${scenario.name}`;
         const nativeTurnId = `turn-limit-${scenario.name}`;
-        const message = "Provider stopped this request.";
+        const message =
+          scenario.name === "capacity-message"
+            ? "Selected model is at capacity. Please try a different model."
+            : "Provider stopped this request.";
         const errorInfo = "errorInfo" in scenario ? scenario.errorInfo : scenario.code;
         const resetAt = "2033-05-19T07:20:00.000Z";
         const snapshot = {
@@ -4083,6 +4104,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             ? Deferred.succeed(resetReceipt, undefined)
             : Effect.void,
         );
+        const startedAt = yield* DateTime.now;
         yield* harness.runtime.startTurn(
           makeCodexTestTurnInput({
             threadId: harness.threadId,
@@ -4097,6 +4119,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.equal(terminal?.status, "failed");
         if (terminal?.status !== "failed") return;
         assert.equal(terminal.failure.class, scenario.expectedClass);
+        if (scenario.expectedClass === "model_capacity") {
+          assert.equal(terminal.failure.retryable, true);
+          assert.equal(
+            terminal.failure.resetAt,
+            DateTime.formatIso(DateTime.add(startedAt, { seconds: 30 })),
+          );
+        }
         assert.equal(terminal.threadDisposition, "reusable");
         if (scenario.name === "deferred-reset") assert.equal(terminal.failure.resetAt, resetAt);
         if (scenario.name === "matching-details")

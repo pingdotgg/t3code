@@ -28,7 +28,9 @@ export function v2EventPresentation(item: OrchestrationV2TurnItem): {
         tone:
           item.status === "completed"
             ? "success"
-            : item.status === "running" || item.failure.class === "usage_limit"
+            : item.status === "running" ||
+                item.failure.class === "usage_limit" ||
+                item.failure.class === "model_capacity"
               ? "warning"
               : "danger",
         icon: CircleAlertIcon,

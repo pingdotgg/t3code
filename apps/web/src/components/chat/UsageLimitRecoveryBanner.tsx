@@ -10,6 +10,7 @@ import { toastManager } from "../ui/toast";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
 
 type RecoveryProps = {
+  modelAtCapacity?: boolean;
   runId: RunId;
   resetAt: string | null;
   stoppedAt: string;
@@ -19,22 +20,36 @@ type RecoveryProps = {
 };
 
 export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBannerStackItem {
-  const { runId, resetAt, stoppedAt } = props;
+  const { runId, resetAt, stoppedAt, modelAtCapacity = false } = props;
   const canSchedule = resetAt !== null && Date.parse(resetAt) > Date.parse(stoppedAt);
+  const scheduled =
+    props.recovery?.runId === runId &&
+    props.recovery.resetAt === resetAt &&
+    props.recovery.autoResume;
   return {
     id: `usage-limit-recovery:${runId}`,
     variant: "warning",
     priority: "urgent",
     icon: <GaugeIcon />,
-    title: "Usage limit reached",
-    description: resetAt
-      ? `Resets ${new Date(resetAt).toLocaleString()}`
-      : "Reset time unavailable; retry manually",
+    title: modelAtCapacity ? "Model at capacity" : "Usage limit reached",
+    description:
+      modelAtCapacity && resetAt
+        ? `${scheduled ? "Retrying" : "Retry available"} at ${new Date(resetAt).toLocaleTimeString()}`
+        : resetAt
+          ? `Resets ${new Date(resetAt).toLocaleString()}`
+          : "Reset time unavailable; retry manually",
     actions: canSchedule ? <RecoveryActions key={`${runId}:${resetAt}`} {...props} /> : null,
   };
 }
 
-function RecoveryActions({ runId, resetAt, recovery, snoozedUntil, onChange }: RecoveryProps) {
+function RecoveryActions({
+  runId,
+  resetAt,
+  recovery,
+  snoozedUntil,
+  onChange,
+  modelAtCapacity = false,
+}: RecoveryProps) {
   const [pending, setPending] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
@@ -85,9 +100,17 @@ function RecoveryActions({ runId, resetAt, recovery, snoozedUntil, onChange }: R
   return (
     <>
       <Button size="xs" variant="ghost" disabled={pending} onClick={() => void toggle("resume")}>
-        {pending ? "Saving..." : scheduled ? "Cancel auto-resume" : "Resume at reset"}
+        {pending
+          ? "Saving..."
+          : scheduled
+            ? modelAtCapacity
+              ? "Cancel auto-retry"
+              : "Cancel auto-resume"
+            : modelAtCapacity
+              ? "Schedule retry"
+              : "Resume at reset"}
       </Button>
-      {!snoozed ? (
+      {!snoozed && !modelAtCapacity ? (
         <Button
           size="xs"
           variant="ghost"

@@ -21,6 +21,7 @@ export function UsageLimitRecoveryCard({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const resetAt = thread.runtime?.usageLimitResetAt ?? null;
+  const modelAtCapacity = thread.runtime?.lastErrorClass === "model_capacity";
   const canSchedule =
     resetAt !== null &&
     Date.parse(resetAt) > Date.parse(thread.latestRun?.completedAt ?? thread.updatedAt);
@@ -49,7 +50,8 @@ export function UsageLimitRecoveryCard({
     recovery?.runId === runId && recovery?.resetAt === resetAt && recovery?.autoResume;
   if (
     thread.runtime?.status !== "failed" ||
-    thread.runtime.lastErrorClass !== "usage_limit" ||
+    (thread.runtime.lastErrorClass !== "usage_limit" &&
+      thread.runtime.lastErrorClass !== "model_capacity") ||
     !runId
   )
     return null;
@@ -88,24 +90,36 @@ export function UsageLimitRecoveryCard({
   return (
     <View className="mx-3 mb-2 gap-2 rounded-xl border border-warning-foreground/25 bg-screen p-3">
       <Text className="text-sm text-warning-foreground">
-        {resetAt
-          ? `Usage limit resets ${DateTime.toDateUtc(DateTime.makeUnsafe(resetAt)).toLocaleString()}.`
-          : "The provider did not report a reset time. Retry manually when your limit is available."}
+        {modelAtCapacity && resetAt
+          ? `Model at capacity. ${scheduled ? "Retrying" : "Retry available"} at ${DateTime.toDateUtc(DateTime.makeUnsafe(resetAt)).toLocaleTimeString()}.`
+          : resetAt
+            ? `Usage limit resets ${DateTime.toDateUtc(DateTime.makeUnsafe(resetAt)).toLocaleString()}.`
+            : "The provider did not report a reset time. Retry manually when your limit is available."}
       </Text>
       {canSchedule ? (
         <View className="flex-row flex-wrap gap-2">
           <Button
-            label={scheduled ? "Cancel auto-resume" : "Resume at reset"}
+            label={
+              scheduled
+                ? modelAtCapacity
+                  ? "Cancel auto-retry"
+                  : "Cancel auto-resume"
+                : modelAtCapacity
+                  ? "Schedule retry"
+                  : "Resume at reset"
+            }
             tone="secondary"
             disabled={pending}
             onPress={() => void toggle("resume")}
           />
-          <Button
-            label={snoozed ? "Wake now" : "Snooze until reset"}
-            tone="secondary"
-            disabled={pending || (!snoozed && resetPassed)}
-            onPress={() => void toggle("snooze")}
-          />
+          {!modelAtCapacity ? (
+            <Button
+              label={snoozed ? "Wake now" : "Snooze until reset"}
+              tone="secondary"
+              disabled={pending || (!snoozed && resetPassed)}
+              onPress={() => void toggle("snooze")}
+            />
+          ) : null}
         </View>
       ) : null}
       {error ? (

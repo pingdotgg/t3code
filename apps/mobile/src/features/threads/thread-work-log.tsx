@@ -899,7 +899,9 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
   );
   const failureItem = row.projectedItem.item;
   if (failureItem.type === "error" && failureItem.status === "failed") {
-    const warning = failureItem.failure.class === "usage_limit";
+    const warning =
+      failureItem.failure.class === "usage_limit" || failureItem.failure.class === "model_capacity";
+    const showFailureMessage = failureItem.failure.class !== "usage_limit";
     const timestamp = new Date(row.createdAt);
     const resetAt = failureItem.failure.resetAt;
     const resetTime = resetAt
@@ -910,12 +912,16 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
           minute: "2-digit",
         })
       : null;
+    const failureLabel =
+      failureItem.failure.class === "model_capacity"
+        ? "Model at capacity."
+        : "Usage limit reached.";
     const label = warning
-      ? `Usage limit reached.${resetTime ? ` Retry after ${resetTime}.` : ""}`
+      ? `${failureLabel}${resetTime ? ` Retry after ${resetTime}.` : ""}`
       : row.summary;
     return (
       <WorkLogPressable
-        accessibilityLabel={warning ? label : `${row.summary}: ${failureItem.failure.message}`}
+        accessibilityLabel={showFailureMessage ? `${label} ${failureItem.failure.message}` : label}
         accessibilityHint="Long press to copy."
         onLongPress={() => props.onCopyRow(row.id, row.getCopyText())}
       >
@@ -954,7 +960,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
               })}
             </Text>
           </View>
-          {!warning ? (
+          {showFailureMessage ? (
             <Text selectable className="ml-7 text-sm text-foreground">
               {failureItem.failure.message}
             </Text>
@@ -1033,7 +1039,8 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
   const isSystemNotice = row.projectedItem.item.type === "system_notice";
   const isUsageLimit =
     row.projectedItem.item.type === "error" &&
-    row.projectedItem.item.failure.class === "usage_limit" &&
+    (row.projectedItem.item.failure.class === "usage_limit" ||
+      row.projectedItem.item.failure.class === "model_capacity") &&
     row.projectedItem.item.status !== "completed";
   const iconIsDestructive =
     !isSystemNotice && !isUsageLimit && (row.icon === "alert" || row.icon === "warning");
