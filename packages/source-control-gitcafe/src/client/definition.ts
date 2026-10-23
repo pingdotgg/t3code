@@ -71,7 +71,7 @@ export const definition = defineSourceControlClient({
     try {
       return (
         GITCAFE_HOSTS.has(new URL(url).hostname.toLowerCase()) &&
-        isChangeRequestPath(url, "/pulls/")
+        (isChangeRequestPath(url, "/pull/") || isChangeRequestPath(url, "/pulls/"))
       );
     } catch {
       return false;

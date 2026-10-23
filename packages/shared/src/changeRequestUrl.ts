@@ -29,7 +29,8 @@ export function parseChangeRequestUrl(targetUrl: string): ChangeRequestLink | nu
   const host = url.hostname.toLowerCase();
 
   if (host === "git.cafe" || host === "staging.git.cafe") {
-    const match = /^\/([^/]+\/[^/]+)\/pulls\/(\d+)(?:\/|$)/u.exec(url.pathname);
+    // GitCafe serves pull requests at `/pull/<n>` and redirects the older `/pulls/<n>` there.
+    const match = /^\/([^/]+\/[^/]+)\/pulls?\/(\d+)(?:\/|$)/u.exec(url.pathname);
     if (match) return claim(host, match);
   } else {
     if (isHostOf(host, "github.com", "github")) {
