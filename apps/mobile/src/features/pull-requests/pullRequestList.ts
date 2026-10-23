@@ -1,3 +1,4 @@
+import { pullRequestFilterProjects } from "@t3tools/client-runtime/pull-request-project-filter";
 import { parsePullRequestQuery } from "@t3tools/client-runtime/pull-request-query";
 import {
   ProjectId,
@@ -30,6 +31,39 @@ export function withoutScratchProjectScope(
   )
     ? { ...controls, projectId: undefined, projectEnvironmentId: undefined }
     : controls;
+}
+
+type FilterProject = Parameters<typeof pullRequestFilterProjects>[0][number];
+
+/**
+ * Projects from environments that serve pull requests, as on web. The saved scope stays a choice
+ * even when its environment stops serving them or its config has not loaded, so the restriction it
+ * still applies to the list remains visible and can be cleared.
+ */
+export function pullRequestProjectChoices<
+  Project extends FilterProject & { readonly isScratch?: true },
+>(
+  projects: readonly Project[],
+  input: {
+    readonly environmentId: string | null;
+    readonly controls: PullRequestListControls;
+    readonly environmentLabels: ReadonlyMap<EnvironmentId, string>;
+    readonly servesPullRequests: (environmentId: EnvironmentId) => boolean;
+  },
+) {
+  const isSelected = (project: Project) =>
+    project.id === input.controls.projectId &&
+    project.environmentId === input.controls.projectEnvironmentId;
+  return pullRequestFilterProjects(
+    projects.filter(
+      (project) =>
+        !project.isScratch &&
+        (input.environmentId === null || project.environmentId === input.environmentId) &&
+        (input.servesPullRequests(project.environmentId) || isSelected(project)),
+    ),
+    input.environmentLabels,
+    projects.find(isSelected),
+  );
 }
 
 export function pullRequestListKey(

@@ -1,8 +1,7 @@
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { findScopedProject } from "./pullRequestList.logic";
-import { pullRequestFilterProjects } from "./pullRequestProjectFilter.logic";
+import { pullRequestFilterProjects } from "./pullRequestProjectFilter.ts";
 
 const cups = EnvironmentId.make("env-cups");
 const nucbox = EnvironmentId.make("env-nucbox");
@@ -47,16 +46,17 @@ describe("pull request project filter choices", () => {
 
   it("keeps a saved worktree selection as the repository's only choice", () => {
     const projects = [project("main"), project("worktree"), project("worktree", cups)];
-    const selected = findScopedProject(projects, nucbox, "worktree");
+    const selected = projects[1];
 
     const choices = pullRequestFilterProjects(projects, labels, selected);
 
     expect(choices.filter((choice) => choice.environmentId === nucbox)).toEqual([
       { ...projects[1], title: "t3code · nucbox-1" },
     ]);
-    expect(findScopedProject(choices, nucbox, "worktree")).toBeDefined();
-    expect(findScopedProject(choices, nucbox, "main")).toBeUndefined();
-    expect(findScopedProject(choices, cups, "worktree")).toBeDefined();
+    expect(choices.map(({ id, environmentId }) => ({ id, environmentId }))).toEqual([
+      { id: "worktree", environmentId: cups },
+      { id: "worktree", environmentId: nucbox },
+    ]);
   });
 
   it("distinguishes same-named repositories on one server by checkout path", () => {

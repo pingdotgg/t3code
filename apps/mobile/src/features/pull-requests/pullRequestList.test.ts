@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   EnvironmentId,
+  ProjectId,
   SourceControlProviderKind,
   type PullRequestListEntry,
   type PullRequestListResult,
@@ -17,6 +18,7 @@ import {
   pullRequestListInput,
   scopedPullRequestListKey,
   pullRequestListRowsAreEqual,
+  pullRequestProjectChoices,
   withoutScratchProjectScope,
 } from "./pullRequestList";
 
@@ -344,5 +346,52 @@ describe("withoutScratchProjectScope", () => {
       projectEnvironmentId: "env-b",
     };
     expect(withoutScratchProjectScope(elsewhere, projects)).toBe(elsewhere);
+  });
+});
+
+describe("pullRequestProjectChoices", () => {
+  const laptop = EnvironmentId.make("env-laptop");
+  const desktop = EnvironmentId.make("env-desktop");
+  const project = (id: string, environmentId: EnvironmentId) => ({
+    id: ProjectId.make(id),
+    environmentId,
+    title: "t3code",
+    workspaceRoot: `/work/${id}`,
+    repositoryIdentity: { canonicalKey: "github.com/pingdotgg/t3code" },
+  });
+  const projects = [project("main", laptop), project("worktree", laptop), project("main", desktop)];
+  const choices = (
+    servesPullRequests: (environmentId: EnvironmentId) => boolean,
+    scope: { projectId?: string; projectEnvironmentId?: string } = {},
+  ) =>
+    pullRequestProjectChoices(projects, {
+      environmentId: null,
+      controls: { ...DEFAULT_PR_LIST_CONTROLS, ...scope },
+      environmentLabels: new Map([
+        [laptop, "laptop"],
+        [desktop, "desktop"],
+      ]),
+      servesPullRequests,
+    }).map(({ id, environmentId, title }) => ({ id, environmentId, title }));
+
+  it("lists each repository once per environment that serves pull requests", () => {
+    expect(choices(() => true)).toEqual([
+      { id: "main", environmentId: desktop, title: "t3code · desktop" },
+      { id: "main", environmentId: laptop, title: "t3code · laptop" },
+    ]);
+    expect(choices((environmentId) => environmentId === desktop)).toEqual([
+      { id: "main", environmentId: desktop, title: "t3code" },
+    ]);
+  });
+
+  it("keeps the saved scope when its environment stops serving or has not loaded", () => {
+    const scope = { projectId: "worktree", projectEnvironmentId: laptop };
+    expect(choices((environmentId) => environmentId === desktop, scope)).toEqual([
+      { id: "main", environmentId: desktop, title: "t3code · desktop" },
+      { id: "worktree", environmentId: laptop, title: "t3code · laptop" },
+    ]);
+    expect(choices(() => false, scope)).toEqual([
+      { id: "worktree", environmentId: laptop, title: "t3code" },
+    ]);
   });
 });
