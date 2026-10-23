@@ -4,6 +4,7 @@ import * as Option from "effect/Option";
 import type {
   PullRequestActor,
   PullRequestCheck,
+  PullRequestCheckStatus,
   PullRequestComment,
   PullRequestCommit,
   PullRequestReaction,
@@ -213,6 +214,25 @@ export function forgejoCommit(commit: typeof ForgejoCommit.Type): PullRequestCom
   };
 }
 
+// Forgejo Actions reports a job that did not run as `skipped` and a cancelled one as `failure`,
+// and `warning` is finished without being a pass. Only `pending` and states we do not know may
+// hold a watch open.
+function forgejoCheckStatus(state: string): PullRequestCheckStatus {
+  switch (state) {
+    case "success":
+      return "success";
+    case "failure":
+    case "error":
+      return "failure";
+    case "skipped":
+      return "skipped";
+    case "warning":
+      return "neutral";
+    default:
+      return "pending";
+  }
+}
+
 export function forgejoChecks(
   statuses: ReadonlyArray<typeof ForgejoStatus.Type>,
   pullRequestUrl: string,
@@ -227,12 +247,7 @@ export function forgejoChecks(
         url: status.target_url
           ? (URL.parse(status.target_url, pullRequestUrl)?.href ?? null)
           : null,
-        status:
-          status.status === "success"
-            ? "success"
-            : status.status === "failure" || status.status === "error"
-              ? "failure"
-              : "pending",
+        status: forgejoCheckStatus(status.status),
       },
     })),
   );
