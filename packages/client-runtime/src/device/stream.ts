@@ -437,6 +437,7 @@ export function createDeviceStreamClient(
   let decoderEpoch = 0;
   let iosDecoderBacklogs = 0;
   let iosRecoveryFrames = 0;
+  let iosPreferSoftware = false;
   let frameTimer: ReturnType<typeof setTimeout> | null = null;
   let videoReadTimer: ReturnType<typeof setTimeout> | null = null;
   let mjpegImage: HTMLImageElement | null = null;
@@ -601,8 +602,10 @@ export function createDeviceStreamClient(
       // A new AVCC request starts a fresh capture with a keyframe; there is no MJPEG.
       closeDecoder();
       controller?.abort();
-    } else if (platform === "ios") fallBackToMjpeg();
-    else {
+    } else if (platform === "ios") {
+      if (target.videoOnly) fail("This browser could not decode the Duo panel's video.");
+      else fallBackToMjpeg();
+    } else {
       closeDecoder();
       connecting("Video decoder restarted.");
       requestKeyframe();
@@ -619,7 +622,7 @@ export function createDeviceStreamClient(
             paint(frame, frame.displayWidth, frame.displayHeight);
             if (
               platform === "ios" &&
-              iosDecoderBacklogs === 1 &&
+              iosDecoderBacklogs > 0 &&
               ++iosRecoveryFrames >= IOS_BACKLOG_RECOVERY_FRAMES
             ) {
               iosDecoderBacklogs = 0;
@@ -646,7 +649,7 @@ export function createDeviceStreamClient(
     const full: VideoDecoderConfig = {
       ...config,
       optimizeForLatency: true,
-      ...(platform === "ios" && iosDecoderBacklogs >= 2
+      ...(platform === "ios" && iosPreferSoftware
         ? { hardwareAcceleration: "prefer-software" }
         : {}),
     };
@@ -677,13 +680,18 @@ export function createDeviceStreamClient(
         recoverDecoder();
         return;
       }
-      // A fresh keyframe fixes transient lag. Repeated overload with the same
-      // decoder needs software decoding, then MJPEG if that also falls behind.
-      iosRecoveryFrames = 0;
-      if (++iosDecoderBacklogs >= 3) {
-        if (target.videoOnly) fail("This browser cannot keep up with the Duo panel's video.");
-        else fallBackToMjpeg();
-        return;
+      if (platform === "ios") {
+        // A fresh keyframe fixes transient lag. Repeated overload with the same
+        // decoder needs software decoding, then MJPEG if that also falls behind.
+        iosRecoveryFrames = 0;
+        if (++iosDecoderBacklogs >= 2) {
+          if (iosPreferSoftware) {
+            if (target.videoOnly) fail("This browser cannot keep up with the Duo panel's video.");
+            else fallBackToMjpeg();
+            return;
+          }
+          iosPreferSoftware = true;
+        }
       }
       // Native IDRs are spaced by frame count, so an idle simulator may take
       // minutes to produce one. A new AVCC subscription forces a fresh IDR.
@@ -1300,6 +1308,7 @@ export function createDeviceStreamClient(
     configuring = false;
     iosDecoderBacklogs = 0;
     iosRecoveryFrames = 0;
+    iosPreferSoftware = false;
     iosInputAdmitted = false;
     iosInputUnavailable = false;
     connecting();
