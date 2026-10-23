@@ -690,7 +690,12 @@ it.live("binds one-click approval to the selected MCP resource", () => {
             csrfToken: approval.csrfToken,
           };
           for (const other of resources.filter((value) => value !== resource)) {
-            const changed = yield* decide(handler, { ...params, resource: other }, decision, cookie);
+            const changed = yield* decide(
+              handler,
+              { ...params, resource: other },
+              decision,
+              cookie,
+            );
             expect(changed.status).toBe(400);
           }
           const approved = yield* decide(handler, params, decision, cookie);
