@@ -18,7 +18,7 @@ import {
   readResponseSubagents,
   useAssistantMessageText,
   useProject,
-  useThreadShell,
+  useQuietThreadShell,
 } from "../../state/entities";
 import { MessageCopyButton } from "./MessageCopyButton";
 import { AssistantCitationSource } from "./AssistantCitationSource";
@@ -411,7 +411,7 @@ function AssistantChangedFilesSectionInner({
   const setExpanded = useUiStateStore((store) => store.setThreadChangedFilesExpanded);
   const allDirectoriesExpanded = persistedExpanded ?? false;
 
-  const thread = useThreadShell(ctx.threadRef);
+  const thread = useQuietThreadShell(ctx.threadRef);
   const activeProject = useProject(
     thread && thread.projectId
       ? { environmentId: thread.environmentId, projectId: thread.projectId }
