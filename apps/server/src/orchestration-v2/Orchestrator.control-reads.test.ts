@@ -57,6 +57,142 @@ const layerTest = Layer.mergeAll(
   ),
 );
 
+it.effect(
+  "records approval feedback and targets only its runtime request without dispatching a parent turn",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const threadId = ThreadId.make("thread:approval-feedback");
+      const sessionId = ProviderSessionId.make("session:approval-feedback");
+      const now = yield* DateTime.now;
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create-approval-feedback"),
+        threadId,
+        projectId: ProjectId.make("project:approval-feedback"),
+        title: "Parent",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* projections.apply({
+        id: EventId.make("session:approval-feedback"),
+        type: "provider-session.attached",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: sessionId,
+          driver: adapter.driver,
+          providerInstanceId: instanceId,
+          status: "ready",
+          cwd: "/repo",
+          model: modelSelection.model,
+          capabilities: CodexProviderCapabilitiesV2,
+          createdAt: now,
+          updatedAt: now,
+          lastError: null,
+        },
+      });
+      for (const name of ["child", "other"]) {
+        yield* projections.apply({
+          id: EventId.make(`request:${name}`),
+          type: "runtime-request.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: RuntimeRequestId.make(name),
+            nodeId: NodeId.make(`node:${name}`),
+            providerTurnId: null,
+            nativeRequestRef: null,
+            kind: "command",
+            status: "pending",
+            responseCapability: {
+              type: "live",
+              providerSessionId: sessionId,
+              supportsFeedback: name === "child",
+            },
+            createdAt: now,
+            resolvedAt: null,
+          },
+        });
+      }
+      const commandId = CommandId.make("respond:approval-feedback");
+      const feedback = "Run it in a safer manner.";
+      for (const [index, invalid] of [
+        { requestId: RuntimeRequestId.make("other"), decision: "decline" as const, feedback },
+        { requestId: RuntimeRequestId.make("child"), decision: "accept" as const, feedback },
+        { requestId: RuntimeRequestId.make("child"), decision: "decline" as const, feedback: "  " },
+      ].entries()) {
+        const rejectedId = CommandId.make(`invalid-feedback:${index}`);
+        const rejected = yield* orchestrator
+          .dispatch({
+            type: "runtime-request.respond",
+            commandId: rejectedId,
+            threadId,
+            ...invalid,
+          })
+          .pipe(Effect.result);
+        assert.isTrue(Result.isFailure(rejected));
+        assert.deepEqual(yield* outbox.listByCommandId(rejectedId), []);
+      }
+      yield* orchestrator.dispatch({
+        type: "runtime-request.respond",
+        commandId,
+        threadId,
+        requestId: RuntimeRequestId.make("child"),
+        decision: "decline",
+        feedback,
+      });
+      const projection = yield* projections.getThreadProjection(threadId);
+      assert.equal(
+        projection.runtimeRequests.find((request) => request.id === "child")?.feedback,
+        feedback,
+      );
+      assert.equal(
+        projection.runtimeRequests.find((request) => request.id === "other")?.status,
+        "pending",
+      );
+      assert.equal(projection.messages.at(-1)?.text, feedback);
+      const feedbackMessageId = MessageId.make("approval-feedback:child");
+      assert.ok(
+        projection.visibleTurnItems.some(
+          ({ item }) =>
+            item.type === "user_message" &&
+            item.messageId === feedbackMessageId &&
+            item.text === feedback,
+        ),
+      );
+      const history = yield* projections.getTimelinePage(threadId, { limit: 20, view: "messages" });
+      assert.ok(
+        history.items.some(
+          ({ item }) =>
+            item.type === "user_message" &&
+            item.messageId === feedbackMessageId &&
+            item.text === feedback,
+        ),
+      );
+      assert.equal(projection.runs.length, 0);
+      assert.deepEqual(
+        (yield* outbox.listByCommandId(commandId)).map((effect) => effect.request),
+        [
+          {
+            type: "runtime-request.respond",
+            providerSessionId: sessionId,
+            requestId: RuntimeRequestId.make("child"),
+            decision: "decline",
+            feedback,
+          },
+        ],
+      );
+    }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("marks a never-visited thread's first completion unread", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;

@@ -13,6 +13,7 @@ import {
   createQuestionHistoryProjector,
   derivePendingThreadRequests,
   declinePendingApprovals,
+  sendApprovalFeedback,
   seedUserInputDraftAnswers,
   type ApprovalResponder,
   type ThreadPendingApproval,
@@ -71,6 +72,48 @@ describe("declining approvals before sending", () => {
       ),
     ).toBe(true);
     expect(respond).not.toHaveBeenCalled();
+  });
+
+  it("sends feedback only to the displayed request, leaving other approvals pending", async () => {
+    const respond = vi.fn<ApprovalResponder>(async () => AsyncResult.success(undefined));
+    const pending = derivePendingThreadRequests({
+      runtimeRequests: [
+        {
+          ...projection.runtimeRequests[0]!,
+          kind: "command",
+          responseCapability: {
+            type: "live",
+            providerSessionId: ProviderSessionId.make("claude-session"),
+            supportsFeedback: true,
+          },
+        },
+        { ...projection.runtimeRequests[0]!, id: second.requestId, kind: "command" },
+      ],
+      turnItems: [],
+    });
+    expect(await sendApprovalFeedback(pending.approvals[0]!, "  Safer please.  ", respond)).toBe(
+      true,
+    );
+    expect(respond.mock.calls).toEqual([[approval.requestId, "decline", "Safer please."]]);
+  });
+
+  it("keeps feedback unsent when unsupported, stale, empty or rejected", async () => {
+    const respond = vi.fn<ApprovalResponder>(async () => AsyncResult.failure(Cause.fail("failed")));
+    expect(await sendApprovalFeedback(approval, "Safer please.", respond)).toBe(false);
+    expect(
+      await sendApprovalFeedback(
+        { ...approval, supportsFeedback: true, responseCapability: "not_resumable" },
+        "Safer please.",
+        respond,
+      ),
+    ).toBe(false);
+    expect(await sendApprovalFeedback({ ...approval, supportsFeedback: true }, "  ", respond)).toBe(
+      false,
+    );
+    expect(respond).not.toHaveBeenCalled();
+    expect(
+      await sendApprovalFeedback({ ...approval, supportsFeedback: true }, "Safer please.", respond),
+    ).toBe(false);
   });
 });
 
