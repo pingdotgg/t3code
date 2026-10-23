@@ -2,7 +2,8 @@ import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { useWorkspaceSettledContentWidth } from "../layout/workspace-content-width";
-import { ThreadMarkdownVideo, ThreadMediaVisibleContext } from "./ThreadMarkdownVideo";
+import { ThreadMarkdownVideo } from "./ThreadMarkdownVideo";
+import { ThreadMediaVisibility } from "./ThreadMediaVisibility";
 import { useMarkdownImageSource } from "../../native/useMarkdownImageSource";
 import { enrichedContextLinkCustomization } from "../../native/useEnrichedLinkVariants";
 import {
@@ -21,7 +22,7 @@ import {
 } from "./worktree-setup-card";
 import * as Haptics from "expo-haptics";
 import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
-import { useViewabilityAmount, type LegendListRef } from "@legendapp/list/react-native";
+import type { LegendListRef } from "@legendapp/list/react-native";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { HandoffEndpoints } from "@t3tools/client-runtime/handoff";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
@@ -750,14 +751,6 @@ function MessageAttachmentUnknown(props: { readonly name: string }) {
 
 // LegendList only computes hook visibility when the list has a viewability config.
 const THREAD_MEDIA_VIEWABILITY_CONFIG = { itemVisiblePercentThreshold: 0 };
-
-function ThreadMediaVisibility(props: { readonly children: ReactNode }) {
-  const [visible, setVisible] = useState(false);
-  useViewabilityAmount<ThreadFeedEntry>(
-    useCallback((token) => setVisible(token.sizeVisible > 0), []),
-  );
-  return <ThreadMediaVisibleContext value={visible}>{props.children}</ThreadMediaVisibleContext>;
-}
 
 interface MarkdownLinkHandlers {
   readonly onLinkPress: (href: string) => void;
