@@ -38,11 +38,19 @@ import {
   pastedTextDisposition,
   wouldTextPasteExceedLimit,
 } from "@t3tools/client-runtime/text-paste";
-import { prepareImageForAttachment } from "../../lib/imageCompression";
+import {
+  inheritComposerImageThumbnail,
+  prepareImageForAttachment,
+} from "../../lib/imageCompression";
 import { requestConfirmDialog } from "~/confirmDialog";
 import { toastManager } from "../ui/toast";
 import { type RefObject, useRef } from "react";
 import { videoMimeType } from "../../types";
+import {
+  addPreparingComposerImages,
+  isPreparingComposerImage,
+  removePreparingComposerImages,
+} from "./preparingComposerImages";
 
 /**
  * Takes files into the draft: validates and reserves slots, compresses images, inserts
@@ -65,7 +73,6 @@ export function useComposerAttachmentIntake(input: {
   readonly composerFilesRef: ChatComposerProps["composerFilesRef"];
   readonly composerEditorRef: RefObject<ComposerPromptEditorHandle | null>;
   readonly isRevertingCheckpointRef: RefObject<boolean>;
-  readonly pendingImageCompressionsRef: RefObject<Map<string, number>>;
   readonly setThreadError: ChatComposerProps["setThreadError"];
   readonly countReservedAttachments: () => number;
   readonly addComposerImage: (image: ComposerImageAttachment) => string[];
@@ -94,7 +101,6 @@ export function useComposerAttachmentIntake(input: {
     composerFilesRef,
     composerEditorRef,
     isRevertingCheckpointRef,
-    pendingImageCompressionsRef,
     setThreadError,
     countReservedAttachments,
     addComposerImage,
@@ -142,9 +148,8 @@ export function useComposerAttachmentIntake(input: {
         stripInlineContextReferences(promptRef.current).trim().length > 0);
 
     // Validation happens synchronously so concurrent pastes see each other:
-    // accepted files reserve their attachment slots (via the pending counter)
+    // accepted files reserve their attachment slots (as preparing images)
     // before the first await, keeping the total under the limit.
-    const pendingCount = pendingImageCompressionsRef.current.get(attachmentTargetKey) ?? 0;
     let reservedCount = countReservedAttachments();
     // A pick that matches a needs-reattach marker replaces it in the draft, so
     // it must not consume a slot; a draft full of markers would otherwise hit
@@ -242,81 +247,100 @@ export function useComposerAttachmentIntake(input: {
     }
     if (acceptedImages.length === 0) return insertedAny;
 
-    pendingImageCompressionsRef.current.set(
-      attachmentTargetKey,
-      pendingCount + acceptedImages.length,
-    );
+    // The draft image reuses its placeholder's id and thumbnail so the strip tile stays exactly
+    // as it is when the compressed file replaces it.
+    const preparingImages = acceptedImages.map((file) => ({
+      id: randomUUID(),
+      name: file.name || "image",
+      file,
+    }));
+    addPreparingComposerImages(attachmentTargetKey, preparingImages);
     if (questionAttachmentTarget)
       changeQuestionAttachmentPreparation(questionAttachmentTarget, acceptedImages.length);
-    const compressAndStoreImages = async (): Promise<boolean> => {
-      const nextImages: ComposerImageAttachment[] = [];
-      let compressionError: string | null = null;
-      for (const file of acceptedImages) {
-        const compressed = await prepareImageForAttachment(
-          file,
-          PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+    const compressed: { id: string; file: File }[] = [];
+    // Keyed by image so a failure whose tile was removed (even mid-compression) is not reported.
+    const compressionErrors = new Map<string, string>();
+    for (const { id, file } of preparingImages) {
+      // Removed from the strip while an earlier image was compressing.
+      if (!isPreparingComposerImage(attachmentTargetKey, id)) continue;
+      // A rejection must still reach the cleanup below: a leaked
+      // placeholder would block sending from this draft for good.
+      const result = await prepareImageForAttachment(
+        file,
+        PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+      ).catch(() => ({ ok: false, reason: "unreadable" }) as const);
+      if (!result.ok) {
+        compressionErrors.set(
+          id,
+          result.reason === "unreadable"
+            ? `'${file.name}' could not be read as an image.`
+            : `'${file.name}' is too large to attach, even after compression.`,
         );
-        if (!compressed.ok) {
-          compressionError =
-            compressed.reason === "unreadable"
-              ? `'${file.name}' could not be read as an image.`
-              : `'${file.name}' is too large to attach, even after compression.`;
-          continue;
-        }
-        const attachmentFile = compressed.file;
-        const previewUrl = URL.createObjectURL(attachmentFile);
-        nextImages.push({
-          type: "image",
-          id: randomUUID(),
-          name: attachmentFile.name || "image",
-          mimeType: attachmentFile.type,
-          sizeBytes: attachmentFile.size,
-          previewUrl,
-          file: attachmentFile,
-        });
+        continue;
       }
-      if (
-        questionAttachmentTarget &&
-        !useQuestionAttachmentPreparation.getState().counts[questionAttachmentTarget]
-      ) {
-        for (const image of nextImages) URL.revokeObjectURL(image.previewUrl);
-        return false;
-      }
-      const storedImageIds = new Set(
-        nextImages.length === 1 && nextImages[0]
-          ? addComposerImage(nextImages[0])
-          : nextImages.length > 1
-            ? addComposerImagesToDraft(nextImages)
-            : [],
-      );
-      const storedImages = nextImages.filter((image) => storedImageIds.has(image.id));
-      if (storedImages.length > 0 && imageAttachmentsGetChips) {
-        insertedAny =
-          insertAttachmentReferences(storedImages.map(imageContextReference)) || insertedAny;
-      }
-      // Only failures are reported here. Success must not pass `null`: by
-      // now other work (a failed send, an overlapping paste) may have set a
-      // thread error this call knows nothing about, and clearing it would
-      // swallow that message.
-      if (compressionError !== null) {
-        setThreadError(threadId, compressionError);
-      }
-      return insertedAny;
-    };
-    return await compressAndStoreImages().finally(() => {
-      if (questionAttachmentTarget)
-        changeQuestionAttachmentPreparation(questionAttachmentTarget, -acceptedImages.length);
-      const remaining =
-        (pendingImageCompressionsRef.current.get(attachmentTargetKey) ?? 0) - acceptedImages.length;
-      if (remaining > 0) {
-        pendingImageCompressionsRef.current.set(attachmentTargetKey, remaining);
-      } else {
-        pendingImageCompressionsRef.current.delete(attachmentTargetKey);
-      }
-    });
+      inheritComposerImageThumbnail(file, result.file);
+      compressed.push({ id, file: result.file });
+    }
+    const questionDiscarded =
+      questionAttachmentTarget !== null &&
+      !useQuestionAttachmentPreparation.getState().counts[questionAttachmentTarget];
+    // Same tick as the draft insert below, so the strip swaps placeholders for
+    // real tiles in one render. A placeholder removed meanwhile stays removed.
+    const stillPreparingIds = removePreparingComposerImages(
+      attachmentTargetKey,
+      new Set(preparingImages.map((image) => image.id)),
+    );
+    if (questionAttachmentTarget)
+      changeQuestionAttachmentPreparation(questionAttachmentTarget, -stillPreparingIds.size);
+    if (questionDiscarded) return false;
+    const nextImages: ComposerImageAttachment[] = compressed
+      .filter(({ id }) => stillPreparingIds.has(id))
+      .map(({ id, file }) => ({
+        type: "image",
+        id,
+        name: file.name || "image",
+        mimeType: file.type,
+        sizeBytes: file.size,
+        previewUrl: URL.createObjectURL(file),
+        file,
+      }));
+    const storedImageIds = new Set(
+      nextImages.length === 1 && nextImages[0]
+        ? addComposerImage(nextImages[0])
+        : nextImages.length > 1
+          ? addComposerImagesToDraft(nextImages)
+          : [],
+    );
+    const storedImages = nextImages.filter((image) => storedImageIds.has(image.id));
+    // The draft may be gone by now; revoking a URL the store already revoked is harmless.
+    for (const image of nextImages) {
+      if (!storedImageIds.has(image.id)) URL.revokeObjectURL(image.previewUrl);
+    }
+    if (storedImages.length > 0 && imageAttachmentsGetChips) {
+      insertedAny =
+        insertAttachmentReferences(storedImages.map(imageContextReference)) || insertedAny;
+    }
+    // Only failures are reported here. Success must not pass `null`: by
+    // now other work (a failed send, an overlapping paste) may have set a
+    // thread error this call knows nothing about, and clearing it would
+    // swallow that message.
+    const compressionError = [...compressionErrors]
+      .filter(([id]) => stillPreparingIds.has(id))
+      .map(([, message]) => message)
+      .at(-1);
+    if (compressionError !== undefined) {
+      setThreadError(threadId, compressionError);
+    }
+    return insertedAny;
   };
 
   const removeComposerImage = (imageId: string) => {
+    if (removePreparingComposerImages(attachmentTargetKey, new Set([imageId])).size > 0) {
+      // Its compression finishes in the background and is dropped.
+      if (questionAttachmentTarget)
+        changeQuestionAttachmentPreparation(questionAttachmentTarget, -1);
+      return;
+    }
     const image = composerImagesRef.current.find((candidate) => candidate.id === imageId);
     const referenced = collectInlineContextIds(promptRef.current).includes(
       image ? imageContextReference(image).contextId : "",
