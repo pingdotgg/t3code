@@ -51,6 +51,7 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
     public var machineIcon: String? = nil
     public var supportsScratch: Bool? = nil
     public var newProjectsRoot: String? = nil
+    public var addProjectBaseDirectory: String? = nil
     public var canCustomizeIcon: Bool? = nil
     public var supportsWorktreesDirectory: Bool? = nil
     public var supportsServerBrowser: Bool? = nil
@@ -97,7 +98,7 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
         case connectionState
         case connectionDetail
         case machineIcon
-        case supportsScratch, newProjectsRoot
+        case supportsScratch, newProjectsRoot, addProjectBaseDirectory
         case canCustomizeIcon, supportsWorktreesDirectory, supportsServerBrowser, permissions
     }
 
@@ -116,6 +117,7 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
         connectionDetail = try container.decodeIfPresent(String.self, forKey: .connectionDetail)
         machineIcon = try container.decodeIfPresent(String.self, forKey: .machineIcon)
         newProjectsRoot = try container.decodeIfPresent(String.self, forKey: .newProjectsRoot)
+        addProjectBaseDirectory = try container.decodeIfPresent(String.self, forKey: .addProjectBaseDirectory)
         supportsScratch = try container.decodeIfPresent(Bool.self, forKey: .supportsScratch)
         canCustomizeIcon = try container.decodeIfPresent(Bool.self, forKey: .canCustomizeIcon)
         supportsWorktreesDirectory = try container.decodeIfPresent(Bool.self, forKey: .supportsWorktreesDirectory)

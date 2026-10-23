@@ -221,6 +221,7 @@ public struct ServerSettingsSnapshot: Codable, Equatable, Sendable {
     public var environmentIcon: String? = nil
     public var sourceControlWritingStyle: JSONValue? = nil
     public var worktreesDirectory: String? = nil
+    public var addProjectBaseDirectory: String? = nil
     public var previousWorktreesDirectories: [String]? = nil
     public var removeAgentCreditsOnMerge: Bool? = nil
     public var sourceControlHosts: [String: [String: JSONValue]]? = nil
@@ -310,6 +311,7 @@ public struct ServerSettingsSnapshot: Codable, Equatable, Sendable {
         case environmentIcon
         case sourceControlWritingStyle
         case worktreesDirectory, previousWorktreesDirectories, removeAgentCreditsOnMerge, sourceControlHosts
+        case addProjectBaseDirectory
         case worktreeSubmodules, storageCleanup, worktreeCleanup
         case defaultAutoPull, responseStreamingMode, projectSettingsOverrides, projectSettingsFolded, providerInstances
         case favorites, providerModelPreferences
@@ -335,6 +337,7 @@ public struct ServerSettingsSnapshot: Codable, Equatable, Sendable {
         environmentIcon = try container.decodeIfPresent(String.self, forKey: .environmentIcon)
         sourceControlWritingStyle = try container.decodeIfPresent(JSONValue.self, forKey: .sourceControlWritingStyle)
         worktreesDirectory = try container.decodeIfPresent(String.self, forKey: .worktreesDirectory)
+        addProjectBaseDirectory = try container.decodeIfPresent(String.self, forKey: .addProjectBaseDirectory)
         previousWorktreesDirectories = try container.decodeIfPresent([String].self, forKey: .previousWorktreesDirectories)
         removeAgentCreditsOnMerge = try container.decodeIfPresent(Bool.self, forKey: .removeAgentCreditsOnMerge)
         sourceControlHosts = try container.decodeIfPresent([String: [String: JSONValue]].self, forKey: .sourceControlHosts)

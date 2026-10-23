@@ -6710,6 +6710,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         mapped.machineIcon = serverConfigsByEnvironmentID[environment.id]?.settings?.environmentIcon
             ?? environment.descriptor?.platform.machine
         mapped.newProjectsRoot = serverConfigsByEnvironmentID[environment.id]?.newProjectsRoot
+        mapped.addProjectBaseDirectory = serverConfigsByEnvironmentID[environment.id]?.settings?.addProjectBaseDirectory
         mapped.supportsScratch = serverConfigsByEnvironmentID[environment.id]?.scratchWorkspaceRoot != nil
         mapped.canCustomizeIcon = serverConfigsByEnvironmentID[environment.id]?.environment?.capabilities.environmentIcon
             ?? environment.descriptor?.capabilities.environmentIcon
