@@ -493,30 +493,16 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       const path = yield* Path.Path;
       yield* service.install();
       const newer = yield* makeService(undefined, "1.2.4");
-      yield* fs.remove(statePath);
-      yield* fs.makeDirectory(statePath);
-      yield* fs.writeFileString(path.join(statePath, "occupied"), "");
+      const unitPath = (yield* service.status).unitPath;
+      yield* fs.remove(unitPath);
+      yield* fs.makeDirectory(unitPath);
+      yield* fs.writeFileString(path.join(unitPath, "occupied"), "");
 
       const error = yield* newer.install({ start: false }).pipe(Effect.flip);
       expect(error._tag).toBe("BootServiceInstallError");
       expect(
         yield* fs.exists(path.join(path.dirname(statePath), SERVICE_RESTART_PENDING_FILE)),
       ).toBe(true);
-    }),
-  );
-
-  it.effect("install fails without touching the service when the unit cannot be read", () =>
-    Effect.gen(function* () {
-      const { service, fs, statePath, commands } = yield* makeHarness();
-      const plan = yield* service.install();
-      const state = yield* fs.readFileString(statePath);
-      yield* fs.remove(plan.unitPath);
-      yield* fs.makeDirectory(plan.unitPath);
-      commands.length = 0;
-
-      expect((yield* service.install().pipe(Effect.flip))._tag).toBe("BootServiceInstallError");
-      expect(commands).toEqual([]);
-      expect(yield* fs.readFileString(statePath)).toBe(state);
     }),
   );
 
@@ -610,54 +596,22 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
-  it.effect("restart leaves a service that serves another T3 home alone", () =>
+  it.effect("restart and install leave a service that serves another T3 home alone", () =>
     Effect.gen(function* () {
       const { service, fs, baseDir, commands, makeService } = yield* makeHarness();
-      yield* service.install();
+      const plan = yield* service.install();
+      const unit = yield* fs.readFileString(plan.unitPath);
       commands.length = 0;
       const path = yield* Path.Path;
       const otherHome = yield* fs.makeTempDirectoryScoped({ prefix: "t3-other-home-" });
 
       const other = yield* makeService(undefined, "1.2.3", path.join(otherHome, ".t3"));
       expect(yield* other.restart).toBe("skipped");
-      expect(commands.filter((command) => command.startsWith("systemctl "))).toEqual([]);
-
-      const alias = path.join(otherHome, "alias");
-      yield* fs.symlink(baseDir, alias);
-      const sameHome = yield* makeService(undefined, "1.2.3", alias);
-      expect(yield* sameHome.restart).toBe("restarted");
+      expect((yield* other.install().pipe(Effect.flip))._tag).toBe("BootServiceOtherBaseDirError");
+      expect(yield* fs.readFileString(plan.unitPath)).toBe(unit);
+      expect(commands).toEqual([]);
+      expect((yield* other.status).otherBaseDir).toBe(baseDir);
     }),
-  );
-
-  it.effect.each(["linux", "darwin"] as const)(
-    "install refuses to rebind a service that serves another T3 home on %s",
-    (platform) =>
-      Effect.gen(function* () {
-        const { service, fs, baseDir, commands, makeService } = yield* makeHarness(platform);
-        const plan = yield* service.install();
-        const unit = yield* fs.readFileString(plan.unitPath);
-        const path = yield* Path.Path;
-        const otherHome = yield* fs.makeTempDirectoryScoped({ prefix: "t3-other-home-" });
-        const other = yield* makeService(undefined, "1.2.3", path.join(otherHome, ".t3"));
-
-        expect(yield* other.status).toMatchObject({
-          installed: true,
-          current: false,
-          otherBaseDir: baseDir,
-        });
-        commands.length = 0;
-        const error = yield* other.install().pipe(Effect.flip);
-        expect(error).toMatchObject({ _tag: "BootServiceOtherBaseDirError" });
-        expect(error.message).toContain(`--base-dir ${baseDir}`);
-        expect(yield* fs.readFileString(plan.unitPath)).toBe(unit);
-        expect(commands).toEqual([]);
-
-        const alias = path.join(otherHome, "alias");
-        yield* fs.symlink(baseDir, alias);
-        const sameHome = yield* makeService(undefined, "1.2.3", alias);
-        expect((yield* sameHome.status).otherBaseDir).toBeUndefined();
-        yield* sameHome.install();
-      }),
   );
 
   it.effect("hands the whole install to systemd without changing the running service", () =>

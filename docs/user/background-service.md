@@ -20,12 +20,6 @@ Uninstalling the service leaves your projects, threads, and settings intact.
 Running `t3 service install` again repairs a service that `t3 service status`
 reports as broken.
 
-There is one service per user. If you installed it with `--base-dir`, pass the
-same `--base-dir` to every `t3 service` command. Without it, `t3 service status`
-shows which home the service serves and `t3 service install` refuses to change
-it. `t3 service uninstall` removes the service whichever home it serves, so run
-it first when you want to move the service to a different home.
-
 `t3 update` downloads the newest release on your channel and switches `t3`
 and the service to it. Restarting interrupts running agent turns, terminals,
 and remote clients, so it asks first; answer no and the service keeps running

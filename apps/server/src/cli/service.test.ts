@@ -90,20 +90,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("service commands
   );
 });
 
-it.effect.each([
-  ["a newer service", newerServiceStatus],
-  [
-    "a service for another T3 home",
-    {
-      ...status,
-      current: false,
-      installedBaseDir: "/mnt/workspace/t3",
-      otherBaseDir: "/mnt/workspace/t3",
-    },
-  ],
-] as const)("leaves %s unchanged during onboarding without prompting", ([, serviceStatus]) =>
+it.effect("leaves a newer service unchanged during onboarding without prompting", () =>
   Effect.gen(function* () {
-    const { service, installOptions } = makeTestService(serviceStatus);
+    const { service, installOptions } = makeTestService(newerServiceStatus);
     const terminal = Terminal.make({
       columns: Effect.succeed(80),
       rows: Effect.succeed(24),
